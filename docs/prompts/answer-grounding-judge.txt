@@ -1,0 +1,44 @@
+SOURCE: llm-loops.ts — answer_grounding block (~line 790)
+CALLED: once per session, after COMPLETED detected, when:
+  1. workflowMode is true (headless/bench run, not interactive chat)
+  2. _reactiveFired does not already have 'answer_grounding'
+  3. callLLMComplete is available
+  4. The text body (stripped of COMPLETED/BLOCKED) is a bare integer ≥2 digits
+  5. That integer does NOT appear in any of the 5 most recent tool result messages
+LABEL: 'validate:answer_grounding'
+PARAMS: temperature=0, maxTokens=50
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The agent declared its final answer as "{_bodyText}".
+
+Recent tool results:
+<results>
+{_toolResultsText}
+</results>
+
+Does "{_bodyText}" contradict the tool results — i.e., the results contain a different numeric value that should be the answer?
+Answer YES if the tool results show a clearly different value and "{_bodyText}" appears wrong.
+Answer NO if "{_bodyText}" is plausibly correct, derived from the results, or the results are unclear.
+Answer with YES or NO on the first line.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+### On YES: nudge injected via _gate mechanism
+"Your stated answer "{_bodyText}" does not match any recent tool result — re-run the query and report the value you actually observe."
+(appended to any existing _gate text, or wrapped in ~~~guidance~~~)
+
+### On NO or error: no action, COMPLETED proceeds normally.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES:
+- _toolResultsText: last 5 tool messages, each truncated to 500 chars, joined by '---'.
+  Extracts .stdout or .content from JSON tool results, falls back to raw string.
+- The trigger condition "bare integer ≥2 digits" targets benchmark tasks that expect
+  a numeric answer (AgentBench OS/DB count queries, DSAEval scores, etc.)
+- The "not found in recent tool results" pre-check avoids the LLM call when the
+  answer is obviously consistent. The judge only runs in the ambiguous middle case.
+- _reactiveFired.add('answer_grounding') ensures the judge fires at most once per turn,
+  even if the agent re-declares COMPLETED multiple times.
+- Companion check: graded_test (pytest IDs in task text → require passing tests before
+  COMPLETED). Both write to _gate which is injected as a ~~~guidance~~~ nudge.

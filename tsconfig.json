@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": [],
+    "sourceMap": false,
+    "declaration": false,
+    "declarationMap": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  },
+  "exclude": [
+    "node_modules",
+    "tmp",
+    "bench",
+    "tests",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "fg-run.ts",
+    "fg-tui.tsx",
+    "tui-app.tsx",
+    "tui-placeholder.ts",
+    "headless-runner.ts",
+    "bootstrap-jsdom.ts",
+    "node-fs-adapter.ts",
+    "node-sqlite-adapter.ts",
+    "coi-serviceworker.ts"
+  ]
+}

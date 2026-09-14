@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FreeGent</title>
+    <link rel="icon" href="data:,">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Third-party libraries: versions chosen for Safari 12 / iOS 12 compatibility.
+         Safari 12 lacks optional chaining (?.) and nullish coalescing (??), which
+         newer major versions of marked/DOMPurify/highlight.js use in their source.
+         Versions below are the last releases that compile to ES6 without those features.
+         All loaded with defer so they don't block HTML parsing on low-end hardware. -->
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/dompurify@2.5.7/dist/purify.min.js"></script>
+    <!-- Syntax highlighting — light theme active by default; dark theme toggled by JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@10.7.3/build/styles/github.min.css" id="hljs-theme-light">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@10.7.3/build/styles/github-dark.min.css" id="hljs-theme-dark" disabled>
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@10.7.3/build/highlight.min.js"></script>
+    <!-- Math rendering: KaTeX maintains ES5 compatibility via Babel, safe on Safari 12 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+    <!-- Dark-mode pre-paint: set data-theme BEFORE styles.css is applied so the
+         browser never paints the light theme first.  ES modules (init.ts) load
+         asynchronously and would cause a flash if this ran there instead. -->
+    <script>if(localStorage.getItem('fg_dark_mode')==='1')document.documentElement.dataset.theme='dark';</script>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Early stubs for inline onclick= handlers. ES modules load asynchronously, so
+         clicking a rail button before tabs.ts finishes would throw "is not defined".
+         These no-op stubs make the page safe from first paint; real implementations
+         overwrite them when the modules initialise. -->
+    <!-- Polyfills for iOS 12 / Safari 12 (iPad Air 1, iPhone 6). Runtime APIs that
+         esbuild cannot syntax-transpile: Array.prototype.at, Promise.allSettled,
+         String.prototype.replaceAll. Written in plain ES5 so this script itself
+         never triggers a SyntaxError on any supported browser. -->
+    <script>
+    (function(){
+        // globalThis — Safari 12.0 missing (added in 12.1). Some third-party libs use it.
+        // Simple approach: just alias window. Safe in any browser that has window.
+        if (typeof globalThis === 'undefined') { window.globalThis = window; }
+        // Array.prototype.at — Safari 15.4+
+        if (!Array.prototype.at) {
+            Array.prototype.at = function(n) {
+                n = Math.trunc(n) || 0;
+                if (n < 0) n += this.length;
+                return (n < 0 || n >= this.length) ? undefined : this[n];
+            };
+        }
+        // String.prototype.at — same era
+        if (!String.prototype.at) {
+            String.prototype.at = function(n) {
+                n = Math.trunc(n) || 0;
+                if (n < 0) n += this.length;
+                return (n < 0 || n >= this.length) ? undefined : this[n];
+            };
+        }
+        // Promise.allSettled — Safari 13+
+        if (!Promise.allSettled) {
+            Promise.allSettled = function(promises) {
+                return Promise.all(Array.prototype.slice.call(promises).map(function(p) {
+                    return Promise.resolve(p).then(
+                        function(v) { return { status: 'fulfilled', value: v }; },
+                        function(r) { return { status: 'rejected', reason: r }; }
+                    );
+                }));
+            };
+        }
+        // String.prototype.replaceAll — Safari 13.1+
+        if (!String.prototype.replaceAll) {
+            String.prototype.replaceAll = function(search, repl) {
+                if (search instanceof RegExp) return String.prototype.replace.call(this, search, repl);
+                // Escape special regex chars, then replace globally
+                var esc = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return String.prototype.replace.call(this, new RegExp(esc, 'g'), repl);
+            };
+        }
+        // Object.fromEntries — Safari 12.2+ (missing in 12.0 / 12.1)
+        if (!Object.fromEntries) {
+            Object.fromEntries = function(iterable) {
+                var obj = {};
+                var iter = iterable[Symbol.iterator]();
+                var step;
+                while (!(step = iter.next()).done) {
+                    var entry = step.value;
+                    obj[entry[0]] = entry[1];
+                }
+                return obj;
+            };
+        }
+        // Object.hasOwn — Safari 15.4+
+        if (!Object.hasOwn) {
+            Object.hasOwn = function(obj, key) {
+                return Object.prototype.hasOwnProperty.call(obj, key);
+            };
+        }
+        // AbortSignal.timeout — Safari 15.4+
+        if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
+            AbortSignal.timeout = function(ms) {
+                var ctrl = new AbortController();
+                setTimeout(function() { ctrl.abort(); }, ms);
+                return ctrl.signal;
+            };
+        }
+    })();
+    </script>
+    <script>
+    (function(){
+        var _noop = function(){};
+        // toggleDarkMode is also exposed at module level in init.ts, but stub here as
+        // belt-and-suspenders in case the module hasn't executed yet on first click.
+        'activateTab toggleRailExpanded closeMobileRail newChat expandChatToolbar toggleChatsDropdown toggleChatToolbar handleSendButton agentSend stopAfterStep retryLastTurn showModelCooldownPopup hideModelCooldownPopup toggleDarkMode setMode'
+            .split(' ').forEach(function(n){ if (!window[n]) window[n] = _noop; });
+    })();
+    </script>
+</head>
+<body>
+
+<!-- Left navigation rail -->
+<nav class="left-rail" id="left-rail">
+    <div class="rail-header">
+        <button class="rail-btn rail-expand-btn" id="rail-expand-btn" onclick="toggleRailExpanded()" title="Expand sidebar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+    </div>
+    <button class="rail-btn" onclick="newChat();activateTab('chat');expandChatToolbar()" title="New chat">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        <span class="rail-label">New Chat</span>
+    </button>
+    <div class="rail-divider"></div>
+    <button class="rail-btn rail-nav-btn" data-tab="workspace" onclick="activateTab('workspace')" title="Project">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="rail-label">Project</span>
+    </button>
+    <button class="rail-btn rail-nav-btn" data-tab="tasks" onclick="activateTab('tasks')" title="Tasks">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span class="rail-label">Tasks</span>
+    </button>
+    <button class="rail-btn rail-nav-btn" data-tab="chat" onclick="activateTab('chat');toggleChatsDropdown()" title="Chats">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="rail-label">Chats</span>
+    </button>
+    <div id="rail-recent-chats"></div>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" id="dark-mode-btn" onclick="toggleDarkMode()" title="Switch to dark mode" aria-label="Toggle dark mode">
+        <!-- moon — shown in light mode; swapped to sun via JS on toggle -->
+        <svg id="dark-mode-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <span class="rail-label">Dark mode</span>
+    </button>
+    <button class="rail-btn rail-nav-btn" data-tab="settings" onclick="activateTab('settings')" title="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l-.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="rail-label">Settings</span>
+    </button>
+</nav>
+
+<!-- Sidebar: chat history -->
+<div class="rail-sidebar" id="rail-sidebar">
+    <div class="rail-sidebar-header">
+        <span>Chats</span>
+        <button class="rail-sidebar-close" onclick="closeChatsDropdown()" title="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    </div>
+    <div id="chats-dropdown"></div>
+</div>
+
+<!-- Tab content -->
+<div class="tab-content" id="tab-content">
+
+    <!-- File tabs bar (only shown when files are open) -->
+    <div id="tab-bar"></div>
+
+    <!-- Chat tab -->
+    <div class="tab-panel active" data-panel="chat">
+        <div class="chat-drop-overlay" id="chat-drop-overlay">Drop files to attach</div>
+
+        <button class="step-toggle toolbar-toggle-btn" id="toolbar-toggle-btn" onclick="toggleChatToolbar()" title="Hide toolbar">▼</button>
+
+        <!-- Toolbar -->
+        <div class="chat-toolbar">
+            <div class="chat-current-item" id="chat-current-item">
+                <span id="chat-name-display" style="cursor:pointer" title="Click to rename">New Chat</span>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Active model display (replaces dropdown selectors) -->
+            <div class="hdr-model-wrap-outer" onmouseenter="showModelCooldownPopup()" onmouseleave="hideModelCooldownPopup()">
+                <div class="hdr-model-display-wrap" onclick="activateTab('settings');switchSettingsTab('model')" title="Click to configure models">
+                    <span class="hdr-model-icon">⬡</span>
+                    <span id="hdr-model-display" class="hdr-model-text">—</span>
+                </div>
+                <div id="model-cooldown-popup" class="model-cooldown-popup"></div>
+            </div>
+
+            <select class="chat-select" id="hdr-reasoning" onchange="applyHdrReasoning()" style="display:none"></select>
+
+            <select class="chat-select" id="hdr-compact-tokens" onchange="applyHdrCompactTokens()" title="Compaction threshold — compact history when context exceeds this many tokens (0 = off)">
+                <option value="0">Compact: Off</option>
+                <option value="20000">Compact: 20K</option>
+                <option value="40000">Compact: 40K</option>
+                <option value="80000">Compact: 80K</option>
+                <option value="160000">Compact: 160K</option>
+                <option value="800000">Compact: 800K</option>
+            </select>
+
+            <select class="chat-select" id="hdr-search" onchange="applyHdrSearch()">
+                <option value="auto">Search: Auto</option>
+                <option value="tavily">Search: Tavily</option>
+                <option value="brave">Search: Brave</option>
+                <option value="wikipedia">Search: Wikipedia</option>
+            </select>
+
+            <select class="chat-select mode-select" id="hdr-mode" onchange="setMode(this.value)" title="Switch mode — Chat: normal conversation; Cowork: task tracking with kanban">
+                <option value="chat">Mode: Chat</option>
+                <option value="cowork">Mode: Cowork</option>
+            </select>
+
+            <span id="agent-token-label"></span>
+
+        </div>
+
+        <div id="agent-messages" role="log" aria-live="polite" aria-label="Conversation"></div>
+
+        <button id="scroll-to-latest" class="scroll-to-latest" onclick="scrollToLatest()" aria-label="Scroll to latest message" style="display:none">↓ Latest</button>
+
+        <div id="chat-welcome">
+            <div id="chat-welcome-title">How can I help?</div>
+        </div>
+
+        <div id="tool-approval-toast" style="display:none">
+            <div class="tool-approval-label" id="tool-approval-label"></div>
+            <div class="tool-approval-actions">
+                <label class="tool-approval-session-label"><input type="checkbox" id="tool-approval-session"> Allow all <span id="tool-approval-session-name"></span> calls this session</label>
+                <button class="ws-action-btn tool-approval-deny"  onclick="resolveToolApproval(false)">Deny</button>
+                <button class="btn-save tool-approval-allow"      onclick="resolveToolApproval(true)">Allow</button>
+            </div>
+        </div>
+
+        <div id="msg-queue-panel" class="msg-queue-panel"></div>
+        <div id="img-strip" class="img-strip" style="display:none"></div>
+        <div class="chat-input-area">
+            <div id="input-model-picker"></div>
+            <label class="input-attach-btn" title="Attach file">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                <input type="file" id="attach-file-input" multiple onchange="_onAttachFiles(this)">
+            </label>
+            <div
+                id="agent-input"
+                contenteditable="true"
+                spellcheck="true"
+                data-placeholder="Describe a task or ask a question…"
+            ></div>
+            <button id="input-model-btn" class="send-btn send-btn-model" onclick="toggleInputModelPicker()" title="Switch model"></button>
+            <button id="agent-mic-btn" class="send-btn send-btn-mic" onclick="toggleVoiceInput()" title="Voice input"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+<button id="agent-break-btn" class="send-btn send-btn-break" onclick="stopAfterStep()" title="Pause after step" aria-label="Pause after current step" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg></button>
+            <button id="agent-action-btn" class="send-btn send-btn-go" onclick="handleSendButton()" title="Send" aria-label="Send message"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m0 0L5 12m7-7l7 7"/></svg></button>
+        </div>
+    </div>
+
+    <!-- Workspace / Project tab -->
+    <div class="tab-panel" data-panel="workspace" id="workspace-panel">
+        <div class="ws-drop-overlay" id="ws-drop-overlay">Drop files here</div>
+        <div class="project-toolbar">
+            <input id="project-name-input" class="project-name-input" type="text"
+                   placeholder="Project name…"
+                   value=""
+                   onchange="localStorage.setItem('fg_project_name',this.value.trim())">
+            <div class="project-toolbar-btns">
+                <button class="ws-action-btn project-save-btn" onclick="saveProject()" title="Save workspace, files and chat history to browser">&#128190; Save</button>
+                <button class="ws-action-btn" onclick="loadProjectUI()" title="Load a previously saved project">&#128194; Load</button>
+                <button class="ws-action-btn" onclick="exportProject()" title="Download project as compressed file">&#8593; Export</button>
+                <label class="ws-action-btn project-import-label" title="Import project from compressed file">&#8595; Import
+                    <input type="file" accept=".fwproject.gz,.gz,.fwproject,.json" style="display:none" onchange="importProject(this)">
+                </label>
+                <button class="ws-action-btn project-clear-btn" onclick="clearProject()" title="Clear workspace, chat history and project name">&#10005; Clear</button>
+            </div>
+        </div>
+        <div class="workspace-list-wrap">
+            <div id="workspace-file-list"></div>
+        </div>
+    </div>
+
+    <!-- Tasks + Agent panel (merged) -->
+    <div class="tab-panel" data-panel="tasks">
+        <div class="tasks-toolbar">
+            <span class="tasks-toolbar-title">&#10003; Tasks</span>
+            <button class="ws-action-btn" id="sync-ledger-btn" onclick="syncLedgerWithTaskFiles()" title="Rebuild the ledger from task files and refresh the board">&#8634; Sync</button>
+            <button class="ws-action-btn" id="autopilot-btn" onclick="toggleAutopilot()" title="Work the task backlog unattended. Plan mode (Settings → Agent) runs each task as a checkbox plan with per-step context resets.">&#9654; Autopilot</button>
+            <div class="tasks-toolbar-sep"></div>
+            <div class="runner-btns">
+                <button class="ws-action-btn" id="runner-run-btn" onclick="runnerStart()">&#9654; Run</button>
+                <button class="ws-action-btn" id="runner-pause-btn" onclick="runnerPause()" style="display:none">&#9646;&#9646; Pause</button>
+                <button class="ws-action-btn" id="runner-resume-btn" onclick="runnerResume()" style="display:none">&#9654; Resume</button>
+                <button class="ws-action-btn" id="runner-restart-btn" onclick="runnerRestart()" style="display:none">&#8635; Restart</button>
+                <button class="ws-action-btn runner-stop-btn" id="runner-stop-btn" onclick="runnerStop()" style="display:none">&#9632; Stop</button>
+            </div>
+            <span id="runner-status" class="runner-status-text">Idle</span>
+            <small id="runner-token-label" style="color:var(--muted);font-size:11px;line-height:1;flex-shrink:0"></small>
+        </div>
+        <div class="kanban-board">
+            <div class="kanban-col" data-status="todo">
+                <div class="kanban-col-header">To Do <span class="kanban-col-count">0</span></div>
+                <div class="kanban-cards" id="col-todo"></div>
+            </div>
+            <div class="kanban-col" data-status="in-progress">
+                <div class="kanban-col-header">In Progress <span class="kanban-col-count">0</span></div>
+                <div class="kanban-cards" id="col-in-progress"></div>
+            </div>
+            <div class="kanban-col" data-status="review">
+                <div class="kanban-col-header">Review <span class="kanban-col-count">0</span></div>
+                <div class="kanban-cards" id="col-review"></div>
+            </div>
+            <div class="kanban-col" data-status="done">
+                <div class="kanban-col-header">Done <span class="kanban-col-count">0</span></div>
+                <div class="kanban-cards" id="col-done"></div>
+            </div>
+        </div>
+        <div id="task-preview" class="task-preview"></div>
+
+        <!-- Agent execution zone — collapsed by default; expands when loop is active -->
+        <div id="runner-zone" class="runner-zone collapsed">
+            <div class="runner-header" onclick="toggleRunnerZone()">
+                <span class="runner-label">&#9889; Runner</span>
+                <span id="runner-current-task" class="runner-task-name">—</span>
+                <button class="runner-zone-toggle" id="runner-zone-toggle" title="Expand / collapse">&#9660;</button>
+            </div>
+            <div class="runner-body">
+                <div id="runner-process" class="runner-process">
+                    <div class="runner-process-empty">No active process.</div>
+                </div>
+                <div id="runner-interrupt-bar" class="runner-input-bar" style="display:none">
+                    <textarea id="runner-interrupt-input" class="runner-input" placeholder="Interrupt agent with instructions..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerInterrupt()}"></textarea>
+                    <button class="send-btn send-btn-go" onclick="runnerInterrupt()" title="Interrupt">&#9654;</button>
+                </div>
+                <div class="runner-log-wrap">
+                    <div class="runner-section-label">Session log</div>
+                    <div id="runner-session-log" class="runner-log">
+                        <span class="runner-log-empty">No tasks completed this session.</span>
+                    </div>
+                </div>
+                <div id="runner-input-bar" class="runner-input-bar" style="display:none">
+                    <textarea id="runner-unblock-input" class="runner-input"
+                        placeholder="Reply to unblock the agent…" rows="2"
+                        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerSendUnblock()}"></textarea>
+                    <button class="send-btn send-btn-go" onclick="runnerSendUnblock()" title="Send">&#9654;</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings tab -->
+    <div class="tab-panel" data-panel="settings">
+        <div class="settings-panel-scroll">
+            <div class="settings-panel-inner">
+                <div class="settings-tabs">
+                    <button class="settings-tab-btn active" data-tab="profiles" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
+                    <button class="settings-tab-btn"        data-tab="model"    onclick="switchSettingsTab('model')">Models</button>
+                    <button class="settings-tab-btn"        data-tab="search"   onclick="switchSettingsTab('search')">Search</button>
+                    <button class="settings-tab-btn"        data-tab="code"     onclick="switchSettingsTab('code')">Code Execution</button>
+                    <button class="settings-tab-btn"        data-tab="agent"    onclick="switchSettingsTab('agent')">Agent</button>
+                    <button class="settings-tab-btn"        data-tab="skills"   onclick="switchSettingsTab('skills')">Skills</button>
+                    <button class="settings-tab-btn"        data-tab="tools"    onclick="switchSettingsTab('tools')">Tools</button>
+                    <button class="settings-tab-btn"        data-tab="roles"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
+                    <button class="settings-tab-btn"        data-tab="voice"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="model">
+                    <!-- Model priority list -->
+                    <div class="settings-section">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
+                            <span class="settings-label" style="margin-bottom:0">Model Priority</span>
+                            <button class="ws-action-btn" id="auto-rank-btn" onclick="autoPopulateModelPriority()"
+                                title="Ask the AI to rank all available (non-cooling) models by capability and replace the priority list with the top 10 results"
+                                style="font-size:11px;padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
+                        </div>
+                        <p class="settings-hint" style="margin-bottom:8px">Models tried in order. First non-rate-limited model is used. If all are cooling down, waits for the shortest cooldown.</p>
+                        <div id="main-model-list"></div>
+                    </div>
+
+                    <!-- Worker model selector -->
+                    <div class="settings-section">
+                        <span class="settings-label">Worker Model</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Model used for worker subagent calls. "Default" follows the priority list rotation. "Priority model" always forces the #1 model in the list.</p>
+                        <div id="worker-model-selector"></div>
+                    </div>
+
+                    <!-- Utility model selector -->
+                    <div class="settings-section">
+                        <span class="settings-label">Utility Model</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Model used for background tasks: chat title generation, prompt suggestions, etc. "Default" uses the first available model from the priority list. "None" disables all utility LLM calls.</p>
+                        <div id="utility-model-selector"></div>
+                    </div>
+
+                    <!-- Sampling parameters -->
+                    <div class="settings-section">
+                        <span class="settings-label">Sampling</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Override LLM sampling parameters. Empty = provider default.</p>
+                        <table style="border-collapse:collapse">
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Temperature</span></td>
+                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="0.6" onchange="saveSamplingSetting('fg_temperature',this.value)"></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top P</span></td>
+                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="0.95" onchange="saveSamplingSetting('fg_top_p',this.value)"></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top K</span></td>
+                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="20" onchange="saveSamplingSetting('fg_top_k',this.value)"></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Min P</span></td>
+                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_min_p',this.value)"></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Presence penalty</span></td>
+                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_presence_penalty',this.value)"></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Repetition penalty</span></td>
+                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="1.0" onchange="saveSamplingSetting('fg_repetition_penalty',this.value)"></td>
+                            </tr>
+                        </table>
+                        <p class="settings-hint" style="margin-top:6px;margin-bottom:0">Applied as defaults to <b>custom endpoints</b> (vLLM / Ollama / LM Studio). Other providers use their own defaults. Set a value to override; leave blank for provider default.</p>
+                    </div>
+
+                    <!-- API credentials -->
+                    <div class="settings-section">
+                        <span class="settings-label">API Credentials</span>
+                        <table class="settings-table" style="width:100%;margin-top:6px"><tbody>
+                            <tr><td class="settings-table-label">Gemini Key</td>
+                                <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Mistral Key</td>
+                                <td><input class="settings-input" id="mistral-key" type="password" placeholder="..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Groq Key</td>
+                                <td><input class="settings-input" id="groq-key" type="password" placeholder="gsk_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Cerebras Key</td>
+                                <td><input class="settings-input" id="cerebras-key" type="password" placeholder="csk-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">OpenRouter Key</td>
+                                <td><input class="settings-input" id="openrouter-key" type="password" placeholder="sk-or-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">NVIDIA Key</td>
+                                <td><input class="settings-input" id="nvidia-key" type="password" placeholder="nvapi-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">OpenCode Key</td>
+                                <td><input class="settings-input" id="opencode-key" type="password" placeholder="..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">TokenHarbor Key</td>
+                                <td><input class="settings-input" id="tokenharbor-key" type="password" placeholder="thk_live_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Kilo Key</td>
+                                <td><input class="settings-input" id="kilo-key" type="password" placeholder="sk-kilo-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Vercel AI Gateway Key</td>
+                                <td><input class="settings-input" id="vercel-key" type="password" placeholder="aig_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">Nous Portal Key</td>
+                                <td><input class="settings-input" id="nous-key" type="password" placeholder="nsk-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                            <tr><td class="settings-table-label">HuggingFace Key</td>
+                                <td><input class="settings-input" id="hf-key" type="password" placeholder="hf_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                        </tbody></table>
+                        <p class="settings-hint" style="margin-top:6px">HuggingFace key enables FLUX / SDXL via HF Inference as a fallback for <code>generate_image</code> (Pollinations works without a key). Env var: <code>HF_API_KEY</code>.</p>
+                    </div>
+
+                    <!-- Media model selectors -->
+                    <div class="settings-section">
+                        <span class="settings-label">Media Model Routing</span>
+                        <p class="settings-hint" style="margin-bottom:8px">When a message includes multimedia, requests are routed to these models. "Auto" uses the first capable model from the priority list.</p>
+                        <div id="media-model-selectors"></div>
+                    </div>
+
+                    <!-- Model catalog table -->
+                    <div class="settings-section" style="border-bottom:none">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
+                            <span class="settings-label" style="margin-bottom:0">Model Catalog</span>
+                            <button class="ws-action-btn" onclick="showModelUpdateModal?.()" title="Check provider APIs for new or removed free models" style="font-size:11px;padding:3px 10px">⟳ Check for updates</button>
+                        </div>
+                        <p class="settings-hint" style="margin-bottom:8px">All available models. Use ✕ to remove a model from the catalog.</p>
+                        <div id="model-catalog-table" style="overflow-x:auto"></div>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel active" data-tab="profiles">
+                    <div class="settings-section">
+                        <span class="settings-label">Save Current</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Snapshot all settings (except API keys) as a named profile.</p>
+                        <div style="display:flex;gap:8px">
+                            <input class="settings-input" id="profile-name-input" type="text" value="current" style="flex:1" onkeydown="if(event.key==='Enter')profileSaveCurrent()">
+                            <button class="btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="profileSaveCurrent()">Save</button>
+                        </div>
+                        <div style="margin-top:8px">
+                            <button class="ws-action-btn" onclick="profileUpload()">&#8679; Import .json</button>
+                        </div>
+                    </div>
+                    <div id="profiles-list" style="padding:0 0 8px"></div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="search">
+                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
+                        <span class="settings-label">Web Search</span>
+                        <label class="settings-input-label">Search provider</label>
+                        <select class="settings-input" id="search-provider" style="margin-bottom:12px">
+                            <option value="auto">Auto (Tavily &#8594; Brave &#8594; Wikipedia)</option>
+                            <option value="tavily">Tavily (direct)</option>
+                            <option value="brave">Brave (via proxy)</option>
+                            <option value="wikipedia">Wikipedia only</option>
+                        </select>
+                        <label class="settings-input-label">Tavily API Key</label>
+                        <input class="settings-input" id="tavily-key" type="password" placeholder="tvly-...">
+                        <p class="settings-hint">Direct browser call &#8212; no proxy needed.</p>
+                        <label class="settings-input-label">Search Proxy URL</label>
+                        <input class="settings-input" id="search-proxy" type="url" placeholder="https://your-worker.workers.dev">
+                        <p class="settings-hint">Used for Brave search <em>and</em> as CORS proxy for NVIDIA NIM (chat + embeddings). Deploy <code>cloudwatch_brave_worker.js</code> to Cloudflare Workers and paste the URL here.</p>
+                        <label class="settings-input-label">Brave API Key (optional)</label>
+                        <input class="settings-input" id="brave-key" type="password" placeholder="BSA...">
+                        <p class="settings-hint" style="margin-bottom:0">Sent as <code>X-Brave-Key</code> header.</p>
+                        <label class="settings-input-label">GitHub Token (optional)</label>
+                        <input class="settings-input" id="github-token" type="password" placeholder="ghp_...">
+                        <p class="settings-hint">Upgrades GitHub search from 60/hr to 5,000/hr.</p>
+                        <label class="settings-input-label">Stack Exchange Key (optional)</label>
+                        <input class="settings-input" id="stackexchange-key" type="password" placeholder="key=...">
+                        <p class="settings-hint">Upgrades Stack Overflow search from 300/day to 10,000/day.</p>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="code">
+                    <div class="settings-section">
+                        <span class="settings-label">JavaScript in Browser</span>
+                        <p class="settings-hint">Always active — no configuration needed. <code>execute_code(language="javascript")</code> runs in a browser sandbox with a virtual filesystem shim (<code>fs</code>, <code>path</code> modules). Files written via <code>fs.writeFileSync</code> sync back to the workspace automatically. Limitations: no npm, no DOM or canvas, no network access. For canvas/DOM work the AI can generate a self-contained HTML file instead.</p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Python in Browser (Pyodide)</span>
+                        <p class="settings-hint" style="margin-bottom:10px">Runs Python in the browser via Pyodide. Workspace files are pre-loaded at their normal paths; writes sync back automatically. Use <code>micropip.install</code> for pure-Python packages.</p>
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <label class="settings-check-row" style="margin:0"><input type="checkbox" id="pyodide-autoload" onchange="onPyodideAutoloadChange(this.checked)" checked> Auto-load on startup</label>
+                            <button class="btn-save" style="padding:5px 14px;font-size:12px" onclick="startPyodide()">Load now</button>
+                            <span id="pyodide-status" style="font-size:12px;color:var(--muted)">Not loaded</span>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Bash Sandbox</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Controls bash execution only. JavaScript uses the browser sandbox above; Python uses Pyodide.</p>
+                        <label class="settings-input-label">Provider</label>
+                        <select class="settings-input" id="sandbox-provider" onchange="onSandboxProviderChange()">
+                            <option value="wasm">WASM — browser x86-64 emulator (default)</option>
+                            <option value="none">None (bash disabled)</option>
+                            <option value="local">Local — via server.py (localhost only)</option>
+                        </select>
+
+                        <p class="settings-hint" id="sandbox-wasm-hint" style="display:none">
+                            Runs bash entirely in your browser via an x86-64 WASM emulator with musl-static binaries
+                            (<code>grep</code>, <code>sed</code>, <code>awk</code>, <code>find</code>, <code>sort</code>, <code>tr</code>, …).
+                            Workspace files are available at <code>/workspace</code>; writes sync back automatically.
+                            Binaries are fetched on first use and cached in the browser (IndexedDB).
+                        </p>
+                        <p class="settings-hint" id="sandbox-local-hint" style="display:none">
+                            Runs bash, Python, and JavaScript on your machine via <code>server.py</code>.
+                            Full coreutils, npm, and pip available. Files written by scripts sync back to the workspace automatically.
+                        </p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Git Integration</span>
+                        <label class="settings-check-row"><input type="checkbox" id="git-enabled" onchange="saveAgentSetting('fg_git_enabled', this.checked)"> Enable git access</label>
+                        <p class="settings-hint">Exposes the <code>run_git</code> tool and injects git instructions when messages mention git, commit, push, or pull. Requires Local Bash Sandbox (server.py). Disabled by default.</p>
+                    </div>
+                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
+                        <span class="settings-label">Code Structure Queries (AST)</span>
+                        <label class="settings-check-row"><input type="checkbox" id="ast-enabled" onchange="saveAgentSetting('fg_ast_enabled', this.checked)"> Enable ast_query tool</label>
+                        <p class="settings-hint">Exposes <code>ast_query(path, query)</code> for precise symbol navigation with exact line numbers — find definitions, call sites, imports, exports, and references without grep. Supports: "functions", "classes", "imports", "exports", "symbols", "calls:NAME", "references:NAME", "symbol_at:LINE". Works in all environments; available to all agent roles when enabled. Disabled by default.</p>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="agent">
+                    <div class="settings-section">
+                        <span class="settings-label">Context Management</span>
+                        <label class="settings-check-row"><input type="checkbox" id="agent-tool-truncation" onchange="saveAgentSetting('fg_agent_tool_result_truncation', this.checked)"> Tool result truncation</label>
+                        <p class="settings-hint agent-hint">Cap tool results stored in history to avoid context bloat.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Max result size — workers (chars)</label>
+                        <input class="settings-input" id="agent-tool-result-size" type="number" min="500" max="32000" step="100" style="width:120px" oninput="saveAgentSetting('fg_agent_max_tool_result', this.value)">
+                        <label class="settings-input-label" style="margin-top:8px">Max result size — main agent (chars, 0 = off)</label>
+                        <input class="settings-input" id="director-max-tool-result" type="number" min="0" max="32000" step="100" style="width:120px" oninput="saveAgentSetting('fg_director_max_tool_result', this.value)">
+                        <p class="settings-hint agent-hint">When a read_file result in the main agent context exceeds this length, it is replaced with a structural index of definitions (with line numbers) plus as many full function bodies as fit. Other tools are passed through as-is. 0 disables. Default: 20000.</p>
+                        <label class="settings-check-row" style="margin-top:12px"><input type="checkbox" id="agent-proactive-compact" onchange="saveAgentSetting('fg_agent_proactive_compact', this.checked)"> Proactive compaction</label>
+                        <p class="settings-hint agent-hint">Compact history before hitting the hard context limit.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Compact at (first threshold wins)</label>
+                        <table style="border-collapse:collapse;margin-bottom:6px">
+                            <tr>
+                                <td style="padding:2px 8px 2px 0;white-space:nowrap"><span class="settings-hint" style="display:inline">% of window</span></td>
+                                <td>
+                                    <select class="settings-input" id="agent-compact-at" onchange="saveAgentSetting('fg_agent_compact_at', this.value)">
+                                        <option value="0.5">50%</option>
+                                        <option value="0.6">60%</option>
+                                        <option value="0.75">75%</option>
+                                        <option value="0.85">85%</option>
+                                        <option value="1.0">100% (not used)</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 8px 2px 0;white-space:nowrap"><span class="settings-hint" style="display:inline">Token count</span></td>
+                                <td>
+                                    <input class="settings-input" id="agent-compact-tokens" type="number" min="0" max="500000" step="1000" style="width:110px" placeholder="0 = off" oninput="saveAgentSetting('fg_agent_compact_tokens', this.value)">
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Prompt Construction</span>
+                        <label class="settings-check-row"><input type="checkbox" id="agent-script-steering" onchange="saveAgentSetting('fg_agent_script_steering', this.checked)"> Script generation steering</label>
+                        <p class="settings-hint agent-hint">Nudge the agent to prefer execute_code scripts over chained tool calls.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-concise-prompts" onchange="saveAgentSetting('fg_agent_concise_prompts', this.checked)"> Concise prompts</label>
+                        <p class="settings-hint agent-hint">One sentence of intent between tool calls; telegraphic task strings for workers; workers respond in compressed style. Reduces history growth without affecting output quality.</p>
+                        <label class="settings-input-label" style="margin-top:12px">Prompt template</label>
+                        <textarea class="settings-input" id="agent-prompt-template" rows="6"
+                            style="resize:vertical;font-family:monospace;font-size:12px;line-height:1.4"
+                            oninput="saveAgentSetting('fg_agent_prompt_template', this.value)"
+                            placeholder="Extra instructions injected at the top of the system prompt. Applied to every turn. Set by profiles — edit to customise."></textarea>
+                    </div>
+                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
+                        <span class="settings-label">Agent Loop</span>
+                        <label class="settings-check-row"><input type="checkbox" id="agent-plan-mode" onchange="saveAgentSetting('fg_agent_plan_mode', this.checked)"> Plan mode</label>
+                        <p class="settings-hint agent-hint">Emit a step-by-step plan file before executing multi-step tasks.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Max steps per turn</label>
+                        <input class="settings-input" id="agent-max-rounds" type="number" min="1" max="100" step="1" style="width:80px" oninput="saveAgentSetting('fg_agent_max_rounds', this.value)">
+                        <label class="settings-input-label" style="margin-top:8px">Rate-limit cooldown (minutes)</label>
+                        <input class="settings-input" id="rate-limit-cooldown-min" type="number" min="1" max="30" step="1" style="width:80px" oninput="saveAgentSetting('fg_rate_limit_cooldown_min', this.value)">
+                        <p class="settings-hint agent-hint">Base cooldown duration per endpoint after a 429 rate-limit response. Doubles on each consecutive hit (exponential backoff), capped at 10 minutes.</p>
+                        <label class="settings-check-row" style="margin-top:12px"><input type="checkbox" id="agent-lean-workers" onchange="saveAgentSetting('fg_agent_lean_workers', this.checked)"> Lean worker context</label>
+                        <p class="settings-hint agent-hint">Give workers scoped context and minimal tool subsets instead of the full system prompt.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-worker-history" onchange="saveAgentSetting('fg_agent_worker_history', this.checked)"> Share history with same-role workers (shared-prefix workers)</label>
+                        <p class="settings-hint agent-hint">Prefix workers with the full main conversation history (prefix-cached, so cheapest tokens). Workers get complete context; main agent needs less detailed task strings. Disabled by default.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-worker-reduce" onchange="saveAgentSetting('fg_agent_worker_reduce', this.checked)"> Worker output reduce</label>
+                        <p class="settings-hint agent-hint">When total worker text output exceeds 2K chars, synthesise all outputs into one compact summary before returning to the main loop.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-role-model-routing" onchange="saveAgentSetting('fg_agent_role_model_routing', this.checked)"> Role model routing</label>
+                        <p class="settings-hint agent-hint">Automatically uses the first model for planning workers; later models in the priority list for execution workers.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="endpoint-rotation" onchange="saveAgentSetting('fg_endpoint_rotation', this.checked)"> Rotate endpoints every N steps</label>
+                        <div class="settings-hint agent-hint" style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                            <label style="white-space:nowrap">Steps per model (N):</label>
+                            <input type="number" class="settings-input" id="rotation-step-n" min="1" max="100" style="width:64px;margin:0" onchange="saveAgentSetting('fg_rotation_step_n', this.value)">
+                        </div>
+                        <p class="settings-hint agent-hint">Each model in your list is used for N consecutive steps before rotating to the next. A new turn always starts from the first model. Spreads load to stay within per-model TPM limits.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Max delegation depth</label>
+                        <select class="settings-input" id="agent-max-delegation-depth" style="margin-bottom:0" onchange="saveAgentSetting('fg_agent_max_delegation_depth', this.value)">
+                            <option value="0">0 — disabled (workers cannot spawn sub-workers)</option>
+                            <option value="1">1 — one level (coder workers can spawn sub-workers)</option>
+                            <option value="2">2 — two levels</option>
+                        </select>
+                        <p class="settings-hint agent-hint">Hierarchical delegation depth. At depth 1, coder workers can spawn their own parallel sub-workers for independent sub-tasks. Sub-workers cannot spawn further. Depth 0 disables the feature entirely.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Worker thinking budget</label>
+                        <select class="settings-input" id="worker-thinking-budget" style="margin-bottom:0" onchange="saveAgentSetting('fg_worker_thinking_budget', this.value)">
+                            <option value="-1">Inherit from active model</option>
+                            <option value="0">Off</option>
+                            <option value="1024">Low (1K tokens)</option>
+                            <option value="8192">Medium (8K tokens)</option>
+                            <option value="24576">High (24K tokens)</option>
+                        </select>
+                        <p class="settings-hint agent-hint">Thinking budget applied to worker agents. High by default — workers often tackle harder sub-problems than the main loop.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="preserve-thinking" onchange="saveAgentSetting('fg_preserve_thinking', this.checked)"> Preserve thinking across turns (vLLM)</label>
+                        <p class="settings-hint agent-hint">Pass <code>preserve_thinking: true</code> to the vLLM chat template so the model's reasoning from each step is re-inserted as a <code>&lt;think&gt;</code> block in subsequent turns. Improves multi-turn continuity for Qwen3 and similar models. Only affects provider:vllm with a thinking budget &gt; 0.</p>
+                        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+                        <span class="settings-label">QA Gates</span>
+                        <label class="settings-check-row" style="margin-top:8px"><input type="checkbox" id="qa-enabled" onchange="saveAgentSetting('fg_qa_enabled', this.checked)"> Enable lifecycle gates</label>
+                        <p class="settings-hint agent-hint">Run gate checks at each Kanban column transition. When disabled, tasks move directly to done without checks.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="qa-acceptance-review" onchange="saveAgentSetting('fg_qa_acceptance_review', this.checked)"> Acceptance criteria review</label>
+                        <p class="settings-hint agent-hint">Check each criterion in the task's ## Acceptance section against the changed files before marking done.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="qa-test-runner" onchange="saveAgentSetting('fg_qa_test_runner', this.checked)"> Test runner</label>
+                        <p class="settings-hint agent-hint">Find and run test files related to changed files. Blocks completion if tests fail. Requires a code sandbox.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="qa-regression-guard" onchange="saveAgentSetting('fg_qa_regression_guard', this.checked)"> Regression guard</label>
+                        <p class="settings-hint agent-hint">Run the project build/lint/typecheck command after each task. Configured via WORKFLOW.md or detected from package.json. Disabled by default.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Rework limit</label>
+                        <input class="settings-input" id="qa-rework-limit" type="number" min="1" max="10" style="width:80px;margin-bottom:0" onchange="saveAgentSetting('fg_qa_rework_limit', this.value)">
+                        <p class="settings-hint agent-hint">Maximum QA failure cycles before a task is escalated to blocked instead of retried.</p>
+                        <label class="settings-check-row" style="margin-top:8px"><input type="checkbox" id="edit-review-enabled" onchange="saveAgentSetting('fg_edit_review_enabled', this.checked)"> Edit review for large file changes</label>
+                        <label class="settings-check-row"><input type="checkbox" id="show-nudges" onchange="saveAgentSetting('fg_show_nudges', this.checked)"> Show nudges in chat</label>
+                        <p class="settings-hint agent-hint">When a write_file call changes &gt;50% of an existing file's lines, a second LLM call reviews the edit before it is applied. Rejects it if content was accidentally dropped or broken. Adds latency — off by default.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Tool call intent validation</label>
+                        <select class="settings-input" id="intent-validation" style="width:auto" onchange="saveAgentSetting('fg_intent_validation', this.value)">
+                            <option value="off">Off</option>
+                            <option value="heuristic">Heuristic (default)</option>
+                            <option value="llm">LLM-based</option>
+                        </select>
+                        <p class="settings-hint agent-hint">Before executing fetch_url, write_file, execute_code, or delete_file, validate the call against the original user intent to detect prompt injection. Heuristic: fast regex patterns. LLM: slower but catches subtler attacks.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Tool approval</label>
+                        <select class="settings-input" id="tool-approval" style="width:auto" onchange="saveAgentSetting('fg_tool_approval', this.value)">
+                            <option value="off">Off (default)</option>
+                            <option value="high">High-risk only (delete, execute)</option>
+                            <option value="all">All writes</option>
+                        </select>
+                        <p class="settings-hint agent-hint">Pause and ask for approval before executing high-risk or write tools. Disabled by default. Does not apply inside sub-workers.</p>
+                        </div>
+                        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+                        <span class="settings-label">Autonomous Agent Loop</span>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="runner-qa" onchange="saveAgentSetting('fg_agent_loop_qa', this.checked)"> Run QA gates after each task</label>
+                        <p class="settings-hint agent-hint">When enabled, the agent loop runs lifecycle gates (task 036) after completing each task. Failures route the task to in-review for rework.</p>
+<label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-ledger" onchange="saveAgentSetting('fg_agent_ledger', this.checked)"> Use Task/Progress Ledger</label>
+<p class="settings-hint agent-hint">Maintain explicit ledger files for long-horizon coherence (Magentic-One pattern). Only active in Plan mode.</p>
+<label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-review-logs" onchange="saveAgentSetting('fg_agent_review_logs', this.checked)"> Review message logs</label>
+<p class="settings-hint agent-hint">After each turn, save the session log to <code>logs/</code> and create a task to review it for AI inefficiencies. Review tasks will create follow-up tasks for novel issues found.</p>
+                        <label class="settings-input-label" style="margin-top:8px">Consecutive failure limit</label>
+                        <input class="settings-input" id="runner-max-failures" type="number" min="1" max="20" style="width:80px;margin-bottom:0" onchange="saveAgentSetting('fg_agent_loop_max_consecutive_failures', this.value)">
+                        <p class="settings-hint agent-hint">Pause the loop if this many tasks in a row fail without progress. Gives you a chance to inspect and redirect before continuing.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="skills">
+                    <!-- Sub-tabs: Installed / Add Skill / Add Rule -->
+                    <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:14px">
+                        <button class="settings-tab-btn active" id="skill-subtab-installed" onclick="switchSkillSubtab('installed')">Installed</button>
+                        <button class="settings-tab-btn"        id="skill-subtab-add"       onclick="switchSkillSubtab('add')">+ Add Skill</button>
+                        <button class="settings-tab-btn"        id="skill-subtab-add-rule"  onclick="switchSkillSubtab('add-rule')">+ Add Rule</button>
+                    </div>
+
+                    <!-- Installed list -->
+                    <div id="skill-sub-installed">
+                        <p class="settings-hint" style="margin-bottom:10px"><b>Skills</b> are procedural workflows invoked with /name. <b>Rules</b> are standing context injected automatically by trigger. Checked items are always injected into every prompt.</p>
+                        <div style="margin-bottom:12px">
+                            <button class="ws-action-btn" onclick="installSkillFromFiles()">&#8679; Import from file</button>
+                        </div>
+                        <div id="settings-skills-list"></div>
+                    </div>
+
+                    <!-- Add Skill form -->
+                    <div id="skill-sub-add" style="display:none">
+                        <p class="settings-hint" style="margin-bottom:10px">Create a new skill — a procedural workflow invoked with <code>/name</code>. Saved to <code>skills/name/SKILL.md</code>.</p>
+                        <label class="settings-input-label">Skill name</label>
+                        <input class="settings-input" id="new-skill-name" type="text" placeholder="e.g. summarize">
+                        <label class="settings-input-label">Description <span style="font-weight:400;color:var(--muted)">(shown in autocomplete)</span></label>
+                        <input class="settings-input" id="new-skill-desc" type="text" placeholder="One-line description">
+                        <label class="settings-input-label">Instructions</label>
+                        <textarea class="settings-input" id="new-skill-body" rows="10" placeholder="Write the skill procedure here. Use 'When invoked with /name:' format and step-by-step instructions." style="resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5"></textarea>
+                        <div style="display:flex;gap:8px;margin-top:4px">
+                            <button class="btn-save" onclick="createSkillFromForm()">Save Skill</button>
+                            <button class="ws-action-btn" onclick="switchSkillSubtab('installed')">Cancel</button>
+                        </div>
+                        <div id="new-skill-msg" style="margin-top:8px;font-size:12px;color:var(--accent);display:none"></div>
+                    </div>
+
+                    <!-- Add Rule form -->
+                    <div id="skill-sub-add-rule" style="display:none">
+                        <p class="settings-hint" style="margin-bottom:10px">Create a new rule — standing context injected automatically by trigger. Saved to <code>rules/name/RULE.md</code>.</p>
+                        <label class="settings-input-label">Rule name</label>
+                        <input class="settings-input" id="new-rule-name" type="text" placeholder="e.g. python-env">
+                        <label class="settings-input-label">Description</label>
+                        <input class="settings-input" id="new-rule-desc" type="text" placeholder="One-line description">
+                        <label class="settings-input-label">Trigger keywords <span style="font-weight:400;color:var(--muted)">(comma-separated)</span></label>
+                        <input class="settings-input" id="new-rule-trigger" type="text" placeholder="e.g. python, pandas, numpy">
+                        <label class="settings-input-label">Instructions</label>
+                        <textarea class="settings-input" id="new-rule-body" rows="10" placeholder="Write standing rules and context here. These are injected directly — no 'when invoked' framing needed." style="resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5"></textarea>
+                        <div style="display:flex;gap:8px;margin-top:4px">
+                            <button class="btn-save" onclick="createRuleFromForm()">Save Rule</button>
+                            <button class="ws-action-btn" onclick="switchSkillSubtab('installed')">Cancel</button>
+                        </div>
+                        <div id="new-rule-msg" style="margin-top:8px;font-size:12px;color:var(--accent);display:none"></div>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="tools">
+                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
+                        <span class="settings-label">Tools</span>
+                        <p class="settings-hint" style="margin-bottom:10px">Checked tools are available to the LLM in every conversation.</p>
+                        <div id="settings-tools-list"></div>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="roles">
+                    <p class="settings-hint" style="margin-bottom:14px">Worker roles define the system prompt, tool set, and auto-injected skills for each specialist agent. Uncheck a role to prevent workers from using it (they fall back to the generic worker prompt). Edit a system prompt and Save to override the built-in; Reset restores the default.</p>
+                    <div id="roles-tab-content"></div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="voice">
+                    <!-- STT -->
+                    <div class="settings-section">
+                        <span class="settings-label">Speech Input (STT)</span>
+                        <p class="settings-hint">Models tried in order. First with an available key is used.</p>
+                        <div id="voice-stt-list"></div>
+                        <table class="settings-table" style="width:100%;margin-top:10px"><tbody>
+                            <tr>
+                                <td class="settings-table-label">Language</td>
+                                <td><input id="voice-stt-lang" class="settings-input" type="text"
+                                           placeholder="e.g. en, fi  (blank = auto-detect)"
+                                           onchange="saveVoiceSettings()"></td>
+                            </tr>
+                        </tbody></table>
+                    </div>
+                    <!-- TTS -->
+                    <div class="settings-section" style="border-bottom:none">
+                        <span class="settings-label">Speech Output (TTS)</span>
+                        <p class="settings-hint">Models tried in order. First with an available key is used.</p>
+                        <div id="voice-tts-list"></div>
+                        <table class="settings-table" style="width:100%;margin-top:10px"><tbody>
+                            <tr>
+                                <td class="settings-table-label">Auto-speak replies</td>
+                                <td><label style="display:flex;align-items:center;gap:8px">
+                                    <input id="voice-tts-auto" type="checkbox" onchange="saveVoiceSettings()">
+                                    <span class="settings-hint" style="margin:0">Speak each model response automatically</span>
+                                </label></td>
+                            </tr>
+                            <tr>
+                                <td class="settings-table-label" style="white-space:nowrap">Browser voice</td>
+                                <td><select id="voice-tts-voice" class="settings-input" onchange="saveVoiceSettings()">
+                                    <option value="">(browser default)</option>
+                                </select>
+                                <span class="settings-hint" style="margin-top:3px;display:block">Applies to Web Speech Synthesis only</span></td>
+                            </tr>
+                            <tr>
+                                <td class="settings-table-label">Speed</td>
+                                <td style="display:flex;align-items:center;gap:8px">
+                                    <input id="voice-tts-rate" type="range" min="0.5" max="2" step="0.1" value="1"
+                                           style="flex:1" oninput="document.getElementById('voice-tts-rate-val').textContent=this.value;saveVoiceSettings()">
+                                    <span id="voice-tts-rate-val" style="min-width:28px;text-align:right;font-size:12px">1</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="settings-table-label">Pitch</td>
+                                <td style="display:flex;align-items:center;gap:8px">
+                                    <input id="voice-tts-pitch" type="range" min="0.5" max="2" step="0.1" value="1"
+                                           style="flex:1" oninput="document.getElementById('voice-tts-pitch-val').textContent=this.value;saveVoiceSettings()">
+                                    <span id="voice-tts-pitch-val" style="min-width:28px;text-align:right;font-size:12px">1</span>
+                                </td>
+                            </tr>
+                        </tbody></table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- File tabs inserted by JS -->
+
+</div>
+
+<div id="skill-autocomplete" class="skill-autocomplete"></div>
+
+<script type="module" src="state.ts"></script>
+<script type="module" src="workspace.ts"></script>
+<script type="module" src="profiles.ts"></script>
+<script type="module" src="config.ts"></script>
+<script type="module" src="history-util.ts"></script>
+<script type="module" src="model-caps.ts"></script>
+<script type="module" src="ast.ts"></script>
+<script type="module" src="mcp.ts"></script>
+<script type="module" src="fetch-blacklist.ts"></script>
+<script type="module" src="search-providers.ts"></script>
+<script type="module" src="skill-guidance.ts"></script>
+<script type="module" src="turn-context.ts"></script>
+<script type="module" src="step-validator.ts"></script>
+<script type="module" src="nudge-emitter.ts"></script>
+<script type="module" src="payload-builder.ts"></script>
+<script type="module" src="detectors.ts"></script>
+<script type="module" src="tool-call-repair.ts"></script>
+<script type="module" src="history.ts"></script>
+<script type="module" src="model-router.ts"></script>
+<script type="module" src="stream-decode.ts"></script>
+<script type="module" src="retry.ts"></script>
+<script type="module" src="turn-protocol.ts"></script>
+<script type="module" src="tool-schemas.ts"></script>
+<script type="module" src="system-prompt.ts"></script>
+<script type="module" src="tools.ts"></script>
+<script type="module" src="llm-shared.ts"></script>
+<script type="module" src="workers.ts"></script>
+<script type="module" src="llm-loops.ts"></script>
+<script type="module" src="chat-render.ts"></script>
+<script type="module" src="session-schema.ts"></script>
+<script type="module" src="session-store.ts"></script>
+<script type="module" src="idb-session-adapter.ts"></script>
+<script type="module" src="chat-state.ts"></script>
+<script type="module" src="convo-log.ts"></script>
+<script type="module" src="chat-attachments.ts"></script>
+<script type="module" src="agent-core.ts"></script>
+<script type="module" src="settings-ui.ts"></script>
+<script type="module" src="model-update.ts"></script>
+<script type="module" src="skills.ts"></script>
+<script type="module" src="tasks.ts"></script>
+<script type="module" src="editor.ts"></script>
+<script type="module" src="tabs.ts"></script>
+<script type="module" src="qa.ts"></script>
+<script type="module" src="deep-research.ts"></script>
+<script type="module" src="post-turn.ts"></script>
+<script type="module" src="prompt-suggest.ts"></script>
+<script type="module" src="voice.ts"></script>
+<script type="module" src="autopilot.ts"></script>
+<script type="module" src="runner.ts"></script>
+<script type="module" src="init.ts"></script>
+<!-- Document extraction: loaded async — only needed when user attaches a file.
+     async prevents blocking the main thread on low-end hardware (iPad Air 1 A5 chip).
+     pdfjs-dist@3 "legacy" build: ES5-compatible, smaller than v4 for older devices. -->
+<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/legacy/build/pdf.min.js"></script>
+<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/mammoth@1/mammoth.browser.min.js"></script>
+<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- HTML→Markdown conversion (used for contenteditable input and clipboard paste) -->
+<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/turndown@7/dist/turndown.js"></script>
+
+<!-- Message content search modal -->
+<div id="msg-search-modal" class="msg-search-modal" role="dialog" aria-modal="true" aria-label="Search messages" style="display:none" onclick="if(event.target===this)closeMsgSearch()">
+    <div class="msg-search-box">
+        <input id="msg-search-input" type="search" class="msg-search-input"
+               placeholder="Search messages…" autocomplete="off"
+               oninput="runMsgSearch(this.value)" onkeydown="msgSearchKeydown(event)"
+               aria-label="Search message history">
+        <div id="msg-search-results" class="msg-search-results" role="listbox" aria-label="Search results"></div>
+    </div>
+</div>
+</body>
+</html>

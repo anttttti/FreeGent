@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreeGent — AI Agent Runner</title>
+<meta name="description" content="Run AI agents against free-tier cloud LLMs and local models. Browser WebUI, terminal TUI, and headless CLI.">
+<style>
+/* ── Token system ─────────────────────────────────────────── */
+:root {
+  --bg:         #F2F5F9;
+  --surface:    #FFFFFF;
+  --surface2:   #EBF0F6;
+  --border:     #CDD6E4;
+  --text:       #1B2537;
+  --dim:        #5C6B7E;
+  --accent:     #A86D09;
+  --accent-sub: rgba(168,109,9,0.1);
+  --code-bg:    #1B2537;
+  --code-text:  #BDC8D8;
+  --code-dim:   #566476;
+
+  --mono: ui-monospace, 'Cascadia Code', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  --r: 6px;
+  --max: 780px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:         #0A1120;
+    --surface:    #121D2E;
+    --surface2:   #0E1828;
+    --border:     #1C2C40;
+    --text:       #BDC8D8;
+    --dim:        #54657A;
+    --accent:     #E8A838;
+    --accent-sub: rgba(232,168,56,0.08);
+    --code-bg:    #080F1A;
+    --code-text:  #BDC8D8;
+    --code-dim:   #3E5166;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg:         #F2F5F9;
+  --surface:    #FFFFFF;
+  --surface2:   #EBF0F6;
+  --border:     #CDD6E4;
+  --text:       #1B2537;
+  --dim:        #5C6B7E;
+  --accent:     #A86D09;
+  --accent-sub: rgba(168,109,9,0.1);
+  --code-bg:    #1B2537;
+  --code-text:  #BDC8D8;
+  --code-dim:   #566476;
+}
+
+:root[data-theme="dark"] {
+  --bg:         #0A1120;
+  --surface:    #121D2E;
+  --surface2:   #0E1828;
+  --border:     #1C2C40;
+  --text:       #BDC8D8;
+  --dim:        #54657A;
+  --accent:     #E8A838;
+  --accent-sub: rgba(232,168,56,0.08);
+  --code-bg:    #080F1A;
+  --code-text:  #BDC8D8;
+  --code-dim:   #3E5166;
+}
+
+/* ── Reset + base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* ── Layout ───────────────────────────────────────────────── */
+.wrap {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ── Nav ──────────────────────────────────────────────────── */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.nav-brand {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  list-style: none;
+  flex-wrap: wrap;
+}
+
+.nav-links a {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--dim);
+  letter-spacing: 0.01em;
+}
+
+.nav-links a:hover { color: var(--text); text-decoration: none; }
+
+/* ── Header / Hero ────────────────────────────────────────── */
+header {
+  padding: 72px 0 60px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header-eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(32px, 5vw, 48px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  text-wrap: balance;
+  margin-bottom: 20px;
+}
+
+.tagline {
+  font-size: 18px;
+  color: var(--dim);
+  line-height: 1.6;
+  max-width: 600px;
+  margin-bottom: 36px;
+  text-wrap: balance;
+}
+
+.hero-code {
+  background: var(--code-bg);
+  border-radius: var(--r);
+  padding: 20px 24px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--code-text);
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.hero-code .prompt { color: var(--code-dim); user-select: none; }
+.hero-code .cmd    { color: var(--code-text); }
+
+/* ── Sections ─────────────────────────────────────────────── */
+section {
+  padding: 56px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+section:last-of-type { border-bottom: none; }
+
+h2 {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin-bottom: 20px;
+  text-wrap: balance;
+}
+
+h2::before {
+  content: '# ';
+  color: var(--accent);
+}
+
+h3 {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 32px 0 12px;
+}
+
+h3::before {
+  content: '## ';
+  color: var(--dim);
+}
+
+p { margin-bottom: 16px; }
+p:last-child { margin-bottom: 0; }
+
+/* ── Code blocks ──────────────────────────────────────────── */
+.code-block {
+  background: var(--code-bg);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin: 20px 0;
+}
+
+.code-label {
+  padding: 8px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--code-dim);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.code-body {
+  padding: 18px 20px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--code-text);
+}
+
+.code-body .prompt { color: var(--code-dim); user-select: none; }
+.code-body .comment { color: var(--code-dim); font-style: italic; }
+.code-body .key    { color: #88B8E8; }
+.code-body .val    { color: #98D4A4; }
+.code-body .flag   { color: #C8A8E0; }
+
+/* Inline code */
+code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--text);
+}
+
+/* ── Tables ───────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 20px 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+thead th {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 500;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+tbody td:first-child { font-family: var(--mono); font-size: 13px; }
+
+.badge-free {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--accent-sub);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 1px 7px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Interface cards ──────────────────────────────────────── */
+.interface-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 24px 0 36px;
+}
+
+.icard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 22px;
+}
+
+.icard-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+  letter-spacing: 0.01em;
+}
+
+.icard-desc {
+  font-size: 13.5px;
+  color: var(--dim);
+  line-height: 1.55;
+}
+
+/* ── Flag table ───────────────────────────────────────────── */
+.flag-table td:first-child {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.flag-table td:nth-child(2) {
+  color: var(--dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.flag-table td:nth-child(3) {
+  font-size: 13.5px;
+}
+
+/* ── Skills grid ──────────────────────────────────────────── */
+.trigger-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.trigger-chip {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 4px 12px;
+  color: var(--dim);
+}
+
+/* ── Footer ───────────────────────────────────────────────── */
+footer {
+  padding: 40px 0;
+  border-top: 1px solid var(--border);
+}
+
+.footer-inner {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.footer-name {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.footer-meta {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* ── Reduced motion ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .nav-links { display: none; }
+  header { padding: 48px 0 40px; }
+  section { padding: 40px 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Nav ─────────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-inner">
+    <span class="nav-brand">FreeGent</span>
+    <ul class="nav-links">
+      <li><a href="#webui">WebUI</a></li>
+      <li><a href="#tui">TUI</a></li>
+      <li><a href="#cli">CLI</a></li>
+      <li><a href="#config">Config</a></li>
+      <li><a href="https://github.com/anttttti/FreeGent">GitHub ↗</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────── -->
+<header>
+  <div class="wrap">
+    <p class="header-eyebrow">Open Source · ISC License</p>
+    <h1>AI agent runner<br>for free and local LLMs</h1>
+    <p class="tagline">
+      Run code and work agents against Gemini free tier, OpenRouter,
+      NVIDIA, and local models via Ollama, vLLM, or LM Studio.
+      No per-token billing.
+    </p>
+    <div class="hero-code">
+      <span class="prompt">$ </span><span class="cmd">git clone https://github.com/anttttti/FreeGent &amp;&amp; cd FreeGent</span><br>
+      <span class="prompt">$ </span><span class="cmd">npm install</span><br>
+      <span class="prompt">$ </span><span class="cmd">npm run dev</span><br>
+      <span class="prompt" style="color:#E8A838;opacity:0.7">&gt; </span><span style="color:#94B8A0">Ready at http://localhost:5000</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ── What is it ──────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <h2>What is FreeGent</h2>
+    <p>
+      FreeGent is an AI agent system with a browser WebUI, terminal TUI, and headless CLI.
+      It routes requests through a priority list of models, automatically retrying on rate
+      limits and falling back to the next available provider.
+    </p>
+    <p>
+      The core design trades per-model context depth for parallel throughput. A Director agent
+      breaks tasks into subtasks that run as independent workers, each on their own context
+      window — effective on 7B–70B models with 4k–32k context budgets.
+    </p>
+
+    <div class="interface-grid" style="margin-top:32px">
+      <div class="icard">
+        <div class="icard-name">WebUI</div>
+        <div class="icard-desc">Browser chat interface. Persistent workspace, file editor, skills panel, and model settings.</div>
+      </div>
+      <div class="icard">
+        <div class="icard-name">TUI</div>
+        <div class="icard-desc">Interactive terminal session. Same agent core, no browser required. Works over SSH.</div>
+      </div>
+      <div class="icard">
+        <div class="icard-name">CLI</div>
+        <div class="icard-desc">Headless, non-interactive. For scripting, benchmarks, and CI pipelines.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Providers ───────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <h2>Supported Providers</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Free tier</th>
+            <th>Key / endpoint</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Google Gemini</td>
+            <td><span class="badge-free">free</span></td>
+            <td><code>GEMINI_API_KEY</code></td>
+            <td>10 RPM / 500 RPD on flash models</td>
+          </tr>
+          <tr>
+            <td>OpenRouter</td>
+            <td><span class="badge-free">free</span></td>
+            <td><code>OPENROUTER_API_KEY</code></td>
+            <td>Hundreds of free-tier models</td>
+          </tr>
+          <tr>
+            <td>NVIDIA</td>
+            <td><span class="badge-free">free</span></td>
+            <td><code>NVIDIA_API_KEY</code></td>
+            <td>Free API credits for hosted models</td>
+          </tr>
+          <tr>
+            <td>Mistral</td>
+            <td>—</td>
+            <td><code>MISTRAL_API_KEY</code></td>
+            <td>Devstral, Magistral, Medium 3.5</td>
+          </tr>
+          <tr>
+            <td>Groq</td>
+            <td>—</td>
+            <td><code>GROQ_API_KEY</code></td>
+            <td>Fast inference</td>
+          </tr>
+          <tr>
+            <td>Cerebras</td>
+            <td>—</td>
+            <td><code>CEREBRAS_API_KEY</code></td>
+            <td>Fast inference</td>
+          </tr>
+          <tr>
+            <td>OpenAI</td>
+            <td>—</td>
+            <td><code>OPENAI_API_KEY</code></td>
+            <td>GPT-4o and o-series</td>
+          </tr>
+          <tr>
+            <td>Ollama / vLLM / LM Studio</td>
+            <td><span class="badge-free">local</span></td>
+            <td><code>--api-url http://…/v1</code></td>
+            <td>Any OpenAI-compatible endpoint</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Installation ────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <h2>Installation</h2>
+    <p>Requires Node.js 22 or later.</p>
+    <div class="code-block">
+      <div class="code-label">shell</div>
+      <div class="code-body">
+<span class="prompt">$ </span>git clone https://github.com/anttttti/FreeGent<br>
+<span class="prompt">$ </span>cd FreeGent<br>
+<span class="prompt">$ </span>npm install<br>
+<br>
+<span class="comment"># Set up credentials (outside the repo, safe from accidental commits):</span><br>
+<span class="prompt">$ </span>mkdir -p ~/.config/freegent<br>
+<span class="prompt">$ </span>cp .env.example ~/.config/freegent/credentials<br>
+<span class="comment"># edit ~/.config/freegent/credentials and add at least one API key</span>
+      </div>
+    </div>
+    <p>
+      Put your API keys in <code>~/.config/freegent/credentials</code> — see
+      <a href="#config">Configuration</a>. The dev server loads the file automatically.
+    </p>
+  </div>
+</section>
+
+<!-- ── WebUI ───────────────────────────────────────────────── -->
+<section id="webui">
+  <div class="wrap">
+    <h2>WebUI</h2>
+    <p>
+      The browser interface is served by a Vite dev server. It includes a chat panel,
+      a file workspace, a model priority list, a skills manager, and per-session settings.
+    </p>
+
+    <h3>Launch</h3>
+    <div class="code-block">
+      <div class="code-label">shell</div>
+      <div class="code-body">
+<span class="prompt">$ </span>npm run dev<br>
+<span class="comment"># → http://localhost:5000</span><br>
+<br>
+<span class="comment"># Custom port:</span><br>
+<span class="prompt">$ </span><span class="key">FG_PORT</span>=8080 npm run dev<br>
+<br>
+<span class="comment"># Expose on local network:</span><br>
+<span class="prompt">$ </span><span class="key">FG_PORT</span>=5000 <span class="key">FG_BIND</span>=0.0.0.0 npm run dev
+      </div>
+    </div>
+
+    <h3>API keys</h3>
+    <p>
+      Open <strong>Settings → Models → API Credentials</strong> and paste your key, or put
+      your keys in <code>~/.config/freegent/credentials</code> — they are forwarded to the
+      browser automatically and never stored server-side.
+    </p>
+
+    <h3>Model priority</h3>
+    <p>
+      Go to <strong>Settings → Model → Model Priority</strong> to arrange which models are
+      tried first. FreeGent picks the first non-rate-limited entry and waits for the
+      shortest cooldown when all are cooling down.
+    </p>
+
+    <h3>Local LLM endpoint</h3>
+    <p>
+      Go to <strong>Settings → Model → Custom Endpoint</strong> and enter your vLLM, Ollama,
+      or LM Studio base URL (e.g. <code>http://localhost:8000/v1</code>).
+    </p>
+  </div>
+</section>
+
+<!-- ── TUI ─────────────────────────────────────────────────── -->
+<section id="tui">
+  <div class="wrap">
+    <h2>TUI (Terminal UI)</h2>
+    <p>
+      An interactive terminal session built with Ink. Runs the same agent core as the WebUI.
+      Useful for remote servers, SSH sessions, or workflows where a browser is inconvenient.
+    </p>
+
+    <h3>Launch</h3>
+    <div class="code-block">
+      <div class="code-label">shell</div>
+      <div class="code-body">
+<span class="comment"># Auto-detect from ~/.config/freegent/credentials or env vars:</span><br>
+<span class="prompt">$ </span>npm run tui<br>
+<br>
+<span class="comment"># Explicit credentials:</span><br>
+<span class="prompt">$ </span>npm run tui -- <span class="flag">--provider</span> google <span class="flag">--api-key</span> AIza...<br>
+<span class="prompt">$ </span>npm run tui -- <span class="flag">--provider</span> mistral <span class="flag">--model</span> mistral-medium-3.5 <span class="flag">--api-key</span> ...<br>
+<br>
+<span class="comment"># Against a local model:</span><br>
+<span class="prompt">$ </span>npm run tui -- <span class="flag">--api-url</span> http://localhost:8000/v1 <span class="flag">--provider</span> custom <span class="flag">--model</span> qwen3
+      </div>
+    </div>
+
+    <p>
+      The TUI auto-detects the provider from standard environment variable names
+      (<code>GEMINI_API_KEY</code>, <code>OPENAI_API_KEY</code>, etc.) and from
+      <code>~/.config/freegent/credentials</code> (loaded automatically).
+    </p>
+  </div>
+</section>
+
+<!-- ── CLI ─────────────────────────────────────────────────── -->
+<section id="cli">
+  <div class="wrap">
+    <h2>CLI (Headless)</h2>
+    <p>
+      Non-interactive agent runs for scripting, benchmarks, and CI pipelines. The CLI uses
+      the same agent and tool implementations as the WebUI.
+    </p>
+
+    <h3>Examples</h3>
+    <div class="code-block">
+      <div class="code-label">shell</div>
+      <div class="code-body">
+<span class="comment"># Run a task with file tools:</span><br>
+<span class="prompt">$ </span>npx tsx fg-run.ts <span class="flag">--task</span> <span class="val">"Refactor auth.ts to use async/await"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--workspace</span> ./myproject \<br>
+&nbsp;&nbsp;<span class="flag">--provider</span> google <span class="flag">--api-key</span> $GEMINI_API_KEY<br>
+<br>
+<span class="comment"># Read task from a file:</span><br>
+<span class="prompt">$ </span>npx tsx fg-run.ts <span class="flag">--task-file</span> task.txt <span class="flag">--workspace</span> ./myproject<br>
+<br>
+<span class="comment"># One-shot LLM call, no tools:</span><br>
+<span class="prompt">$ </span>npx tsx fg-run.ts <span class="flag">--prompt</span> <span class="val">"Summarise: $(cat notes.txt)"</span> <span class="flag">--provider</span> google<br>
+<br>
+<span class="comment"># Combined provider+model selector:</span><br>
+<span class="prompt">$ </span>npx tsx fg-run.ts <span class="flag">--task</span> <span class="val">"Write unit tests"</span> <span class="flag">--llm</span> <span class="val">"google|gemini-3.6-flash"</span><br>
+<br>
+<span class="comment"># Local model:</span><br>
+<span class="prompt">$ </span>npx tsx fg-run.ts <span class="flag">--task</span> <span class="val">"Write unit tests for src/api.py"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--api-url</span> http://localhost:8000/v1 <span class="flag">--provider</span> custom <span class="flag">--model</span> qwen3
+      </div>
+    </div>
+
+    <h3>Flags reference</h3>
+    <div class="table-wrap">
+      <table class="flag-table">
+        <thead>
+          <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>--task</code> / <code>--workflow</code></td><td>—</td><td>Task description; runs agent with full tool access</td></tr>
+          <tr><td><code>--prompt</code></td><td>—</td><td>Direct LLM call with no tools</td></tr>
+          <tr><td><code>--task-file</code></td><td>—</td><td>Read task description from a file</td></tr>
+          <tr><td><code>--workspace</code></td><td>cwd</td><td>Root directory for file operations</td></tr>
+          <tr><td><code>--llm</code></td><td>—</td><td>Combined selector: <code>provider|model</code></td></tr>
+          <tr><td><code>--provider</code></td><td><code>openai</code></td><td>Provider ID</td></tr>
+          <tr><td><code>--model</code></td><td>—</td><td>Model ID</td></tr>
+          <tr><td><code>--api-key</code></td><td>—</td><td>API key (or <code>FREEGENT_API_KEY</code> env)</td></tr>
+          <tr><td><code>--api-url</code></td><td>—</td><td>Custom OpenAI-compatible base URL</td></tr>
+          <tr><td><code>--thinking-level</code></td><td><code>off</code></td><td><code>off | low | medium | high</code></td></tr>
+          <tr><td><code>--timeout</code></td><td>1800000</td><td>Abort after N ms (default 30 min)</td></tr>
+          <tr><td><code>--disable-tools</code></td><td>—</td><td>Comma-separated tool names to disable</td></tr>
+          <tr><td><code>--log</code></td><td><code>/tmp/fg-agent.log</code></td><td>JSONL turn log path</td></tr>
+          <tr><td><code>--no-log</code></td><td>—</td><td>Disable turn logging</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Configuration ───────────────────────────────────────── -->
+<section id="config">
+  <div class="wrap">
+    <h2>Configuration</h2>
+
+    <h3>API keys</h3>
+    <p>
+      Recommended: put your keys in <code>~/.config/freegent/credentials</code> — it lives
+      outside every git repo, so it can never be accidentally committed. The dev server, TUI,
+      and CLI all load it automatically. Keys are forwarded to <code>localStorage</code> in
+      the browser and sent directly to each provider — never stored by FreeGent's server.
+    </p>
+    <div class="code-block">
+      <div class="code-label">~/.config/freegent/credentials</div>
+      <div class="code-body">
+<span class="key">GEMINI_API_KEY</span>=<span class="val">AIza...</span><br>
+<span class="key">OPENROUTER_API_KEY</span>=<span class="val">sk-or-...</span><br>
+<span class="key">MISTRAL_API_KEY</span>=<span class="val">...</span><br>
+<span class="key">GROQ_API_KEY</span>=<span class="val">gsk_...</span><br>
+<span class="key">CEREBRAS_API_KEY</span>=<span class="val">csk-...</span><br>
+<span class="key">NVIDIA_API_KEY</span>=<span class="val">nvapi-...</span><br>
+<span class="key">OPENAI_API_KEY</span>=<span class="val">sk-...</span><br>
+<br>
+<span class="comment"># Optional — web search tools</span><br>
+<span class="key">BRAVE_API_KEY</span>=<span class="val">...</span><br>
+<span class="key">TAVILY_API_KEY</span>=<span class="val">...</span>
+      </div>
+    </div>
+
+    <h3>Local LLMs — vLLM</h3>
+    <p>
+      Serve any HuggingFace model locally. FreeGent works well with Qwen3, Gemma 4,
+      Devstral, and similar tool-calling models.
+    </p>
+    <div class="code-block">
+      <div class="code-label">shell — vLLM (Qwen3 27B example)</div>
+      <div class="code-body">
+<span class="prompt">$ </span>vllm serve cyankiwi/Qwen3.6-27B-AWQ-INT4 \<br>
+&nbsp;&nbsp;<span class="flag">--port</span> 8000 \<br>
+&nbsp;&nbsp;<span class="flag">--max-model-len</span> 20000 \<br>
+&nbsp;&nbsp;<span class="flag">--enable-auto-tool-choice</span> \<br>
+&nbsp;&nbsp;<span class="flag">--tool-call-parser</span> qwen3_coder \<br>
+&nbsp;&nbsp;<span class="flag">--reasoning-parser</span> qwen3<br>
+<span class="comment"># Endpoint: http://localhost:8000/v1</span>
+      </div>
+    </div>
+
+    <h3>Local LLMs — Ollama</h3>
+    <div class="code-block">
+      <div class="code-label">shell</div>
+      <div class="code-body">
+<span class="prompt">$ </span>ollama run qwen2.5-coder:7b<br>
+<span class="comment"># Endpoint: http://localhost:11434/v1</span>
+      </div>
+    </div>
+    <p>
+      In the WebUI, enter the endpoint at <strong>Settings → Model → Custom Endpoint</strong>.
+      For CLI/TUI, pass <code>--api-url http://localhost:&lt;port&gt;/v1</code>.
+    </p>
+  </div>
+</section>
+
+<!-- ── Skills ──────────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <h2>Skills</h2>
+    <p>
+      Skills are Markdown files in <code>skills/&lt;name&gt;/SKILL.md</code> that inject
+      guidance into the agent's system prompt when a trigger fires. They let you customise
+      agent behaviour for your project without touching source code.
+    </p>
+    <p>
+      Enable skills in <strong>Settings → Skills</strong>, or drop a <code>SKILL.md</code>
+      into the workspace <code>skills/</code> directory. Skills fire based on:
+    </p>
+    <div class="trigger-list">
+      <span class="trigger-chip">keyword in message</span>
+      <span class="trigger-chip">file extension in workspace</span>
+      <span class="trigger-chip">tool call result</span>
+      <span class="trigger-chip">repeated tool use</span>
+      <span class="trigger-chip">session start</span>
+      <span class="trigger-chip">task start</span>
+      <span class="trigger-chip">media attachment type</span>
+      <span class="trigger-chip">N consecutive failures</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ── Footer ──────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <span class="footer-name">FreeGent</span>
+    <span class="footer-meta">
+      ISC License ·
+      <a href="https://github.com/anttttti/FreeGent">github.com/anttttti/FreeGent</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

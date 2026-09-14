@@ -1,0 +1,138 @@
+/**
+ * unix.ts — Barrel export: all Unix commands available in FreeGent's shell.
+ * Adapted from Shiro's unix.ts: excludes system-info (removed) and shrine
+ * (Shiro-specific UI command).
+ */
+import type { Command } from './index';
+import { alias } from './alias';
+import { arrayHelper } from './array';
+import { awk } from './awk';
+import { base32Cmd } from './base32';
+import { base64 } from './base64';
+import { basename } from './basename';
+import { bc } from './bc';
+import { breakCmd } from './break';
+import { caseCmd, esac } from './case';
+import { cat } from './cat';
+import { chmod } from './chmod';
+import { chown } from './chown';
+import { clear } from './clear';
+import { cksumCmd } from './cksum';
+import { column } from './column';
+import { comm } from './comm';
+import { continueCmd } from './continue';
+import { cp } from './cp';
+import { csplitCmd } from './csplit';
+import { cut } from './cut';
+import { date } from './date';
+import { dcCmd } from './dc';
+import { declare, local, readonly, unset } from './local';
+import { ddCmd } from './dd';
+import { df } from './df';
+import { dirname } from './dirname';
+import { doCmd, done, until, whileCmd } from './while';
+import { dos2unixCmd, unix2dosCmd } from './line-endings';
+import { du } from './du';
+import { echo } from './echo';
+import { elif, elseCmd, fi, ifCmd, then } from './if';
+import { env } from './env';
+import { evalCmd } from './eval';
+import { exit } from './exit';
+import { expand } from './expand';
+import { expr } from './expr';
+import { exportCmd } from './export';
+import { factorCmd } from './factor';
+import { false as falseCmd } from './false';
+import { file } from './file';
+import { findCmd } from './find';
+import { fmt } from './fmt';
+import { fold } from './fold';
+import { forCmd, inCmd } from './for';
+import { free } from './free';
+import { functionCmd } from './function';
+import { getopts } from './getopts';
+import { hash } from './hash';
+import { head } from './head';
+import { heredoc } from './heredoc';
+import { hexdump } from './hexdump';
+import { id } from './id';
+import { install } from './install';
+import { join } from './join';
+import { less } from './less';
+import { letCmd, arithmeticExpansion } from './let';
+import { ls } from './ls';
+import { make } from './make';
+import { md5sum } from './md5sum';
+import { mkdir } from './mkdir';
+import { mv } from './mv';
+import { nl } from './nl';
+import { nohup } from './nohup';
+import { numfmtCmd } from './numfmt';
+import { od } from './od';
+import { paste } from './paste';
+import { patch } from './patch';
+import { pkgConfig } from './pkg-config';
+import { pr } from './pr';
+import { printenv } from './printenv';
+import { printf } from './printf';
+import { processSubstitution } from './process-substitution';
+import { pwd } from './pwd';
+import { read } from './read';
+import { readlink } from './readlink';
+import { realpath } from './realpath';
+import { returnCmd } from './return';
+import { revCmd, tacCmd, shufCmd, cmpCmd } from './text-utils';
+import { seq } from './seq';
+import { set } from './set';
+import { sha256sum } from './sha256sum';
+import { shift } from './shift';
+import { sleep } from './sleep';
+import { sort } from './sort';
+import { splitCmd } from './split';
+import { stat } from './stat';
+import { strings } from './strings';
+import { tail } from './tail';
+import { tar } from './tar';
+import { tee } from './tee';
+import { test } from './posix-test';
+import { time } from './time';
+import { timeout } from './timeout';
+import { touch } from './touch';
+import { tr } from './tr';
+import { kill, trap } from './trap';
+import { true as trueCmd } from './true';
+import { tsort } from './tsort';
+import { type } from './type';
+import { ulimit } from './ulimit';
+import { umask } from './umask';
+import { unalias } from './unalias';
+import { unexpand } from './unexpand';
+import { uniq } from './uniq';
+import { uptime } from './uptime';
+import { watch } from './watch';
+import { wc } from './wc';
+import { which } from './which';
+import { whoami } from './whoami';
+import { xargs } from './xargs';
+import { xxdCmd } from './xxd';
+import { yes } from './yes';
+
+export const unixCommands: Command[] = [
+    alias, arrayHelper, awk, base32Cmd, base64, basename, bc, breakCmd,
+    caseCmd, esac, cat, chmod, chown, clear, cksumCmd, column, comm,
+    continueCmd, cp, csplitCmd, cut, date, dcCmd, declare, local, readonly,
+    unset, ddCmd, df, dirname, doCmd, done, until, whileCmd,
+    dos2unixCmd, unix2dosCmd, du, echo, elif, elseCmd, fi, ifCmd, then,
+    env, evalCmd, exit, expand, expr, exportCmd, factorCmd, falseCmd,
+    file, findCmd, fmt, fold, forCmd, inCmd, free, functionCmd,
+    getopts, hash, head, heredoc, hexdump, id, install, join, less,
+    letCmd, ls, make, md5sum, mkdir, mv, nl, nohup, numfmtCmd, od,
+    paste, patch, pkgConfig, pr, printenv, printf, processSubstitution,
+    pwd, read, readlink, realpath, returnCmd, revCmd, tacCmd, shufCmd, cmpCmd,
+    seq, set, sha256sum, shift, sleep, sort, splitCmd, stat, strings,
+    tail, tar, tee, test, time, timeout, touch, tr, kill, trap,
+    trueCmd, tsort, type, ulimit, umask, unalias, unexpand, uniq,
+    uptime, watch, wc, which, whoami, xargs, xxdCmd, yes,
+];
+
+export { arithmeticExpansion };

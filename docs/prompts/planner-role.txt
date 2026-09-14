@@ -1,0 +1,19 @@
+SOURCE: workers.ts — BUILTIN_ROLES
+GENERATED: by scripts/gen-role-docs.mjs — do not edit by hand; run the script to update
+STATUS: planner role removed from BUILTIN_ROLES
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The 'planner' role is no longer defined in BUILTIN_ROLES in workers.ts.
+
+It was previously used as a sub-worker role for generating execution plans.
+Its functionality was absorbed into the director role (which reads and delegates
+planning inline) and into custom roles/ workspace files when needed.
+
+If you want to restore the planner, add an entry to BUILTIN_ROLES in workers.ts
+and re-run: node scripts/gen-role-docs.mjs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES:
+- Not in BUILTIN_ROLES — run_workers cannot spawn a planner sub-worker.
+- Custom role files in roles/ can define a 'planner' role; see workers.ts _parseRoleFile().
