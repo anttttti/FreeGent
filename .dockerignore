@@ -1,0 +1,14 @@
+node_modules
+.git
+.env
+.env~
+*.jsonl
+logs/
+memory/
+notes/
+research/
+rules/
+__pycache__/
+docs/
+.claude/
+tmp/

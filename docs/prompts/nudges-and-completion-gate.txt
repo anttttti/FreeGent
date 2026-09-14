@@ -1,0 +1,86 @@
+SOURCE: various — all runtime nudges injected into agent history during a turn
+These are not prompts sent as independent LLM calls; they're injected as history entries
+(role: system or user depending on provider) during the main turn loop.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 1. _COMPLETION_NUDGE  (llm-loops.ts:179)
+WHEN: missing_state_line check fires (phase: post-state, max: 2)
+      i.e., a no-tool-call response with no COMPLETED/BLOCKED line.
+--
+Protocol reminder: Previous response missing final state declaration. Reply with ONLY:
+COMPLETED — task done
+BLOCKED: <exact reason> — cannot proceed
+Or call the next tool. No other text.
+--
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 2. Blank-step stall nudge  (detectors.ts:52-54)
+WHEN: 5 consecutive steps with tool calls but no visible text.
+      (thinking-mode models often produce tool calls with empty text.)
+EMITTED AS: 'stall_detected' nudge via emitNudge()
+
+First stall (consecutiveStalls=1):
+--
+You have produced no visible text for 5 consecutive steps. In one sentence state what you are doing, then immediately call the next tool.
+--
+
+Repeated stall (consecutiveStalls≥2):
+--
+You keep going silent after each tool result. Write at least one sentence describing what you found before every tool call.
+--
+
+NOTE: After firing, seen-read-files and seen-list-files caches are cleared so the
+model is allowed to re-read files it already read (its context may be stale).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 3. Completion gate guidance  (skill-guidance.ts:205)
+WHEN: agent declares COMPLETED; completionGateGuidance() returns non-empty.
+      Returns non-empty when one or more skills have trigger_on_completion
+      matching current state (edit/always_on_edit/triggered/blocked/always).
+EMITTED AS: 'completion_gate' nudge; _forceToolCall = true forces next response to be a tool call.
+
+Template:
+--
+~~~guidance
+Before finalizing, apply this completion checklist. If everything already holds, restate your final answer exactly and end with COMPLETED.
+
+### {skill.name}
+{skill.body}
+
+[... additional triggered skills ...]
+~~~
+--
+
+Each skill fires at most once per session (_reactiveFired dedup).
+If _gate also contains answer_grounding or graded_test messages, they are appended.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 4. Delegation nudge for replace_in_file failures  (llm-loops.ts:143)
+WHEN: replace_in_file fails ≥2 times on the same file AND the file is a coder-editable type
+      (defined by _CODER_FILE_EXTS, line ~57).
+--
+replace_in_file on {path} has failed {n} times. Delegate this edit to a coder worker:
+  run_workers([{ id: "edit", role: "coder", task: "In {path}, [describe change]" }])
+The coder worker has a fresh context and will read the exact current file content.
+--
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 5. execute_code error nudge  (llm-loops.ts:66)
+WHEN: execute_code returns a non-zero exit code.
+--
+Fix the error above. Pyodide notes: no subprocess/os.system; install missing packages with `import micropip; await micropip.install(["pkg"])`; use the fetch_url tool for HTTP requests.
+--
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 6. Nudge injection mechanism
+- Provider determines role: OpenAI/vLLM/custom → 'system' role; Google/Anthropic → 'user' role
+  with <nudge>...</nudge> wrapping (Google/Anthropic don't support mid-conversation system messages).
+- All nudges go through emitNudge(name, entry, {history}) — bound to session history at turn start
+  to avoid the "wrong array" bug (detectors write to the turn's history, not module-global).
+- Pending nudges are captured before compaction and re-injected if compaction drops them from the tail.

@@ -1,0 +1,40 @@
+.env
+.env~
+node_modules/
+.idea/
+/work/
+/tasks/
+/planning_notes*.md
+/project_idea.md
+/bench/
+/tmp/
+/tmp_dev/
+/logs/
+/handover.md
+/smoke/logs/
+/smoke/tmp-workspace/
+/notes/
+/results/
+/memory/
+/research/
+/tasks/
+/bench/benchmarks/terminalbench/uv-bin/
+/dist/
+
+# Development notes and chat exports
+notes.txt
+code_review.md
+20[0-9][0-9]_*.md
+chat-export-*.md
+006-*.md
+tasks/0*.md
+
+# Claude Code internal files
+.claude/
+
+# Emacs lock files
+\#.env#
+.#.env
+
+CONTRIBUTING.md
+docs/adr/

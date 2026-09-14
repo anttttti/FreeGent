@@ -1,0 +1,42 @@
+SOURCE: llm-loops.ts — _classifyTools() function (~line 408)
+CALLED: once at the start of each turn (before step 0), and once after compaction
+        if the task message changed (post-compaction reclassification)
+LABEL: 'classify:tools'
+PROVIDER: callLLMComplete (same provider/model as the main turn)
+PARAMS: temperature=0, maxTokens=80
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Select tools for an AI agent. Reply with a comma-separated list of tool names needed, or NONE.
+
+Available tools:
+[one line per tool: "name: description (first line, ≤100 chars)"]
+
+[optional context block from _classifyContext():]
+[  Workspace context: <repo_map summary or file list excerpt>]
+[  Mid-task summary: <compaction summary excerpt ≤500 chars>]
+
+Task: [first user message, ≤700 chars]
+
+Reply with comma-separated optional tool names only (e.g. "web_search, fetch_url") or NONE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES ON MECHANICS:
+- _ALWAYS_TOOLS is empty — no tools are hardcoded. Classifier selects everything.
+- null _toolFilter = not yet classified (runTurn will classify inline on first turn).
+- empty Set _toolFilter = classified, no tools needed (pure text response).
+- Bench path: classifyTools(taskText, session) called before runTurn — filter pre-set.
+- WebUI path: _classifyTools awaited inside runTurn at first user message, then
+  applyKeywordToolFilter adds keyword-matched tools on top.
+- Return value: Set of selected tool names, or null on LLM/network error.
+  null → caller sets empty Set (safe fallback = no tools, not all tools).
+- Called again after compaction with the fresh post-compaction context string.
+- The classifier's selection is written to _sessionToolFilter and exposed in the
+  system prompt as "Active tools: ..." at the bottom of buildSystemPrompt().
+- In bench configs that set disabledTools, those tools never appear in activeTools()
+  so they can never be classified in. The classifier only picks from what's active.
+
+NOTES ON PERFORMANCE:
+- maxTokens=80 keeps classifier calls cheap (~0.3s on local vLLM).
+- The classifier runs synchronously before step 0 — its latency is on the critical path.
+- If the classifier errors or returns null, the turn proceeds with all tools enabled.

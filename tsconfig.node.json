@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "types": ["node"],
+    "sourceMap": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "fg-run.ts",
+    "headless-runner.ts",
+    "bootstrap-jsdom.ts",
+    "node-fs-adapter.ts",
+    "node-sqlite-adapter.ts",
+    "tests/**/*.ts"
+  ]
+}

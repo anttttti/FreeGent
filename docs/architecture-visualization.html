@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreeGent — Codebase Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; overflow: hidden; }
+
+  #canvas { position: absolute; inset: 0; }
+
+  /* Top bar */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(13,17,23,0.92); backdrop-filter: blur(12px);
+    border-bottom: 1px solid #21262d;
+    padding: 10px 20px; display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 { font-size: 14px; color: #58a6ff; font-weight: 600; white-space: nowrap; }
+  .topbar .legend { display: flex; gap: 12px; font-size: 11px; flex-wrap: wrap; }
+  .topbar .legend span { display: flex; align-items: center; gap: 4px; }
+  .topbar .legend .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .topbar .controls { margin-left: auto; display: flex; gap: 8px; }
+  .topbar button {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    font-family: inherit;
+  }
+  .topbar button:hover { background: #30363d; border-color: #58a6ff; }
+  .topbar button.active { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+
+  /* SVG */
+  svg { width: 100%; height: 100%; }
+  svg .link { stroke-linecap: round; }
+  svg .link-es { stroke: #f0883e; stroke-width: 1.2; opacity: 0.4; }
+  svg .link-bridge { stroke: #3fb950; stroke-width: 0.8; opacity: 0.15; }
+  svg .link-highlight { stroke-width: 2.5; opacity: 0.9; }
+  svg .node { cursor: pointer; }
+  svg .node rect { rx: 6; ry: 6; stroke-width: 1.5; transition: stroke-width 0.15s; }
+  svg .node:hover rect { stroke-width: 3; filter: brightness(1.3); }
+  svg .node text { font-family: inherit; font-size: 11px; fill: #e6edf3; pointer-events: none; }
+  svg .node .subtitle { font-size: 9px; fill: #8b949e; }
+  svg .group-label { font-size: 13px; fill: #484f58; font-weight: 600; font-family: inherit; }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed; z-index: 200; background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 12px 16px; font-size: 11px; max-width: 420px;
+    pointer-events: none; opacity: 0; transition: opacity 0.15s;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #tooltip.visible { opacity: 1; }
+  #tooltip h3 { color: #58a6ff; margin-bottom: 6px; font-size: 13px; }
+  #tooltip .row { display: flex; gap: 8px; margin: 3px 0; }
+  #tooltip .label { color: #8b949e; min-width: 80px; }
+  #tooltip .val { color: #c9d1d9; }
+  #tooltip .imports { color: #f0883e; }
+  #tooltip .exports { color: #3fb950; }
+
+  /* Detail panel */
+  #detail {
+    position: fixed; top: 50px; right: 16px; z-index: 100;
+    width: 360px; max-height: calc(100vh - 70px); overflow-y: auto;
+    background: rgba(22,27,34,0.95); backdrop-filter: blur(12px);
+    border: 1px solid #21262d; border-radius: 10px;
+    padding: 16px; font-size: 11px; display: none;
+  }
+  #detail.visible { display: block; }
+  #detail h2 { color: #58a6ff; font-size: 14px; margin-bottom: 8px; }
+  #detail h3 { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin: 12px 0 6px; }
+  #detail .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    margin: 2px; font-size: 10px;
+  }
+  #detail .tag-es { background: rgba(240,136,62,0.2); color: #f0883e; border: 1px solid rgba(240,136,62,0.3); }
+  #detail .tag-bridge { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.25); }
+  #detail .tag-role { background: rgba(88,166,255,0.15); color: #58a6ff; border: 1px solid rgba(88,166,255,0.25); }
+  #detail .close-btn {
+    position: absolute; top: 10px; right: 12px; background: none; border: none;
+    color: #8b949e; font-size: 18px; cursor: pointer;
+  }
+  #detail .close-btn:hover { color: #f85149; }
+  #detail .dep-list { max-height: 150px; overflow-y: auto; }
+  #detail .dep-item {
+    padding: 3px 0; border-bottom: 1px solid #21262d; cursor: pointer;
+  }
+  #detail .dep-item:hover { color: #58a6ff; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>FreeGent Architecture</h1>
+  <div class="legend">
+    <span><span class="dot" style="background:#f0883e"></span> ES import</span>
+    <span><span class="dot" style="background:#3fb950"></span> Window bridge</span>
+    <span><span class="dot" style="background:#f85149"></span> Core loop</span>
+    <span><span class="dot" style="background:#a371f7"></span> Domain module</span>
+    <span><span class="dot" style="background:#58a6ff"></span> I/O & UI</span>
+    <span><span class="dot" style="background:#d2a8ff"></span> Config & state</span>
+    <span><span class="dot" style="background:#7ee787"></span> Workers</span>
+  </div>
+  <div class="controls">
+    <button id="btnAll" class="active">All</button>
+    <button id="btnES">ES Imports</button>
+    <button id="btnBridge">Bridge</button>
+    <button id="btnReset">Reset View</button>
+  </div>
+</div>
+
+<svg id="canvas"></svg>
+<div id="tooltip"></div>
+<div id="detail">
+  <button class="close-btn" id="detailClose">&times;</button>
+  <h2 id="detailTitle"></h2>
+  <div id="detailBody"></div>
+</div>
+
+<script>
+const MODULES = [
+  // { id, label, sub, group, x, y, imports:[], bridges:[], esImports:[] }
+  // groups: core, domain, io, config, worker
+  { id:'state', label:'state.ts', sub:'21 shared vars + setters', group:'config', imports:[], bridges:['openaiHistory','activePlaceholder','agentBreaking','mainAgentRole','currentTurnSkills','agentStreaming','activeAbortController','lastProvider','memoryContext','_reactiveFired','_failureCounts','_toolCallHistory','activeChatId','currentTurnToolExtras','_seenReadFiles','_seenListFiles','lastUserMessageText','setMainAgentRole','setOpenaiHistory','setAgentStreaming','setActivePlaceholder','setAgentBreaking','setActiveAbortController','setLastTurnDoneToken','setSeenReadFiles','setSeenListFiles'] },
+  { id:'config', label:'config.ts', sub:'~60 settings + model catalog', group:'config', imports:[], bridges:['ls','getProvider','getGeminiKey','getOAIModel','getOAIContextTokens','getWorkerModel','estimateTokens','getContextThreshold','isContextSizeKnown','getThinkingLevel','thinkingLevelBudget','ALL_TOOL_NAMES','MAX_STEPS','activeSkills','enabledTools','skillsRegistry','parseFrontmatter','loadServerKeys','getActiveModel','getSamplingParams','GEMINI_THINKING_MODELS'] },
+
+  { id:'agent-core', label:'agent-core.ts', sub:'Entry point + checkpoints', group:'core', imports:[], bridges:['agentSend','agentRegenerate','agentBreak','agentAbort','agentAction','createNewChat','agentClear','addFileAttachment','showCheckpointDiff','reloadCheckpoint','rerunCheckpoint','clearCheckpoints'] },
+  { id:'llm-loops', label:'llm-loops.ts', sub:'Main ReAct loop + streaming', group:'core', imports:[], bridges:['runTurn','callOAI','callGemini','_runToolCalls','_patchOAIWriteArgs','_stripThinking','clearSessionFallback','clearReplaceState','FETCH_TIMEOUT_CUSTOM_MS','_fetchSignal'] },
+  { id:'llm-shared', label:'llm-shared.ts', sub:'Retry + compaction + context', group:'core', imports:[], bridges:['compactGeminiHistory','compactOAIHistory','parseCompactResponse','loadMemoryContext','loadAgentsContext','applyMemoryUpdates','_lcsMatrix','parseContextOverflow'] },
+  { id:'tools', label:'tools.ts', sub:'Tool implementations', group:'core', imports:[], bridges:['executeToolAsync','toolLabel'] },
+  { id:'tool-schemas', label:'tool-schemas.ts', sub:'~35 tool specs', group:'core', esImports:['state.js'], imports:['state'], bridges:['activeTools','buildGeminiTools','buildOAITools','_hasBashOrCode'] },
+  { id:'system-prompt', label:'system-prompt.ts', sub:'Dynamic prompt builder', group:'core', esImports:['state.js'], imports:['state'], bridges:['buildSystemPrompt'] },
+  { id:'skill-guidance', label:'skill-guidance.ts', sub:'Trigger eval + injection', group:'core', esImports:['state.js'], imports:['state'], bridges:['evaluateSkillTriggers','buildTriggeredGuidance','reactiveSkillGuidance','completionGateGuidance','_skillExcludedForRole'] },
+  { id:'step-validator', label:'step-validator.ts', sub:'3-band output validation', group:'core', imports:[], bridges:['validateOutput','extractPayload','AGENT_TOOL_NAMES'] },
+
+  { id:'model-router', label:'model-router.ts', sub:'Endpoint resolution + cooldown', group:'domain', imports:[], bridges:['oaiEndpoint','specToEndpoint','getRateLimitFallbackEndpoint','_nextRotationSpec','modelFriendlyName','resolveWorkerModelSpec','recordRequest','_isRateLimit','_markCooldown','_isCoolingDown','getCooldownRemaining'] },
+  { id:'retry', label:'retry.ts', sub:'Retry loop + error handling', group:'domain', imports:[], bridges:['withRetry','_makeOAIRetryHandler','_makeGeminiRetryHandler','isTransient','parseContextOverflow','retryDelay','sleepInterruptible'] },
+  { id:'stream-decode', label:'stream-decode.ts', sub:'SSE + streaming parsers', group:'domain', esImports:['state.js'], imports:['state'], bridges:['readSSE','streamOAICompat','nonStreamOAICompat','streamGeminiSSE'] },
+  { id:'payload-builder', label:'payload-builder.ts', sub:'Chat payload construction', group:'domain', imports:[], bridges:['buildChatPayload','isCustomEndpoint'] },
+  { id:'detectors', label:'detectors.ts', sub:'Blank/stuck/response detection', group:'domain', esImports:['state.js'], imports:['state'], bridges:['_updateBlankSteps','_updateStuckDetector','_checkTextResponse'] },
+  { id:'turn-protocol', label:'turn-protocol.ts', sub:'Completion + question detection', group:'domain', esImports:['state.js'], imports:['state'], bridges:['_handleTurnState','_isComplete','_isUserQuestion','_asksUser','_stripTerminal'] },
+  { id:'tool-call-repair', label:'tool-call-repair.ts', sub:'JSON + name repair', group:'domain', imports:[], bridges:['_repairToolCallArgs','_repairToolNames','_repairExecCodeArgs','EXEC_CODE_ALIASES'] },
+  { id:'nudge-emitter', label:'nudge-emitter.ts', sub:'Mid-turn context injection', group:'domain', imports:[], bridges:['emitNudge'] },
+  { id:'history', label:'history.ts', sub:'Pruning + truncation', group:'domain', esImports:['state.js'], imports:['state'], bridges:['truncateResultForHistory','pruneOAIHistory','repairHistoryArray','repairOAIHistory','resetSeenReadFiles'] },
+  { id:'history-util', label:'history-util.ts', sub:'History helper utils', group:'domain', esImports:['state.js'], imports:['state'], bridges:['activeHistory','msgText','stripInjected','isRealUserMessage','lastExchange'] },
+
+  { id:'workers', label:'workers.ts', sub:'Parallel worker orchestration', group:'worker', esImports:['state.js'], imports:['state'], bridges:['callLLMComplete','callMainModelText','callWorkerModelText','executeWorkers','runWorkerTurn','buildWorkerSystemPrompt','takeWorkspaceSnapshot','loadRoles','rolesRegistry','setMainAgentRole','clearMainAgentRole','diffRegions','splitLines'] },
+  { id:'chat-render', label:'chat-render.ts', sub:'Stepbox + markdown rendering', group:'io', esImports:['state.js'], imports:['state'], bridges:['createResponsePlaceholder','appendMessage','renderMarkdown','cleanResponse','scrollBottom','processImgSlots','getMessagesEl'] },
+  { id:'workspace', label:'workspace.ts', sub:'IndexedDB + FSA file I/O', group:'io', imports:[], bridges:['agentWriteFile','agentReadFile','agentListFiles','agentDeleteFile','initDB','readWorkspaceFile','writeWorkspaceFile','openLocalFolder','saveCheckpointSnapshot','restoreCheckpointWorkspace'] },
+  { id:'settings-ui', label:'settings-ui.ts', sub:'Settings form + model catalog', group:'io', imports:[], bridges:['showSettings','saveSettings','populateSettingsForm','updateActiveModelDisplay','applyHdrReasoning','renderModelCatalogTable','renderMainModelList','renderWorkerModelList'] },
+  { id:'profiles', label:'profiles.ts', sub:'Setting snapshots', group:'io', imports:[], bridges:['profileSaveCurrent','profileDelete','profileDownload','profileUpload','renderProfilesTab'] },
+  { id:'autopilot', label:'autopilot.ts', sub:'Autonomous Kanban loop', group:'io', imports:[], bridges:['toggleAutopilot','stopAutopilot'] },
+  { id:'search-providers', label:'search-providers.ts', sub:'Web search backends', group:'io', esImports:['state.js'], imports:['state'], bridges:['performWebSearch','tavilySearch','braveSearch','wikipediaSearch'] },
+  { id:'chat-state', label:'chat-state.ts', sub:'Chat UI state mgmt', group:'io', imports:[], bridges:[] },
+];
+
+// Layout: manual positions based on logical groups
+const LAYOUT = {
+  // Config & state (top-left cluster)
+  state:    { x: 180, y: 200 },
+  config:   { x: 180, y: 340 },
+
+  // Core loop (center)
+  'agent-core':     { x: 520, y: 120 },
+  'llm-loops':      { x: 520, y: 260 },
+  'llm-shared':     { x: 520, y: 400 },
+  'system-prompt':  { x: 720, y: 120 },
+  'skill-guidance': { x: 720, y: 260 },
+  'tool-schemas':   { x: 720, y: 400 },
+  'tools':          { x: 520, y: 540 },
+  'step-validator': { x: 720, y: 540 },
+
+  // Domain modules (left + right wings)
+  'model-router':     { x: 120, y: 500 },
+  'retry':            { x: 120, y: 640 },
+  'stream-decode':    { x: 310, y: 680 },
+  'payload-builder':  { x: 310, y: 540 },
+  'detectors':        { x: 120, y: 780 },
+  'turn-protocol':    { x: 310, y: 810 },
+  'tool-call-repair': { x: 520, y: 810 },
+  'nudge-emitter':    { x: 720, y: 680 },
+  'history':          { x: 910, y: 540 },
+  'history-util':     { x: 910, y: 260 },
+
+  // Workers (bottom)
+  'workers': { x: 120, y: 920 },
+
+  // I/O & UI (right side)
+  'chat-render':     { x: 1100, y: 200 },
+  'workspace':       { x: 1100, y: 340 },
+  'settings-ui':     { x: 1100, y: 480 },
+  'profiles':        { x: 1100, y: 620 },
+  'autopilot':       { x: 1100, y: 760 },
+  'search-providers':{ x: 1100, y: 900 },
+  'chat-state':      { x: 1300, y: 200 },
+};
+
+const GROUP_COLORS = {
+  core:   '#f85149',
+  domain: '#a371f7',
+  io:     '#58a6ff',
+  config: '#d2a8ff',
+  worker: '#7ee787',
+};
+
+const GROUP_BG = {
+  core:   'rgba(248,81,73,0.08)',
+  domain: 'rgba(163,113,247,0.08)',
+  io:     'rgba(88,166,255,0.08)',
+  config: 'rgba(210,168,255,0.08)',
+  worker: 'rgba(126,231,135,0.08)',
+};
+
+// Build adjacency from ES imports
+function buildESLinks() {
+  const links = [];
+  for (const m of MODULES) {
+    if (m.esImports) {
+      for (const imp of m.esImports) {
+        const target = imp.replace('.js','');
+        if (MODULES.find(x=>x.id===target)) {
+          links.push({ source: m.id, target, type:'es' });
+        }
+      }
+    }
+  }
+  // Add well-known runtime dependencies (bridge consumers → bridge providers)
+  const runtimeDeps = [
+    ['llm-loops','model-router'],['llm-loops','retry'],['llm-loops','stream-decode'],
+    ['llm-loops','detectors'],['llm-loops','turn-protocol'],['llm-loops','step-validator'],
+    ['llm-loops','nudge-emitter'],['llm-loops','tool-call-repair'],['llm-loops','llm-shared'],
+    ['llm-loops','tools'],['llm-loops','payload-builder'],['llm-loops','system-prompt'],
+    ['llm-loops','skill-guidance'],['llm-loops','chat-render'],
+    ['workers','model-router'],['workers','retry'],['workers','llm-shared'],
+    ['workers','stream-decode'],['workers','chat-render'],['workers','workspace'],
+    ['agent-core','llm-loops'],['agent-core','chat-render'],['agent-core','skill-guidance'],
+    ['agent-core','workspace'],
+    ['tools','workspace'],['tools','search-providers'],['tools','chat-render'],
+    ['system-prompt','skill-guidance'],['system-prompt','config'],['system-prompt','workspace'],
+    ['settings-ui','config'],['settings-ui','llm-loops'],['settings-ui','model-router'],
+    ['skill-guidance','config'],
+    ['autopilot','agent-core'],['autopilot','config'],
+    ['history','config'],['history-util','history'],
+    ['search-providers','config'],
+    ['profiles','config'],['profiles','settings-ui'],
+    ['chat-render','state'],['chat-state','chat-render'],
+  ];
+  for (const [s,t] of runtimeDeps) {
+    if (MODULES.find(x=>x.id===s) && MODULES.find(x=>x.id===t)) {
+      links.push({ source:s, target:t, type:'bridge' });
+    }
+  }
+  return links;
+}
+
+const LINKS = buildESLinks();
+
+// --- SVG Rendering ---
+const svg = document.getElementById('canvas');
+const NS = 'http://www.w3.org/2000/svg';
+const W = 1500, H = 1080;
+let viewBox = { x: -40, y: -60, w: W+80, h: H+120 };
+let selectedModule = null;
+let linkFilter = 'all';
+
+function setViewBox() {
+  svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+}
+
+function render() {
+  svg.innerHTML = '';
+  setViewBox();
+
+  // Defs for arrowhead
+  const defs = document.createElementNS(NS,'defs');
+  for (const type of ['es','bridge']) {
+    const marker = document.createElementNS(NS,'marker');
+    marker.setAttribute('id', `arrow-${type}`);
+    marker.setAttribute('viewBox','0 0 10 10');
+    marker.setAttribute('refX','10'); marker.setAttribute('refY','5');
+    marker.setAttribute('markerWidth','6'); marker.setAttribute('markerHeight','6');
+    marker.setAttribute('orient','auto-start-reverse');
+    const path = document.createElementNS(NS,'path');
+    path.setAttribute('d','M 0 0 L 10 5 L 0 10 z');
+    path.setAttribute('fill', type==='es' ? '#f0883e' : '#3fb950');
+    path.setAttribute('opacity','0.5');
+    marker.appendChild(path);
+    defs.appendChild(marker);
+  }
+  svg.appendChild(defs);
+
+  // Group backgrounds
+  const groups = {};
+  for (const m of MODULES) {
+    if (!groups[m.group]) groups[m.group] = [];
+    groups[m.group].push(m);
+  }
+  for (const [g, members] of Object.entries(groups)) {
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    for (const m of members) {
+      const p = LAYOUT[m.id];
+      minX = Math.min(minX, p.x-60); minY = Math.min(minY, p.y-25);
+      maxX = Math.max(maxX, p.x+160); maxY = Math.max(maxY, p.y+35);
+    }
+    const rect = document.createElementNS(NS,'rect');
+    rect.setAttribute('x', minX-15); rect.setAttribute('y', minY-20);
+    rect.setAttribute('width', maxX-minX+30); rect.setAttribute('height', maxY-minY+40);
+    rect.setAttribute('fill', GROUP_BG[g]); rect.setAttribute('stroke', GROUP_COLORS[g]);
+    rect.setAttribute('stroke-opacity','0.15'); rect.setAttribute('rx','12');
+    svg.appendChild(rect);
+
+    const label = document.createElementNS(NS,'text');
+    label.setAttribute('x', minX-5); label.setAttribute('y', minY-8);
+    label.setAttribute('class','group-label');
+    label.textContent = g.toUpperCase();
+    svg.appendChild(label);
+  }
+
+  // Links
+  const linkG = document.createElementNS(NS,'g');
+  for (const link of LINKS) {
+    const s = LAYOUT[link.source], t = LAYOUT[link.target];
+    if (!s || !t) continue;
+
+    const show = linkFilter === 'all' || linkFilter === link.type;
+    const line = document.createElementNS(NS,'line');
+    line.setAttribute('x1', s.x+70); line.setAttribute('y1', s.y+10);
+    line.setAttribute('x2', t.x+70); line.setAttribute('y2', t.y+10);
+    line.setAttribute('class', `link ${show?'':'hidden'} ${link.type==='es'?'link-es':'link-bridge'}`);
+    line.setAttribute('marker-end', `url(#arrow-${link.type})`);
+    line.dataset.source = link.source;
+    line.dataset.target = link.target;
+    linkG.appendChild(line);
+  }
+  svg.appendChild(linkG);
+
+  // Nodes
+  for (const m of MODULES) {
+    const p = LAYOUT[m.id];
+    const g = document.createElementNS(NS,'g');
+    g.setAttribute('class','node');
+    g.setAttribute('transform', `translate(${p.x},${p.y})`);
+    g.dataset.id = m.id;
+
+    const color = GROUP_COLORS[m.group];
+    const rect = document.createElementNS(NS,'rect');
+    rect.setAttribute('width','140'); rect.setAttribute('height','30');
+    rect.setAttribute('fill', 'rgba(22,27,34,0.9)');
+    rect.setAttribute('stroke', color);
+    g.appendChild(rect);
+
+    const text = document.createElementNS(NS,'text');
+    text.setAttribute('x','8'); text.setAttribute('y','14');
+    text.textContent = m.label;
+    g.appendChild(text);
+
+    const sub = document.createElementNS(NS,'text');
+    sub.setAttribute('x','8'); sub.setAttribute('y','24');
+    sub.setAttribute('class','subtitle');
+    sub.textContent = m.sub;
+    g.appendChild(sub);
+
+    g.addEventListener('mouseenter', e => showTooltip(e, m));
+    g.addEventListener('mouseleave', hideTooltip);
+    g.addEventListener('click', () => showDetail(m));
+
+    svg.appendChild(g);
+  }
+}
+
+// Tooltip
+const tooltip = document.getElementById('tooltip');
+function showTooltip(e, m) {
+  const esIn = LINKS.filter(l=>l.target===m.id && l.type==='es').map(l=>l.source);
+  const esOut = LINKS.filter(l=>l.source===m.id && l.type==='es').map(l=>l.target);
+  const brIn = LINKS.filter(l=>l.target===m.id && l.type==='bridge').map(l=>l.source);
+  const brOut = LINKS.filter(l=>l.source===m.id && l.type==='bridge').map(l=>l.target);
+
+  tooltip.innerHTML = `<h3>${m.label}</h3>
+    <div class="row"><span class="label">Group:</span><span class="val">${m.group}</span></div>
+    <div class="row"><span class="label">Role:</span><span class="val">${m.sub}</span></div>
+    ${esIn.length ? `<div class="row"><span class="label imports">ES imports from:</span><span class="imports">${esIn.join(', ')}</span></div>` : ''}
+    ${esOut.length ? `<div class="row"><span class="label imports">ES imported by:</span><span class="imports">${esOut.join(', ')}</span></div>` : ''}
+    ${brIn.length ? `<div class="row"><span class="label exports">Bridge used by:</span><span class="exports">${brIn.length} modules</span></div>` : ''}
+    ${brOut.length ? `<div class="row"><span class="label exports">Bridge uses:</span><span class="exports">${brOut.join(', ')}</span></div>` : ''}
+    ${m.bridges?.length ? `<div class="row"><span class="label exports">Exports:</span><span class="exports">${m.bridges.slice(0,6).join(', ')}${m.bridges.length>6?' ...':''}</span></div>` : ''}
+  `;
+  tooltip.style.left = (e.clientX+12)+'px';
+  tooltip.style.top = (e.clientY+12)+'px';
+  tooltip.classList.add('visible');
+}
+function hideTooltip() { tooltip.classList.remove('visible'); }
+
+// Detail panel
+const detail = document.getElementById('detail');
+const detailTitle = document.getElementById('detailTitle');
+const detailBody = document.getElementById('detailBody');
+
+function showDetail(m) {
+  selectedModule = m;
+  detailTitle.textContent = m.label;
+
+  const esIn = LINKS.filter(l=>l.target===m.id && l.type==='es').map(l=>l.source);
+  const esOut = LINKS.filter(l=>l.source===m.id && l.type==='es').map(l=>l.target);
+  const brIn = LINKS.filter(l=>l.target===m.id && l.type==='bridge').map(l=>l.source);
+  const brOut = LINKS.filter(l=>l.source===m.id && l.type==='bridge').map(l=>l.target);
+
+  let html = `
+    <p style="color:#8b949e;margin-bottom:8px">${m.sub}</p>
+    <span class="tag tag-role">${m.group}</span>
+    <h3>Static ES Imports</h3>
+    ${esIn.length ? esIn.map(s=>`<span class="tag tag-es">${s}</span>`).join(' ') : '<span style="color:#484f58">none — uses window bridge</span>'}
+    <h3>ES Imported By</h3>
+    ${esOut.length ? esOut.map(s=>`<span class="tag tag-es">${s}</span>`).join(' ') : '<span style="color:#484f58">none</span>'}
+    <h3>Bridge Dependencies (runtime)</h3>
+    <div class="dep-list">
+      ${brOut.map(s=>`<div class="dep-item" onclick="selectModule('${s}')">← reads from <strong>${s}</strong></div>`).join('')}
+    </div>
+    <h3>Used By (runtime)</h3>
+    <div class="dep-list">
+      ${brIn.map(s=>`<div class="dep-item" onclick="selectModule('${s}')"><strong>${s}</strong> reads this bridge</div>`).join('')}
+    </div>
+    <h3>Window Bridge Exports (${m.bridges?.length || 0})</h3>
+    <div style="max-height:200px;overflow-y:auto">
+      ${(m.bridges||[]).map(b=>`<span class="tag tag-bridge">${b}</span>`).join(' ')}
+    </div>
+  `;
+  detailBody.innerHTML = html;
+  detail.classList.add('visible');
+
+  // Highlight connected links
+  svg.querySelectorAll('line.link').forEach(l => {
+    l.classList.remove('link-highlight');
+    if (l.dataset.source === m.id || l.dataset.target === m.id) {
+      l.classList.add('link-highlight');
+      l.style.opacity = '0.9';
+    } else {
+      l.style.opacity = '0.12';
+    }
+  });
+  svg.querySelectorAll('.node').forEach(n => {
+    const id = n.dataset.id;
+    const connected = id === m.id || brOut.includes(id) || brIn.includes(id) || esIn.includes(id) || esOut.includes(id);
+    n.style.opacity = connected ? '1' : '0.3';
+  });
+}
+
+window.selectModule = function(id) {
+  const m = MODULES.find(x=>x.id===id);
+  if (m) showDetail(m);
+};
+
+document.getElementById('detailClose').addEventListener('click', () => {
+  detail.classList.remove('visible');
+  selectedModule = null;
+  svg.querySelectorAll('line.link').forEach(l => { l.classList.remove('link-highlight'); l.style.opacity=''; });
+  svg.querySelectorAll('.node').forEach(n => { n.style.opacity=''; });
+});
+
+// Controls
+document.getElementById('btnES').addEventListener('click', () => { linkFilter='es'; updateButtons(); render(); if(selectedModule) showDetail(selectedModule); });
+document.getElementById('btnBridge').addEventListener('click', () => { linkFilter='bridge'; updateButtons(); render(); if(selectedModule) showDetail(selectedModule); });
+document.getElementById('btnAll').addEventListener('click', () => { linkFilter='all'; updateButtons(); render(); if(selectedModule) showDetail(selectedModule); });
+document.getElementById('btnReset').addEventListener('click', () => { viewBox={x:-40,y:-60,w:W+80,h:H+120}; render(); });
+
+function updateButtons() {
+  document.getElementById('btnAll').classList.toggle('active', linkFilter==='all');
+  document.getElementById('btnES').classList.toggle('active', linkFilter==='es');
+  document.getElementById('btnBridge').classList.toggle('active', linkFilter==='bridge');
+}
+
+// Pan & zoom
+let isPanning = false, panStart = {};
+svg.addEventListener('mousedown', e => {
+  if (e.target.closest('.node')) return;
+  isPanning = true; panStart = { x: e.clientX, y: e.clientY, vx: viewBox.x, vy: viewBox.y };
+  svg.style.cursor = 'grabbing';
+});
+window.addEventListener('mousemove', e => {
+  if (!isPanning) return;
+  const dx = (e.clientX - panStart.x) * viewBox.w / svg.clientWidth;
+  const dy = (e.clientY - panStart.y) * viewBox.h / svg.clientHeight;
+  viewBox.x = panStart.vx - dx; viewBox.y = panStart.vy - dy;
+  setViewBox();
+});
+window.addEventListener('mouseup', () => { isPanning = false; svg.style.cursor = ''; });
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  const scale = e.deltaY > 0 ? 1.1 : 0.9;
+  const rect = svg.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / rect.width;
+  const my = (e.clientY - rect.top) / rect.height;
+  const nw = viewBox.w * scale, nh = viewBox.h * scale;
+  viewBox.x += (viewBox.w - nw) * mx;
+  viewBox.y += (viewBox.h - nh) * my;
+  viewBox.w = nw; viewBox.h = nh;
+  setViewBox();
+}, { passive: false });
+
+render();
+</script>
+</body>
+</html>

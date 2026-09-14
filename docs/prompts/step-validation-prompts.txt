@@ -1,0 +1,90 @@
+SOURCE: llm-loops.ts — _STEP_CHECKS array (~line 275)
+        step-validator.ts — validateOutput() engine
+MECHANISM: Each check defines re_pass/re_fail bracket. Routing:
+  - re_pass matches only → check passes, free (no LLM call)
+  - re_fail matches only → deterministic nudge (no LLM call)
+  - both match or neither → ambiguous → llmPrompt runs (callLLMComplete, temp=0)
+  - no llmPrompt → pass (fail-open design)
+LABEL PATTERN: check name used in counters (ps.checkFires[name])
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## CHECK 1: pseudo_tool_call  (phase: pre-state, max: 5)
+
+### LLM judge prompt (llmPrompt, called when text is ambiguous)
+--
+An autonomous agent must invoke tools via structured tool calls; plain text output is never executed.
+[Current task: {taskGoal}]
+Does the output below try to run a command or invoke a tool by writing it as text (a pseudo-call, or a code block it expects to be executed), instead of stating a final answer or explanation? Answer YES or NO on the first line. If YES and you can identify the command it wanted to run, add a second line: payload: <the command> If YES and you can identify the specific tool name, add a third line: tool: <toolname>
+--
+
+### Nudge (on fire; n=1)
+You wrote {JSON.stringify(payload.split('\n')[0].slice(0,160))} as TEXT — nothing was executed. Make the actual tool call now: `{toolName}` tool call and exactly that command. Do not print code you intend to run.
+[if no payload: "You wrote a command or tool call as TEXT — nothing was executed and nothing will be. Text and code blocks are never run. Make the actual tool call now (e.g. execute_code with language "bash"). Do not print the code you intend to run."]
+
+### Nudge escalation (n=2)
+[base] + "\n\nIMPORTANT: Text you write is NEVER executed, including code blocks and JSON snippets. To run a command, emit a native function call using the tools schema in your system context."
+
+### Nudge escalation (n≥3)
+[base] + "\n\nThis is the THIRD reminder. Use the native JSON function-calling schema provided in your tools list — emit a structured tool call, NOT text or code blocks. If you cannot determine the right tool or arguments, declare BLOCKED: <reason>."
+
+### re_pass (definitely fine — exits without LLM):
+- Contains <handover> or ```handover block
+- Is a terminal state (COMPLETED/BLOCKED) with no tool-name JSON pattern
+- No code fence AND no tool-name word in text
+- XML tag mid-line but not line-leading (routes to LLM, not deterministic pass)
+
+### re_fail (definitely violating — deterministic nudge):
+- python-call syntax: toolName(  →  returns tool name as string
+- JSON syntax: "name": "toolName"  →  returns tool name
+- XML line-leading: <toolName ...>  →  returns tool name
+- Generic XML: <invoke name="..."> or <tool_name>  →  returns true
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## CHECK 2: gibberish_output  (phase: pre-state, max: 3)
+
+### LLM judge prompt
+--
+The output below is either meaningful text or degenerate garbage (repetitive/repetitive/repetitive... loops, stray markup tags, or meaningless tokens). Does it look like degenerate/meaningless output that should be suppressed? Answer YES if it is degenerate garbage.
+--
+
+### Nudge (constant, no escalation):
+"Your last response was degenerate output — repetitive text or artifact tags. Focus: call a tool or give a clear final answer. Do not repeat yourself."
+
+### re_pass (definitely fine):
+- Is a terminal state (COMPLETED/BLOCKED)
+- Text is <40 chars (too short to be degenerate loop)
+- Has >3 unique non-whitespace characters (likely real text)
+
+### re_fail (deterministic garbage detection):
+- Any character repeated ≥25 times consecutively: /([\s\S])\1{24,}/
+- Leaked </thinking> or </think> at end of output (unclosed think tag)
+- Entire output is a bare open/close thinking tag
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## CHECK 3: missing_state_line  (phase: post-state, max: 2)
+
+### No LLM judge (deterministic only — fires on every non-tool no-state response)
+### onFire: ps.finalCheck++
+
+### Nudge (the _COMPLETION_NUDGE constant, line ~179):
+--
+Protocol reminder: Previous response missing final state declaration. Reply with ONLY:
+COMPLETED — task done
+BLOCKED: <exact reason> — cannot proceed
+Or call the next tool. No other text.
+--
+
+### re_fail: always () => true (fires unconditionally in post-state phase)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOTES:
+- Phase ordering: pre-state checks run before turn-state handling (COMPLETED/BLOCKED parsing).
+  post-state check is the final fallback after all other state handling fails.
+- Counter ps.checkFires[name] resets whenever a real tool call succeeds.
+- _forceToolCall is set to true after certain fires to guarantee a tool call on next step.
+- AGENT_TOOL_NAMES is the canonical list of tool names for re patterns (loaded lazily
+  from step-validator.ts to avoid module-load races).
