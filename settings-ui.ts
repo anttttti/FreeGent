@@ -1009,6 +1009,29 @@ function _handleDrop(event, containerId, targetIdx) {
 }
 
 
+// Returns true when a model entry can be used with the current key configuration:
+// either it needs no key (noKey:true) or its provider has a key set in localStorage.
+// custom/vllm entries are always included — the user added them and may have a per-entry key.
+function _modelHasKey(m: any): boolean {
+    if (m.noKey) return true;
+    if (m.key)   return true;  // per-catalog-entry key override
+    const p = m.provider;
+    if (p === 'custom' || p === 'vllm') return true;
+    const _k = (fn: any) => typeof fn === 'function' && !!fn();
+    if (p === 'google')      return _k(getGeminiKey);
+    if (p === 'mistral')     return _k(getMistralKey);
+    if (p === 'groq')        return _k(getGroqKey);
+    if (p === 'cerebras')    return _k(getCerebrasKey);
+    if (p === 'openrouter')  return _k(getOpenRouterKey);
+    if (p === 'nvidia')      return _k(getNvidiaKey);
+    if (p === 'nous')        return _k(getNousKey);
+    if (p === 'tokenharbor') return _k(getTokenHarborKey);
+    if (p === 'kilo')        return _k(getKiloKey);
+    if (p === 'vercel')      return _k(getVercelKey);
+    if (p === 'openai')      return _k(getOAIKey);
+    return true; // unknown provider — include by default
+}
+
 function _renderPriorityList(containerId, list) {
     const container = (document.getElementById(containerId) as HTMLInputElement);
     if (!container) return;
@@ -1017,6 +1040,10 @@ function _renderPriorityList(containerId, list) {
     const listSet = new Set(list);
     for (const k of _prioritySelected) if (!listSet.has(k)) _prioritySelected.delete(k);
     if (!listSet.has(_priorityLastClicked!)) _priorityLastClicked = null;
+
+    // Filter list to models the user has a key for (or that need no key).
+    const _allModelMap = new Map((getAllModels() as any[]).map(m => [`${m.provider}|${m.model}`, m]));
+    list = list.filter(k => { const m = _allModelMap.get(k); return !m || _modelHasKey(m); });
 
     const pausedSet = new Set(getPausedMainModels());
     const multiSel  = _prioritySelected.size > 1;
@@ -1080,7 +1107,7 @@ function _renderPriorityList(containerId, list) {
         }
     }
     const _addModels = getAllModels()
-        .filter(m => !list.includes(`${m.provider}|${m.model}`))
+        .filter(m => !list.includes(`${m.provider}|${m.model}`) && _modelHasKey(m))
         .sort((a, b) => `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`))
         .map(m => ({ value: `${m.provider}|${m.model}`, label: `${m.provider}/${m.model}` }));
     html += `</div>
