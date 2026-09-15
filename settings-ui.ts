@@ -1236,8 +1236,11 @@ function toggleInputModelPicker(): void {
 }
 
 function _renderInputModelPicker(picker: HTMLElement): void {
-    const list = typeof getMainModelList === 'function' ? getMainModelList() : [];
+    const raw  = typeof getMainModelList === 'function' ? getMainModelList() : [];
     const all  = typeof getAllModels === 'function' ? getAllModels() : [];
+    // Filter to models the user has a key for (mirrors _renderPriorityList behaviour).
+    const _allModelMap = new Map((all as any[]).map(m => [`${m.provider}|${m.model}`, m]));
+    const list = raw.filter(k => { const m = _allModelMap.get(k); return !m || _modelHasKey(m); });
     const active = list[0] || '';
     const seen = new Set<string>();
     const items: Array<{spec: string; label: string}> = [];
