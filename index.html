@@ -502,9 +502,9 @@
                         <label class="settings-input-label">Tavily API Key</label>
                         <input class="settings-input" id="tavily-key" type="password" placeholder="tvly-...">
                         <p class="settings-hint">Direct browser call &#8212; no proxy needed.</p>
-                        <label class="settings-input-label">Search Proxy URL</label>
-                        <input class="settings-input" id="search-proxy" type="url" placeholder="https://your-worker.workers.dev">
-                        <p class="settings-hint">Used for Brave search <em>and</em> as CORS proxy for NVIDIA NIM (chat + embeddings). Deploy <code>cloudwatch_brave_worker.js</code> to Cloudflare Workers and paste the URL here.</p>
+                        <label class="settings-input-label">CORS Proxy / CF Worker URL</label>
+                        <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
+                        <p class="settings-hint">Required on GitHub Pages for providers that block direct browser calls (OpenCode, Kilo, NVIDIA NIM, TokenHarbor, Vercel). Also used for Brave search. Deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL — see <code>cf-worker/README.md</code> for instructions.</p>
                         <label class="settings-input-label">Brave API Key (optional)</label>
                         <input class="settings-input" id="brave-key" type="password" placeholder="BSA...">
                         <p class="settings-hint" style="margin-bottom:0">Sent as <code>X-Brave-Key</code> header.</p>
