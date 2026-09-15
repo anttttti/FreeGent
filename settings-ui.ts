@@ -1496,8 +1496,8 @@ function renderWorkerModelSelector() {
         { value: 'priority', label: 'Priority model', fixed: true },
     ];
     const modelOpts = models.slice().sort((a, b) =>
-        `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`)
-    ).map(m => ({ value: `${m.provider}|${m.model}`, label: `${m.provider}/${m.model}` }));
+        `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`)
+    ).map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     const allOpts = (fixedOpts as ComboOption[]).concat(modelOpts);
     const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
     container.innerHTML = `<div class="model-combo" id="worker-model-combo"
@@ -1529,8 +1529,8 @@ function renderUtilityModelSelector() {
         { value: 'none', label: 'None (no utility LLM calls)', fixed: true },
     ];
     const modelOpts = models.slice().sort((a, b) =>
-        `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`)
-    ).map(m => ({ value: `${m.provider}|${m.model}`, label: `${m.provider}/${m.model}` }));
+        `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`)
+    ).map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     const allOpts = (fixedOpts as ComboOption[]).concat(modelOpts);
     const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
     container.innerHTML = `<div class="model-combo" id="utility-model-combo"
