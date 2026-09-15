@@ -896,6 +896,8 @@ function _applyProposals(proposals: Proposal[]): void {
                     contextK: 128,
                     note:     p.note,
                     ...(p.cooldownMs != null ? { cooldownMs: p.cooldownMs } : {}),
+                    // opencode uses 'public' key; kilo :free models send no Authorization header
+                    ...((p.provider === 'opencode' || (p.provider === 'kilo' && p.model.endsWith(':free'))) ? { noKey: true } : {}),
                 });
             }
         } else {
