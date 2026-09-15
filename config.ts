@@ -297,15 +297,25 @@ function getEffectiveProxy() {
     try { return `${window.location.origin}/api/proxy`; } catch {}
     return '';
 }
+// The default CF Worker — used when the user hasn't configured their own proxy
+// and the app is running on GitHub Pages (no local /api/proxy server available).
+// Secured by origin + domain allowlist in cf-worker/worker.js.
+const DEFAULT_CF_WORKER = 'https://fg-proxy.antti-puurula.workers.dev';
+
 // Returns the active CORS proxy URL for LLM POST calls.
-// Priority: configured search proxy (including Cloudflare Worker URLs) → same-origin /api/proxy.
+// Priority: user-configured proxy → default CF Worker (GitHub Pages) → same-origin /api/proxy.
 // The same-origin fallback lets LAN-IP deployments (mobile on local network) reach the
 // backend without CORS errors. A configured CF Worker URL covers GitHub Pages deployments
 // where there is no local server — see cf-worker/ for the deployable Worker script.
 export function getLocalApiProxy() {
     const configured = typeof getSearchProxy === 'function' ? getSearchProxy() : '';
     if (configured) return configured.replace(/\/$/, '');
-    try { return `${window.location.origin}/api/proxy`; } catch {}
+    try {
+        const host = window.location.hostname;
+        // On GitHub Pages there is no local server — use the default CF Worker.
+        if (host.endsWith('.github.io')) return DEFAULT_CF_WORKER;
+        return `${window.location.origin}/api/proxy`;
+    } catch {}
     return '';
 }
 function getBraveKey()       { return ls('fg_brave_key'); }
