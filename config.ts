@@ -797,7 +797,9 @@ function startPyodide() {
     localStorage.setItem(KEYS.PYODIDE_AUTOLOAD, '1');
     let resolve, reject;
     pyodideReadyPromise = new Promise((res, rej) => { resolve = res; reject = rej; });
-    pyodideWorker = new Worker('pyodide-worker.ts');
+    // new URL pattern required for Vite to bundle the worker into dist/.
+    // type:'classic' because pyodide-worker uses importScripts (not ES module imports).
+    pyodideWorker = new Worker(new URL('./pyodide-worker.ts', import.meta.url), { type: 'classic' });
     pyodideWorker.onmessage = ({ data }) => {
         if (data.type === 'ready') {
             pyodideStatus = 'ready';
