@@ -32,6 +32,9 @@ tasks/0*.md
 # Claude Code internal files
 .claude/
 
+# Cloudflare Wrangler local cache
+cf-worker/.wrangler/
+
 # Emacs lock files
 \#.env#
 .#.env
