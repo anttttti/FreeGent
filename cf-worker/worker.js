@@ -61,6 +61,7 @@ export default {
 
                 upstream = await fetch(target, {
                     headers: { 'User-Agent': 'Mozilla/5.0' },
+                    signal: AbortSignal.timeout(10_000),
                 });
 
             } else if (request.method === 'POST') {
