@@ -297,15 +297,14 @@ function getEffectiveProxy() {
     try { return `${window.location.origin}/api/proxy`; } catch {}
     return '';
 }
-// Local-only POST proxy — for LLM providers that need CORS bypass via the Python server.
-// Unlike getEffectiveProxy(), this never returns a Cloudflare Worker URL (which only handles GET).
-// Returns the active CORS proxy URL: configured search proxy > same-origin /api/proxy.
-// Always uses the same-origin proxy (not just on localhost) so mobile devices on the LAN
-// can reach the backend at their LAN IP without hitting CORS errors.
+// Returns the active CORS proxy URL for LLM POST calls.
+// Priority: configured search proxy (including Cloudflare Worker URLs) → same-origin /api/proxy.
+// The same-origin fallback lets LAN-IP deployments (mobile on local network) reach the
+// backend without CORS errors. A configured CF Worker URL covers GitHub Pages deployments
+// where there is no local server — see cf-worker/ for the deployable Worker script.
 export function getLocalApiProxy() {
     const configured = typeof getSearchProxy === 'function' ? getSearchProxy() : '';
-    // Cloudflare Workers (*.workers.dev) only handle GET — skip them for POST proxying.
-    if (configured && !/\.workers\.dev\//i.test(configured + '/')) return configured.replace(/\/$/, '');
+    if (configured) return configured.replace(/\/$/, '');
     try { return `${window.location.origin}/api/proxy`; } catch {}
     return '';
 }
