@@ -426,7 +426,11 @@
 
                     <!-- API credentials -->
                     <div class="settings-section">
-                        <span class="settings-label">API Credentials</span>
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+                            <span class="settings-label" style="margin-bottom:0">API Credentials</span>
+                            <button class="ws-action-btn" onclick="document.getElementById('env-file-input').click()" title="Parse API keys from a .env file — processed entirely in the browser, never uploaded">&#8679; Import from .env</button>
+                            <input id="env-file-input" type="file" accept=".env,.txt" style="display:none" onchange="importEnvFile(this)">
+                        </div>
                         <table class="settings-table" style="width:100%;margin-top:6px"><tbody>
                             <tr><td class="settings-table-label">Gemini Key</td>
                                 <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td></tr>

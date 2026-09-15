@@ -178,6 +178,66 @@ function onSandboxProviderChange() {
     saveSettings();
 }
 
+// Mapping from .env variable names → { localStorage key, settings input id }
+const ENV_KEY_MAP: Record<string, { ls: string; input: string }> = {
+    GEMINI_API_KEY:       { ls: 'fg_gemini_key',        input: 'gemini-key' },
+    MISTRAL_API_KEY:      { ls: 'fg_mistral_key',       input: 'mistral-key' },
+    GROQ_API_KEY:         { ls: 'fg_groq_key',          input: 'groq-key' },
+    CEREBRAS_API_KEY:     { ls: 'fg_cerebras_key',      input: 'cerebras-key' },
+    OPENROUTER_API_KEY:   { ls: 'fg_openrouter_key',    input: 'openrouter-key' },
+    NVIDIA_API_KEY:       { ls: 'fg_nvidia_key',        input: 'nvidia-key' },
+    OPENCODE_API_KEY:     { ls: 'fg_opencode_key',      input: 'opencode-key' },
+    TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key' },
+    KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key' },
+    VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key' },
+    NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key' },
+    HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key' },
+    TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key' },
+    BRAVE_API_KEY:        { ls: 'fg_brave_key',         input: 'brave-key' },
+    GITHUB_TOKEN:         { ls: 'fg_github_token',      input: 'github-token' },
+    STACKEXCHANGE_API_KEY:{ ls: 'fg_stackexchange_key', input: 'stackexchange-key' },
+};
+
+(window as any).importEnvFile = function(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = (e.target?.result as string) || '';
+        // Parse KEY=VALUE lines; strip quotes and inline comments.
+        const found: Record<string, string> = {};
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith('#')) continue;
+            const eq = line.indexOf('=');
+            if (eq < 1) continue;
+            const key = line.slice(0, eq).trim();
+            if (!ENV_KEY_MAP[key]) continue;          // ignore unknown vars
+            let val = line.slice(eq + 1).trim();
+            val = val.replace(/^['"]|['"]$/g, '');    // strip surrounding quotes
+            val = val.replace(/\s*#.*$/, '').trim();  // strip inline comments
+            if (val) found[key] = val;
+        }
+        const keys = Object.keys(found);
+        if (!keys.length) { alert('No recognised API keys found in file.'); input.value = ''; return; }
+        const names = keys.join(', ');
+        if (!confirm(`Found ${keys.length} key${keys.length > 1 ? 's' : ''}:\n${names}\n\nImport into Settings?`)) {
+            input.value = '';
+            return;
+        }
+        for (const [envVar, val] of Object.entries(found)) {
+            const { ls, input: inputId } = ENV_KEY_MAP[envVar];
+            localStorage.setItem(ls, val);
+            const el = document.getElementById(inputId) as HTMLInputElement | null;
+            if (el) { el.value = val; el.dataset.fgLoaded = '1'; }
+        }
+        input.value = '';  // reset so same file can be re-imported if needed
+        (window as any).renderModelCatalogTable?.();
+        (window as any).renderMainModelList?.();
+    };
+    reader.readAsText(file);
+};
+
 function saveSettings() {
     const get = id => ((document.getElementById(id) as HTMLInputElement)?.value || '').trim();
     // Guard: only write API key fields when the input has a value OR was explicitly
