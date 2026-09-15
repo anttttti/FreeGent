@@ -624,10 +624,36 @@ function savePausedMainModels(arr) {
     try { localStorage.setItem(KEYS.PAUSED_MAIN, JSON.stringify(arr || [])); } catch {}
 }
 
-// Active lists — full list minus paused models — used by routing code
+// Returns true when the user has a key configured for the given provider|model spec
+// (or when the model works without a key). Mirrors _modelHasKey() in settings-ui.ts.
+export function specHasKey(spec: string): boolean {
+    const bar   = spec.indexOf('|');
+    if (bar < 0) return true;
+    const provider = spec.slice(0, bar);
+    const model    = spec.slice(bar + 1);
+    const entry    = getAllModels().find(m => m.provider === provider && m.model === model) as any;
+    if (entry?.noKey) return true;
+    if (entry?.key)   return true;
+    if (provider === 'custom' || provider === 'vllm') return true;
+    const _k = (fn: any) => typeof fn === 'function' && !!fn();
+    if (provider === 'google')      return _k(getGeminiKey);
+    if (provider === 'mistral')     return _k(getMistralKey);
+    if (provider === 'groq')        return _k(getGroqKey);
+    if (provider === 'cerebras')    return _k(getCerebrasKey);
+    if (provider === 'openrouter')  return _k(getOpenRouterKey);
+    if (provider === 'nvidia')      return _k(getNvidiaKey);
+    if (provider === 'nous')        return _k(getNousKey);
+    if (provider === 'tokenharbor') return _k(getTokenHarborKey);
+    if (provider === 'kilo')        return _k(getKiloKey);
+    if (provider === 'vercel')      return _k(getVercelKey);
+    if (provider === 'openai')      return _k(getOAIKey);
+    return true; // unknown provider — don't filter
+}
+
+// Active lists — full list minus paused models and models with no configured key
 export function getActiveMainModelList() {
     const paused = new Set(getPausedMainModels());
-    return getMainModelList().filter(k => !paused.has(k));
+    return getMainModelList().filter(k => !paused.has(k) && specHasKey(k));
 }
 
 // Returns the first active model spec that supports every required media type.
@@ -988,7 +1014,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, getMainModelList, saveMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
+    getActiveMainModelList, specHasKey, getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,
     getUtilityModel, saveUtilityModel, isUtilityDisabled,

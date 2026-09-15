@@ -1072,24 +1072,12 @@ function _handleDrop(event, containerId, targetIdx) {
 // Returns true when a model entry can be used with the current key configuration:
 // either it needs no key (noKey:true) or its provider has a key set in localStorage.
 // custom/vllm entries are always included — the user added them and may have a per-entry key.
+// Thin wrapper so callers that have a model entry object can use specHasKey
+// (defined in config.ts, which is the single source of truth for key checks).
 function _modelHasKey(m: any): boolean {
-    if (m.noKey) return true;
-    if (m.key)   return true;  // per-catalog-entry key override
-    const p = m.provider;
-    if (p === 'custom' || p === 'vllm') return true;
-    const _k = (fn: any) => typeof fn === 'function' && !!fn();
-    if (p === 'google')      return _k(getGeminiKey);
-    if (p === 'mistral')     return _k(getMistralKey);
-    if (p === 'groq')        return _k(getGroqKey);
-    if (p === 'cerebras')    return _k(getCerebrasKey);
-    if (p === 'openrouter')  return _k(getOpenRouterKey);
-    if (p === 'nvidia')      return _k(getNvidiaKey);
-    if (p === 'nous')        return _k(getNousKey);
-    if (p === 'tokenharbor') return _k(getTokenHarborKey);
-    if (p === 'kilo')        return _k(getKiloKey);
-    if (p === 'vercel')      return _k(getVercelKey);
-    if (p === 'openai')      return _k(getOAIKey);
-    return true; // unknown provider — include by default
+    return typeof specHasKey === 'function'
+        ? specHasKey(`${m.provider}|${m.model}`)
+        : true;
 }
 
 function _renderPriorityList(containerId, list) {

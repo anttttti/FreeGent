@@ -128,6 +128,7 @@ declare global {
     var isToolActive: (name: string) => boolean;
     var estimateTokens: (obj: any) => number;
     var getActiveMainModelList: any;
+    var specHasKey: (spec: string) => boolean;
     var getActiveModel: any;
     var getAgentCompactAt: any;
     var getAgentCompactTokens: any;
