@@ -288,19 +288,24 @@ function getSearchProxy() {
     const v = ls('fg_search_proxy');
     return v && !/^https?:\/\//i.test(v) ? `https://${v}` : v;
 }
-function getEffectiveProxy() {
-    const manual = getSearchProxy();
-    if (manual) return manual;
-    // Always fall back to the same-origin /api/proxy so LAN-IP access
-    // (e.g. https://192.168.1.28:5000) routes fetch_url plain GETs through
-    // the local server and avoids cross-origin CORS blocks.
-    try { return `${window.location.origin}/api/proxy`; } catch {}
-    return '';
-}
 // The default CF Worker — used when the user hasn't configured their own proxy
 // and the app is running on GitHub Pages (no local /api/proxy server available).
 // Secured by origin + domain allowlist in cf-worker/worker.js.
 const DEFAULT_CF_WORKER = 'https://fg-proxy.antti-puurula.workers.dev';
+function getEffectiveProxy() {
+    const manual = getSearchProxy();
+    if (manual) return manual;
+    try {
+        const host = window.location.hostname;
+        // On GitHub Pages there is no local server — use the default CF Worker.
+        if (host.endsWith('.github.io')) return DEFAULT_CF_WORKER;
+        // Always fall back to the same-origin /api/proxy so LAN-IP access
+        // (e.g. https://192.168.1.28:5000) routes fetch_url plain GETs through
+        // the local server and avoids cross-origin CORS blocks.
+        return `${window.location.origin}/api/proxy`;
+    } catch {}
+    return '';
+}
 
 // Returns the active CORS proxy URL for LLM POST calls.
 // Priority: user-configured proxy → default CF Worker (GitHub Pages) → same-origin /api/proxy.
