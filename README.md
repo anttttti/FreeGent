@@ -4,6 +4,8 @@
 
 FreeGent is an open-source AI agent runner that works against Gemini free tier, OpenRouter, NVIDIA, Mistral, Groq, and local models via Ollama, vLLM, or LM Studio. It ships three interfaces: a browser WebUI, an interactive terminal TUI, and a headless CLI for scripting.
 
+🌐 **[Try it on GitHub Pages](https://anttttti.github.io/FreeGent/)** — no install needed.
+
 ---
 
 ## Supported Providers
