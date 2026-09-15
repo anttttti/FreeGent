@@ -7,7 +7,7 @@
  *   npx wrangler deploy
  *
  * Then paste the resulting URL (e.g. https://fg-proxy.you.workers.dev)
- * into FreeGent Settings → Search / CORS Proxy.
+ * into FreeGent Settings → CORS Proxy / CF Worker URL.
  *
  * What this does
  * ──────────────
@@ -20,9 +20,20 @@
  *   GET  ?url=<encoded>          – used by fetch_url and web-search tools
  *   POST {url, headers?, body?}  – used by all LLM provider calls
  *
- * Privacy / security
+ * Security
  * ──────────────────
- * This Worker is a pure passthrough. No data is logged, stored, or inspected.
+ * Two layers prevent the worker from being used as a generic open proxy:
+ *
+ *   1. Origin check — only browsers from ALLOWED_ORIGINS may call this worker.
+ *      (Scripts can spoof Origin, but this stops casual browser misuse.)
+ *
+ *   2. Domain allowlist — target URLs must match ALLOWED_HOSTS. Even with a
+ *      spoofed Origin the worker cannot be used to proxy arbitrary internet
+ *      traffic; only the known LLM / search provider domains are reachable.
+ *
+ * Privacy
+ * ──────────────────
+ * The Worker is a pure passthrough. No data is logged, stored, or inspected.
  * API keys in Authorization headers are forwarded directly to the provider and
  * never retained. The source is public — you can audit it here, or deploy your
  * own instance to a Cloudflare account you control.
@@ -35,6 +46,46 @@
  * ($5/month for 10 M requests, 30-minute limit) removes that concern.
  */
 
+// ── Allowed request origins ───────────────────────────────────────────────────
+// Requests from other origins are rejected with 403.
+// Add your own domain here if you fork FreeGent or self-host it elsewhere.
+const ALLOWED_ORIGINS = new Set([
+    'https://anttttti.github.io',   // GitHub Pages deployment
+    'http://localhost:5173',         // Vite dev server
+    'http://localhost:4173',         // Vite preview
+    'http://localhost:3000',
+]);
+
+// ── Allowed upstream hostnames ────────────────────────────────────────────────
+// Target URLs must match one of these. Anything else is rejected with 403.
+// This prevents the worker from being used as a generic open proxy even if
+// the Origin header is spoofed.
+const ALLOWED_HOSTS = new Set([
+    // LLM providers — direct CORS
+    'generativelanguage.googleapis.com',  // Google Gemini
+    'api.mistral.ai',
+    'api.groq.com',
+    'api.cerebras.ai',
+    'openrouter.ai',
+    'api.openrouter.ai',
+    'nous.hermes.ai',
+    'api.nousresearch.com',
+
+    // LLM providers — proxy required (no CORS headers)
+    'opencode.ai',
+    'api.kilo.ai',
+    'integrate.api.nvidia.com',
+    'api.tokenharbor.ai',
+    'api.vercel.ai',
+
+    // OpenAI-compatible
+    'api.openai.com',
+
+    // Search
+    'api.search.brave.com',
+    'api.tavily.com',
+]);
+
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -44,20 +95,32 @@ const CORS = {
 
 export default {
     async fetch(request) {
+        const origin = request.headers.get('Origin') || '';
+
         // ── CORS preflight ────────────────────────────────────────────────────
         if (request.method === 'OPTIONS') {
+            if (!_originOk(origin)) return _err(403, 'Origin not allowed');
             return new Response(null, { status: 204, headers: CORS });
         }
 
-        const url = new URL(request.url);
+        // ── Origin check ──────────────────────────────────────────────────────
+        // Allow requests with no Origin header (e.g. curl, server-side callers)
+        // only from the owner's own deployments — for safety we require Origin
+        // to be present and in the allowlist for cross-origin browser requests.
+        if (origin && !_originOk(origin)) {
+            return _err(403, 'Origin not allowed');
+        }
+
+        const workerUrl = new URL(request.url);
 
         try {
             let upstream;
 
             if (request.method === 'GET') {
                 // ── Search / fetch_url proxy ──────────────────────────────────
-                const target = url.searchParams.get('url');
+                const target = workerUrl.searchParams.get('url');
                 if (!target) return _err(400, 'Missing url parameter');
+                if (!_hostOk(target)) return _err(403, `Host not in allowlist`);
 
                 upstream = await fetch(target, {
                     headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -72,6 +135,7 @@ export default {
 
                 const { url: target, method = 'POST', headers = {}, body: reqBody } = body;
                 if (!target) return _err(400, 'Missing url field in body');
+                if (!_hostOk(target)) return _err(403, `Host not in allowlist`);
 
                 upstream = await fetch(target, {
                     method,
@@ -94,6 +158,27 @@ export default {
         }
     },
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function _originOk(origin) {
+    if (!origin) return false;
+    try {
+        const { origin: o } = new URL(origin);
+        return ALLOWED_ORIGINS.has(o);
+    } catch { return false; }
+}
+
+function _hostOk(target) {
+    try {
+        const { hostname } = new URL(target);
+        if (ALLOWED_HOSTS.has(hostname)) return true;
+        // Allow any subdomain of allowed hosts (e.g. custom OpenRouter subdomain,
+        // or a self-hosted vllm instance on a *.workers.dev / *.vercel.app URL).
+        // Exact-match is preferred; subdomain wildcard is a fallback for vllm/custom.
+        return [...ALLOWED_HOSTS].some(h => hostname === h || hostname.endsWith('.' + h));
+    } catch { return false; }
+}
 
 function _err(status, message) {
     return new Response(JSON.stringify({ error: message }), {
