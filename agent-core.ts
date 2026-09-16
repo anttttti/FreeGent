@@ -8,7 +8,7 @@ import { KEYS, chatKey, ckptKey } from './storage-keys.js';
 import * as MsgQueue from './msg-queue.js';
 import { registry } from './session-registry.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList } from './config.js';
+import { getActiveMainModelList, specHasKey } from './config.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
@@ -875,12 +875,10 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     let _mediaGeminiModel = _routing.mediaGeminiModel;
     let _mediaOAIEndpoint = _routing.mediaOAIEndpoint;
 
-    if (provider === 'google'      && !getGeminiKey())      { showSettings(); return; }
-    if (provider === 'mistral'     && !getMistralKey())     { showSettings(); return; }
-    if (provider === 'groq'        && !getGroqKey())        { showSettings(); return; }
-    if (provider === 'cerebras'    && !getCerebrasKey())    { showSettings(); return; }
-    if (provider === 'openrouter'  && !getOpenRouterKey())  { showSettings(); return; }
-    if (provider === 'nvidia'      && !getNvidiaKey())      { showSettings(); return; }
+    // Key guard: check local key AND CF Worker shared key via specHasKey.
+    // Pass provider-only spec (provider + '|') so specHasKey falls through to
+    // provider-level checks without requiring a specific model name here.
+    if (!specHasKey(provider + '|')) { showSettings(); return; }
 
     const input = document.getElementById('agent-input') as HTMLTextAreaElement | null;
     const rawText = _readInputText(input);
