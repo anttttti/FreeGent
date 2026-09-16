@@ -467,15 +467,15 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'thinkingmachines/inkling:free',                     label:'Inkling (free)',                released:'2026-07', contextK:1024, params:975,  media:['text','image'],                tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Thinking Machines; 975B MoE (41B active); 1M context; multimodal; free via OpenRouter' },
     { provider:'openrouter', model:'minimax/minimax-m3:free',                           label:'MiniMax M3 (free)',             released:'2026-06', contextK:1048, params:428,  media:['text','image'],                tools:true,  thinking:false, rpm:20,  rpd:50,   note:'MiniMax M3; 428B MoE (23B active); multimodal; 1M context; free via OpenRouter' },
     { provider:'openrouter', model:'minimax/minimax-m2.7:free',                         label:'MiniMax M2.7 (free)',           released:'2026-03', contextK:196,  params:230,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'MiniMax M2.7; 230B MoE (10B active); 196K context; free via OpenRouter' },
-    // ── OpenCode Zen (free tier, no API key required — uses 'public' key) ───────
+    // ── OpenCode Zen (requires OpenCode API key or shared key on CF Worker) ──────
     // https://opencode.ai/docs/zen/#endpoints
-    { provider:'opencode', model:'big-pickle',                        label:'Big Pickle (free)',               released:'2026-07', contextK:128,  params:null, media:['text'], tools:true,  thinking:false, noKey:true, note:'Large capable model; free via OpenCode Zen' },
-    { provider:'opencode', model:'nemotron-3-ultra-free',             label:'Nemotron 3 Ultra (free)',         released:'2026-06', contextK:128,  params:550,  media:['text'], tools:true,  thinking:true,  noKey:true, note:'550B MoE (55B active); Nemotron 3 Ultra; powerful reasoning; free via OpenCode Zen' },
-    { provider:'opencode', model:'mimo-v2.5-free',                    label:'MiMo-V2.5 (free)',                released:'2026-06', contextK:128,  params:310,  media:['text'], tools:true,  thinking:true,  noKey:true, note:'310B MoE (15B active); MiMo V2.5 reasoning model; free via OpenCode Zen' },
-    { provider:'opencode', model:'nemotron-3.5-lightning-free',       label:'Nemotron 3.5 Lightning (free)',   released:'2026-07', contextK:262,  params:30,   media:['text'], tools:true,  thinking:false, noKey:true, note:'30B MoE (3B active); 262K context; fast tool-capable model; free via OpenCode Zen' },
-    { provider:'opencode', model:'muse-spark-1.3-contributor-free',   label:'Muse Spark 1.3 Contributor (free)', released:'2026-08', contextK:128, params:null, media:['text'], tools:true,  thinking:false, noKey:true, note:'Muse Spark 1.3 Contributor; free via OpenCode Zen' },
-    { provider:'opencode', model:'ling-3.0-flash-fin-free',           label:'Ling 3.0 Flash Fin (free)',         released:'2026-08', contextK:262, params:124,  media:['text'], tools:true,  thinking:false, noKey:true, note:'Finance-focused MoE; 124B total (5.1B active); 262K context; free via OpenCode Zen' },
-    { provider:'opencode', model:'deepseek-v4-flash-free',            label:'DeepSeek V4 Flash (free)',          released:'2026-07', contextK:128, params:null, media:['text'], tools:true,  thinking:false, noKey:true, note:'DeepSeek V4 Flash; currently one of the most reliable free models on OpenCode Zen' },
+    { provider:'opencode', model:'big-pickle',                        label:'Big Pickle (free)',               released:'2026-07', contextK:128,  params:null, media:['text'], tools:true,  thinking:false, note:'Large capable model; free via OpenCode Zen' },
+    { provider:'opencode', model:'nemotron-3-ultra-free',             label:'Nemotron 3 Ultra (free)',         released:'2026-06', contextK:128,  params:550,  media:['text'], tools:true,  thinking:true,  note:'550B MoE (55B active); Nemotron 3 Ultra; powerful reasoning; free via OpenCode Zen' },
+    { provider:'opencode', model:'mimo-v2.5-free',                    label:'MiMo-V2.5 (free)',                released:'2026-06', contextK:128,  params:310,  media:['text'], tools:true,  thinking:true,  note:'310B MoE (15B active); MiMo V2.5 reasoning model; free via OpenCode Zen' },
+    { provider:'opencode', model:'nemotron-3.5-lightning-free',       label:'Nemotron 3.5 Lightning (free)',   released:'2026-07', contextK:262,  params:30,   media:['text'], tools:true,  thinking:false, note:'30B MoE (3B active); 262K context; fast tool-capable model; free via OpenCode Zen' },
+    { provider:'opencode', model:'muse-spark-1.3-contributor-free',   label:'Muse Spark 1.3 Contributor (free)', released:'2026-08', contextK:128, params:null, media:['text'], tools:true,  thinking:false, note:'Muse Spark 1.3 Contributor; free via OpenCode Zen' },
+    { provider:'opencode', model:'ling-3.0-flash-fin-free',           label:'Ling 3.0 Flash Fin (free)',         released:'2026-08', contextK:262, params:124,  media:['text'], tools:true,  thinking:false, note:'Finance-focused MoE; 124B total (5.1B active); 262K context; free via OpenCode Zen' },
+    { provider:'opencode', model:'deepseek-v4-flash-free',            label:'DeepSeek V4 Flash (free)',          released:'2026-07', contextK:128, params:null, media:['text'], tools:true,  thinking:false, note:'DeepSeek V4 Flash; currently one of the most reliable free models on OpenCode Zen' },
     // ── Nous Portal ───────────────────────────────────────────────────────────
     // https://portal.nousresearch.com/models — 300+ models; rotating free tier (50 RPM / 500K TPM).
     // Free-model catalog rotates monthly; check portal for current availability.
@@ -646,6 +646,7 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     cerebras:    'CEREBRAS_API_KEY',
     openrouter:  'OPENROUTER_API_KEY',
     nous:        'NOUS_API_KEY',
+    opencode:    'OPENCODE_API_KEY',
 };
 
 // Query the CF Worker /keys endpoint and cache which provider keys it has.
@@ -690,6 +691,7 @@ export function specHasKey(spec: string): boolean {
     if (provider === 'openrouter')  return _k(getOpenRouterKey)|| !!_cfWorkerKeys[_CF_PROVIDER_ENV.openrouter];
     if (provider === 'nvidia')      return _k(getNvidiaKey);
     if (provider === 'nous')        return _k(getNousKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nous];
+    if (provider === 'opencode')    return _k(getOpenCodeKey)  || !!_cfWorkerKeys[_CF_PROVIDER_ENV.opencode];
     if (provider === 'tokenharbor') return _k(getTokenHarborKey);
     if (provider === 'kilo')        return _k(getKiloKey);
     if (provider === 'vercel')      return _k(getVercelKey);

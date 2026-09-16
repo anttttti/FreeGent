@@ -90,6 +90,7 @@ const PROVIDER_KEY_MAP = {
     'openrouter.ai':                     'OPENROUTER_API_KEY',
     'api.openrouter.ai':                 'OPENROUTER_API_KEY',
     'inference-api.nousresearch.com':    'NOUS_API_KEY',
+    'opencode.ai':                       'OPENCODE_API_KEY',
 };
 
 const CORS = {
@@ -153,7 +154,7 @@ export default {
 
                 // Inject shared key when client sends no / empty Authorization.
                 const auth = headers['Authorization'] || headers['authorization'] || '';
-                const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ';
+                const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 if (isEmpty && env) {
                     const { hostname } = new URL(target);
                     const envKey = PROVIDER_KEY_MAP[hostname];
