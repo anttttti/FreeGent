@@ -1156,8 +1156,8 @@ function _renderPriorityList(containerId, list) {
     }
     const _addModels = getAllModels()
         .filter(m => !list.includes(`${m.provider}|${m.model}`) && _modelHasKey(m))
-        .sort((a, b) => `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`))
-        .map(m => ({ value: `${m.provider}|${m.model}`, label: `${m.provider}/${m.model}` }));
+        .sort((a, b) => `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`))
+        .map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     html += `</div>
 <div style="margin-top:6px">
   <div class="model-combo" id="${containerId}-add-combo"
@@ -1911,13 +1911,11 @@ function _comboRenderDropdown(comboId: string, q: string): void {
                     : o.label;
                 const safeVal = o.value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 if (addMode) {
-                    // Inline-add mode: each row has its own Add button.
-                    // onmousedown fires before onblur, so the click is captured before
-                    // the dropdown closes.
-                    return `<div class="model-combo-option model-combo-option-add" data-value="${o.value}">` +
-                        `<span class="model-combo-option-label">${hl}</span>` +
-                        `<button class="model-combo-add-btn" onmousedown="event.preventDefault();_comboAddItem('${comboId}','${safeVal}')">Add</button>` +
-                        `</div>`;
+                    // Inline-add mode: clicking anywhere on the row adds the model.
+                    // onmousedown fires before onblur so the click is captured before
+                    // the dropdown closes; preventDefault keeps focus on the input.
+                    return `<div class="model-combo-option model-combo-option-add" data-value="${o.value}"` +
+                        ` onmousedown="event.preventDefault();_comboAddItem('${comboId}','${safeVal}')">${hl}</div>`;
                 }
                 return `<div class="model-combo-option" data-value="${o.value}"
                     onmousedown="_comboSelect('${comboId}','${safeVal}')">${hl}</div>`;
