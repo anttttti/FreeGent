@@ -148,6 +148,9 @@ async function loadServerKeys() {
         if (el?.textContent) Object.assign(_serverKeys, JSON.parse(el.textContent));
     } catch {}
     try {
+        // Skip on static hosts (GitHub Pages, CF Pages) — no local /api/keys server.
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        if (host.endsWith('.github.io') || host.endsWith('.pages.dev')) return;
         const r = await fetch('/api/keys', { signal: AbortSignal.timeout(2000) });
         if (r.ok) Object.assign(_serverKeys, await r.json());
     } catch {}

@@ -419,6 +419,8 @@ export function utilityEndpoint(): any {
     const spec = typeof getUtilityModel === 'function' ? getUtilityModel() : '';
     if (!spec || spec === 'none') return null; // 'none' = disabled; callers fall back to firstFreeEndpoint
     if (getCooldownRemaining(spec) > 0) return null; // cooling — callers fall back
+    // Skip if the model's provider key isn't available (e.g. CF Worker keys not yet loaded)
+    if (typeof specHasKey === 'function' && !specHasKey(spec)) return null;
     return specToEndpoint(spec);
 }
 
