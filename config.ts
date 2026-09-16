@@ -647,6 +647,7 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     openrouter:  'OPENROUTER_API_KEY',
     nous:        'NOUS_API_KEY',
     opencode:    'OPENCODE_API_KEY',
+    tokenharbor: 'TOKENHARBOR_API_KEY',
 };
 
 // Query the CF Worker /keys endpoint and cache which provider keys it has.
@@ -692,7 +693,7 @@ export function specHasKey(spec: string): boolean {
     if (provider === 'nvidia')      return _k(getNvidiaKey);
     if (provider === 'nous')        return _k(getNousKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nous];
     if (provider === 'opencode')    return _k(getOpenCodeKey)  || !!_cfWorkerKeys[_CF_PROVIDER_ENV.opencode];
-    if (provider === 'tokenharbor') return _k(getTokenHarborKey);
+    if (provider === 'tokenharbor') return _k(getTokenHarborKey) || !!_cfWorkerKeys[_CF_PROVIDER_ENV.tokenharbor];
     if (provider === 'kilo')        return _k(getKiloKey);
     if (provider === 'vercel')      return _k(getVercelKey);
     if (provider === 'openai')      return _k(getOAIKey);
