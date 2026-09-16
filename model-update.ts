@@ -7,9 +7,14 @@
 
 // ── Proxy helpers ─────────────────────────────────────────────────────────
 
-// GET via the same-origin Node.js proxy — avoids CORS and hides the key from the network tab.
+// Returns the active proxy base URL — CF Worker on GitHub Pages, local /api/proxy otherwise.
+function _proxyBase(): string {
+    return typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '/api/proxy';
+}
+
+// GET via proxy — avoids CORS and hides the key from the network tab.
 async function _proxyGet(url: string): Promise<any> {
-    const resp = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`, {
+    const resp = await fetch(`${_proxyBase()}?url=${encodeURIComponent(url)}`, {
         signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) return null;
@@ -19,7 +24,7 @@ async function _proxyGet(url: string): Promise<any> {
 // GET-via-POST-proxy — for providers that require Bearer auth (blocked by CORS in browser).
 async function _proxyBearer(url: string, key: string): Promise<any> {
     if (!key) return null;
-    const resp = await fetch('/api/proxy', {
+    const resp = await fetch(_proxyBase(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, method: 'GET', headers: { 'Authorization': `Bearer ${key}`, 'Accept': 'application/json' } }),
@@ -34,7 +39,7 @@ async function _proxyBearer(url: string, key: string): Promise<any> {
 async function _proxyFetch(url: string, key?: string): Promise<any> {
     const hdrs: Record<string, string> = { 'Accept': 'application/json' };
     if (key) hdrs['Authorization'] = `Bearer ${key}`;
-    const resp = await fetch('/api/proxy', {
+    const resp = await fetch(_proxyBase(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, method: 'GET', headers: hdrs }),
