@@ -13,5 +13,7 @@ compatibility_date = "2024-09-23"
 #   npx wrangler secret put CEREBRAS_API_KEY
 #   npx wrangler secret put GEMINI_API_KEY
 #   npx wrangler secret put NOUS_API_KEY
+#   npx wrangler secret put OPENCODE_API_KEY
+#   npx wrangler secret put TOKENHARBOR_API_KEY
 #
 # Keys are injected server-side and never visible to browser clients.

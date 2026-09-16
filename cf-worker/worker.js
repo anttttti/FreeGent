@@ -73,6 +73,7 @@ const ALLOWED_HOSTS = new Set([
     'opencode.ai',
     'api.kilo.ai',
     'integrate.api.nvidia.com',
+    'tokenharbor.ai',
     'api.tokenharbor.ai',
     'api.vercel.ai',
     'api.openai.com',
@@ -91,6 +92,8 @@ const PROVIDER_KEY_MAP = {
     'api.openrouter.ai':                 'OPENROUTER_API_KEY',
     'inference-api.nousresearch.com':    'NOUS_API_KEY',
     'opencode.ai':                       'OPENCODE_API_KEY',
+    'tokenharbor.ai':                    'TOKENHARBOR_API_KEY',
+    'api.tokenharbor.ai':                'TOKENHARBOR_API_KEY',
 };
 
 const CORS = {
