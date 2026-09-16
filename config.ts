@@ -582,13 +582,15 @@ function getMainModelList() {
     if (raw) {
         try {
             const a = JSON.parse(raw);
-            if (Array.isArray(a) && a.length) {
+            if (Array.isArray(a)) {
                 const valid = [...new Set(a.filter(_validSpec))];
                 if (valid.length !== a.length) {
                     // Prune stale entries (removed catalog models) and persist the clean list
                     try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(valid)); } catch {}
                 }
-                if (valid.length) return valid;
+                // Return even if empty — an empty list means the user cleared it intentionally.
+                // Only fall through to defaults when the key was never stored at all (raw is falsy).
+                return valid;
             }
         } catch {}
     }
