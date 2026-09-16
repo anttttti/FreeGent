@@ -660,7 +660,7 @@ function renderModelCatalogTable() {
   ${_th('released', 'Released',  'Approximate public release date (YYYY-MM)')}
   ${_th('tools',    'Tools',     'Supports function/tool calling (structured API calls to external tools)')}
   ${_th('thinking', 'Think',     'Supports extended thinking / chain-of-thought reasoning mode')}
-  ${_th('noKey',    'Key',       'API key required? ✓ = key needed. — = works without a key (anonymous access).')}
+  ${_th('noKey',    'Key',       'API key status. — = no key needed. ✓ = key configured (local or CF Worker). ✗ = key required but not configured.')}
   ${_th('note',     'Note',      'Capability summary and notable features')}
   <th></th>
 </tr></thead><tbody>`;
@@ -682,7 +682,7 @@ function renderModelCatalogTable() {
   <td>${m.released || ''}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
-  <td>${m.noKey ? '—' : '✓'}</td>
+  <td>${m.noKey ? '—' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
   <td class="model-table-note">${m.note || ''}</td>
   <td style="white-space:nowrap">${editBtn}${delBtn}</td>
 </tr>`;
