@@ -1418,16 +1418,30 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
                     console.warn('[auto-rank] JSON parse failed:', argsStr?.slice(0, 120));
                 }
             }
-            rawIndices = (parsed?.rankings ?? []).filter((n: any) => Number.isInteger(n));
+            const rankings = parsed?.rankings;
+            if (Array.isArray(rankings)) {
+                rawIndices = rankings.filter((n: any) => Number.isInteger(n));
+            }
         }
 
-        // Prose fallback: scan for digit sequences that could be list indices
-        if (!rawIndices.length && result?.content) {
-            console.warn('[auto-rank] no tool_calls, parsing prose for numbers');
-            const seen = new Set<number>();
-            for (const m of result.content.matchAll(/\b(\d{1,3})\b/g)) {
-                const n = parseInt(m[1], 10);
-                if (n >= 1 && n <= available.length && !seen.has(n)) { seen.add(n); rawIndices.push(n); }
+        // Prose fallback: scan for digit sequences that could be list indices.
+        // Normalise content — may be a plain string or an array of content blocks.
+        if (!rawIndices.length) {
+            const rawContent = result?.content;
+            const contentStr = typeof rawContent === 'string'
+                ? rawContent
+                : Array.isArray(rawContent)
+                    ? rawContent.map((b: any) => (typeof b === 'string' ? b : (b?.text ?? ''))).join('\n')
+                    : '';
+            if (contentStr) {
+                console.warn('[auto-rank] no tool_calls — parsing prose for numbers:', contentStr.slice(0, 200));
+                const seen = new Set<number>();
+                for (const m of contentStr.matchAll(/\b(\d{1,3})\b/g)) {
+                    const n = parseInt(m[1], 10);
+                    if (n >= 1 && n <= available.length && !seen.has(n)) { seen.add(n); rawIndices.push(n); }
+                }
+            } else {
+                console.warn('[auto-rank] no parseable content — result:', JSON.stringify(result)?.slice(0, 300));
             }
         }
 
@@ -1440,7 +1454,7 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
             }
             if (picked.length >= 10) break;
         }
-        if (!picked.length) return _fail(`no valid indices in response — got: ${rawIndices.slice(0, 10).join(', ')}`);
+        if (!picked.length) return _fail(`no valid indices in response — got: ${JSON.stringify(rawIndices).slice(0, 120)}`);
 
         saveMainModelList(picked);
         renderMainModelList();
