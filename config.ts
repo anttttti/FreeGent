@@ -560,13 +560,21 @@ function getAllModels() {
 // Each is an ordered array of "provider|model" strings.
 // The first non-cooling entry is used; if all cool, wait for the shortest.
 
+// Default priority list for new GitHub Pages users.
+// Kilo :free models (noKey:true) work with zero configuration.
+// OpenRouter models appear once the user sets an OpenRouter key.
+// Order: best quality first, Kilo before OpenRouter within each tier for no-key users.
 const _DEFAULT_MAIN_MODELS = [
-    'opencode|big-pickle',
-    'opencode|nemotron-3-ultra-free',
-    'opencode|mimo-v2.5-free',
-    'opencode|nemotron-3.5-lightning-free',
-    'opencode|muse-spark-1.2-contributor-free',
-    'opencode|ling-3.0-flash-fin-free',
+    'kilo|thinkingmachines/inkling:free',              // 975B MoE, 1M ctx, reasoning
+    'openrouter|thinkingmachines/inkling:free',        // same model, OpenRouter quota
+    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx, reasoning
+    'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
+    'openrouter|minimax/minimax-m3:free',              // 428B MoE, 1M ctx, multimodal
+    'kilo|poolside/laguna-s-2.1:free',                 // 118B MoE, coding agent
+    'openrouter|poolside/laguna-s-2.1:free',
+    'kilo|thinkingmachines/inkling-small:free',        // 276B MoE, 1M ctx, fast reasoning
+    'kilo|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
+    'openrouter|nvidia/nemotron-3.5-lightning:free',   // 30B, very fast, tools
 ];
 
 function getMainModelList() {
