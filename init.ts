@@ -219,7 +219,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // so we intentionally omit it and rely solely on ontouchstart + hover media query.
     const _isTouchOnly = 'ontouchstart' in window
         && !window.matchMedia('(hover: hover)').matches;
-    if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) !== '0' && !_isTouchOnly) startPyodide();
+    if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) !== '0' && !_isTouchOnly) {
+        try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
+    }
 
     // Local bash: auto-detect server.py on localhost. Only probe when on localhost and not
     // already configured, so we don't clobber a deliberate 'none' choice from a previous session.
