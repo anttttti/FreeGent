@@ -233,19 +233,31 @@ function _customEndpoint(model: string, hintProvider: string): any {
     return { provider, url: `${baseUrl}${path}`, key, model, proxy: useProxy };
 }
 
+// On static hosts (GitHub Pages, *.pages.dev) there is no local server, so route
+// CORS-capable providers through the CF Worker too — this lets the worker inject
+// shared API keys from its environment when the user hasn't set a local key.
+function _staticProxy(): boolean {
+    if (window._fgHeadless) return false;
+    try {
+        const h = window.location.hostname;
+        return h.endsWith('.github.io') || h.endsWith('.pages.dev');
+    } catch { return false; }
+}
+
 export function oaiEndpoint(): any {
     const provider = getProvider();
     const model    = getActiveModel(); // always reads from priority list
-    if (provider === 'google')      return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model };
+    const sp       = _staticProxy();
+    if (provider === 'google')      return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
     if (provider === 'mistral')     return { provider, url: 'https://api.mistral.ai/v1/chat/completions',          key: getMistralKey(),    model };
-    if (provider === 'groq')        return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model };
-    if (provider === 'cerebras')    return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model };
-    if (provider === 'openrouter')  return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model };
+    if (provider === 'groq')        return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
+    if (provider === 'cerebras')    return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model, proxy: sp };
+    if (provider === 'openrouter')  return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
     if (provider === 'opencode')    return { provider, url: 'https://opencode.ai/zen/v1/chat/completions',         key: getOpenCodeKey() || 'public', model, proxy: !window._fgHeadless };
     if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
     if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
     if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model };
+    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
     if (provider === 'nvidia') {
         return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: !window._fgHeadless };
     }
@@ -263,16 +275,17 @@ export function specToEndpoint(spec: string): any {
     const idx      = spec.indexOf('|');
     const provider = idx !== -1 ? spec.slice(0, idx) : spec;
     const model    = idx !== -1 ? spec.slice(idx + 1) : spec;
-    if (provider === 'google')     return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model };
+    const sp = _staticProxy();
+    if (provider === 'google')     return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
     if (provider === 'mistral')    return { provider, url: 'https://api.mistral.ai/v1/chat/completions',          key: getMistralKey(),    model };
-    if (provider === 'groq')       return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model };
-    if (provider === 'cerebras')   return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model };
-    if (provider === 'openrouter') return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model };
+    if (provider === 'groq')       return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
+    if (provider === 'cerebras')   return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model, proxy: sp };
+    if (provider === 'openrouter') return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
     if (provider === 'opencode')    return { provider, url: 'https://opencode.ai/zen/v1/chat/completions',         key: getOpenCodeKey() || 'public', model, proxy: !window._fgHeadless };
     if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
     if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
     if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model };
+    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
     if (provider === 'nvidia') {
         return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: !window._fgHeadless };
     }
