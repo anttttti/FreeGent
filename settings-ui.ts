@@ -682,7 +682,7 @@ function renderModelCatalogTable() {
   <td>${m.released || ''}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
-  <td>${m.noKey ? '—' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
+  <td>${m.noKey ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
   <td class="model-table-note">${m.note || ''}</td>
   <td style="white-space:nowrap">${editBtn}${delBtn}</td>
 </tr>`;
