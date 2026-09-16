@@ -37,7 +37,8 @@
  * Security
  * ──────────────────
  * - Origin check: only browsers from ALLOWED_ORIGINS may call this worker.
- * - Domain allowlist: target URLs must be a known LLM/search provider.
+ * - POST (LLM proxy): strict domain allowlist — only known LLM/search providers.
+ * - GET  (fetch_url): any public HTTPS URL; private/reserved IPs are blocked (SSRF guard).
  * - Secrets never leave the worker; /keys only returns true/false per provider.
  *
  * Privacy
@@ -60,7 +61,8 @@ const ALLOWED_ORIGINS = new Set([
     'http://localhost:3000',
 ]);
 
-// ── Allowed upstream hostnames ────────────────────────────────────────────────
+// ── Allowed upstream hostnames (POST / LLM proxy only) ───────────────────────
+// GET fetch_url requests use _publicUrlOk() instead — any public HTTPS URL.
 const ALLOWED_HOSTS = new Set([
     'generativelanguage.googleapis.com',
     'api.mistral.ai',
@@ -138,7 +140,8 @@ export default {
                 // ── Search / fetch_url proxy ──────────────────────────────────
                 const target = workerUrl.searchParams.get('url');
                 if (!target) return _err(400, 'Missing url parameter');
-                if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
+                // Allow any public HTTPS URL; block private/reserved IPs (SSRF guard).
+                if (!_publicUrlOk(target)) return _err(403, 'URL blocked (private address or non-HTTPS)');
 
                 upstream = await fetch(target, {
                     headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -203,6 +206,27 @@ function _hostOk(target) {
         const { hostname } = new URL(target);
         if (ALLOWED_HOSTS.has(hostname)) return true;
         return [...ALLOWED_HOSTS].some(h => hostname === h || hostname.endsWith('.' + h));
+    } catch { return false; }
+}
+
+// For GET fetch_url requests: allow any public HTTPS URL.
+// Block private/reserved ranges to prevent SSRF attacks.
+function _publicUrlOk(target) {
+    try {
+        const u = new URL(target);
+        if (u.protocol !== 'https:') return false;
+        const h = u.hostname;
+        // Block localhost and loopback
+        if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
+        // Block link-local / metadata endpoints
+        if (h === '169.254.169.254' || h.startsWith('169.254.')) return false;
+        // Block private IPv4 ranges (10.x, 172.16-31.x, 192.168.x)
+        if (/^10\./.test(h)) return false;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+        if (/^192\.168\./.test(h)) return false;
+        // Block IPv6 private/loopback
+        if (/^\[?(::1|fc|fd|fe80)/i.test(h)) return false;
+        return true;
     } catch { return false; }
 }
 
