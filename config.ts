@@ -634,6 +634,43 @@ function savePausedMainModels(arr) {
     try { localStorage.setItem(KEYS.PAUSED_MAIN, JSON.stringify(arr || [])); } catch {}
 }
 
+// ── CF Worker shared-key cache ────────────────────────────────────────────────
+// Maps env var name → true if the deployed CF Worker has that secret configured.
+// Populated by loadCfWorkerKeys() on startup. Empty until then (safe default).
+let _cfWorkerKeys: Record<string, boolean> = {};
+
+// Maps provider → CF Worker env var name (matching PROVIDER_KEY_MAP in worker.js)
+const _CF_PROVIDER_ENV: Record<string, string> = {
+    google:      'GEMINI_API_KEY',
+    groq:        'GROQ_API_KEY',
+    cerebras:    'CEREBRAS_API_KEY',
+    openrouter:  'OPENROUTER_API_KEY',
+    nous:        'NOUS_API_KEY',
+};
+
+// Query the CF Worker /keys endpoint and cache which provider keys it has.
+// Called once on startup when a CF Worker URL is configured.
+export async function loadCfWorkerKeys(): Promise<void> {
+    const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
+    if (!proxy) return;
+    // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
+    try { if (new URL(proxy).hostname === window.location.hostname) return; } catch { return; }
+    try {
+        const resp = await fetch(`${proxy}/keys`, { signal: AbortSignal.timeout(5_000) });
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data && typeof data === 'object') {
+                _cfWorkerKeys = data;
+                // Re-render model lists so newly-available providers appear
+                if (typeof (window as any).renderMainModelList === 'function')
+                    (window as any).renderMainModelList();
+                if (typeof (window as any).renderModelCatalogTable === 'function')
+                    (window as any).renderModelCatalogTable();
+            }
+        }
+    } catch {}
+}
+
 // Returns true when the user has a key configured for the given provider|model spec
 // (or when the model works without a key). Mirrors _modelHasKey() in settings-ui.ts.
 export function specHasKey(spec: string): boolean {
@@ -646,13 +683,13 @@ export function specHasKey(spec: string): boolean {
     if (entry?.key)   return true;
     if (provider === 'custom' || provider === 'vllm') return true;
     const _k = (fn: any) => typeof fn === 'function' && !!fn();
-    if (provider === 'google')      return _k(getGeminiKey);
+    if (provider === 'google')      return _k(getGeminiKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.google];
     if (provider === 'mistral')     return _k(getMistralKey);
-    if (provider === 'groq')        return _k(getGroqKey);
-    if (provider === 'cerebras')    return _k(getCerebrasKey);
-    if (provider === 'openrouter')  return _k(getOpenRouterKey);
+    if (provider === 'groq')        return _k(getGroqKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.groq];
+    if (provider === 'cerebras')    return _k(getCerebrasKey)  || !!_cfWorkerKeys[_CF_PROVIDER_ENV.cerebras];
+    if (provider === 'openrouter')  return _k(getOpenRouterKey)|| !!_cfWorkerKeys[_CF_PROVIDER_ENV.openrouter];
     if (provider === 'nvidia')      return _k(getNvidiaKey);
-    if (provider === 'nous')        return _k(getNousKey);
+    if (provider === 'nous')        return _k(getNousKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nous];
     if (provider === 'tokenharbor') return _k(getTokenHarborKey);
     if (provider === 'kilo')        return _k(getKiloKey);
     if (provider === 'vercel')      return _k(getVercelKey);
@@ -1024,7 +1061,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, getMainModelList, saveMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
+    getActiveMainModelList, specHasKey, loadCfWorkerKeys, getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,
     getUtilityModel, saveUtilityModel, isUtilityDisabled,

@@ -1,3 +1,17 @@
 name = "fg-proxy"
 main = "worker.js"
 compatibility_date = "2024-09-23"
+
+# Optional: add shared API keys so GitHub Pages users can access those
+# providers without configuring their own keys in the browser.
+# Store them as encrypted Cloudflare secrets — never put values here.
+#
+# Run once per key you want to share:
+#
+#   npx wrangler secret put OPENROUTER_API_KEY
+#   npx wrangler secret put GROQ_API_KEY
+#   npx wrangler secret put CEREBRAS_API_KEY
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put NOUS_API_KEY
+#
+# Keys are injected server-side and never visible to browser clients.

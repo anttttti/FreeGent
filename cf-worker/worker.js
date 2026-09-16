@@ -9,46 +9,50 @@
  * Then paste the resulting URL (e.g. https://fg-proxy.you.workers.dev)
  * into FreeGent Settings → CORS Proxy / CF Worker URL.
  *
+ * Optional: add shared API keys as Cloudflare secrets so GitHub Pages
+ * users can access those providers without configuring their own keys:
+ *
+ *   npx wrangler secret put OPENROUTER_API_KEY
+ *   npx wrangler secret put GROQ_API_KEY
+ *   npx wrangler secret put CEREBRAS_API_KEY
+ *   npx wrangler secret put GEMINI_API_KEY
+ *   npx wrangler secret put NOUS_API_KEY
+ *
+ * Secrets are stored encrypted in Cloudflare — never in the repo code.
+ * They are injected into requests as Authorization headers when the
+ * client hasn't supplied its own key.  The user's own key always wins.
+ *
  * What this does
  * ──────────────
  * GitHub Pages cannot run server-side code, so browser fetch() calls to
  * LLM providers that don't send CORS headers are blocked. This Worker is a
  * thin passthrough that adds the missing CORS headers and forwards the request.
  *
- * Two request shapes are supported, matching the existing /api/proxy protocol:
+ * Three request shapes are supported:
  *
+ *   GET  /keys                   – returns which provider keys are configured
  *   GET  ?url=<encoded>          – used by fetch_url and web-search tools
  *   POST {url, headers?, body?}  – used by all LLM provider calls
  *
  * Security
  * ──────────────────
- * Two layers prevent the worker from being used as a generic open proxy:
- *
- *   1. Origin check — only browsers from ALLOWED_ORIGINS may call this worker.
- *      (Scripts can spoof Origin, but this stops casual browser misuse.)
- *
- *   2. Domain allowlist — target URLs must match ALLOWED_HOSTS. Even with a
- *      spoofed Origin the worker cannot be used to proxy arbitrary internet
- *      traffic; only the known LLM / search provider domains are reachable.
+ * - Origin check: only browsers from ALLOWED_ORIGINS may call this worker.
+ * - Domain allowlist: target URLs must be a known LLM/search provider.
+ * - Secrets never leave the worker; /keys only returns true/false per provider.
  *
  * Privacy
  * ──────────────────
  * The Worker is a pure passthrough. No data is logged, stored, or inspected.
- * API keys in Authorization headers are forwarded directly to the provider and
- * never retained. The source is public — you can audit it here, or deploy your
- * own instance to a Cloudflare account you control.
+ * API keys (user's own or injected from env) are forwarded directly to the
+ * provider and never retained.
  *
  * Free-tier limits
  * ──────────────────
  * Cloudflare's free Workers plan allows 100 000 req/day and up to 30 seconds
- * of wall time per request. Most LLM responses finish within that window, but
- * very long generations on slow models may time out. Upgrading to Workers Paid
- * ($5/month for 10 M requests, 30-minute limit) removes that concern.
+ * of wall time per request.
  */
 
 // ── Allowed request origins ───────────────────────────────────────────────────
-// Requests from other origins are rejected with 403.
-// Add your own domain here if you fork FreeGent or self-host it elsewhere.
 const ALLOWED_ORIGINS = new Set([
     'https://anttttti.github.io',   // GitHub Pages deployment
     'http://localhost:5173',         // Vite dev server
@@ -57,34 +61,36 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 // ── Allowed upstream hostnames ────────────────────────────────────────────────
-// Target URLs must match one of these. Anything else is rejected with 403.
-// This prevents the worker from being used as a generic open proxy even if
-// the Origin header is spoofed.
 const ALLOWED_HOSTS = new Set([
-    // LLM providers — direct CORS
-    'generativelanguage.googleapis.com',  // Google Gemini
+    'generativelanguage.googleapis.com',
     'api.mistral.ai',
     'api.groq.com',
     'api.cerebras.ai',
     'openrouter.ai',
     'api.openrouter.ai',
     'nous.hermes.ai',
-    'api.nousresearch.com',
-
-    // LLM providers — proxy required (no CORS headers)
+    'inference-api.nousresearch.com',
     'opencode.ai',
     'api.kilo.ai',
     'integrate.api.nvidia.com',
     'api.tokenharbor.ai',
     'api.vercel.ai',
-
-    // OpenAI-compatible
     'api.openai.com',
-
-    // Search
     'api.search.brave.com',
     'api.tavily.com',
 ]);
+
+// ── Provider → env var name ───────────────────────────────────────────────────
+// Used to inject shared keys when the client sends no Authorization header.
+// Must match _CF_PROVIDER_ENV in config.ts.
+const PROVIDER_KEY_MAP = {
+    'generativelanguage.googleapis.com': 'GEMINI_API_KEY',
+    'api.groq.com':                      'GROQ_API_KEY',
+    'api.cerebras.ai':                   'CEREBRAS_API_KEY',
+    'openrouter.ai':                     'OPENROUTER_API_KEY',
+    'api.openrouter.ai':                 'OPENROUTER_API_KEY',
+    'inference-api.nousresearch.com':    'NOUS_API_KEY',
+};
 
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
@@ -94,7 +100,7 @@ const CORS = {
 };
 
 export default {
-    async fetch(request) {
+    async fetch(request, env) {
         const origin = request.headers.get('Origin') || '';
 
         // ── CORS preflight ────────────────────────────────────────────────────
@@ -104,14 +110,22 @@ export default {
         }
 
         // ── Origin check ──────────────────────────────────────────────────────
-        // Allow requests with no Origin header (e.g. curl, server-side callers)
-        // only from the owner's own deployments — for safety we require Origin
-        // to be present and in the allowlist for cross-origin browser requests.
         if (origin && !_originOk(origin)) {
             return _err(403, 'Origin not allowed');
         }
 
         const workerUrl = new URL(request.url);
+
+        // ── GET /keys — which provider secrets are configured ─────────────────
+        if (request.method === 'GET' && workerUrl.pathname === '/keys') {
+            const available = {};
+            for (const envKey of Object.values(PROVIDER_KEY_MAP)) {
+                available[envKey] = !!(env && env[envKey]);
+            }
+            return new Response(JSON.stringify(available), {
+                headers: { ...CORS, 'Content-Type': 'application/json' },
+            });
+        }
 
         try {
             let upstream;
@@ -120,7 +134,7 @@ export default {
                 // ── Search / fetch_url proxy ──────────────────────────────────
                 const target = workerUrl.searchParams.get('url');
                 if (!target) return _err(400, 'Missing url parameter');
-                if (!_hostOk(target)) return _err(403, `Host not in allowlist`);
+                if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
 
                 upstream = await fetch(target, {
                     headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -135,7 +149,18 @@ export default {
 
                 const { url: target, method = 'POST', headers = {}, body: reqBody } = body;
                 if (!target) return _err(400, 'Missing url field in body');
-                if (!_hostOk(target)) return _err(403, `Host not in allowlist`);
+                if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
+
+                // Inject shared key when client sends no / empty Authorization.
+                const auth = headers['Authorization'] || headers['authorization'] || '';
+                const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ';
+                if (isEmpty && env) {
+                    const { hostname } = new URL(target);
+                    const envKey = PROVIDER_KEY_MAP[hostname];
+                    if (envKey && env[envKey]) {
+                        headers['Authorization'] = `Bearer ${env[envKey]}`;
+                    }
+                }
 
                 upstream = await fetch(target, {
                     method,
@@ -173,9 +198,6 @@ function _hostOk(target) {
     try {
         const { hostname } = new URL(target);
         if (ALLOWED_HOSTS.has(hostname)) return true;
-        // Allow any subdomain of allowed hosts (e.g. custom OpenRouter subdomain,
-        // or a self-hosted vllm instance on a *.workers.dev / *.vercel.app URL).
-        // Exact-match is preferred; subdomain wildcard is a fallback for vllm/custom.
         return [...ALLOWED_HOSTS].some(h => hostname === h || hostname.endsWith('.' + h));
     } catch { return false; }
 }

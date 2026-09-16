@@ -115,6 +115,8 @@ async function _doModelWarmup(): Promise<void> {
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadServerKeys(); // load env-var keys from Python server before anything else
+    // Query the CF Worker for shared provider keys (non-blocking — re-renders model lists when done)
+    loadCfWorkerKeys?.().catch(() => {});
 
     // Init IndexedDB session adapter — no COOP/COEP headers required.
     // Must run before getChatList() so the warmed localStorage is available immediately.

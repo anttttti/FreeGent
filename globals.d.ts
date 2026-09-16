@@ -224,6 +224,7 @@ declare global {
     var isContextSizeKnown: any;
     var isRoleEnabled: any;
     var loadServerKeys: any;
+    var loadCfWorkerKeys: (() => Promise<void>) | undefined;
     var ls: any;
     var parseFrontmatter: any;
     var pyodideStatus: any;
