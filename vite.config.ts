@@ -444,6 +444,9 @@ export default defineConfig(() => {
       // the original code instead; iOS 12 may fail on that one file but other clients
       // are never disturbed.
       const _basename = id.split('/').pop()?.replace(/\?.*$/, '') ?? id;
+      // Skip files that use import.meta.url — esbuild with loader:'js' replaces
+      // import.meta with {} (undefined .url), breaking new Worker(new URL(..., import.meta.url)).
+      if (code.includes('import.meta.url')) return null;
       try {
         const result = await esbuildLib.transform(code, {
           target: 'es2019',
