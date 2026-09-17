@@ -1366,7 +1366,17 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
             },
         };
 
-        // Collect candidate endpoints in preference order, deduped by provider|model
+        // Collect candidate endpoints in preference order, deduped by provider|model.
+        // Auto-rank sends a tool_choice call, so only use models with tools:true in the catalog.
+        // Unknown/custom models (not in catalog) are assumed capable.
+        const _rankModelMap = new Map(
+            (typeof getAllModels === 'function' ? getAllModels() as any[] : [])
+                .map(m => [`${m.provider}|${m.model}`, m])
+        );
+        const _supportsTools = (ep: any) => {
+            const entry = _rankModelMap.get(`${ep.provider}|${ep.model}`);
+            return !entry || !!entry.tools;
+        };
         const _seen = new Set<string>();
         const epCandidates: any[] = [];
         for (const getter of [
@@ -1377,10 +1387,11 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
             if (!getter) continue;
             const ep = getter();
             if (!ep) continue;
+            if (!_supportsTools(ep)) continue; // skip models that don't support tool_choice
             const key = `${ep.provider}|${ep.model}`;
             if (!_seen.has(key)) { _seen.add(key); epCandidates.push(ep); }
         }
-        if (!epCandidates.length) return _fail('no endpoint available');
+        if (!epCandidates.length) return _fail('no tool-capable endpoint available');
 
         let result: any;
         let lastErr: any;
