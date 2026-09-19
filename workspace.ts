@@ -916,7 +916,7 @@ window._fgPlayRaw=function(data,rate,ch){
     if(!window._fgAudioCtx)window._fgAudioCtx=new AudioContext();
     const ctx=window._fgAudioCtx;
     // Decode PCM: Pyodide passes Python bytes as Uint8Array
-    let raw: Uint8Array | null;
+    let raw;
     if(data instanceof Uint8Array)raw=data;
     else if(ArrayBuffer.isView(data))raw=new Uint8Array(data.buffer,data.byteOffset,data.byteLength);
     else{try{const j=data.toJs?.();raw=j instanceof Uint8Array?j:null;}catch(_){raw=null;}if(!raw)return;}
@@ -1761,7 +1761,7 @@ function renderIdbTree(parentEl, node, depth, pathPrefix, fileOrder) {
                     const idbRecs = await listWorkspaceFiles();
                     const filesDict = {};
                     for (const rec of idbRecs) filesDict[rec.name] = rec.content;
-                    openArtifactTab(f.name, _buildPyRunnerHtml(f.name, code, filesDict));
+                    openArtifactTab(f.name, _buildPyRunnerHtml(f.name, code, filesDict), { isPreview: false });
                 } catch (err) { alert(`Run failed: ${err.message}`); }
                 finally { play.textContent = '▶'; play.disabled = false; }
             };

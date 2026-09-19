@@ -529,7 +529,7 @@ async function _replaceAsync(str, re, asyncFn) {
     return str.replace(re, () => results[i++]);
 }
 
-async function openArtifactTab(title, html) {
+async function openArtifactTab(title, html, { isPreview = true } = {}) {
     const inlined = await _inlineWorkspaceRefs(html);
     const content = _wrapArtifact(inlined);
     const key = `artifact:${title}`;
@@ -561,7 +561,7 @@ async function openArtifactTab(title, html) {
     panel.appendChild(iframe);
     document.getElementById('tab-content').appendChild(panel);
 
-    fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview: true });
+    fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview });
     activateTab(key);
 }
 window.openArtifactTab = openArtifactTab;
