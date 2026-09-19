@@ -237,7 +237,7 @@ function execToolSpec() {
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
                 `Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) running via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. ${_noReadBash}` +
-                'Python: workspace files pre-loaded, writes sync back; numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for extras. Image files (png, jpg, gif, …) auto-detected and displayed inline — after the call, copy the [IMAGE:filename] marker from tool stdout into your reply to embed (do NOT print it from Python). No subprocess, no network (use fetch_url). ' +
+                'Python: workspace files pre-loaded, writes sync back; numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for extras. Image files (png, jpg, gif, …) auto-detected and displayed inline — after the call, copy the [IMAGE:filename] marker from tool stdout into your reply to embed (do NOT print it from Python). No subprocess, no network (use fetch_url). pygame/GUI: cannot run inside execute_code — write the game to a .py file with write_file and tell the user to open it from the file panel to play it in the browser (full canvas + audio supported). ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'python', 'javascript'];
         } else if (hasWasm) {
@@ -247,7 +247,7 @@ function execToolSpec() {
             languages = ['bash', 'javascript'];
         } else if (hasPyodide) {
             description = 'Execute Python (Pyodide) or JavaScript (browser sandbox) in-page. ' +
-                'Python: files pre-loaded, writes sync back; only numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for anything else. Image files (png, jpg, gif, …) auto-detected and displayed inline — after the call, copy the [IMAGE:filename] marker from tool stdout into your reply to embed (do NOT print it from Python). No subprocess, no network (use fetch_url). ' +
+                'Python: files pre-loaded, writes sync back; only numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for anything else. Image files (png, jpg, gif, …) auto-detected and displayed inline — after the call, copy the [IMAGE:filename] marker from tool stdout into your reply to embed (do NOT print it from Python). No subprocess, no network (use fetch_url). pygame/GUI: cannot run inside execute_code — write the game to a .py file with write_file and tell the user to open it from the file panel to play it in the browser (full canvas + audio supported). ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages or require() of project modules.';
             languages = ['python', 'javascript'];
         } else {
