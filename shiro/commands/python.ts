@@ -139,7 +139,8 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
 
   // Case 1: relative-path writes (most common) — CWD was /shiro/workspace
   //   /shiro/workspace/foo.xlsx → /workspace/foo.xlsx in Shiro shell → IDB
-  await walkAndSync('/shiro', '/').catch(() => {});
+  // Use '' (not '/') so paths don't get a leading double-slash ('//workspace').
+  await walkAndSync('/shiro', '').catch(() => {});
   // Case 2: absolute-path writes — Python used open('/workspace/foo', ...)
   //   Pyodide /workspace/foo → Shiro shell /workspace/foo → IDB
   await walkAndSync('/workspace', '/workspace').catch(() => {});
@@ -185,6 +186,21 @@ function _collectOutput(py: any, ctx: CommandContext): number {
 }
 
 /**
+ * Best-effort drain of the StringIO buffers on the exception path.
+ * Preserves any output printed before the error; safe to call even if
+ * the preamble never ran (the inner try/catch swallows the NameError).
+ */
+function _tryDrainBuffers(py: any, ctx: CommandContext): void {
+  try {
+    const o = py.runPython('_shiro_out.getvalue()');
+    const e = py.runPython('_shiro_err.getvalue()');
+    py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
+    if (o) ctx.stdout += o;
+    if (e) ctx.stderr += e;
+  } catch { /* buffers not initialised — ignore */ }
+}
+
+/**
  * Extract an exit code from a Pyodide exception.
  * sys.exit(N) raises SystemExit — return N instead of treating it as an error.
  * Any other exception is a real error: write the message to stderr and return 1.
@@ -218,8 +234,8 @@ export const pythonCmd: Command = {
     const mIdx = args.indexOf('-m');
     if (mIdx !== -1 && args[mIdx + 1]) {
       const mod = args[mIdx + 1];
-      // Run the module by constructing the equivalent of `python -m mod`
-      await syncToNative(py, ctx, ctx.cwd);
+      // Always sync from workspace root so imports from any directory work
+      await syncToNative(py, ctx, '/workspace');
       const beforeMtimes = snapshotMtimes(py, '/shiro');
       let exitCode = 0;
       try {
@@ -227,6 +243,7 @@ export const pythonCmd: Command = {
         py.runPython(`import runpy; runpy.run_module(${JSON.stringify(mod)}, run_name='__main__', alter_sys=True)`);
         exitCode = _collectOutput(py, ctx);
       } catch (err: any) {
+        _tryDrainBuffers(py, ctx);
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
@@ -238,8 +255,8 @@ export const pythonCmd: Command = {
     const cIdx = args.indexOf('-c');
     if (cIdx !== -1 && args[cIdx + 1]) {
       const code = args[cIdx + 1];
-      // Seed workspace files so the one-liner can read/import them
-      await syncToNative(py, ctx, ctx.cwd);
+      // Always sync from workspace root so imports from any directory work
+      await syncToNative(py, ctx, '/workspace');
       const beforeMtimes = snapshotMtimes(py, '/shiro');
       let exitCode = 0;
       try {
@@ -247,6 +264,7 @@ export const pythonCmd: Command = {
         py.runPython(code);
         exitCode = _collectOutput(py, ctx);
       } catch (err: any) {
+        _tryDrainBuffers(py, ctx);
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
@@ -266,7 +284,8 @@ export const pythonCmd: Command = {
         return 2;
       }
 
-      await syncToNative(py, ctx, ctx.cwd);
+      // Always sync from workspace root so sibling-directory imports work
+      await syncToNative(py, ctx, '/workspace');
       const beforeMtimes = snapshotMtimes(py, '/shiro');
 
       let exitCode = 0;
@@ -275,6 +294,7 @@ export const pythonCmd: Command = {
         py.runPython(content);
         exitCode = _collectOutput(py, ctx);
       } catch (err: any) {
+        _tryDrainBuffers(py, ctx);
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
@@ -318,9 +338,12 @@ _shiro_err = io.StringIO()
 sys.stdout = _shiro_out
 sys.stderr = _shiro_err
 `);
-              // Use exec for statements, eval for expressions
+              // Use exec for statements, eval for expressions.
+              // Capture any runtime exception in evalError so the traceback can
+              // be shown after the normal stdout/stderr buffer drain below.
+              let evalError: string | null = null;
               try {
-                const result = py.runPython(`
+                py.runPython(`
 try:
     _r = eval(${JSON.stringify(input)})
     if _r is not None:
@@ -328,14 +351,28 @@ try:
 except SyntaxError:
     exec(${JSON.stringify(input)})
 `);
-              } catch {}
+              } catch (evalErr: any) {
+                // Pyodide raises Python exceptions as JS errors; the traceback is
+                // in .message.  We handle SystemExit specially.
+                const msg: string = evalErr?.message ?? String(evalErr);
+                if (evalErr?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
+                  const m = msg.match(/SystemExit:\s*(-?\d+)/);
+                  const code = m ? parseInt(m[1], 10) : 0;
+                  py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
+                  term.exitRawMode();
+                  resolve(code);
+                  return;
+                }
+                evalError = msg;
+              }
               const stdout = py.runPython('_shiro_out.getvalue()');
               const stderr = py.runPython('_shiro_err.getvalue()');
               py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
               if (stdout) term.writeOutput(stdout.replace(/\n/g, '\r\n'));
               if (stderr) term.writeOutput(stderr.replace(/\n/g, '\r\n'));
+              if (evalError) term.writeOutput(evalError.replace(/\n/g, '\r\n') + '\r\n');
             } catch (err: any) {
-              term.writeOutput(err.message.replace(/\n/g, '\r\n') + '\r\n');
+              term.writeOutput((err?.message ?? String(err)).replace(/\n/g, '\r\n') + '\r\n');
             }
           }
 
@@ -403,4 +440,10 @@ export const pipCmd: Command = {
       return 1;
     }
   },
+};
+
+export const pip3Cmd: Command = {
+  ...pipCmd,
+  name: 'pip3',
+  description: 'Python 3 package manager',
 };
