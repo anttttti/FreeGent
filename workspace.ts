@@ -748,11 +748,16 @@ export async function agentWriteFile(path, content, encoding = null) {
             await writeWorkspaceFile(path, content, null, encoding);
         }
     } else {
-        let wroteToFsa = false;
+        // Always mirror to IDB so listWorkspaceFiles() stays current for the Pyodide
+        // worker's next call. Without this, files that exist in an FSA-synced folder get
+        // written to FSA only (wroteToFsa=true skips IDB), leaving IDB stale. The Pyodide
+        // worker's migration loop then re-reads IDB on the next execute_code call and
+        // overwrites the correctly-persisted IDBFS content with the stale IDB version —
+        // making Python-written files disappear between calls.
         if (fsaHandle) {
-            try { await readFsaFile(path); await writeFsaFile(path, content); wroteToFsa = true; } catch {}
+            try { await readFsaFile(path); await writeFsaFile(path, content); } catch {}
         }
-        if (!wroteToFsa) await writeWorkspaceFile(path, content, null, encoding);
+        await writeWorkspaceFile(path, content, null, encoding);
     }
     await renderFileList();
     if (path === 'AGENTS.md')       loadAgentsContext?.();
