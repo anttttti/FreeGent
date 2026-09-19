@@ -23,7 +23,8 @@ async function ensurePyodide(ctx: CommandContext): Promise<any> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    ctx.stdout += 'Loading Python (Pyodide)... ';
+    // Status goes to stderr — it's diagnostic, not program output.
+    ctx.stderr += 'Loading Python (Pyodide)...\n';
 
     // Load Pyodide loader script via importScripts-like eval
     const loaderUrl = `${PYODIDE_CDN}/pyodide.mjs`;
@@ -35,7 +36,6 @@ async function ensurePyodide(ctx: CommandContext): Promise<any> {
       indexURL: PYODIDE_CDN,
     });
 
-    ctx.stdout += 'done.\n';
     return pyodide;
   })();
 
@@ -47,13 +47,10 @@ async function ensurePyodide(ctx: CommandContext): Promise<any> {
   }
 }
 
-/** Mount Shiro FS files into Pyodide's virtual FS */
+/** Mount Shiro FS files into Pyodide's virtual FS under /shiro */
 async function syncToNative(py: any, ctx: CommandContext, dir: string) {
   try {
-    // Create /shiro mount point in Pyodide's FS
     try { py.FS.mkdir('/shiro'); } catch { /* exists */ }
-
-    // Copy files from Shiro FS into Pyodide's in-memory FS
     const entries = await ctx.fs.readdir(dir);
     for (const entry of entries) {
       if (entry === '.git') continue;
@@ -66,8 +63,8 @@ async function syncToNative(py: any, ctx: CommandContext, dir: string) {
           await syncToNative(py, ctx, fullPath);
         } else {
           const content = await ctx.fs.readFile(fullPath);
-          const dir = pyPath.split('/').slice(0, -1).join('/');
-          try { py.FS.mkdirTree(dir); } catch { /* exists */ }
+          const pyParentDir = pyPath.slice(0, pyPath.lastIndexOf('/'));
+          try { py.FS.mkdirTree(pyParentDir); } catch { /* exists */ }
           if (content instanceof Uint8Array) {
             py.FS.writeFile(pyPath, content);
           } else {
@@ -113,6 +110,8 @@ function snapshotMtimes(py: any, dir: string, out = new Map<string, number>()): 
  *   /workspace/<name>    — absolute /workspace/… writes
  */
 async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<string, number>) {
+  const visited = new Set<string>();
+
   const walkAndSync = async (pyDir: string, shellDir: string) => {
     let entries: string[];
     try { entries = py.FS.readdir(pyDir); } catch { return; }
@@ -125,6 +124,7 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
         if (py.FS.isDir(st.mode)) {
           await walkAndSync(pyPath, shellPath);
         } else {
+          visited.add(pyPath);
           // Skip files that Python did not touch (mtime unchanged since seeding)
           const prevMs = beforeMtimes.get(pyPath);
           const curMs  = st.mtime instanceof Date ? st.mtime.getTime() : (st.mtime ?? 0);
@@ -143,6 +143,45 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
   // Case 2: absolute-path writes — Python used open('/workspace/foo', ...)
   //   Pyodide /workspace/foo → Shiro shell /workspace/foo → IDB
   await walkAndSync('/workspace', '/workspace').catch(() => {});
+
+  // Sync deletions: files seeded into /shiro but gone after the run were deleted by Python.
+  for (const pyPath of beforeMtimes.keys()) {
+    if (!visited.has(pyPath) && pyPath.startsWith('/shiro/')) {
+      // /shiro/workspace/foo.txt → /workspace/foo.txt in Shiro shell
+      const shellPath = pyPath.slice('/shiro'.length);
+      try { await ctx.fs.unlink(shellPath); } catch { /* already gone */ }
+    }
+  }
+}
+
+/**
+ * Python preamble injected before every script/one-liner.
+ * Sets sys.argv, cwd, sys.path, and redirects stdout/stderr into StringIO buffers.
+ */
+function _preamble(cwd: string, argv: string[]): string {
+  const pyDir = `/shiro${cwd}`;
+  return `
+import sys, io, os
+sys.argv = ${JSON.stringify(argv)}
+os.chdir(${JSON.stringify(pyDir)})
+for _p in [${JSON.stringify(pyDir)}, '/shiro/workspace']:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+_shiro_out = io.StringIO()
+_shiro_err = io.StringIO()
+sys.stdout = _shiro_out
+sys.stderr = _shiro_err
+`.trim();
+}
+
+/** Drain the StringIO stdout/stderr buffers and restore real streams. Returns exit code 0. */
+function _collectOutput(py: any, ctx: CommandContext): number {
+  const stdout = py.runPython('_shiro_out.getvalue()');
+  const stderr = py.runPython('_shiro_err.getvalue()');
+  py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
+  if (stdout) ctx.stdout += stdout;
+  if (stderr) ctx.stderr += stderr;
+  return 0; // stderr output (warnings, logging) is not a failure
 }
 
 /**
@@ -155,10 +194,7 @@ function _extractExitCode(err: any, ctx: CommandContext): number {
   // Pyodide wraps SystemExit; the message is typically "SystemExit: N" or just "N"
   if (err?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
     const match = msg.match(/SystemExit:\s*(-?\d+)/);
-    const code  = match ? parseInt(match[1], 10) : 0;
-    // sys.exit(0) is silent; non-zero exit writes the code to stderr like CPython does
-    if (code !== 0) ctx.stderr += `\n`;
-    return code;
+    return match ? parseInt(match[1], 10) : 0;
   }
   ctx.stderr += msg + '\n';
   return 1;
@@ -178,6 +214,26 @@ export const pythonCmd: Command = {
 
     const args = ctx.args;
 
+    // python3 -m module  (e.g. python -m pytest, python -m unittest)
+    const mIdx = args.indexOf('-m');
+    if (mIdx !== -1 && args[mIdx + 1]) {
+      const mod = args[mIdx + 1];
+      // Run the module by constructing the equivalent of `python -m mod`
+      await syncToNative(py, ctx, ctx.cwd);
+      const beforeMtimes = snapshotMtimes(py, '/shiro');
+      let exitCode = 0;
+      try {
+        py.runPython(_preamble(ctx.cwd, ['python', '-m', mod, ...args.slice(mIdx + 2)]));
+        py.runPython(`import runpy; runpy.run_module(${JSON.stringify(mod)}, run_name='__main__', alter_sys=True)`);
+        exitCode = _collectOutput(py, ctx);
+      } catch (err: any) {
+        exitCode = _extractExitCode(err, ctx);
+      } finally {
+        await syncFromNative(py, ctx, beforeMtimes);
+      }
+      return exitCode;
+    }
+
     // python3 -c "code"
     const cIdx = args.indexOf('-c');
     if (cIdx !== -1 && args[cIdx + 1]) {
@@ -187,22 +243,9 @@ export const pythonCmd: Command = {
       const beforeMtimes = snapshotMtimes(py, '/shiro');
       let exitCode = 0;
       try {
-        py.runPython(`
-import sys, io, os
-sys.argv = ['python', '-c']
-os.chdir('/shiro${ctx.cwd}')
-_shiro_out = io.StringIO()
-_shiro_err = io.StringIO()
-sys.stdout = _shiro_out
-sys.stderr = _shiro_err
-`);
+        py.runPython(_preamble(ctx.cwd, ['python', '-c']));
         py.runPython(code);
-        const stdout = py.runPython('_shiro_out.getvalue()');
-        const stderr = py.runPython('_shiro_err.getvalue()');
-        py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-        if (stdout) ctx.stdout += stdout;
-        if (stderr) ctx.stderr += stderr;
-        exitCode = 0; // stderr output (warnings, logging) is not a failure
+        exitCode = _collectOutput(py, ctx);
       } catch (err: any) {
         exitCode = _extractExitCode(err, ctx);
       } finally {
@@ -223,33 +266,17 @@ sys.stderr = _shiro_err
         return 2;
       }
 
-      // Sync CWD to Pyodide FS
       await syncToNative(py, ctx, ctx.cwd);
-      // Snapshot mtimes after seeding so syncFromNative can skip unchanged files
       const beforeMtimes = snapshotMtimes(py, '/shiro');
 
       let exitCode = 0;
       try {
-        py.runPython(`
-import sys, io, os
-sys.argv = ${JSON.stringify(['python', scriptArg, ...args.slice(args.indexOf(scriptArg) + 1)])}
-os.chdir('/shiro${ctx.cwd}')
-_shiro_out = io.StringIO()
-_shiro_err = io.StringIO()
-sys.stdout = _shiro_out
-sys.stderr = _shiro_err
-`);
+        py.runPython(_preamble(ctx.cwd, ['python', scriptArg, ...args.slice(args.indexOf(scriptArg) + 1)]));
         py.runPython(content);
-        const stdout = py.runPython('_shiro_out.getvalue()');
-        const stderr = py.runPython('_shiro_err.getvalue()');
-        py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-        if (stdout) ctx.stdout += stdout;
-        if (stderr) ctx.stderr += stderr;
-        exitCode = 0; // stderr output (warnings, logging) is not a failure
+        exitCode = _collectOutput(py, ctx);
       } catch (err: any) {
         exitCode = _extractExitCode(err, ctx);
       } finally {
-        // Sync any files Python wrote back to Shiro FS / IDB workspace
         await syncFromNative(py, ctx, beforeMtimes);
       }
       return exitCode;
