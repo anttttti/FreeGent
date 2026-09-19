@@ -164,15 +164,22 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
     if (activeChatId && typeof restoreCheckpointWorkspace === 'function') {
         try {
             const { localFiles } = await restoreCheckpointWorkspace(activeChatId, ckptId);
-            if (localFiles.length > 0) {
+            // Only offer local-file restore when a folder is actually synced via FSA.
+            // Without an active FSA handle, writeFsaFile throws immediately and the
+            // dialog's "Restore all" button appears to do nothing — the retry also
+            // stalls if createWritable() hangs waiting for a browser permission prompt.
+            const _canWriteLocal = typeof writeFsaFile === 'function'
+                                && typeof hasLocalFolder === 'function' && hasLocalFolder();
+            if (localFiles.length > 0 && _canWriteLocal) {
                 const ok = await _confirmLocalRestore(localFiles.length);
-                if (ok && typeof writeFsaFile === 'function') {
-                    for (const f of localFiles) {
+                if (ok) {
+                    // Parallel writes: don't let one stalled FSA handle block the rest.
+                    await Promise.all(localFiles.map(async f => {
                         try {
                             if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
                             else await writeFsaFile(f.name, f.content);
                         } catch {}
-                    }
+                    }));
                 }
             }
             renderFileList?.();
