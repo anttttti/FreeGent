@@ -402,7 +402,8 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
 }
 
 // Inline external CSS and JS file references so the HTML is self-contained for srcdoc.
-// Handles: <link rel="stylesheet" href="...">, <script src="..." [type="module"]>
+// Handles: <link rel="stylesheet" href="...">, <script src="..." [type="module"]>,
+//          inline <script> blocks containing static ES import statements.
 async function _inlineWorkspaceRefs(html) {
     const readFile = typeof agentReadFile === 'function' ? agentReadFile : null;
     if (!readFile) return html;
@@ -433,6 +434,41 @@ async function _inlineWorkspaceRefs(html) {
                     : await readFile(src);
                 if (js == null) return match;
                 return `<script>\n${js}\n</script>`;
+            } catch { return match; }
+        });
+
+    // Inline static ES import statements inside inline <script> blocks.
+    // Agent-generated HTML often writes <script>import {x} from './x.js'</script> without
+    // type="module", which causes "Unexpected token 'import'" in a classic script context.
+    // We handle it the same way as <script src="..." type="module">: recursively inline the
+    // imported workspace files and strip import/export keywords, yielding a classic script.
+    // External imports (http//) are left as-is so the browser can handle them natively.
+    const _STATIC_IMPORT_RE = /^\s*import\s+(?:(?:\*\s+as\s+\w+|(?:\w+|{[^}]*})(?:\s*,\s*(?:\*\s+as\s+\w+|\w+|{[^}]*}))*)\s+from\s+)?['"][^'"]+['"]\s*;?/m;
+    html = await _replaceAsync(html,
+        /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+        async (match, attrs, content) => {
+            // Skip external-src scripts (already handled above) and scripts without static imports.
+            if (/\bsrc=/i.test(attrs)) return match;
+            if (!_STATIC_IMPORT_RE.test(content)) return match;
+            try {
+                const importRe = /^\s*import\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]\s*;?/gm;
+                const localDeps: string[] = [];
+                let im: RegExpExecArray | null;
+                while ((im = importRe.exec(content)) !== null) {
+                    const dep = im[1];
+                    if (!dep.startsWith('http') && !dep.startsWith('//'))
+                        localDeps.push(dep.startsWith('./') ? dep.slice(2) : dep);
+                }
+                if (!localDeps.length) return match; // only external imports — leave for browser
+                const depSrcs = await Promise.all(localDeps.map(d => _inlineJsModule(d, readFile)));
+                // Strip static import/export declarations from the inline script body.
+                const stripped = content
+                    .replace(/^\s*import\s+(?:[^'"]*?\s+from\s+)?['"][^'"]+['"]\s*;?/gm, '')
+                    .replace(/^\s*export\s+default\s+/gm, '')
+                    .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
+                    .replace(/^(\s*)export\s+((?:async\s+)?(?:function|class|const|let|var)\s)/gm, '$1$2');
+                const cleanAttrs = attrs.replace(/\s*\btype=["']module["']/gi, '').trim();
+                return `<script${cleanAttrs ? ' ' + cleanAttrs : ''}>\n${[...depSrcs, stripped].join('\n')}\n</script>`;
             } catch { return match; }
         });
 

@@ -168,14 +168,40 @@ self.onmessage = async ({ data }) => {
             : '/workspace';
         const workDir = fileDir || '/workspace';
 
-        // Add workspace paths to sys.path so local .py files are importable
-        // without needing micropip. Standard Pyodide does NOT include '' (CWD) in
-        // sys.path, so os.chdir('/workspace') alone is not enough.
+        // Build the full set of sys.path entries needed:
+        // • /workspace and workDir (already existed)
+        // • every /workspace sub-directory that directly contains a .py file
+        //   so that `import browser_display` works when the file lives at
+        //   /workspace/stock_market_app/browser_display.py.
+        const _sysPaths = new Set<string>(['/workspace', workDir]);
+        for (const name of Object.keys(files || {})) {
+            if (!name.endsWith('.py')) continue;
+            const slash = name.lastIndexOf('/');
+            if (slash > 0) _sysPaths.add('/workspace/' + name.slice(0, slash));
+        }
+
+        // Invalidate sys.modules entries for every workspace .py file so that
+        // edits between execute_code calls aren't silently served from cache.
+        // Both bare-name ("browser_display") and package-style ("app.utils")
+        // forms are cleared so either import style gets a fresh load.
+        const _wsModuleNames: string[] = [];
+        for (const name of Object.keys(files || {})) {
+            if (!name.endsWith('.py')) continue;
+            const stem  = name.replace(/\.py$/, '');
+            const parts = stem.split('/');
+            _wsModuleNames.push(parts[parts.length - 1]);          // bare: browser_display
+            if (parts.length > 1) _wsModuleNames.push(parts.join('.')); // pkg: stock_market_app.browser_display
+        }
+
         await pyodide.runPythonAsync(`
 import sys
-for _p in ['/workspace', ${JSON.stringify(workDir)}]:
+for _p in ${JSON.stringify([..._sysPaths])}:
     if _p not in sys.path:
         sys.path.insert(0, _p)
+# Clear cached workspace modules so edits take effect on re-import.
+for _m in ${JSON.stringify(_wsModuleNames)}:
+    for _k in [_k for _k in list(sys.modules.keys()) if _k == _m or _k.startswith(_m + '.')]:
+        del sys.modules[_k]
 `);
 
         let stdout: string = '';

@@ -96,7 +96,11 @@ export function sessionSaveRawMessage(chatId, entry) {
         list.push({ ts: Date.now(), ...entry });
         if (list.length > _RAW_CAP) list.splice(0, list.length - _RAW_CAP);
         localStorage.setItem(key, JSON.stringify(list));
-    } catch (e) { console.warn('[session-store] raw capture localStorage fallback failed:', e?.message); }
+    } catch (e) {
+        // Quota errors are expected in long sessions — don't spam the console.
+        if (!(e instanceof DOMException && e.name === 'QuotaExceededError'))
+            console.warn('[session-store] raw capture localStorage fallback failed:', e?.message);
+    }
 }
 
 function sessionLoadRawMessages(chatId) {
