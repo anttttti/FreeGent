@@ -419,10 +419,17 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         }
         if (repeatCache) {
             const key = `${name}|${JSON.stringify(args)}`;
-            repeatCache.set(key, result);
-            // Evict oldest entries when the cache grows beyond the cap.
-            while (repeatCache.size > _REPEAT_CACHE_MAX)
-                repeatCache.delete(repeatCache.keys().next().value);
+            if (!result?.error) {
+                // Only cache successful results. Error results are retryable — caching them
+                // would fire a spurious 'tool_repeat' nudge on retry and hand the model the
+                // same failure instead of letting it try again (e.g. 'context budget exhausted').
+                repeatCache.set(key, result);
+                // Evict oldest entries when the cache grows beyond the cap.
+                while (repeatCache.size > _REPEAT_CACHE_MAX)
+                    repeatCache.delete(repeatCache.keys().next().value);
+            }
+            // Eviction for side-effecting tools runs regardless of success/error: a write
+            // or execute_code may have partially mutated state even if it returned an error.
             if (_WRITE_TOOLS.has(name)) {
                 repeatCache.clear();
             } else if (name === 'execute_code') {

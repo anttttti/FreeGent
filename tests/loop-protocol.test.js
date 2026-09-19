@@ -372,6 +372,43 @@ describe('_runToolCalls — shared tool execution (Issue 8 slice 2)', () => {
         expect(calledWith[0][1]).toEqual({ snap: 1 });   // context forwarded
         expect(started).toEqual([['read_file', 0]]);      // onStart fired before exec
     });
+
+    it('does not cache error results — a failed call can be retried without triggering onRepeat', async () => {
+        // First call returns an error (e.g. "context budget exhausted")
+        globalThis.__execToolStub = vi.fn(async () => ({ error: 'context budget exhausted' }));
+        const cache = new Map();
+        const repeated = [];
+        await window._runToolCalls(
+            [{ name: 'read_file', args: { path: 'tools.ts' } }], mkTasks(1),
+            { forWorker: false, repeatCache: cache, onRepeat: n => repeated.push(n) });
+        expect(repeated).toHaveLength(0);   // no repeat nudge on first call
+        expect(cache.size).toBe(0);         // error must not be cached
+
+        // Second call (retry) with the same args — succeeds this time
+        globalThis.__execToolStub = vi.fn(async () => ({ content: 'file contents' }));
+        await window._runToolCalls(
+            [{ name: 'read_file', args: { path: 'tools.ts' } }], mkTasks(1),
+            { forWorker: false, repeatCache: cache, onRepeat: n => repeated.push(n) });
+        expect(repeated).toHaveLength(0);   // still no repeat nudge — retry of a failed call is fine
+        expect(cache.size).toBe(1);         // success IS cached
+    });
+
+    it('caches successful results and fires onRepeat on a genuine duplicate', async () => {
+        globalThis.__execToolStub = vi.fn(async () => ({ content: 'ok' }));
+        const cache = new Map();
+        const repeated = [];
+        // First call — succeeds, gets cached
+        await window._runToolCalls(
+            [{ name: 'read_file', args: { path: 'a.ts' } }], mkTasks(1),
+            { forWorker: false, repeatCache: cache, onRepeat: n => repeated.push(n) });
+        expect(repeated).toHaveLength(0);
+        expect(cache.size).toBe(1);
+        // Second identical call — cache hit, onRepeat fires
+        await window._runToolCalls(
+            [{ name: 'read_file', args: { path: 'a.ts' } }], mkTasks(1),
+            { forWorker: false, repeatCache: cache, onRepeat: n => repeated.push(n) });
+        expect(repeated).toEqual(['read_file']);
+    });
 });
 
 // The 'agent' role's own prompt promises unlimited web_search/fetch_url/list_files rounds
