@@ -472,6 +472,24 @@ async function _inlineWorkspaceRefs(html) {
             } catch { return match; }
         });
 
+    // Promote top-level const/let declarations to window.X so inline event handlers
+    // (onclick="fetchData()") can reach them. In classic <script> blocks, const/let at
+    // top level are script-scoped — not window properties — so event attribute handlers
+    // that look up the name on window never find them.  Only column-0 declarations with
+    // a plain identifier are promoted; destructuring (const {a}=, const [a]=) and
+    // indented/nested declarations are left alone.
+    html = html.replace(
+        /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+        (match, attrs, content) => {
+            if (/\bsrc=/i.test(attrs) || /\btype=["']module["']/i.test(attrs)) return match;
+            const out = content.replace(
+                /^(const|let)\s+([a-zA-Z_$][\w$]*)\s*=/gm,
+                'window.$2 ='
+            );
+            return out === content ? match : `<script${attrs}>${out}</script>`;
+        }
+    );
+
     // Scan for quoted asset paths (audio, images, fonts) referenced in the inlined scripts.
     // For any that exist in the workspace, build a fetch() interceptor so runtime fetches resolve.
     const assetRe = /["']([^"']+\.(?:wav|mp3|ogg|flac|aac|png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot))["']/gi;
