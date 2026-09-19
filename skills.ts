@@ -616,7 +616,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - stdout / stderr / exit_code returned; exit_code != 0 means failure${_pkgNote}`);
             }
             if (hasPyodide) parts.push(`### Environment (Pyodide / browser sandbox)
-- Workspace files pre-loaded at their normal paths — \`open("local/fg-tasks/ledger.md")\` works directly
+- All workspace files are pre-loaded automatically — \`open("data.csv")\` or \`open("local/data.csv")\` works directly without any prior write_file step
 - Files written during execution sync back to the workspace automatically
 - Top-level \`await\` supported
 - Only these packages auto-load from imports: numpy, pandas, scipy, matplotlib, Pillow, scikit-learn — do not assume any other package is available
