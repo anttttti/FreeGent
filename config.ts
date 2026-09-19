@@ -1003,7 +1003,7 @@ let _wasmShell: (() => Promise<any>) | null = null;
 async function runWithWasm(code: string): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     if (!_wasmShell) {
         // Dynamic import keeps the WASM bundle out of the critical path.
-        const mod = await import(/* @vite-ignore */ './shiro/shell-singleton');
+        const mod = await import('./shiro/shell-singleton');
         _wasmShell = mod.getShell;
     }
     const shell = await _wasmShell!();

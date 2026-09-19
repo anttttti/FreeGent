@@ -299,9 +299,8 @@ export function _parseRetryAfter(resp) {
              || resp.headers.get('x-ratelimit-reset-requests')
              || resp.headers.get('x-ratelimit-reset-tokens');
     if (!raw) return null;
-    // Numeric-seconds path ONLY for purely numeric strings: parseFloat('1m30s') is 1,
-    // which silently ate every Groq-style duration ('2h' waited 2 SECONDS) — the
-    // duration branch below was dead code until this anchor check (found by test).
+    // Guard: only match purely numeric strings. Without ^…$, parseFloat('1m30s')→1
+    // would return 1 s instead of 90 s, making the duration branch below unreachable.
     if (/^\d+(?:\.\d+)?$/.test(raw.trim())) return Math.ceil(parseFloat(raw)) * 1000;
     // Duration string: "1m30.5s", "6s", "2h"
     let ms = 0;
