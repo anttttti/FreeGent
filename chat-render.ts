@@ -144,6 +144,7 @@ export function processFileLinks(container: any): void {
 
         const a = _makeFileLink(text, filePath);
         codeEl.parentNode!.insertBefore(a, codeEl);
+        a.textContent = '';   // _makeFileLink sets textContent as label; clear before wrapping the <code> el
         a.appendChild(codeEl);
     });
 
