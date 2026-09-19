@@ -16,23 +16,23 @@ describe('resolveWorkerModelSpec — tier routing', () => {
     });
 
     it('returns first active model when no spec and no role', () => {
-        // Use a model from _DEFAULT_MAIN_MODELS so getMainModelList() passes _validSpec.
-        localStorage.setItem('fg_main_models', JSON.stringify(['opencode|big-pickle']));
+        // Use a kilo noKey:true model so specHasKey passes without an API key.
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|thinkingmachines/inkling:free']));
         const result = W.resolveWorkerModelSpec(null, null);
-        expect(result).toBe('opencode|big-pickle');
+        expect(result).toBe('kilo|thinkingmachines/inkling:free');
     });
 
     it('returns first active model for execution tier (no special routing)', () => {
-        localStorage.setItem('fg_main_models', JSON.stringify(['opencode|big-pickle']));
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|thinkingmachines/inkling:free']));
         const result = W.resolveWorkerModelSpec(null, { tier: 'execution' });
-        expect(result).toBe('opencode|big-pickle');
+        expect(result).toBe('kilo|thinkingmachines/inkling:free');
     });
 
     it('orchestrator tier returns main model spec when role routing is active', () => {
-        // Set a known main model so the result is predictable.
-        localStorage.setItem('fg_main_models', JSON.stringify(['opencode|nemotron-3-ultra-free']));
+        // Use a kilo noKey:true model so specHasKey passes without an API key.
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|thinkingmachines/inkling:free']));
         localStorage.setItem('fg_agent_role_model_routing', 'true');
         const result = W.resolveWorkerModelSpec(null, { tier: 'orchestrator' });
-        expect(result).toBe('opencode|nemotron-3-ultra-free');
+        expect(result).toBe('kilo|thinkingmachines/inkling:free');
     });
 });

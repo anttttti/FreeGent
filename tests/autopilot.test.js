@@ -250,7 +250,7 @@ describe('autopilot — plan-then-execute', () => {
 
     it('writes a ledger and references it from each step prompt', async () => {
         await runToIdle();
-        const ledger = [...files.keys()].find(k => k.startsWith('tasks/ledger-'));
+        const ledger = [...files.keys()].find(k => k.startsWith('fg-tasks/ledger-'));
         expect(ledger).toBeTruthy();
         expect(files.get(ledger)).toMatch(/### Step 1/);
         expect(files.get(ledger)).toMatch(/### Step 2/);
