@@ -1685,14 +1685,7 @@ async function _handleExecuteCode(args, context) {
                 }
             } catch (e) { return { error: `Local sandbox: ${e.message} — is server.py running?` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {
-            // Browser bash via x86-64 WASM emulator + musl-static binaries.
-            // Python CLI is NOT in the WASM image — intercept before the shell gives a
-            // confusing "command not found" and redirect to execute_code(language='python').
-            const _pyInvoke = /(?:^|\n|;|&&|\|\|)\s*python3?\s+\S/m.test(args.code);
-            if (_pyInvoke && (pyodideStatus === 'ready' || pyodideStatus === 'loading')) {
-                return { error: 'python/python3 is not available in the WASM bash environment.',
-                         hint: "Run Python files with execute_code(language='python', code=<file-contents>) instead — Pyodide is loaded and workspace files are pre-populated." };
-            }
+            // Browser bash via x86-64 WASM emulator + musl-static binaries
             try { execResult = await runWithWasm(args.code); }
             catch (e) { return { error: `WASM: ${e.message}` }; }
         } else {
