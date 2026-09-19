@@ -9,7 +9,7 @@
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { KEYS } from './storage-keys.js';
-import { readFileSync, appendFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -351,6 +351,26 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     // Mirror to globalThis so ES-module free-variable reads in tools.ts see it
     // (dom.window.x = y bypasses the windowProxy set-trap; globalThis.nativeExec stays
     // undefined otherwise and execute_code bash falls through to the "Local sandbox" error).
+    // Snapshot workspace files (path → mtimeMs) for detecting writes during execute_code.
+    // Only used for local (non-Docker) execution where we can stat the filesystem directly.
+    const _snapWorkspace = (dir: string): Map<string, number> => {
+        const snap = new Map<string, number>();
+        const walk = (d: string, depth: number) => {
+            if (depth > 8) return; // guard against deeply nested repos
+            try {
+                for (const ent of readdirSync(d, { withFileTypes: true })) {
+                    if (ent.name.startsWith('.git')) continue; // skip git internals (large + uninteresting)
+                    const full = join(d, ent.name);
+                    if (ent.isFile()) {
+                        try { snap.set(full, statSync(full).mtimeMs); } catch {}
+                    } else if (ent.isDirectory()) walk(full, depth + 1);
+                }
+            } catch {}
+        };
+        if (dir) walk(dir, 0);
+        return snap;
+    };
+
     const _nativeExecFn = (language, code) => new Promise((resolve) => {
         const _dc = (bin: string, flag: string) => ['docker', ['exec', '-i', targetContainer, bin, flag, code]] as const;
         const LANG_CMD = targetContainer
@@ -360,17 +380,35 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
         const [cmd, cmdArgs] = entry;
         const MAX_OUTPUT = 200_000, MAX_RETURN = 5_000, TIMEOUT_MS = 120_000;
+        // Snapshot workspace before execution (local only — Docker workspace is on the container).
+        const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
         let stdout = '', stderr = '', done = false;
         const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
         const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true });
         child.unref();
         child.stdout?.on('data', d => { stdout += d; if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(-MAX_OUTPUT); });
         child.stderr?.on('data', d => { stderr += d; if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(-MAX_OUTPUT); });
-        child.on('close', (code) => _done({
-            stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
-            stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
-            exit_code: code ?? 0,
-        }));
+        child.on('close', (exitCode) => {
+            const result: Record<string, any> = {
+                stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
+                stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
+                exit_code: exitCode ?? 0,
+            };
+            // Detect files written/modified during execution via post-snapshot diff.
+            // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
+            if (preSnap && (exitCode ?? 0) === 0 && workspaceRoot) {
+                const written: string[] = [];
+                try {
+                    const postSnap = _snapWorkspace(workspaceRoot);
+                    for (const [p, mtime] of postSnap) {
+                        if (!preSnap.has(p) || preSnap.get(p) !== mtime)
+                            written.push(p.startsWith(workspaceRoot + '/') ? p.slice(workspaceRoot.length + 1) : p);
+                    }
+                } catch {}
+                if (written.length > 0) result.files_written = written;
+            }
+            _done(result);
+        });
         child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, stdout, stderr, exit_code: 1 }));
         const timer = setTimeout(() => {
             try { process.kill(-child.pid, 'SIGKILL'); } catch {}

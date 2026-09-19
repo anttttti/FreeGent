@@ -225,6 +225,8 @@ declare global {
     var isRoleEnabled: any;
     var loadServerKeys: any;
     var loadCfWorkerKeys: (() => Promise<void>) | undefined;
+    var hasCfTavilyKey: (() => boolean) | undefined;
+    var hasCfBraveKey:  (() => boolean) | undefined;
     var ls: any;
     var parseFrontmatter: any;
     var pyodideStatus: any;

@@ -1684,9 +1684,6 @@ async function _handleExecuteCode(args, context) {
                     execResult = { ...execResult, files_written: writtenPaths };
                 }
             } catch (e) { return { error: `Local sandbox: ${e.message} — is server.py running?` }; }
-        } else if (typeof nativeExec === 'function') {
-            try { execResult = await nativeExec(args.language, args.code); }
-            catch (e) { return { error: `nativeExec: ${e.message}` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {
             // Browser bash via x86-64 WASM emulator + musl-static binaries
             try { execResult = await runWithWasm(args.code); }

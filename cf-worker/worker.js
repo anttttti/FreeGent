@@ -17,6 +17,8 @@
  *   npx wrangler secret put CEREBRAS_API_KEY
  *   npx wrangler secret put GEMINI_API_KEY
  *   npx wrangler secret put NOUS_API_KEY
+ *   npx wrangler secret put TAVILY_API_KEY
+ *   npx wrangler secret put BRAVE_API_KEY
  *
  * Secrets are stored encrypted in Cloudflare — never in the repo code.
  * They are injected into requests as Authorization headers when the
@@ -86,6 +88,8 @@ const ALLOWED_HOSTS = new Set([
 // ── Provider → env var name ───────────────────────────────────────────────────
 // Used to inject shared keys when the client sends no Authorization header.
 // Must match _CF_PROVIDER_ENV in config.ts.
+// Note: Brave (api.search.brave.com) uses X-Subscription-Token, not Authorization —
+// its key is injected separately below after this map is applied.
 const PROVIDER_KEY_MAP = {
     'generativelanguage.googleapis.com': 'GEMINI_API_KEY',
     'api.groq.com':                      'GROQ_API_KEY',
@@ -96,6 +100,13 @@ const PROVIDER_KEY_MAP = {
     'opencode.ai':                       'OPENCODE_API_KEY',
     'tokenharbor.ai':                    'TOKENHARBOR_API_KEY',
     'api.tokenharbor.ai':                'TOKENHARBOR_API_KEY',
+    'api.tavily.com':                    'TAVILY_API_KEY',
+};
+
+// Search providers that use non-standard auth headers (not Authorization: Bearer).
+// Injected after the standard PROVIDER_KEY_MAP pass.
+const SEARCH_HEADER_MAP = {
+    'api.search.brave.com': { envKey: 'BRAVE_API_KEY', header: 'X-Subscription-Token' },
 };
 
 const CORS = {
@@ -126,6 +137,9 @@ export default {
         if (request.method === 'GET' && workerUrl.pathname === '/keys') {
             const available = {};
             for (const envKey of Object.values(PROVIDER_KEY_MAP)) {
+                available[envKey] = !!(env && env[envKey]);
+            }
+            for (const { envKey } of Object.values(SEARCH_HEADER_MAP)) {
                 available[envKey] = !!(env && env[envKey]);
             }
             return new Response(JSON.stringify(available), {
@@ -166,6 +180,18 @@ export default {
                     const envKey = PROVIDER_KEY_MAP[hostname];
                     if (envKey && env[envKey]) {
                         headers['Authorization'] = `Bearer ${env[envKey]}`;
+                    }
+                }
+
+                // Inject search-provider keys that use non-standard auth headers.
+                if (env) {
+                    const { hostname } = new URL(target);
+                    const entry = SEARCH_HEADER_MAP[hostname];
+                    if (entry) {
+                        const existing = headers[entry.header] || headers[entry.header.toLowerCase()] || '';
+                        if (!existing && env[entry.envKey]) {
+                            headers[entry.header] = env[entry.envKey];
+                        }
                     }
                 }
 
