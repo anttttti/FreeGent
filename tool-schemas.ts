@@ -237,7 +237,7 @@ function execToolSpec() {
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
                 `Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) running via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. ${_noReadBash}` +
-                'Python: workspace files pre-loaded, writes sync back; numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for extras. No subprocess, no network (use fetch_url). ' +
+                'Python: workspace files pre-loaded, writes sync back. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'python', 'javascript'];
         } else if (hasWasm) {
@@ -247,7 +247,7 @@ function execToolSpec() {
             languages = ['bash', 'javascript'];
         } else if (hasPyodide) {
             description = 'Execute Python (Pyodide) or JavaScript (browser sandbox) in-page. ' +
-                'Python: files pre-loaded, writes sync back; only numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for anything else. No subprocess, no network (use fetch_url). ' +
+                'Python: files pre-loaded, writes sync back. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages or require() of project modules.';
             languages = ['python', 'javascript'];
         } else {

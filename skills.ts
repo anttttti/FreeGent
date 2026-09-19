@@ -579,7 +579,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         description: 'Run Python via execute_code. Body adapts to the active runtime (native subprocess or Pyodide).',
         trigger: 'python, pyodide, pandas, numpy, matplotlib, scipy, micropip',
         trigger_on_filetype: '.py, .ipynb',
-        trigger_on_tool: 'write_file=>.py, write_file=>.ipynb',
+        trigger_on_tool: 'write_file=>.py, write_file=>.ipynb, execute_code',
         roles: 'coder, director',
         requires_tools: 'execute_code',
         body: '',
