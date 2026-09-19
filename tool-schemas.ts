@@ -236,7 +236,7 @@ function execToolSpec() {
         const hasWasm    = p === 'wasm';
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
-                `Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) running via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. ${_noReadBash}` +
+                `Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) running via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. python/python3 CLI is NOT in bash — use language="python" instead. ${_noReadBash}` +
                 'Python: workspace files pre-loaded, writes sync back; numpy, pandas, matplotlib, Pillow, scikit-learn auto-load from imports — use micropip.install("pkg") for extras. Image files (png, jpg, gif, …) auto-detected and displayed inline — after the call, copy the [IMAGE:filename] marker from tool stdout into your reply to embed (do NOT print it from Python). No subprocess, no network (use fetch_url). ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'python', 'javascript'];
