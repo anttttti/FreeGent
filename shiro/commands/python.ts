@@ -158,8 +158,9 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
 /**
  * Python preamble injected before every script/one-liner.
  * Sets sys.argv, cwd, sys.path, and redirects stdout/stderr into StringIO buffers.
+ * Exported for testing.
  */
-function _preamble(cwd: string, argv: string[]): string {
+export function _preamble(cwd: string, argv: string[]): string {
   const pyDir = `/shiro${cwd}`;
   return `
 import sys, io, os
@@ -204,8 +205,9 @@ function _tryDrainBuffers(py: any, ctx: CommandContext): void {
  * Extract an exit code from a Pyodide exception.
  * sys.exit(N) raises SystemExit — return N instead of treating it as an error.
  * Any other exception is a real error: write the message to stderr and return 1.
+ * Exported for testing.
  */
-function _extractExitCode(err: any, ctx: CommandContext): number {
+export function _extractExitCode(err: any, ctx: CommandContext): number {
   const msg: string = err?.message ?? String(err);
   // Pyodide wraps SystemExit; the message is typically "SystemExit: N" or just "N"
   if (err?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
@@ -406,6 +408,16 @@ export const python3Cmd: Command = {
   name: 'python3',
   description: 'Python 3 interpreter (Pyodide)',
 };
+
+/**
+ * Test-only: inject a pre-built Pyodide mock so tests don't hit the CDN.
+ * Call before the first exec() in each test; the mock persists until reset.
+ * @internal
+ */
+export function __setPyodideForTest(mock: any): void {
+  pyodide = mock;
+  loadPromise = null;
+}
 
 export const pipCmd: Command = {
   name: 'pip',
