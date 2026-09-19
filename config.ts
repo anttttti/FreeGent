@@ -991,7 +991,11 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                 stdout = (stdout ? stdout + '\n' : '') + imageNames.map(n => `[IMAGE:${n}]`).join('\n');
             if (writeErrors.length)
                 stderr = (stderr ? stderr + '\n' : '') + writeErrors.map(e => `[workspace-write-error] ${e}`).join('\n');
-            resolve({ stdout, stderr, exit_code });
+            resolve({
+                stdout, stderr, exit_code,
+                // Only present when Python produced image output — tells the agent to embed it.
+                ...(imageNames.length ? { image_note: 'Copy the [IMAGE:…] lines from stdout into your reply to display each image inline.' } : {}),
+            });
         };
         pyodideWorker.postMessage({ type: 'run', id, code, files, filepath });
     });
