@@ -229,6 +229,18 @@ if [ -n "$_PUSH_RANGE" ]; then
 
 fi  # end _PUSH_RANGE checks
 
+# 8. Test suite
+step "Tests"
+if npm test -- --reporter=verbose 2>&1 | tee /tmp/_fg_test_out.txt | tail -6; then
+    _TEST_PASS=$(grep -c '✓' /tmp/_fg_test_out.txt 2>/dev/null || echo 0)
+    _TEST_FAIL=$(grep -c '✗\|FAIL\| × ' /tmp/_fg_test_out.txt 2>/dev/null || echo 0)
+    ok "Tests passed ($_TEST_PASS)"
+else
+    echo
+    grep -E '(FAIL|✗| × |●)' /tmp/_fg_test_out.txt | head -20 >&2
+    fail "Test suite failed — fix before deploying."
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 if $DO_GIT || ! $DO_DEPLOY; then
     step "Build"
