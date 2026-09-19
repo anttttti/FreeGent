@@ -1640,7 +1640,14 @@ async function _handleExecuteCode(args, context) {
         // hit localhost:5000 or the Pyodide-loading-forever path.
         try { execResult = await nativeExec(args.language, args.code); }
         catch (e) { return { error: `nativeExec: ${e.message}` }; }
-    } else if (args.language !== 'bash' && args.language !== 'javascript' && !_needsDisplay && (pyodideStatus === 'ready' || pyodideStatus === 'loading')) {
+    } else if (_needsDisplay && args.language !== 'bash' && args.language !== 'javascript') {
+        // pygame / tkinter / etc. need a real canvas — execute_code can't provide one.
+        // The browser pygame runner (launched from the file panel) handles this: write
+        // the game to a .py file and the user can run it in-browser with canvas + audio.
+        return { error: 'pygame and other GUI libraries cannot run inside execute_code (no display). ' +
+            'Write the game to a .py file using write_file, then tell the user to open it from the file panel — ' +
+            'the browser pygame runner provides a full canvas and synthesised audio.' };
+    } else if (args.language !== 'bash' && args.language !== 'javascript' && (pyodideStatus === 'ready' || pyodideStatus === 'loading')) {
         try { execResult = await runWithPyodide(args.code); }
         catch (e) { return { error: `Pyodide: ${e.message}` }; }
     } else {
