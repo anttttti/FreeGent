@@ -20,6 +20,7 @@ import { sedCmd } from './commands/sed';
 import { globCmd } from './commands/glob';
 import { jsEvalCmd } from './commands/jseval';
 import { nodeCmd } from './commands/jseval/node-cmd';
+import { pythonCmd, python3Cmd, pipCmd } from './commands/python';
 import { FWFileSystem, WORKSPACE_MOUNT } from './fg-filesystem';
 
 let _shell: Shell | null = null;
@@ -32,7 +33,7 @@ async function createShell(): Promise<Shell> {
     commands.registerAll(shellBuiltins);
     commands.registerAll(shiroCmds);
     // Individual commands registered with priority (override builtins)
-    commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd]);
+    commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd]);
 
     // Create FreeGent-backed filesystem
     const fs = new FWFileSystem();
