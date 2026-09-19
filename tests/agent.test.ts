@@ -169,7 +169,8 @@ describe('buildSystemPrompt', () => {
 // ── Settings helpers ──────────────────────────────────────────────────────────
 
 describe('settings helpers — defaults', () => {
-    it('getProvider defaults to opencode', () => expect(W.getProvider()).toBe('opencode'));
+    // Default comes from _DEFAULT_MAIN_MODELS[0] which is a kilo free model (noKey:true).
+    it('getProvider defaults to kilo', () => expect(W.getProvider()).toBe('kilo'));
     it('getGeminiModel defaults to gemini-2.5-flash', () => expect(W.getGeminiModel()).toBe('gemini-2.5-flash'));
     it('getOAIModel defaults to mistral-medium-3.5', () => expect(W.getOAIModel()).toBe('mistral-medium-3.5'));
     it('getOAIUrl defaults to openai base', () => expect(W.getOAIUrl()).toBe('https://api.openai.com/v1'));
@@ -258,19 +259,27 @@ describe('oaiEndpoint', () => {
 // ── getActiveModel ────────────────────────────────────────────────────────────
 
 describe('getActiveModel', () => {
+    // getProvider()/getActiveModel() now read from getActiveMainModelList(), which
+    // filters by specHasKey.  Specs without a configured key are excluded, so tests
+    // must supply the matching key AND set fg_main_models to the specific model.
+
     it('returns gemini model for google provider', () => {
-        localStorage.setItem('fg_provider', 'google');
-        localStorage.setItem('fg_gemini_model', 'gemini-2.5-flash');
-        expect(W.getActiveModel()).toBe('gemini-2.5-flash');
+        localStorage.setItem('fg_gemini_key', 'AIza-test');
+        localStorage.setItem('fg_main_models', JSON.stringify(['google|gemma-4-31b-it']));
+        expect(W.getActiveModel()).toBe('gemma-4-31b-it');
     });
 
-    it('returns mistral model for mistral provider', () => {
+    it('returns mistral model for mistral provider (via legacy fg_provider migration path)', () => {
+        // Setting fg_provider without fg_main_models triggers the migration path that
+        // builds ['mistral|{fg_mistral_model}'] from per-provider localStorage keys.
         localStorage.setItem('fg_provider', 'mistral');
-        localStorage.setItem('fg_mistral_model', 'codestral-latest');
-        expect(W.getActiveModel()).toBe('codestral-latest');
+        localStorage.setItem('fg_mistral_key', 'msk-test');
+        localStorage.setItem('fg_mistral_model', 'mistral-small-latest');
+        expect(W.getActiveModel()).toBe('mistral-small-latest');
     });
 
     it('returns mistral model when mistral is in main list', () => {
+        localStorage.setItem('fg_mistral_key', 'msk-test');
         localStorage.setItem('fg_main_models', JSON.stringify(['mistral|mistral-small-latest']));
         expect(W.getActiveModel()).toBe('mistral-small-latest');
     });
@@ -340,7 +349,10 @@ describe('activeTools', () => {
 describe('performWebSearch routing', () => {
     beforeEach(() => localStorage.clear());
 
-    it('auto + Tavily key → calls Tavily API', async () => {
+    it('auto + Tavily key → calls Tavily API (via same-origin proxy in test env)', async () => {
+        // tavilySearch routes through getEffectiveProxy() when available — in jsdom the
+        // origin is http://localhost so it uses /api/proxy.  The proxy envelope wraps the
+        // real Tavily call; the key is passed as Authorization: Bearer, not in the body.
         localStorage.setItem('fg_search_provider', 'auto');
         localStorage.setItem('fg_tavily_key', 'tvly-test');
         window.fetch.mockResolvedValue({
@@ -349,11 +361,15 @@ describe('performWebSearch routing', () => {
         });
         const r = await W.performWebSearch('cats');
         expect(r.source).toBe('Tavily');
-        const [url, opts] = window.fetch.mock.calls[0];
-        expect(url).toBe('https://api.tavily.com/search');
-        const body = JSON.parse(opts.body);
-        expect(body.query).toBe('cats');
-        expect(body.api_key).toBe('tvly-test');
+        const [, opts] = window.fetch.mock.calls[0];
+        const envelope = JSON.parse(opts.body);
+        // Outer envelope targets Tavily
+        expect(envelope.url).toBe('https://api.tavily.com/search');
+        // Key forwarded as Authorization header (not in body)
+        expect(envelope.headers['Authorization']).toBe('Bearer tvly-test');
+        // Inner body carries the query
+        const inner = JSON.parse(envelope.body);
+        expect(inner.query).toBe('cats');
     });
 
     it('auto + no keys → falls back to Wikipedia', async () => {
@@ -414,7 +430,10 @@ describe('tavilySearch', () => {
         expect(r).toHaveProperty('error');
     });
 
-    it('POSTs to Tavily with correct payload', async () => {
+    it('POSTs to Tavily with correct payload (via proxy envelope)', async () => {
+        // In jsdom getEffectiveProxy() returns the same-origin /api/proxy, so tavilySearch
+        // wraps the call in a proxy envelope.  Key goes in Authorization, inner body
+        // carries the Tavily-specific fields.
         localStorage.setItem('fg_tavily_key', 'tvly-xyz');
         window.fetch.mockResolvedValue({
             ok: true,
@@ -423,11 +442,13 @@ describe('tavilySearch', () => {
         const r = await W.tavilySearch('best pizza');
         expect(r.source).toBe('Tavily');
         expect(r.results[0].title).toBe('X');
-        const body = JSON.parse(window.fetch.mock.calls[0][1].body);
-        expect(body.api_key).toBe('tvly-xyz');
-        expect(body.query).toBe('best pizza');
-        expect(body.search_depth).toBe('basic');
-        expect(body.max_results).toBe(5);
+        const envelope = JSON.parse(window.fetch.mock.calls[0][1].body);
+        expect(envelope.url).toBe('https://api.tavily.com/search');
+        expect(envelope.headers['Authorization']).toBe('Bearer tvly-xyz');
+        const inner = JSON.parse(envelope.body);
+        expect(inner.query).toBe('best pizza');
+        expect(inner.search_depth).toBe('basic');
+        expect(inner.max_results).toBe(5);
     });
 
     it('returns error on HTTP failure', async () => {

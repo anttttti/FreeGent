@@ -68,10 +68,12 @@ describe('error classifiers', () => {
 // getMainModelList() validates specs against the catalog — register the fakes as
 // custom models (same trick headless-runner uses for arbitrary --model values).
 function registerFakeModels(...specs) {
+    // noKey:true bypasses the specHasKey API-key check so getActiveMainModelList()
+    // includes these entries even without any key set in localStorage.
     localStorage.setItem('fg_custom_models', JSON.stringify(specs.map(s => {
         const [provider, model] = s.split('|');
         return { provider, model, label: model, released: '', contextK: 8, params: 0,
-                 media: ['text'], tools: true, thinking: false, note: 'test' };
+                 media: ['text'], tools: true, thinking: false, note: 'test', noKey: true };
     })));
     localStorage.setItem('fg_main_models', JSON.stringify(specs));
 }
