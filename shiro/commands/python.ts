@@ -145,6 +145,25 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
   await walkAndSync('/workspace', '/workspace').catch(() => {});
 }
 
+/**
+ * Extract an exit code from a Pyodide exception.
+ * sys.exit(N) raises SystemExit — return N instead of treating it as an error.
+ * Any other exception is a real error: write the message to stderr and return 1.
+ */
+function _extractExitCode(err: any, ctx: CommandContext): number {
+  const msg: string = err?.message ?? String(err);
+  // Pyodide wraps SystemExit; the message is typically "SystemExit: N" or just "N"
+  if (err?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
+    const match = msg.match(/SystemExit:\s*(-?\d+)/);
+    const code  = match ? parseInt(match[1], 10) : 0;
+    // sys.exit(0) is silent; non-zero exit writes the code to stderr like CPython does
+    if (code !== 0) ctx.stderr += `\n`;
+    return code;
+  }
+  ctx.stderr += msg + '\n';
+  return 1;
+}
+
 export const pythonCmd: Command = {
   name: 'python',
   description: 'Python interpreter (Pyodide)',
@@ -163,14 +182,15 @@ export const pythonCmd: Command = {
     const cIdx = args.indexOf('-c');
     if (cIdx !== -1 && args[cIdx + 1]) {
       const code = args[cIdx + 1];
+      // Seed workspace files so the one-liner can read/import them
+      await syncToNative(py, ctx, ctx.cwd);
       const beforeMtimes = snapshotMtimes(py, '/shiro');
       let exitCode = 0;
       try {
-        // Set up sys.argv
-        py.runPython(`import sys; sys.argv = ['python', '-c']`);
-        // Redirect stdout/stderr
         py.runPython(`
-import sys, io
+import sys, io, os
+sys.argv = ['python', '-c']
+os.chdir('/shiro${ctx.cwd}')
 _shiro_out = io.StringIO()
 _shiro_err = io.StringIO()
 sys.stdout = _shiro_out
@@ -182,12 +202,10 @@ sys.stderr = _shiro_err
         py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
         if (stdout) ctx.stdout += stdout;
         if (stderr) ctx.stderr += stderr;
-        exitCode = stderr ? 1 : 0;
+        exitCode = 0; // stderr output (warnings, logging) is not a failure
       } catch (err: any) {
-        ctx.stderr = err.message + '\n';
-        exitCode = 1;
+        exitCode = _extractExitCode(err, ctx);
       } finally {
-        // Sync any files Python wrote back to Shiro FS / IDB workspace
         await syncFromNative(py, ctx, beforeMtimes);
       }
       return exitCode;
@@ -227,10 +245,9 @@ sys.stderr = _shiro_err
         py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
         if (stdout) ctx.stdout += stdout;
         if (stderr) ctx.stderr += stderr;
-        exitCode = stderr ? 1 : 0;
+        exitCode = 0; // stderr output (warnings, logging) is not a failure
       } catch (err: any) {
-        ctx.stderr = err.message + '\n';
-        exitCode = 1;
+        exitCode = _extractExitCode(err, ctx);
       } finally {
         // Sync any files Python wrote back to Shiro FS / IDB workspace
         await syncFromNative(py, ctx, beforeMtimes);
