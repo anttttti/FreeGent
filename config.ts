@@ -375,7 +375,7 @@ function getAgentMaxToolResult()    { return parseInt(ls('fg_agent_max_tool_resu
 function getDirectorMaxToolResult() { return parseInt(ls('fg_director_max_tool_result', '20000'), 10); } // 0 = disabled
 export function getAgentProactiveCompact() { return ls('fg_agent_proactive_compact', 'true') !== 'false'; }
 export function getAgentCompactAt()        { return parseFloat(ls('fg_agent_compact_at', '0.75')); }
-export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '20000'), 10); }
+export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '80000'), 10); }
 
 function getAgentPlanMode()         { return ls('fg_agent_plan_mode', 'false') !== 'false'; }
 export function getAgentMaxSteps()           { return parseInt(ls('fg_agent_max_rounds', '100'), 10); }
@@ -642,7 +642,7 @@ function savePausedMainModels(arr) {
 // Populated by loadCfWorkerKeys() on startup. Empty until then (safe default).
 let _cfWorkerKeys: Record<string, boolean> = {};
 
-// Maps provider → CF Worker env var name (matching PROVIDER_KEY_MAP in worker.js)
+// Maps provider → CF Worker env var name (matching PROVIDER_KEY_MAP / SEARCH_HEADER_MAP in worker.js)
 const _CF_PROVIDER_ENV: Record<string, string> = {
     google:      'GEMINI_API_KEY',
     groq:        'GROQ_API_KEY',
@@ -651,6 +651,8 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     nous:        'NOUS_API_KEY',
     opencode:    'OPENCODE_API_KEY',
     tokenharbor: 'TOKENHARBOR_API_KEY',
+    tavily:      'TAVILY_API_KEY',
+    brave:       'BRAVE_API_KEY',
 };
 
 // Query the CF Worker /keys endpoint and cache which provider keys it has.
@@ -675,6 +677,11 @@ export async function loadCfWorkerKeys(): Promise<void> {
         }
     } catch {}
 }
+
+// Returns true if the CF Worker has a shared Tavily API key configured.
+export function hasCfTavilyKey(): boolean { return !!_cfWorkerKeys['TAVILY_API_KEY']; }
+// Returns true if the CF Worker has a shared Brave Search API key configured.
+export function hasCfBraveKey():  boolean { return !!_cfWorkerKeys['BRAVE_API_KEY'];  }
 
 // Returns true when the user has a key configured for the given provider|model spec
 // (or when the model works without a key). Mirrors _modelHasKey() in settings-ui.ts.
@@ -1067,7 +1074,8 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, getMainModelList, saveMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, loadCfWorkerKeys, getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
+    getActiveMainModelList, specHasKey, loadCfWorkerKeys, hasCfTavilyKey, hasCfBraveKey,
+    getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,
     getUtilityModel, saveUtilityModel, isUtilityDisabled,

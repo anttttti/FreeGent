@@ -1636,6 +1636,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
             if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
                 _editsThisRun = true;
+            // Also set _editsThisRun when execute_code writes workspace files (Director-role benchmarks
+            // have no write_file, so the gate only fires if bash/python wrote files — detected via
+            // files_written populated by nativeExec's pre/post filesystem snapshot in headless-runner.ts).
+            if (!_editsThisRun && results.some(r =>
+                r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
+                && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
+                _editsThisRun = true;
             // Track successful execute_code — feeds step_validation advisory mode.
             // A prior successful exec means the model can already use tools; further
             // step_validation fires should warn rather than block (T3.3/T3.7).
