@@ -599,7 +599,7 @@ const _STEP_CHECKS = [
         // confirmed as the primary driver of the v0.47→v0.50 SWE-Bench Lite regression (−6/36).
         name: 'missing_state_line', phase: 'post-state', max: 5,
         re_pass: t => _isComplete(t),   // already has COMPLETED/BLOCKED — pass
-        re_fail: t => !_isComplete(t) && mainAgentRole?.name?.toLowerCase() !== 'director',
+        re_fail: t => !_isComplete(t) && mainAgentRole?.name !== 'director',
         llmPrompt: '',                   // deterministic: no LLM judge needed
         nudge: (_text: string, _payload: any, n: number) => {
             if ((n ?? 1) >= 5) return 'You have written text five times in a row without a terminal state token. Declare COMPLETED: <answer> or BLOCKED: <reason> immediately — no further narration.';
