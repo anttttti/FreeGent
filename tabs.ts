@@ -480,15 +480,17 @@ async function _inlineWorkspaceRefs(html) {
         });
 
     // Promote top-level const/let declarations to window.X so inline event handlers
-    // (onclick="fetchData()") can reach them. In classic <script> blocks, const/let at
-    // top level are script-scoped — not window properties — so event attribute handlers
-    // that look up the name on window never find them.  Only column-0 declarations with
-    // a plain identifier are promoted; destructuring (const {a}=, const [a]=) and
-    // indented/nested declarations are left alone.
+    // (onclick="fetchData()") can reach them.  This applies to BOTH classic and
+    // type="module" scripts: in a classic script, const/let are script-scoped (not
+    // window properties); in a module script they are module-scoped.  Either way,
+    // event attribute handlers (onclick="fetchData()") look up the name on window
+    // and never find it unless we promote it.
+    // Only column-0 simple-identifier declarations are promoted; destructuring
+    // (const {a}=, const [a]=) and indented/nested declarations are left alone.
     html = html.replace(
         /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
         (match, attrs, content) => {
-            if (/\bsrc=/i.test(attrs) || /\btype=["']module["']/i.test(attrs)) return match;
+            if (/\bsrc=/i.test(attrs)) return match; // external src — skip
             const out = content.replace(
                 /^(const|let)\s+([a-zA-Z_$][\w$]*)\s*=/gm,
                 'window.$2 ='
