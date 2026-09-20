@@ -102,7 +102,7 @@ if [ -f "$WORKER" ]; then
     ok "CF Worker has no hardcoded secrets"
 fi
 
-# 5. No bench/ changes committed to FreeGent  (bench code belongs in FreeWorkerBench)
+# 5. No bench/ changes committed to FreeGent  (bench code belongs in FreeGentBench)
 # 6. No AI-agent-attributed commits            (only human-authored commits allowed)
 # 7. All commits authored by the repo owner    (bypass: FREEGENT_ALLOW_FOREIGN_AUTHOR=1)
 #
@@ -125,7 +125,7 @@ if [ -n "$_PUSH_RANGE" ]; then
         echo -e "${R}✗ bench/ changes found in commits to be pushed:${N}" >&2
         echo "$_BENCH_HITS" | sed 's/^/    /' >&2
         echo >&2
-        fail "Benchmark code belongs in FreeWorkerBench (the bench/ submodule).\n  Commit there — never directly to FreeGent."
+        fail "Benchmark code belongs in FreeGentBench (the bench/ submodule).\n  Commit there — never directly to FreeGent."
     fi
     ok "No bench/ changes in pending commits"
 
