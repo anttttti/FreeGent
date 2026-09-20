@@ -1765,7 +1765,7 @@ export async function executeToolAsync(name, args, context = null) {
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
         && !mainAgentRole.tools.has(name)) {
-        const hint = mainAgentRole.name === 'Director'
+        const hint = mainAgentRole.name === 'director'
             ? 'Delegate this via run_workers if needed.'
             : 'Output a <handover> block so the Director can use it.';
         return { error: `Tool '${name}' is not available in the current role (${mainAgentRole.name}). ${hint}` };
