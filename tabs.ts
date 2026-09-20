@@ -459,7 +459,14 @@ async function _inlineWorkspaceRefs(html) {
                     if (!dep.startsWith('http') && !dep.startsWith('//'))
                         localDeps.push(dep.startsWith('./') ? dep.slice(2) : dep);
                 }
-                if (!localDeps.length) return match; // only external imports — leave for browser
+                if (!localDeps.length) {
+                    // All imports are external (http/CDN) — the browser handles them natively,
+                    // but only in a module script.  If the tag lacks type="module", add it so
+                    // the browser doesn't throw "Unexpected token 'import'" on the import syntax.
+                    if (/\btype=["']module["']/i.test(attrs)) return match;
+                    const modAttrs = (attrs.trim() ? attrs.trim() + ' ' : '') + 'type="module"';
+                    return `<script ${modAttrs}>${content}</script>`;
+                }
                 const depSrcs = await Promise.all(localDeps.map(d => _inlineJsModule(d, readFile)));
                 // Strip static import/export declarations from the inline script body.
                 const stripped = content
