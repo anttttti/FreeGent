@@ -410,8 +410,9 @@ function _saveRoleForChat(name: string): void {
     } catch {}
 }
 function setMainAgentRole(name: string): void {
-    _setRoleObj(rolesRegistry.get(name) || null);
-    _saveRoleForChat(name);
+    const _name = name?.toLowerCase() ?? name;
+    _setRoleObj(rolesRegistry.get(_name) || null);
+    _saveRoleForChat(_name);
 }
 function clearMainAgentRole(): void {
     // Director is always the default; this restores it after a custom role is done.
@@ -1323,7 +1324,9 @@ async function executeWorkers(args: any): Promise<any> {
                 return { id: agent.id, output: output || '', staging, error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
             } catch (e) {
                 lastError = e;
-                if (attempt < MAX_RETRIES) {
+                // Permanent failures (bad auth, model discontinued, no tool support) — don't retry.
+                const isPermanent = /HTTP 40[14]|no endpoints found|invalid model|model.*not.*exist|does not exist/i.test(e.message ?? '');
+                if (attempt < MAX_RETRIES && !isPermanent) {
                     // Transient error (stream abort, network) — clear partial staging and retry
                     staging.clear();
                     handle.setOutput(`Error: ${e.message}\n[Retrying… attempt ${attempt + 2} of ${MAX_RETRIES + 1}]`);
