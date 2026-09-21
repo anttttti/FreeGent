@@ -382,6 +382,10 @@ const _COMPLETION_NUDGE = 'Protocol reminder: Previous response missing final st
 //   opts.onTaskDone : called when an update_task_status("done") runs this step
 //   opts.onResult   : (name, args, result) side-effect at completion time (e.g. convo-log)
 const _WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'replace_in_file', 'delete_file', 'execute_code']);
+// Read-only tools whose success should NOT reset the consecutiveToolFails counter.
+// An ls or read_file between failing attempts would otherwise mask a repeated-failure
+// loop (flask-4992: hit 7 consecutive fails but ls resets kept it running for 5.7M tokens).
+const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace', 'fetch_url']);
 
 async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null }): Promise<Array<{name: string; args: any; result: any}>> {
     return Promise.all(normCalls.map(async ({ name, args }, i) => {
@@ -1563,7 +1567,21 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             replNudge: _s._replaceNudgeSent,
         });
         const _execOk = _exec.filter(r => !r.result?.error).length;
-        consecutiveToolFails = _execOk > 0 ? 0 : consecutiveToolFails + _exec.length;
+        // Meaningful success: a write tool with no error, or execute_code that exited 0
+        // and produced output or wrote files. Read-only successes (read_file, list_files,
+        // search_workspace, fetch_url) do NOT reset the counter — a diagnostic ls between
+        // failing attempts should not mask a repeated-failure loop.
+        const _execMeaningful = _exec.filter(r => {
+            if (r.result?.error) return false;
+            if (_READ_ONLY_TOOLS.has(r.name)) return false;
+            if (r.name === 'execute_code') {
+                const res = r.result;
+                return (res?.exit_code ?? 0) === 0
+                    && (!!res?.stdout?.trim() || (Array.isArray(res?.files_written) && res.files_written.length > 0));
+            }
+            return true;
+        }).length;
+        consecutiveToolFails = _execMeaningful > 0 ? 0 : consecutiveToolFails + _exec.length;
         if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
