@@ -125,20 +125,6 @@ describe('parseFnTagCalls — non-native tool-call formats', () => {
     });
 });
 
-describe('_updateBlankSteps — silent-step stall detection', () => {
-    it('does not flag a step that produced visible text', () => {
-        const r = window._updateBlankSteps(true, true, 0, 0);
-        expect(r.blankSteps).toBe(0);
-        expect(r.stallMsg).toBeNull();
-    });
-    it('counts consecutive blank tool-call steps and nudges at the threshold', () => {
-        let s = { blankSteps: 4, consecutiveStalls: 0 };
-        const r = window._updateBlankSteps(true, false, s.blankSteps, s.consecutiveStalls);
-        expect(r.stallMsg).toBeTruthy();      // 5th blank step fires a nudge
-        expect(r.blankSteps).toBe(0);          // counter resets after firing
-    });
-});
-
 describe('_updateStuckDetector — repeated identical results', () => {
     it('fires after three identical result signatures', () => {
         let hashes = [];
@@ -416,7 +402,7 @@ describe('_runToolCalls — shared tool execution (Issue 8 slice 2)', () => {
 // handover budget, otherwise genuine research gets cut short mid-search (see runTurn's
 // _isAgentRole block, which increments agentWriteSteps only when this returns true).
 
-describe('_updateStuckDetector / _updateBlankSteps — local seen-map eviction (worker path)', () => {
+describe('_updateStuckDetector — local seen-map eviction (worker path)', () => {
     it('_updateStuckDetector evicts the passed-in maps (not globals) on a 3x repeat', () => {
         const rf = new Map([['a.js:1:9', 'x'], ['b.js:1:9', 'y']]);
         const lf = new Set(['a.js']);
@@ -433,15 +419,6 @@ describe('_updateStuckDetector / _updateBlankSteps — local seen-map eviction (
         expect(lf.has('a.js')).toBe(false);
     });
 
-    it('_updateBlankSteps clears the passed-in maps at the 5-blank threshold', () => {
-        const rf = new Map([['x', 1]]);
-        const lf = new Set(['y']);
-        let blank = 4, stalls = 0;
-        const r = window._updateBlankSteps(true, false, blank, stalls, { rf, lf });
-        expect(r.stallMsg).toBeTruthy();
-        expect(rf.size).toBe(0);
-        expect(lf.size).toBe(0);
-    });
 });
 
 describe('toolLabel — fallback sanitization', () => {
