@@ -173,7 +173,10 @@ export class FWFileSystem extends FileSystem {
                 // Use _base64ToBytes (robust against interior '=' from legacy chunked encoding).
                 return encoding === 'utf8' ? rec.content as string : _base64ToBytes(rec.content as string);
             }
-            const content = rec.content as string ?? '';
+            // Normalize CRLF → LF so musl sed/awk/grep work correctly on files that
+            // were stored with Windows line endings (e.g. written by a browser agent or
+            // copy-pasted from Windows).  Binary files already exit above via 'base64'.
+            const content = (rec.content as string ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             if (encoding === 'utf8') return content;
             return enc.encode(content);
         }
@@ -213,7 +216,7 @@ export class FWFileSystem extends FileSystem {
                 // Don't corrupt a binary file with a text append — no-op for binary workspace files.
                 return;
             }
-            const existing = rec?.content as string ?? '';
+            const existing = (rec?.content as string ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             const addition = typeof data === 'string' ? data : dec.decode(data);
             await agentWriteFile(wsPath, existing + addition);
             return;

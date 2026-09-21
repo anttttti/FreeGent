@@ -420,8 +420,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const chatId = activeChatId;
         if (!chatId) return;
         const text = (input as HTMLElement)?.innerText?.trim() ?? '';
-        if (text) localStorage.setItem(`fg_draft_${chatId}`, text);
-        else localStorage.removeItem(`fg_draft_${chatId}`);
+        try {
+            if (text) localStorage.setItem(`fg_draft_${chatId}`, text);
+            else localStorage.removeItem(`fg_draft_${chatId}`);
+        } catch (e) {
+            // QuotaExceededError: localStorage full — draft is convenience-only, silently skip.
+            if (!(e instanceof DOMException && e.name === 'QuotaExceededError')) console.warn('[init] _saveDraft localStorage failed:', e);
+        }
     }
     function _restoreDraft(chatId: string): void {
         const draft = chatId ? localStorage.getItem(`fg_draft_${chatId}`) : null;

@@ -143,7 +143,16 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
   await walkAndSync('/shiro', '').catch(() => {});
   // Case 2: absolute-path writes — Python used open('/workspace/foo', ...)
   //   Pyodide /workspace/foo → Shiro shell /workspace/foo → IDB
-  await walkAndSync('/workspace', '/workspace').catch(() => {});
+  //
+  // Skip when /workspace is a symlink to /shiro/workspace (the preamble creates one
+  // so that agent code using hardcoded /workspace/... paths works). Case 1 already
+  // covers all those files; running Case 2 on a symlink would bypass the mtime guard
+  // (beforeMtimes only has /shiro/... keys) and re-write every file on every run.
+  let _wsIsSymlink = false;
+  try { py.FS.readlink('/workspace'); _wsIsSymlink = true; } catch { /* not a symlink or absent */ }
+  if (!_wsIsSymlink) {
+    await walkAndSync('/workspace', '/workspace').catch(() => {});
+  }
 
   // Sync deletions: files seeded into /shiro but gone after the run were deleted by Python.
   for (const pyPath of beforeMtimes.keys()) {
@@ -169,6 +178,13 @@ os.chdir(${JSON.stringify(pyDir)})
 for _p in [${JSON.stringify(pyDir)}, '/shiro/workspace']:
     if _p not in sys.path:
         sys.path.insert(0, _p)
+# Make /workspace an alias for /shiro/workspace so scripts using hardcoded
+# /workspace/... paths (common in agent-generated code) work without changes.
+try:
+    if not os.path.exists('/workspace'):
+        os.symlink('/shiro/workspace', '/workspace')
+except OSError:
+    pass  # already exists or symlink not supported — open('/workspace/...') may still fail
 _shiro_out = io.StringIO()
 _shiro_err = io.StringIO()
 sys.stdout = _shiro_out

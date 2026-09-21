@@ -25,8 +25,9 @@ const _TOOL_FORMATS = {
     // NVIDIA NIM — Mistral models use standard OpenAI function calling
     'nvidia/mistralai/mistral-large-3-675b-instruct-2512':  'openai',
     'nvidia/mistralai/mistral-medium-3.5-128b':             'openai',
-    // OpenRouter — GLM models use the same fn-tag format as their NVIDIA NIM counterparts
-    'openrouter/z-ai/glm-5.2:free':                         'fn-tag',
+    // OpenRouter — GLM-5.2:free: OR routing has no provider endpoint that supports tool_use,
+    // returning HTTP 404 when tools are sent. Disable tool use; use as a text-only model.
+    'openrouter/z-ai/glm-5.2:free':                         'none',
     // OpenRouter — models that output <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
     // nemotron via OpenRouter supports native OAI function calling — 'fn-tag' causes it to
     // alternate inconsistently between fn-tag and native formats within the same conversation
