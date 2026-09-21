@@ -15,7 +15,7 @@
 // Follows the step-validator/nudge-emitter/payload-builder pattern: ES module, exports,
 // window bridge.
 
-import { _seenReadFiles, _seenListFiles, setSeenReadFiles, setSeenListFiles } from './state.js';
+import { _seenReadFiles, _seenListFiles } from './state.js';
 
 // ── Result fingerprinting ────────────────────────────────────────────────────
 // Long strings are collapsed to head + full-content hash + tail + length so identical
@@ -34,31 +34,6 @@ export function _fpTrunc(k: string, v: any): any {
     return (typeof v === 'string' && v.length > 512)
         ? `${v.slice(0, 128)}#${_fpHash(v)}#${v.slice(-64)}#len${v.length}`
         : v;
-}
-
-// ── Blank-step stall detection ───────────────────────────────────────────────
-// Tracks consecutive blank tool-call steps (model sends tool calls with no visible text).
-// Returns {blankSteps, consecutiveStalls, stallMsg} where stallMsg is non-null when a
-// stall nudge should be injected into history.
-export function _updateBlankSteps(hasCalls: boolean, hasText: boolean, blankSteps: number, consecutiveStalls: number, seen: any = null) {
-    if (!hasCalls) return { blankSteps, consecutiveStalls, stallMsg: null };
-    if (!hasText) {
-        blankSteps++;
-        if (blankSteps >= 5) {
-            blankSteps = 0;
-            consecutiveStalls++;
-            if (seen) { seen.rf.clear(); seen.lf.clear(); }
-            else { setSeenReadFiles(new Map()); setSeenListFiles(new Set()); }
-            const stallMsg = consecutiveStalls >= 2
-                ? `You keep going silent after each tool result. Write at least one sentence describing what you found before every tool call. If you already found the answer in a prior tool result, state it now and write COMPLETED.`
-                : `You have produced no visible text for 5 consecutive steps. In one sentence state what you are doing, then immediately call the next tool. If you already found the answer in a prior tool result, state it now and write COMPLETED.`;
-            return { blankSteps, consecutiveStalls, stallMsg };
-        }
-    } else {
-        blankSteps = 0;
-        consecutiveStalls = 0;
-    }
-    return { blankSteps, consecutiveStalls, stallMsg: null };
 }
 
 // ── Stuck-result detection ───────────────────────────────────────────────────
@@ -189,4 +164,4 @@ export function _updateEnvFailureDetector(
 }
 
 // Window bridge for free-variable access from sibling modules (house pattern).
-Object.assign(window, { _fpHash, _fpTrunc, _updateBlankSteps, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });
+Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });

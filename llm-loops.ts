@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateBlankSteps, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -751,7 +751,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
     // The flag is consumed+cleared by callOAI on the first LLM request of this turn.
     if (forceToolCall) _forceToolCall = true;
-    let _stepCount = 0, resultHashes = [], blankSteps = 0, consecutiveStalls = 0, consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
     const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
@@ -1487,17 +1487,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             }
         }
 
-        // Detect consecutive blank visible responses (e.g. thinking-mode models).
-        const blankStall = _updateBlankSteps(!!calls.length, !!textContent.trim(), blankSteps, consecutiveStalls);
-        blankSteps = blankStall.blankSteps; consecutiveStalls = blankStall.consecutiveStalls;
-        const stallNudge = blankStall.stallMsg;
-
         // Log no-tool-call turns; tool-call turns are logged after _exec with results.
         if (!calls.length) {
             convoLogTurn({
                 step, model: ep.model, provider: ep.provider ?? getProvider(),
                 promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
-                response: textContent, toolCalls: [], loopDetected: !!stallNudge,
+                response: textContent, toolCalls: [], loopDetected: false,
                 systemPrompt: buildSystemPrompt(),
                 lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
             });
@@ -1708,7 +1703,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // after tool execution — tool results are already in history above, so the
         // assistant tool_calls → role:'tool' pairing is intact.
         if (_callsOverflowNudge)               _emitNudge('calls_overflow', _nudge(_callsOverflowNudge));
-        if (stallNudge)                       _emitNudge('stall_detected', _nudge(stallNudge));
         // stuck_detected: 3 consecutive identical full-result signatures — the model is in a
         // genuine loop with no new information. Nudge and force a tool call; the model may still
         // find a way forward (e.g. switching from read_file to execute_code for file access).
