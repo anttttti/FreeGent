@@ -831,6 +831,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 
     const _garbledState = { count: 0 };
     let _wEnvFailSig = '', _wEnvFailCount = 0, _wEnvFailTotal = 0;
+    let _noToolNudgeFired = false;
     // Helper: close worker session and clean up registry.
     const _wSessionClose = (reason: import('./session-event.ts').TurnEndReason) => {
         if (!_wSession) return;
@@ -896,6 +897,14 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     localOH[localOH.length - 1] = { ...msg, content: qc.truncated };
                     emitNudge('worker_runaway', { role: 'user', content: `<nudge>${qc.nudge}</nudge>` }, { history: localOH });
                     if (qc.action === 'bail') { _wSessionClose({ kind: 'error', message: 'bail:garbled' }); return { output: qc.truncated, toolCalls: _wToolCalls }; }
+                    continue;
+                }
+                // No tool calls AND no tools ever called this turn: the worker narrated
+                // instead of acting (tools-as-text, backtick names, prose plan). Nudge once;
+                // if it happens again, let the response through as-is.
+                if (_wToolCalls.length === 0 && !_noToolNudgeFired) {
+                    _noToolNudgeFired = true;
+                    emitNudge('worker_no_tools', { role: 'user', content: `<nudge>You haven't called any tools yet. Use the structured function-call format to call tools — code blocks, backtick names, and prose descriptions do nothing. Call a tool now to start your task.</nudge>` }, { history: localOH });
                     continue;
                 }
                 console.error(`[worker:${_wRole}:step${step}] no tool calls, returning text`);
