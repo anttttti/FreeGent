@@ -5,7 +5,7 @@
 // The state module's object-setter is imported under an alias for the direct-assignment sites.
 import { setMainAgentRole as _setRoleObj, openaiHistory, activePlaceholder, softStopPending, activeChatId } from './state.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
-import { _fpTrunc, _updateBlankSteps, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
@@ -824,8 +824,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     localOH.push({ role: 'user', content: task });
 
     const maxSteps = _WORKER_MAX_STEPS;
-    let blankSteps = 0;
-    let wStalls = 0;
     let wResultHashes: string[] = [];
     const _wSeen = { rf: localSeenRF, lf: localSeenLF };
     const _workerRepeatCache = new Map();
@@ -905,11 +903,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 return { output: text, toolCalls: _wToolCalls };
             }
 
-            // Blank-step detection (shared with the main loop).
-            let _stallMsg: string | null = null;
-            { const s = _updateBlankSteps(true, !!text.trim(), blankSteps, wStalls, _wSeen);
-              blankSteps = s.blankSteps; wStalls = s.consecutiveStalls; _stallMsg = s.stallMsg; }
-
             // Shared repairs (tool-call-repair.ts): fence-wrapped JSON args, mangled
             // names, execute_code alias/fence/token cleanup — same as the main loop.
             // Irreparable args/empty code execute as-is; their errors are real feedback
@@ -948,7 +941,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             let _wEnvFailMsg: string | null;
             ({ envFailSig: _wEnvFailSig, envFailCount: _wEnvFailCount, envFailTotal: _wEnvFailTotal, envFailMsg: _wEnvFailMsg } =
                 _updateEnvFailureDetector(results, _wEnvFailSig, _wEnvFailCount, _wEnvFailTotal));
-            if (_stallMsg)    emitNudge('worker_stall',   { role: 'user', content: `<nudge>${_stallMsg}</nudge>` },    { history: localOH });
             if (_stuckMsg)    emitNudge('worker_stuck',   { role: 'user', content: `<nudge>${_stuckMsg}</nudge>` },    { history: localOH });
             if (_wEnvFailMsg) emitNudge('worker_env_fail',{ role: 'user', content: `<nudge>${_wEnvFailMsg}</nudge>` }, { history: localOH });
     }
