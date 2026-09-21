@@ -378,12 +378,16 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
     let m: RegExpExecArray | null;
     while ((m = importRe.exec(src)) !== null) {
         const dep = m[1];
-        if (!dep.startsWith('http') && !dep.startsWith('//')) {
+        // Only treat as local if it looks like a path: must start with ./ ../ or /.
+        // Bare specifiers ('vue', 'react', 'pyodide', …) are npm-style — browsers
+        // never resolve them as relative URLs and we cannot inline them from the workspace.
+        if (!dep.startsWith('http') && !dep.startsWith('//') &&
+            (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/'))) {
             // Resolve relative to the directory of path
             const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
             const depPath = dep.startsWith('./') ? dir + dep.slice(2)
                           : dep.startsWith('../') ? dep  // best-effort; skip complex traversal
-                          : dir + dep;
+                          : dep;
             imports.push(depPath);
         }
     }
@@ -456,7 +460,10 @@ async function _inlineWorkspaceRefs(html) {
                 let im: RegExpExecArray | null;
                 while ((im = importRe.exec(content)) !== null) {
                     const dep = im[1];
-                    if (!dep.startsWith('http') && !dep.startsWith('//'))
+                    // Only local if it's a path (./ ../ /). Bare specifiers ('vue', 'react', …)
+                    // are external and cannot be inlined from the workspace.
+                    if (!dep.startsWith('http') && !dep.startsWith('//') &&
+                        (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/')))
                         localDeps.push(dep.startsWith('./') ? dep.slice(2) : dep);
                 }
                 if (!localDeps.length) {
