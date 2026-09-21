@@ -1017,6 +1017,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             // SWE-bench graded-test directive: when the task text lists `pytest path::name`
             // identifiers (injected by the runner), require them to pass before COMPLETED.
             // Fires once per session (_reactiveFired dedup); skipped when blocked.
+            let _hasGradedTest = false;
             if (!_blocked && _editsThisRun && !_reactiveFired.has('graded_test')) {
                 const _taskText = typeof _origTaskMsg?.content === 'string' ? _origTaskMsg.content : '';
                 // Collect graded test IDs from two formats the runner emits:
@@ -1037,6 +1038,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                 }
                 const _ftpIds = [..._ftpSet];
                 if (_ftpIds.length) {
+                    _hasGradedTest = true;
                     _reactiveFired.add('graded_test');
                     const _ftpMsg = `Run the graded test now: \`pytest ${_ftpIds.join(' ')}\` — it must exit 0 before you declare COMPLETED.`;
                     _gate = _gate ? `${_gate}\n\n${_ftpMsg}` : `~~~guidance\n${_ftpMsg}\n~~~`;
@@ -1044,7 +1046,33 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             }
             if (_gate) {
                 _saveAnswer(ps, textContent); ps.finalCheck++;
-                _emitNudge('completion_gate', nudge(_gate)); _forceToolCall = true;
+                _emitNudge('completion_gate', nudge(_gate));
+                if (_hasGradedTest) _forceToolCall = true;  // checklist path: advisory only
+                return { do: 'continue' };
+            }
+        }
+        // graded_test re-fire: gate already fired once; model declares COMPLETED again.
+        // Check the most recent pytest tool result — if tests still failing (or never ran),
+        // inject another bounce. Cap at ps.finalCheck < 3 (two re-fires after the first).
+        if (!forWorker && _isComplete(textContent) && step < _loopMax - 1 && !softStopPending
+            && _editsThisRun && ps.finalCheck >= 1 && ps.finalCheck < 3 && _reactiveFired.has('graded_test')) {
+            const _hist = _histR(_s);
+            let _testOutput = '';
+            for (let _i = _hist.length - 1; _i >= 0; _i--) {
+                const _m = _hist[_i];
+                if (_m.role !== 'tool') continue;
+                const _c = typeof _m.content === 'string' ? _m.content
+                    : Array.isArray(_m.content) ? (_m.content as any[]).map((x: any) => x.text ?? '').join('') : '';
+                if (/passed|failed|PASSED|FAILED|ERROR|pytest/.test(_c)) { _testOutput = _c; break; }
+            }
+            // Pass: at least one "N passed" with no "N failed" / "N error"
+            const _testPassed = !!_testOutput && /\d+ passed/.test(_testOutput) && !/\d+ (failed|error)/.test(_testOutput);
+            if (!_testPassed) {
+                const _retryMsg = _testOutput
+                    ? `The graded test still failed — fix the failure then run it again: it must exit 0 before you declare COMPLETED.`
+                    : `You declared COMPLETED without running the graded test. Run it now — it must exit 0.`;
+                _saveAnswer(ps, textContent); ps.finalCheck++;
+                _emitNudge('completion_gate', nudge(`~~~guidance\n${_retryMsg}\n~~~`)); _forceToolCall = true;
                 return { do: 'continue' };
             }
         }
