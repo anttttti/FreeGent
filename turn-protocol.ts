@@ -60,7 +60,7 @@ export function _stripTerminal(text: string): string {
         .replace(/<thought>[\s\S]*?<\/thought>\n?/gi, '')
         .replace(/<thought>[\s\S]*/gi, '')        // unclosed: from <thought> to EOT
         .replace(/<\/?(?:think|thinking|thought)>?/gi, '')
-        .replace(/<\/?(?:handover|handover_context|original_request)>/gi, '')
+        .replace(/<\/?(?:handover_context|original_request)>/gi, '')
         .trimEnd();
 }
 

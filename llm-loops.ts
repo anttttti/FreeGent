@@ -508,8 +508,7 @@ const _STEP_CHECKS = [
         // _isComplete short-circuits ONLY when there is no tool-JSON in the text.
         // A COMPLETED+{"name":"execute_code",...} response must not pass unchecked —
         // the re_fail below catches the JSON syntax and fires the nudge instead.
-        re_pass: t => t.includes('<handover>') || /^```handover\b/m.test(t)
-            || (_isComplete(t) && !new RegExp('"name"\\s*:\\s*"(?:' + _toolNamesRe() + ')"').test(t))
+        re_pass: t => (_isComplete(t) && !new RegExp('"name"\\s*:\\s*"(?:' + _toolNamesRe() + ')"').test(t))
             // Strip inline code spans (`…`) before the tool-name check so that documentation
             // like "`update_task_status(path, status)` to mark" is not treated as suspicious.
             // Code fences (``` … ```) are intentionally preserved — tool calls inside a fence
@@ -520,13 +519,10 @@ const _STEP_CHECKS = [
             // firing the nudge deterministically.
             || (new RegExp(`<(?:${_toolNamesRe()})(?:\\s|>|/|=)`, 'i').test(t)
                 && !new RegExp(`(?:^|\\n)\\s*<(?:${_toolNamesRe()})(?:\\s|>|/|=)`, 'i').test(t)),
-        // Handover blocks are intentional structured output, not text-format tool calls —
-        // skip the fail check entirely when one is present (re_pass already passes it).
         // Returns the matched tool name (string) when recognisable, true for generic
         // pseudo-call formats (invoke/tool_name XML), false when no violation found.
         // step-validator.ts preserves the string and exposes it as vc.toolName.
         re_fail: t => {
-            if (t.includes('<handover>')) return false;
             // Strip inline code spans so "`update_task_status(path, status)`" in
             // documentation does not trigger a deterministic pseudo-call nudge.
             // Code fences are NOT stripped — a tool call inside ``` is a real pseudo-call.
@@ -1086,7 +1082,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         if (_ts.kind === 'return')   return { do: 'return', value: _ts.text };
         if (_ts.kind === 'continue') return { do: 'continue' };
 
-        if (textContent.includes('<handover>')) return { do: 'return', value: textContent };
         // Premature BLOCKED: autonomous mode, model declared blocked without making
         // any tool calls this turn. One bounce only (ps.blockedCheck cap).
         if (_BLOCKED_DECLARATION_RE.test(textContent)
@@ -1515,13 +1510,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                 return await _gracefulSynthesis(`role step cap (${_roleCap} steps) reached`, textContent);
         }
         if (++_stepCount >= getAgentMaxSteps()) return await _gracefulSynthesis('step budget exhausted', textContent);
-
-        // Intercept <handover> emitted as a function call name
-        const _hoFC = calls.find(tc => /^<handover[\s>]/i.test(tc.function?.name || '') || tc.function?.name === 'handover');
-        if (_hoFC) {
-            const _raw = _hoFC.function.name;
-            return _raw.includes('</handover>') ? _raw : `${_raw}\n</handover>`;
-        }
 
         // Cap per-turn tool calls — see _MAX_CALLS_PER_TURN comment above.
         let _callsOverflowNudge: string | null = null;

@@ -1325,7 +1325,7 @@ async function _handleFetchUrl(args) {
         const _hasReadFile = typeof mainAgentRole === 'undefined' || !mainAgentRole?.tools || mainAgentRole.tools.has('read_file');
         return { error: _hasReadFile
             ? `fetch_url cannot read file:// URLs. Use read_file with path "${_p}" instead.`
-            : `fetch_url cannot read file:// URLs and read_file is not in your tool set. Output a <handover> block immediately so the Director can read "${_p}".` };
+            : `fetch_url cannot read file:// URLs and read_file is not in your tool set. BLOCKED: cannot read "${_p}" — no file-reading tool available in this role.` };
     }
     // GitHub HTML pages are blocked for bots. Rewrite blob URLs to raw content
     // deterministically; capture repo-root URLs for a README fallback on failure.
@@ -1767,7 +1767,7 @@ export async function executeToolAsync(name, args, context = null) {
         && !mainAgentRole.tools.has(name)) {
         const hint = mainAgentRole.name === 'director'
             ? 'Delegate this via run_workers if needed.'
-            : 'Output a <handover> block so the Director can use it.';
+            : `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`;
         return { error: `Tool '${name}' is not available in the current role (${mainAgentRole.name}). ${hint}` };
     }
 
