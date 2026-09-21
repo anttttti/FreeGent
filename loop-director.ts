@@ -65,5 +65,12 @@ export async function directorLoop(
         onTurn?.(n, result);
     }
 
+    // If the loop exhausted maxContinuations without a terminal signal, synthesise
+    // a blocked result so callers never see finishSignal='running' after the loop exits.
+    if (result.finishSignal === 'running' && !session.softStopPending) {
+        result = { ...result, finishSignal: 'blocked',
+            text: result.text + '\n\nBLOCKED: reached max continuations without completing the task.' };
+    }
+
     return result;
 }
