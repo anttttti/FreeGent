@@ -303,7 +303,6 @@ function _friendlyLabel(raw) {
     // entity memory removed
     if (s.startsWith('git '))           return 'Git';
     if (s === 'list_files')             return 'Listing files';
-    if (s.startsWith('<handover>') || s === 'handover') return 'Handing over';
 
     // Fallback for any unrecognized label. Strip angle-bracket markup and clamp length so a
     // malformed input (e.g. a model emitting an XML block as a tool name) can't dump a wall

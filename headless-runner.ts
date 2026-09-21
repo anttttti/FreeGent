@@ -781,7 +781,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             if (_m?.role !== 'assistant') continue;
             const _raw = typeof _m.content === 'string' ? _m.content
                 : Array.isArray(_m.content) ? (_m.content as any[]).map((p: any) => p.text || '').join('') : '';
-            if (!_raw || /<(?:handover|original_request)>/.test(_raw)) continue;
+            if (!_raw || /<original_request>/.test(_raw)) continue;
             const _t = _strip(_raw).trim();
             if (_t && _t !== '*(break)*' && !/^\s*\{/.test(_t)) {
                 output = _t;
