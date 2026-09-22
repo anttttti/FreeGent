@@ -1,5 +1,5 @@
 // Tests for detectors.ts — the loop-health detector module shared by runTurn and
-// runWorkerTurn. _updateBlankSteps/_updateStuckDetector have behavioral coverage in
+// runWorkerTurn. _updateStuckDetector has behavioral coverage in
 // loop-protocol.test.js; this file covers the module directly, headlined by
 // _checkTextResponse (the runaway gate — previously untested despite catching the
 // v0.10 陪着 repetition loops) and the fingerprint helpers.

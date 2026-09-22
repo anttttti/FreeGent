@@ -42,7 +42,7 @@ await import('../turn-context.ts');
 await import('../nudge-emitter.ts');
 // payload-builder.ts: buildChatPayload, isCustomEndpoint — shared OAI payload construction
 await import('../payload-builder.ts');
-// detectors.ts: _updateBlankSteps, _updateStuckDetector, _checkTextResponse, _fpTrunc
+// detectors.ts: _updateStuckDetector, _checkTextResponse, _fpTrunc
 await import('../detectors.ts');
 // tool-call-repair.ts: _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, aliases
 await import('../tool-call-repair.ts');

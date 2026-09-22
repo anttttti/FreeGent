@@ -439,7 +439,6 @@ declare global {
     var _checkTextResponse: any;
     var _fpHash: any;
     var _fpTrunc: any;
-    var _updateBlankSteps: any;
     var _updateStuckDetector: any;
     // ── bridged by post-turn.ts ──
     var maybeRunInitAgent: any;
