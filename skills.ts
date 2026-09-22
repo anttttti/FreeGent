@@ -574,38 +574,6 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 \`\`\``
     },
     {
-        name: 'html-cors-proxy',
-        type: 'rule',
-        description: 'Use the FG proxy for external data fetches in agent-written HTML files.',
-        trigger: 'html fetch, html data, cors, html api, html app',
-        trigger_on_tool: 'write_file=>.html',
-        body: '',
-        body_fn: () => {
-            if (typeof window === 'undefined') return '';
-            const _px = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
-            if (!_px) return '';
-            return `## External data fetches in HTML files
-
-HTML pages you write run on the FreeGent origin and cannot fetch external URLs directly — CORS blocks them. **Always route external data requests through the FG proxy:**
-
-\`\`\`js
-const PROXY = '${_px}';
-// Basic usage
-const resp = await fetch(PROXY + '?url=' + encodeURIComponent('https://api.example.com/data'));
-
-// With extra request headers (base64-encoded JSON, safe subset only: Accept, Referer, etc.)
-const h = btoa(JSON.stringify({ 'Accept': 'application/json', 'Referer': 'https://api.example.com/' }));
-const resp2 = await fetch(PROXY + '?url=' + encodeURIComponent(targetUrl) + '&h=' + h);
-\`\`\`
-
-**Rules:**
-- **Never** hardcode third-party CORS proxies (corsproxy.io, allorigins.win, cors.eu.org, cors-anywhere, codetabs, etc.) — they are unreliable and block finance/data APIs.
-- For stock/finance CSV data, prefer **Stooq**: \`https://stooq.com/q/d/l/?s=TICKER.us&d1=YYYYMMDD&d2=YYYYMMDD&i=d\` — returns \`Date,Open,High,Low,Close,Volume\` CSV with no auth or crumb required.
-- Yahoo Finance v8 requires a session crumb that the proxy cannot obtain — use Stooq instead.
-- The proxy accepts any public HTTPS URL; no API key needed for public data sources.`;
-        },
-    },
-    {
         name: 'python',
         type: 'rule',
         description: 'Run Python via execute_code. Body adapts to the active runtime (native subprocess or Pyodide).',
