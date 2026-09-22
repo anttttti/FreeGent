@@ -157,9 +157,32 @@ export default {
                 // Allow any public HTTPS URL; block private/reserved IPs (SSRF guard).
                 if (!_publicUrlOk(target)) return _err(403, 'URL blocked (private address or non-HTTPS)');
 
+                // Build realistic browser headers so data APIs (finance, news, etc.)
+                // don't reject the request as an obvious bot.
+                const fwdHeaders = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                };
+
+                // Optional: agent-specified extra headers via ?h=<base64-JSON>.
+                // Only a safe whitelist of header names is accepted (no auth, cookie, etc.).
+                const _SAFE_HDR = new Set(['accept', 'accept-language', 'cache-control',
+                    'referer', 'origin', 'x-requested-with', 'content-type']);
+                const hParam = workerUrl.searchParams.get('h');
+                if (hParam) {
+                    try {
+                        const extra = JSON.parse(atob(hParam));
+                        for (const [k, v] of Object.entries(extra)) {
+                            if (_SAFE_HDR.has(k.toLowerCase()) && typeof v === 'string' && v.length < 512)
+                                fwdHeaders[k] = v;
+                        }
+                    } catch { /* ignore malformed ?h= */ }
+                }
+
                 upstream = await fetch(target, {
-                    headers: { 'User-Agent': 'Mozilla/5.0' },
-                    signal: AbortSignal.timeout(10_000),
+                    headers: fwdHeaders,
+                    signal: AbortSignal.timeout(15_000),
                 });
 
             } else if (request.method === 'POST') {
