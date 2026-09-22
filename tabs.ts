@@ -527,7 +527,10 @@ async function _inlineWorkspaceRefs(html) {
     // 1. Passive event listener fix — Chrome blocks preventDefault() in default-passive touch listeners.
     // 2. Fetch interceptor — serves workspace asset files by data URL; falls back to silent WAV for
     //    missing audio so the game doesn't 404 and the AudioManager degrades cleanly.
+    // 3. CORS proxy — routes cross-origin GET requests through the FG proxy so agent-written HTML
+    //    apps can fetch external APIs without CORS errors and without hardcoding 3rd-party proxies.
     const mapJson = JSON.stringify(assetMap);
+    const _proxyUrl = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
     const shimTag = `<script>
 (function(){
 /* 1. localStorage shim — srcdoc sandboxes lack allow-same-origin so localStorage throws;
@@ -550,8 +553,9 @@ EventTarget.prototype.addEventListener=function(t,f,p){
     p={passive:false,capture:p===true};
   return _ael.call(this,t,f,p);
 };
-/* 3. fetch interceptor: workspace assets + silent-audio fallback */
+/* 3. fetch interceptor: workspace assets + silent-audio fallback + CORS proxy */
 const _M=${mapJson};
+const _PX=${JSON.stringify(_proxyUrl)};
 const _silentWav=(function(){
   const b=new Uint8Array(46),v=new DataView(b.buffer); /* 44-byte header + 2-byte sample */
   [82,73,70,70].forEach(function(x,i){b[i]=x;});
@@ -574,11 +578,32 @@ function _dataUrlResponse(dataUrl){
   return Promise.resolve(new Response(new Blob([a],{type:mt})));
 }
 const _audioExts=/\\.(wav|mp3|ogg|flac|aac|m4a)$/i;
+const _pxOrigin=_PX?(function(){try{return new URL(_PX).origin;}catch{return '';}}()):'';
+const _SAFE_H=new Set(['accept','accept-language','cache-control','referer','x-requested-with']);
 const _F=window.fetch;
 window.fetch=function(u,opts){
-  if(typeof u==='string'&&!u.startsWith('http')&&!u.startsWith('//')&&!u.startsWith('data:')){
-    if(_M[u]) return _dataUrlResponse(_M[u]);
-    if(_audioExts.test(u)) return _dataUrlResponse(_silentWav);
+  if(typeof u==='string'){
+    /* workspace assets + silent audio */
+    if(!u.startsWith('http')&&!u.startsWith('//')&&!u.startsWith('data:')){
+      if(_M[u]) return _dataUrlResponse(_M[u]);
+      if(_audioExts.test(u)) return _dataUrlResponse(_silentWav);
+    }
+    /* CORS proxy: route cross-origin GET requests through the FG proxy */
+    if(_PX&&(u.startsWith('https://')||u.startsWith('http://'))){
+      try{
+        const _m=((opts&&opts.method)||'GET').toUpperCase();
+        if(_m==='GET'&&new URL(u).origin!==location.origin&&new URL(u).origin!==_pxOrigin){
+          let _pu=_PX+'?url='+encodeURIComponent(u);
+          if(opts&&opts.headers){
+            const _hd={};
+            const _h=opts.headers instanceof Headers?Object.fromEntries(opts.headers.entries()):opts.headers;
+            for(const[k,v]of Object.entries(_h||{}))if(_SAFE_H.has(k.toLowerCase()))_hd[k]=v;
+            if(Object.keys(_hd).length)_pu+='&h='+btoa(JSON.stringify(_hd));
+          }
+          return _F.call(this,_pu,{signal:opts&&opts.signal});
+        }
+      }catch{}
+    }
   }
   return _F.call(this,u,opts);
 };
