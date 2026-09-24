@@ -67,6 +67,11 @@ Options:
   --context-window  <n>     Total token budget (input+output); enables per-step clamping (default: none)
   --compaction-limit <n>    Compact history when estimated tokens exceed this (default: 20000)
   --disable-tools <list>    Comma-separated tool names to disable (e.g. fetch_url,web_search)
+  --enable-tools <list>     Comma-separated tools to enable and add to the director's
+                            headless tool set (e.g. fetch_url)
+  --fetch-allow <origins>   Restrict fetch_url to these origins (comma-separated, e.g.
+                            http://fg-gw:41234) and disable web_search and other
+                            outbound-request tools. Request policy, not containment.
   --temperature   <n>       Sampling temperature 0–2 (default: 0.2)
   --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
   --retry-mode <mode>       Retry delay mode: exponential (default) | fixed
@@ -99,6 +104,8 @@ const sidecarDir      = _arg('--sidecar-dir') || '';
 const contextWindow   = parseInt(_arg('--context-window') || '') || 0;
 const compactionLimit = parseInt(_arg('--compaction-limit') || '') || 0;
 const disabledTools   = _arg('--disable-tools') || '';
+const fetchAllow      = _arg('--fetch-allow') || '';
+const enableTools     = _arg('--enable-tools') || '';
 const mainRole          = _arg('--main-role')          || '';
 const temperatureArg  = _arg('--temperature');
 const temperature     = temperatureArg != null ? parseFloat(temperatureArg) : null;
@@ -115,7 +122,7 @@ if (!task && taskFile) {
 if (!task && !promptText) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 
 const workspaceRoot = resolve(workspacePath);
-const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
+const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
+import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 
 const _REPO_MAP_EXT = {
@@ -465,7 +466,7 @@ async function _handleRunGit(args: any) {
         });
         if (!resp.ok) return { error: `run_git: HTTP ${resp.status}` };
         const gitResult = await resp.json();
-        return await analyzeToolResult(gitResult, 'run_git', `git ${(args.args || []).join(' ')}`);
+        return gitResult;
     } catch (e) { return { error: `run_git: ${e.message}` }; }
 }
 
@@ -818,6 +819,7 @@ async function _handleRunWorkers(args, context) {
             ...args,
             depth: context.depth + 1,
             _parentSnapshot: context.snapshot,
+            _parentRequest: context.parentRequest?.() ?? null,
         });
         // Propagate committed sub-worker files into parent staging so the
         // top-level commit phase sees them for conflict detection.
@@ -1313,6 +1315,34 @@ async function _handleWebSearch(args) {
     return performWebSearch(args.query);
 }
 
+// Serialized size above which a fetch_url JSON response is shrunk by _fitJson.
+const _FETCH_JSON_MAX = 8000;
+
+// Shrink a parsed JSON value to fit `budget` serialized chars while keeping it valid JSON:
+// whole array items / object keys are kept in order; the first one that doesn't fit is shrunk
+// recursively when there is room, and the rest are dropped (counted in `dropped`).
+function _fitJson(v: any, budget: number, dropped: { items: number; keys: number }): any {
+    const s = JSON.stringify(v);
+    if (s === undefined || s.length <= budget) return v;
+    if (typeof v === 'string') return v.slice(0, Math.max(0, budget - 3)) + '…';
+    const isArr = Array.isArray(v);
+    if (!isArr && (v === null || typeof v !== 'object')) return v;
+    const entries: [string, any][] = isArr ? v.map((x: any, i: number) => [String(i), x]) : Object.entries(v);
+    const out: [string, any][] = [];
+    let used = 2;   // [] or {}
+    for (let i = 0; i < entries.length; i++) {
+        const [k, x] = entries[i];
+        const head = (out.length ? 1 : 0) + (isArr ? 0 : JSON.stringify(k).length + 1);
+        const xs = JSON.stringify(x) ?? 'null';
+        if (used + head + xs.length <= budget) { out.push([k, x]); used += head + xs.length; continue; }
+        const room = budget - used - head;
+        if (room >= 200) { out.push([k, _fitJson(x, room, dropped)]); i++; }
+        if (isArr) dropped.items += entries.length - i; else dropped.keys += entries.length - i;
+        break;
+    }
+    return isArr ? out.map(([, x]) => x) : Object.fromEntries(out);
+}
+
 async function _handleFetchUrl(args) {
     args = { ...args, url: args.url ?? args.link ?? args.href ?? args.uri ?? '' };
     // Strip [UNAVAILABLE] suffix if the model passes an annotated URL from search results.
@@ -1327,14 +1357,20 @@ async function _handleFetchUrl(args) {
             ? `fetch_url cannot read file:// URLs. Use read_file with path "${_p}" instead.`
             : `fetch_url cannot read file:// URLs and read_file is not in your tool set. BLOCKED: cannot read "${_p}" — no file-reading tool available in this role.` };
     }
+    // Sandboxed run: refuse anything outside the --fetch-allow origins before any request.
+    // The GitHub rewrites, README fallback and CORS proxy below all fetch other hosts, so they
+    // are skipped while the allowlist is active, and redirects are not followed.
+    const _sandboxed = isFetchAllowActive();
+    const _denied = checkFetchAllowed(args.url);
+    if (_denied) return { error: _denied };
     // GitHub HTML pages are blocked for bots. Rewrite blob URLs to raw content
     // deterministically; capture repo-root URLs for a README fallback on failure.
-    const _ghBlobMatch = /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/blob\/([^/?#]+)\/(.+?)(?:\?.*)?$/.exec(args.url);
+    const _ghBlobMatch = _sandboxed ? null : /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/blob\/([^/?#]+)\/(.+?)(?:\?.*)?$/.exec(args.url);
     if (_ghBlobMatch) {
         const [, _o, _r, _b, _p] = _ghBlobMatch;
         args = { ...args, url: `https://raw.githubusercontent.com/${_o}/${_r}/${_b}/${_p}` };
     }
-    const _ghRootMatch = /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/?(?:\?.*)?$/.exec(args.url);
+    const _ghRootMatch = _sandboxed ? null : /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/?(?:\?.*)?$/.exec(args.url);
     try {
         const method  = (args.method || 'GET').toUpperCase();
         const reqHdrs = { ...(args.headers || {}) };
@@ -1375,10 +1411,11 @@ async function _handleFetchUrl(args) {
             ? (typeof AbortSignal.any === 'function' ? AbortSignal.any([activeAbortController.signal, _fetchTimeout]) : _fetchTimeout)
             : _fetchTimeout;
         let resp;
-        if (isPlain && proxy) {
+        if (isPlain && proxy && !_sandboxed) {
             resp = await fetch(`${proxy}?url=${encodeURIComponent(args.url)}`, { signal: _fetchSignal });
         } else {
-            resp = await fetch(args.url, { method, headers: reqHdrs, body, signal: _fetchSignal });
+            resp = await fetch(args.url, { method, headers: reqHdrs, body, signal: _fetchSignal,
+                                           ...(_sandboxed && { redirect: 'manual' as const }) });
         }
 
         const status = resp.status;
@@ -1431,10 +1468,10 @@ async function _handleFetchUrl(args) {
             const str  = JSON.stringify(json);
             const ex   = await _maybeExtract(str, `${method} ${args.url}`);
             if (ex) return ex;
-            const result = str.length > 8000
-                ? { status, content: str.slice(0, 8000), truncated: true }
-                : { status, content: json };
-            return await analyzeToolResult(result, 'fetch_url', `${method} ${args.url}`);
+            if (str.length <= _FETCH_JSON_MAX) return { status, content: json };
+            const dropped = { items: 0, keys: 0 };
+            return { status, content: _fitJson(json, _FETCH_JSON_MAX, dropped), truncated: true,
+                     note: `Response was ${str.length} chars; shown as valid JSON within ${_FETCH_JSON_MAX} chars — kept whole entries in order, dropped ${dropped.items} array item(s) and ${dropped.keys} key(s) at the end. Narrow the request to see the rest.` };
         }
 
         const text = await resp.text();
@@ -1548,6 +1585,9 @@ async function _handleGenerateImage(args) {
 
     return { error: `Image generation failed. ${lastError || 'Unknown error'}${!getHFKey() ? ' (Tip: add a HuggingFace API key in Settings → Models → API Credentials for an additional provider.)' : ''}` };
 }
+
+// Error signatures in stderr worth flagging when the exit code is 0 (see _handleExecuteCode).
+const _STDERR_ERROR_RE = /Traceback \(most recent call last\)|^\w*(?:Error|Exception):|\berror:|\bFAILED\b|\bfatal:/m;
 
 async function _handleExecuteCode(args, context) {
     // Alias lists owned by tool-call-repair.ts — dispatch and pre-dispatch repair
@@ -1701,11 +1741,11 @@ async function _handleExecuteCode(args, context) {
                 : 'Load Pyodide in Settings → Code Execution to run Python in the browser.' };
         }
     }
-    if (execResult && !execResult.error && !(execResult.exit_code > 0) && execResult.stderr?.trim())
-        execResult = await analyzeToolResult(
-            execResult, 'execute_code', `${args.language} execution`,
-            r => { const { stderr: _, ...rest } = r; return rest; } // strip benign stderr
-        );
+    // Exit 0 with an error signature in stderr: a multi-command script's exit code reflects only
+    // its last command, so an earlier failure can hide behind it. Annotate; never strip or replace
+    // output — stderr also carries legitimate output (gcc -v, progress, warnings).
+    if (execResult && !execResult.error && !(execResult.exit_code > 0) && _STDERR_ERROR_RE.test(execResult.stderr ?? ''))
+        execResult = { ...execResult, note: 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.' };
     return execResult;
 }
 

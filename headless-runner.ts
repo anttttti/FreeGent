@@ -27,6 +27,7 @@ import './model-caps.js';
 import './ast.js';
 import './history-util.js';
 import './fetch-blacklist.js';
+import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
 import './search-providers.js';
 import './skill-guidance.js';
 import './turn-context.js';
@@ -47,7 +48,7 @@ import './post-turn.js';
 import './llm-shared.js';
 import './tools.js';
 import './chat-render.js';
-import './workers.js';
+import { setDirectorHeadlessTools } from './workers.js';
 import './workspace.js';
 import './qa.js';
 // Former classic scripts — now ES modules imported like the rest. Their window bridges
@@ -294,6 +295,8 @@ function _parseOpts(opts: any) {
         retryFixedMs    : opts.retryFixedMs    ?? (parseInt(e.FREEGENT_RETRY_FIXED_MS ?? '') || 0),
         maxRounds: opts.maxRounds ?? (parseInt(e.FREEGENT_MAX_ROUNDS ?? '') || 0),
         harness:   opts.harness   ?? e.FREEGENT_HARNESS ?? 'freegent',
+        fetchAllow:      opts.fetchAllow      ?? e.FREEGENT_FETCH_ALLOW      ?? '',
+        enableTools:     opts.enableTools     ?? e.FREEGENT_ENABLE_TOOLS     ?? '',
     };
 }
 
@@ -313,7 +316,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
         contextWindow, compactionLimit, disabledTools, mainRole, workflowMode, resumeSessionId, sessionDbPath,
-        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools,
     } = _parseOpts(opts);
 
     // ── Startup timing instrumentation ────────────────────────────────────────
@@ -422,8 +425,25 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
 
     _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit, temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs);
     if (maxRounds > 0) _ls.setItem('fg_agent_max_rounds', String(maxRounds));
-    const _disabledList = disabledTools ? disabledTools.split(',').map(t => t.trim()).filter(Boolean) : [];
-    if (disabledTools) dom.window.setDisabledTools(_disabledList);
+    let _disabledList = disabledTools ? disabledTools.split(',').map(t => t.trim()).filter(Boolean) : [];
+    // --fetch-allow: fetch_url may only reach the listed origins (parseFetchAllow throws on a
+    // malformed entry, failing the run before the agent starts). Other tools that make their own
+    // outbound requests are switched off so fetch_url is the only HTTP tool. Request policy only —
+    // containment is the caller's job (network isolation around this process).
+    if (fetchAllow) {
+        setFetchAllow(parseFetchAllow(fetchAllow));
+        const _netTools = ['web_search', 'deep_research', 'academic_search', 'package_search', 'context7_docs', 'generate_image'];
+        _disabledList = [...new Set([..._disabledList, ..._netTools])];
+    }
+    // --enable-tools: make tools available and add them to the director's headless ceiling.
+    const _enableList = enableTools ? enableTools.split(',').map(t => t.trim()).filter(Boolean) : [];
+    for (const t of _enableList) {
+        if (!(dom.window.ALL_TOOL_NAMES as string[]).includes(t)) throw new Error(`--enable-tools: unknown tool "${t}"`);
+        if (_disabledList.includes(t)) throw new Error(`--enable-tools: "${t}" is also disabled (--disable-tools or --fetch-allow)`);
+    }
+    if (disabledTools || fetchAllow) dom.window.setDisabledTools(_disabledList);
+    for (const t of _enableList) dom.window.enabledTools.add(t);
+    setDirectorHeadlessTools(_enableList);
     // Enable file-write tools for worker roles. setDisabledTools() skips OPT_IN_TOOLS
     // (write_file, replace_in_file, apply_patch) by design, but workers need them to make
     // code edits without falling back to error-prone bash redirection. The director's

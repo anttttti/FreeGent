@@ -11,7 +11,7 @@ import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlP
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls } from './model-caps.js';
-import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
+import { isCustomEndpoint, buildChatPayload, buildRequestMessages } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { streamOAICompat, nonStreamOAICompat, decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
@@ -108,9 +108,8 @@ function _mirrorCompactionToSession(
 
         // newHistory[0] = anchor (already in session as surf[0])
         // newHistory[1] = compaction summary text (starts with '[SYSTEM: The conversation history')
-        // Guard: also bail if newHistory[1] is not a proper compaction summary — this can
-        // happen when compactHistory took the hard-drop fallback (no summary is produced);
-        // in that case the surface already holds the pre-drop history, which is still valid.
+        // Guard: bail if newHistory[1] is not a compaction summary. compactHistory always
+        // produces one (a failure stub when the summarizer fails), so this is defensive.
         const summaryMsg = newHistory[1];
         if (!summaryMsg?.content) return; // unexpected: no summary
         if (typeof summaryMsg.content !== 'string' ||
@@ -121,7 +120,7 @@ function _mirrorCompactionToSession(
 
         // Re-append items from newHistory[2+] as new surface events
         // (they were in the old surface and are now shadowed; we create fresh events
-        //  so the surface ordering is correct: summary → understood → tail).
+        //  so the surface ordering is correct: summary → tail).
         const _sessAppend = sess.append.bind(sess) as _AppendSurface;
         for (let _ci = 2; _ci < newHistory.length; _ci++) {
             const _cm = newHistory[_ci];
@@ -207,6 +206,14 @@ window._lastStreamChunkAt = _lastStreamChunkAt;
 // stored so subsequent turns (agentSend calls) in the same episode don't
 // reset back to the original model. Cleared when a new chat is created.
 let _sessionFallback = null; // null | { provider, url?, key?, model }
+
+// System prompt, tool list and messages of the most recent main-agent request, exactly as sent.
+// Forked workers (run_workers role "director") resend them verbatim plus their subtask, so
+// their request shares the main agent's prefix byte for byte and the endpoint's prefix cache
+// covers the inherited history.
+export type ForkBase = { system: string; tools: any[] | null; messages: any[] };
+let _lastMainRequest: ForkBase | null = null;
+export function getLastMainRequest(): ForkBase | null { return _lastMainRequest; }
 let _forceToolCall = false;  // set by enforcement nudges (completion_gate, step_validation, etc.); consumed+cleared by callOAI
 
 // Rotation step counter — reset at each new turn; passed to model-router's _nextRotationSpec.
@@ -816,9 +823,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
     }
 
     // ── Compaction inner function ───────────────────────────────────────────
-    // Called when the token budget is full.  Compacts history, re-classifies tools,
-    // and re-injects any pending nudge.  Returns the taskComplete string if the
-    // compaction summariser declared done, or null to continue the step loop.
+    // Called when the token budget is full.  Compacts history and re-injects any pending
+    // nudge.  Always returns null (continue the step loop); kept as a hook for callers.
     async function _doCompact(step: number): Promise<string | null> {
         _forceCompact = false;
         // Capture any pending nudge so it can be re-injected if compaction drops it.
@@ -834,11 +840,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         const _evtSessC = _getEvtSession(_s);
         const _preSurfC = _evtSessC ? [..._evtSessC.surface] : null;
         const _effectiveForCompact = _evtSessC ? _evtSessC.deriveMessages() : undefined;
-        const _compact = await compactHistory(placeholder, activeEndpoint, _s, _effectiveForCompact);
-        if (_compact?.taskComplete) {
-            setLastTurnDoneToken(true);
-            return _compact.taskComplete;
-        }
+        // Main loop's last request (system prompt + tools as sent) → compaction request shares its prefix.
+        await compactHistory(placeholder, activeEndpoint, _s, _effectiveForCompact, _lastMainRequest);
         // Mirror compaction: shadow old surface events with summary + tail items.
         if (_evtSessC && _preSurfC && _preSurfC.length > 1) {
             _mirrorCompactionToSession(_evtSessC, _preSurfC, _s.history);
@@ -1821,7 +1824,7 @@ async function callLLM(
     return decodeOAIResponse(resp, onChunk);
 }
 
-async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0 } = {}): Promise<any> {
+async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null } = {}): Promise<any> {
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;
     const provider = ep.provider ?? getProvider();
@@ -1847,7 +1850,8 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const _fnTagNote = toolFormat === 'fn-tag'
         ? '\n\n## Tool-call format (this endpoint)\nThis endpoint does not execute the tool schema natively — to call a tool, output exactly this tag as literal text: `<function=NAME>{"arg":"value"}</function>` (NAME is the tool name, the body is valid JSON arguments). Output ONLY the tag, nothing else on that line — no narration before it, no fabricated result after it. The real result arrives in the next turn.'
         : '';
-    const sysPrompt = (forWorker ? _bwsp(roleOverride) : _bsp()) + _fnTagNote;
+    // Forked worker: reuse the parent's system prompt and tools verbatim (prefix-cache identity).
+    const sysPrompt = forkPrefix ? forkPrefix.system : (forWorker ? _bwsp(roleOverride) : _bsp()) + _fnTagNote;
     // log the request header (model, system prompt size, tool count).
     // evtSession / evtStep come from runTurn via the options object.
     if (evtSession) {
@@ -1902,20 +1906,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     //    with HTTP 400 "Invalid assistant message: content=None tool_calls=None".
     // 2. Normalize mid-conversation role:'system' messages (NVIDIA nudges) to role:'user' —
     //    Mistral/Devstral reject system after position 0.
-    const _sanitizeToolName = n => (n || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const _rawHist = _effectiveHist
-        .filter(m => !(m.role === 'assistant' && m.content == null && !m.tool_calls?.length))
-        .map(m => {
-            if (m.role === 'assistant' && m.tool_calls?.some(tc => tc.function?.name?.match(/[^a-zA-Z0-9_-]/)))
-                return { ...m, tool_calls: m.tool_calls.map(tc => tc.function?.name?.match(/[^a-zA-Z0-9_-]/)
-                    ? { ...tc, function: { ...tc.function, name: _sanitizeToolName(tc.function.name) } } : tc) };
-            if (m.role === 'tool' && m.name?.match(/[^a-zA-Z0-9_-]/))
-                return { ...m, name: _sanitizeToolName(m.name) };
-            return m;
-        });
-    let _hist = provider !== 'nvidia'
-        ? _rawHist.map(m => m.role === 'system' ? { role: 'user', content: `<nudge>${m.content ?? ''}</nudge>` } : m)
-        : _rawHist;
+    let _hist = buildRequestMessages(_effectiveHist, provider);
     // Guard: vLLM (Qwen3 Jinja2 template) raises "No user query found in messages." when
     // the messages array contains no user-role entry. This should never happen — the
     // invariant is that the first event appended to a session is the task's user message.
@@ -1934,7 +1925,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const _ftc = _forceToolCall; _forceToolCall = false; // consume and reset before the call
     const payload = buildChatPayload(ep, {
         messages: [{ role: 'system', content: sysPrompt }, ..._hist],
-        tools: hasTools ? buildOAITools(forWorker, toolFilterOverride) : null,
+        tools: forkPrefix ? forkPrefix.tools : (hasTools ? buildOAITools(forWorker, toolFilterOverride) : null),
         temperature: getTemperature(),
         maxTokens: effectiveMaxTokens,
         stream: true,
@@ -1943,6 +1934,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         sampling: isCustom ? getSamplingParams() : null,
         forceToolCall: _ftc,
     });
+    if (!forWorker) _lastMainRequest = { system: sysPrompt, tools: payload.tools ?? null, messages: payload.messages.slice(1) };
     // Wrap onChunk to timestamp each received token — used by the suspension recovery
     // discriminator in init.ts (_lastStreamChunkAt <= _hiddenAtMs → stream died = suspend).
     const _timestampedOnChunk = (chunk: string, ...rest: any[]) => {
@@ -2011,7 +2003,7 @@ function _stripThinking(text: string): string {
 // headless: in JSDOM, module free-variable reads resolve through globalThis, which the
 // bootstrap windowProxy forwards here. (Detectors → detectors.ts, history hygiene →
 // history.ts, tool repair → tool-call-repair.ts — each bridges its own exports.)
-Object.assign(window, { runTurn, callLLM, callOAI, _runToolCalls, _validateStepOutput, _saveAnswer, _patchOAIWriteArgs, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
+Object.assign(window, { runTurn, callLLM, callOAI, getLastMainRequest, _runToolCalls, _validateStepOutput, _saveAnswer, _patchOAIWriteArgs, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
 
 // §7: named ES module exports alongside window bridge (harness adapter / headless import paths).
 // Note: clearSessionFallback and clearReplaceState are already exported via export function above.

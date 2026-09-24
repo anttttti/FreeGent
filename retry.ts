@@ -28,6 +28,16 @@ export function isTransient(e) {
 
 export function parseContextOverflow(e) {
     const msg = e.message || '';
+    // vLLM (current): "you requested M output tokens and your prompt contains at least N input
+    // tokens, for a total of at least <ctx+1> tokens". N is a lower bound vLLM derives as ctx+1−M,
+    // not the prompt size, so ctx−N−256 would shave only ~257 tokens per retry (compaction needed
+    // 7–21 rejected attempts in v0.54). The real prompt size is unknown here: halve M instead, and
+    // report no headroom once that gets tiny so callers shrink the prompt.
+    const lb = msg.match(/you requested (\d+) output tokens and your prompt contains at least \d+ input tokens/i);
+    if (lb) {
+        const half = Math.floor(parseInt(lb[1], 10) / 2);
+        return half >= 256 ? half : 0;
+    }
     // vLLM / SGLang: "maximum context length is N ... at least M input tokens"
     let m = msg.match(/maximum context length is (\d+).*?at least (\d+) input tokens/is);
     if (!m) {
@@ -173,7 +183,9 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         const isErr = !is429 && _isServerError(e.message);
         const headroom = parseContextOverflow(e);
         if (headroom !== null) {
-            if (headroom > 0 && onContextOverflow) { onContextOverflow(headroom); return; }  // fast retry with smaller max_tokens
+            // Immediate retry with smaller max_tokens — never the global retry delay (in benchmark
+            // configs that's a fixed 120 s, meant for rate limits and outages).
+            if (headroom > 0 && onContextOverflow) { onContextOverflow(headroom); return 0; }
             // Prompt itself exceeds context — reducing max_tokens won't help.
             if (onContextTruncate) {
                 const reduced = onContextTruncate();
