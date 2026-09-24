@@ -504,7 +504,7 @@ async function _handleAppendFile(args: any, context: any) {
         return doAppend(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
-                return context.snapshot.get(args.path) ?? '';
+                return (await context.snapshot.get(args.path)) ?? '';
             },
             async c => context.staging.set(args.path, c)
         );
@@ -804,6 +804,12 @@ function _writeFileImageDisplay(path, content) {
     return {};
 }
 
+// A worker context's snapshot is a LazySnapshot (workers.ts) or, in tests, a plain Map of contents.
+function _snapshotFiles(snap: any): Array<{ name: string; size: number }> {
+    if (snap instanceof Map) return [...snap].filter(([, c]) => c !== null).map(([name, c]) => ({ name, size: (c || '').length }));
+    return snap.list();
+}
+
 // SWE-bench: grader strips test-file changes before scoring — agent edits score zero.
 // 17/36 failed SWE tasks edited test files; 14 passed a self-modified test and were
 // still rejected. Headless-only (nativeExec present); interactive sessions unaffected.
@@ -867,11 +873,12 @@ async function _handleListFiles(args, context) {
         return { files: all.slice(0, _LIST_FILES_CAP), note: `Showing first ${_LIST_FILES_CAP} of ${all.length} files. Use a more specific path filter to narrow results.` };
     };
     if (context) {
-        const seen = new Set();
+        // Staged content wins over the snapshot; null in staging means deleted.
         const files = [];
-        for (const [n, c] of [...context.snapshot, ...context.staging]) {
-            if (!seen.has(n) && c !== null) { seen.add(n); files.push({ name: n, size: (c || '').length }); }
-        }
+        for (const f of _snapshotFiles(context.snapshot))
+            if (!context.staging.has(f.name)) files.push(f);
+        for (const [n, c] of context.staging)
+            if (c !== null) files.push({ name: n, size: (c || '').length });
         return { path: pathFilter, ..._cap(applyFilter(files)) };
     }
     try   { return { path: pathFilter, ..._cap(applyFilter(await agentListFiles())) }; }
@@ -964,8 +971,8 @@ async function _handleReadFile(args, context) {
             return _checkBinary(path, c) ?? _imgPreview(path, c) ?? _ret(path, c, _sliceLines(c, sl, el));
         }
         if (context.snapshot.has(path)) {
-            const c = context.snapshot.get(path);
-            return _checkBinary(path, c) ?? _imgPreview(path, c) ?? _ret(path, c, _sliceLines(c, sl, el));
+            const c = await context.snapshot.get(path);
+            if (c !== undefined) return _checkBinary(path, c) ?? _imgPreview(path, c) ?? _ret(path, c, _sliceLines(c, sl, el));
         }
         // local/ files are not in the snapshot — read directly from filesystem
         try {
@@ -1021,7 +1028,7 @@ async function _handleWriteFile(args, context) {
     if (context) {
         const old = context.staging.has(args.path)
             ? (context.staging.get(args.path) ?? '')
-            : (context.snapshot.get(args.path) ?? '');
+            : ((await context.snapshot.get(args.path)) ?? '');
         if (old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD) {
             return { error: _shrinkError(args.path, old.length, args.content.length) };
         }
@@ -1131,7 +1138,7 @@ async function _handleReplaceInFile(args, context) {
         return doReplace(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
-                return context.snapshot.get(args.path) ?? '';
+                return (await context.snapshot.get(args.path)) ?? '';
             },
             async c => context.staging.set(args.path, c)
         );
@@ -1218,7 +1225,7 @@ async function _handleApplyPatch(args, context) {
         return doApply(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
-                return context.snapshot.get(args.path) ?? '';
+                return (await context.snapshot.get(args.path)) ?? '';
             },
             async c => context.staging.set(args.path, c)
         );
