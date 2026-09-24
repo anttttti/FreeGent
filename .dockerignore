@@ -12,3 +12,15 @@ __pycache__/
 docs/
 .claude/
 tmp/
+
+# Benchmark tree: datasets, gold answers and past predictions must never be readable by the
+# agent inside its container. Re-include only what the benchmark Dockerfiles COPY explicitly.
+bench/
+!bench/benchmarks/*/entrypoint*.sh
+!bench/intercode/docker/
+!bench/intercode/data/ctf/task_assets/
+!bench/intercode/data/sql/bird/ic_bird_dbs.sql
+!bench/benchmarks/intercode/data/sql/spider/ic_spider_dbs.sql
+!bench/benchmarks/intercode/data/sql/wikisql/ic_wikisql_dev.sql
+# CTF reference solutions: /ctf/<id> is the agent's workspace. Grading uses ic_ctf.json.
+bench/intercode/data/ctf/task_assets/*/solution/

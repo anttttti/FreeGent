@@ -61,6 +61,29 @@ function _thinkingFields(provider: string, isCustom: boolean, budget: number, pr
     return {};
 }
 
+// History → request messages, as every main-loop request sends them. Shared by callOAI and
+// compaction so a compaction request repeats the main loop's messages byte for byte (the
+// endpoint's prefix cache then covers the whole history).
+//   1. drop bare assistant messages (content null, no tool_calls) — strict providers 400 on them
+//   2. sanitize tool names to [a-zA-Z0-9_-]
+//   3. non-NVIDIA: mid-conversation system messages (nudges) become <nudge> user messages
+export function buildRequestMessages(hist: any[], provider: string): any[] {
+    const _clean = (n: string) => (n || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const raw = hist
+        .filter(m => !(m.role === 'assistant' && m.content == null && !m.tool_calls?.length))
+        .map(m => {
+            if (m.role === 'assistant' && m.tool_calls?.some(tc => tc.function?.name?.match(/[^a-zA-Z0-9_-]/)))
+                return { ...m, tool_calls: m.tool_calls.map(tc => tc.function?.name?.match(/[^a-zA-Z0-9_-]/)
+                    ? { ...tc, function: { ...tc.function, name: _clean(tc.function.name) } } : tc) };
+            if (m.role === 'tool' && m.name?.match(/[^a-zA-Z0-9_-]/))
+                return { ...m, name: _clean(m.name) };
+            return m;
+        });
+    return provider !== 'nvidia'
+        ? raw.map(m => m.role === 'system' ? { role: 'user', content: `<nudge>${m.content ?? ''}</nudge>` } : m)
+        : raw;
+}
+
 export function buildChatPayload(ep: any, {
     messages,               // full messages array including system prompt — caller-sanitized
     tools = null,           // tool schema array, or null/[] for no tools
@@ -128,4 +151,4 @@ export function buildChatPayload(ep: any, {
 }
 
 // Window bridge for free-variable access from sibling modules (house pattern).
-Object.assign(window, { buildChatPayload, isCustomEndpoint });
+Object.assign(window, { buildChatPayload, buildRequestMessages, isCustomEndpoint });

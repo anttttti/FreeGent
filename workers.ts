@@ -3,14 +3,15 @@
 // Note: workers.js defines setMainAgentRole(name) that takes a role-NAME string and
 // resolves it through rolesRegistry — this overrides state.js's same-named setter on window.
 // The state module's object-setter is imported under an alias for the direct-assignment sites.
-import { setMainAgentRole as _setRoleObj, openaiHistory, activePlaceholder, softStopPending, activeChatId } from './state.js';
+import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
+import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec } from './model-router.js';
-import { _normPath, truncateResultForHistory, repairHistoryArray } from './history.js';
+import { _normPath, truncateResultForHistory } from './history.js';
 import { parseArgs } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
@@ -38,6 +39,15 @@ STATUS: partial — <what was done / what remains>
 const _roleConciseBlock = getAgentConcisePrompts()
     ? '\n\n## Conciseness\nComplete with one sentence stating the outcome and nothing else, then COMPLETED. No Goal/Approach/Changes/Outcome blocks, no recap of what code already printed, no preamble before tool calls. The work speaks for itself.\nRespond in compressed, telegraphic style — facts, findings, file paths, decisions. No preamble, no summary wrap-up, no pleasantries.\n'
     : '';
+
+// Tools added to the director's headless ceiling by fg-run --enable-tools (e.g. fetch_url for a
+// benchmark whose task API is HTTP). Tool availability only — fetch_url's reach is governed
+// separately by --fetch-allow.
+const _directorHeadlessExtras = new Set<string>();
+export function setDirectorHeadlessTools(names: string[]): void {
+    _directorHeadlessExtras.clear();
+    for (const n of names) _directorHeadlessExtras.add(n);
+}
 
 const BUILTIN_ROLES = [
     {
@@ -206,12 +216,13 @@ ${toolSection}`;
             // writing files inline, and excluding them from this ceiling prevents hallucinated
             // direct calls. headless-runner.ts adds them to enabledTools so worker ceilings
             // (coder) can pass them through.
-            //   • web_search, fetch_url — disabled via disabledTools in benchmark configs.
+            //   • web_search, fetch_url — off unless listed in fg-run --enable-tools.
             // run_git is kept so the role-dispatch guard passes; the tool handler itself gates
             // on getGitEnabled() && getSandboxProvider() === 'local' and returns a clear error.
             return new Set([
                 'read_file', 'search_workspace', 'list_files', 'run_workers', 'execute_code',
                 'run_git', 'ast_query',
+                ..._directorHeadlessExtras,
             ]);
         },
         // body_fn: called at prompt-build time so the Available tools section reflects
@@ -293,9 +304,9 @@ ${toolSection}`;
                 ].join(', ');
                 toolLines.push(
 `- **Delegate** — run_workers(agents): spawn parallel workers; choose the role that matches the sub-task:
-  - role "coder" — ${coderDesc} (${coderTools.join(', ')})
-  - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')})
-  - role "director" — autonomous multi-step subtask with full director tool set
+  - role "director" — a fork of you with your full context and tools. Use it when the subtask depends on what you've learned. Just state the subtask.
+  - role "coder" — ${coderDesc} (${coderTools.join(', ')}). Sees only the task you send, not other context: include every path, ID and constraint it needs.
+  - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')}). Sees only the task you send, not other context: include every path, ID and constraint it needs.
 Delegate to workers for: ${delegateCases}.`
                 );
             }
@@ -685,34 +696,6 @@ async function takeWorkspaceSnapshot() {
     return snapshot;
 }
 
-// Returns a copy of the main conversation history suitable for injecting into a worker,
-// stripped of the trailing run_workers tool call (which has no matching result yet).
-function getMainHistoryForWorker(): any[] {
-    const hist = [...openaiHistory];
-    const last = hist[hist.length - 1];
-    if (last?.role === 'assistant' && last.tool_calls?.length) hist.pop();
-    return hist;
-}
-
-// Returns a trimmed slice of history: first `headRounds` + last `tailRounds` conversation rounds.
-// A "round" is one user turn + one assistant/model turn (2 messages). Used for role workers that
-// need orientation (head) and current state (tail) without the full history cost.
-function getTrimmedHistoryForWorker(headRounds: number = 2, tailRounds: number = 2): any[] {
-    let full = repairHistoryArray(getMainHistoryForWorker());
-    const isProse = m => (m.role === 'user' || (m.role === 'assistant' && !m.tool_calls?.length)) &&
-           (typeof m.content === 'string' ? m.content.trim() : Array.isArray(m.content) && m.content.length > 0);
-    const prose = full.filter(isProse);
-    const rounds = [];
-    for (let i = 0; i < prose.length - 1; i++) {
-        const a = prose[i], b = prose[i + 1];
-        if (a.role === 'user' && b.role === 'assistant') { rounds.push([a, b]); i++; }
-    }
-    const head = rounds.slice(0, headRounds);
-    const tail = rounds.slice(Math.max(headRounds, rounds.length - tailRounds));
-    const selected = new Set([...head.flat(), ...tail.flat()]);
-    return full.filter(m => selected.has(m));
-}
-
 // ── Endpoint busy-tracking for parallel rotation ──────────────────────────
 // When "Rotate endpoints each step" is on, parallel workers should each use
 // a different endpoint so no two requests hit the same provider at once.
@@ -739,36 +722,17 @@ function _pickFreeRotationSpec(alreadyPicked: Set<string> | null): string | null
     return null; // all busy or cooling
 }
 
-// Strips framework-injected blocks (guidance/handover/memory) from a user message string.
-const _WORKER_CTX_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory)>[\s\S]*?<\/\1>\n*/g;
-function _stripWorkerCtxInjected(s: string): string { return (s || '').replace(_WORKER_CTX_INJECTED_RE, '').trim(); }
+// Task message for a forked worker, appended after the inherited prefix. Every fork-specific
+// instruction lives here, after the shared prefix, so it cannot break prefix-cache identity.
+function _forkTaskMessage(task: string): string {
+    return `<fork>
+You are a fork of the main agent, working on one subtask it delegated to you. The conversation above is your context. Do only this subtask; do not redo earlier work or continue the main task. End your final reply with a status line instead of COMPLETED: STATUS: complete, STATUS: blocked — <reason>, or STATUS: partial — <what remains>.
+</fork>
 
-// Returns the initial real user turn and (if more than one exists) the last real user turn
-// as OAI messages, for injecting into a worker's history when full history sharing is off.
-// "Real" = not a <nudge> or <tool_response> injection.  Framework blocks are stripped.
-function _getWorkerUserContextMsgs(): { role: string; content: string }[] {
-    const hist = repairHistoryArray(getMainHistoryForWorker());
-    const realUser = hist.filter(m =>
-        m.role === 'user' &&
-        typeof m.content === 'string' &&
-        m.content &&
-        !m.content.startsWith('<nudge>') &&
-        !m.content.startsWith('<tool_response>')
-    );
-    if (realUser.length === 0) return [];
-    const firstContent = _stripWorkerCtxInjected(realUser[0].content);
-    if (!firstContent) return [];
-    const msgs: { role: string; content: string }[] = [{ role: 'user', content: firstContent }];
-    if (realUser.length > 1) {
-        const lastContent = _stripWorkerCtxInjected(realUser[realUser.length - 1].content);
-        if (lastContent && lastContent !== firstContent)
-            msgs.push({ role: 'user', content: lastContent });
-    }
-    return msgs;
+Subtask: ${task}`;
 }
 
-
-async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
+async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
     const wSpec = resolveWorkerModelSpec(workerModelSpec, role);
     let endpoint = wSpec ? specToEndpoint(wSpec) : null;
     taskHandle.setModel(modelFriendlyName(wSpec || `${getProvider()}|${getActiveModel()}`));
@@ -799,29 +763,22 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
         try { _wSession.append('turn/start', { turn: 0, chatId: activeChatId ?? 'anon' }); } catch {}
     }
 
-    // History injection for shared-prefix workers:
-    // - Director: full history → identical prefix to main agent → best cache hit rate
-    // - Role workers (researcher, coder, etc.): first 2 + last 2 conversation rounds only
-    //   → enough to understand the overall goal (head) and current state (tail), without full cost
-    // - History off OR trimmed history has no real user turn: inject initial+last real user turns
-    //   so workers always have the user's original request as grounding context.
-    //   (getTrimmedHistoryForWorker returns [] when all assistant turns have tool_calls, because
-    //    the isProse filter finds no (user, assistant-without-tool-calls) rounds to include.)
-    if (getAgentWorkerHistory()) {
-        const isDirector = !role || role.name === 'director';
-        const hist = isDirector ? getMainHistoryForWorker() : getTrimmedHistoryForWorker(2, 2);
-        localOH.push(...hist);
-        // Fallback: trimmed history found no rounds (all assistant turns had tool_calls) —
-        // inject first+last real user turns so the worker still has the original request.
-        const _hasRealUser = localOH.some(m =>
-            m.role === 'user' && typeof m.content === 'string' &&
-            !m.content.startsWith('<nudge>') && !m.content.startsWith('<tool_response>')
-        );
-        if (!_hasRealUser) localOH.push(..._getWorkerUserContextMsgs());
+    // Two kinds of worker:
+    // - Fork (role "director"): inherits the parent's last request verbatim — system prompt,
+    //   tools and messages — plus the subtask. The request shares the parent's exact prefix, so
+    //   the endpoint's prefix cache covers the inherited history. Off when the worker-history
+    //   setting is off, or when there is no parent request to fork.
+    // - Specialist (every other role): own role prompt and tools; sees only the task.
+    const isFork = !!forkBase && (!role || role.name === 'director') && getAgentWorkerHistory();
+    if (isFork) {
+        localOH.push(...forkBase!.messages);
+        localOH.push({ role: 'user', content: _forkTaskMessage(task) });
     } else {
-        localOH.push(..._getWorkerUserContextMsgs());
+        localOH.push({ role: 'user', content: task });
     }
-    localOH.push({ role: 'user', content: task });
+    // This worker's own last request, exposed so a nested run_workers call can fork it.
+    let _ownRequest: ForkBase | null = null;
+    if (context) context.parentRequest = () => _ownRequest;
 
     const maxSteps = _WORKER_MAX_STEPS;
     let wResultHashes: string[] = [];
@@ -852,10 +809,15 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 // evtSession uses a fake AgentSession shape (only _session and _evtTurn needed).
                 const _wEvtSessProxy = _wSession ? { _session: _wSession, _evtTurn: _wEvtTurn } as any : null;
                 message = await withRetry(
-                    () => { console.error(`[worker:${_wRole}:step${step}] calling callOAI attempt=${_callAttempt++} ep=${(endpoint??oaiEndpoint()).provider}|${(endpoint??oaiEndpoint()).model} histLen=${localOH.length}`); return callOAI((c, t) => taskHandle.append(c, t), p => taskHandle.setRequest?.(JSON.stringify(p, null, 2)),
+                    () => { console.error(`[worker:${_wRole}:step${step}] calling callOAI attempt=${_callAttempt++} ep=${(endpoint??oaiEndpoint()).provider}|${(endpoint??oaiEndpoint()).model} histLen=${localOH.length}`); return callOAI((c, t) => taskHandle.append(c, t),
+                        p => {
+                            taskHandle.setRequest?.(JSON.stringify(p, null, 2));
+                            _ownRequest = { system: p.messages[0]?.content ?? '', tools: p.tools ?? null, messages: p.messages.slice(1) };
+                        },
                         { localHistory: localOH, forWorker: true, endpointOverride: endpoint,
                           roleOverride: localRole, toolFilterOverride: localToolFilter,
-                          maxTokens: workerMaxTokens, evtSession: _wEvtSessProxy, evtStep: step }); },
+                          maxTokens: workerMaxTokens, evtSession: _wEvtSessProxy, evtStep: step,
+                          forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null }); },
                     _makeOAIRetryHandler({
                         getEp: () => endpoint ?? oaiEndpoint(),
                         setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
@@ -879,7 +841,8 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     100,
                     () => (endpoint ?? oaiEndpoint()).provider === 'custom'
                 );
-                console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}`);
+                const _u = message?.usage;
+                console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
 
@@ -902,7 +865,8 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 // No tool calls AND no tools ever called this turn: the worker narrated
                 // instead of acting (tools-as-text, backtick names, prose plan). Nudge once;
                 // if it happens again, let the response through as-is.
-                if (_wToolCalls.length === 0 && !_noToolNudgeFired) {
+                // Forks skip this: the inherited context may already hold the answer.
+                if (!isFork && _wToolCalls.length === 0 && !_noToolNudgeFired) {
                     _noToolNudgeFired = true;
                     emitNudge('worker_no_tools', { role: 'user', content: `<nudge>You haven't called any tools yet. Use the structured function-call format to call tools — code blocks, backtick names, and prose descriptions do nothing. Call a tool now to start your task.</nudge>` }, { history: localOH });
                     continue;
@@ -1054,47 +1018,6 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
         throw e;
     }
     return result;
-}
-
-// Generalized ambiguous tool result analyzer.
-// Calls the worker model to classify the result as healthy or problematic.
-// Returns the original result unchanged when healthy, or {issue: "..."} when not.
-// Pass stripFn to clean up the result when healthy (e.g. drop benign stderr).
-async function analyzeToolResult(result: any, toolName: string, hint: string = '', stripFn: ((s: string) => string) | null = null): Promise<string | {issue: string}> {
-    if (typeof callLLMComplete !== 'function') return result;
-    if (!result || typeof result !== 'object' || result.error || result.issue) return result;
-    const serialized = JSON.stringify(result, null, 2);
-    if (serialized.length < 30) return result;
-    // Deterministic pass band before the LLM call: a clean success — exit 0
-    // and nothing suspicious anywhere in the result — needs no LLM classification.
-    // Failures stay LLM-judged: whether e.g. a traceback is a problem is context-
-    // dependent (an intentional bug reproduction SHOULD produce one).
-    const _suspect = /error|warn|fail|traceback|exception|fatal|denied|not found|missing|cannot|unable/i;
-    if (/"exit_code":\s*0\b/.test(serialized) && !_suspect.test(serialized))
-        return stripFn ? stripFn(result) : result;
-    const prompt = `A tool returned this result. Determine if it indicates a problem the agent needs to address.
-
-Tool: ${toolName}${hint ? `\nContext: ${hint}` : ''}
-
-Result:
-${serialized.slice(0, 1500)}
-
-If the result is healthy and the task succeeded: reply exactly:
-CLEAN
-
-If the result contains errors, warnings, partial failures, or anything requiring attention: reply exactly:
-ISSUE: <one sentence — describe the specific problem and include the exact error text so the agent knows what to fix>`;
-    try {
-        // maxAttempts=2: this is advisory stderr analysis, not worth multi-hour retry storms.
-        const text = await withRetry(
-            () => callLLMComplete(prompt, { temperature: 0, maxTokens: 120, label: 'worker:analyze:analyze' }),
-            null, 2
-        );
-        const trimmed = text.trim();
-        if (/^CLEAN/i.test(trimmed)) return stripFn ? stripFn(result) : result;
-        const explanation = trimmed.replace(/^ISSUE[:\s]*/i, '').trim() || trimmed;
-        return { issue: explanation };
-    } catch { return result; }
 }
 
 async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: Map<string, string>, handle: any = null): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number}}> {
@@ -1278,6 +1201,11 @@ async function executeWorkers(args: any): Promise<any> {
     const runId = 'wrun_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     sessionCreateWorkerRun?.(runId, activeChatId ?? null);
 
+    // Request that forked workers inherit: the calling worker's own last request for nested
+    // run_workers calls, otherwise the main agent's last request.
+    const forkBase: ForkBase | null = args._parentRequest
+        ?? (typeof getLastMainRequest === 'function' ? getLastMainRequest() : null);
+
     const agentResults = await Promise.all(agents.map(async (agent, i) => {
         const staging = new Map();
         const context = { snapshot, staging, depth };
@@ -1292,7 +1220,7 @@ async function executeWorkers(args: any): Promise<any> {
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 const role = agent.role ? ((isRoleEnabled(agent.role) ? rolesRegistry.get(agent.role) : null) || null) : null;
-                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role);
+                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase);
                 let output = _rawOut;
                 let { status, note, footer } = parseWorkerStatus(output || '');
                 if (footer) {
@@ -1488,5 +1416,5 @@ Object.assign(window, {
     setMainAgentRole, clearMainAgentRole, restoreRoleForChat, takeWorkspaceSnapshot,
     buildWorkerSystemPrompt, _filterRoleBody,
     callLLMComplete,
-    analyzeToolResult, runWorkerTurn, executeWorkers,
+    runWorkerTurn, executeWorkers,
 });

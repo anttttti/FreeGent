@@ -153,7 +153,7 @@ export const SETTINGS_DEF: PanelDef = {
             title: 'Workers',
             fields: [
                 { kind: 'toggle', key: 'fg_agent_lean_workers',     label: 'Lean worker context' },
-                { kind: 'toggle', key: 'fg_agent_worker_history',   label: 'Share history with same-role workers' },
+                { kind: 'toggle', key: 'fg_agent_worker_history',   label: 'Director workers fork the full context' },
                 { kind: 'toggle', key: 'fg_agent_worker_reduce',    label: 'Worker output reduce' },
                 { kind: 'toggle', key: 'fg_agent_role_model_routing', label: 'Role model routing' },
                 {

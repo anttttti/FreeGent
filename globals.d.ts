@@ -345,7 +345,8 @@ declare global {
     var _runToolCalls: any;
     var _validateStepOutput: any;
     var _saveAnswer: any;
-    var callOAI: (onChunk: (chunk: string, type?: string) => void, onRequest: ((r: any) => void) | null, opts?: { localHistory?: any[] | null; forWorker?: boolean; endpointOverride?: any; roleOverride?: any; toolFilterOverride?: Set<string> | null; maxTokens?: number | null; inputTokensHint?: number; evtSession?: any; evtStep?: number }) => Promise<any>;
+    var callOAI: (onChunk: (chunk: string, type?: string) => void, onRequest: ((r: any) => void) | null, opts?: { localHistory?: any[] | null; forWorker?: boolean; endpointOverride?: any; roleOverride?: any; toolFilterOverride?: Set<string> | null; maxTokens?: number | null; inputTokensHint?: number; evtSession?: any; evtStep?: number; forkPrefix?: { system: string; tools: any[] | null } | null }) => Promise<any>;
+    var getLastMainRequest: () => { system: string; tools: any[] | null; messages: any[] } | null;
     var clearReplaceState: any;
     var clearSessionFallback: any;
     var repairOAIHistory: any;
@@ -388,7 +389,6 @@ declare global {
     var loadAgentsContext: any;
     var loadMemoryContext: any;
     var oaiEndpoint: any;
-    var parseCompactResponse: any;
     var parseContextOverflow: any;
     var recordRequest: any;
     var recordSuccess: any;
@@ -594,7 +594,6 @@ declare global {
     var toolLabel: any;
     // ── bridged by workers.ts ──
     var _filterRoleBody: any;
-    var analyzeToolResult: any;
     var buildWorkerSystemPrompt: any;
     var callLLMComplete: (prompt: string, opts?: { temperature?: number; maxTokens?: number; endpoint?: any; label?: string; history?: any[] | null; maxAttempts?: number }, handle?: any) => Promise<string>;
     var clearMainAgentRole: any;
@@ -661,7 +660,6 @@ declare global {
     var uploadFiles: any;
     var writeFsaFile: any;
     var writeWorkspaceFile: any;
-    var _lastCompactSummary: any; // live accessor from llm-shared.ts
     // ── CDN / environment globals ──
     var Prism: any; // prism CDN
     var TurndownService: any; // turndown CDN
