@@ -81,6 +81,8 @@ export function _buildDeviceContext(): string {
     // Screen size category (logical pixels).
     const _w = typeof screen !== 'undefined' ? screen.width : 0;
     const _h = typeof screen !== 'undefined' ? screen.height : 0;
+    // No real screen (headless / JSDOM reports 0×0): there is no user device to describe.
+    if (!_w || !_h) return '';
     const _short = Math.min(_w, _h);  // shorter dimension = device width in portrait
     const _screenCat = _short < 600 ? 'phone' : _short < 1024 ? 'tablet' : 'desktop';
 

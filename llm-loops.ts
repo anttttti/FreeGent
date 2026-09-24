@@ -280,7 +280,10 @@ function _toolErrorHint(name: string): string {
         search_workspace:  'Use a simpler single-word pattern. path_filter accepts pipe-separated substrings (e.g. "foo.js|bar.js").',
         replace_in_file: 'old_string must match exactly (whitespace, quotes, indentation). Read the file first to confirm.',
         write_file:      'Ensure parent directory exists. content must be a non-empty string.',
-        execute_code:    'Fix the error above. Pyodide notes: no subprocess/os.system; install missing packages with `import micropip; await micropip.install(["pkg"])`; use the fetch_url tool for HTTP requests.',
+        // Pyodide-specific advice only applies when there is no native execution (browser).
+        execute_code:    typeof nativeExec === 'function'
+            ? 'Fix the error above and retry.'
+            : 'Fix the error above. Pyodide notes: no subprocess/os.system; install missing packages with `import micropip; await micropip.install(["pkg"])`; use the fetch_url tool for HTTP requests.',
         fetch_url:       'Confirm the URL is correctly formatted and the server is reachable.',
     }[name] || 'Review the error message above and retry with corrected parameters.';
 }
