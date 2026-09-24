@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -773,6 +773,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
     if (forceToolCall) _forceToolCall = true;
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
+    let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
     const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
@@ -1581,14 +1582,28 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             return (name === 'write_file' && args?.path && args?.content) ? _readOldContent(args.path) : Promise.resolve(null);
         }));
         const _repeatedNames: string[] = [];
-        const _exec = await _runToolCalls(_normCalls, toolTasks, {
-            forWorker,
-            repeatCache: _repeatCache,
-            onTaskDone: () => { _taskDoneCalledThisStep = true; },
-            onRepeat: (name) => _repeatedNames.push(name),
-            replFails: _s._replaceFailures,
-            replNudge: _s._replaceNudgeSent,
-        });
+        // Repeat guard: a call that already ran REPEAT_LIMIT times in a row with the same result is
+        // refused (error result, not executed); after a few refusals the turn ends as BLOCKED below.
+        const _thisCallSig = _callSig(_normCalls);
+        const _refused = _repeatRefused(_repeatGuard, _thisCallSig);
+        const _exec = _refused
+            ? _normCalls.map(({ name, args }, i) => {
+                const result = _repeatRefusalResult(_repeatGuard.streak);
+                toolTasks?.[i]?.setOutput(JSON.stringify(result, null, 2));
+                toolTasks?.[i]?.complete();
+                return { name, args, result };
+            })
+            : await _runToolCalls(_normCalls, toolTasks, {
+                forWorker,
+                repeatCache: _repeatCache,
+                onTaskDone: () => { _taskDoneCalledThisStep = true; },
+                onRepeat: (name) => _repeatedNames.push(name),
+                replFails: _s._replaceFailures,
+                replNudge: _s._replaceNudgeSent,
+            });
+        _repeatGuard = _refused
+            ? { ..._repeatGuard, refused: _repeatGuard.refused + 1 }
+            : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec));
         const _execOk = _exec.filter(r => !r.result?.error).length;
         // Meaningful success: a write tool with no error, or execute_code that exited 0
         // and produced output or wrote files. Read-only successes (read_file, list_files,
@@ -1790,6 +1805,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                 }
             }
         }
+
+        // The model kept issuing the refused call: stop instead of spending the step budget on it.
+        if (_repeatGuard.refused >= REPEAT_REFUSALS_BEFORE_STOP)
+            return await _gracefulSynthesis(`it kept repeating a call that had already returned the same result ${_repeatGuard.streak} times in a row`, textContent);
 
         if (softStopPending) return '*(break)*';
     }
