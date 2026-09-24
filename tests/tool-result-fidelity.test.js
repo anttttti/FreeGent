@@ -69,6 +69,14 @@ describe('fetch_url JSON fitting', () => {
         expect(llmSpy).not.toHaveBeenCalled();
     });
 
+    it('a long string with escaped characters stays within the budget', async () => {
+        serve({ log: 'line "quoted"\n\t'.repeat(2000) });   // every char pair escapes in JSON
+        const r = await W.executeToolAsync('fetch_url', { url: 'http://api.test/log' });
+        expect(typeof r.content.log).toBe('string');
+        expect(r.content.log.endsWith('…')).toBe(true);
+        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(8000);
+    });
+
     it('a large array nested under a key is shrunk in place', async () => {
         serve({ query: 'q', results: tools });
         const r = await W.executeToolAsync('fetch_url', { url: 'http://api.test/search' });

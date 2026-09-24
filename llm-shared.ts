@@ -1,15 +1,15 @@
-import { openaiHistory, setOpenaiHistory, workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession, _reactiveFired, setReactiveFired } from './state.js';
+import { workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { withRetry, _isTimeoutError, parseContextOverflow, fmtDelay } from './retry.js';
-import { getCooldownRemaining, specToEndpoint, oaiEndpoint, _isCoolingDown, modelFriendlyName,
+import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName,
          firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payload-builder.js';
 import { buildOAITools } from './tool-schemas.js';
 import { estimateTokens, getOAIContextTokens, getSamplingParams, getActiveMainModelList, getLocalApiProxy, getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens } from './config.js';
 import { sessionCompactHistory } from './session-store.js';
-// llm-shared.js — FreeGent: streaming helpers, retry, context compaction, history conversion
-// Depends on: config.js, tools.js, state.js (openaiHistory).
+// llm-shared.js — FreeGent: context compaction (and the AGENTS.md loader).
+// Depends on: config.js, state.js, payload-builder.js, retry.js, model-router.js.
 // All top-level consts/lets are module-private; public API exposed via window bridge below.
 
 
@@ -281,7 +281,6 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     }
 
     // Rebuild: anchor + summary (or failure stub) + verbatim tail.
-    const _firedBeforeCompact = [..._reactiveFired];
     const _preCompactHistory = [..._s.history];
     _s.history.length = 0;
     const _anchor = _origFirst
@@ -297,7 +296,6 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     if (_s.history[_s.history.length - 1]?.role === 'assistant') {
         _s.history.push({ role: 'user', content: '[SYSTEM: Continue where you left off.]' });
     }
-    setReactiveFired(new Set(_firedBeforeCompact));
     sessionCompactHistory?.(activeChatId, _preCompactHistory, _s.history);
     const afterTokens = estimateTokens(_s.history);
     task.setPrompt(summary

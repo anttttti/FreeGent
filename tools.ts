@@ -1331,7 +1331,8 @@ const _FETCH_JSON_MAX = 8000;
 function _fitJson(v: any, budget: number, dropped: { items: number; keys: number }): any {
     const s = JSON.stringify(v);
     if (s === undefined || s.length <= budget) return v;
-    if (typeof v === 'string') return v.slice(0, Math.max(0, budget - 3)) + '…';
+    // Budget is in serialized chars: leave room for the quotes, the ellipsis and escape overhead.
+    if (typeof v === 'string') return v.slice(0, Math.max(0, budget - 3 - (s.length - v.length - 2))) + '…';
     const isArr = Array.isArray(v);
     if (!isArr && (v === null || typeof v !== 'object')) return v;
     const entries: [string, any][] = isArr ? v.map((x: any, i: number) => [String(i), x]) : Object.entries(v);

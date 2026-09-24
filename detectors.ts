@@ -208,4 +208,4 @@ export function _updateEnvFailureDetector(
 }
 
 // Window bridge for free-variable access from sibling modules (house pattern).
-Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard });
+Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });
