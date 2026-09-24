@@ -252,6 +252,11 @@ const _MAX_CALLS_PER_TURN = 20;
 // the response, compact, and retry.
 const _TOKEN_FILL_RATIO = 0.98;
 
+// Absolute per-step output cap for local endpoints (plus any thinking budget). v0.54 steps used
+// 76 output tokens at the median and <2K at p99; the old 25%-of-context cap (15K at 60K) only let
+// degenerate "reasoning in code comments" tool calls run for ~107 s each before being cut off.
+const _STEP_OUTPUT_CAP = 8192;
+
 // Tail chars kept from a file-read result for the per-file snippet map (used in step diffs).
 const _FILE_SNIP_TAIL = 500;
 
@@ -820,6 +825,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
     let _lastInputTokens  = 0;
     let _lastHistoryLen   = 0;    // last history.length seen by the estimator (for cache hit check)
     let _lastEstTokens    = 0;    // cached result of estimateTokens for that length
+    let _lastMaxTokensSent = 0;   // max_tokens of the last request (callOAI's clamp), for truncation checks
 
     const _loopMax = getAgentMaxSteps();
 
@@ -953,7 +959,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         const _ep2 = activeEndpoint ?? _defaultEndpoint();
         // Use 65536 for Google models (supports up to 65536 output tokens, more with thinking).
         let _maxTok = oaiMaxTokens ?? (_ep2.provider === 'google' ? 65536 : (_ep2.provider === 'custom' ? (getOAIContextTokens?.() ?? 32768) : 32768));
-        if (_ep2.provider === 'custom') {
+        if (_lastMaxTokensSent > 0) {
+            _maxTok = _lastMaxTokensSent;   // exactly what callOAI sent (includes the step output cap)
+        } else if (_ep2.provider === 'custom') {
             const _ctxWin     = getOAIContextTokens();
             const _exactInput = usage?.prompt_tokens ?? _lastInputTokens;
             const _pctCap     = Math.floor(_ctxWin * 0.25);
@@ -1261,8 +1269,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                     //    Reasoning-only excluded (completion_tokens > 0): handled by _isEmptyReasoning.
                     const _emptyResponse = !_text && !msg.tool_calls?.length && !_frTokenCap
                         && !(msg.usage?.completion_tokens > 0);
-                    if (_frTokenCap || _frFiltered || _frError || _missingFR || _shortTrunc || _emptyResponse) {
-                        const _truncReason = _frTokenCap ? `finish_reason:${_fr}`
+                    // 5. Tool call cut off at max_tokens. Streamed vLLM responses report
+                    //    finish_reason "tool_calls" and close the JSON, so only the token count
+                    //    shows it; executing it runs truncated code (v0.54: 40 such calls).
+                    const _toolCapHit = !!msg.tool_calls?.length && (msg as any)._maxTokens > 0
+                        && (msg.usage?.completion_tokens ?? 0) >= (msg as any)._maxTokens * _TOKEN_FILL_RATIO;
+                    if (_frTokenCap || _toolCapHit || _frFiltered || _frError || _missingFR || _shortTrunc || _emptyResponse) {
+                        const _truncReason = _toolCapHit ? `tool_call_cut_off:${msg.usage?.completion_tokens}`
+                            : _frTokenCap ? `finish_reason:${_fr}`
                             : _frFiltered ? `finish_reason:filtered(${_fr})`
                             : _frError    ? `finish_reason:error(${_fr})`
                             : _missingFR  ? `finish_reason:missing,dangling:"${_text.slice(-20)}"`
@@ -1276,6 +1290,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                         const _e: any = new Error(`TruncatedResponse(${_truncReason})`);
                         _e.isTruncated = true;
                         _e.truncReason = _truncReason;
+                        if (_frTokenCap || _toolCapHit) {
+                            _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length };
+                        }
                         if (_frFiltered) _e.isFiltered = true;
                         throw _e;
                     }
@@ -1325,7 +1342,16 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             // isTruncated escaped withRetry — the whole model pool is exhausted.
             // Close the step as truncated (it was kept 'running' across inner retries)
             // then continue the outer loop so the next iteration re-enters with a fresh step.
-            if (e.isTruncated) { thinkTask.markTruncated?.(e.truncReason ?? 'pool_exhausted'); continue; }
+            if (e.isTruncated) {
+                thinkTask.markTruncated?.(e.truncReason ?? 'pool_exhausted');
+                // Output cut off at the token cap: the response was discarded (not executed, not in
+                // history). Tell the model why before retrying, or it tends to repeat the runaway.
+                if (e.outputCapHit) {
+                    const { tokens, toolCall } = e.outputCapHit;
+                    _emitNudge('output_cut_off', _nudge(`Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
+                }
+                continue;
+            }
             const _is429 = _isRateLimit(e.message);
             const _isErr = _isServerError(e.message);
             // Permanent configuration errors (model not found, no access) must not re-enter
@@ -1397,7 +1423,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             content: message.content ?? null,
             ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
         });
-        const { usage, ...msg } = message;
+        _lastMaxTokensSent = (message as any)._maxTokens ?? 0;
+        const { usage, _maxTokens: _mt, ...msg } = message as any;
         // Capture raw content for hallucinated-call detection before _stripThinking removes it.
         const _rawMsgContent = typeof msg.content === 'string' ? msg.content : '';
         if (typeof msg.content === 'string') msg.content = _stripThinking(msg.content) || null;
@@ -1905,7 +1932,8 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         // Percentage floor: even if the estimate is accurate, never allocate more than 25% of
         // the context window for output — guards against compounding estimation error.
         const pctCap = Math.floor(ctxWindow * 0.25);
-        effectiveMaxTokens = Math.max(256, Math.min(effectiveMaxTokens, available, pctCap));
+        const stepCap = _STEP_OUTPUT_CAP + Math.max(0, customThinkBudget);
+        effectiveMaxTokens = Math.max(256, Math.min(effectiveMaxTokens, available, pctCap, stepCap));
     }
     // Sanitize history before sending:
     // 1. Drop bare assistant messages (content:null, no tool_calls) — these arise when
@@ -1964,6 +1992,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
             result.tool_calls = tool_calls;
         }
     }
+    // The max_tokens actually sent: truncation checks compare completion_tokens against it,
+    // because streamed vLLM responses report finish_reason "tool_calls" even when cut off.
+    result._maxTokens = effectiveMaxTokens;
     return result;
 }
 
