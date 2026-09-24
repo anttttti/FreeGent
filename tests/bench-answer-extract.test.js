@@ -41,6 +41,39 @@ describe('extractFinalAnswer', () => {
     });
 });
 
+describe('extractFinalAnswer bash block extension', () => {
+    it('extends backwards from "done" to include the whole while loop', () => {
+        // Use String.raw to avoid template literal $() substitution confusion
+        const raw = [
+            'find /system/folder1 -name "*special*" | while read -r file; do',
+            '    new_name=$(echo "$file" | sed \'s/special/regular/g\')',
+            '    mv "$file" "$new_name"',
+            'done',
+            'COMPLETED',
+        ].join('\n');
+        const result = extractFinalAnswer(raw);
+        expect(result).toContain('while read -r file');
+        expect(result).toContain('done');
+        expect(result).not.toBe('done');
+    });
+    it('extends backwards from "fi" to include the whole if block', () => {
+        const raw = 'if [ -d /system/folder1 ]; then\n    echo "yes"\nfi\nCOMPLETED';
+        const result = extractFinalAnswer(raw);
+        expect(result).toContain('if [ -d');
+        expect(result).toContain('fi');
+    });
+    it('does NOT change single-line commands', () => {
+        expect(extractFinalAnswer('ls -la /system\nCOMPLETED')).toBe('ls -la /system');
+    });
+    it('does NOT include prose before the block opener', () => {
+        // Prose on earlier lines should NOT be included — block starts at the opener
+        const raw = 'I will rename the files using find:\nfind /x | while read f; do mv "$f" new; done\nCOMPLETED';
+        const result = extractFinalAnswer(raw);
+        expect(result).toContain('while read');
+        expect(result).not.toContain('I will rename');
+    });
+});
+
 describe('stripFencedBlocks', () => {
     it('unwraps content and leaves unfenced text alone', () => {
         expect(stripFencedBlocks('a\n```py\nx = 1\n```\nb')).toBe('a\nx = 1\nb');
