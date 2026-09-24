@@ -234,55 +234,8 @@ Max 2 replan attempts. If still failing → update_task_status(path, "failed", "
 // Built-in rules — standing context injected when triggered, not invoked procedurally.
 // Rules with a body_fn field compute their body dynamically at injection time (see buildTriggeredGuidance).
 // Analogous to .cursor/rules or .claude/rules in other tools.
-const BUILTIN_RULES = [
-    {
-        name: 'datetime',
-        type: 'rule',
-        description: 'Injects current date and time when the user asks about time-sensitive information.',
-        exclude_mode: 'container',  // benchmarks already get date via system prompt; time-of-day is irrelevant
-        // Narrow set: only phrases that genuinely require knowing the current time.
-        // Broad words (when, date, year, week, month, age, duration, calendar) were removed
-        // because they fire on unrelated queries ("date format", "what year was X invented?")
-        // and bust the shared prefix cache with a per-minute timestamp for no benefit.
-        trigger: 'what time, current time, right now, at the moment, local time, what day, what date, today, tonight, yesterday, tomorrow, this morning, this afternoon, this evening, hour, minute, o\'clock, timezone, utc, gmt, time zone, schedule, deadline, how long ago, how soon, time elapsed, time remaining, timestamp',
-        body: '',
-        body_fn: () => {
-            const n = new Date();
-            const pad = x => String(x).padStart(2, '0');
-            const tz = n.toTimeString().match(/GMT[+-]\d{4}/)?.[0] ?? '';
-            return `Current date and time: ${n.toISOString().slice(0, 10)} ${pad(n.getHours())}:${pad(n.getMinutes())} local (${tz})`;
-        },
-    },
-    {
-        name: 'location',
-        type: 'rule',
-        description: 'Injects approximate user location (timezone + locale) when the user asks about location-sensitive information.',
-        exclude_mode: 'container',  // location context is only meaningful in interactive (WebUI/TUI) sessions
-        trigger: 'near me, nearby, local, my location, my city, my country, my region, my area, where am i, my timezone, my language, my locale, in my country, in my city, around me, closest, nearest, weather, forecast, temperature outside, humidity, wind, rain, snow, sunny, cloudy, restaurant, shop, store, cafe, hotel, hospital, pharmacy, airport, train station, bus stop, directions, navigate, map, open now, delivery',
-        body: '',
-        body_fn: () => {
-            const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
-            const lang = typeof navigator !== 'undefined' ? (navigator.language ?? '') : '';
-            const geo  = typeof getGeoCache === 'function' ? getGeoCache() : null;
-            const parts: string[] = [];
-            if (geo?.city)     parts.push(`city: ${geo.city}`);
-            if (geo?.region)   parts.push(`region: ${geo.region}`);
-            if (geo?.country)  parts.push(`country: ${geo.country}`);
-            parts.push(`timezone: ${(geo?.timezone || tz) || '(unknown)'}`);
-            if (lang)          parts.push(`locale: ${lang}`);
-            if (geo?.org)      parts.push(`ISP/org: ${geo.org}`);
-            return `User approximate location — ${parts.join('; ')}`;
-        },
-    },
-    {
-        name: 'image',
-        type: 'rule',
-        description: 'Image rendering and generation rules — how to display SVG, charts, and AI-generated images inline.',
-        trigger: 'generate image, create image, draw, illustrate, visualize, make a picture, a photo of, an image of, generate a picture, paint, artwork, render an image, image generation, text to image, stable diffusion, flux, svg, chart, diagram, plot, visualization, graph, matplotlib, seaborn, plotly, histogram, scatter, bar chart, pie chart, heatmap, logo, icon, infographic',
-        trigger_on_tool: 'execute_code=>[IMAGE:, generate_image',
-        trigger_on_filetype: '.svg, .png, .jpg, .jpeg, .gif, .webp, .bmp, .ico, .avif',
-        trigger_on_media: 'image',
-        body: `## Image Generation & Visual Output
+// image skill bodies — the generate_image parts only when that tool is enabled.
+const _IMAGE_BODY = `## Image Generation & Visual Output
 
 ### Displaying images inline
 The chat renders visual output directly. Three paths depending on the task:
@@ -316,7 +269,73 @@ Tries **stabilityai/stable-diffusion-xl-base-1.0** first, falls back to **black-
 1. **Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply
 2. **Photo/realistic image request:** call \`generate_image\`, then write \`[IMAGE:key]\` in your reply
 3. If the HuggingFace token is missing, tell the user to add it in **Settings → HuggingFace Token**
-4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`
+4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`;
+const _IMAGE_BODY_NO_GEN = `## Image Generation & Visual Output
+
+### Displaying images inline
+The chat renders visual output directly. Two paths depending on the task:
+
+**Data visualization (charts, plots, graphs)** — use \`execute_code\` with matplotlib, seaborn, or plotly. Any image file your Python code writes (e.g. \`plt.savefig("chart.png")\`, \`fig.write_image("chart.svg")\`) is **automatically displayed inline** in the tool output — no extra encoding needed. After the code runs, the tool result contains \`[IMAGE:filename]\` in stdout — copy that exact marker into your chat reply to embed it (e.g. write \`[IMAGE:chart.png]\`). **Never write \`![alt](filename)\`** — a bare workspace filename is not a URL and will show as a broken image. **Never \`print("[IMAGE:filename]")\` from inside the Python code** — the marker is added automatically by the tool infrastructure; printing it yourself results in a broken image because the image won't be in the display store.
+
+**SVG diagrams / illustrations** — generate SVG code and paste the raw \`<svg>...</svg>\` XML directly in your reply. The chat renders it inline. Do NOT base64-encode SVGs — write the XML directly.
+
+**Never** compute or fabricate base64 image data — only use \`[IMAGE:key]\` markers with keys from tool results or files your code actually wrote.
+
+### Workflow
+**Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply.`;
+
+const BUILTIN_RULES = [
+    {
+        name: 'datetime',
+        type: 'rule',
+        description: 'Injects current date and time when the user asks about time-sensitive information.',
+        exclude_mode: 'container',  // benchmarks already get date via system prompt; time-of-day is irrelevant
+        // Narrow set: only phrases that genuinely require knowing the current time.
+        // Broad words (when, date, year, week, month, age, duration, calendar) were removed
+        // because they fire on unrelated queries ("date format", "what year was X invented?")
+        // and bust the shared prefix cache with a per-minute timestamp for no benefit.
+        trigger: 'what time, current time, right now, at the moment, local time, what day, what date, today, tonight, yesterday, tomorrow, this morning, this afternoon, this evening, hour, minute, o\'clock, timezone, utc, gmt, time zone, schedule, deadline, how long ago, how soon, time elapsed, time remaining, timestamp',
+        body: '',
+        body_fn: () => {
+            const n = new Date();
+            const pad = x => String(x).padStart(2, '0');
+            const tz = n.toTimeString().match(/GMT[+-]\d{4}/)?.[0] ?? '';
+            return `Current date and time: ${n.toISOString().slice(0, 10)} ${pad(n.getHours())}:${pad(n.getMinutes())} local (${tz})`;
+        },
+    },
+    {
+        name: 'location',
+        type: 'rule',
+        description: 'Injects approximate user location (timezone + locale) when the user asks about location-sensitive information.',
+        exclude_mode: 'container',  // location context is only meaningful in interactive (WebUI/TUI) sessions
+        trigger: 'near me, nearby, my location, my city, my country, my region, my area, where am i, my timezone, my language, my locale, in my country, in my city, around me, closest, nearest, weather, forecast, temperature outside, humidity, wind, rain, snow, sunny, cloudy, restaurant, shop, store, cafe, hotel, hospital, pharmacy, airport, train station, bus stop, directions, navigate, map, open now, delivery',
+        body: '',
+        body_fn: () => {
+            const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+            const lang = typeof navigator !== 'undefined' ? (navigator.language ?? '') : '';
+            const geo  = typeof getGeoCache === 'function' ? getGeoCache() : null;
+            const parts: string[] = [];
+            if (geo?.city)     parts.push(`city: ${geo.city}`);
+            if (geo?.region)   parts.push(`region: ${geo.region}`);
+            if (geo?.country)  parts.push(`country: ${geo.country}`);
+            parts.push(`timezone: ${(geo?.timezone || tz) || '(unknown)'}`);
+            if (lang)          parts.push(`locale: ${lang}`);
+            if (geo?.org)      parts.push(`ISP/org: ${geo.org}`);
+            return `User approximate location — ${parts.join('; ')}`;
+        },
+    },
+    {
+        name: 'image',
+        type: 'rule',
+        description: 'Image rendering and generation rules — how to display SVG, charts, and AI-generated images inline.',
+        trigger: 'generate image, create image, draw, illustrate, visualize, make a picture, a photo of, an image of, generate a picture, paint, artwork, render an image, image generation, text to image, stable diffusion, flux, svg, chart, diagram, plot, visualization, graph, matplotlib, seaborn, plotly, histogram, scatter, bar chart, pie chart, heatmap, logo, icon, infographic',
+        trigger_on_tool: 'execute_code=>[IMAGE:, generate_image',
+        // :msg — only when the message names such a file. Matching workspace files fired this in
+        // every SWE-bench task (repos ship .png assets).
+        trigger_on_filetype: '.svg:msg, .png:msg, .jpg:msg, .jpeg:msg, .gif:msg, .webp:msg, .bmp:msg, .ico:msg, .avif:msg',
+        trigger_on_media: 'image',
+        body: '',
+        body_fn: () => enabledTools.has('generate_image') ? _IMAGE_BODY : _IMAGE_BODY_NO_GEN,
     },
     {
         name: 'audio',
@@ -696,7 +715,9 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         name: 'documents',
         type: 'rule',
         description: 'Read, write, and modify document files (.pdf, .docx, .xlsx, .pptx, .odt). Examples adapt to native python3 or Pyodide.',
-        trigger: 'pdf, docx, xlsx, document, spreadsheet, word, excel, powerpoint, odt, pptx',
+        // No 'document', 'spreadsheet', 'word': they fired on API-backed sheets (AutomationBench)
+        // and ordinary prose. File types and explicit format names only.
+        trigger: 'pdf, docx, xlsx, excel, powerpoint, odt, pptx',
         trigger_on_filetype: '.pdf, .docx, .doc, .xlsx, .xls, .odt, .pptx, .ppt, .ods',
         body: '',
         body_fn: () => {

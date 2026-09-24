@@ -1,7 +1,7 @@
 // Tests for the table-driven skill-trigger evaluator (evaluateSkillTriggers) and the shared
 // role-exclusion predicate (_skillExcludedForRole) — both in skill-guidance.js (eval'd in setup.js).
 // This is the hot path that decides which skills fire each turn; previously untestable inside agentSend.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 
 const W = window;
 
@@ -180,5 +180,39 @@ describe('completionGateGuidance', () => {
         window.setReactiveFired(new Set());
         W.completionGateGuidance(false, false);
         expect(window._reactiveFired.has(s.name)).toBe(true);
+    });
+});
+
+// Built-in trigger tuning after v0.54: these skills fired on incidental matches.
+describe('built-in skill triggers — v0.54 false positives', () => {
+    beforeAll(async () => { await import('../skills.ts'); });   // BUILTIN_SKILLS/RULES aren't loaded by setup.js
+    const builtin = name => [...W.BUILTIN_SKILLS, ...W.BUILTIN_RULES].find(s => s.name === name);
+    const fires = (name, over) => W.evaluateSkillTriggers(reg(builtin(name)), new Set(), baseInputs(over)).has(name);
+
+    it('image: an image file in the workspace alone does not fire it', () => {
+        expect(fires('image', { wsExts: new Set(['.png']), lowerText: 'fix the regression in the parser' })).toBe(false);
+    });
+    it('image: still fires when the message names an image file', () => {
+        expect(fires('image', { wsExts: new Set(['.png']), lowerText: 'the chart.png output is blank' })).toBe(true);
+    });
+    it('documents: "spreadsheet" / "document" in prose does not fire it; a file format does', () => {
+        expect(fires('documents', { lowerText: 'update the sales leads google sheet spreadsheet ss_leads' })).toBe(false);
+        expect(fires('documents', { lowerText: 'see the document attached for details' })).toBe(false);
+        expect(fires('documents', { lowerText: 'convert report.docx to pdf' })).toBe(true);
+    });
+    it('location: "local" does not fire it', () => {
+        expect(fires('location', { lowerText: 'you have access to business software via a local http api' })).toBe(false);
+        expect(fires('location', { lowerText: 'find a cafe near me' })).toBe(true);
+    });
+    it('image body mentions generate_image only when the tool is enabled', () => {
+        const img = builtin('image');
+        const had = W.enabledTools.has('generate_image');
+        try {
+            W.enabledTools.delete('generate_image');
+            expect(img.body_fn()).not.toContain('generate_image');
+            expect(img.body_fn()).toContain('[IMAGE:');
+            W.enabledTools.add('generate_image');
+            expect(img.body_fn()).toContain('generate_image');
+        } finally { had ? W.enabledTools.add('generate_image') : W.enabledTools.delete('generate_image'); }
     });
 });
