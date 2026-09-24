@@ -685,15 +685,31 @@ ${_navHint}${_parallelHint}
 Do not attempt to spawn workers. Work independently and write your outputs as files.${concise}`;
 }
 
-async function takeWorkspaceSnapshot() {
-    const snapshot = new Map();
-    try {
-        const files = await agentListFiles();
-        for (const f of files.filter(f => !f.isLocal)) {
-            try { snapshot.set(f.name, await agentReadFile(f.name)); } catch {}
-        }
-    } catch {}
-    return snapshot;
+// Workspace view for one run_workers call. The file list is taken up front; a file's content is
+// read on first access and then kept, so every worker sees the same content for it. Reading every
+// file eagerly cost 1.2 s per call on a Django-sized repo, and 43 s through docker exec (one
+// `docker exec cat` per file, TerminalBench), while workers touch only a handful of files.
+export class LazySnapshot {
+    private _sizes   = new Map<string, number>();                        // name → size from the listing
+    private _content = new Map<string, Promise<string | undefined>>();   // name → first read
+    constructor(files: Array<{ name: string; size?: number }>) {
+        for (const f of files) this._sizes.set(f.name, f.size ?? 0);
+    }
+    get size(): number { return this._sizes.size; }
+    has(name: string): boolean { return this._sizes.has(name); }
+    list(): Array<{ name: string; size: number }> { return [...this._sizes].map(([name, size]) => ({ name, size })); }
+    // undefined when the file isn't in the listing or can't be read (e.g. a directory).
+    get(name: string): Promise<string | undefined> {
+        if (!this._sizes.has(name)) return Promise.resolve(undefined);
+        let p = this._content.get(name);
+        if (!p) { p = agentReadFile(name).catch(() => undefined); this._content.set(name, p); }
+        return p;
+    }
+}
+
+async function takeWorkspaceSnapshot(): Promise<LazySnapshot> {
+    try { return new LazySnapshot((await agentListFiles()).filter(f => !f.isLocal)); }
+    catch { return new LazySnapshot([]); }
 }
 
 // ── Endpoint busy-tracking for parallel rotation ──────────────────────────
@@ -1020,14 +1036,14 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
     return result;
 }
 
-async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: Map<string, string>, handle: any = null): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number}}> {
+async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number}}> {
     const autoMerged: Record<string, any> = {}, needsLLM: Record<string, any> = {};
 
     for (const [path, versions] of Object.entries(conflicts)) {
         const sides = Object.values(versions);
         if (sides.length < 2) { autoMerged[path] = sides[0] ?? ''; continue; }
         if (sides.length === 2) {
-            const base = snapshot.get(path) ?? '';
+            const base = (await snapshot.get(path)) ?? '';
             const { merged, conflicts: hasConflicts } = tryMerge(base, sides[0], sides[1]);
             if (!hasConflicts) { autoMerged[path] = merged; continue; }
             needsLLM[path] = { merged, versions };
