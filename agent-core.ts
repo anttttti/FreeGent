@@ -1263,6 +1263,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     const placeholder = activePlaceholder;
     let finalText = '';
     let _turnEndReason: import('./session-event.ts').TurnEndReason = { kind: 'completed' };
+    let _errored = false;
     try {
         finalText = await runTurn(null, placeholder, { session: _s, forceToolCall });
         if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
@@ -1283,6 +1284,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
             }
         } catch {}
         _turnEndReason = { kind: 'error', message: String((err as any)?.message ?? err) };
+        _errored = true;
         finalText = _handleTurnError(err, placeholder, 'runAgentTurn');
     } finally {
         // emit turn/end regardless of how the turn finished.
@@ -1305,6 +1307,8 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     // updates the global which defaultSession proxies, and dedicated sessions are single-threaded).
     const _finishSignal: FinishSignal =
         softStopPending              ? 'stopped'  :
+        // The prompt was rolled back above, so a continuation turn would run without it.
+        _errored                     ? 'error'    :
         _lastTurnDoneToken           ? 'complete' :
         // _lastTurnBlockedToken: set in llm-loops before _stripTerminal removes "BLOCKED:" —
         // the only reliable way to detect a genuine model BLOCKED declaration at this point.

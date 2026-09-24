@@ -4,7 +4,9 @@
 // policy and the harness only executes single turns.
 //
 // The loop calls `runOneTurn` (typically runAgentTurn) repeatedly until the agent
-// declares COMPLETED, is BLOCKED, is stopped externally, or hits the max-continuation cap.
+// declares COMPLETED, is BLOCKED, is stopped externally, a turn errors, or it hits the
+// max-continuation cap. Only 'running' continues: after 'error' the turn's prompt has been
+// rolled back, so a continuation would run without the task.
 
 import type { AgentSession } from './state.js';
 import type { TurnResult } from './types.js';
