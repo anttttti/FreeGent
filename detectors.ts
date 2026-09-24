@@ -37,6 +37,16 @@ export function _fpTrunc(k: string, v: any): any {
 }
 
 // ── Stuck-result detection ───────────────────────────────────────────────────
+// Advice per repeated tool. v0.54: 454 of 467 main-loop stuck nudges were for execute_code,
+// which got the read/search advice below ('' = default).
+const _BLOCKED_TAIL = ' If genuinely stuck, declare BLOCKED: <exact reason> — do not declare COMPLETED without a verified answer.';
+const _STUCK_MSGS: Record<string, string> = {
+    write_file:   'Your last 3 write_file calls wrote identical byte counts — the file was not changed. Read the current file with read_file before writing again.',
+    execute_code: 'Your last 3 execute_code calls produced identical results — running the same command again will not change the outcome. Change the command, or first find out why nothing changes (check logs, process state, file contents, error output).' + _BLOCKED_TAIL,
+    fetch_url:    'Your last 3 fetch_url calls returned identical responses — the same request will keep returning the same thing. Change the URL, method, parameters or body, or use a different endpoint.' + _BLOCKED_TAIL,
+    run_workers:  'Your last 3 run_workers calls returned identical results — delegating the same task again will not help. Do the step yourself, or give the workers a different, more specific task.' + _BLOCKED_TAIL,
+    '':           'Your last 3 steps produced identical results. Try a different approach: use start_line/end_line to read a specific section, or search_workspace with a literal string from the error message or function name to find the right file. Do not search by filename — search by content.' + _BLOCKED_TAIL,
+};
 // Maintains a rolling window of the last 3 result fingerprints; when all 3 match,
 // evicts read caches (targeted by path when possible) and returns a stuck nudge.
 // Returns {resultHashes, stuckMsg} — caller must reassign resultHashes.
@@ -57,13 +67,47 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
         // doing so doesn't help and forces redundant re-reads of already-seen files.
         let _stuckTool = '';
         try { _stuckTool = (JSON.parse(resSig)?.[0]?.n ?? ''); } catch {}
-        const stuckMsg = _stuckTool === 'write_file'
-            ? 'Your last 3 write_file calls wrote identical byte counts — the file was not changed. Read the current file with read_file before writing again.'
-            : 'Your last 3 steps produced identical results. Try a different approach: use start_line/end_line to read a specific section, or search_workspace with a literal string from the error message or function name to find the right file. Do not search by filename — search by content. If genuinely stuck, declare BLOCKED: <exact reason> — do not declare COMPLETED without a verified answer.';
+        const stuckMsg = _STUCK_MSGS[_stuckTool] ?? _STUCK_MSGS[''];
         return { resultHashes, stuckMsg };
     }
     return { resultHashes, stuckMsg: null };
 }
+
+// ── Repeat guard ─────────────────────────────────────────────────────────────
+// Consecutive steps making the same tool call(s) with the same result — digits ignored, since PIDs,
+// timestamps and request IDs change between otherwise identical runs. Once a call has repeated
+// REPEAT_LIMIT times, the next identical call is refused instead of executed. v0.54: 9 tasks looped
+// like this (e.g. `ps aux | grep postgres` 72 times, a curl returning 405 112 times); the nudges
+// kept firing but nothing escalated.
+export const REPEAT_LIMIT = 8;
+export type RepeatGuard = { callSig: string; resSig: string; streak: number; refused: number };
+export const newRepeatGuard = (): RepeatGuard => ({ callSig: '', resSig: '', streak: 0, refused: 0 });
+
+export function _callSig(calls: Array<{ name: string; args: any }>): string {
+    return JSON.stringify(calls.map(c => [c.name, c.args ?? {}]));
+}
+export function _resultSig(results: Array<{ name: string; result: any }>): string {
+    const digitless = (k: string, v: any) => {
+        if (typeof v !== 'string') return v;
+        const d = v.replace(/\d+/g, '#');
+        return d.length > 512 ? `${d.slice(0, 128)}#${_fpHash(d)}#${d.slice(-64)}#len${d.length}` : d;
+    };
+    return JSON.stringify(results.map(r => ({ n: r.name, res: r.result })), digitless);
+}
+// Before executing: true when this call would extend a streak past REPEAT_LIMIT.
+export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
+    return g.streak >= REPEAT_LIMIT && callSig === g.callSig;
+}
+// After executing (not after a refusal): extend or restart the streak.
+export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: string): RepeatGuard {
+    const same = callSig === g.callSig && resSig === g.resSig;
+    return { callSig, resSig, streak: same ? g.streak + 1 : 1, refused: 0 };
+}
+export function _repeatRefusalResult(n: number): { error: string } {
+    return { error: `Not executed: this exact call already ran ${n} times in a row with the same result. Running it again will not change anything — change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
+}
+// Refusals in a row before the loop gives up on the turn.
+export const REPEAT_REFUSALS_BEFORE_STOP = 3;
 
 // ── Text-response quality gate ───────────────────────────────────────────────
 // Checks a no-tool-call text response for quality issues that need a nudge.
@@ -164,4 +208,4 @@ export function _updateEnvFailureDetector(
 }
 
 // Window bridge for free-variable access from sibling modules (house pattern).
-Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });
+Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard });

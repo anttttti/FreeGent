@@ -6,7 +6,7 @@
 import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
@@ -800,6 +800,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     let wResultHashes: string[] = [];
     const _wSeen = { rf: localSeenRF, lf: localSeenLF };
     const _workerRepeatCache = new Map();
+    let _wRepeatGuard = newRepeatGuard();
     let workerFallback: any = null;
 
     const _garbledState = { count: 0 };
@@ -897,10 +898,18 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             // Irreparable args/empty code execute as-is; their errors are real feedback
             // (dispatch rejects empty code with a targeted message).
             const { norm: _normCalls } = repairAllToolCalls(calls);
-            const _exec = await _runToolCalls(_normCalls, null, {
-                forWorker: true, context, repeatCache: _workerRepeatCache,
-                onStart: (name, args) => taskHandle.append(`→ ${toolLabel(name, args)}\n`, 'thinking'),
-            });
+            // Repeat guard (same as the main loop): refuse a call that already repeated with the same result.
+            const _wCallSig = _callSig(_normCalls);
+            const _wRefused = _repeatRefused(_wRepeatGuard, _wCallSig);
+            const _exec = _wRefused
+                ? _normCalls.map(({ name, args }) => ({ name, args, result: _repeatRefusalResult(_wRepeatGuard.streak) }))
+                : await _runToolCalls(_normCalls, null, {
+                    forWorker: true, context, repeatCache: _workerRepeatCache,
+                    onStart: (name, args) => taskHandle.append(`→ ${toolLabel(name, args)}\n`, 'thinking'),
+                });
+            _wRepeatGuard = _wRefused
+                ? { ..._wRepeatGuard, refused: _wRepeatGuard.refused + 1 }
+                : _updateRepeatGuard(_wRepeatGuard, _wCallSig, _resultSig(_exec));
             // Record every tool call this step into the per-worker log (name + compact label).
             for (const c of _normCalls) _wToolCalls.push({ name: c.name, label: toolLabel(c.name, c.args) });
             const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, result: r.result }));
@@ -932,6 +941,11 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 _updateEnvFailureDetector(results, _wEnvFailSig, _wEnvFailCount, _wEnvFailTotal));
             if (_stuckMsg)    emitNudge('worker_stuck',   { role: 'user', content: `<nudge>${_stuckMsg}</nudge>` },    { history: localOH });
             if (_wEnvFailMsg) emitNudge('worker_env_fail',{ role: 'user', content: `<nudge>${_wEnvFailMsg}</nudge>` }, { history: localOH });
+            // Kept repeating a refused call: report the loop (executeWorkers marks it blocked).
+            if (_wRepeatGuard.refused >= REPEAT_REFUSALS_BEFORE_STOP) {
+                _wSessionClose({ kind: 'error', message: 'repeat loop' });
+                return { output: '*(loop detected)*', toolCalls: _wToolCalls };
+            }
     }
     _wSessionClose({ kind: 'max-turns' });
     return { output: '*(max steps reached)*', toolCalls: _wToolCalls };
