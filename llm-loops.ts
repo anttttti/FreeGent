@@ -390,10 +390,6 @@ function _nudgeRole(provider: string | null): 'system' | 'user' {
     return provider === 'nvidia' ? 'system' : 'user';
 }
 
-// Fixed protocol-violation reminder — fires when a no-tool-call response ended with none of
-// the three declared states. Identical text every call so endpoint prefix cache absorbs the cost.
-const _COMPLETION_NUDGE = 'Protocol reminder: Previous response missing final state declaration. Reply with ONLY:\nCOMPLETED — task done\nBLOCKED: <exact reason> — cannot proceed\nOr call the next tool. No other text.';
-
 // Shared tool execution (Issue 8 slice 2 — see notes/refactor-loop-and-tools.md). The
 // execute + error-wrap + tracking + step-box UI loop is shared with runTurn;
 // calls are normalized to {name, args} and
@@ -456,18 +452,10 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 while (repeatCache.size > _REPEAT_CACHE_MAX)
                     repeatCache.delete(repeatCache.keys().next().value);
             }
-            // Eviction for side-effecting tools runs regardless of success/error: a write
-            // or execute_code may have partially mutated state even if it returned an error.
-            if (_WRITE_TOOLS.has(name)) {
-                repeatCache.clear();
-            } else if (name === 'execute_code') {
-                // Any execute_code call may change the environment (pip install, make, etc.).
-                // Evict all OTHER execute_code entries so subsequent identical commands
-                // re-run rather than returning a result from before the environment changed.
-                // Keep this call's own entry so same-step duplicate calls still deduplicate.
-                for (const k of repeatCache.keys())
-                    if (k !== key && k.startsWith('execute_code|')) repeatCache.delete(k);
-            }
+            // Eviction for side-effecting tools (including execute_code, which may change the
+            // environment) runs regardless of success/error: a write may have partially mutated
+            // state even if it returned an error.
+            if (_WRITE_TOOLS.has(name)) repeatCache.clear();
         }
         if (name === 'update_task_status' && /^done$/i.test(args.status || '')) onTaskDone?.();
         if (name === 'replace_in_file' && !forWorker && replFails) _trackReplaceFailure(args.path || '', !!(result && result.error), replFails);
@@ -738,7 +726,7 @@ type StepAction =
 // Unified turn function: always uses openaiHistory as canonical format.
 // Main turn loop — dispatches through callOAI (all providers including Google via OAI-compat).
 // Cross-provider fallback is handled by changing activeEndpoint with no history conversion.
-async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = false, toolFilterOverride = null as Set<string> | null, session, forceToolCall = false }: { forWorker?: boolean; toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean } = {}): Promise<string> {
+async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOverride = null as Set<string> | null, session, forceToolCall = false }: { toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean } = {}): Promise<string> {
     const _s = session ?? defaultSession;
     // Every nudge must land in THIS turn's history. emitNudge() defaults to the
     // module-level openaiHistory, which is only the same array when _s is defaultSession
@@ -765,7 +753,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         }
     };
     repairOAIHistory();
-    if (!forWorker) resetSeenReadFiles();
+    resetSeenReadFiles();
+    _lastMainRequest = null;   // set by this turn's first request; never another chat's
     setLastTurnDoneToken(false);
     setLastTurnBlockedToken(false);
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
@@ -814,14 +803,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         },
         histLen: () => _histR(_s).length,
     };
-    if (!forWorker) {
-        _sessionFallback = null;
-        _rotState.step = 0;
-        const _ep0 = endpoint ?? _defaultEndpoint();
-        if (_isCoolingDown(_ep0)) {
-            const fb = getRateLimitFallbackEndpoint();
-            if (fb) _sessionFallback = fb;
-        }
+    _sessionFallback = null;
+    _rotState.step = 0;
+    const _ep0 = endpoint ?? _defaultEndpoint();
+    if (_isCoolingDown(_ep0)) {
+        const fb = getRateLimitFallbackEndpoint();
+        if (fb) _sessionFallback = fb;
     }
     let activeEndpoint    = endpoint ?? _sessionFallback ?? null;
     let oaiMaxTokens      = null;
@@ -836,15 +823,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
     // On the first user turn: apply keyword matching on top of the LLM-classified set.
     // Classification itself is the caller's responsibility (agentSend / runAgentTurn /
     // headless-runner) and must be awaited before runTurn is called.
-    if (!forWorker && _histR(_s).filter((m: any) => m.role === 'user').length === 1) {
+    if (_histR(_s).filter((m: any) => m.role === 'user').length === 1) {
         const _firstUser = _histR(_s).find((m: any) => m.role === 'user');
         applyKeywordToolFilter(typeof _firstUser?.content === 'string' ? _firstUser.content : '', _s);
     }
 
     // ── Compaction inner function ───────────────────────────────────────────
-    // Called when the token budget is full.  Compacts history and re-injects any pending
-    // nudge.  Always returns null (continue the step loop); kept as a hook for callers.
-    async function _doCompact(step: number): Promise<string | null> {
+    // Called when the token budget is full.  Compacts history and re-injects any pending nudge.
+    async function _doCompact(step: number): Promise<void> {
         _forceCompact = false;
         // Capture any pending nudge so it can be re-injected if compaction drops it.
         const _lastPre = _histR(_s).at(-1);  // read from session
@@ -946,7 +932,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // (triggered mid-turn by tool failures etc.) stay deduplicated — they'll re-fire
         // if their trigger condition occurs again in the fresh context.
         for (const skill of currentTurnSkills) _reactiveFired.delete(skill);
-        return null;
     }
 
     // ── Text-only step inner function ─────────────────────────────────────────
@@ -960,18 +945,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         thinkTask: any, histLegacy: boolean,
         nudge: (text: string) => any,
     ): Promise<StepAction> {
-        const _ep2 = activeEndpoint ?? _defaultEndpoint();
-        // Use 65536 for Google models (supports up to 65536 output tokens, more with thinking).
-        let _maxTok = oaiMaxTokens ?? (_ep2.provider === 'google' ? 65536 : (_ep2.provider === 'custom' ? (getOAIContextTokens?.() ?? 32768) : 32768));
-        if (_lastMaxTokensSent > 0) {
-            _maxTok = _lastMaxTokensSent;   // exactly what callOAI sent (includes the step output cap)
-        } else if (_ep2.provider === 'custom') {
-            const _ctxWin     = getOAIContextTokens();
-            const _exactInput = usage?.prompt_tokens ?? _lastInputTokens;
-            const _pctCap     = Math.floor(_ctxWin * 0.25);
-            _maxTok = Math.max(256, Math.min(_maxTok, _ctxWin - _exactInput - 200, _pctCap));
-        }
-        if ((usage?.completion_tokens ?? 0) >= _maxTok * _TOKEN_FILL_RATIO && step < _loopMax - 1) {
+        // Output at the max_tokens callOAI actually sent (set on every response) → truncated.
+        if (_lastMaxTokensSent > 0 && (usage?.completion_tokens ?? 0) >= _lastMaxTokensSent * _TOKEN_FILL_RATIO && step < _loopMax - 1) {
             thinkTask.append('\n[output cut off at token limit — discarding response, compacting before retry]\n', 'error');
             // only pop from _s.history for fn-tag / no-session.
             if (histLegacy) _s.history.pop();
@@ -1032,7 +1007,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // completionGateGuidance makes this a single bounce per turn.
         // _editsThisRun guard: skip gate entirely for data-query tasks (no file writes) —
         // gate re-checks cause models to second-guess correct answers (v0.33 db/10).
-        if (!forWorker && _isComplete(textContent) && step < _loopMax - 1 && !softStopPending
+        if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending
             && _editsThisRun && ps.finalCheck < 1) {
             const _blocked = _BLOCKED_DECLARATION_RE.test(textContent);
             let _gate = completionGateGuidance(_editsThisRun, _blocked);
@@ -1076,7 +1051,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // graded_test re-fire: gate already fired once; model declares COMPLETED again.
         // Check the most recent pytest tool result — if tests still failing (or never ran),
         // inject another bounce. Cap at ps.finalCheck < 3 (two re-fires after the first).
-        if (!forWorker && _isComplete(textContent) && step < _loopMax - 1 && !softStopPending
+        if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending
             && _editsThisRun && ps.finalCheck >= 1 && ps.finalCheck < 3 && _reactiveFired.has('graded_test')) {
             const _hist = _histR(_s);
             let _testOutput = '';
@@ -1192,8 +1167,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                 return _lastEstTokens;
             })();
         if (_forceCompact || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
-            const _compactDone = await _doCompact(step);
-            if (_compactDone !== null) return _compactDone;
+            await _doCompact(step);
         }
 
         if ((ps._postCompactionTurns ?? 0) > 0) ps._postCompactionTurns!--;
@@ -1201,14 +1175,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         let thinkTask = placeholder.addThinkingTask();
 
         // Revert fallback when primary recovered
-        if (!forWorker && !endpoint && activeEndpoint && _sessionFallback && !getEndpointRotation()) {
+        if (!endpoint && activeEndpoint && _sessionFallback && !getEndpointRotation()) {
             const ep0 = _defaultEndpoint();
             if (!_isCoolingDown(ep0) && activeEndpoint.model !== ep0.model) {
                 activeEndpoint = null; _sessionFallback = null;
             }
         }
         // Endpoint rotation
-        if (!forWorker && !endpoint) {
+        if (!endpoint) {
             const ep = activeEndpoint ?? _defaultEndpoint();
             const currentKey = `${ep.provider ?? getProvider()}|${ep.model}`;
             const nextSpec = _nextRotationSpec(currentKey, _rotState);
@@ -1219,7 +1193,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         const _epKey = `${ep.provider ?? getProvider()}|${ep.model}`;
 
         // Pre-flight probe
-        if (!forWorker && _endpointNeedsProbe.has(_epKey)) {
+        if (_endpointNeedsProbe.has(_epKey)) {
             const _probeOk = await _probeOAIEndpoint(ep);
             if (_probeOk) {
                 _endpointNeedsProbe.delete(_epKey);
@@ -1308,7 +1282,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                     setFallback:   fb => { _sessionFallback = fb; },
                     onNote:        msg => thinkTask.append(`\n${msg}\n`, 'error'),
                     onModelChange: key => thinkTask.setModel(modelFriendlyName(key)),
-                    forWorker,
                     onContextOverflow: max => {
                         oaiMaxTokens = max;
                         _forceCompact = true;
@@ -1390,7 +1363,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                     }
                 }
             }
-            if ((_is429 || _isErr) && !forWorker) {
+            if (_is429 || _isErr) {
                 const fb = _sessionFallback ?? getRateLimitFallbackEndpoint();
                 if (fb && fb.model !== _oEp.model) {
                     activeEndpoint = fb; _sessionFallback = fb;
@@ -1427,8 +1400,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             content: message.content ?? null,
             ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
         });
-        _lastMaxTokensSent = (message as any)._maxTokens ?? 0;
-        const { usage, _maxTokens: _mt, ...msg } = message as any;
+        const { usage, _maxTokens, ...msg } = message as any;
+        _lastMaxTokensSent = _maxTokens ?? 0;
         // Capture raw content for hallucinated-call detection before _stripThinking removes it.
         const _rawMsgContent = typeof msg.content === 'string' ? msg.content : '';
         if (typeof msg.content === 'string') msg.content = _stripThinking(msg.content) || null;
@@ -1545,7 +1518,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         ps.substCheck = 0;
         ps.checkFires = {};
         // Role mode gets a tighter, explicit cap that emits BLOCKED rather than a silent synthesis.
-        if (!forWorker && _s.workflowMode && _s.role) {
+        if (_s.workflowMode && _s.role) {
             const _roleCap = Math.min(_ROLE_STEP_CAP, getAgentMaxSteps());
             if (_stepCount + 1 >= _roleCap)
                 return await _gracefulSynthesis(`role step cap (${_roleCap} steps) reached`, textContent);
@@ -1594,7 +1567,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
                 return { name, args, result };
             })
             : await _runToolCalls(_normCalls, toolTasks, {
-                forWorker,
+                forWorker: false,
                 repeatCache: _repeatCache,
                 onTaskDone: () => { _taskDoneCalledThisStep = true; },
                 onRepeat: (name) => _repeatedNames.push(name),
@@ -1675,7 +1648,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             }
         }
 
-        const replaceFailNudge = forWorker ? null : await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
+        const replaceFailNudge = await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
 
         const resSig = JSON.stringify(results.map(r => ({ n: r.name, res: r.result })), _fpTrunc);
         const stalledPaths = new Set(calls.map(tc => parseArgs(tc.function.arguments)?.path).filter(Boolean).map(_normPath)) as Set<string>;
@@ -1699,13 +1672,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             if (_isFnTag) {
                 const parts = results.map(({ tc, name, result }) => {
                     const _pfx = _errPrefix(result);
-                    return `<tool_response>\n<tool_name>${name}</tool_name>\n<result>\n${_pfx}${JSON.stringify(_historyResult(name, result, forWorker, stepBudget))}\n</result>\n</tool_response>`;
+                    return `<tool_response>\n<tool_name>${name}</tool_name>\n<result>\n${_pfx}${JSON.stringify(_historyResult(name, result, false, stepBudget))}\n</result>\n</tool_response>`;
                 });
                 if (parts.length) _s.history.push({ role: 'user', content: parts.join('\n\n') });
             } else {
                 for (const { tc, name, result } of results) {
                     const _pfx = _errPrefix(result);
-                    _s.history.push({ role: 'tool', tool_call_id: tc.id, name, content: _pfx + JSON.stringify(_historyResult(name, result, forWorker, stepBudget)) });
+                    _s.history.push({ role: 'tool', tool_call_id: tc.id, name, content: _pfx + JSON.stringify(_historyResult(name, result, false, stepBudget)) });
                 }
             }
         }
@@ -1713,7 +1686,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // always individual regardless of fn-tag vs. native — the event log captures semantic truth).
         for (const { tc, name, result } of results) {
             const _pfx = _errPrefix(result);
-            const _histContent = _pfx + JSON.stringify(_historyResult(name, result, forWorker, stepBudget));
+            const _histContent = _pfx + JSON.stringify(_historyResult(name, result, false, stepBudget));
             _evtAppend(_s, 'tool/result', {
                 turn: _s._evtTurn ?? 0,
                 step,
@@ -1724,26 +1697,24 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             }, { surfaceOp: 'append' });
         }
 
-        if (!forWorker) {
-            const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, result: r.result })));
-            if (_reactive) { _emitNudge('reactive_guidance', _nudge(_reactive)); _forceToolCall = true; }
-            // Track successful file edits — feeds the completion gate ('edit' condition).
-            // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
-            if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
-                _editsThisRun = true;
-            // Also set _editsThisRun when execute_code writes workspace files (Director-role benchmarks
-            // have no write_file, so the gate only fires if bash/python wrote files — detected via
-            // files_written populated by nativeExec's pre/post filesystem snapshot in headless-runner.ts).
-            if (!_editsThisRun && results.some(r =>
-                r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
-                && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
-                _editsThisRun = true;
-            // Track successful execute_code — feeds step_validation advisory mode.
-            // A prior successful exec means the model can already use tools; further
-            // step_validation fires should warn rather than block (T3.3/T3.7).
-            if (results.some(r => r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0))
-                _execsThisRun = true;
-        }
+        const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, result: r.result })));
+        if (_reactive) { _emitNudge('reactive_guidance', _nudge(_reactive)); _forceToolCall = true; }
+        // Track successful file edits — feeds the completion gate ('edit' condition).
+        // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
+        if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
+            _editsThisRun = true;
+        // Also set _editsThisRun when execute_code writes workspace files (Director-role benchmarks
+        // have no write_file, so the gate only fires if bash/python wrote files — detected via
+        // files_written populated by nativeExec's pre/post filesystem snapshot in headless-runner.ts).
+        if (!_editsThisRun && results.some(r =>
+            r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
+            && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
+            _editsThisRun = true;
+        // Track successful execute_code — feeds step_validation advisory mode.
+        // A prior successful exec means the model can already use tools; further
+        // step_validation fires should warn rather than block (T3.3/T3.7).
+        if (results.some(r => r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0))
+            _execsThisRun = true;
 
         // ── Post-results nudge zone ─────────────────────────────────────────
         // Phase contract: this is the ONLY place user-role guidance may be appended
@@ -1759,7 +1730,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5)   _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
-        if (!stuckNudge && !forWorker) {
+        if (!stuckNudge) {
             const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0));
             // Rate-limit: skip on the first error in a burst (the [TOOL ERROR] prefix in history
             // already carries the signal). Fire only on the 2nd+ consecutive error, and stop at 5+
@@ -1784,7 +1755,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         // wasted turns on TAC/TerminalBench tasks where no test suite exists.
 
         // Empty-FS → bash fallback (CTF-36): repeated empty list_files → run ls -la directly
-        if (!_emptyFsNudged && !forWorker) {
+        if (!_emptyFsNudged) {
             for (const { name, result } of results) {
                 if (name === 'list_files' && Array.isArray(result.files) && result.files.length === 0) {
                     const prev = _emptyListTargets.get(result.path) ?? 0;

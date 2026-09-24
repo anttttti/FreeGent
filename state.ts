@@ -13,6 +13,9 @@
 //   _evtTurn:  monotonic turn counter incremented at each runAgentTurn() call;
 //              threaded through runTurn() so step events carry the right turn number.
 export type AgentSession = {
+    // The model's input is this array only for fn-tag models and sessions without an event log.
+    // With an event-log session (_session) the input is _session.deriveMessages(); here this array
+    // holds only user prompts, nudges and compaction output, so it is not a full transcript.
     history: any[];
     abortController: AbortController | null;
     role: any;

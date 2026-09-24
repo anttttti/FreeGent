@@ -20,8 +20,6 @@ import { getAgentMaxSteps } from './config.js';
 // The constant MAX_STEPS (100) made the "not on the last step" guards wrong for other limits.
 const _maxSteps = () => getAgentMaxSteps();
 
-// _COMPLETION_NUDGE stays in llm-loops.ts (needed at parse time by _STEP_CHECKS).
-
 // The detector accepts high-prior synonyms (DONE, TERMINATE, TASK COMPLETE from AutoGen/
 // LangChain-style pretraining data) since half-compliant models drift to those.
 export const _TERMINAL_RE   = /(?:^|\n)\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}\s*$/;

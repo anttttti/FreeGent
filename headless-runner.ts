@@ -645,33 +645,6 @@ export async function resumeSession(chatId: string): Promise<boolean> {
     } catch { return false; }
 }
 
-/** Extract a concise summary of every tool call Agent made, paired with its result excerpt. */
-function _buildTriedSummary(hist: any[]): string {
-    const resultOf: Record<string, string> = {};
-    for (const msg of hist) {
-        if (msg.role === 'tool' && msg.tool_call_id) {
-            const raw = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
-            resultOf[msg.tool_call_id] = raw.slice(0, 200).replace(/\n+/g, ' ');
-        }
-    }
-    const lines: string[] = [];
-    for (const msg of hist) {
-        if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
-            for (const tc of msg.tool_calls) {
-                const name = tc.function?.name ?? '?';
-                let argStr = '';
-                try {
-                    const a = JSON.parse(tc.function?.arguments ?? '{}');
-                    argStr = JSON.stringify(a).slice(0, 80);
-                } catch {}
-                const result = tc.id ? (resultOf[tc.id] ?? '') : '';
-                lines.push(`${name}(${argStr})${result ? ` → ${result}` : ''}`);
-            }
-        }
-    }
-    return lines.length ? lines.join('\n') : 'none';
-}
-
 /**
  * Run a single direct LLM call (no agent loop, no tools).
  * Profile and .env keys are loaded just as for run().
