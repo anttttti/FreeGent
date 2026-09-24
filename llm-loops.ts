@@ -363,6 +363,15 @@ async function _getReplaceFailNudge(_replFails: Map<string, number>, _replNudge:
     return null;
 }
 
+// The task as given: the first user message without the post-compaction [TASK …] pin and
+// without injected framework blocks. The raw message starts with the guidance prelude, so
+// slicing it yielded guidance boilerplate (551/558 v0.54 tasks) and its pytest examples were
+// read as graded tests.
+export function _originalTask(hist: any[]): string {
+    const m = hist.find((x: any) => x.role === 'user' && typeof x.content === 'string' && x.content.trim());
+    return m ? stripInjected(m.content.replace(/^\[TASK[^\]]*\]\n/, '')) : '';
+}
+
 // Returns the role to use when injecting a framework nudge into OAI history.
 // Mid-conversation system messages work on vLLM/SGLang and NVIDIA endpoints.
 // Mistral and most hosted APIs only reliably support system at position 0.
@@ -971,11 +980,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: qc.truncated, ...(m?.tool_calls?.length ? { tool_calls: m.tool_calls } : {}) }), 'truncation');
             // Re-inject original task so the agent doesn't lose context on
             // generation collapse (no fg-tasks/current.md in headless/Docker).
-            const _origTask = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
-            if (_origTask && !_origTask.content.startsWith('[TASK')) {
-                const _taskSnippet = typeof _origTask.content === 'string'
-                    ? _origTask.content.slice(0, 2000)
-                    : '';
+            // Skipped after compaction: the pinned [TASK …] anchor already keeps it in view.
+            const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
+            if (_firstUser && !_firstUser.content.startsWith('[TASK')) {
+                const _taskSnippet = _originalTask(_histR(_s)).slice(0, 2000);
                 if (_taskSnippet) qc.nudge += `\n\nOriginal task:\n${_taskSnippet}`;
             }
             _emitNudge('quality_check', nudge(qc.nudge));
@@ -985,9 +993,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
         }
         // Generic step-output validation, pre-state phase: deterministic gates first,
         // minimal LLM yes/no for what regexes can't decide (see _STEP_CHECKS).
-        const _origTaskMsg = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
-        const _taskGoal = (_origTaskMsg && !_origTaskMsg.content.startsWith('[TASK'))
-            ? _origTaskMsg.content.slice(0, 400) : '';
+        const _task = _originalTask(_histR(_s));
+        const _taskGoal = _task.slice(0, 400);
         // Run validation even on COMPLETED responses so pseudo-calls embedded
         // alongside COMPLETED are caught before the session terminates.
         // re_pass in pseudo_tool_call fast-exits for clean COMPLETED (no LLM call).
@@ -1022,7 +1029,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             // Fires once per session (_reactiveFired dedup); skipped when blocked.
             let _hasGradedTest = false;
             if (!_blocked && _editsThisRun && !_reactiveFired.has('graded_test')) {
-                const _taskText = typeof _origTaskMsg?.content === 'string' ? _origTaskMsg.content : '';
+                const _taskText = _task;   // guidance examples (e.g. `pytest tests/test_foo.py`) excluded
                 // Collect graded test IDs from two formats the runner emits:
                 //   1. backtick-quoted `pytest -xvs path.py::name …` — runner always wraps in
                 //      backticks and may include flags and multiple paths on one line; parse
