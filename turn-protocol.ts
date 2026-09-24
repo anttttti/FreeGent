@@ -14,10 +14,11 @@
 // ES module, exports, window bridge.
 
 import { workflowMode, setLastTurnDoneToken } from './state.js';
+import { getAgentMaxSteps } from './config.js';
 
-// _maxSteps() is bridged from config.ts via window — read lazily at call time
-// (module parse happens before classic scripts run).
-const _maxSteps = () => (typeof globalThis.MAX_STEPS !== 'undefined' ? globalThis.MAX_STEPS : 100);
+// The configured step limit (fg_agent_max_rounds / --max-rounds) — the same one runTurn loops on.
+// The constant MAX_STEPS (100) made the "not on the last step" guards wrong for other limits.
+const _maxSteps = () => getAgentMaxSteps();
 
 // _COMPLETION_NUDGE stays in llm-loops.ts (needed at parse time by _STEP_CHECKS).
 
