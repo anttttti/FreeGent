@@ -13,7 +13,7 @@ import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, s
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { NodeSqliteAdapter } from './node-sqlite-adapter.js';
 
@@ -541,7 +541,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         //   resumeSessionId — explicit session to restore (from --resume or /resume N)
         //   workflowMode    — bench runs always get a fresh unique ID, never resume
         //   default         — new interactive session, unique per launch
-        const chatId = resumeSessionId || `${_wsPrefix}${Date.now().toString(36).padStart(9, '0')}`;
+        // Random suffix: concurrent benchmark containers share workspaceRoot (/workspace) and can
+        // start in the same millisecond; identical IDs made their event logs share one file.
+        const chatId = resumeSessionId || `${_wsPrefix}${Date.now().toString(36).padStart(9, '0')}${randomBytes(3).toString('hex')}`;
         const chatName = resumeSessionId
             ? undefined  // don't overwrite existing name of a resumed session
             : `${_dirName} ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
