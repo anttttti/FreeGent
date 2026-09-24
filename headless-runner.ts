@@ -389,6 +389,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
         const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true });
         child.unref();
+        // No interactive input: close stdin so a program that reads it gets EOF at once instead of
+        // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
+        child.stdin?.end();
         child.stdout?.on('data', d => { stdout += d; if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(-MAX_OUTPUT); });
         child.stderr?.on('data', d => { stderr += d; if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(-MAX_OUTPUT); });
         child.on('close', (exitCode) => {
@@ -417,7 +420,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             try { process.kill(-child.pid, 'SIGKILL'); } catch {}
             _done({ stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
                     stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
-                    exit_code: 124, error: 'Command timed out after 120s' });
+                    exit_code: 124, error: 'Command timed out after 120s. Input is not interactive (stdin is closed) — pass input through a pipe or file, and run long jobs in the background.' });
         }, TIMEOUT_MS);
     });
     dom.window.nativeExec = _nativeExecFn;
