@@ -1601,7 +1601,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { forWorker = 
             }
             return true;
         }).length;
-        consecutiveToolFails = _execMeaningful > 0 ? 0 : consecutiveToolFails + _exec.length;
+        // Read-only tools (read_file, list_files, search_workspace, fetch_url) are neutral:
+        // they neither reset the counter (no productive progress) nor increment it (no failure).
+        // Only non-read tool calls count against the failure budget.
+        const _execNonRead = _exec.filter(r => !_READ_ONLY_TOOLS.has(r.name)).length;
+        consecutiveToolFails = _execMeaningful > 0 ? 0 : consecutiveToolFails + _execNonRead;
         if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
