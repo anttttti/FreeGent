@@ -1589,15 +1589,28 @@ async function _handleGenerateImage(args) {
 // Error signatures in stderr worth flagging when the exit code is 0 (see _handleExecuteCode).
 const _STDERR_ERROR_RE = /Traceback \(most recent call last\)|^\w*(?:Error|Exception):|\berror:|\bFAILED\b|\bfatal:/m;
 
+// Python markers at the start of a line. Bash scripts don't start lines this way, and a bash
+// script wrapping Python (heredoc, python -c) is excluded. On v0.54's 227 execute_code calls
+// without a language this picked 46, 45 of which had failed as Python-run-as-bash and none of
+// which had succeeded as bash.
+const _PY_LINE_RE = /^(?:import \w|from [\w.]+ import |def \w+\s*\(|class \w+[(:]|print\(|if __name__ ==)/m;
+export function _looksLikePython(code: string): boolean {
+    const s = (code || '').trimStart();
+    if (s.startsWith('#!')) return /python/.test(s.split('\n', 1)[0]);
+    if (code.includes('<<') || /\bpython3?\s+-c\b/.test(code)) return false;
+    return _PY_LINE_RE.test(code);
+}
+
 async function _handleExecuteCode(args, context) {
     // Alias lists owned by tool-call-repair.ts — dispatch and pre-dispatch repair
     // must accept the same keys or they drift (pre-repair normally handles this;
     // dispatch aliasing is the backstop for paths that skip repair).
     const _firstStr = (keys) => { for (const k of keys) { if (typeof args[k] === 'string' && args[k]) return args[k]; } return undefined; };
-    args = { ...args,
-        code:     _firstStr(EXEC_CODE_ALIASES) ?? '',
-        language: _firstStr(EXEC_LANG_ALIASES) ?? 'bash',
-    };
+    const _code = _firstStr(EXEC_CODE_ALIASES) ?? '';
+    const _lang = _firstStr(EXEC_LANG_ALIASES);   // undefined when the model omitted it
+    // No language given: Python when the code clearly is Python, else bash (the old default).
+    // An explicit language is never overridden.
+    args = { ...args, code: _code, language: _lang ?? (_looksLikePython(_code) ? 'python' : 'bash') };
     // Strip trailing newlines: a literal \n at the end of a bash code string causes
     // the shell to receive an empty second command that exits 0 with no stdout,
     // silently masking the real command's absence. Safe for all languages. (T1.5)
@@ -1741,6 +1754,9 @@ async function _handleExecuteCode(args, context) {
                 : 'Load Pyodide in Settings → Code Execution to run Python in the browser.' };
         }
     }
+    // Explicit bash that failed on what looks like Python: say so (never switch an explicit choice).
+    if (_lang === 'bash' && execResult && !execResult.error && execResult.exit_code > 0 && _looksLikePython(args.code))
+        execResult = { ...execResult, note: 'This looks like Python code but ran as bash — set language: "python".' };
     // Exit 0 with an error signature in stderr: a multi-command script's exit code reflects only
     // its last command, so an earlier failure can hide behind it. Annotate; never strip or replace
     // output — stderr also carries legitimate output (gcc -v, progress, warnings).
