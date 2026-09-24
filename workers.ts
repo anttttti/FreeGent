@@ -164,7 +164,7 @@ ${toolSection}
                 toolLines.push(
 `**replace_in_file** — surgical in-place edit
 - "path" (required): file to edit.
-- "old_content" / "new_content" (required): exact before/after strings; must match file exactly.
+- "old_string" / "new_string" (required): exact before/after strings; must match file exactly.
 - Prefer over write_file for small targeted changes to avoid clobbering unrelated code.
 - Never use bash \`sed -i\` or \`echo >\` to edit files — those create .bak junk and corrupt Python string literals.`);
             if (_has('apply_patch'))

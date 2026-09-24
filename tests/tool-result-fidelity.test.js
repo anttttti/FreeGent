@@ -78,3 +78,43 @@ describe('fetch_url JSON fitting', () => {
         expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(8000);
     });
 });
+
+describe('execute_code language', () => {
+    let origExec, seen;
+    const run = (args, res = { stdout: '', stderr: '', exit_code: 0 }) => {
+        W.nativeExec = async (language) => { seen = language; return res; };
+        return W.executeToolAsync('execute_code', args);
+    };
+    beforeEach(() => { W.mainAgentRole = null; origExec = W.nativeExec; seen = null; });
+    afterEach(() => { W.nativeExec = origExec; });
+
+    it.each([
+        ['import os\nprint(os.getcwd())', 'python'],
+        ['x = [1, 2]\ndef f(a):\n    return a\nprint(f(x))', 'python'],
+        ['#!/usr/bin/env python3\nx = 1', 'python'],
+        ['ls -la\ngrep -r foo .', 'bash'],
+        ['python3 - <<EOF\nimport sys\nprint(sys.version)\nEOF', 'bash'],   // bash wrapping python
+        ['python3 -c "import sys; print(1)"', 'bash'],
+        ['#!/bin/bash\nimport_data.sh', 'bash'],
+    ])('language omitted: %j runs as %s', async (code, lang) => {
+        await run({ code });
+        expect(seen).toBe(lang);
+    });
+
+    it('an explicit language is never overridden', async () => {
+        await run({ code: 'import os\nprint(1)', language: 'bash' });
+        expect(seen).toBe('bash');
+    });
+
+    it('explicit bash that fails on Python-looking code gets a hint', async () => {
+        const r = await run({ code: 'import os\nprint(1)', language: 'bash' },
+            { stdout: '', stderr: "bash: line 1: import: command not found\nbash: line 2: syntax error near unexpected token `1'", exit_code: 2 });
+        expect(r.note).toMatch(/looks like Python code but ran as bash/);
+    });
+
+    it('no hint when explicit bash succeeds or the code is not Python', async () => {
+        expect((await run({ code: 'import os\nprint(1)', language: 'bash' })).note).toBeUndefined();
+        const r = await run({ code: 'ls /nope', language: 'bash' }, { stdout: '', stderr: 'ls: cannot access', exit_code: 2 });
+        expect(r.note).toBeUndefined();
+    });
+});
