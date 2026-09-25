@@ -527,8 +527,9 @@ async function _inlineWorkspaceRefs(html) {
     // 1. Passive event listener fix — Chrome blocks preventDefault() in default-passive touch listeners.
     // 2. Fetch interceptor — serves workspace asset files by data URL; falls back to silent WAV for
     //    missing audio so the game doesn't 404 and the AudioManager degrades cleanly.
-    // 3. CORS proxy — routes cross-origin GET requests through the FG proxy so agent-written HTML
-    //    apps can fetch external APIs without CORS errors and without hardcoding 3rd-party proxies.
+    // 3. CORS proxy — relays cross-origin GET requests to this page (_relayPreviewFetch), which
+    //    fetches them through the FG proxy, so agent-written HTML apps can fetch external APIs
+    //    without CORS errors and without hardcoding 3rd-party proxies.
     const mapJson = JSON.stringify(assetMap);
     const _proxyUrl = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
     const shimTag = `<script>
@@ -578,31 +579,48 @@ function _dataUrlResponse(dataUrl){
   return Promise.resolve(new Response(new Blob([a],{type:mt})));
 }
 const _audioExts=/\\.(wav|mp3|ogg|flac|aac|m4a)$/i;
-const _pxOrigin=_PX?(function(){try{return new URL(_PX).origin;}catch{return '';}}()):'';
 const _SAFE_H=new Set(['accept','accept-language','cache-control','referer','x-requested-with']);
+/* The sandbox gives this frame Origin "null", which the proxy rejects, so cross-origin GETs are
+   relayed to the parent page, which fetches them through the proxy with its own origin. */
+const _pend={};let _seq=0;
+const _NULL_BODY=new Set([101,204,205,304]);
+window.addEventListener('message',function(e){
+  const d=e.data;
+  if(e.source!==parent||!d||d.type!=='fg-fetch-result'||!_pend[d.id])return;
+  const p=_pend[d.id];delete _pend[d.id];
+  if(d.error)p.rej(new TypeError('Failed to fetch '+p.url+': '+d.error));
+  else p.res(new Response(_NULL_BODY.has(d.status)?null:d.body,{status:d.status,statusText:d.statusText,headers:d.headers}));
+});
+function _relay(u,headers,sig){
+  return new Promise(function(res,rej){
+    const abort=function(){rej(new DOMException('The operation was aborted.','AbortError'));};
+    if(sig&&sig.aborted){abort();return;}
+    const id=++_seq;
+    _pend[id]={res:res,rej:rej,url:u};
+    if(sig)sig.addEventListener('abort',function(){if(_pend[id]){delete _pend[id];abort();}});
+    parent.postMessage({type:'fg-fetch',id:id,url:u,headers:headers},'*');
+  });
+}
 const _F=window.fetch;
 window.fetch=function(u,opts){
+  if(u instanceof URL)u=u.href;
   if(typeof u==='string'){
     /* workspace assets + silent audio */
     if(!u.startsWith('http')&&!u.startsWith('//')&&!u.startsWith('data:')){
       if(_M[u]) return _dataUrlResponse(_M[u]);
       if(_audioExts.test(u)) return _dataUrlResponse(_silentWav);
     }
-    /* CORS proxy: route cross-origin GET requests through the FG proxy */
+    /* CORS proxy: relay cross-origin GET requests to the parent page */
     if(_PX&&(u.startsWith('https://')||u.startsWith('http://'))){
-      try{
-        const _m=((opts&&opts.method)||'GET').toUpperCase();
-        if(_m==='GET'&&new URL(u).origin!==location.origin&&new URL(u).origin!==_pxOrigin){
-          let _pu=_PX+'?url='+encodeURIComponent(u);
-          if(opts&&opts.headers){
-            const _hd={};
-            const _h=opts.headers instanceof Headers?Object.fromEntries(opts.headers.entries()):opts.headers;
-            for(const[k,v]of Object.entries(_h||{}))if(_SAFE_H.has(k.toLowerCase()))_hd[k]=v;
-            if(Object.keys(_hd).length)_pu+='&h='+btoa(JSON.stringify(_hd));
-          }
-          return _F.call(this,_pu,{signal:opts&&opts.signal});
-        }
-      }catch{}
+      const _m=((opts&&opts.method)||'GET').toUpperCase();
+      if(_m==='GET'){
+        const _hd={};
+        try{
+          const _h=opts&&opts.headers?(opts.headers instanceof Headers?Object.fromEntries(opts.headers.entries()):opts.headers):{};
+          for(const[k,v]of Object.entries(_h||{}))if(_SAFE_H.has(k.toLowerCase()))_hd[k]=String(v);
+        }catch{}
+        return _relay(u,_hd,opts&&opts.signal);
+      }
     }
   }
   return _F.call(this,u,opts);
@@ -623,6 +641,50 @@ async function _replaceAsync(str, re, asyncFn) {
     let i = 0;
     return str.replace(re, () => results[i++]);
 }
+
+// Preview iframes are sandboxed without allow-same-origin, so their requests carry Origin "null",
+// which the CF proxy rejects. Their fetch shim posts cross-origin GETs here instead; this page
+// fetches them through the proxy with its own origin and posts the response back.
+const _RELAY_SAFE_HEADERS = new Set(['accept', 'accept-language', 'cache-control', 'referer', 'x-requested-with']);
+
+function _isPreviewWindow(win: MessageEventSource | null): boolean {
+    if (!win) return false;
+    for (const f of document.querySelectorAll('iframe.artifact-iframe'))
+        if ((f as HTMLIFrameElement).contentWindow === win) return true;
+    return false;
+}
+
+async function _relayPreviewFetch(e: MessageEvent) {
+    const d = e.data;
+    if (!d || d.type !== 'fg-fetch' || typeof d.id !== 'number' || typeof d.url !== 'string') return;
+    if (!_isPreviewWindow(e.source)) return;
+    const src = e.source as Window;
+    try {
+        const proxy = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
+        if (!proxy) throw new Error('no CORS proxy configured');
+        const { protocol } = new URL(d.url);
+        if (protocol !== 'https:' && protocol !== 'http:') throw new Error('only http(s) URLs can be fetched');
+        let url = `${proxy}?url=${encodeURIComponent(d.url)}`;
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(d.headers || {}))
+            if (_RELAY_SAFE_HEADERS.has(k.toLowerCase()) && typeof v === 'string') headers[k] = v;
+        if (Object.keys(headers).length) url += `&h=${btoa(JSON.stringify(headers))}`;
+        const resp = await fetch(url);
+        const body = await resp.arrayBuffer();
+        // The proxy's own failures (blocked URL, upstream unreachable) must not look like the
+        // upstream's response, or apps parse the proxy's {"error": …} JSON as data.
+        if (resp.headers.get('X-FG-Proxy-Error')) {
+            let msg = '';
+            try { msg = JSON.parse(new TextDecoder().decode(body)).error; } catch {}
+            throw new Error(`proxy: ${msg || `HTTP ${resp.status}`}`);
+        }
+        src.postMessage({ type: 'fg-fetch-result', id: d.id, status: resp.status, statusText: resp.statusText,
+            headers: [...resp.headers], body }, '*', [body]);
+    } catch (err) {
+        src.postMessage({ type: 'fg-fetch-result', id: d.id, error: String((err as Error)?.message || err) }, '*');
+    }
+}
+window.addEventListener('message', _relayPreviewFetch);
 
 async function openArtifactTab(title, html, { isPreview = true } = {}) {
     const inlined = await _inlineWorkspaceRefs(html);

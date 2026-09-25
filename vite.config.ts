@@ -123,6 +123,12 @@ function jsonErr(res: ServerResponse, status: number, message: string): void {
   jsonSend(res, { error: message }, status);
 }
 
+// Same shape as the CF Worker's proxy errors: X-FG-Proxy-Error tells them apart from upstream responses.
+function proxyErr(res: ServerResponse, status: number, message: string): void {
+  res.setHeader('X-FG-Proxy-Error', '1');
+  jsonErr(res, status, message);
+}
+
 async function apiKeys(res: ServerResponse): Promise<void> {
   const keys: Record<string, string> = {};
   const seen = new Set<string>();
@@ -267,7 +273,7 @@ async function apiGit(req: IncomingMessage, res: ServerResponse): Promise<void> 
 async function apiProxyGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const qs = req.url?.split('?')[1] ?? '';
   const targetUrl = new URLSearchParams(qs).get('url') ?? '';
-  if (!targetUrl) { jsonErr(res, 400, 'Missing url parameter'); return; }
+  if (!targetUrl) { proxyErr(res, 400, 'Missing url parameter'); return; }
   try {
     const upstream = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     const contentType = upstream.headers.get('Content-Type') ?? 'text/plain';
@@ -275,7 +281,7 @@ async function apiProxyGet(req: IncomingMessage, res: ServerResponse): Promise<v
     res.writeHead(upstream.status, { 'Content-Type': contentType, 'Content-Length': data.length });
     res.end(data);
   } catch (err: any) {
-    jsonErr(res, 502, `Proxy error: ${err}`);
+    proxyErr(res, 502, `Proxy error: ${err}`);
   }
 }
 
