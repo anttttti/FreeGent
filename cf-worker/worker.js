@@ -114,6 +114,7 @@ const CORS = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept',
     'Access-Control-Max-Age':       '86400',
+    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
 };
 
 export default {
@@ -279,9 +280,10 @@ function _publicUrlOk(target) {
     } catch { return false; }
 }
 
+// X-FG-Proxy-Error marks errors generated here, so clients can tell them from upstream responses.
 function _err(status, message) {
     return new Response(JSON.stringify({ error: message }), {
         status,
-        headers: { ...CORS, 'Content-Type': 'application/json' },
+        headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1' },
     });
 }
