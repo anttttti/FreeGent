@@ -420,7 +420,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             try { process.kill(-child.pid, 'SIGKILL'); } catch {}
             _done({ stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
                     stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
-                    exit_code: 124, error: 'Command timed out after 120s. Input is not interactive (stdin is closed) — pass input through a pipe or file, and run long jobs in the background.' });
+                    exit_code: 124, error: 'Command timed out after 120s. If it was waiting for input, pass input through a pipe or file (stdin is closed); run long jobs in the background.' });
         }, TIMEOUT_MS);
     });
     dom.window.nativeExec = _nativeExecFn;

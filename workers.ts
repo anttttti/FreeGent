@@ -12,7 +12,7 @@ import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
-import { parseArgs } from './history-util.js';
+import { parseArgs, isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
@@ -267,18 +267,11 @@ ${toolSection}`;
             }
 
             if (hasWk) {
-                // Coder worker: its ceiling tools intersected with enabledTools.
-                // Use the same condition for run_git as the tool handler so the description
-                // only advertises tools the worker can actually call.
-                const coderBase = (['list_files', 'read_file', 'search_workspace', 'execute_code'] as const).filter(_has);
-                const coderExtras: string[] = (['write_file', 'replace_in_file', 'apply_patch', 'repo_map'] as const).filter(_has);
-                if (_has('run_git') && getGitEnabled() && getSandboxProvider() === 'local') coderExtras.push('run_git');
-                const coderTools = [...new Set([...coderBase, ...coderExtras])];
-                // Describe coder capabilities based on what is actually available.
+                // Coder worker, described without tool names: _filterRoleBody deletes every line
+                // naming a tool the director lacks, and a director without edit tools (SWE-bench)
+                // lost the whole coder line — it was never told coders exist.
                 const hasCoderWrite = _has('write_file') || _has('replace_in_file') || _has('apply_patch');
-                const coderDesc = hasCoderWrite
-                    ? 'reads, edits, and runs code; use write_file/replace_in_file for edits, execute_code for tests'
-                    : 'reads and runs code; use execute_code for tests and edits';
+                const coderDesc = hasCoderWrite ? 'reads, edits and runs code' : 'reads and runs code; edits through shell commands';
 
                 // Researcher worker: ceiling intersected with enabledTools.
                 // The researcher ceiling now includes web/research tools — only advertise
@@ -305,8 +298,8 @@ ${toolSection}`;
                 toolLines.push(
 `- **Delegate** — run_workers(agents): spawn parallel workers; choose the role that matches the sub-task:
   - role "director" — a fork of you with your full context and tools. Use it when the subtask depends on what you've learned. Just state the subtask.
-  - role "coder" — ${coderDesc} (${coderTools.join(', ')}). Sees only the task you send, not other context: include every path, ID and constraint it needs.
-  - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')}). Sees only the task you send, not other context: include every path, ID and constraint it needs.
+  - role "coder" — ${coderDesc}. Use coder for file edits. Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
+  - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')}). Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
 Delegate to workers for: ${delegateCases}.`
                 );
             }
@@ -748,6 +741,18 @@ You are a fork of the main agent, working on one subtask it delegated to you. Th
 Subtask: ${task}`;
 }
 
+// The user's request for a non-fork worker: the first real user message and, when different, the
+// latest one, with framework blocks stripped. Workers without it lose the task's details
+// (v0.55: coder delegations dropped from 28 to 8 and none resolved).
+function _userRequestMsgs(messages: any[]): { role: string; content: string }[] {
+    const real = messages.filter(isRealUserMessage)
+        .map(m => stripInjected(m.content.replace(/^\[TASK[^\]]*\]\n/, '')))
+        .filter(Boolean);
+    if (!real.length) return [];
+    const first = real[0], last = real[real.length - 1];
+    return (last !== first ? [first, last] : [first]).map(content => ({ role: 'user', content }));
+}
+
 async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
     const wSpec = resolveWorkerModelSpec(workerModelSpec, role);
     let endpoint = wSpec ? specToEndpoint(wSpec) : null;
@@ -784,12 +789,14 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     //   tools and messages — plus the subtask. The request shares the parent's exact prefix, so
     //   the endpoint's prefix cache covers the inherited history. Off when the worker-history
     //   setting is off, or when there is no parent request to fork.
-    // - Specialist (every other role): own role prompt and tools; sees only the task.
+    // - Specialist (every other role): own role prompt and tools; sees the user's request
+    //   (first and latest user messages) and the task.
     const isFork = !!forkBase && (!role || role.name === 'director') && getAgentWorkerHistory();
     if (isFork) {
         localOH.push(...forkBase!.messages);
         localOH.push({ role: 'user', content: _forkTaskMessage(task) });
     } else {
+        localOH.push(..._userRequestMsgs(forkBase?.messages ?? []));
         localOH.push({ role: 'user', content: task });
     }
     // This worker's own last request, exposed so a nested run_workers call can fork it.

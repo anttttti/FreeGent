@@ -273,8 +273,8 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
 
 // ── History pruning ──────────────────────────────────────────────────────────
 // Removes stale/duplicate file read results in-place. No LLM call — pure heuristic.
-// Stale read:    file written after the read → prior read content is outdated.
-// Duplicate read: same file read multiple times, no write between → keep latest.
+// Duplicate read: a later read of the same file covers this read's line range, with no write to
+// the file in between → stub this one. Reads separated by a write are kept (pre-edit state).
 
 const _PRUNE_READ_TOOLS  = new Set(['read_file']);
 const _PRUNE_WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'delete_file', 'append_file']);
@@ -282,42 +282,47 @@ const _PRUNE_MIN_CHARS   = 800;
 
 function _clen(c: any): number { return typeof c === 'string' ? c.length : JSON.stringify(c).length; }
 
-export function pruneOAIHistory(history: any[]): number {
-    // Map tool_call_id → { name, path }
-    const callMeta = new Map();
-    for (const msg of history) {
-        if (msg.role !== 'assistant' || !msg.tool_calls) continue;
-        for (const tc of msg.tool_calls) {
+type _CallMeta = { name: string; path: string | null; from: number; to: number };
+// tool_call_id → tool name, path, and read line range (a whole-file read is [1, Infinity]).
+function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
+    const callMeta = new Map<string, _CallMeta>();
+    for (const m of msgs) {
+        if (m.role !== 'assistant' || !m.tool_calls) continue;
+        for (const tc of m.tool_calls) {
             const name = tc.function?.name; if (!name) continue;
-            let path = null;
-            try { const a = JSON.parse(tc.function.arguments || '{}'); path = a.path ?? a.file_path ?? a.filename ?? null; } catch {}
-            callMeta.set(tc.id, { name, path });
+            let a: any = {};
+            try { a = JSON.parse(tc.function.arguments || '{}'); } catch {}
+            callMeta.set(tc.id, { name, path: a.path ?? a.file_path ?? a.filename ?? null,
+                from: Number(a.start_line) || 1, to: Number(a.end_line) || Infinity });
         }
     }
-    const results = [];
+    return callMeta;
+}
+
+// True when a later read of the same file covers this read's line range with no write to the file
+// in between — only then is this read redundant. Pruning every earlier read of the path left the
+// model one range at a time, and it re-read two ranges alternately until the step limit (v0.55).
+function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta }>): boolean {
+    for (const r of results) {
+        if (r.pos <= pos || r.meta.path !== meta.path) continue;
+        if (_PRUNE_WRITE_TOOLS.has(r.meta.name)) return false;   // file changed before any covering read
+        if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to) return true;
+    }
+    return false;
+}
+
+export function pruneOAIHistory(history: any[]): number {
+    const callMeta = _callMetaMap(history);
+    const results: Array<{ pos: number; msg: any; meta: _CallMeta }> = [];
     for (let i = 0; i < history.length; i++) {
         const msg = history[i]; if (msg.role !== 'tool') continue;
-        const meta = callMeta.get(msg.tool_call_id); if (meta) results.push({ idx: i, msg, meta });
-    }
-    // Write indices and last-read index per path
-    const writeIdx = new Map(), lastRead = new Map();
-    for (const { idx, meta } of results) {
-        if (_PRUNE_WRITE_TOOLS.has(meta.name) && meta.path) {
-            (writeIdx.get(meta.path) ?? writeIdx.set(meta.path, []).get(meta.path)).push(idx);
-        }
-        if (_PRUNE_READ_TOOLS.has(meta.name) && meta.path) lastRead.set(meta.path, idx);
+        const meta = callMeta.get(msg.tool_call_id); if (meta) results.push({ pos: i, msg, meta });
     }
     let saved = 0;
-    for (const { idx, msg, meta } of results) {
+    for (const { pos: idx, msg, meta } of results) {
         if (!_PRUNE_READ_TOOLS.has(meta.name) || !meta.path) continue;
         const cl = _clen(msg.content); if (cl < _PRUNE_MIN_CHARS) continue;
-        const isLastRead = lastRead.get(meta.path) === idx;
-        if (isLastRead) continue; // always keep the most recent read
-        // Only prune if no write happened between this read and the latest read of the file.
-        // If a write occurred in between, the old read shows pre-edit state — keep it.
-        const lastReadIdx = lastRead.get(meta.path);
-        const hasWriteBetween = writeIdx.get(meta.path)?.some(wi => wi > idx && wi <= lastReadIdx);
-        if (!hasWriteBetween) {
+        if (_readCovered(idx, meta, results)) {
             history[idx] = { ...msg, content: `[pruned: dup read "${meta.path}", ${cl} chars]` }; saved += cl;
             // Mark _seenReadFiles entries for this path as 'pruned' so the dedup
             // gate in truncateResultForHistory lets future re-reads through.
@@ -337,43 +342,21 @@ export function pruneOAIHistory(history: any[]): number {
  * still used for fn-tag / no-session paths.
  */
 export function pruneSessionHistory(sess: Session): number {
-    const msgs = sess.deriveMessages();
-    // Build tool_call_id → { name, path } from assistant messages
-    const callMeta = new Map<string, { name: string; path: string | null }>();
-    for (const m of msgs) {
-        if (m.role !== 'assistant' || !(m as any).tool_calls) continue;
-        for (const tc of (m as any).tool_calls) {
-            const name = tc.function?.name; if (!name) continue;
-            let path: string | null = null;
-            try { const a = JSON.parse(tc.function.arguments || '{}'); path = a.path ?? a.file_path ?? a.filename ?? null; } catch {}
-            callMeta.set(tc.id, { name, path });
-        }
-    }
-    // Map from surface seq → { data, meta } for tool/result events
-    const results: Array<{ seq: number; d: any; meta: { name: string; path: string | null } }> = [];
-    for (const seq of sess.surface) {
+    const callMeta = _callMetaMap(sess.deriveMessages());
+    // tool/result events in surface (message) order; pos is the surface position.
+    const results: Array<{ pos: number; seq: number; d: any; meta: _CallMeta }> = [];
+    sess.surface.forEach((seq, pos) => {
         const ev = sess.events[seq];
-        if (ev?.type !== 'tool/result') continue;
+        if (ev?.type !== 'tool/result') return;
         const d = ev.data as any;
         const meta = callMeta.get(d.callId);
-        if (meta) results.push({ seq, d, meta });
-    }
-    // Write seq-indices and last-read seq per path
-    const writeSeqs = new Map<string, number[]>();
-    const lastRead  = new Map<string, number>();
-    for (const { seq, meta } of results) {
-        if (_PRUNE_WRITE_TOOLS.has(meta.name) && meta.path)
-            (writeSeqs.get(meta.path) ?? (writeSeqs.set(meta.path, []), writeSeqs.get(meta.path)!)).push(seq);
-        if (_PRUNE_READ_TOOLS.has(meta.name) && meta.path) lastRead.set(meta.path, seq);
-    }
+        if (meta) results.push({ pos, seq, d, meta });
+    });
     let saved = 0;
-    for (const { seq, d, meta } of results) {
+    for (const { pos, seq, d, meta } of results) {
         if (!_PRUNE_READ_TOOLS.has(meta.name) || !meta.path) continue;
         const cl = _clen(d.content); if (cl < _PRUNE_MIN_CHARS) continue;
-        if (lastRead.get(meta.path) === seq) continue; // keep the most recent read
-        const lastReadSeq = lastRead.get(meta.path)!;
-        const hasWriteBetween = writeSeqs.get(meta.path)?.some(ws => ws > seq && ws <= lastReadSeq);
-        if (hasWriteBetween) continue;
+        if (!_readCovered(pos, meta, results)) continue;
         if ((d.content as string)?.startsWith('[pruned:')) continue; // already pruned
         const prunedContent = `[pruned: dup read "${meta.path}", ${cl} chars]`;
         pruneSurface(sess, seq, d.callId, meta.name, d.turn ?? 0, d.step ?? 0, prunedContent);

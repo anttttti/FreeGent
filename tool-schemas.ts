@@ -325,8 +325,8 @@ const WORKERS_TOOL_SPEC = {
                     type: 'object',
                     properties: {
                         id:    { type: 'string', description: 'Short identifier, e.g. "w1" or "search".' },
-                        task:  { type: 'string', description: 'The subtask. For coder/researcher, include every path, ID and constraint the worker needs — they see only this text.' },
-                        role:  { type: 'string', enum: ['researcher', 'coder', 'director'], description: 'director: a fork of you with your full context and tools — use when the subtask depends on what you have learned. coder: reads, edits and runs code. researcher: read-only search and research. coder and researcher see only the task you send, not other context.' },
+                        task:  { type: 'string', description: 'The subtask. For coder/researcher, include the paths, findings and constraints you have worked out — besides this text they see only the user\'s request.' },
+                        role:  { type: 'string', enum: ['researcher', 'coder', 'director'], description: 'director: a fork of you with your full context and tools — use when the subtask depends on what you have learned. coder: reads, edits and runs code — use coder for file edits. researcher: read-only search and research. coder and researcher see the user\'s request and the task you send, not the rest of the conversation.' },
                         model: { type: 'string', description: 'Model override (format: "provider|model-id").' }
                     },
                     required: ['id', 'task', 'role']

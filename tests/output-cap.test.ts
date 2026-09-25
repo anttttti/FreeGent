@@ -67,3 +67,34 @@ describe('tool call cut off at max_tokens', () => {
         expect(exec).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('tool call cut off by the context clamp', () => {
+    // Local endpoint with a small window: max_tokens is clamped below the 8192 step cap.
+    const LOCAL_EP = { provider: 'vllm', url: 'http://vllm.test/v1/chat/completions', model: 'm', key: '' };
+    const cutCall = { tool_calls: [{ id: 'cut1', type: 'function', function: { name: 'execute_code', arguments: '{"language":"bash","code":"echo"}' } }],
+                      usage: { completion_tokens: 999_999 } };
+
+    async function run(contextTokens: string) {
+        localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${LOCAL_EP.provider}|${LOCAL_EP.model}`]));
+        localStorage.setItem('fg_openai_context', contextTokens);
+        W.nativeExec = vi.fn(async () => ({ stdout: '', stderr: '', exit_code: 0 }));
+        W.setOpenaiHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
+        const bodies: any[] = [];
+        W.fetch = makeReplayFetch([cutCall, { content: 'Summary of the work so far.' }, { content: 'The answer is 7.\nCOMPLETED' }],
+            { onRequest: b => bodies.push(b) });
+        await W.runTurn(LOCAL_EP, NULL_RENDER_ADAPTER);
+        return bodies;
+    }
+
+    it('compacts before retrying when max_tokens was clamped below the step cap', async () => {
+        const bodies = await run('6000');
+        expect(bodies[0].max_tokens).toBeLessThan(8192);
+        expect(bodies[1].tool_choice).toBe('none');   // the compaction request
+    });
+
+    it('retries without compacting when the cut-off was at the full step cap', async () => {
+        const bodies = await run('60000');
+        expect(bodies[0].max_tokens).toBe(8192);
+        expect(bodies.some(b => b.tool_choice === 'none')).toBe(false);
+    });
+});
