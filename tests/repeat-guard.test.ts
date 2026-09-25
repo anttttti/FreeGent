@@ -42,6 +42,7 @@ describe('stuck nudge text', () => {
         let r: any = { resultHashes: [] };
         for (let i = 0; i < 3; i++) r = _updateStuckDetector(sig, new Set(), r.resultHashes);
         expect(r.stuckMsg).toMatch(/running the same command again/);
+        expect(r.stuckMsg).toMatch(/already answers the task, give the answer now/);
         expect(r.stuckMsg).not.toMatch(/start_line/);
     });
 });
@@ -67,6 +68,8 @@ describe('runTurn with a looping call', () => {
         expect(result).toMatch(/stopped|BLOCKED/);
         const refusals = W.openaiHistory.filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed: this exact call already ran'));
         expect(refusals.length).toBeGreaterThan(0);
+        // A model that already has the answer is told to give it, not only to declare BLOCKED.
+        expect(refusals[0].content).toContain('If the output you already have answers the task, give that answer now');
     });
 
     it('keeps running a repeated call whose results change', async () => {

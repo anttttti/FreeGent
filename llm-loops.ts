@@ -1269,7 +1269,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                         _e.isTruncated = true;
                         _e.truncReason = _truncReason;
                         if (_frTokenCap || _toolCapHit) {
-                            _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length };
+                            _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length, maxTokens: (msg as any)._maxTokens ?? 0 };
                         }
                         if (_frFiltered) _e.isFiltered = true;
                         throw _e;
@@ -1324,7 +1324,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Output cut off at the token cap: the response was discarded (not executed, not in
                 // history). Tell the model why before retrying, or it tends to repeat the runaway.
                 if (e.outputCapHit) {
-                    const { tokens, toolCall } = e.outputCapHit;
+                    const { tokens, toolCall, maxTokens } = e.outputCapHit;
+                    // Below the step cap, the limit came from the context clamp: the context is
+                    // nearly full, so an unchanged retry is cut off again (v0.55: 46 in a row).
+                    if (maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
                     _emitNudge('output_cut_off', _nudge(`Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
                 }
                 continue;

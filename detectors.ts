@@ -42,7 +42,7 @@ export function _fpTrunc(k: string, v: any): any {
 const _BLOCKED_TAIL = ' If genuinely stuck, declare BLOCKED: <exact reason> — do not declare COMPLETED without a verified answer.';
 const _STUCK_MSGS: Record<string, string> = {
     write_file:   'Your last 3 write_file calls wrote identical byte counts — the file was not changed. Read the current file with read_file before writing again.',
-    execute_code: 'Your last 3 execute_code calls produced identical results — running the same command again will not change the outcome. Change the command, or first find out why nothing changes (check logs, process state, file contents, error output).' + _BLOCKED_TAIL,
+    execute_code: 'Your last 3 execute_code calls produced identical results — running the same command again will not change the outcome. If that output already answers the task, give the answer now. Otherwise change the command, or first find out why nothing changes (check logs, process state, file contents, error output).' + _BLOCKED_TAIL,
     fetch_url:    'Your last 3 fetch_url calls returned identical responses — the same request will keep returning the same thing. Change the URL, method, parameters or body, or use a different endpoint.' + _BLOCKED_TAIL,
     run_workers:  'Your last 3 run_workers calls returned identical results — delegating the same task again will not help. Do the step yourself, or give the workers a different, more specific task.' + _BLOCKED_TAIL,
     '':           'Your last 3 steps produced identical results. Try a different approach: use start_line/end_line to read a specific section, or search_workspace with a literal string from the error message or function name to find the right file. Do not search by filename — search by content.' + _BLOCKED_TAIL,
@@ -104,7 +104,7 @@ export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: stri
     return { callSig, resSig, streak: same ? g.streak + 1 : 1, refused: 0 };
 }
 export function _repeatRefusalResult(n: number): { error: string } {
-    return { error: `Not executed: this exact call already ran ${n} times in a row with the same result. Running it again will not change anything — change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
+    return { error: `Not executed: this exact call already ran ${n} times in a row with the same result. Running it again will not change the result. If the output you already have answers the task, give that answer now; otherwise change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
 }
 // Refusals in a row before the loop gives up on the turn.
 export const REPEAT_REFUSALS_BEFORE_STOP = 3;
