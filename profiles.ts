@@ -146,7 +146,6 @@ const BUILTIN_PROFILES = [
             fg_agent_ledger:                       'true',
             fg_agent_review_logs:                  'false',
             fg_openai_context:                     '50000',
-            fg_tool_approval:                      'off',
             fg_git_enabled:                        'false',
             fg_ast_enabled:                        'true',
             fg_agent_prompt_template:
@@ -189,7 +188,6 @@ const BUILTIN_PROFILES = [
             fg_agent_review_logs:                  'false',
             fg_agent_loop_max_consecutive_failures: '5',
             fg_openai_context:                     '50000',
-            fg_tool_approval:                      'off',
             fg_git_enabled:                        'false',
             fg_ast_enabled:                        'true',
             fg_agent_prompt_template:

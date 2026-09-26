@@ -2,7 +2,7 @@
 // fix: the helpers workers.js needs must now be reachable via globalThis.
 process.env.WORKSPACE_ROOT = '/tmp/fg-probe-ws';
 import(new URL('../headless-runner.ts', import.meta.url).href).then(mod => {
-    const need = ['_runToolCalls', '_updateBlankSteps', '_updateStuckDetector', '_normPath',
+    const need = ['_runToolCalls', '_updateStuckDetector', '_normPath',
                   'truncateResultForHistory', 'callOAI', 'repairOAIHistory',
                   'convoLogTurn', 'runTurn', 'agentSend', 'loadSkills', 'validateOutput'];
     const missing = need.filter(n => typeof globalThis[n] !== 'function' && typeof globalThis.window?.[n] !== 'function');

@@ -224,6 +224,7 @@ declare global {
     var isContextSizeKnown: any;
     var isRoleEnabled: any;
     var loadServerKeys: any;
+    var isServerKeyPlaceholder: (v: any) => boolean;
     var loadCfWorkerKeys: (() => Promise<void>) | undefined;
     var hasCfTavilyKey: (() => boolean) | undefined;
     var hasCfBraveKey:  (() => boolean) | undefined;

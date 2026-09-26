@@ -4,6 +4,10 @@
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
+import { sandboxCall } from './exec-sandbox-host.js';
+
+// Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
+const JS_SANDBOX_TIMEOUT_MS = 120_000;
 
 const _REPO_MAP_EXT = {
     js:'javascript', jsx:'javascript', mjs:'javascript', cjs:'javascript',
@@ -284,25 +288,53 @@ async function _ivLog(name, args, check) {
 // ── Tool approval ──────────────────────────────────────────────────────────
 
 const _toolApprovalSession = new Set(); // tools the user has whitelisted for this session
-let   _approvalResolve     = null;
 
-function requestToolApproval(toolName, args) {
+// FIFO queue so parallel tool calls (Promise.all) don't overwrite each other's resolver.
+// Each entry is shown one at a time; the next shows as soon as the user responds.
+const _approvalQueue: Array<{ toolName: string; summary: string; resolve: (v: boolean) => void }> = [];
+let _approvalActive = false;
+
+async function _drainApprovalQueue() {
+    _approvalActive = true;
+    while (_approvalQueue.length) {
+        const { toolName, summary, resolve } = _approvalQueue.shift()!;
+        // Re-check session whitelist: it may have been granted while this entry was waiting
+        if (_toolApprovalSession.has(toolName)) { resolve(true); continue; }
+        const result = await _showApprovalToast(toolName, summary);
+        resolve(result);
+    }
+    _approvalActive = false;
+}
+
+function _showApprovalToast(toolName: string, summary: string): Promise<boolean> {
     const toast   = document.getElementById('tool-approval-toast');
     const label   = document.getElementById('tool-approval-label');
     const sesName = document.getElementById('tool-approval-session-name');
     const sesCb   = document.getElementById('tool-approval-session') as HTMLInputElement | null;
     if (!toast) return Promise.resolve(true);
-
-    // Build a one-line summary of what the call will do
-    let summary = toolName;
-    if (args.path)     summary += `: ${args.path}`;
-    if (args.language) summary += ` (${args.language})`;
     if (label)   label.textContent   = summary;
     if (sesName) sesName.textContent = toolName;
     if (sesCb)   sesCb.checked       = false;
     toast.style.display = '';
+    return new Promise(resolve => { _currentApprovalResolve = resolve; });
+}
 
-    return new Promise(resolve => { _approvalResolve = resolve; });
+let _currentApprovalResolve: ((v: boolean) => void) | null = null;
+
+function requestToolApproval(toolName, args) {
+    if (!document.getElementById('tool-approval-toast')) return Promise.resolve(true);
+    let summary = toolName;
+    if (args.path)     summary += `: ${args.path}`;
+    if (args.language) summary += ` (${args.language})`;
+    // Show what will run, not just which tool: the approval is only as good as what the user sees.
+    const cmd = toolName === 'run_git'
+        ? (Array.isArray(args.args) ? args.args.join(' ') : String(args.args ?? args.command ?? args.cmd ?? ''))
+        : (typeof args.code === 'string' ? args.code : '');
+    if (cmd) summary += `: ${cmd.length > 300 ? cmd.slice(0, 300) + '…' : cmd}`;
+    return new Promise<boolean>(resolve => {
+        _approvalQueue.push({ toolName, summary, resolve });
+        if (!_approvalActive) _drainApprovalQueue();
+    });
 }
 
 function resolveToolApproval(allowed) {
@@ -312,12 +344,28 @@ function resolveToolApproval(allowed) {
     if (allowed && sesCb?.checked && label?.textContent)
         _toolApprovalSession.add(label.textContent);
     if (toast) toast.style.display = 'none';
-    if (_approvalResolve) { _approvalResolve(allowed); _approvalResolve = null; }
+    if (_currentApprovalResolve) { _currentApprovalResolve(allowed); _currentApprovalResolve = null; }
 }
 
 window.resolveToolApproval = resolveToolApproval;
 
 const _APPROVAL_HIGH_RISK = new Set(['delete_file', 'execute_code']);
+
+// True when the call would run a command on the user's machine through the dev server
+// (/api/execute or /api/git), as opposed to a browser sandbox or a headless container.
+// Mirrors the routing in _handleExecuteCode.
+function _runsOnHost(name: string, args: any): boolean {
+    if (typeof nativeExec === 'function') return false;   // headless: the runner's own sandboxing applies
+    if (name === 'run_git') return true;
+    if (name !== 'execute_code' || getSandboxProvider() !== 'local') return false;
+    const lang = args?.language;
+    if (lang === 'javascript') return false;   // always the browser sandbox
+    // Only treat Python as browser-only when Pyodide is definitively ready.
+    // 'loading' is uncertain: if loading fails, execution falls through to /api/execute on the
+    // host without a second approval prompt. Gate on 'ready' to avoid that TOCTOU window.
+    const pyodideRuns = lang !== 'bash' && pyodideStatus === 'ready';
+    return !pyodideRuns;
+}
 const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'apply_patch', 'replace_in_file']);
 
 // ── apply_patch helpers: fuzzy offset correction + LLM disambiguation ────────
@@ -464,7 +512,11 @@ async function _handleRunGit(args: any) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ args: gitArgs }),
         });
-        if (!resp.ok) return { error: `run_git: HTTP ${resp.status}` };
+        if (!resp.ok) {
+            let detail = '';
+            try { detail = (await resp.json())?.error ?? ''; } catch {}
+            return { error: `run_git: ${detail || `HTTP ${resp.status}`}` };
+        }
         const gitResult = await resp.json();
         return gitResult;
     } catch (e) { return { error: `run_git: ${e.message}` }; }
@@ -1355,6 +1407,21 @@ async function _handleFetchUrl(args) {
     args = { ...args, url: args.url ?? args.link ?? args.href ?? args.uri ?? '' };
     // Strip [UNAVAILABLE] suffix if the model passes an annotated URL from search results.
     args = { ...args, url: stripUnavailable(args.url) };
+    // Browser only: refuse the page's own server. Same-origin requests carry the dev server's
+    // token (added by the page's fetch wrapper), so a prompt-injected fetch_url could otherwise
+    // drive /api/execute or /api/proxy. Loopback names on the same port are the same server.
+    // Headless runs have no dev server, and reach localhost services (e.g. benchmark mock APIs).
+    // __FG_SERVER_KEYS is set by the dev server's page script: no dev server, nothing to protect.
+    if (!window._fgHeadless && (window as any).__FG_SERVER_KEYS && window.location?.host) {
+        try {
+            const u = new URL(args.url, window.location.href);
+            const pagePort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+            const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+            const loopback = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\]|\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\])$/i.test(u.hostname.replace(/\.$/, ''));
+            if (u.host === window.location.host || (loopback && port === pagePort))
+                return { error: 'fetch_url: requests to the FreeGent server itself are not allowed' };
+        } catch {}
+    }
     // Models reach for fetch_url with file:// to read workspace files; the browser
     // fetch fails with an unactionable "Failed to fetch". Redirect deterministically.
     if (/^file:/i.test(args.url)) {
@@ -1444,6 +1511,12 @@ async function _handleFetchUrl(args) {
                         }
                     } catch (_e) { /* try next branch */ }
                 }
+            }
+            // The proxy itself refused (private address, the dev server, rate limit): say why, so
+            // the model doesn't mistake a policy refusal for a flaky site and retry.
+            if (resp.headers.get('X-FG-Proxy-Error')) {
+                const why = await resp.json().then(j => j?.error, () => '').catch(() => '');
+                return { error: `fetch_url: the proxy refused this URL${why ? ` — ${why}` : ''}. Only public web addresses can be fetched.` };
             }
             // Blacklist plain-GET pages that block bots (403/429/503/other 4xx-5xx).
             // API/JSON/POST requests are excluded — a 401 on an auth'd call is a config
@@ -1537,18 +1610,22 @@ async function _handleGenerateImage(args) {
 
     let lastError: string | null = null;
 
+    // Through the dev server's proxy (CORS) when there is one; headless has none and needs none.
+    const _viaProxy = (url: string, init: { method: string; headers?: Record<string, string>; body?: string }) => {
+        const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
+        return proxy
+            ? fetch(proxy, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, ...init }), signal: activeAbortController?.signal })
+            : fetch(url, { ...init, signal: activeAbortController?.signal });
+    };
+
     // ── 1. Pollinations.ai — free, no API key required ───────────────────────
     // Uses FLUX under the hood; works out of the box without credentials.
     try {
         const seed = Math.floor(Math.random() * 1_000_000);
         const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`
             + `?width=1024&height=1024&model=flux&nologo=true&seed=${seed}`;
-        const resp = await fetch('/api/proxy', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ url: polUrl, method: 'GET' }),
-            signal:  activeAbortController?.signal,
-        });
+        const resp = await _viaProxy(polUrl, { method: 'GET' });
         const result = await _saveImageResp(resp, 'pollinations/flux');
         if (result) return result;
         const errText = await resp.text().catch(() => '');
@@ -1569,16 +1646,10 @@ async function _handleGenerateImage(args) {
             try {
                 const reqBody: any = { inputs: prompt };
                 if (negativePrompt && model.includes('stable-diffusion')) reqBody.negative_prompt = negativePrompt;
-                const resp = await fetch('/api/proxy', {
+                const resp = await _viaProxy(`https://router.huggingface.co/hf-inference/models/${model}`, {
                     method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({
-                        url:     `https://router.huggingface.co/hf-inference/models/${model}`,
-                        method:  'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hfKey}` },
-                        body:    JSON.stringify(reqBody),
-                    }),
-                    signal: activeAbortController?.signal,
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hfKey}` },
+                    body:    JSON.stringify(reqBody),
                 });
                 const result = await _saveImageResp(resp, model);
                 if (result) return result;
@@ -1629,9 +1700,9 @@ async function _handleExecuteCode(args, context) {
     }
     let execResult = null;
     const _needsDisplay = /^\s*(?:import|from)\s+(pygame|pygame_ce|turtle|tkinter|wx|gi\.repository|PyQt[456]|PySide[26])\b/m.test(args.code);
-    // Static browser JavaScript: eval with virtual fs shim (no nativeExec, no local sandbox)
+    // Browser JavaScript: runs in the exec sandbox frame with a virtual fs shim (not headless).
+    // (/api/execute runs only bash and python, so JavaScript uses the sandbox whatever the provider.)
     const _isStaticJS = args.language === 'javascript'
-        && getSandboxProvider() !== 'local'
         && typeof nativeExec !== 'function';
     if (_isStaticJS) {
         execResult = await (async () => {
@@ -1644,56 +1715,25 @@ async function _handleExecuteCode(args, context) {
                     if (c != null && c.length <= 500_000) files[f.name] = c;
                 }
             } catch {}
-            const written = {};
-            const stdout_lines = [], stderr_lines = [];
-            const _norm = p => p.replace(/^\.\//, '');
-            // Virtual fs — readFileSync/writeFileSync/existsSync/readdirSync/appendFileSync
-            const _fs = {
-                readFileSync:  (p, _enc) => { const k = _norm(p); if (!(k in files)) { const e = new Error(`ENOENT: no such file or directory, open '${p}'`); e.code = 'ENOENT'; throw e; } return files[k]; },
-                writeFileSync: (p, c)    => { const k = _norm(p); written[k] = typeof c === 'string' ? c : String(c); files[k] = written[k]; },
-                appendFileSync:(p, c)    => { const k = _norm(p); const prev = files[k] ?? ''; written[k] = prev + c; files[k] = written[k]; },
-                existsSync:    (p)       => _norm(p) in files,
-                readdirSync:   (p)       => { const pre = (p === '.' || p === '') ? '' : p.replace(/\/?$/, '/'); return [...new Set(Object.keys(files).filter(f => f.startsWith(pre)).map(f => f.slice(pre.length).split('/')[0]).filter(Boolean))]; },
-            };
-            // path shim
-            const _path = {
-                join:     (...a) => a.join('/').replace(/\/+/g, '/').replace(/\/$/, '') || '.',
-                dirname:  (p)    => p.includes('/') ? p.split('/').slice(0, -1).join('/') || '/' : '.',
-                basename: (p, e) => { const b = p.split('/').pop(); return e && b.endsWith(e) ? b.slice(0, -e.length) : b; },
-                extname:  (p)    => { const m = p.match(/\.[^./]+$/); return m ? m[0] : ''; },
-                resolve:  (...a) => a.join('/').replace(/\/+/g, '/'),
-            };
-            const _require = m => {
-                if (m === 'fs')   return _fs;
-                if (m === 'path') return _path;
-                throw new Error(`Cannot find module '${m}' — only 'fs' and 'path' are available in the browser JS sandbox`);
-            };
-            const _console = {
-                log:   (...a) => stdout_lines.push(a.map(String).join(' ')),
-                info:  (...a) => stdout_lines.push(a.map(String).join(' ')),
-                error: (...a) => stderr_lines.push(a.map(String).join(' ')),
-                warn:  (...a) => stderr_lines.push(a.map(String).join(' ')),
-            };
-            try {
-                // eslint-disable-next-line no-new-func
-                const fn = new Function('fs', 'require', 'console', 'process', `return (async()=>{ ${args.code} })()`);
-                await fn(_fs, _require, _console, { env: {}, argv: ['node', 'script.js'], cwd: () => '.' });
-                const write_errors = [];
-                for (const [path, content] of Object.entries(written)) {
-                    try {
-                        await agentWriteFile(path, content);
-                        if (context?.staging) context.staging.set(path, content);
-                        _invalidateReadDedup(path);
-                    } catch (e) {
-                        write_errors.push(`${path}: ${e.message ?? e}`);
-                    }
+            // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
+            // storage or the dev server) with a fs/path shim over this copy of the files.
+            let run;
+            try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS); }
+            catch (e) { return { stdout: '', stderr: `JS sandbox: ${e.message ?? e}`, exit_code: 1 }; }
+            if (run.failed) return { stdout: run.stdout, stderr: run.stderr, exit_code: 1 };
+            const write_errors = [];
+            for (const [path, content] of Object.entries(run.written as Record<string, string>)) {
+                try {
+                    await agentWriteFile(path, content);
+                    if (context?.staging) context.staging.set(path, content);
+                    _invalidateReadDedup(path);
+                } catch (e) {
+                    write_errors.push(`${path}: ${e.message ?? e}`);
                 }
-                const written_ok = Object.keys(written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
-                const extra_stderr = write_errors.length ? (stderr_lines.length ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
-                return { stdout: stdout_lines.join('\n'), stderr: stderr_lines.join('\n') + extra_stderr, exit_code: write_errors.length && !written_ok.length ? 1 : 0, ...(written_ok.length ? { files_written: written_ok } : {}), ...(write_errors.length ? { write_errors } : {}) };
-            } catch (e) {
-                return { stdout: stdout_lines.join('\n'), stderr: e.stack || e.message, exit_code: 1 };
             }
+            const written_ok = Object.keys(run.written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
+            const extra_stderr = write_errors.length ? (run.stderr ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
+            return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: write_errors.length && !written_ok.length ? 1 : 0, ...(written_ok.length ? { files_written: written_ok } : {}), ...(write_errors.length ? { write_errors } : {}) };
         })();
     } else if (typeof nativeExec === 'function') {
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
@@ -1728,7 +1768,7 @@ async function _handleExecuteCode(args, context) {
                             : rec.content;
                     }
                 } catch {}
-                const resp = await fetch('http://localhost:5000/api/execute', {
+                const resp = await fetch('/api/execute', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body:    JSON.stringify({ language: args.language, code: args.code, files }),
@@ -1843,13 +1883,15 @@ export async function executeToolAsync(name, args, context = null) {
         }
     }
 
-    // Tool approval gate — only in main agent context (not sub-workers), only when enabled
-    if (!context && !_toolApprovalSession.has(name)) {
+    // Tool approval gate (when enabled). Commands that run on the host — execute_code through the
+    // local sandbox, and run_git — are gated for workers too; other tools only for the main agent.
+    if (!_toolApprovalSession.has(name)) {
         const approval = getToolApproval();
+        const onHost = _runsOnHost(name, args);
         const needsApproval =
-            (approval === 'high' && (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python'))) ||
-            (approval === 'all'  && _APPROVAL_ALL_WRITE.has(name));
-        if (needsApproval) {
+            (approval === 'high' && (onHost || (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python')))) ||
+            (approval === 'all'  && (onHost || _APPROVAL_ALL_WRITE.has(name)));
+        if (needsApproval && (!context || onHost)) {
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
         }

@@ -738,8 +738,18 @@ export async function agentReadFile(path) {
     throw new Error(`File not found: ${path}`);
 }
 
+// Git metadata is off limits to agent writes: a hook (.git/hooks/*) or repo config (.git/config:
+// core.pager, core.fsmonitor, aliases, filters) written into a granted local folder is executed by
+// the next git command — run_git, or yours. Browser workspace only; headless runs are contained
+// by their container.
+function _refuseGitMetadata(path: string, op: string): void {
+    if (String(path).split(/[\\/]+/).some(seg => seg.toLowerCase() === '.git'))
+        throw new Error(`${op}: ${path} is inside a .git directory — git metadata can't be changed by the agent`);
+}
+
 export async function agentWriteFile(path, content, encoding = null) {
     if (_wa) return _wa.agentWriteFile(path, content, encoding);
+    _refuseGitMetadata(path, 'write');
     if (path.startsWith('local/')) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
@@ -770,6 +780,7 @@ export async function agentWriteFile(path, content, encoding = null) {
 
 export async function agentDeleteFile(path) {
     if (_wa) return _wa.agentDeleteFile(path);
+    _refuseGitMetadata(path, 'delete');
     if (path.startsWith('local/')) {
         try { await deleteFsaFile(path.slice('local/'.length)); }
         catch { await deleteWorkspaceFile(path); } // fall back for orphaned IDB local/ files

@@ -216,6 +216,19 @@ Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a ma
 - `chat-render.ts` — `createTask()` stepbox rendering, `_friendlyLabel()` label → display name
 - `settings-ui.ts` — settings form, `updateActiveModelDisplay()`, `applyHdrReasoning()`
 - `profiles.ts` — `PROFILE_KEYS`, `profileApply()` — **credentials must never be in `PROFILE_KEYS`**
+- `dev-api.ts` — the dev/preview server's `/api/*` (token check, `/api/proxy` with server-key
+  substitution and the self-target guard, `/api/execute`, `/api/git`) and the page script that
+  wraps `fetch`. **Credential values never go to the browser**: the page holds placeholders
+  (`__fgsk__fg_x_key__`). A new provider needs its hosts in `KEY_HOSTS`, or its server key won't
+  be substituted. `secret-env.ts` strips credentials from command environments.
+- `exec-sandbox-host.ts` + `exec-sandbox/` — **agent code never runs in the page's origin.**
+  Browser `execute_code` (JS, Pyodide) and the WASM shell run in an opaque-origin iframe whose
+  bundle (`fg-exec-sandbox.js`) is built by `dev-api.ts buildExecSandbox()`. Don't add `eval` /
+  `new Function` / same-origin workers for agent-supplied code in page modules; add a runner to
+  `exec-sandbox/entry.ts`. New workspace needs from the frame go in `WS_OPS`.
+- `/api/proxy` policy: **GET** is for URLs the agent can influence and reaches public addresses
+  only; **POST** reaches private addresses too, for configured LLM endpoints. Never route an
+  agent-chosen URL through the POST form.
 - `workspace.ts` — file I/O routing, checkpoint storage, `agentWriteFile/ReadFile/ListFiles/DeleteFile`
 - `headless-runner.ts` / `fg-run.ts` — Node/JSDOM benchmark entry (run with `npx tsx fg-run.ts`)
 

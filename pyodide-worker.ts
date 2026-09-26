@@ -3,12 +3,6 @@ importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js');
 
 let pyodide: any = null;
 
-function syncfs(populate) {
-    return new Promise<void>((resolve, reject) => {
-        pyodide.FS.syncfs(populate, err => err ? reject(err) : resolve());
-    });
-}
-
 async function init() {
     try {
         pyodide = await loadPyodide({
@@ -16,9 +10,9 @@ async function init() {
         });
         await pyodide.loadPackage("micropip");
 
+        // In-memory /workspace: the page sends the workspace files with every run, and the worker
+        // runs in the exec sandbox's opaque origin, where IndexedDB (IDBFS) is not available.
         pyodide.FS.mkdirTree('/workspace');
-        pyodide.FS.mount(pyodide.FS.filesystems.IDBFS, {}, '/workspace');
-        await syncfs(true); // populate from any existing IDBFS data
 
         self.postMessage({ type: 'ready' });
     } catch (e) {
@@ -131,9 +125,7 @@ self.onmessage = async ({ data }) => {
     }
 
     try {
-        // Refresh IDBFS from its backing store, then migrate any files from the main
-        // thread that are missing or outdated (first-run migration + incremental sync).
-        await syncfs(true);
+        // Bring /workspace up to date with the files the page sent.
         for (const [name, content] of Object.entries(files || {})) {
             const path = `/workspace/${name}`;
             const dir  = path.slice(0, path.lastIndexOf('/'));
@@ -156,7 +148,7 @@ self.onmessage = async ({ data }) => {
             }
         }
 
-        // Remove IDBFS files not in the loaded files dict so stale data from prior
+        // Remove /workspace files not in the loaded files dict so stale data from prior
         // sessions doesn't bleed into the workspace or mask Python writes.
         purgeStale('/workspace', '', files);
 
@@ -257,9 +249,6 @@ await micropip.install(${JSON.stringify(toInstall)})
         }
 
         const after = snapshotDir('/workspace', '');
-
-        // Persist IDBFS changes (including deletions) back to IndexedDB.
-        await syncfs(false);
 
         const changedFiles = {};
         for (const [name, content] of Object.entries(after)) {

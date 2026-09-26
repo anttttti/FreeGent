@@ -58,11 +58,21 @@ export async function* readSSE(resp: any) {
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
-            buffer = lines.pop();
+            buffer = lines.pop()!;
             for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const payload = line.slice(6).trim();
+                if (!line.startsWith('data:')) continue;
+                // SSE spec: strip "data:" then one optional space; strip trailing \r for CRLF streams
+                const payload = line.slice(5).replace(/^ /, '').replace(/\r$/, '');
+                if (!payload) continue; // keep-alive / empty data line
                 if (payload === '[DONE]') return;
+                try { yield JSON.parse(payload); }
+                catch (err) { console.warn('[SSE] JSON parse error:', String(err), 'payload:', payload.slice(0, 120)); }
+            }
+        }
+        // Flush any final event that had no trailing newline
+        if (buffer.startsWith('data:')) {
+            const payload = buffer.slice(5).replace(/^ /, '').replace(/\r$/, '');
+            if (payload && payload !== '[DONE]') {
                 try { yield JSON.parse(payload); } catch {}
             }
         }

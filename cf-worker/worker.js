@@ -61,6 +61,8 @@ const ALLOWED_ORIGINS = new Set([
     'http://localhost:5173',         // Vite dev server
     'http://localhost:4173',         // Vite preview
     'http://localhost:3000',
+    'http://localhost:5000',         // Vite dev server (actual default port)
+    'http://127.0.0.1:5000',
 ]);
 
 // ── Allowed upstream hostnames (POST / LLM proxy only) ───────────────────────
@@ -128,7 +130,7 @@ export default {
         }
 
         // ── Origin check ──────────────────────────────────────────────────────
-        if (origin && !_originOk(origin)) {
+        if (!origin || !_originOk(origin)) {
             return _err(403, 'Origin not allowed');
         }
 
@@ -155,6 +157,7 @@ export default {
                 // ── Search / fetch_url proxy ──────────────────────────────────
                 const target = workerUrl.searchParams.get('url');
                 if (!target) return _err(400, 'Missing url parameter');
+                if (await _rateLimited(request, env, 'get')) return _err(429, 'Rate limit exceeded — try again in a minute');
                 // Allow any public HTTPS URL; block private/reserved IPs (SSRF guard).
                 if (!_publicUrlOk(target)) return _err(403, 'URL blocked (private address or non-HTTPS)');
 
@@ -181,10 +184,16 @@ export default {
                     } catch { /* ignore malformed ?h= */ }
                 }
 
-                upstream = await fetch(target, {
-                    headers: fwdHeaders,
-                    signal: AbortSignal.timeout(15_000),
-                });
+                // Follow redirects here so every hop gets the same public-URL check.
+                let cur = target;
+                for (let hop = 0; ; hop++) {
+                    upstream = await fetch(cur, { headers: fwdHeaders, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+                    const loc = upstream.headers.get('Location');
+                    if (![301, 302, 303, 307, 308].includes(upstream.status) || !loc) break;
+                    if (hop >= 5) return _err(502, 'Too many redirects');
+                    cur = new URL(loc, cur).toString();
+                    if (!_publicUrlOk(cur)) return _err(403, 'Redirect to a private address or non-HTTPS URL blocked');
+                }
 
             } else if (request.method === 'POST') {
                 // ── LLM API proxy ─────────────────────────────────────────────
@@ -197,27 +206,21 @@ export default {
                 if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
 
                 // Inject shared key when client sends no / empty Authorization.
+                // Shared keys are usable by anyone who can reach this Worker — the Origin check
+                // stops browsers on other sites, but any other client can send any Origin. The
+                // per-IP rate limit (FG_RATE_LIMITER in wrangler.toml) is what bounds their use.
                 const auth = headers['Authorization'] || headers['authorization'] || '';
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
-                if (isEmpty && env) {
-                    const { hostname } = new URL(target);
-                    const envKey = PROVIDER_KEY_MAP[hostname];
-                    if (envKey && env[envKey]) {
-                        headers['Authorization'] = `Bearer ${env[envKey]}`;
-                    }
-                }
-
-                // Inject search-provider keys that use non-standard auth headers.
-                if (env) {
-                    const { hostname } = new URL(target);
-                    const entry = SEARCH_HEADER_MAP[hostname];
-                    if (entry) {
-                        const existing = headers[entry.header] || headers[entry.header.toLowerCase()] || '';
-                        if (!existing && env[entry.envKey]) {
-                            headers[entry.header] = env[entry.envKey];
-                        }
-                    }
-                }
+                const { hostname } = new URL(target);
+                const envKey = isEmpty && env ? PROVIDER_KEY_MAP[hostname] : null;
+                const search = env ? SEARCH_HEADER_MAP[hostname] : null;
+                const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
+                const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
+                if (injecting && await _rateLimited(request, env, 'key'))
+                    return _err(429, 'Shared-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
+                if (envKey && env[envKey]) headers['Authorization'] = `Bearer ${env[envKey]}`;
+                // Search providers that use non-standard auth headers.
+                if (searchMissing && env[search.envKey]) headers[search.header] = env[search.envKey];
 
                 upstream = await fetch(target, {
                     method,
@@ -259,23 +262,42 @@ function _hostOk(target) {
     } catch { return false; }
 }
 
+// Per-client-IP limit via the Workers Rate Limiting binding. Without the binding (e.g. a fork
+// deployed with an older wrangler.toml) nothing is limited.
+async function _rateLimited(request, env, kind) {
+    const limiter = env && env.FG_RATE_LIMITER;
+    if (!limiter) return false;
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    try {
+        const { success } = await limiter.limit({ key: `${kind}:${ip}` });
+        return !success;
+    } catch { return false; }
+}
+
 // For GET fetch_url requests: allow any public HTTPS URL.
-// Block private/reserved ranges to prevent SSRF attacks.
+// Block private/reserved ranges to prevent SSRF attacks. (Workers can't reach private networks
+// anyway; this keeps the check honest.) Applied again to every redirect hop.
 function _publicUrlOk(target) {
     try {
         const u = new URL(target);
         if (u.protocol !== 'https:') return false;
-        const h = u.hostname;
-        // Block localhost and loopback
-        if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
-        // Block link-local / metadata endpoints
-        if (h === '169.254.169.254' || h.startsWith('169.254.')) return false;
-        // Block private IPv4 ranges (10.x, 172.16-31.x, 192.168.x)
-        if (/^10\./.test(h)) return false;
-        if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
-        if (/^192\.168\./.test(h)) return false;
-        // Block IPv6 private/loopback
-        if (/^\[?(::1|fc|fd|fe80)/i.test(h)) return false;
+        let h = u.hostname.toLowerCase().replace(/\.$/, '');
+        if (h === 'localhost' || h.endsWith('.localhost')) return false;
+        // IPv6 literal: loopback, unspecified, unique-local, link-local, IPv4-mapped
+        if (h.startsWith('[')) {
+            h = h.slice(1, -1);
+            if (h === '::1' || h === '::' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || h.startsWith('::ffff:')) return false;
+            return true;
+        }
+        const m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+        if (!m) return true;
+        const [a, b] = [Number(m[1]), Number(m[2])];
+        if (a === 0 || a === 10 || a === 127) return false;                 // this-network, private, loopback
+        if (a === 169 && b === 254) return false;                            // link-local / cloud metadata
+        if (a === 172 && b >= 16 && b <= 31) return false;                   // private
+        if (a === 192 && b === 168) return false;                            // private
+        if (a === 100 && b >= 64 && b <= 127) return false;                  // carrier-grade NAT
+        if (a >= 224) return false;                                          // multicast / reserved
         return true;
     } catch { return false; }
 }

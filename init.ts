@@ -227,7 +227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // already configured, so we don't clobber a deliberate 'none' choice from a previous session.
     if (['localhost', '127.0.0.1'].includes(window.location.hostname) &&
         !localStorage.getItem(KEYS.SANDBOX_PROVIDER)) {
-        fetch('http://localhost:5000/api/execute', { method: 'POST',
+        fetch('/api/execute', { method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ language: 'python', code: 'print(1)' }) })
             .then(r => { if (r.ok) {

@@ -41,3 +41,24 @@ describe('device context', () => {
         }
     });
 });
+
+// Headless runs have no dev server: the same-origin /api/proxy fallback pointed at
+// http://freegent.internal/api/proxy, so every plain-GET fetch_url failed with "fetch failed".
+describe('proxy getters when headless', () => {
+    afterEach(() => { delete (window as any)._fgHeadless; });
+
+    it('return no proxy, so callers fetch directly', () => {
+        (window as any)._fgHeadless = true;
+        expect((globalThis as any).getEffectiveProxy()).toBe('');
+        expect((globalThis as any).getLocalApiProxy()).toBe('');
+    });
+
+    it('fetch_url fetches the URL itself', async () => {
+        (window as any)._fgHeadless = true;
+        const spy = vi.fn(async () => new Response('hello', { status: 200, headers: { 'Content-Type': 'text/plain' } }));
+        vi.stubGlobal('fetch', spy);
+        const r = await (globalThis as any).executeToolAsync('fetch_url', { url: 'https://example.com/page' });
+        expect(r.error).toBeUndefined();
+        expect(String(spy.mock.calls[0][0])).toBe('https://example.com/page');
+    });
+});

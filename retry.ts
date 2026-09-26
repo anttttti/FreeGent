@@ -98,7 +98,7 @@ export function sleepInterruptible(ms: number, signal?: AbortSignal | null) {
 // onFailure: optional fn(e) called for EVERY caught exception, before the transient/non-transient
 // branch — a non-transient error (e.g. a 400 that doesn't match any isTransient() pattern) never
 // reaches onRetry at all, so this is the only hook that sees every failed attempt unconditionally.
-export async function withRetry(fn, onRetry, maxAttempts = Infinity, isTransientOverride = null, onFailure = null) {
+export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverride = null, onFailure = null) {
     for (let attempt = 0; ; attempt++) {
         try { return await fn(); }
         catch (e) {

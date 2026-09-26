@@ -247,6 +247,8 @@ function saveSettings() {
     const saveKey = (lsKey: string, inputId: string) => {
         const el = document.getElementById(inputId) as HTMLInputElement | null;
         const val = el ? el.value.trim() : '';
+        // A server-key placeholder is never stored: the server keeps the key.
+        if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) return;
         if (val) {
             localStorage.setItem(lsKey, val);
         } else if (el?.dataset.fgLoaded) {
@@ -287,6 +289,13 @@ function populateSettingsForm() {
     const set = (id, val) => {
         const el = document.getElementById(id) as HTMLInputElement | null;
         if (!el) return;
+        // Keys held by the dev server reach the page only as placeholders: leave the field empty
+        // and say where the key comes from. Typing a key here overrides the server's.
+        if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) {
+            el.value = '';
+            el.placeholder = 'Set in ~/.config/freegent/credentials (kept on the server)';
+            return;
+        }
         el.value = val;
         if (val) el.dataset.fgLoaded = '1';
     };

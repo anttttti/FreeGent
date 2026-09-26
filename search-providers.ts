@@ -90,17 +90,16 @@ export async function braveSearch(query: any): Promise<any> {
         } else if (localKey || cfHasKey) {
             // Route through CF Worker POST proxy to Brave Search API.
             // Worker injects X-Subscription-Token from BRAVE_API_KEY when no local key.
-            if (!cfProxy) return { error: 'Brave search requires a proxy URL. Set it in Settings → Search.' };
             const braveHeaders: Record<string, string> = {};
             if (localKey) braveHeaders['X-Subscription-Token'] = localKey;
-            resp = await fetch(cfProxy, {
+            const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10`;
+            // No proxy (headless): no CORS either, so call Brave directly with the user's key.
+            if (!cfProxy && localKey) resp = await fetch(braveUrl, { headers: braveHeaders, signal: _searchSignal() });
+            else if (!cfProxy) return { error: 'Brave search requires a proxy URL. Set it in Settings → Search.' };
+            else resp = await fetch(cfProxy, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
-                    url:     `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10`,
-                    method:  'GET',
-                    headers: braveHeaders,
-                }),
+                body:    JSON.stringify({ url: braveUrl, method: 'GET', headers: braveHeaders }),
                 signal: _searchSignal(),
             });
         } else {

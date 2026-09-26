@@ -62,9 +62,11 @@ npm run dev:lan      # all interfaces  →  also reachable from phone / other de
 FG_PORT=8080 npm run dev              # custom port
 ```
 
-`npm run dev:lan` is equivalent to `vite --host`. Vite prints the Network URL on startup; open it on any device on the same LAN. The CORS allowlist is automatically extended to include all local IPv4 addresses when binding to all interfaces.
+`npm run dev:lan` is equivalent to `vite --host`. On startup it prints one URL per network address that carries an access token (`#fg_token=…`); open that URL once on each device, which then remembers the token. Without it, the page loads but the server's API (code execution, the proxy, server-held keys) refuses requests — anyone else on the network can load the page but can't use them. The token is stored in `~/.config/freegent/server-token`; delete that file to issue a new one. If the port is taken, the server exits instead of moving to another port.
 
-Enter your API key in **Settings → Profiles**, or put it in `~/.config/freegent/credentials` — it loads automatically on startup (see [API keys](#api-keys) below).
+Code the agent runs in the browser (JavaScript, Python via Pyodide, and the in-browser bash shell) runs in a sandboxed frame that can't read the app's data. With **Local** code execution, commands run on your machine through the dev server: on Linux with [bubblewrap](https://github.com/containers/bubblewrap) (`apt install bubblewrap`) each command is isolated from your home directory, keeping system directories, the toolchains on your `PATH` (e.g. conda) and network access. `FG_EXEC_BIND=/path,/other` exposes extra read-only paths; `FG_EXEC_ISOLATION=none` turns isolation off. Without bubblewrap the agent asks before each local command. With bubblewrap, `run_git` runs isolated too: it sees only this repository, so `git push` over SSH has to come from your own shell.
+
+Enter your API key in **Settings → Profiles**, or put it in `~/.config/freegent/credentials` — it loads automatically on startup (see [API keys](#api-keys) below). Keys in the credentials file stay in the dev server: the page only gets placeholders, and the server adds each key to requests going to that provider's own hosts.
 
 **Key features:**
 
