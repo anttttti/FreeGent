@@ -229,7 +229,14 @@ if [ -n "$_PUSH_RANGE" ]; then
 
 fi  # end _PUSH_RANGE checks
 
-# 8. Test suite
+# 8. Typecheck + test suite
+step "Typecheck"
+if npm run typecheck 2>&1; then
+    ok "Typecheck passed"
+else
+    fail "Type errors — fix before deploying."
+fi
+
 step "Tests"
 if npm test -- --reporter=verbose 2>&1 | tee /tmp/_fg_test_out.txt | tail -6; then
     _TEST_PASS=$(grep -c '✓' /tmp/_fg_test_out.txt 2>/dev/null || echo 0)

@@ -9,7 +9,7 @@
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { KEYS } from './storage-keys.js';
-import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -28,6 +28,7 @@ import './ast.js';
 import './history-util.js';
 import './fetch-blacklist.js';
 import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
+import { scrubEnv } from './secret-env.js';
 import './search-providers.js';
 import './skill-guidance.js';
 import './turn-context.js';
@@ -385,9 +386,17 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         const MAX_OUTPUT = 200_000, MAX_RETURN = 5_000, TIMEOUT_MS = 120_000;
         // Snapshot workspace before execution (local only — Docker workspace is on the container).
         const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
+        // Snapshot .git/hooks to detect hook-injection attempts (non-.sample files planted by the agent).
+        const hooksDir = (!targetContainer && workspaceRoot) ? join(workspaceRoot, '.git', 'hooks') : null;
+        const preHooks: Set<string> | null = hooksDir ? (() => {
+            try { return new Set(readdirSync(hooksDir).filter(f => !f.endsWith('.sample'))); }
+            catch { return null; }
+        })() : null;
         let stdout = '', stderr = '', done = false;
         const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
-        const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true });
+        // The runner's environment holds the provider keys (loaded from the credentials file);
+        // agent commands get it without them. (docker exec doesn't forward it either way.)
+        const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true, env: scrubEnv(process.env) });
         child.unref();
         // No interactive input: close stdin so a program that reads it gets EOF at once instead of
         // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
@@ -412,6 +421,17 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
                     }
                 } catch {}
                 if (written.length > 0) result.files_written = written;
+            }
+            // Detect .git/hooks planted by the executed code (hook-injection guard).
+            if (hooksDir && preHooks !== null) {
+                try {
+                    const postHooks = readdirSync(hooksDir).filter(f => !f.endsWith('.sample'));
+                    const planted = postHooks.filter(h => !preHooks.has(h));
+                    if (planted.length > 0) {
+                        for (const h of planted) { try { unlinkSync(join(hooksDir, h)); } catch {} }
+                        result.warning = `execute_code planted .git/hooks — removed: ${planted.join(', ')}. Check for other .git/ writes.`;
+                    }
+                } catch {}
             }
             _done(result);
         });

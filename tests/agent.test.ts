@@ -99,6 +99,12 @@ describe('isTransient', () => {
 // ── renderMarkdown ────────────────────────────────────────────────────────────
 
 describe('renderMarkdown', () => {
+    beforeEach(() => {
+        // Provide a passthrough DOMPurify so tests exercise the sanitized path
+        (window as any).DOMPurify = { sanitize: (html: string, _opts?: any) => html };
+    });
+    afterEach(() => { delete (window as any).DOMPurify; });
+
     it('uses marked.parse when marked is available', () => {
         window.marked = { parse: (t) => `<p>${t}</p>` };
         expect(W.renderMarkdown('hello')).toBe('<p>hello</p>');
@@ -109,6 +115,14 @@ describe('renderMarkdown', () => {
         const result = W.renderMarkdown('text');
         expect(result).toContain('target="_blank"');
         expect(result).toContain('rel="noopener noreferrer"');
+    });
+
+    it('escapes HTML when DOMPurify is absent', () => {
+        delete (window as any).DOMPurify;
+        window.marked = { parse: () => '<script>alert(1)</script>' };
+        const result = W.renderMarkdown('x');
+        expect(result).not.toContain('<script>');
+        expect(result).toContain('&lt;script&gt;');
     });
 
     it('falls back to basic renderer when marked absent', () => {

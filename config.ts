@@ -1,6 +1,7 @@
 // config.js — FreeGent: global state, settings helpers, model catalog, pyodide, utilities
 // Loaded first; all other modules depend on this.
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
+import { createSandboxedPyodideWorker, sandboxCall } from './exec-sandbox-host.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 100; // hard ceiling on ReAct steps within a single turn
@@ -125,35 +126,38 @@ let pyodideMsgId        = 0;
 
 // ── Settings helpers ───────────────────────────────────────────────────────
 
-// Keys loaded from the Python server (env vars / .env file). Populated by
-// loadServerKeys() at startup. Only used when localStorage has no value for a key.
+// Keys the dev server holds (from ~/.config/freegent/credentials or .env). The page never sees
+// their values: each is a placeholder that the page's fetch wrapper sends through /api/proxy,
+// where the server swaps in the key for that provider's hosts only (dev-api.ts). Only used when
+// localStorage has no value for a key.
 const _serverKeys = {};
 
-// Fetch API keys from the local server and store in _serverKeys.
-// Two sources are checked in order; both are merged so neither wins exclusively:
-//
-//  1. DOM-injected tag — <script id="fg-server-keys" type="application/json"> embedded
-//     by the fg-key-inject Vite plugin in vite.config.ts.  Available synchronously and
-//     survives SSL cert failures: mobile browsers that accept the navigation warning for
-//     a self-signed cert (basicSsl is localhost-only; LAN-IP fetch() is refused) can
-//     still read keys that were baked into the HTML.
-//
-//  2. /api/keys fetch — picks up keys changed after page load (dev hot-reload) and works
-//     in static builds where the inject plugin isn't present.
-//
-// The fetch result overwrites the DOM values so runtime changes are always picked up.
+export const isServerKeyPlaceholder = (v: any): boolean => typeof v === 'string' && /^__fgsk__fg_[a-z0-9_]+__$/.test(v);
+
+// Read the server's key list (set by the page script the dev server injects) and turn each
+// entry into a placeholder. The server sends a short SHA-256 prefix per key, never the value;
+// older versions copied server keys into localStorage when Settings was saved, so any stored
+// value with a matching hash is removed — the placeholder takes over.
 async function loadServerKeys() {
-    try {
-        const el = document.getElementById('fg-server-keys');
-        if (el?.textContent) Object.assign(_serverKeys, JSON.parse(el.textContent));
-    } catch {}
-    try {
-        // Skip on static hosts (GitHub Pages, CF Pages) — no local /api/keys server.
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        if (host.endsWith('.github.io') || host.endsWith('.pages.dev')) return;
-        const r = await fetch('/api/keys', { signal: AbortSignal.timeout(2000) });
-        if (r.ok) Object.assign(_serverKeys, await r.json());
-    } catch {}
+    const status: Record<string, string> = (typeof window !== 'undefined' && (window as any).__FG_SERVER_KEYS) || {};
+    for (const name of Object.keys(status)) _serverKeys[name] = `__fgsk__${name}__`;
+    const subtle = typeof crypto !== 'undefined' ? crypto.subtle : undefined;
+    if (!subtle) {
+        // Not a secure context (plain-HTTP LAN): no SHA-256 here, so stored copies can't be
+        // matched. Say so, rather than leave them silently.
+        const stored = Object.keys(status).filter(n => { try { return !!localStorage.getItem(n); } catch { return false; } });
+        if (stored.length) console.warn(`[FreeGent] The server holds these keys, and this browser also has a saved copy it can't check over plain HTTP: ${stored.join(', ')}. If they are copies, clear them in Settings.`);
+        return;
+    }
+    for (const [name, hash] of Object.entries(status)) {
+        try {
+            const stored = localStorage.getItem(name);
+            if (!stored || isServerKeyPlaceholder(stored)) continue;
+            const digest = await subtle.digest('SHA-256', new TextEncoder().encode(stored));
+            const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+            if (hex.slice(0, 16) === hash) localStorage.removeItem(name);
+        } catch {}
+    }
 }
 
 // localStorage with server-key fallback. If a key has never been stored in
@@ -298,6 +302,10 @@ const DEFAULT_CF_WORKER = 'https://fg-proxy.antti-puurula.workers.dev';
 function getEffectiveProxy() {
     const manual = getSearchProxy();
     if (manual) return manual;
+    // Headless (fg-run, benchmarks) has no local server and no CORS: fetch directly. The
+    // same-origin fallback below would be http://freegent.internal/api/proxy there, which doesn't
+    // exist — every plain-GET fetch_url and proxied search failed with "fetch failed".
+    if ((window as any)._fgHeadless) return '';
     try {
         const host = window.location.hostname;
         // On GitHub Pages there is no local server — use the default CF Worker.
@@ -318,6 +326,7 @@ function getEffectiveProxy() {
 export function getLocalApiProxy() {
     const configured = typeof getSearchProxy === 'function' ? getSearchProxy() : '';
     if (configured) return configured.replace(/\/$/, '');
+    if ((window as any)._fgHeadless) return '';   // no local server headless (see getEffectiveProxy)
     try {
         const host = window.location.hostname;
         // On GitHub Pages there is no local server — use the default CF Worker.
@@ -394,7 +403,14 @@ function getAgentReviewLogs()         { return ls('fg_agent_review_logs', 'false
 function getAgentMaxReplans()         { return parseInt(ls('fg_agent_max_replans', '2'), 10); }
 function getIntentValidation() { return ls(KEYS.INTENT_VALIDATION, 'heuristic'); } // 'off' | 'heuristic'
 function setIntentValidation(value) { localStorage.setItem(KEYS.INTENT_VALIDATION, value); }
-function getToolApproval() { return ls('fg_tool_approval', 'off'); } // 'off' | 'high' | 'all'
+// 'off' | 'high' | 'all'. Unset, it follows the sandbox: code that runs on the host unisolated
+// (the 'local' provider → /api/execute without bubblewrap, as the user) asks first; browser
+// sandboxes and an isolated /api/execute don't. __FG_SERVER_INFO comes from the dev server.
+function getToolApproval() {
+    const hostUnisolated = getSandboxProvider() === 'local'
+        && !(typeof window !== 'undefined' && (window as any).__FG_SERVER_INFO?.execIsolated);
+    return ls('fg_tool_approval', hostUnisolated ? 'high' : 'off');
+}
 
 
 function getRunnerMaxConsecutiveFails() { return parseInt(ls('fg_agent_loop_max_consecutive_failures', '5'), 10); }
@@ -897,9 +913,9 @@ function startPyodide() {
     localStorage.setItem(KEYS.PYODIDE_AUTOLOAD, '1');
     let resolve, reject;
     pyodideReadyPromise = new Promise((res, rej) => { resolve = res; reject = rej; });
-    // new URL pattern required for Vite to bundle the worker into dist/.
-    // type:'classic' because pyodide-worker uses importScripts (not ES module imports).
-    pyodideWorker = new Worker(new URL('./pyodide-worker.ts', import.meta.url), { type: 'classic' });
+    // The worker runs inside the exec sandbox frame (opaque origin), not in the page's origin:
+    // Python code can't reach the app's storage or the dev server. See exec-sandbox-host.ts.
+    pyodideWorker = createSandboxedPyodideWorker();
     pyodideWorker.onmessage = ({ data }) => {
         if (data.type === 'ready') {
             pyodideStatus = 'ready';
@@ -1001,20 +1017,12 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
     });
 }
 // ── WASM browser bash ─────────────────────────────────────────────────────
-// Lazy import so the WASM runtime is only fetched when first used.
-let _wasmShell: (() => Promise<any>) | null = null;
-
+// The shell runs inside the exec sandbox frame (exec-sandbox-host.ts): its node / js-eval / python
+// commands execute agent code, which must not run with the page's privileges. /workspace writes
+// reach the FreeGent workspace as they happen, through the frame's workspace channel.
+const WASM_TIMEOUT_MS = 10 * 60_000;
 async function runWithWasm(code: string): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-    if (!_wasmShell) {
-        // Dynamic import keeps the WASM bundle out of the critical path.
-        const mod = await import('./shiro/shell-singleton');
-        _wasmShell = mod.getShell;
-    }
-    const shell = await _wasmShell!();
-    const { stdout, stderr, exitCode } = await shell.exec(code);
-    // Sync any files written inside /workspace back to the FreeGent workspace.
-    // FWFileSystem writes them via agentWriteFile at write time, so no extra flush needed.
-    return { stdout, stderr, exit_code: exitCode ?? 0 };
+    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS);
 }
 
 // ── Shared utilities ──────────────────────────────────────────────────────
@@ -1086,7 +1094,7 @@ Object.assign(window, {
     buildModelCatalogText, getActiveModel, estimateTokens,
     getContextThreshold, isContextSizeKnown, getContextUsage, updateModelLabel, updateTokenLabel,
     updatePyodideStatusEl, startPyodide, parseFrontmatter,
-    loadServerKeys,
+    loadServerKeys, isServerKeyPlaceholder,
     modelSupportsThinking,
     _pyodideImageStore,
     setDisabledTools,

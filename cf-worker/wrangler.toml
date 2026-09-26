@@ -17,3 +17,15 @@ compatibility_date = "2024-09-23"
 #   npx wrangler secret put TOKENHARBOR_API_KEY
 #
 # Keys are injected server-side and never visible to browser clients.
+
+# Per-client-IP rate limit for requests that use a shared key above, and for the open
+# ?url= fetch path. Anyone can call this Worker (an Origin header is easy to fake), so this is
+# what bounds use of the shared keys. worker.js keys the limit as "key:<ip>" / "get:<ip>".
+# period must be 10 or 60 seconds; namespace_id is any number unique within the account.
+[[ratelimits]]
+name = "FG_RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60

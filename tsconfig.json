@@ -21,6 +21,7 @@
     "bench",
     "tests",
     "vite.config.ts",
+    "dev-api.ts",
     "vitest.config.ts",
     "fg-run.ts",
     "fg-tui.tsx",

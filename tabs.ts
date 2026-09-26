@@ -662,8 +662,12 @@ async function _relayPreviewFetch(e: MessageEvent) {
     try {
         const proxy = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
         if (!proxy) throw new Error('no CORS proxy configured');
-        const { protocol } = new URL(d.url);
+        const _parsedRelayUrl = new URL(d.url);
+        const { protocol } = _parsedRelayUrl;
         if (protocol !== 'https:' && protocol !== 'http:') throw new Error('only http(s) URLs can be fetched');
+        // Address policy lives in the proxy (dev-api.ts publicGet / the CF Worker's _publicUrlOk):
+        // relayed GETs reach public addresses only, checked when the connection is made.
+        if (_parsedRelayUrl.host === window.location.host) throw new Error('the FreeGent server itself cannot be relayed');
         let url = `${proxy}?url=${encodeURIComponent(d.url)}`;
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(d.headers || {}))

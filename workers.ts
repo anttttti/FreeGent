@@ -975,7 +975,7 @@ function _isJudgeLabel(label: string | null | undefined): boolean { return label
 // system prompt at position 0). Used by history-aware judges (completion verify): the
 // judge sees the full conversation — tool calls AND results — and the request shares the
 // main loop's prefix in the server's KV cache, so the marginal cost is ~the output tokens.
-async function callLLMComplete(prompt: string, { temperature = getTemperature(), maxTokens = 1024, endpoint = null as any, label = 'worker:llm:text', history = null as any[] | null, maxAttempts = Infinity as number } = {}, handle: any = null): Promise<string> {
+async function callLLMComplete(prompt: string, { temperature = getTemperature(), maxTokens = 1024, endpoint = null as any, label = 'worker:llm:text', history = null as any[] | null, maxAttempts = 12 as number } = {}, handle: any = null): Promise<string> {
     const _own = !handle;
     if (!handle) {
         handle = activePlaceholder?.addToolStep([label])?.[0] ?? NULL_TASK_HANDLE;

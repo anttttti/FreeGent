@@ -425,10 +425,10 @@ export function renderMarkdown(text: any): any {
             const raw = marked.parse(preprocessed, { gfm: true, breaks: true });
             // Sanitize before setting innerHTML — DOMPurify strips injected scripts and
             // event handlers while preserving benign HTML. ADD_ATTR keeps target="_blank"
-            // that the replace below adds. Falls back to unsanitized if DOMPurify absent.
+            // that the replace below adds. Falls back to HTML-escaped text if DOMPurify absent.
             let html = (typeof DOMPurify !== 'undefined')
                 ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
-                : raw;
+                : raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             html = html.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=');
             // Restore pre-rendered math (%%FWMATH0%% placeholders survive DOMPurify as text)
             if (_mathParts.length) {

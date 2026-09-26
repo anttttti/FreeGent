@@ -222,7 +222,12 @@ function _customEndpoint(model: string, hintProvider: string): any {
         ? localStorage.getItem('fg_openai_url') ?? ''
         : getOAIUrl();
     const baseUrl = (entry?.url || _configuredOaiUrl || 'http://localhost:8000/v1').replace(/\/$/, '');
-    const key     = entry?.key ?? getOAIKey() ?? '';
+    // A server-held OPENAI_API_KEY reaches the page as a placeholder that the dev server only
+    // fills in for api.openai.com; sending it to a local server would get the request refused.
+    const _oaiKey = getOAIKey() ?? '';
+    const _oaiKeyUsable = !(typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(_oaiKey))
+        || /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl);
+    const key     = entry?.key ?? (_oaiKeyUsable ? _oaiKey : '');
     const fmt     = entry?.apiFormat || hintProvider || 'openai';
     const path    = fmt === 'ollama' ? '/api/chat' : '/chat/completions';
     const provider = fmt === 'vllm' ? 'vllm' : 'custom';

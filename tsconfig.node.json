@@ -14,6 +14,8 @@
   },
   "include": [
     "vite.config.ts",
+    "dev-api.ts",
+    "secret-env.ts",
     "vitest.config.ts",
     "fg-run.ts",
     "headless-runner.ts",

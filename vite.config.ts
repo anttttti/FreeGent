@@ -1,15 +1,14 @@
 import { defineConfig, type Plugin } from 'vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import * as esbuildLib from 'esbuild';
-import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname, normalize, relative, sep } from 'node:path';
-import { tmpdir, networkInterfaces, homedir } from 'node:os';
-import { promisify } from 'node:util';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-
-const execFileAsync = promisify(execFile);
+import {
+  loadDotenv, configDir, serverKeys, serverKeyStatus, loadOrCreateToken,
+  createDevApi, buildClientScript, injectClientScript, lanUrls, buildExecSandbox, execIsolation,
+} from './dev-api.js';
 
 // Set FG_HTTP=1 to serve plain HTTP even when --host is used (e.g. for
 // iPad/Safari access where self-signed TLS is not accepted).  The trade-off
@@ -56,283 +55,6 @@ function _lanOrigins(port: number): string[] {
         .flatMap(i => [`http://${i.address}:${port}`, `https://${i.address}:${port}`]);
 }
 
-const KEY_MAP: Array<[string, string]> = [
-  ['GEMINI_API_KEY',        'fg_gemini_key'],
-  ['GOOGLE_API_KEY',        'fg_gemini_key'],
-  ['MISTRAL_API_KEY',       'fg_mistral_key'],
-  ['GROQ_API_KEY',          'fg_groq_key'],
-  ['CEREBRAS_API_KEY',      'fg_cerebras_key'],
-  ['NVIDIA_API_KEY',        'fg_nvidia_key'],
-  ['OPENROUTER_API_KEY',    'fg_openrouter_key'],
-  ['OPENCODE_API_KEY',      'fg_opencode_key'],
-  ['TOKENHARBOR_API_KEY',   'fg_tokenharbor_key'],
-  ['KILO_API_KEY',          'fg_kilo_key'],
-  ['VERCEL_API_KEY',        'fg_vercel_key'],
-  ['NOUSPORTAL_API_KEY',  'fg_nous_key'],
-  ['NOUS_API_KEY',        'fg_nous_key'],  // alias
-  ['OPENAI_API_KEY',        'fg_openai_key'],
-  ['TAVILY_API_KEY',        'fg_tavily_key'],
-  ['HF_API_KEY',            'fg_hf_key'],
-  ['HUGGINGFACE_API_KEY',   'fg_hf_key'],
-  ['BRAVE_API_KEY',         'fg_brave_key'],
-  ['GITHUB_TOKEN',          'fg_github_token'],
-  ['STACKEXCHANGE_API_KEY', 'fg_stackexchange_key'],
-];
-
-function _parseDotenvFile(envPath: string): void {
-  if (!existsSync(envPath)) return;
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#') || !t.includes('=')) continue;
-    const idx = t.indexOf('=');
-    const key = t.slice(0, idx).trim();
-    let val = t.slice(idx + 1).trim();
-    if (val.length >= 2 && val[0] === val.at(-1) && (val[0] === '"' || val[0] === "'"))
-      val = val.slice(1, -1);
-    if (key && !(key in process.env)) process.env[key] = val;
-  }
-}
-
-function loadDotenv(): void {
-  // Precedence (shell env always wins; .env files fill in gaps in order):
-  //   1. <project>/.env    — project-local; gitignored; legacy/override path
-  //   2. ~/.config/freegent/credentials — user-global; OUTSIDE any repo, cannot be committed
-  // Keeping keys in the XDG location is the recommended approach: git add -A
-  // can never reach it, so accidental commits are structurally impossible.
-  _parseDotenvFile(join(process.cwd(), '.env'));
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
-  _parseDotenvFile(join(xdgConfig, 'freegent', 'credentials'));
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', reject);
-  });
-}
-
-function jsonSend(res: ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data);
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
-  res.end(body);
-}
-
-function jsonErr(res: ServerResponse, status: number, message: string): void {
-  jsonSend(res, { error: message }, status);
-}
-
-// Same shape as the CF Worker's proxy errors: X-FG-Proxy-Error tells them apart from upstream responses.
-function proxyErr(res: ServerResponse, status: number, message: string): void {
-  res.setHeader('X-FG-Proxy-Error', '1');
-  jsonErr(res, status, message);
-}
-
-async function apiKeys(res: ServerResponse): Promise<void> {
-  const keys: Record<string, string> = {};
-  const seen = new Set<string>();
-  for (const [envVar, fgKey] of KEY_MAP) {
-    if (seen.has(fgKey)) continue;
-    const val = process.env[envVar] ?? '';
-    if (val) { keys[fgKey] = val; seen.add(fgKey); }
-  }
-  jsonSend(res, keys);
-}
-
-async function apiExecute(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let tmpDir: string | null = null;
-  try {
-    let body: any; try { body = JSON.parse(await readBody(req)); }
-    catch { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid JSON body' })); return; }
-    const language: string = body.language ?? 'bash';
-    const code: string = body.code ?? '';
-    const files: Record<string, string> = body.files ?? {};
-
-    tmpDir = await mkdtemp(join(tmpdir(), 'fg_'));
-    for (const [relPath, content] of Object.entries(files)) {
-      const safe = normalize(join(tmpDir, relPath));
-      if (!safe.startsWith(tmpDir + sep)) continue;
-      await mkdir(dirname(safe), { recursive: true });
-      // Binary files are tagged '\x00BIN\x00<base64>' by the browser
-      if (content.startsWith('\x00BIN\x00')) {
-        await writeFile(safe, Buffer.from(content.slice(5), 'base64'));
-      } else {
-        await writeFile(safe, content, 'utf-8');
-      }
-    }
-
-    let cmd: [string, string[]];
-    if (language === 'bash') cmd = ['bash', ['-c', code]];
-    else if (language === 'python' || language === 'python3') cmd = ['python3', ['-c', code]];
-    else { jsonErr(res, 400, `Unsupported language: ${language}`); return; }
-
-    let stdout = '', stderr = '', exitCode = 0;
-    try {
-      const r = await execFileAsync(cmd[0], cmd[1], {
-        cwd: tmpDir, timeout: 60_000,
-        env: { ...process.env, HOME: tmpDir },
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      stdout = r.stdout; stderr = r.stderr;
-    } catch (err: any) {
-      if (err.code === 'ETIMEDOUT') {
-        jsonSend(res, { stdout: '', stderr: 'Timeout (60s)', exit_code: 124 }); return;
-      }
-      stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
-      exitCode = typeof err.code === 'number' ? err.code : 1;
-    }
-
-    const filesWritten: Record<string, string> = {};
-    const walk = async (dir: string): Promise<void> => {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        const abs = join(dir, entry.name);
-        if (entry.isDirectory()) { await walk(abs); continue; }
-        const rel = relative(tmpDir!, abs);
-        try {
-          const rawBytes = await readFile(abs);
-          // Detect binary content by checking for null bytes in the first 8KB
-          const probe = rawBytes.subarray(0, 8192);
-          const isBinary = probe.includes(0);
-          if (isBinary) {
-            const b64Tagged = '\x00BIN\x00' + rawBytes.toString('base64');
-            // Include if file is new or was binary-tagged in input
-            const prevTag = files[rel] ?? '';
-            if (prevTag !== b64Tagged) filesWritten[rel] = b64Tagged;
-          } else {
-            const content = rawBytes.toString('utf-8');
-            if (files[rel] !== content && ('\x00BIN\x00' + Buffer.from(content).toString('base64')) !== files[rel])
-              filesWritten[rel] = content;
-          }
-        } catch { /* unreadable */ }
-      }
-    };
-    await walk(tmpDir);
-    jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten });
-  } catch (err: any) {
-    jsonErr(res, 500, String(err));
-  } finally {
-    if (tmpDir) rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
-// Git subcommands that only READ repository state. When the server is network-
-// bound (BIND !== 127.0.0.1) multiple clients share one working tree, so we
-// permit only these read-only commands to prevent one user's checkout/reset
-// from corrupting the repo state seen by every other connected client.
-// Localhost-only servers are single-user by definition; all commands are allowed.
-const _GIT_READONLY = new Set([
-  'status', 'diff', 'log', 'show', 'branch', 'remote', 'tag',
-  'ls-files', 'ls-tree', 'cat-file', 'describe', 'rev-parse', 'rev-list',
-  'blame', 'grep', 'shortlog', 'reflog', 'stash', 'worktree',
-]);
-// Stash and worktree have both read (list) and write (push/pop/add) sub-ops,
-// so we inspect the second token too before allowing them.
-const _GIT_READONLY_STASH_OPS  = new Set(['list', 'show']);
-const _GIT_READONLY_WORKTREE_OPS = new Set(['list']);
-
-async function apiGit(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  try {
-    let body: any; try { body = JSON.parse(await readBody(req)); }
-    catch { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid JSON body' })); return; }
-    const args: unknown = body.args;
-    if (!Array.isArray(args) || !args.every((a): a is string => typeof a === 'string')) {
-      jsonErr(res, 400, 'args must be a list of strings'); return;
-    }
-
-    // Network-mode guard: reject mutating git commands that would alter shared state.
-    if (BIND !== '127.0.0.1') {
-      const sub = args[0] ?? '';
-      const sub2 = args[1] ?? 'list';  // default to 'list' for bare `git stash`
-      const allowed = _GIT_READONLY.has(sub)
-        && (sub !== 'stash'    || _GIT_READONLY_STASH_OPS.has(sub2))
-        && (sub !== 'worktree' || _GIT_READONLY_WORKTREE_OPS.has(sub2));
-      if (!allowed) {
-        jsonErr(res, 403,
-          `git ${sub}: mutating git commands are disabled when the server is ` +
-          `network-bound (multiple clients share one working tree). ` +
-          `Use a local sandbox or access via localhost.`);
-        return;
-      }
-    }
-
-    let stdout = '', stderr = '', returncode = 0;
-    try {
-      const r = await execFileAsync('git', args, { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 });
-      stdout = r.stdout; stderr = r.stderr;
-    } catch (err: any) {
-      stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
-      returncode = typeof err.code === 'number' ? err.code : 1;
-    }
-    jsonSend(res, { stdout, stderr, returncode });
-  } catch (err: any) {
-    jsonErr(res, 500, String(err));
-  }
-}
-
-async function apiProxyGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const qs = req.url?.split('?')[1] ?? '';
-  const targetUrl = new URLSearchParams(qs).get('url') ?? '';
-  if (!targetUrl) { proxyErr(res, 400, 'Missing url parameter'); return; }
-  try {
-    const upstream = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const contentType = upstream.headers.get('Content-Type') ?? 'text/plain';
-    const data = Buffer.from(await upstream.arrayBuffer());
-    res.writeHead(upstream.status, { 'Content-Type': contentType, 'Content-Length': data.length });
-    res.end(data);
-  } catch (err: any) {
-    proxyErr(res, 502, `Proxy error: ${err}`);
-  }
-}
-
-async function apiProxyPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let headersSent = false;
-  try {
-    let body: any; try { body = JSON.parse(await readBody(req)); }
-    catch { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid JSON body' })); return; }
-    const targetUrl: string = body.url ?? '';
-    const method: string = (body.method ?? 'POST').toUpperCase();
-    const reqHeaders: Record<string, string> = body.headers ?? {};
-    const reqBody: string | undefined = body.body;
-
-    const upstream = await fetch(targetUrl, {
-      method, headers: reqHeaders,
-      body: reqBody != null ? (typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody)) : undefined,
-    });
-
-    const contentType = upstream.headers.get('Content-Type') ?? 'application/octet-stream';
-    res.writeHead(upstream.status, { 'Content-Type': contentType });
-    res.flushHeaders();
-    headersSent = true;
-
-    if (upstream.body) {
-      const reader = upstream.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
-        }
-      } catch (streamErr: any) {
-        try {
-          res.write(`data: ${JSON.stringify({ error: { message: `Stream error: ${streamErr}` } })}\n\n`);
-        } catch { /* client disconnected */ }
-      }
-    }
-    res.end();
-  } catch (err: any) {
-    if (!headersSent) {
-      try { jsonErr(res, 502, `Proxy error: ${err}`); } catch { /* client disconnected */ }
-    } else {
-      try {
-        res.write(`data: ${JSON.stringify({ error: { message: `Proxy error: ${err}` } })}\n\n`);
-        res.end();
-      } catch { /* client disconnected */ }
-    }
-  }
-}
-
-
 export default defineConfig(() => {
   loadDotenv();
 
@@ -347,10 +69,19 @@ export default defineConfig(() => {
     ...(process.env.FG_ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
   ]);
 
-  async function apiMiddleware(req: IncomingMessage, res: ServerResponse, next: () => void) {
-    const url = req.url ?? '';
-    const method = (req.method ?? 'GET').toUpperCase();
+  // Keys stay in this process; the page only gets placeholders (see dev-api.ts).
+  const keys = serverKeys();
+  const token = loadOrCreateToken(join(configDir(), 'server-token'));
+  const devApi = createDevApi({ bind: BIND, port: PORT, allowedOrigins, token, keys });
+  // The token is embedded in the page HTML so any browser that loads the page can use the API
+  // without a token URL. /api/execute and /api/git are loopback-only regardless, so a LAN device
+  // with the token can only reach /api/proxy — an acceptable exposure on a trusted LAN.
+  const isolation = execIsolation();
+  const clientScript = buildClientScript(token, serverKeyStatus(keys),
+    { execIsolated: isolation === 'bwrap' });
 
+  function hmrStubAndWellKnown(req: IncomingMessage, res: ServerResponse, next: () => void) {
+    const url = req.url ?? '';
     // When the server is network-bound (multiple devices can connect), suppress the
     // Vite HMR client entirely. Vite's `hmr: false` config option does not actually
     // disable the WebSocket server in Vite 8 — the WS channel stays open and all
@@ -360,8 +91,6 @@ export default defineConfig(() => {
     // Localhost is single-user by definition; HMR is preserved there.
     if (BIND !== '127.0.0.1' && url.startsWith('/@vite/client')) {
       res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
-      // Suppress the real Vite HMR client on LAN (multi-client) mode to prevent
-      // cross-client error broadcasts over the shared WebSocket bus.
       // IMPORTANT: must still export every named symbol the real client exports so
       // that Vite-transformed modules that do `import { injectQuery } from '/@vite/client'`
       // don't throw a LinkError. The real client exports:
@@ -377,52 +106,49 @@ export default defineConfig(() => {
       ].join('\n'));
       return;
     }
-
-    if (url.startsWith('/api/')) {
-      const origin = req.headers.origin ?? '';
-      res.setHeader('Access-Control-Allow-Origin', allowedOrigins.has(origin) ? origin : `http://localhost:${PORT}`);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-
-      if (method === 'OPTIONS') {
-        res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
-        res.end(); return;
-      }
-      if (origin && !allowedOrigins.has(origin)) {
-        jsonErr(res, 403, 'Cross-origin request rejected'); return;
-      }
-    }
-
-    try {
-      if (url === '/api/keys' && method === 'GET')                    return await apiKeys(res);
-      if (url.startsWith('/api/proxy') && method === 'GET')           return await apiProxyGet(req, res);
-      if (url === '/api/execute' && method === 'POST')                return await apiExecute(req, res);
-      if (url === '/api/git' && method === 'POST')                    return await apiGit(req, res);
-      if (url === '/api/proxy' && method === 'POST')                  return await apiProxyPost(req, res);
-      if (url.startsWith('/.well-known/')) { res.writeHead(204); res.end(); return; }
-    } catch (err: any) {
-      if (!res.headersSent) jsonErr(res, 500, String(err));
-      return;
-    }
-
+    if (url.startsWith('/.well-known/')) { res.writeHead(204); res.end(); return; }
     next();
+  }
+
+  function printLanUrls(server: any, https: boolean) {
+    if (BIND === '127.0.0.1') return;
+    server.httpServer?.once('listening', () => setTimeout(() => {
+      console.log('\n  FreeGent: open one of these URLs on each device:');
+      for (const u of lanUrls(PORT, https)) console.log(`    ${u}`);
+      console.log('');
+    }, 50));
   }
 
   const apiPlugin = {
     name: 'fg-api',
     // Registers the /api/* middleware for `vite dev`.
     configureServer(server: any) {
-      server.middlewares.use(apiMiddleware);
+      console.log(isolation === 'bwrap'
+        ? '  FreeGent: local code execution is isolated with bubblewrap (no access to your home directory).'
+        : '  FreeGent: local code execution is NOT isolated (bubblewrap unavailable): commands run as you and can read your files; the agent asks before each one.');
+      server.middlewares.use(hmrStubAndWellKnown);
+      server.middlewares.use(devApi.middleware);
+      printLanUrls(server, useSsl);
     },
     // Vite calls a separate hook for `vite preview` (production) — without this,
     // /api/* requests fall through to the SPA and silently return index.html.
+    // transformIndexHtml doesn't run for preview, so the page script is added here.
     configurePreviewServer(server: any) {
-      server.middlewares.use(apiMiddleware);
+      server.middlewares.use(hmrStubAndWellKnown);
+      server.middlewares.use(devApi.middleware);
+      server.middlewares.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
+        const path = (req.url ?? '').split('?')[0];
+        if (req.method !== 'GET' || (path !== base && path !== `${base}index.html`)) { next(); return; }
+        let html: string;
+        try { html = readFileSync(join(server.config.build.outDir, 'index.html'), 'utf-8'); }
+        catch { next(); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(injectClientScript(html, clientScript));
+      });
+      printLanUrls(server, useSsl);
     },
   };
 
-  // Embed API keys directly in the served HTML as a <script id="fg-server-keys"> tag.
-  // This makes the keys available synchronously — no fetch('/api/keys') round-trip needed.
   // Vite 8 dev mode uses esbuild only for TypeScript type-stripping, not for syntax
   // downleveling (esbuild.target in the main config has no effect on dev transforms).
   // This plugin re-runs esbuild with target:'safari12' after Vite's built-in transform
@@ -470,27 +196,43 @@ export default defineConfig(() => {
     },
   };
 
-  // Critical for mobile browsers that accept the page-navigation SSL warning but refuse
-  // subsequent programmatic fetch() calls to a self-signed-cert origin (basicSsl is
-  // only valid for localhost, not for LAN IP addresses — desktop browsers only).
-  // The browser-side loadServerKeys() still fetches /api/keys as a fallback for hot-
-  // reloaded keys; the DOM tag wins because it's read first and fetch() merges on top.
-  const keyInjectPlugin = {
-    name: 'fg-key-inject',
-    transformIndexHtml(): Array<{ tag: string; attrs: Record<string, string>; children: string; injectTo: string }> {
-      const keys: Record<string, string> = {};
-      const seen = new Set<string>();
-      for (const [envVar, fgKey] of KEY_MAP) {
-        if (seen.has(fgKey)) continue;
-        const val = process.env[envVar] ?? '';
-        if (val) { keys[fgKey] = val; seen.add(fgKey); }
-      }
-      return [{
-        tag: 'script',
-        attrs: { id: 'fg-server-keys', type: 'application/json' },
-        children: JSON.stringify(keys),
-        injectTo: 'head',
-      }];
+  // The exec sandbox bundle (exec-sandbox/entry.ts + the WASM shell), loaded by the sandbox frame
+  // from <base>fg-exec-sandbox.js. Built on first request in dev (and again after its sources
+  // change); emitted as a file by `vite build`. It's public code: no token needed.
+  const SANDBOX_FILE = 'fg-exec-sandbox.js';
+  let sandboxCode: Promise<string> | null = null;
+  const execSandboxPlugin: Plugin = {
+    name: 'fg-exec-sandbox',
+    configureServer(server: any) {
+      const root = server.config.root;
+      server.watcher.on('change', (f: string) => {
+        if (/[\\/](shiro|exec-sandbox)[\\/]|pyodide-worker\.ts$/.test(f)) sandboxCode = null;
+      });
+      server.middlewares.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
+        if ((req.url ?? '').split('?')[0] !== `${base}${SANDBOX_FILE}`) { next(); return; }
+        (sandboxCode ??= buildExecSandbox(root)).then(code => {
+          res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(code);
+        }, err => {
+          sandboxCode = null;
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end(`exec sandbox build failed: ${err?.message ?? err}`);
+        });
+      });
+    },
+    async generateBundle() {
+      this.emitFile({ type: 'asset', fileName: SANDBOX_FILE, source: await buildExecSandbox(process.cwd()) });
+    },
+  };
+
+  // Page script (dev server only): the X-FG-Token header for /api/* and the server-key
+  // placeholders. apply:'serve' keeps it out of `vite build` — built pages never carry the token
+  // or anything derived from local keys.
+  const clientScriptPlugin: Plugin = {
+    name: 'fg-client-script',
+    apply: 'serve',
+    transformIndexHtml() {
+      return [{ tag: 'script', children: clientScript, injectTo: 'head-prepend' as const }];
     },
   };
 
@@ -517,9 +259,12 @@ export default defineConfig(() => {
 
   return {
     base,
-    plugins: [apiPlugin, keyInjectPlugin, safari12Plugin, ...(useSsl && !useCustomCert ? [basicSsl()] : [])],
+    plugins: [apiPlugin, clientScriptPlugin, execSandboxPlugin, safari12Plugin, ...(useSsl && !useCustomCert ? [basicSsl()] : [])],
     server: {
       port: PORT,
+      // Fail instead of moving to the next free port: allowedOrigins and the proxy's
+      // self-target check are built from PORT, and must describe the port actually in use.
+      strictPort: true,
       host: BIND,
       ...(useCustomCert ? {
         https: {
@@ -555,6 +300,11 @@ export default defineConfig(() => {
           'Cross-Origin-Embedder-Policy': 'credentialless',
         } : {}),
       },
+    },
+    // `vite preview` uses the same port (host, https and strictPort default to the server's), so
+    // the API middleware's origin list and self-target check hold there too.
+    preview: {
+      port: PORT,
     },
     // Dev-mode syntax downleveling for Safari 12 is handled by the safari12Plugin above
     // (Vite 8 dev server ignores esbuild.target for transforms; plugin enforce:'post' wins).
