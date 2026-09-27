@@ -3,7 +3,7 @@
 // reasoning tokens and the first content tokens into ONE SSE chunk under speculative
 // decoding, and the echo-model suppression discarded that chunk's content, eating the
 // first token of the final answer ("picoCTF{…}" → "icoCTF{…}", "29" → "9").
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { streamOAICompat, nonStreamOAICompat } from '../stream-decode.ts';
 
 // Build a Response-like object whose body streams the given events as SSE lines.
@@ -157,3 +157,48 @@ describe('streamOAICompat — finish_reason capture', () => {
     });
 });
 
+
+// fg-chat 2026-09-27-00-54-06: NVIDIA streamed a line of narration, then went silent while
+// generating a large write_file call (arguments sent only at the end). The 90 s idle timeout
+// cut every such stream and the fragment was returned as a finished text-only reply.
+describe('streamOAICompat — mid-stream stall', () => {
+    function stallingResp(events) {
+        const enc = new TextEncoder();
+        const lines = events.map(e => `data: ${JSON.stringify(e)}\n`);
+        let i = 0;
+        return { body: { getReader: () => ({
+            read: () => i < lines.length
+                ? Promise.resolve({ value: enc.encode(lines[i++]), done: false })
+                : new Promise(() => {}),            // server silent from here on
+            cancel: async () => {}, releaseLock: () => {},
+        }) } };
+    }
+    const events = [
+        { choices: [{ delta: { content: 'Let me write the game file' } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'write_file', arguments: '{"path":"game.html","content":"<html' } }] } }] },
+    ];
+
+    it('survives 90 s of silence once data has arrived', async () => {
+        vi.useFakeTimers();
+        try {
+            let settled = false;
+            const p = streamOAICompat(stallingResp(events), () => {}).finally(() => { settled = true; });
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(settled).toBe(false);
+            await vi.advanceTimersByTimeAsync(5 * 60_000);
+            await p;
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('flags a stalled stream as idle_timeout and drops the partial tool call', async () => {
+        vi.useFakeTimers();
+        try {
+            const p = streamOAICompat(stallingResp(events), () => {});
+            await vi.advanceTimersByTimeAsync(6 * 60_000);
+            const msg = await p;
+            expect(msg.finish_reason).toBe('idle_timeout');
+            expect(msg.content).toBe('Let me write the game file');
+            expect(msg.tool_calls).toBeUndefined();
+        } finally { vi.useRealTimers(); }
+    });
+});

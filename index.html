@@ -625,7 +625,7 @@
                         <label class="settings-check-row"><input type="checkbox" id="agent-plan-mode" onchange="saveAgentSetting('fg_agent_plan_mode', this.checked)"> Plan mode</label>
                         <p class="settings-hint agent-hint">Emit a step-by-step plan file before executing multi-step tasks.</p>
                         <label class="settings-input-label" style="margin-top:8px">Max steps per turn</label>
-                        <input class="settings-input" id="agent-max-rounds" type="number" min="1" max="100" step="1" style="width:80px" oninput="saveAgentSetting('fg_agent_max_rounds', this.value)">
+                        <input class="settings-input" id="agent-max-rounds" type="number" min="1" max="500" step="1" style="width:80px" oninput="saveAgentSetting('fg_agent_max_rounds', this.value)">
                         <label class="settings-input-label" style="margin-top:8px">Rate-limit cooldown (minutes)</label>
                         <input class="settings-input" id="rate-limit-cooldown-min" type="number" min="1" max="30" step="1" style="width:80px" oninput="saveAgentSetting('fg_rate_limit_cooldown_min', this.value)">
                         <p class="settings-hint agent-hint">Base cooldown duration per endpoint after a 429 rate-limit response. Doubles on each consecutive hit (exponential backoff), capped at 10 minutes.</p>
@@ -708,61 +708,16 @@
                 </div>
 
                 <div class="settings-tab-panel" data-tab="skills">
-                    <!-- Sub-tabs: Installed / Add Skill / Add Rule -->
-                    <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:14px">
-                        <button class="settings-tab-btn active" id="skill-subtab-installed" onclick="switchSkillSubtab('installed')">Installed</button>
-                        <button class="settings-tab-btn"        id="skill-subtab-add"       onclick="switchSkillSubtab('add')">+ Add Skill</button>
-                        <button class="settings-tab-btn"        id="skill-subtab-add-rule"  onclick="switchSkillSubtab('add-rule')">+ Add Rule</button>
+                    <div style="margin-bottom:10px">
+                        <button class="ws-action-btn" onclick="installSkillFromFiles()">&#8679; Import from file</button>
                     </div>
-
-                    <!-- Installed list -->
-                    <div id="skill-sub-installed">
-                        <p class="settings-hint" style="margin-bottom:10px"><b>Skills</b> are procedural workflows invoked with /name. <b>Rules</b> are standing context injected automatically by trigger. Checked items are always injected into every prompt.</p>
-                        <div style="margin-bottom:12px">
-                            <button class="ws-action-btn" onclick="installSkillFromFiles()">&#8679; Import from file</button>
-                        </div>
-                        <div id="settings-skills-list"></div>
-                    </div>
-
-                    <!-- Add Skill form -->
-                    <div id="skill-sub-add" style="display:none">
-                        <p class="settings-hint" style="margin-bottom:10px">Create a new skill — a procedural workflow invoked with <code>/name</code>. Saved to <code>skills/name/SKILL.md</code>.</p>
-                        <label class="settings-input-label">Skill name</label>
-                        <input class="settings-input" id="new-skill-name" type="text" placeholder="e.g. summarize">
-                        <label class="settings-input-label">Description <span style="font-weight:400;color:var(--muted)">(shown in autocomplete)</span></label>
-                        <input class="settings-input" id="new-skill-desc" type="text" placeholder="One-line description">
-                        <label class="settings-input-label">Instructions</label>
-                        <textarea class="settings-input" id="new-skill-body" rows="10" placeholder="Write the skill procedure here. Use 'When invoked with /name:' format and step-by-step instructions." style="resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5"></textarea>
-                        <div style="display:flex;gap:8px;margin-top:4px">
-                            <button class="btn-save" onclick="createSkillFromForm()">Save Skill</button>
-                            <button class="ws-action-btn" onclick="switchSkillSubtab('installed')">Cancel</button>
-                        </div>
-                        <div id="new-skill-msg" style="margin-top:8px;font-size:12px;color:var(--accent);display:none"></div>
-                    </div>
-
-                    <!-- Add Rule form -->
-                    <div id="skill-sub-add-rule" style="display:none">
-                        <p class="settings-hint" style="margin-bottom:10px">Create a new rule — standing context injected automatically by trigger. Saved to <code>rules/name/RULE.md</code>.</p>
-                        <label class="settings-input-label">Rule name</label>
-                        <input class="settings-input" id="new-rule-name" type="text" placeholder="e.g. python-env">
-                        <label class="settings-input-label">Description</label>
-                        <input class="settings-input" id="new-rule-desc" type="text" placeholder="One-line description">
-                        <label class="settings-input-label">Trigger keywords <span style="font-weight:400;color:var(--muted)">(comma-separated)</span></label>
-                        <input class="settings-input" id="new-rule-trigger" type="text" placeholder="e.g. python, pandas, numpy">
-                        <label class="settings-input-label">Instructions</label>
-                        <textarea class="settings-input" id="new-rule-body" rows="10" placeholder="Write standing rules and context here. These are injected directly — no 'when invoked' framing needed." style="resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5"></textarea>
-                        <div style="display:flex;gap:8px;margin-top:4px">
-                            <button class="btn-save" onclick="createRuleFromForm()">Save Rule</button>
-                            <button class="ws-action-btn" onclick="switchSkillSubtab('installed')">Cancel</button>
-                        </div>
-                        <div id="new-rule-msg" style="margin-top:8px;font-size:12px;color:var(--accent);display:none"></div>
-                    </div>
+                    <div id="settings-skills-list"></div>
                 </div>
 
                 <div class="settings-tab-panel" data-tab="tools">
                     <div class="settings-section" style="border-bottom:none;margin-bottom:0">
                         <span class="settings-label">Tools</span>
-                        <p class="settings-hint" style="margin-bottom:10px">Checked tools are available to the LLM in every conversation.</p>
+                        <p class="settings-hint" style="margin-bottom:10px">Enable tools per mode. Chat: standard conversations. Cowork: task-runner sessions (also applies to the runner).</p>
                         <div id="settings-tools-list"></div>
                     </div>
                 </div>

@@ -1,7 +1,7 @@
 // worker-fork.test.ts — run_workers context: a "director" worker forks the main agent's last
 // request verbatim (system prompt, tools, messages) plus its subtask, so the request shares the
-// main agent's prefix; coder/researcher specialists get their own prompt, the user's request
-// (first and latest user messages, framework blocks stripped) and the task.
+// main agent's prefix; coder/researcher specialists get their own prompt, the user's request as
+// background (first and latest user messages, framework blocks stripped) and the task.
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_TASK_HANDLE } from '../render-adapter.ts';
@@ -67,10 +67,10 @@ describe('run_workers fork (role "director")', () => {
         await mainRequest(HISTORY);
         localStorage.setItem('fg_agent_worker_history', 'false');
         const [req] = await workerRequests('Report the secret word.', 'director', W.getLastMainRequest());
-        expect(req.messages.slice(1)).toEqual([
-            { role: 'user', content: 'The secret word is PELICAN-7731.' },
-            { role: 'user', content: 'Report the secret word.' },
-        ]);
+        const [ctx, task] = req.messages.slice(1);
+        expect(req.messages).toHaveLength(3);
+        expect(ctx.content).toContain('<original_request>\nThe secret word is PELICAN-7731.\n</original_request>');
+        expect(task).toEqual({ role: 'user', content: 'Report the secret word.' });
     });
 });
 
@@ -83,17 +83,26 @@ describe('run_workers specialists', () => {
         { role: 'user', content: 'Also keep the public API unchanged.' },
     ];
 
-    it.each(['coder', 'researcher'])('%s gets the first and latest user messages and the task, under its own prompt', async (role) => {
+    it.each(['coder', 'researcher'])('%s gets the first and latest user messages as background, then the task, under its own prompt', async (role) => {
         const main = await mainRequest(CHAT);
         const [req] = await workerRequests('Patch parse() in parser.py.', role, W.getLastMainRequest());
-        expect(req.messages.slice(1)).toEqual([
-            { role: 'user', content: 'Fix the bug in parser.py.' },
-            { role: 'user', content: 'Also keep the public API unchanged.' },
-            { role: 'user', content: 'Patch parse() in parser.py.' },
-        ]);
+        const [ctx, task] = req.messages.slice(1);
+        expect(req.messages).toHaveLength(3);
+        expect(ctx.role).toBe('user');
+        expect(ctx.content).toContain('<original_request>\nFix the bug in parser.py.\n\n(latest message)\nAlso keep the public API unchanged.\n</original_request>');
+        expect(ctx.content).toContain('Your job is ONLY the subtask');
+        expect(task).toEqual({ role: 'user', content: 'Patch parse() in parser.py.' });
         expect(req.messages[0].content).not.toEqual(main.messages[0].content);
         // Tool results, nudges and guidance stay out.
         expect(JSON.stringify(req.messages.slice(1))).not.toMatch(/SECRET-TOOL-OUTPUT|Keep going|Use tools/);
+    });
+
+    // v0.55: researchers handed the whole SWE task as their own kept investigating until the
+    // step limit (37 of 46 blocked). They are told to report, not fix.
+    it('tells a researcher to report rather than fix', async () => {
+        await mainRequest(CHAT);
+        const [req] = await workerRequests('Find where parse() handles tabs.', 'researcher', W.getLastMainRequest());
+        expect(req.messages[1].content).toMatch(/cannot modify files and are not expected to fix anything/);
     });
 
     it('gets just the task when there is no parent request', async () => {

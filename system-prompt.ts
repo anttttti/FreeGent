@@ -123,11 +123,11 @@ export function buildSystemPrompt(): string {
     const _mediaCtx = (enabledTools.has('run_workers') && (_imgM || _audM || _vidM))
         ? `\n## Configured media models\n${_imgM ? `- Image: \`${_imgM}\`\n` : ''}${_audM ? `- Audio: \`${_audM}\`\n` : ''}${_vidM ? `- Video: \`${_vidM}\`\n` : ''}Use these as the \`model\` field in \`run_workers\` to route media-processing tasks to the right model.\n`
         : '';
-    // Effective tool set = role.tools ∩ enabledTools.  Passed to _filterRoleBody so that a
+    // Effective tool set = role.tools ∩ active-mode tools.  Passed to _filterRoleBody so that a
     // role whose .tools ceiling excludes a tool gets its body filtered even if that tool is
     // globally enabled — the model should only see tools it can actually call.
     const _effectiveToolSet: Set<string> | undefined = mainAgentRole.tools
-        ? new Set([...mainAgentRole.tools].filter((t: string) => enabledTools.has(t)))
+        ? new Set([...mainAgentRole.tools].filter((t: string) => isToolActive(t)))
         : undefined;
     // Precedence: saved JS source > saved plain text > built-in body_fn > static body.
     const _savedFnSrc = typeof getRoleBodyFn === 'function' ? getRoleBodyFn(mainAgentRole.name) : null;
@@ -178,16 +178,20 @@ export function buildSystemPrompt(): string {
         return parts.join('\n');
     })();
     // Cowork mode: inject task-management context into the system prompt.
-    // The detailed tasks skill body is injected turn-by-turn as triggered guidance
-    // (turn-context.ts seeds it unconditionally). This block establishes the always-present
-    // intent: for complex requests, break work into task files before starting.
+    // Self-contained: the detailed `tasks` skill is a workspace file (skills/tasks/SKILL.md),
+    // absent from a fresh or empty workspace — then turn-context.ts cannot seed it and this
+    // block is all the model gets (fg-chat 2026-09-27-00-54-06: no tasks were created).
     // Skip if the user has manually added the tasks skill to activeSkills — it already
     // appears in the system prompt via the always-on skill loop above.
     const _tasksSkillAlwaysOn = typeof activeSkills !== 'undefined' && activeSkills.has('tasks');
     const _coworkCtx = (typeof getMode === 'function' && getMode() === 'cowork' && !_tasksSkillAlwaysOn)
-        ? '\n## Cowork mode\nFor complex or multi-step requests (building an app, a game, a large refactor), break the work into task files **before** starting implementation. Create one `fg-tasks/NNN-slug.md` file per major step, then work through them in order.\nUse `update_task_status(path, status)` to track progress: call with `"in-progress"` when starting a task, `"done"` or `"failed"` when finishing.\nRead `fg-tasks/ledger.md` to see the current board.'
+        ? '\n## Cowork mode\nFor complex or multi-step requests (building an app, a game, a large refactor), your **first** tool calls create the task files — before any implementation file. One `fg-tasks/NNN-slug.md` per major step (NNN zero-padded, continuing after the highest id in `fg-tasks/ledger.md` if it exists; slug lowercase-hyphenated), each with `status: open`:\n```\n---\nid: NNN\ntitle: Short imperative title\nstatus: open\npriority: Medium\n---\n# Short imperative title\nWhat to do and what done looks like.\n## Acceptance Criteria\n- [ ] criterion\n## Log\n```\nThen work through them in order. Use `update_task_status(path, status)` to track progress: `"in-progress"` when starting a task, `"done"` or `"failed"` when finishing. Only one task may be in-progress at a time — finish the current one before starting the next. Do not edit `fg-tasks/ledger.md`; it updates automatically.\nKeep each file write small (well under 300 lines): split an app into several files (e.g. index.html, style.css, and game code split by feature) rather than writing it in one call — very large tool calls stall and are lost.'
         : '';
-    return `${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_coworkCtx}${_dateCtx}`;
+    // Separate from _coworkCtx so it applies even when the tasks skill is always-on.
+    const _coworkSummary = (typeof getMode === 'function' && getMode() === 'cowork')
+        ? '\n## Cowork turn summary\nIf this turn created, changed, or updated the status of any task, your final message (before COMPLETED / BLOCKED) must end with a summary:\n- **Changes**: the files created or modified, one line each on what changed.\n- **Tasks added**: id, title, and status of each task created this turn.\n- **Tasks worked on**: id, title, the status each ended in, and what was done or what remains.\nOmit a section that would be empty. Skip the summary when the turn did not touch any task.'
+        : '';
+    return `${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
 }
 
 // Window bridge for classic scripts.

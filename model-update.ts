@@ -853,9 +853,13 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         }
     }
 
-    // Remove proposals the user has previously dismissed (kept unchecked on Apply).
+    // Remove proposals the user has previously dismissed (kept unchecked on Apply), and add
+    // proposals for blacklisted models (FREE_MODEL_BLACKLIST in config.ts: listed as free, but
+    // every request fails).
     const suppressed = _getSuppressedRemoves();
-    return { proposals: proposals.filter(p => !(p.type === 'remove' && suppressed.has(p.spec))), errors };
+    return { proposals: proposals.filter(p =>
+        !(p.type === 'remove' && suppressed.has(p.spec)) &&
+        !(p.type === 'add' && typeof isBlacklistedModel === 'function' && isBlacklistedModel(p.spec))), errors };
 }
 
 // ── Modal UI ──────────────────────────────────────────────────────────────

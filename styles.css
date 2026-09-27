@@ -958,6 +958,16 @@ html, body {
 .model-cap-badge { display: inline-block; font-size: 10px; background: #e8f0fe; color: var(--accent); border-radius: 3px; padding: 1px 5px; margin-right: 2px; }
 .model-cap-badge-think { background: #fff3e0; color: #e65100; }
 
+/* ── Tools two-column checklist ── */
+.tools-checklist-header,
+.tools-checklist-row    { display: grid; grid-template-columns: 1fr 48px 56px; align-items: center; padding: 4px 2px; border-bottom: 1px solid var(--border); }
+.tools-checklist-header { padding-bottom: 5px; }
+.tools-checklist-row:last-child { border-bottom: none; }
+.tools-checklist-name   { min-width: 0; padding: 2px 0; }
+.tools-checklist-col-hdr { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; text-align: center; }
+.tools-checklist-cell   { display: flex; justify-content: center; align-items: center; padding: 2px 0; }
+.tools-checklist-cell input[type="checkbox"] { cursor: pointer; }
+
 /* ── Skills ── */
 .skills-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); flex-shrink: 0; }
 .skills-toolbar-title { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -985,6 +995,46 @@ html, body {
 .skill-trigger-save-btn:hover { opacity: 0.88; }
 .skill-trigger-reset-btn { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; }
 .skill-trigger-reset-btn:hover { border-color: #d32f2f; color: #d32f2f; }
+
+/* ── Skills / Rules table ── */
+.sr-section-hdr  { font-size: 13px; font-weight: 700; color: var(--text); margin: 14px 0 4px; }
+.sr-hint         { margin: 0 0 8px; }
+.sr-sep          { border-top: 2px solid var(--border); margin: 18px 0 14px; }
+.sr-subsep       { margin: 8px 0; }
+.sr-table-wrap   { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-bottom: 2px; }
+.sr-table-builtin { opacity: 1; }
+.sr-table        { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.sr-table thead tr { background: var(--sidebar-bg); }
+.sr-table th     { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+.sr-th-on        { width: 36px; text-align: center !important; }
+.sr-th-name      { width: 38%; }
+.sr-th-trigger   { }
+.sr-th-del       { width: 28px; }
+.sr-row          { border-bottom: 1px solid var(--border); }
+.sr-row:last-of-type { border-bottom: none; }
+.sr-row-builtin  { }
+.sr-td-on        { text-align: center; padding: 6px 4px; width: 36px; }
+.sr-td-on input  { cursor: pointer; }
+.sr-td-name      { padding: 6px 8px; vertical-align: top; }
+.sr-td-trigger   { padding: 6px 8px; font-size: 12px; color: var(--muted); vertical-align: middle; }
+.sr-td-del       { text-align: center; padding: 4px; width: 28px; vertical-align: middle; }
+.sr-name-btn     { background: none; border: none; padding: 0; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; text-align: left; }
+.sr-name-btn:hover { text-decoration: underline; }
+.sr-name-btn-open { color: var(--text); }
+.sr-desc         { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+.sr-del-btn      { background: none; border: none; font-size: 16px; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.sr-del-btn:hover { color: #d32f2f; background: #fef2f2; }
+.sr-editor-row   { background: var(--sidebar-bg); }
+.sr-editor-td    { padding: 8px 12px 12px; border-top: 1px solid var(--border); }
+.sr-add-row      { border-top: 1px dashed var(--border); }
+.sr-add-td       { padding: 6px 8px; }
+.sr-add-open-btn { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 2px 0; }
+.sr-add-open-btn:hover { text-decoration: underline; }
+.sr-add-form     { padding-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+.sr-add-input    { font-size: 12px; border: 1px solid var(--border); border-radius: 5px; padding: 4px 7px; background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; }
+.sr-add-textarea { font-size: 12px; border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; resize: vertical; font-family: 'SF Mono','Fira Code',monospace; line-height: 1.5; }
+.sr-add-msg      { font-size: 12px; }
+[data-theme="dark"] .sr-del-btn:hover { background: rgba(211,47,47,0.15); }
 
 /* ── Skill autocomplete ── */
 .skill-autocomplete { position: fixed; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 200; overflow: hidden; display: none; min-width: 280px; max-width: 520px; }
@@ -1050,6 +1100,21 @@ html, body {
     color: #c62828 !important;
     border-color: #ef5350 !important;
 }
+
+/* ── Runner running state ── */
+@keyframes runner-pulse { 0%,100%{opacity:0.7} 50%{opacity:1} }
+
+/* Tasks rail nav button — glows while the runner loop is active */
+.rail-nav-btn.runner-glow { color: var(--accent) !important; animation: runner-pulse 1.4s ease-in-out infinite; }
+.rail-nav-btn.runner-glow .rail-label { color: var(--accent) !important; }
+
+/* Runner label (⚡ Runner) and status text — glow while actively running (not paused) */
+.runner-label.runner-running  { color: var(--accent) !important; animation: runner-pulse 1.4s ease-in-out infinite; }
+.runner-status-text.runner-running { color: var(--accent) !important; animation: runner-pulse 1.4s ease-in-out infinite; }
+
+/* Chat link inside the runner header */
+.runner-chat-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.runner-chat-link:hover { color: var(--accent); text-decoration: underline; }
 
 /* ── Profile cards ── */
 .profile-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; transition: border-color 0.15s; }

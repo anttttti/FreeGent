@@ -53,6 +53,7 @@ declare global {
     var runnerToggle: () => void;
     var initRunner: () => void;
     var isRunnerRunning: () => boolean;
+    var getRunnerChatId: () => string | null;
     // ── bridged by ast.ts ──
     var _astFormatResults: any;
     var _astQueryContent: any;
@@ -106,6 +107,7 @@ declare global {
     var restoreChatMessages: any;
     var saveChatList: any;
     var saveHistory: any;
+    var setChatName: any;
     var startInlineRenameCurrentChat: any;
     var switchToChat: any;
     var toggleChatsDropdown: any;
@@ -123,6 +125,7 @@ declare global {
     var chatsDropdownOpen: any;
     var disabledRoles: any;
     var enabledTools: any;
+    var coworkEnabledTools: any;
     var getMode: () => 'chat' | 'cowork';
     var setMode: (m: 'chat' | 'cowork') => void;
     var isToolActive: (name: string) => boolean;
@@ -151,6 +154,8 @@ declare global {
     var getAgentWorkerHistory: any;
     var getAgentWorkerReduce: any;
     var getAllModels: any;
+    var isBlacklistedModel: (spec: string) => boolean;
+    var FREE_MODEL_BLACKLIST: ReadonlySet<string>;
     var getAllModelsForMedia: any;
     var getAstEnabled: any;
     var getAudioModel: any;

@@ -1257,72 +1257,204 @@ function _buildSkillTriggerEditor(skill) {
     return wrap;
 }
 
-function _skillChecklistSection(el, label, hint) {
-    const hdr = document.createElement('p');
-    hdr.style.cssText = 'font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px';
-    hdr.textContent = label;
-    el.appendChild(hdr);
-    if (hint) {
-        const h = document.createElement('p');
-        h.style.cssText = 'font-size:11px;color:var(--muted);margin:0 0 8px';
-        h.textContent = hint;
-        el.appendChild(h);
+// ── Skills / Rules table renderer ─────────────────────────────────────────
+
+function _skillIsOn(skill, isBuiltin) {
+    if (isBuiltin) return skill.type === 'rule' ? enabledBuiltinRules.has(skill.name) : enabledBuiltinSkills.has(skill.name);
+    return activeSkills.has(skill.name);
+}
+
+function _skillSetOn(skill, isBuiltin, on) {
+    if (isBuiltin) {
+        if (skill.type === 'rule') {
+            if (on) enabledBuiltinRules.add(skill.name); else enabledBuiltinRules.delete(skill.name);
+            localStorage.setItem('fg_builtin_rules', JSON.stringify([...enabledBuiltinRules]));
+        } else {
+            if (on) enabledBuiltinSkills.add(skill.name); else enabledBuiltinSkills.delete(skill.name);
+            localStorage.setItem('fg_builtin_skills', JSON.stringify([...enabledBuiltinSkills]));
+        }
+        loadSkills();
+    } else {
+        if (on) activeSkills.add(skill.name); else activeSkills.delete(skill.name);
+        localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
+        renderSkillsList();
     }
 }
 
-function _buildSkillChecklistItem(skill, isBuiltin) {
+async function _deleteSkillEntry(skill) {
     const isRule = skill.type === 'rule';
-    const wrap = document.createElement('div');
-    wrap.className = 'model-checklist-item skill-checklist-item';
-
-    const cb = document.createElement('input');
-    cb.type    = 'checkbox';
-    cb.checked = isBuiltin
-        ? (isRule ? enabledBuiltinRules.has(skill.name) : enabledBuiltinSkills.has(skill.name))
-        : activeSkills.has(skill.name);
-    cb.style.cssText = 'margin-top:2px;flex-shrink:0;cursor:pointer';
-    cb.addEventListener('change', () => {
-        if (isBuiltin) {
-            if (isRule) {
-                if (cb.checked) enabledBuiltinRules.add(skill.name);
-                else enabledBuiltinRules.delete(skill.name);
-                localStorage.setItem('fg_builtin_rules', JSON.stringify([...enabledBuiltinRules]));
-            } else {
-                if (cb.checked) enabledBuiltinSkills.add(skill.name);
-                else enabledBuiltinSkills.delete(skill.name);
-                localStorage.setItem('fg_builtin_skills', JSON.stringify([...enabledBuiltinSkills]));
-            }
-            loadSkills();
-        } else {
-            if (cb.checked) activeSkills.add(skill.name);
-            else activeSkills.delete(skill.name);
-            localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
-            renderSkillsList();
-        }
-    });
-
-    // Look up the live registry entry (has overrides applied) for accurate trigger display
-    const live = skillsRegistry.get(skill.name) || skill;
-
-    const info = document.createElement('div');
-    info.className = 'model-item-info';
-    info.style.minWidth = '0';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'model-item-name';
-    nameEl.textContent = '/' + skill.name;
-    const descEl = document.createElement('div');
-    descEl.className = 'model-item-meta';
-    descEl.textContent = skill.description || '(no description)';
-    info.append(nameEl, descEl, _buildSkillTriggerEditor(live));
-
-    wrap.append(cb, info);
-    return wrap;
+    try {
+        await agentDeleteFile(`${isRule ? 'rules' : 'skills'}/${skill.name}/${isRule ? 'RULE' : 'SKILL'}.md`);
+        activeSkills.delete(skill.name);
+        localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
+        await loadSkills();
+    } catch (e) { alert(`Could not delete "${skill.name}": ${(e as any).message}`); }
 }
 
-function _checklistBlock(el, heading, hint, items, isBuiltin) {
-    if (!items.length) return;
-    _skillChecklistSection(el, heading, hint);
-    for (const s of items) el.appendChild(_buildSkillChecklistItem(s, isBuiltin));
+function _buildSkillTableRow(skill, isBuiltin, tbody) {
+    const live = skillsRegistry.get(skill.name) || skill;
+
+    const tr = document.createElement('tr');
+    tr.className = 'sr-row' + (isBuiltin ? ' sr-row-builtin' : '');
+
+    // On
+    const tdOn = document.createElement('td');
+    tdOn.className = 'sr-td-on';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = _skillIsOn(skill, isBuiltin);
+    cb.addEventListener('change', () => _skillSetOn(skill, isBuiltin, cb.checked));
+    tdOn.appendChild(cb);
+    tr.appendChild(tdOn);
+
+    // Name (click expands editor)
+    const tdName = document.createElement('td');
+    tdName.className = 'sr-td-name';
+    const nameBtn = document.createElement('button');
+    nameBtn.className = 'sr-name-btn';
+    nameBtn.textContent = '/' + skill.name;
+    tdName.appendChild(nameBtn);
+    if (skill.description) {
+        const d = document.createElement('div');
+        d.className = 'sr-desc';
+        d.textContent = skill.description;
+        tdName.appendChild(d);
+    }
+    tr.appendChild(tdName);
+
+    // Trigger summary
+    const tdTrig = document.createElement('td');
+    tdTrig.className = 'sr-td-trigger';
+    const trigRaw = live.trigger || live.trigger_on_filetype || live.trigger_on_tool || live.trigger_on_event || '';
+    if (trigRaw) {
+        const parts = trigRaw.split(',').map(s => s.trim()).filter(Boolean);
+        tdTrig.textContent = parts.slice(0, 4).join(', ') + (parts.length > 4 ? ' …' : '');
+    } else {
+        tdTrig.textContent = '—';
+        tdTrig.style.color = 'var(--muted)';
+    }
+    tr.appendChild(tdTrig);
+
+    // Delete (custom only)
+    const tdDel = document.createElement('td');
+    tdDel.className = 'sr-td-del';
+    if (!isBuiltin) {
+        const btn = document.createElement('button');
+        btn.className = 'sr-del-btn';
+        btn.title = 'Delete';
+        btn.textContent = '×';
+        btn.addEventListener('click', async () => {
+            if (!confirm(`Delete "${skill.name}"?`)) return;
+            await _deleteSkillEntry(skill);
+        });
+        tdDel.appendChild(btn);
+    }
+    tr.appendChild(tdDel);
+
+    // Expandable editor row
+    const trEd = document.createElement('tr');
+    trEd.className = 'sr-editor-row';
+    trEd.style.display = 'none';
+    const tdEd = document.createElement('td');
+    tdEd.colSpan = 4;
+    tdEd.className = 'sr-editor-td';
+    tdEd.appendChild(_buildSkillTriggerEditor(live));
+    trEd.appendChild(tdEd);
+
+    nameBtn.addEventListener('click', () => {
+        const open = trEd.style.display !== 'none';
+        trEd.style.display = open ? 'none' : '';
+        nameBtn.classList.toggle('sr-name-btn-open', !open);
+    });
+
+    tbody.appendChild(tr);
+    tbody.appendChild(trEd);
+}
+
+function _appendAddRow(tbody, isRule) {
+    const tr = document.createElement('tr');
+    tr.className = 'sr-add-row';
+    const tdSpacer = document.createElement('td');
+    tr.appendChild(tdSpacer);
+    const tdForm = document.createElement('td');
+    tdForm.colSpan = 3;
+    tdForm.className = 'sr-add-td';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'sr-add-open-btn';
+    addBtn.textContent = isRule ? '+ Add rule' : '+ Add skill';
+    tdForm.appendChild(addBtn);
+
+    const form = document.createElement('div');
+    form.className = 'sr-add-form';
+    form.style.display = 'none';
+
+    const mk = (tag, cls, placeholder?) => {
+        const el = document.createElement(tag) as any;
+        el.className = cls;
+        if (placeholder) el.placeholder = placeholder;
+        return el;
+    };
+    const nameIn  = mk('input',    'sr-add-input', 'name');
+    const descIn  = mk('input',    'sr-add-input', 'description');
+    const trigIn  = mk('input',    'sr-add-input', 'trigger keywords (comma-separated)');
+    const bodyIn  = mk('textarea', 'sr-add-textarea', isRule ? 'Rule content' : 'Skill instructions');
+    bodyIn.rows = 5;
+    const msg     = mk('div',      'sr-add-msg');
+    msg.style.display = 'none';
+    const btnRow  = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+    const saveBtn   = mk('button', 'skill-trigger-save-btn');
+    saveBtn.textContent = isRule ? 'Save rule' : 'Save skill';
+    const cancelBtn = mk('button', 'skill-trigger-reset-btn');
+    cancelBtn.textContent = 'Cancel';
+    btnRow.append(saveBtn, cancelBtn);
+
+    form.append(nameIn, descIn, trigIn, bodyIn, msg, btnRow);
+    tdForm.appendChild(form);
+    tr.appendChild(tdForm);
+    tbody.appendChild(tr);
+
+    addBtn.addEventListener('click', () => { addBtn.style.display = 'none'; form.style.display = ''; nameIn.focus(); });
+    cancelBtn.addEventListener('click', () => {
+        form.style.display = 'none'; addBtn.style.display = '';
+        [nameIn, descIn, trigIn, bodyIn].forEach(e => { if (e) e.value = ''; });
+        msg.style.display = 'none';
+    });
+    saveBtn.addEventListener('click', async () => {
+        const name    = nameIn.value.trim().replace(/\s+/g, '-').toLowerCase();
+        const desc    = descIn.value.trim();
+        const trigger = trigIn.value.trim();
+        const body    = bodyIn.value.trim();
+        const err = (t) => { msg.textContent = t; msg.style.color = '#d32f2f'; msg.style.display = ''; };
+        if (!name) return err('Name is required.');
+        if (!body) return err('Content is required.');
+        const fm  = `---\nname: ${name}${desc ? `\ndescription: ${desc}` : ''}${trigger ? `\ntrigger: ${trigger}` : ''}\n---\n\n`;
+        const path = isRule ? `rules/${name}/RULE.md` : `skills/${name}/SKILL.md`;
+        try {
+            await agentWriteFile(path, fm + body);
+            msg.textContent = `✓ "${name}" saved.`; msg.style.color = 'var(--accent)'; msg.style.display = '';
+            [nameIn, descIn, trigIn, bodyIn].forEach(e => { if (e) e.value = ''; });
+            await loadSkills();
+            setTimeout(() => { form.style.display = 'none'; addBtn.style.display = ''; msg.style.display = 'none'; }, 700);
+        } catch (e) { err(`Error: ${(e as any).message}`); }
+    });
+}
+
+function _buildSkillTable(entries, isBuiltin, isRule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sr-table-wrap' + (isBuiltin ? ' sr-table-builtin' : ' sr-table-custom');
+    const table = document.createElement('table');
+    table.className = 'sr-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = `<tr><th class="sr-th-on">On</th><th class="sr-th-name">${isRule ? 'Rule' : 'Skill'}</th><th class="sr-th-trigger">Trigger</th><th class="sr-th-del"></th></tr>`;
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const s of entries) _buildSkillTableRow(s, isBuiltin, tbody);
+    if (!isBuiltin) _appendAddRow(tbody, isRule);
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
 }
 
 function renderSkillsChecklist() {
@@ -1333,63 +1465,90 @@ function renderSkillsChecklist() {
     const fileSkills = [...skillsRegistry.values()].filter(s => s.path !== 'builtin' && s.type !== 'rule');
     const fileRules  = [...skillsRegistry.values()].filter(s => s.path !== 'builtin' && s.type === 'rule');
 
+    const section = (title, hint) => {
+        const h = document.createElement('div');
+        h.className = 'sr-section-hdr';
+        h.textContent = title;
+        el.appendChild(h);
+        if (hint) {
+            const p = document.createElement('p');
+            p.className = 'settings-hint sr-hint';
+            p.textContent = hint;
+            el.appendChild(p);
+        }
+    };
+
     // ── Skills ───────────────────────────────────────────────────────────────
-    const skillsHdr = document.createElement('div');
-    skillsHdr.style.cssText = 'font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px';
-    skillsHdr.textContent = 'Skills';
-    el.appendChild(skillsHdr);
-
-    _checklistBlock(el, 'Built-in', 'Procedural workflows invoked with /name.', BUILTIN_SKILLS, true);
-
-    if (fileSkills.length) {
-        const sep = document.createElement('div');
-        sep.style.cssText = 'border-top:1px solid var(--border);margin:10px 0 8px';
-        el.appendChild(sep);
-        _checklistBlock(el, 'Installed', 'Checked skills are always injected into the system prompt.', fileSkills, false);
-    }
+    section('Skills', 'Procedural workflows invoked with /name. Built-ins checked here are always injected.');
+    el.appendChild(_buildSkillTable(BUILTIN_SKILLS, true, false));
+    const skillsSep = document.createElement('div');
+    skillsSep.className = 'sr-subsep';
+    el.appendChild(skillsSep);
+    el.appendChild(_buildSkillTable(fileSkills, false, false));
 
     // ── Rules ─────────────────────────────────────────────────────────────────
     const rulesSep = document.createElement('div');
-    rulesSep.style.cssText = 'border-top:2px solid var(--border);margin:16px 0 12px';
+    rulesSep.className = 'sr-sep';
     el.appendChild(rulesSep);
-
-    const rulesHdr = document.createElement('div');
-    rulesHdr.style.cssText = 'font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px';
-    rulesHdr.textContent = 'Rules';
-    el.appendChild(rulesHdr);
-
-    _checklistBlock(el, 'Built-in', 'Standing context injected when triggered (keyword, filetype, tool result).', BUILTIN_RULES, true);
-
-    if (fileRules.length) {
-        const sep2 = document.createElement('div');
-        sep2.style.cssText = 'border-top:1px solid var(--border);margin:10px 0 8px';
-        el.appendChild(sep2);
-        _checklistBlock(el, 'Installed', 'Checked rules are always injected into the system prompt.', fileRules, false);
-    }
+    section('Rules', 'Standing context injected automatically when a trigger keyword, filetype, or tool matches.');
+    el.appendChild(_buildSkillTable(BUILTIN_RULES, true, true));
+    const rulesSep2 = document.createElement('div');
+    rulesSep2.className = 'sr-subsep';
+    el.appendChild(rulesSep2);
+    el.appendChild(_buildSkillTable(fileRules, false, true));
 }
 
 function renderToolsChecklist() {
     const el = (document.getElementById('settings-tools-list') as HTMLInputElement);
     if (!el) return;
     el.innerHTML = '';
+
+    // Header row
+    const hdr = document.createElement('div');
+    hdr.className = 'tools-checklist-header';
+    hdr.innerHTML = '<div class="tools-checklist-name"></div>'
+        + '<div class="tools-checklist-col-hdr">Chat</div>'
+        + '<div class="tools-checklist-col-hdr">Cowork</div>';
+    el.appendChild(hdr);
+
     for (const name of ALL_TOOL_NAMES) {
-        const item = document.createElement('label');
-        item.className = 'model-checklist-item';
-        const cb = document.createElement('input');
-        cb.type    = 'checkbox';
-        cb.checked = enabledTools.has(name);
-        cb.addEventListener('change', () => {
-            if (cb.checked) enabledTools.add(name);
+        const row = document.createElement('div');
+        row.className = 'tools-checklist-row';
+
+        const info = document.createElement('div');
+        info.className = 'tools-checklist-name model-item-info';
+        info.innerHTML = `<div class="model-item-name">${TOOL_LABELS[name] || name}</div><div class="model-item-meta">${TOOL_DESCRIPTIONS[name] || ''}</div>`;
+
+        const cbChat = document.createElement('input');
+        cbChat.type    = 'checkbox';
+        cbChat.checked = enabledTools.has(name);
+        cbChat.addEventListener('change', () => {
+            if (cbChat.checked) enabledTools.add(name);
             else enabledTools.delete(name);
-            // Persist the disabled set (see config.js) so future tools default to on.
             localStorage.setItem('fg_disabled_tools',
                 JSON.stringify(ALL_TOOL_NAMES.filter(t => !enabledTools.has(t))));
         });
-        const info = document.createElement('div');
-        info.className = 'model-item-info';
-        info.innerHTML = `<div class="model-item-name">${TOOL_LABELS[name] || name}</div><div class="model-item-meta">${TOOL_DESCRIPTIONS[name] || ''}</div>`;
-        item.append(cb, info);
-        el.appendChild(item);
+
+        const cbCowork = document.createElement('input');
+        cbCowork.type    = 'checkbox';
+        cbCowork.checked = coworkEnabledTools.has(name);
+        cbCowork.addEventListener('change', () => {
+            if (cbCowork.checked) coworkEnabledTools.add(name);
+            else coworkEnabledTools.delete(name);
+            localStorage.setItem('fg_disabled_tools_cowork',
+                JSON.stringify(ALL_TOOL_NAMES.filter(t => !coworkEnabledTools.has(t))));
+        });
+
+        const cellChat   = document.createElement('div');
+        cellChat.className = 'tools-checklist-cell';
+        cellChat.appendChild(cbChat);
+
+        const cellCowork = document.createElement('div');
+        cellCowork.className = 'tools-checklist-cell';
+        cellCowork.appendChild(cbCowork);
+
+        row.append(info, cellChat, cellCowork);
+        el.appendChild(row);
     }
 }
 

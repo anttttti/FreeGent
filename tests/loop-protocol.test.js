@@ -269,6 +269,22 @@ describe('_handleTurnState — shared no-tool-call protocol (Issue 8 slice 1)', 
         expect(r.text).toBe('The Geometry Dash clone has been created.');
     });
 
+    it('director narration is nudged in interactive chat, exempt only in workflowMode (Cowork "Let me do…" stop)', async () => {
+        await import('../step-validator.ts');
+        const text = 'The board renders. Now the scoring logic. Let me do that next.';
+        window.mainAgentRole = { name: 'director' };
+        try {
+            window.setWorkflowMode(false);
+            const vc = await window._validateStepOutput(text, { checkFires: {} }, 'post-state');
+            expect(vc?.name).toBe('missing_state_line');
+            expect(vc.nudge).toMatch(/make the next tool call now/);
+            window.setWorkflowMode(true);
+            expect(await window._validateStepOutput(text, { checkFires: {} }, 'post-state')).toBeNull();
+        } finally {
+            window.setWorkflowMode(false);
+        }
+    });
+
     it('plain narration falls through to the caller', async () => {
         const ps = { finalCheck: 0, cont: 0, saved: null, substCheck: 0 };
         const r = await _handleTurnState('Let me replace that section next.', 0, ps, mkAdapter());

@@ -31,6 +31,13 @@ export function _normPath(p: string): string { return (p || '').replace(/^local\
 
 export function resetSeenReadFiles(): void { setSeenReadFiles(new Map()); setSeenListFiles(new Set()); }
 
+// Cheap content fingerprint (FNV-1a over UTF-16 code units, plus length) for read dedup.
+function _contentHash(s: string): string {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return `${s.length}:${(h >>> 0).toString(36)}`;
+}
+
 export function _invalidateReadDedup(path: string): void {
     const norm = _normPath(path);
     for (const key of _seenReadFiles.keys())
@@ -192,16 +199,27 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // as a synthetic key so resetSeenReadFiles() and _invalidateReadDedup() clear it automatically.
         const pathNorm   = _normPath(result.path);
         const countKey   = `${pathNorm}::__count__`;
+        const rangeKey   = `${pathNorm}:${result.start_line||''}:${result.end_line||''}`;
+        // Outside the `${pathNorm}:` prefix, which the pruners rewrite to 'pruned'.
+        const hashKey    = `__hash__:${rangeKey}`;
+        // Suppression is only safe when the content is what the model already has. Edits made
+        // through write_file/replace_in_file invalidate explicitly, but shell edits (sed -i in
+        // WASM bash, Pyodide, nativeExec) cannot be tracked per file — a hash of the fresh read
+        // catches them all. Before this, a read after `sed -i` was answered "Already read" and
+        // the model reasoned from the pre-edit copy (fg-chat 2026-09-27-01-29-29).
+        const contentHash = typeof result.content === 'string' ? _contentHash(result.content) : null;
+        const changed = contentHash !== null && _rf.has(hashKey) && _rf.get(hashKey) !== contentHash;
+        if (changed) {
+            for (const k of [..._rf.keys()]) if (k.startsWith(pathNorm + ':')) _rf.delete(k);
+        }
         const readCount  = (_rf.get(countKey) as number) ?? 0;
         if (readCount >= 6) {
             return { path: result.path, note: `Already read "${result.path}" ${readCount} times this session — content is in your prior tool results.` };
         }
 
         // Suppress duplicate read of the same range whose content is still in history
-        // (not yet pruned). If the file was edited since, _invalidateReadDedup already
-        // cleared the entry — re-read goes through normally. pruneOAIHistory sets
-        // 'pruned' so post-prune re-reads serve content again (never starve the model).
-        const rangeKey = `${pathNorm}:${result.start_line||''}:${result.end_line||''}`;
+        // (not yet pruned) and unchanged. pruneOAIHistory sets 'pruned' so post-prune
+        // re-reads serve content again (never starve the model).
         const priorState = _rf.get(rangeKey);
         if (priorState === 'full' || priorState === 'truncated') {
             return { path: result.path, note: `Already read "${result.path}" — the full content is in your prior tool result for this file. Read a different range if you need other sections.` };
@@ -210,6 +228,7 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // Track read state for pruneOAIHistory & dedup check above.
         const contentLen = typeof result.content === 'string' ? result.content.length : 0;
         _rf.set(rangeKey, contentLen > limit ? 'truncated' : 'full');
+        if (contentHash !== null) _rf.set(hashKey, contentHash);
         // Only count full (unranged) reads — ranged reads are targeted navigation and should not be capped.
         if (!result.start_line && !result.end_line) _rf.set(countKey, readCount + 1);
     }
@@ -302,13 +321,23 @@ function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
 // True when a later read of the same file covers this read's line range with no write to the file
 // in between — only then is this read redundant. Pruning every earlier read of the path left the
 // model one range at a time, and it re-read two ranges alternately until the step limit (v0.55).
-function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta }>): boolean {
+// Returns the covering read's meta, or null.
+function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta }>): _CallMeta | null {
     for (const r of results) {
         if (r.pos <= pos || r.meta.path !== meta.path) continue;
-        if (_PRUNE_WRITE_TOOLS.has(r.meta.name)) return false;   // file changed before any covering read
-        if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to) return true;
+        if (_PRUNE_WRITE_TOOLS.has(r.meta.name)) return null;   // file changed before any covering read
+        if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to) return r.meta;
     }
-    return false;
+    return null;
+}
+
+const _rangeLabel = (m: _CallMeta) => (m.from <= 1 && m.to === Infinity) ? 'whole file' : `lines ${m.from}–${m.to === Infinity ? 'end' : m.to}`;
+
+// Stub for a pruned read. It names where the lines are now: a bare "[pruned: dup read …]" read as
+// "content lost", and the model re-read the range — which pruned the overlapping reads in turn,
+// so it cycled through ~6 ranges of one file for 88 steps (SWE-bench Lite v0.55 sympy-18189).
+function _prunedReadStub(meta: _CallMeta, cover: _CallMeta, chars: number): string {
+    return `[pruned: dup read "${meta.path}" (${_rangeLabel(meta)}), ${chars} chars — these lines are in a later read_file result of the same file (${_rangeLabel(cover)}). Do not read them again; use that result.]`;
 }
 
 export function pruneOAIHistory(history: any[]): number {
@@ -322,8 +351,9 @@ export function pruneOAIHistory(history: any[]): number {
     for (const { pos: idx, msg, meta } of results) {
         if (!_PRUNE_READ_TOOLS.has(meta.name) || !meta.path) continue;
         const cl = _clen(msg.content); if (cl < _PRUNE_MIN_CHARS) continue;
-        if (_readCovered(idx, meta, results)) {
-            history[idx] = { ...msg, content: `[pruned: dup read "${meta.path}", ${cl} chars]` }; saved += cl;
+        const cover = _readCovered(idx, meta, results);
+        if (cover) {
+            history[idx] = { ...msg, content: _prunedReadStub(meta, cover, cl) }; saved += cl;
             // Mark _seenReadFiles entries for this path as 'pruned' so the dedup
             // gate in truncateResultForHistory lets future re-reads through.
             const pNorm = _normPath(meta.path);
@@ -356,9 +386,10 @@ export function pruneSessionHistory(sess: Session): number {
     for (const { pos, seq, d, meta } of results) {
         if (!_PRUNE_READ_TOOLS.has(meta.name) || !meta.path) continue;
         const cl = _clen(d.content); if (cl < _PRUNE_MIN_CHARS) continue;
-        if (!_readCovered(pos, meta, results)) continue;
+        const cover = _readCovered(pos, meta, results);
+        if (!cover) continue;
         if ((d.content as string)?.startsWith('[pruned:')) continue; // already pruned
-        const prunedContent = `[pruned: dup read "${meta.path}", ${cl} chars]`;
+        const prunedContent = _prunedReadStub(meta, cover, cl);
         pruneSurface(sess, seq, d.callId, meta.name, d.turn ?? 0, d.step ?? 0, prunedContent);
         saved += cl;
         const pNorm = _normPath(meta.path);
