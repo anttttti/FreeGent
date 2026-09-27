@@ -233,3 +233,33 @@ describe('runTurn — empty reasoning-only response', () => {
         expect(nullAssistants).toHaveLength(0);
     });
 });
+
+// SWE-bench v0.55 astropy-12907: the only files changed were repro scripts (the real edit was a
+// sed that matched nothing), yet COMPLETED was accepted. One bounce, then accepted.
+describe('runTurn — scratch-only edits at COMPLETED', () => {
+    it('bounces the first COMPLETED when only a repro script was written, accepts the second', async () => {
+        setupChat();
+        const files = new Map<string, string>();
+        W.setWorkspaceAdapter({
+            agentListFiles: async () => [...files.keys()].map(name => ({ name })),
+            agentReadFile: async (p: string) => { if (!files.has(p)) throw new Error('not found'); return files.get(p); },
+            agentWriteFile: async (p: string, c: string) => { files.set(p, c); },
+            agentDeleteFile: async (p: string) => { files.delete(p); },
+        });
+        W.enabledTools?.add?.('write_file');
+        W._sessionToolFilter = new Set(['write_file', 'list_files']);
+        const mock = makeReplayFetch([
+            { tool_calls: [{ id: 'w1', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'repro.py', content: 'print(1)\n' }) } }] },
+            { content: 'Fixed the separability bug.\n\nCOMPLETED' },
+            { content: 'The repro script is the requested deliverable.\n\nCOMPLETED' },
+        ]);
+        W.fetch = mock;
+        const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        const llmCalls = mock.mock.calls.filter(([u]: [string]) => String(u).includes('/chat/completions'));
+        expect(llmCalls).toHaveLength(3);
+        const sent = JSON.stringify(JSON.parse(llmCalls[2][1].body).messages);
+        expect(sent).toContain('only files changed this turn are scratch files: repro.py');
+        expect(result).toContain('deliverable');
+        W.setWorkspaceAdapter(null);
+    });
+});

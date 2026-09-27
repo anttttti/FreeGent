@@ -502,8 +502,10 @@ export function scrollBottom(el: any, threshold: number | undefined = 80): void 
     if (!el) return;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < threshold)
         el.scrollTop = el.scrollHeight;
-    // Keep jump-to-latest button state consistent after any programmatic scroll
-    _updateScrollBtn?.();
+    // Keep jump-to-latest button state consistent after any programmatic scroll.
+    // Via window: init.ts bridges it at the end of its DOMContentLoaded handler, and chat
+    // restore renders before that — a bare `_updateScrollBtn?.()` throws ReferenceError then.
+    window._updateScrollBtn?.();
 }
 
 export function appendMessage(role: any, html: any, container: HTMLElement | null | undefined = null): HTMLDivElement {
@@ -990,8 +992,12 @@ export function createResponsePlaceholder(container: null | undefined = null): R
             append(text, type) {
                 if (text && _ghostCol && _ghostCol !== colEl) { _ghostColClose?.(); _ghostColClose = null; _ghostCol.remove(); _ghostCol = null; }
                 if (text) hasOutput = true;
+                // A finished step can still get annotations (e.g. "[validation: … — nudging]"
+                // after complete()); record them without reopening tabs complete() closed —
+                // that left Output open in the Event Log for every nudged step.
+                const _live = !done;
                 if (type === 'thinking') {
-                    colTabs.openTab('Thinking');
+                    if (_live) colTabs.openTab('Thinking');
                     if (latestThink) {
                         // Append a new text node instead of textContent += to avoid O(n²)
                         // string reallocation on every token during long thinking phases.
@@ -1012,12 +1018,12 @@ export function createResponsePlaceholder(container: null | undefined = null): R
                         });
                     }
                     _ensureAggEntry();
-                    aggTabs.openTab('Thinking');
+                    if (_live) aggTabs.openTab('Thinking');
                     // Always append a new text node — avoids O(n²) textContent += on the agg panel too.
                     aggTabs.pres.Thinking.appendChild(document.createTextNode(text));
                 } else {
                     const isError = type === 'error';
-                    colTabs.openTab('Output');
+                    if (_live) colTabs.openTab('Output');
                     if (latestOut && !isError && !latestOut.classList.contains('step-err')) {
                         latestOut.appendChild(document.createTextNode(text));
                     } else {
@@ -1035,7 +1041,7 @@ export function createResponsePlaceholder(container: null | undefined = null): R
                         });
                     }
                     _ensureAggEntry();
-                    aggTabs.openTab('Output');
+                    if (_live) aggTabs.openTab('Output');
                     if (isError) {
                         const es = document.createElement('span'); es.className = 'step-err'; es.textContent = text;
                         aggTabs.pres.Output.appendChild(es);

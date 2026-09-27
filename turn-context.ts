@@ -140,7 +140,81 @@ export async function buildTurnPrelude({
         ? `<project_instructions>\n${agentsContext}\n</project_instructions>` : '';
     if (agentsCtxBlock) setPendingAgentsContextInject(false);
 
-    return [guidance, agentsCtxBlock].filter(Boolean).join('\n\n');
+    // First turn, every mode (chat, Cowork, runner, headless benchmarks): inject a compact
+    // workspace listing so the agent knows what exists without spending a step on list_files.
+    // Benchmark logs (v0.55) showed the model opening ~70–100% of file-based tasks with a
+    // listing call (a full LLM round trip), and the listing coming back empty on API-style
+    // suites (TAC, AutomationBench) and fresh Cowork chats.
+    let wsFilesBlock = '';
+    if (isFirstTurn) {
+        try {
+            const inContainer = typeof fgTargetContainer !== 'undefined' && !!fgTargetContainer;
+            wsFilesBlock = formatWorkspaceListing(await collectWorkspacePaths(), { inContainer });
+        } catch {}
+    }
+
+    return [wsFilesBlock, agentsCtxBlock, guidance].filter(Boolean).join('\n\n');
+}
+
+// Budget for the first-turn listing. The full listing of a SWE-bench repo is ~20K chars; past
+// the budget the listing collapses to per-directory file counts.
+const _WS_LIST_MAX_PATHS = 60;
+const _WS_LIST_MAX_CHARS = 3000;
+
+// Render workspace paths as a <workspace_files> block: the full sorted list when small,
+// otherwise directories with file counts (expanded one level at a time while within budget)
+// plus the root-level files. Returns '' when nothing reliable can be said.
+//   inContainer: paths come from `find` inside a task container — an empty result there can
+//   mean the listing failed, so it is not reported as an empty workspace.
+export function formatWorkspaceListing(rawPaths: string[], { inContainer = false } = {}): string {
+    const raw = (rawPaths || []).filter(p => typeof p === 'string' && p);
+    // Adapter notes ("[listing truncated at 500 entries — …]") are not paths, but say the
+    // listing is incomplete.
+    const truncated = raw.some(p => p.startsWith('[') && /truncat/i.test(p));
+    const sorted = [...new Set(raw.filter(p => !p.startsWith('[')).map(p => p.replace(/\/+$/, '')))].sort();
+    // `find` (container adapter) also emits each directory as an entry: drop entries that
+    // are a parent of the next one, so only files remain.
+    const paths = sorted.filter((p, i) => !(sorted[i + 1]?.startsWith(p + '/')));
+    const wrap = (body: string) => `<workspace_files>\n${body}\n</workspace_files>`;
+    const count = `${paths.length}${truncated ? '+' : ''} file${paths.length === 1 && !truncated ? '' : 's'}${truncated ? ' (listing truncated)' : ''}`;
+    if (!paths.length) {
+        return inContainer ? '' : wrap('(empty — the workspace has no files yet)');
+    }
+    const full = paths.join('\n');
+    if (paths.length <= _WS_LIST_MAX_PATHS && full.length <= _WS_LIST_MAX_CHARS) {
+        return wrap(`${count}:\n${full}`);
+    }
+
+    // Collapse to directories at increasing depth, keeping the deepest rendering that fits.
+    const lead = paths[0].startsWith('/') ? 1 : 0;   // absolute container paths: skip the '' segment
+    const render = (depth: number): string[] => {
+        const dirs = new Map<string, number>();
+        const files: string[] = [];
+        for (const p of paths) {
+            const segs = p.split('/');
+            if (segs.length - lead <= depth) { files.push(p); continue; }
+            const d = segs.slice(0, lead + depth).join('/') + '/';
+            dirs.set(d, (dirs.get(d) ?? 0) + 1);
+        }
+        return [
+            ...[...dirs].map(([d, n]) => `${d} (${n} file${n === 1 ? '' : 's'})`),
+            ...files,
+        ].sort();
+    };
+    let lines = render(1);
+    for (let depth = 2; depth <= 4; depth++) {
+        const next = render(depth);
+        if (next.length > _WS_LIST_MAX_PATHS || next.join('\n').length > _WS_LIST_MAX_CHARS) break;
+        lines = next;
+    }
+    let body = lines.join('\n');
+    if (body.length > _WS_LIST_MAX_CHARS) {
+        const kept: string[] = [];
+        let len = 0;
+        for (const l of lines) { if (len + l.length + 1 > _WS_LIST_MAX_CHARS) break; kept.push(l); len += l.length + 1; }
+        body = `${kept.join('\n')}\n… ${lines.length - kept.length} more entries`;
+    }
+    return wrap(`${count} — directories shown with file counts; use list_files with a path filter for details:\n${body}`);
 }
 
 Object.assign(window, {

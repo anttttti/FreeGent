@@ -13,7 +13,7 @@ export function msgText(m: any): any {
 
 // Strip injected framework blocks (guidance / handover / relevant-memory / project
 // instructions from AGENTS.md) from a user message.
-const _HU_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory|project_instructions)>[\s\S]*?<\/\1>\n*/g;
+const _HU_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory|project_instructions|workspace_files)>[\s\S]*?<\/\1>\n*/g;
 export function stripInjected(s: any): any { return (s || '').replace(_HU_INJECTED_RE, '').trim(); }
 
 // True when m is a real user turn — plain text, not tool results, not a framework <nudge> nudge.

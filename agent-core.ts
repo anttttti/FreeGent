@@ -958,11 +958,13 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
         }
     }
 
-    const isFirstMessage = openaiHistory.length === 0;
+    // Name the chat now, in parallel with the turn (utility model, fire-and-forget) — waiting
+    // for the turn left a long Cowork run labeled "New Chat" until it finished.
+    if (openaiHistory.length === 0 && activeChatId) autoNameChat(activeChatId, text).catch(() => {});
 
     input.innerHTML = '';
     autoResizeTextarea(input);
-    clearInputDraft?.();  // remove saved draft now that the message is sent
+    window.clearInputDraft?.();  // remove saved draft now that the message is sent (bridged late by init.ts)
     lastUserMessageText = rawText;
     _currentUserIntent  = rawText; // used by intent validation in executeToolAsync
     if (rawText.trim()) _userInputHistory.push(rawText);
@@ -1091,7 +1093,6 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     try {
         updateChatMetaLastAt(activeChatId);
         saveHistory();
-        if (isFirstMessage && activeChatId) autoNameChat(activeChatId, text);
     } finally {
         _tearDownTurn();
         input?.focus();

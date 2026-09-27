@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
-import { REPEAT_LIMIT, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard, _updateStuckDetector } from '../detectors.ts';
+import { REPEAT_LIMIT, REPEAT_WINDOW, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _updateStuckDetector } from '../detectors.ts';
 
 const W = window as any;
 
@@ -33,6 +33,28 @@ describe('repeat guard helpers', () => {
         }
         expect(_repeatRefused(g, sig)).toBe(true);
         expect(_repeatRefused(g, _callSig([{ name: 'execute_code', args: { code: 'ls' } }]))).toBe(false);
+    });
+
+    it('is not reset by a variant slipped between repeats (v0.55 OS task 38)', () => {
+        const ls  = _callSig([{ name: 'execute_code', args: { code: 'find / -perm -4000 | xargs ls -l' } }]);
+        const lsd = _callSig([{ name: 'execute_code', args: { code: 'find / -perm -4000 | xargs ls -ld' } }]);
+        let g = newRepeatGuard();
+        for (let i = 0; i < REPEAT_LIMIT; i++) {
+            g = _updateRepeatGuard(g, ls, 'same');
+            if (i % 3 === 2) g = _updateRepeatGuard(g, lsd, 'same-d');
+        }
+        expect(_repeatCount(g, ls)).toBe(REPEAT_LIMIT);
+        expect(_repeatRefused(g, ls)).toBe(true);
+    });
+
+    it('forgets repeats that fall out of the window, and counts only the latest result', () => {
+        const sig = _callSig([{ name: 'execute_code', args: { code: 'ps aux' } }]);
+        let g = newRepeatGuard();
+        for (let i = 0; i < REPEAT_LIMIT - 1; i++) g = _updateRepeatGuard(g, sig, 'same');
+        g = _updateRepeatGuard(g, sig, 'changed');
+        expect(_repeatRefused(g, sig)).toBe(false);
+        for (let i = 0; i < REPEAT_WINDOW; i++) g = _updateRepeatGuard(g, `other${i}`, 'x');
+        expect(_repeatCount(g, sig)).toBe(0);
     });
 });
 
@@ -70,6 +92,28 @@ describe('runTurn with a looping call', () => {
         expect(refusals.length).toBeGreaterThan(0);
         // A model that already has the answer is told to give it, not only to declare BLOCKED.
         expect(refusals[0].content).toContain('If the output you already have answers the task, give that answer now');
+    });
+
+    it('refuses a looping call even when the model alternates in a variant', async () => {
+        const exec = vi.fn(async () => ({ stdout: '-rwsr-xr-x 1 root root /usr/bin/find', stderr: '', exit_code: 0 }));
+        W.nativeExec = exec;
+        const lsdCall = (i: number) => ({ tool_calls: [{ id: `d${i}`, type: 'function', function: { name: 'execute_code', arguments: '{"language":"bash","code":"ls -ld /usr/bin/find"}' } }] });
+        W.fetch = makeReplayFetch(Array.from({ length: 40 }, (_, i) => (i % 4 === 3 ? lsdCall(i) : psCall(i))));
+        const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        expect(result).toMatch(/stopped|BLOCKED/);
+        expect(exec.mock.calls.length).toBeLessThan(30);
+    });
+
+    it('lets the model answer after a stuck nudge (no forced tool call)', async () => {
+        W.nativeExec = vi.fn(async () => ({ stdout: '-rwsr-xr-x 1 root root /usr/bin/find', stderr: '', exit_code: 0 }));
+        const bodies: any[] = [];
+        W.fetch = makeReplayFetch([psCall(0), psCall(1), psCall(2), { content: '/usr/bin/find has SUID.\nCOMPLETED' }],
+            { onRequest: b => bodies.push(b) });
+        const ep = { provider: 'vllm', url: 'http://vllm.test/v1/chat/completions', model: 'm', key: '' };
+        await W.runTurn(ep, NULL_RENDER_ADAPTER);
+        const stuckAt = W.openaiHistory.findIndex((m: any) => m.role === 'user' && String(m.content).includes('produced identical results'));
+        expect(stuckAt).toBeGreaterThan(-1);
+        expect(bodies[3].tool_choice).not.toBe('required');
     });
 
     it('keeps running a repeated call whose results change', async () => {

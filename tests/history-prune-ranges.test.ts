@@ -64,3 +64,16 @@ describe.each([['pruneOAIHistory', prunedOAI], ['pruneSessionHistory', prunedSes
         expect(pruned([['read_file', A], ['read_file', { ...A, path: 'g.py' }]])).toEqual([false, false]);
     });
 });
+
+// v0.55 sympy-18189: a bare "[pruned: dup read …]" read as "content lost" and the model re-read the
+// range. The stub now names the later read that holds the lines.
+describe('pruned read stub', () => {
+    it('names the pruned range and the later read that covers it', () => {
+        const h = oaiHistory([['read_file', { path: 'f.py', start_line: 280, end_line: 350 }], ['read_file', { path: 'f.py', start_line: 200, end_line: 350 }]]);
+        pruneOAIHistory(h);
+        const stub = h.filter(m => m.role === 'tool')[0].content;
+        expect(stub).toMatch(/^\[pruned: dup read "f\.py" \(lines 280–350\)/);
+        expect(stub).toContain('later read_file result of the same file (lines 200–350)');
+        expect(stub).toContain('Do not read them again');
+    });
+});

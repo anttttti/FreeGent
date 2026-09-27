@@ -23,6 +23,11 @@ import { softStopPending } from './state.js';
 // every few seconds at most). Short enough that a browser-killed connection (tab hidden,
 // OS sleep, phone lock) is detected and retried by withRetry within ~90 s rather than 5 min.
 const SSE_IDLE_TIMEOUT_MS = 90_000;
+// Once the stream has delivered data the server is known alive, and some providers (NVIDIA
+// NIM) send a tool call's arguments in one piece only when generation ends — writing a large
+// file is minutes of silence after the opening narration. At 90 s those streams were cut
+// every time and the narration returned as the whole reply (fg-chat 2026-09-27-00-54-06).
+const SSE_MIDSTREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 
 export async function* readSSE(resp: any) {
@@ -43,6 +48,7 @@ export async function* readSSE(resp: any) {
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer: string = '';
+    let gotData = false;
     try {
         while (true) {
             let timerId: number;
@@ -52,10 +58,11 @@ export async function* readSSE(resp: any) {
                     timerId = setTimeout(() => {
                         reader.cancel().catch(() => {}); // close connection so server isn't left processing
                         reject(new Error('Stream idle timeout'));
-                    }, SSE_IDLE_TIMEOUT_MS);
+                    }, gotData ? SSE_MIDSTREAM_IDLE_TIMEOUT_MS : SSE_IDLE_TIMEOUT_MS);
                 }),
             ]).finally(() => clearTimeout(timerId));
             if (done) break;
+            gotData = true;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop()!;
@@ -206,8 +213,16 @@ export async function streamOAICompat(resp: any, onChunk: any) {
             }
         }
     } } catch (e) {
-        // Idle timeout mid-stream: return what arrived rather than retrying from scratch and losing it
-        if (/idle timeout/i.test(e.message) && content) { /* fall through */ }
+        // Idle timeout mid-stream: return what arrived rather than retrying from scratch and losing it,
+        // but flag it — the response is cut off, not finished. Unflagged, the partial narration
+        // ("Let me write the game file…") read as a complete text-only reply and the half-sent
+        // tool call was lost. Partial tool-call arguments are dropped: they are not valid calls.
+        if (/idle timeout/i.test(e.message) && content) {
+            if (finish_reason == null) {
+                finish_reason = 'idle_timeout';
+                for (const k of Object.keys(tcMap)) delete tcMap[k];
+            }
+        }
         else if (e.name !== 'AbortError' || !softStopPending) throw e;
     }
     if (!content && reasoningContent) { content = reasoningContent; onChunk('', 'output'); }

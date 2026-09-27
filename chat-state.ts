@@ -1,6 +1,7 @@
 // chat-state.js — FreeGent: chat list, history persistence, chat management UI
 // Depends on: config.js, chat-render.js
 import { KEYS, chatKey } from './storage-keys.js';
+import { NULL_TASK_HANDLE } from './render-adapter.js';
 
 // ── Chat list helpers ──────────────────────────────────────────────────────
 
@@ -123,14 +124,22 @@ async function _deleteHtml(chatId) {
 
 // ── History persistence ────────────────────────────────────────────────────
 
+// Chat whose history switchToChat is still loading. Until the load lands, openaiHistory is []
+// and the messages view is blank, so a save in that window (e.g. a turn finishing after
+// stopNow released agentStreaming) would overwrite the chat's stored history with nothing.
+let _loadingChatId: string | null = null;
+
 function saveHistory() {
     if (!activeChatId) return;
-    // A8: in headless/bench mode, SQLite (sessionSaveHistory) is authoritative.
-    // Skip the localStorage JSON write and the DOM HTML snapshot — both are
-    // browser-only concerns and wasteful/meaningless in a headless JSDOM environment.
-    if (typeof workflowMode !== 'undefined' && workflowMode) {
+    if (activeChatId === _loadingChatId) return;
+    const _wfMode = typeof workflowMode !== 'undefined' && workflowMode;
+    // A8 (updated): in headless/bench mode, SQLite is authoritative; the localStorage
+    // openaiHistory write is kept so browser-runner chats (workflowMode=true in a real
+    // browser) are readable when the user opens the chat tab. Only the DOM HTML snapshot
+    // is skipped in workflowMode — rendering goes to runner-process, not the messages div.
+    if (_wfMode) {
         try { sessionSaveHistory?.(activeChatId, openaiHistory); } catch {}
-        return;
+        // fall through to save openaiHistory to localStorage
     }
     // Browser UI path: write localStorage for fast reload access.
     try {
@@ -166,13 +175,17 @@ function saveHistory() {
                 try { localStorage.setItem(chatKey.oh(activeChatId), JSON.stringify(_mini)); } catch {}
             }
         }
-        // Additive: also persist the full (untrimmed) history to the session-store adapter.
-        sessionSaveHistory?.(activeChatId, openaiHistory);
+        // Additive: also persist the full (untrimmed) history to the session-store adapter
+        // (skipped when _wfMode since it was already called above).
+        if (!_wfMode) sessionSaveHistory?.(activeChatId, openaiHistory);
     } catch (e) { console.warn('[saveHistory] LLM history persist failed:', (e as any)?.message); }
     // Messages HTML — browser only (requires a real DOM element).
+    // In workflowMode, save it only when something was rendered: headless runs use the NULL
+    // render adapter (empty view, nothing to save), while the browser task runner renders
+    // its turns into the chat view.
     try {
         const el = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
-        if (el) {
+        if (el && !(_wfMode && !el.childElementCount)) {
             const id   = activeChatId;
             const html = el.innerHTML;
             // Write to localStorage synchronously — same pattern as openaiHistory above.
@@ -191,6 +204,9 @@ async function loadChatHistory(id: string): Promise<boolean> {
     try {
         // Try SQLite session store first (available when an adapter is injected).
         const sqliteHistory = await sessionLoadHistory?.(id);
+        // Another chat became active during the await (New Chat, runner episode): assigning
+        // now would put this chat's history into that one.
+        if (activeChatId !== id) return false;
         if (sqliteHistory && sqliteHistory.length > 0) {
             openaiHistory = sqliteHistory;
             return true;
@@ -422,11 +438,14 @@ function renderHistoryFallback() {
     for (const msg of history) {
         const role = msg.role === 'model' ? 'model' : msg.role;
         if (role === 'user' && typeof msg.content === 'string') {
-            // Strip injected prefixes (skill guidance, handover context) so raw XML isn't shown.
-            const cleaned = msg.content
-                .replace(/^<active_guidance>[\s\S]*?<\/active_guidance>\n*/, '')
-                .replace(/^<handover_context>[\s\S]*?<\/handover_context>\n*/, '')
-                .replace(/<relevant_memory>[\s\S]*?<\/relevant_memory>\n*/, '');
+            // Strip injected blocks (skill guidance, handover context, memory, project instructions,
+            // the first-turn workspace listing) so raw framework text isn't shown. stripInjected
+            // (history-util.ts) owns the list of injected block types.
+            const cleaned = typeof stripInjected === 'function' ? stripInjected(msg.content)
+                : msg.content
+                    .replace(/^<active_guidance>[\s\S]*?<\/active_guidance>\n*/, '')
+                    .replace(/^<handover_context>[\s\S]*?<\/handover_context>\n*/, '')
+                    .replace(/<relevant_memory>[\s\S]*?<\/relevant_memory>\n*/, '');
             const noteMatch = cleaned.match(/^<nudge>([\s\S]*)<\/nudge>$/);
             if (noteMatch) {
                 if (typeof getShowNudges === 'function' && getShowNudges()) {
@@ -662,8 +681,13 @@ function closeChatsDropdown() {
 
 async function switchToChat(id) {
     if (id === activeChatId || agentStreaming) return;
+    // The task runner drives the active chat's global history; leaving its chat mid-run would
+    // put the runner's next turn (or the tail of a stopped one) into the chat switched to.
+    if (typeof isRunnerRunning === 'function' && isRunnerRunning()
+        && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null)) return;
     saveHistory();
     activeChatId        = id;
+    _loadingChatId      = id;
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
     openaiHistory       = [];
     lastProvider        = '';
@@ -672,11 +696,16 @@ async function switchToChat(id) {
     if (typeof restoreRoleForChat === 'function') restoreRoleForChat(id);
     const msgs = getMessagesEl();
     if (msgs) msgs.innerHTML = '';
-    const loaded   = await loadChatHistory(id);
-    // Restore the per-chat turn log alongside the LLM history so the log viewer and exports
-    // reflect the exact session history, not just what survived in the ephemeral sessionStorage.
-    loadChatLog?.(id);
-    const restored = await restoreChatMessages(id);
+    let loaded = false, restored = false;
+    try {
+        loaded   = await loadChatHistory(id);
+        // Restore the per-chat turn log alongside the LLM history so the log viewer and exports
+        // reflect the exact session history, not just what survived in the ephemeral sessionStorage.
+        loadChatLog?.(id);
+        restored = await restoreChatMessages(id);
+    } finally {
+        if (_loadingChatId === id) _loadingChatId = null;
+    }
     // Guard: if another chat switch (or createNewChat) fired during the async restore,
     // this switchToChat is now stale — don't touch UI or state further.
     if (activeChatId !== id) return;
@@ -686,7 +715,7 @@ async function switchToChat(id) {
     updateTokenLabel();
     setInputState(true);
     // Restore composer draft for this chat (set by init.ts _saveDraft)
-    _restoreDraft?.(id);
+    window._restoreDraft?.(id);   // bridged late by init.ts — bare name can be undeclared
 }
 
 function deleteChat(id) {
@@ -725,14 +754,18 @@ async function autoNameChat(chatId, firstUserMessage) {
     // Explicit utility endpoint: this is a lightweight UI call, not a worker/reasoning task.
     // Falls back to firstFreeEndpoint when no utility model is configured.
     const _uep = typeof utilityEndpoint === 'function' ? utilityEndpoint() : null;
+    // Runs in parallel with the chat turn: pass a no-op handle so these calls don't attach
+    // themselves as steps to the streaming response (callLLMComplete's default). Both the
+    // title call and the validation judge use the utility endpoint, not the main model.
+    const _llm = (p: string, o: any) => callLLMComplete(p, { endpoint: _uep, ...o }, NULL_TASK_HANDLE);
     try {
-        let name: string | null = await callLLMComplete(msg, { temperature: 0.3, maxTokens: 16, maxAttempts: 3, endpoint: _uep });
+        let name: string | null = await _llm(msg, { temperature: 0.3, maxTokens: 16, maxAttempts: 3 });
         if (name) {
             name = name.replace(/^["'\s]+|["'\s]+$/g, '').trim();
             if (name.length > 60) return; // definitely not a title
             // Three-band validation: fast regex for clear cases, LLM for ambiguous middle.
             const fired = typeof validateOutput === 'function'
-                ? await validateOutput(name, _NAME_CHECKS, { llm: typeof callLLMComplete === 'function' ? callLLMComplete : null })
+                ? await validateOutput(name, _NAME_CHECKS, { llm: typeof callLLMComplete === 'function' ? _llm : null })
                 : (_NAME_ECHO_RE.test(name) || name.split(/\s+/).length > 8) || null;
             if (!fired) setChatName(chatId, name);
         }
@@ -804,7 +837,7 @@ function searchMessages(query: string): any[] {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatList, saveChatList, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { getChatList, saveChatList, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

@@ -797,6 +797,21 @@ async function _handleUpdateTaskStatus(args: any) {
         return { error: `update_task_status: No local folder is open — use the workspace path "${fallback}" instead of "${path}".` };
     }
     try {
+        // One task in progress at a time: a model that marks every task in-progress up front
+        // leaves the whole board "In progress" when the turn ends early. Scoped to the task's
+        // own folder so unrelated task dirs don't interfere.
+        if (String(status).toLowerCase() === 'in-progress' && typeof loadTaskFiles === 'function') {
+            const dir = path.slice(0, path.lastIndexOf('/') + 1);
+            const others = (await loadTaskFiles()).filter((t: any) =>
+                t.path !== path && t.path.startsWith(dir)
+                && t.path.lastIndexOf('/') === dir.length - 1
+                && (t.fm.status || '').toLowerCase() === 'in-progress');
+            if (others.length) {
+                const list = others.map((t: any) => t.path).join(', ');
+                return { ok: false, path, status, blocked: true,
+                    reason: `Only one task may be in-progress at a time; ${list} is still in-progress. Finish it first (update_task_status to "done", "failed" or "blocked"), or set it back to "open" if you have not started it.` };
+            }
+        }
         // Route through transitionTask so QA gates fire on every status change.
         // transitionTask calls setTaskStatus internally on success, and short-circuits
         // straight to it when gates are disabled (fg_qa_enabled=false, the headless
@@ -1680,7 +1695,112 @@ export function _looksLikePython(code: string): boolean {
     return _PY_LINE_RE.test(code);
 }
 
+// ── In-place edit verification ──────────────────────────────────────────────
+// `sed -i` / `perl -pi` rewrite their target file even when the pattern matched nothing, so the
+// file looks written (mtime changes; sandboxes report it in files_written) while its content is
+// identical. Models then build on a fix that was never applied: SWE-bench v0.55 astropy-12907
+// (an unescaped "[" in the sed pattern; COMPLETED with only repro scripts in the patch) and the
+// Cowork game chat 2026-09-27 ("the sed didn't work", then ~20 retries). Read the targets
+// before and after through the workspace adapter (works for every sandbox) and say so.
+const _INPLACE_CMD_RE  = /(?:^|[\s;|&(])(?:sed|perl)\s/;
+const _INPLACE_FLAG_RE = /\s(?:-[A-Za-z]*i[A-Za-z]*(?:\.\w+)?|--in-place(?:=\S*)?)(?=\s)/;
+const _INPLACE_MAX_FILES = 10, _INPLACE_MAX_BYTES = 2_000_000;
+
+// File operands of sed/perl in-place commands in a shell snippet. The script is the argument of
+// -e / --expression, or else the first non-option operand; the rest are files. Anything that
+// is not actually a readable file is dropped later by the failed read.
+// Split shell code into commands of tokens, honouring quotes (a sed script may contain ';' or
+// newlines) and backslash-newline continuations. Quote characters are kept on the tokens.
+function _shellCommands(code: string): string[][] {
+    const cmds: string[][] = [];
+    let cur: string[] = [], tok = '', q: string | null = null;
+    const endTok = () => { if (tok) { cur.push(tok); tok = ''; } };
+    const endCmd = () => { endTok(); if (cur.length) cmds.push(cur); cur = []; };
+    const s = String(code || '');
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (q) { tok += c; if (c === q) q = null; else if (c === '\\' && q === '"' && i + 1 < s.length) tok += s[++i]; continue; }
+        if (c === "'" || c === '"') { q = c; tok += c; continue; }
+        if (c === '\\' && s[i + 1] === '\n') { i++; continue; }
+        if (c === '#' && !tok) { while (i < s.length && s[i] !== '\n') i++; endCmd(); continue; }
+        if (c === '\n' || c === ';') { endCmd(); continue; }
+        if ((c === '&' || c === '|') && s[i + 1] === c) { endCmd(); i++; continue; }
+        if (c === '|' || c === '&') { endCmd(); continue; }
+        if (/\s/.test(c)) { endTok(); continue; }
+        tok += c;
+    }
+    endCmd();
+    return cmds;
+}
+
+export function _inPlaceTargets(code: string): string[] {
+    const out = new Set<string>();
+    for (const toks of _shellCommands(code)) {
+        const seg = toks.join(' ');
+        if (!_INPLACE_CMD_RE.test(' ' + seg) || !_INPLACE_FLAG_RE.test(' ' + seg + ' ')) continue;
+        let seenCmd = false, scriptGiven = false, nextIsScript = false;
+        for (const t of toks) {
+            if (!seenCmd) { if (/^(?:sed|perl)$/.test(t)) seenCmd = true; continue; }
+            if (nextIsScript) { nextIsScript = false; continue; }
+            if (/^--expression(?:=|$)/.test(t)) { scriptGiven = true; nextIsScript = !t.includes('='); continue; }
+            if (/^-[A-Za-z]*e$/.test(t)) { scriptGiven = true; nextIsScript = true; continue; }   // -e, -pe, -pie
+            if (t.startsWith('-')) continue;
+            if (!scriptGiven) { scriptGiven = true; continue; }                                    // sed 's/…/…/' file
+            const u = t.replace(/^(["'])(.*)\1$/, '$2');
+            if (!u || /[\s*?$<>|]/.test(u)) continue;
+            if (/^[\w./~+-]+$/.test(u) && (/\.[A-Za-z0-9]+$/.test(u) || u.includes('/'))) out.add(u);
+        }
+    }
+    return [...out].slice(0, _INPLACE_MAX_FILES);
+}
+
+// Candidate workspace paths for a shell path: as given, and without the WASM sandbox's
+// /workspace/ mount prefix (read_file/write_file use plain relative paths there).
+const _inPlacePathCandidates = (p: string) => [...new Set([p, p.replace(/^\/workspace\//, ''), p.replace(/^\.\//, '')])];
+
+export async function _readInPlaceTargets(paths: string[]): Promise<Map<string, { path: string; content: string }>> {
+    const snap = new Map();
+    for (const p of paths) {
+        for (const cand of _inPlacePathCandidates(p)) {
+            try {
+                const c = await agentReadFile(cand);
+                if (typeof c === 'string' && c.length <= _INPLACE_MAX_BYTES) { snap.set(p, { path: cand, content: c }); break; }
+            } catch {}
+        }
+    }
+    return snap;
+}
+
+export async function _annotateUnchangedInPlace(result: any, before: Map<string, { path: string; content: string }>) {
+    if (!result || result.error || (result.exit_code ?? 0) !== 0) return result;
+    const unchanged: string[] = [];
+    for (const [shellPath, { path, content }] of before) {
+        let after: string | null = null;
+        try { after = await agentReadFile(path); } catch {}
+        if (after === content) unchanged.push(shellPath);
+    }
+    if (!unchanged.length) return result;
+    const _base = (p: string) => p.replace(/^\/workspace\//, '').replace(/^\.\//, '');
+    const same = new Set(unchanged.map(_base));
+    const out: any = { ...result };
+    if (Array.isArray(out.files_written)) {
+        out.files_written = out.files_written.filter((f: string) => ![...same].some(u => _base(f) === u || _base(f).endsWith('/' + u) || u.endsWith('/' + _base(f))));
+        if (!out.files_written.length) delete out.files_written;
+    }
+    const note = `In-place edit changed nothing: ${unchanged.join(', ')} ${unchanged.length === 1 ? 'is' : 'are'} byte-identical to before — the sed/perl pattern matched no text (check the escaping of [ ] . * / and the quoting). The fix is NOT applied; use replace_in_file for exact edits.`;
+    out.note = out.note ? `${out.note} ${note}` : note;
+    return out;
+}
+
 async function _handleExecuteCode(args, context) {
+    const _rawCode = EXEC_CODE_ALIASES.map(k => args?.[k]).find(v => typeof v === 'string' && v) ?? '';
+    const _targets = _inPlaceTargets(_rawCode);
+    const _before  = _targets.length ? await _readInPlaceTargets(_targets) : null;
+    const result   = await _handleExecuteCodeInner(args, context);
+    return _before?.size ? _annotateUnchangedInPlace(result, _before) : result;
+}
+
+async function _handleExecuteCodeInner(args, context) {
     // Alias lists owned by tool-call-repair.ts — dispatch and pre-dispatch repair
     // must accept the same keys or they drift (pre-repair normally handles this;
     // dispatch aliasing is the backstop for paths that skip repair).

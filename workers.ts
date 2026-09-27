@@ -6,7 +6,7 @@
 import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
@@ -50,80 +50,6 @@ export function setDirectorHeadlessTools(names: string[]): void {
 }
 
 const BUILTIN_ROLES = [
-    {
-        name: 'researcher',
-        description: 'Research specialist: gathers information from the web, academic sources, and the workspace. Uses deep_research for multi-source questions. Read-only.',
-        tier: 'execution',
-        tools: new Set([
-            'list_files', 'read_file', 'search_workspace',
-            'web_search', 'fetch_url', 'deep_research', 'academic_search',
-            'execute_code', 'repo_map', 'ast_query',
-        ]),
-        body_fn(): string {
-            const _has = (t: string) => enabledTools.has(t);
-            const hasDeep     = _has('deep_research');
-            const hasWeb      = _has('web_search');
-            const hasFetch    = _has('fetch_url');
-            const hasAcademic = _has('academic_search');
-            const hasRepoMap  = _has('repo_map');
-            const hasAst      = _has('ast_query') && (typeof getAstEnabled === 'function' ? getAstEnabled() : false);
-            const hasExec     = _has('execute_code');
-            const hasWsRead   = _has('read_file') || _has('search_workspace') || _has('list_files');
-
-            const strategyLines: string[] = [];
-            if (hasDeep)
-                strategyLines.push(`For any question needing multiple web sources, call **deep_research** once — it plans sub-questions, searches and reads pages, and returns a cited report. Do NOT chain individual web_search calls for multi-source research; deep_research does it better.`);
-            if (hasWeb || hasFetch) {
-                const webTools = [hasWeb && 'web_search', hasFetch && 'fetch_url'].filter(Boolean).join(' / ');
-                if (hasDeep)
-                    strategyLines.push(`Use **${webTools}** for specific lookups, current events, or when you need one page rather than a full research sweep.`);
-                else
-                    strategyLines.push(`Use **${webTools}** to find and retrieve information from the web. Run parallel searches for different angles.`);
-            }
-            if (hasAcademic)
-                strategyLines.push(`For scientific, technical, or medical questions, use **academic_search** (source: arxiv for CS/physics preprints, semantic_scholar for citation counts, pubmed for biomedical, crossref for DOI lookup).`);
-            if (hasWsRead)
-                strategyLines.push(`For codebase or workspace questions, use **search_workspace** (parallel calls, one keyword each) then **read_file** for the relevant sections.`);
-
-            const toolLines: string[] = [];
-            if (hasDeep)
-                toolLines.push(`**deep_research** — multi-round web research: plans sub-questions, searches and reads sources, synthesizes a cited report. Use for any broad or multi-source question.`);
-            if (hasWeb)
-                toolLines.push(`**web_search** — find pages by keyword; source param selects: web (default), wikipedia, hackernews, github, stackoverflow, reddit, gdelt.`);
-            if (hasFetch)
-                toolLines.push(`**fetch_url** — retrieve a specific URL; set extract to pull only relevant passages from large pages.`);
-            if (hasAcademic)
-                toolLines.push(`**academic_search** — search academic papers; source: arxiv, semantic_scholar, pubmed, crossref.`);
-            if (_has('list_files'))
-                toolLines.push(`**list_files** — list workspace directory contents.`);
-            if (_has('search_workspace'))
-                toolLines.push(`**search_workspace** — search file contents by keyword or regex; use context_lines 20–40 to see full function bodies.`);
-            if (_has('read_file'))
-                toolLines.push(`**read_file** — read a file or line range; use start_line/end_line to target the section you need.`);
-            if (hasExec)
-                toolLines.push(`**execute_code** — run bash/Python to inspect workspace state; do not use to write files.`);
-            if (hasRepoMap)
-                toolLines.push(`**repo_map** — compact symbol map of all workspace code files; call first when the task involves code structure.`);
-            if (hasAst)
-                toolLines.push(`**ast_query** — exact function/class/symbol locations by name.`);
-
-            const strategySection = strategyLines.length
-                ? `\n## Research strategy\n${strategyLines.map(l => `- ${l}`).join('\n')}`
-                : '';
-            const toolSection = toolLines.length
-                ? `\n## Tools\n${toolLines.map(l => `- ${l}`).join('\n')}`
-                : '';
-
-            return `You are a research specialist agent. Your goal is to find and synthesize information — from the web, academic sources, and the workspace — to answer questions completely and with citations. Do NOT write or modify files.
-${strategySection}
-**Parallel tool use:** Send independent tool calls together in one response. Only sequence when a later call depends on an earlier result.
-**Format:** Use the structured JSON function-call format. Do NOT output tool calls as XML tags, markdown links, or code fences.
-${toolSection}
-## Output format
-1. **Findings** — answer with citations: URLs for web sources, file:line for workspace
-2. **Gaps** — what the research could not establish`;
-        },
-    },
     {
         name: 'coder',
         description: 'Reads, edits, and runs code. Uses write_file/replace_in_file for file edits, execute_code for running commands.',
@@ -346,6 +272,80 @@ After a tool succeeds: do not second-guess. Move to the next step — no re-chec
 After a tool fails: retry with a fix (corrected args, exact text re-read from the file, smaller step), run a diagnostic, or state plainly what failed. A failed tool is not a stopping condition — only DONE or BLOCKED is.
 ${availableToolsSection}
 ${_roleConciseBlock}`;
+        },
+    },
+    {
+        name: 'researcher',
+        description: 'Research specialist: gathers information from the web, academic sources, and the workspace. Uses deep_research for multi-source questions. Read-only.',
+        tier: 'execution',
+        tools: new Set([
+            'list_files', 'read_file', 'search_workspace',
+            'web_search', 'fetch_url', 'deep_research', 'academic_search',
+            'execute_code', 'repo_map', 'ast_query',
+        ]),
+        body_fn(): string {
+            const _has = (t: string) => enabledTools.has(t);
+            const hasDeep     = _has('deep_research');
+            const hasWeb      = _has('web_search');
+            const hasFetch    = _has('fetch_url');
+            const hasAcademic = _has('academic_search');
+            const hasRepoMap  = _has('repo_map');
+            const hasAst      = _has('ast_query') && (typeof getAstEnabled === 'function' ? getAstEnabled() : false);
+            const hasExec     = _has('execute_code');
+            const hasWsRead   = _has('read_file') || _has('search_workspace') || _has('list_files');
+
+            const strategyLines: string[] = [];
+            if (hasDeep)
+                strategyLines.push(`For any question needing multiple web sources, call **deep_research** once — it plans sub-questions, searches and reads pages, and returns a cited report. Do NOT chain individual web_search calls for multi-source research; deep_research does it better.`);
+            if (hasWeb || hasFetch) {
+                const webTools = [hasWeb && 'web_search', hasFetch && 'fetch_url'].filter(Boolean).join(' / ');
+                if (hasDeep)
+                    strategyLines.push(`Use **${webTools}** for specific lookups, current events, or when you need one page rather than a full research sweep.`);
+                else
+                    strategyLines.push(`Use **${webTools}** to find and retrieve information from the web. Run parallel searches for different angles.`);
+            }
+            if (hasAcademic)
+                strategyLines.push(`For scientific, technical, or medical questions, use **academic_search** (source: arxiv for CS/physics preprints, semantic_scholar for citation counts, pubmed for biomedical, crossref for DOI lookup).`);
+            if (hasWsRead)
+                strategyLines.push(`For codebase or workspace questions, use **search_workspace** (parallel calls, one keyword each) then **read_file** for the relevant sections.`);
+
+            const toolLines: string[] = [];
+            if (hasDeep)
+                toolLines.push(`**deep_research** — multi-round web research: plans sub-questions, searches and reads sources, synthesizes a cited report. Use for any broad or multi-source question.`);
+            if (hasWeb)
+                toolLines.push(`**web_search** — find pages by keyword; source param selects: web (default), wikipedia, hackernews, github, stackoverflow, reddit, gdelt.`);
+            if (hasFetch)
+                toolLines.push(`**fetch_url** — retrieve a specific URL; set extract to pull only relevant passages from large pages.`);
+            if (hasAcademic)
+                toolLines.push(`**academic_search** — search academic papers; source: arxiv, semantic_scholar, pubmed, crossref.`);
+            if (_has('list_files'))
+                toolLines.push(`**list_files** — list workspace directory contents.`);
+            if (_has('search_workspace'))
+                toolLines.push(`**search_workspace** — search file contents by keyword or regex; use context_lines 20–40 to see full function bodies.`);
+            if (_has('read_file'))
+                toolLines.push(`**read_file** — read a file or line range; use start_line/end_line to target the section you need.`);
+            if (hasExec)
+                toolLines.push(`**execute_code** — run bash/Python to inspect workspace state; do not use to write files.`);
+            if (hasRepoMap)
+                toolLines.push(`**repo_map** — compact symbol map of all workspace code files; call first when the task involves code structure.`);
+            if (hasAst)
+                toolLines.push(`**ast_query** — exact function/class/symbol locations by name.`);
+
+            const strategySection = strategyLines.length
+                ? `\n## Research strategy\n${strategyLines.map(l => `- ${l}`).join('\n')}`
+                : '';
+            const toolSection = toolLines.length
+                ? `\n## Tools\n${toolLines.map(l => `- ${l}`).join('\n')}`
+                : '';
+
+            return `You are a research specialist agent. Your goal is to find and synthesize information — from the web, academic sources, and the workspace — to answer questions completely and with citations. Do NOT write or modify files.
+${strategySection}
+**Parallel tool use:** Send independent tool calls together in one response. Only sequence when a later call depends on an earlier result.
+**Format:** Use the structured JSON function-call format. Do NOT output tool calls as XML tags, markdown links, or code fences.
+${toolSection}
+## Output format
+1. **Findings** — answer with citations: URLs for web sources, file:line for workspace
+2. **Gaps** — what the research could not establish`;
         },
     },
 ];
@@ -741,16 +741,30 @@ You are a fork of the main agent, working on one subtask it delegated to you. Th
 Subtask: ${task}`;
 }
 
+// When a worker should stop, by role — appended to the background framing below.
+const _WORKER_SCOPE_LINE: Record<string, string> = {
+    researcher: 'You cannot modify files and are not expected to fix anything: answer the subtask, then report your findings right away.',
+    coder:      'Do the subtask, check that it worked, then report what you changed.',
+};
+
 // The user's request for a non-fork worker: the first real user message and, when different, the
 // latest one, with framework blocks stripped. Workers without it lose the task's details
-// (v0.55: coder delegations dropped from 28 to 8 and none resolved).
-function _userRequestMsgs(messages: any[]): { role: string; content: string }[] {
+// (v0.55: coder delegations dropped from 28 to 8 and none resolved). It is framed as background,
+// in one message ahead of the subtask: sent as plain user turns, the whole request ("fix the
+// issue, pass the graded tests") read as the worker's own job, and read-only researchers kept
+// investigating it until their step limit (SWE-bench Lite v0.55: 37 of 46 researchers blocked,
+// vs 4 of 60 in v0.53).
+function _userRequestMsgs(messages: any[], roleName: string | null = null): { role: string; content: string }[] {
     const real = messages.filter(isRealUserMessage)
         .map(m => stripInjected(m.content.replace(/^\[TASK[^\]]*\]\n/, '')))
         .filter(Boolean);
     if (!real.length) return [];
     const first = real[0], last = real[real.length - 1];
-    return (last !== first ? [first, last] : [first]).map(content => ({ role: 'user', content }));
+    const body = last !== first ? `${first}\n\n(latest message)\n${last}` : first;
+    const scope = _WORKER_SCOPE_LINE[roleName ?? ''] ?? 'Do the subtask, then report.';
+    return [{ role: 'user', content:
+        `<original_request>\n${body}\n</original_request>\n` +
+        `Background only: the overall request the lead agent is working on. Your job is ONLY the subtask in the next message — do not take on the whole request. ${scope}` }];
 }
 
 async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
@@ -796,7 +810,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
         localOH.push(...forkBase!.messages);
         localOH.push({ role: 'user', content: _forkTaskMessage(task) });
     } else {
-        localOH.push(..._userRequestMsgs(forkBase?.messages ?? []));
+        localOH.push(..._userRequestMsgs(forkBase?.messages ?? [], role?.name ?? null));
         localOH.push({ role: 'user', content: task });
     }
     // This worker's own last request, exposed so a nested run_workers call can fork it.
@@ -909,7 +923,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             const _wCallSig = _callSig(_normCalls);
             const _wRefused = _repeatRefused(_wRepeatGuard, _wCallSig);
             const _exec = _wRefused
-                ? _normCalls.map(({ name, args }) => ({ name, args, result: _repeatRefusalResult(_wRepeatGuard.streak) }))
+                ? _normCalls.map(({ name, args }) => ({ name, args, result: _repeatRefusalResult(_repeatCount(_wRepeatGuard, _wCallSig)) }))
                 : await _runToolCalls(_normCalls, null, {
                     forWorker: true, context, repeatCache: _workerRepeatCache,
                     onStart: (name, args) => taskHandle.append(`→ ${toolLabel(name, args)}\n`, 'thinking'),

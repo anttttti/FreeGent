@@ -17,8 +17,9 @@ export const KEYS = {
     BUILTIN_RULES:      'fg_builtin_rules',
     SKILL_TRIGGERS:     'fg_skill_triggers',
     DISABLED_ROLES:     'fg_disabled_roles',
-    DISABLED_TOOLS:     'fg_disabled_tools',
-    ENABLED_TOOLS:      'fg_enabled_tools',   // legacy; migrated to DISABLED_TOOLS on first load
+    DISABLED_TOOLS:           'fg_disabled_tools',
+    ENABLED_TOOLS:            'fg_enabled_tools',         // legacy; migrated to DISABLED_TOOLS on first load
+    DISABLED_TOOLS_COWORK:    'fg_disabled_tools_cowork', // separate disabled set for cowork mode
 
     // ── API keys ─────────────────────────────────────────────────────────────
     GEMINI_KEY:         'fg_gemini_key',

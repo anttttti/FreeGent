@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -242,6 +242,8 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
 const _FR_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'other']);
 const _FR_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
 const _FR_ERROR     = new Set(['error', 'abort']);
+// Set by stream-decode when the stream went silent mid-response (SSE idle timeout).
+const _FR_STALLED   = new Set(['idle_timeout']);
 // Normal finish reasons (stop, end_turn, tool_calls, …) are never checked — fall-through is the normal path.
 
 // Per-turn tool-call cap — legitimate parallel batches never exceed this; higher counts
@@ -407,12 +409,79 @@ const _WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'replace_in_file', 'd
 // loop (flask-4992: hit 7 consecutive fails but ls resets kept it running for 5.7M tokens).
 const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace', 'fetch_url']);
 
+// ── Overlapping-read guard ───────────────────────────────────────────────────
+// The repeat cache only catches byte-identical calls. A model can instead rotate through
+// overlapping line ranges of one file (200-250, 200-350, 210-350, …): every call differs, the
+// stuck detector never sees three identical results, and pruning stubs the older ranges so the
+// cycle continues — SWE-bench Lite v0.55 sympy-18189 spent 88 steps this way, and v0.55
+// researcher workers re-read one file 15-20 times. Track which lines of each file were read
+// since the last write; reads that add no new lines are allowed a few times, then refused.
+type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number }>;
+const _readLedgers = new WeakMap<Map<string, any>, _ReadLedger>();   // keyed by the per-turn repeat cache
+export const REDUNDANT_READS_BEFORE_REFUSAL = 3;
+// Whole-file reads longer than this may be cut down before the model sees them — not "covered".
+const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
+
+function _readRange(args: any): [number, number] {
+    return [Number(args?.start_line) || 1, Number(args?.end_line) || Infinity];
+}
+function _rangeCovered(ranges: Array<[number, number]>, [from, to]: [number, number]): boolean {
+    let reach = from - 1;
+    for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+        if (a > reach + 1) break;
+        if (b > reach) reach = b;
+        if (reach >= to) return true;
+    }
+    return reach >= to;
+}
+const _fmtRanges = (rs: Array<[number, number]>) =>
+    rs.map(([a, b]) => b === Infinity ? (a <= 1 ? 'whole file' : `${a}–end`) : `${a}–${b}`).join(', ');
+
+// Returns a refusal result when this read only repeats lines already read, too many times.
+export function _checkRedundantRead(ledger: _ReadLedger, args: any): any | null {
+    const path = _normPath(String(args?.path ?? ''));
+    const entry = path ? ledger.get(path) : null;
+    if (!entry || !_rangeCovered(entry.ranges, _readRange(args))) return null;
+    entry.redundant++;
+    if (entry.redundant < REDUNDANT_READS_BEFORE_REFUSAL) return null;
+    return { error: `read_file refused: these lines of "${args.path}" were already read this turn (${_fmtRanges(entry.ranges)}) and the file has not changed since. Their content is in your earlier tool results — a pruned result names the later read that holds it. Do not read this file again: edit it, run code, or give your answer.` };
+}
+// Whether an execute_code call may have changed workspace files: reported writes, or a command
+// that writes (redirects, in-place edits, file-moving tools, Python/JS file writes, git mutations).
+export function _execMayWrite(args: any, result: any): boolean {
+    if (Array.isArray(result?.files_written) && result.files_written.length) return true;
+    const code = String(args?.code ?? '');
+    return /(?:^|[^>&2])>{1,2}\s*[^\s&|]|\btee\b|\bsed\s+(?:-\w*\s+)*-\w*i|\bperl\s+-\w*i|\b(?:mv|cp|rm|touch|truncate|patch|dd|install)\s|\bgit\s+(?:checkout|apply|stash|reset|restore|am|cherry-pick|merge|rebase)\b|open\([^)]*['"][wax+]|\.write(?:_text|_bytes|lines)?\(|writeFile|shutil\.|os\.(?:rename|replace|remove)/.test(code);
+}
+export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
+    if (!result || result.error || typeof result.content !== 'string') return;
+    const [from, to] = _readRange(args);
+    if (to === Infinity && from <= 1 && (result.content.length > _READ_LEDGER_FULL_MAX_CHARS || /Only the first \d+ lines shown/.test(result.content))) return;
+    const path = _normPath(String(args?.path ?? ''));
+    if (!path) return;
+    const e = ledger.get(path) ?? { ranges: [], redundant: 0 };
+    e.ranges.push([from, to]);
+    ledger.set(path, e);
+}
+
 async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null }): Promise<Array<{name: string; args: any; result: any}>> {
+    const _ledger: _ReadLedger | null = repeatCache
+        ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
+        : null;
     return Promise.all(normCalls.map(async ({ name, args }, i) => {
         const task = toolTasks?.[i];
         task?.setPrompt(JSON.stringify({ tool: name, args }, null, 2));
         onStart?.(name, args, i);
         let result;
+        if (_ledger && name === 'read_file') {
+            const refusal = _checkRedundantRead(_ledger, args);
+            if (refusal) {
+                task?.setOutput(JSON.stringify(refusal, null, 2));
+                task?.complete();
+                onResult?.(name, args, refusal);
+                return { name, args, result: refusal };
+            }
+        }
         if (repeatCache) {
             const key = `${name}|${JSON.stringify(args)}`;
             const hit = repeatCache.get(key);
@@ -455,7 +524,13 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // Eviction for side-effecting tools (including execute_code, which may change the
             // environment) runs regardless of success/error: a write may have partially mutated
             // state even if it returned an error.
-            if (_WRITE_TOOLS.has(name)) repeatCache.clear();
+            if (_WRITE_TOOLS.has(name)) {
+                repeatCache.clear();
+                // execute_code is in _WRITE_TOOLS because it *may* change files; running a repro or
+                // a grep between reads must not reset read tracking, or the loop above never ends.
+                if (name !== 'execute_code' || _execMayWrite(args, result)) _ledger?.clear();
+            }
+            else if (name === 'read_file' && _ledger) _recordRead(_ledger, args, result);
         }
         if (name === 'update_task_status' && /^done$/i.test(args.status || '')) onTaskDone?.();
         if (name === 'replace_in_file' && !forWorker && replFails) _trackReplaceFailure(args.path || '', !!(result && result.error), replFails);
@@ -468,6 +543,31 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
 
 // Synthesises a short termination summary when the agent is force-stopped by a hard limit.
 // Falls back to a raw stop string when callLLMComplete is unavailable (e.g. unit tests).
+// Scratch files an agent creates while working — reproduction/debug scripts, temp and backup
+// copies, test-run output (report.xml, junit*.xml, .coverage, htmlcov/; v0.55 pytest-5692's whole
+// patch was an 87 KB report.xml). Never part of a fix: they should not be the only edit behind COMPLETED, and the
+// SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
+export const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
+export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
+
+// Final message when an interactive turn reaches its step limit. The pending tool call of the
+// last step was not run; saying so keeps the user from assuming it was.
+async function _stepBudgetStopMessage(max: number): Promise<string> {
+    const lines = [`**Paused:** this turn reached its limit of ${max} steps (Settings → Agent Loop → Max steps per turn). The last requested tool call was not run. Send **continue** to pick up where it left off.`];
+    if (typeof getMode === 'function' && getMode() === 'cowork' && typeof loadTaskFiles === 'function') {
+        try {
+            const open = (await loadTaskFiles()).filter((t: any) =>
+                t.path.startsWith('fg-tasks/') && !['done', 'completed'].includes((t.fm.status || '').toLowerCase()));
+            if (open.length) {
+                lines.push('', '**Tasks not finished yet:**',
+                    ...open.map((t: any) => `- ${t.fm.id ? `#${t.fm.id} ` : ''}${t.fm.title || t.path} — ${t.fm.status || 'open'}`),
+                    '', 'You can also run them one at a time with **Run** in the Tasks tab.');
+            }
+        } catch {}
+    }
+    return lines.join('\n');
+}
+
 async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
     if (typeof callLLMComplete !== 'function') return `*(stopped: ${reason})*`;
     try {
@@ -510,6 +610,11 @@ function _saveAnswer(ps: any, text: string): void {
     if (_stripTerminal(text ?? '').trim() || !ps.saved) ps.saved = text;
 }
 
+
+// Final sentence announces an immediate action: "Let me write X now.", "I'll create Y:",
+// "Next, I will add Z." — intent without the tool call that should carry it out.
+// "[.!?](?=\S)" lets file names ("game.js") through; "let me know" is a sign-off, not intent.
+const _INTENT_TAIL_RE = /(?:^|[.!?\n]\s*)(?:(?:ok(?:ay)?|now|next|so|then|first|alright)[,\s]+)*(?:let me(?! know)|let's|i'll|i will|i'm going to|i am going to|i need to|time to)\b(?:[^\n.!?]|[.!?](?=\S))*[.:!…]*$/i;
 
 const _STEP_CHECKS = [
     {   // Pseudo tool call in any form: text that tries to run a command instead of
@@ -609,13 +714,17 @@ const _STEP_CHECKS = [
         // its own completion gate via the final COMPLETED token.  Forcing COMPLETED after
         // N text turns causes premature task termination before verification is complete —
         // confirmed as the primary driver of the v0.47→v0.50 SWE-Bench Lite regression (−6/36).
+        // The exclusion is limited to workflowMode (headless runs, the task runner), whose outer
+        // loop re-enters after a narration turn. Interactive chat also defaults to the director
+        // role but has no outer loop: unchecked, mid-task narration ("Let me do…") after tool
+        // calls ended the turn with the work half done (Cowork game build, 2026-09).
         name: 'missing_state_line', phase: 'post-state', max: 5,
         re_pass: t => _isComplete(t),   // already has COMPLETED/BLOCKED — pass
-        re_fail: t => !_isComplete(t) && mainAgentRole?.name !== 'director',
+        re_fail: t => !_isComplete(t) && !(workflowMode && mainAgentRole?.name === 'director'),
         llmPrompt: '',                   // deterministic: no LLM judge needed
         nudge: (_text: string, _payload: any, n: number) => {
             if ((n ?? 1) >= 5) return 'You have written text five times in a row without a terminal state token. Declare COMPLETED: <answer> or BLOCKED: <reason> immediately — no further narration.';
-            return 'Your response must end with a state token: COMPLETED (task done) or BLOCKED: <reason> (cannot proceed without user input). Add one now.';
+            return 'Your response has no tool call and no state token. If work remains, make the next tool call now — describing it does nothing. Otherwise end with COMPLETED (task done) or BLOCKED: <reason> (cannot proceed without user input).';
         },
         // Save the answer text when this check fires so a subsequent bare "COMPLETED"
         // (the model's next reply after the state-token nudge) can be accepted without
@@ -763,8 +872,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
+    const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
     let _emptyFsNudged = false;     // empty-FS fallback fires at most once per turn
     const _emptyListTargets = new Map(); // path → count of consecutive empty list_files results
@@ -1002,6 +1112,18 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Advisory mode: nudge in history, model not forced to loop.
             }
         }
+        // Scratch-only completion: every file changed this run is a repro/debug/temp file, so the
+        // fix itself is not in place (SWE-bench v0.55 astropy-12907: a sed that matched nothing,
+        // then COMPLETED with only repro scripts in the patch). One bounce; a second COMPLETED
+        // is accepted — the scratch files may be the deliverable.
+        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
+            && step < _loopMax - 1 && !softStopPending && !ps.scratchOnlyCheck
+            && _editedPaths.size && [..._editedPaths].every(isScratchPath)) {
+            ps.scratchOnlyCheck = 1;
+            _saveAnswer(ps, textContent);
+            _emitNudge('scratch_only_edits', nudge(`You declared COMPLETED, but the only files changed this turn are scratch files: ${[..._editedPaths].slice(0, 6).join(', ')}. No project file was modified, so if the task was to change the code, the fix is not applied — check with \`git diff\` (or read the file) and apply it, then remove the scratch files. If these files are the deliverable, reply COMPLETED again.`));
+            return { do: 'continue' };
+        }
         // Completion gate: context-dependent rules (trigger_on_completion in skills.js)
         // fire once when the model first declares completion. _reactiveFired dedup in
         // completionGateGuidance makes this a single bounce per turn.
@@ -1131,6 +1253,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     }
                 }
                 _emitNudge('step_validation', nudge(vcPost.nudge));
+                // Narration announcing its next action ("Let me write the game.js file now.")
+                // means the model intends a tool call but keeps emitting text — the reminder
+                // alone looped five times in a Cowork run. Force the call it announced.
+                if (vcPost.name === 'missing_state_line' && _INTENT_TAIL_RE.test(textContent.trim()))
+                    _forceToolCall = true;
                 return { do: 'continue' };
             }
         }
@@ -1252,8 +1379,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     //    shows it; executing it runs truncated code (v0.54: 40 such calls).
                     const _toolCapHit = !!msg.tool_calls?.length && (msg as any)._maxTokens > 0
                         && (msg.usage?.completion_tokens ?? 0) >= (msg as any)._maxTokens * _TOKEN_FILL_RATIO;
-                    if (_frTokenCap || _toolCapHit || _frFiltered || _frError || _missingFR || _shortTrunc || _emptyResponse) {
-                        const _truncReason = _toolCapHit ? `tool_call_cut_off:${msg.usage?.completion_tokens}`
+                    // 6. Stream went silent mid-response and was cut (SSE idle timeout): the text is
+                    //    a fragment, and any tool call in progress was lost.
+                    const _frStalled = _fr != null && _FR_STALLED.has(_fr);
+                    if (_frTokenCap || _toolCapHit || _frFiltered || _frError || _frStalled || _missingFR || _shortTrunc || _emptyResponse) {
+                        const _truncReason = _frStalled ? 'stream_stalled:idle_timeout'
+                            : _toolCapHit ? `tool_call_cut_off:${msg.usage?.completion_tokens}`
                             : _frTokenCap ? `finish_reason:${_fr}`
                             : _frFiltered ? `finish_reason:filtered(${_fr})`
                             : _frError    ? `finish_reason:error(${_fr})`
@@ -1272,6 +1403,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                             _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length, maxTokens: (msg as any)._maxTokens ?? 0 };
                         }
                         if (_frFiltered) _e.isFiltered = true;
+                        if (_frStalled) _e.streamStalled = true;
                         throw _e;
                     }
                     return msg;
@@ -1329,6 +1461,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     // nearly full, so an unchanged retry is cut off again (v0.55: 46 in a row).
                     if (maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
                     _emitNudge('output_cut_off', _nudge(`Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
+                }
+                // Stalled mid-response: typically a very large tool call (a whole app in one
+                // write_file) that the provider buffers until done. Ask for smaller pieces.
+                if (e.streamStalled) {
+                    _emitNudge('output_stalled', _nudge('Your last response stalled mid-generation and was discarded — nothing was executed, and any tool call you were writing was lost. This usually means a single tool call was too large. Make the next call now, keeping it small: split a large file into several smaller files (e.g. index.html, style.css, game.js split by feature), each well under 300 lines — or, if append_file is available, write the first part and append the rest in further calls.'));
                 }
                 continue;
             }
@@ -1526,7 +1663,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (_stepCount + 1 >= _roleCap)
                 return await _gracefulSynthesis(`role step cap (${_roleCap} steps) reached`, textContent);
         }
-        if (++_stepCount >= getAgentMaxSteps()) return await _gracefulSynthesis('step budget exhausted', textContent);
+        if (++_stepCount >= getAgentMaxSteps()) {
+            // Interactive chat: the user can simply continue, so say that plainly (with the open
+            // tasks in Cowork) — the 160-token synthesis came back empty and left a bare
+            // "*(stopped: …)*" after a 100-step Cowork build (fg-chat 2026-09-27-01-29-29).
+            if (!_s.workflowMode) return await _stepBudgetStopMessage(getAgentMaxSteps());
+            return await _gracefulSynthesis('step budget exhausted', textContent);
+        }
 
         // Cap per-turn tool calls — see _MAX_CALLS_PER_TURN comment above.
         let _callsOverflowNudge: string | null = null;
@@ -1558,13 +1701,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             return (name === 'write_file' && args?.path && args?.content) ? _readOldContent(args.path) : Promise.resolve(null);
         }));
         const _repeatedNames: string[] = [];
-        // Repeat guard: a call that already ran REPEAT_LIMIT times in a row with the same result is
-        // refused (error result, not executed); after a few refusals the turn ends as BLOCKED below.
+        // Repeat guard: a call that recently returned the same result REPEAT_LIMIT times is refused
+        // (error result, not executed); after a few refusals the turn ends as BLOCKED below.
         const _thisCallSig = _callSig(_normCalls);
         const _refused = _repeatRefused(_repeatGuard, _thisCallSig);
         const _exec = _refused
             ? _normCalls.map(({ name, args }, i) => {
-                const result = _repeatRefusalResult(_repeatGuard.streak);
+                const result = _repeatRefusalResult(_repeatCount(_repeatGuard, _thisCallSig));
                 toolTasks?.[i]?.setOutput(JSON.stringify(result, null, 2));
                 toolTasks?.[i]?.complete();
                 return { name, args, result };
@@ -1713,6 +1856,19 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
             && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
             _editsThisRun = true;
+        // Which files changed this run — for the scratch-only completion check.
+        for (const r of results) {
+            if (r.result?.error) continue;
+            if (r.name === 'write_file' || r.name === 'replace_in_file') {
+                const p = r.result?.path ?? r.args?.path;
+                if (p && !String(p).startsWith('fg-tasks/')) _editedPaths.add(String(p));
+            } else if (r.name === 'apply_patch') {
+                for (const m of String(r.args?.patch ?? r.args?.diff ?? '').matchAll(/^\+\+\+ (?:b\/)?(\S+)/gm))
+                    if (m[1] !== '/dev/null') _editedPaths.add(m[1]);
+            } else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && Array.isArray(r.result?.files_written)) {
+                for (const p of r.result.files_written) _editedPaths.add(String(p));
+            }
+        }
         // Track successful execute_code — feeds step_validation advisory mode.
         // A prior successful exec means the model can already use tools; further
         // step_validation fires should warn rather than block (T3.3/T3.7).
@@ -1725,11 +1881,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // assistant tool_calls → role:'tool' pairing is intact.
         if (_callsOverflowNudge)               _emitNudge('calls_overflow', _nudge(_callsOverflowNudge));
         // stuck_detected: 3 consecutive identical full-result signatures — the model is in a
-        // genuine loop with no new information. Nudge and force a tool call; the model may still
-        // find a way forward (e.g. switching from read_file to execute_code for file access).
+        // genuine loop with no new information. Nudge only: the nudge offers answering or BLOCKED,
+        // both text replies, so forcing a tool call (tool_choice 'required') would rule them out
+        // and leave repeating the call as the only move. The repeat guard ends real loops.
         // Do NOT _gracefulSynthesis here: for SWE tasks !_editsThisRun is true throughout the
         // entire exploration phase, so early termination kills tasks that would have recovered.
-        if (stuckNudge)                     { _emitNudge('stuck_detected', _nudge(stuckNudge)); _forceToolCall = true; }
+        if (stuckNudge)                       _emitNudge('stuck_detected', _nudge(stuckNudge));
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5)   _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
@@ -1782,7 +1939,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
         // The model kept issuing the refused call: stop instead of spending the step budget on it.
         if (_repeatGuard.refused >= REPEAT_REFUSALS_BEFORE_STOP)
-            return await _gracefulSynthesis(`it kept repeating a call that had already returned the same result ${_repeatGuard.streak} times in a row`, textContent);
+            return await _gracefulSynthesis(`it kept repeating calls that had already returned the same result many times`, textContent);
 
         if (softStopPending) return '*(break)*';
     }

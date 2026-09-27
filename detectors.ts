@@ -74,14 +74,16 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
 }
 
 // ── Repeat guard ─────────────────────────────────────────────────────────────
-// Consecutive steps making the same tool call(s) with the same result — digits ignored, since PIDs,
-// timestamps and request IDs change between otherwise identical runs. Once a call has repeated
-// REPEAT_LIMIT times, the next identical call is refused instead of executed. v0.54: 9 tasks looped
-// like this (e.g. `ps aux | grep postgres` 72 times, a curl returning 405 112 times); the nudges
-// kept firing but nothing escalated.
+// Steps making the same tool call(s) with the same result — digits ignored, since PIDs, timestamps
+// and request IDs change between otherwise identical runs. Once a call has returned the same result
+// REPEAT_LIMIT times within the last REPEAT_WINDOW steps, the next identical call is refused instead
+// of executed. v0.54: 9 tasks looped like this (e.g. `ps aux | grep postgres` 72 times). Counted in a
+// window, not a streak: v0.55 OS task 38 slipped one variant (`ls -ld`) between runs of `ls -l`,
+// which reset a streak each time. Refusals accumulate over the turn for the same reason.
 export const REPEAT_LIMIT = 8;
-export type RepeatGuard = { callSig: string; resSig: string; streak: number; refused: number };
-export const newRepeatGuard = (): RepeatGuard => ({ callSig: '', resSig: '', streak: 0, refused: 0 });
+export const REPEAT_WINDOW = 12;
+export type RepeatGuard = { recent: Array<[callSig: string, resSig: string]>; refused: number };
+export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });
 
 export function _callSig(calls: Array<{ name: string; args: any }>): string {
     return JSON.stringify(calls.map(c => [c.name, c.args ?? {}]));
@@ -94,19 +96,22 @@ export function _resultSig(results: Array<{ name: string; result: any }>): strin
     };
     return JSON.stringify(results.map(r => ({ n: r.name, res: r.result })), digitless);
 }
-// Before executing: true when this call would extend a streak past REPEAT_LIMIT.
-export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
-    return g.streak >= REPEAT_LIMIT && callSig === g.callSig;
+// How many recent steps ran this call and got the same result as its latest run.
+export function _repeatCount(g: RepeatGuard, callSig: string): number {
+    const last = g.recent.findLast(([c]) => c === callSig);
+    return last ? g.recent.filter(([c, r]) => c === callSig && r === last[1]).length : 0;
 }
-// After executing (not after a refusal): extend or restart the streak.
+export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
+    return _repeatCount(g, callSig) >= REPEAT_LIMIT;
+}
+// After executing (not after a refusal).
 export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: string): RepeatGuard {
-    const same = callSig === g.callSig && resSig === g.resSig;
-    return { callSig, resSig, streak: same ? g.streak + 1 : 1, refused: 0 };
+    return { ...g, recent: [...g.recent, [callSig, resSig] as [string, string]].slice(-REPEAT_WINDOW) };
 }
 export function _repeatRefusalResult(n: number): { error: string } {
-    return { error: `Not executed: this exact call already ran ${n} times in a row with the same result. Running it again will not change the result. If the output you already have answers the task, give that answer now; otherwise change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
+    return { error: `Not executed: this exact call already ran ${n} times in your last ${REPEAT_WINDOW} steps with the same result. Running it again will not change the result. If the output you already have answers the task, give that answer now; otherwise change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
 }
-// Refusals in a row before the loop gives up on the turn.
+// Refusals in a turn before the loop gives up on it.
 export const REPEAT_REFUSALS_BEFORE_STOP = 3;
 
 // ── Text-response quality gate ───────────────────────────────────────────────

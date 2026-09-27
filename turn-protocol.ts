@@ -17,7 +17,7 @@ import { workflowMode, setLastTurnDoneToken } from './state.js';
 import { getAgentMaxSteps } from './config.js';
 
 // The configured step limit (fg_agent_max_rounds / --max-rounds) — the same one runTurn loops on.
-// The constant MAX_STEPS (100) made the "not on the last step" guards wrong for other limits.
+// The constant MAX_STEPS (the setting's ceiling) made the "not on the last step" guards wrong for other limits.
 const _maxSteps = () => getAgentMaxSteps();
 
 // The detector accepts high-prior synonyms (DONE, TERMINATE, TASK COMPLETE from AutoGen/

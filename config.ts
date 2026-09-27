@@ -4,7 +4,7 @@ import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall } from './exec-sandbox-host.js';
 export { KEYS } from './storage-keys.js';
 
-export const MAX_STEPS = 100; // hard ceiling on ReAct steps within a single turn
+export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
 
 // ── Session state ──────────────────────────────────────────────────────────
 let agentsContext       = ''; // content of AGENTS.md, injected at top of system prompt
@@ -81,11 +81,19 @@ export const enabledTools = (() => {
     return new Set(ALL_TOOL_NAMES.filter(t => !OPT_IN_TOOLS.has(t)));
 })();
 
+// Cowork-mode tool enablement. Same persistence pattern as enabledTools.
+// Default: all tools enabled in chat are also enabled in cowork, plus update_task_status
+// and write_file (required for the tasks skill) which are cowork-only defaults.
+const COWORK_ONLY_DEFAULTS = new Set(['update_task_status', 'write_file']);
+export const coworkEnabledTools = (() => {
+    const disabled = JSON.parse(localStorage.getItem(KEYS.DISABLED_TOOLS_COWORK) || 'null');
+    if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
+    // Fresh install: same as chat defaults, plus cowork-only defaults.
+    return new Set(ALL_TOOL_NAMES.filter(t => !OPT_IN_TOOLS.has(t) || COWORK_ONLY_DEFAULTS.has(t)));
+})();
+
 // ── Mode ───────────────────────────────────────────────────────────────────
 // Global UX mode: 'chat' (default) | 'cowork'.
-// Cowork mode activates task-management tools (update_task_status) and injects
-// task context into the system prompt, even if the user hasn't explicitly
-// enabled those tools in Settings → Tools.
 export type AppMode = 'chat' | 'cowork';
 
 export function getMode(): AppMode {
@@ -103,15 +111,10 @@ export function setMode(m: AppMode): void {
     tb?.classList.toggle('mode-cowork', m === 'cowork');
 }
 
-// Tools activated by Cowork mode in addition to user's tool prefs.
-// write_file is required so the tasks skill can actually create task files.
-const COWORK_TOOLS = new Set<string>(['update_task_status', 'write_file']);
-
 // Drop-in replacement for enabledTools.has() used in tool and skill filtering:
-// returns true when the tool is in enabledTools OR when the current mode
-// activates it (so callers don't need to know about mode logic).
+// returns true when the tool is enabled for the current mode.
 export function isToolActive(name: string): boolean {
-    return enabledTools.has(name) || (getMode() === 'cowork' && COWORK_TOOLS.has(name));
+    return getMode() === 'cowork' ? coworkEnabledTools.has(name) : enabledTools.has(name);
 }
 
 // ── Chat state ─────────────────────────────────────────────────────────────
@@ -387,7 +390,12 @@ export function getAgentCompactAt()        { return parseFloat(ls('fg_agent_comp
 export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '80000'), 10); }
 
 function getAgentPlanMode()         { return ls('fg_agent_plan_mode', 'false') !== 'false'; }
-export function getAgentMaxSteps()           { return parseInt(ls('fg_agent_max_rounds', '100'), 10); }
+// Steps per turn: default 100, settable 1–MAX_STEPS. A cleared or invalid field falls back to
+// the default rather than NaN (which ended every turn after its first step).
+export function getAgentMaxSteps() {
+    const n = parseInt(ls('fg_agent_max_rounds', '100'), 10);
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, MAX_STEPS) : 100;
+}
 export function getAgentLeanWorkers()        { return ls('fg_agent_lean_workers', 'true') !== 'false'; }
 export function getAgentWorkerHistory()      { return ls('fg_agent_worker_history', 'true') !== 'false'; }
 function getAgentPromptTemplate()     { return ls('fg_agent_prompt_template', ''); }
@@ -445,7 +453,7 @@ const MODEL_CATALOG = [
     // https://ai.google.dev/gemini-api/docs/models
     { provider:'google',     model:'gemini-3.5-flash-lite',                               label:'Gemini 3.5 Flash Lite',         released:'2026-05', contextK:1048, params:null, media:['text','image'],                tools:true,  thinking:true,  rpm:30,  rpd:1500, note:'Efficient Gemini; thinking mode' },
     { provider:'google',     model:'gemini-2.5-flash-lite',                               label:'Gemini 2.5 Flash Lite',         released:'2025-07', contextK:1048, params:null, media:['text','image'],                tools:true,  thinking:true,  rpm:30,  rpd:1500, note:'Prior generation; fastest Gemini; supports thinking mode' },
-    { provider:'google',     model:'gemma-4-31b-it',                                      label:'Gemma 4 31B',                   released:'2026-04', contextK:256,  params:31,   media:['text','image'],                tools:true,  thinking:false, rpm:30,  rpd:1500, note:'Strong open model; 256K context; native tool use; runs locally at 24GB VRAM' },
+    { provider:'google',     model:'gemma-4-31b-it',                                      label:'Gemma 4 31B',                   released:'2026-04', contextK:256,  params:31,   media:['text','image'],                tools:true,  thinking:false, rpm:30,  rpd:1500, note:'Strong open model; 256K context; native tool use; runs locally at 24GB VRAM. NOTE: currently returns HTTP 500 for all requests via Google AI API — use OpenRouter variant instead' },
     { provider:'google',     model:'gemma-4-26b-a4b-it',                                  label:'Gemma 4 MoE 27B',               released:'2026-04', contextK:256,  params:27,   media:['text','image'],                tools:true,  thinking:false, rpm:30,  rpd:1500, note:'MoE open model; fast inference (3.8B active params); 256K context' },
     // ── Mistral (free tier — free mode is the default; limits visible in admin panel) ──────────────
     // https://mistral.ai/docs/models
@@ -477,15 +485,12 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'poolside/laguna-s-2.1:free',                          label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:262,  params:118,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Poolside Laguna S; 118B MoE (8B active); code-focused; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'poolside/laguna-xs-2.1:free',                         label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262,  params:33,   media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Poolside Laguna XS; 33B MoE (3B active); smallest Laguna; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'cohere/north-mini-code:free',                         label:'North Mini Code (free)',       released:'2026-07', contextK:256,  params:30,   media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Cohere North Mini Code; 30B MoE (3B active); code specialist; 256K context; free via OpenRouter' },
-    { provider:'openrouter', model:'z-ai/glm-5.2:free',                                  label:'GLM-5.2 (free)',               released:'2026-07', contextK:256,  params:744,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'ZhipuAI GLM-5.2; 744B MoE (40B active); fn-tag tool calls (<tool_use><tool_name>name</tool_name><arguments>{json}</arguments></tool_use>); free via OpenRouter' },
+    { provider:'openrouter', model:'qwen/qwen3.8-27b:free',                              label:'Qwen3.8 27B (free)',           released:'2026-08', contextK:262,  params:27,   media:['text','image'],                tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Qwen3.8 27B dense VLM; coding/agentic focus; 262K context; thinking mode; free via OpenRouter' },
     { provider:'openrouter', model:'inclusionai/ling-3.0-flash-fin:free',               label:'Ling 3.0 Flash Fin (free)',     released:'2026-08', contextK:262,  params:124,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Finance-focused MoE; 124B total (5.1B active); 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'inclusionai/ling-3.0-flash-sante:free',             label:'Ling 3.0 Flash Sante (free)',   released:'2026-09', contextK:262,  params:124,  media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Health/medicine-focused MoE; 124B total (5.1B active); 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'dots-studio/dots-3-note-preview:free',              label:'Dots3-Note Preview (free)',     released:'2026-08', contextK:512,  params:280,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'280B MoE (16B active); 512K context; free via OpenRouter' },
     { provider:'openrouter', model:'liquid/lfm-2.5-2.6b:free',                         label:'LFM2.5-2.6B (free)',           released:'2026-08', contextK:65,   params:2.6,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'LiquidAI compact reasoning model; 2.6B; agent/RAG-focused; free via OpenRouter' },
     { provider:'openrouter', model:'thinkingmachines/inkling-small:free',               label:'Inkling Small (free)',          released:'2026-07', contextK:1024, params:276,  media:['text','image'],                tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Thinking Machines; 276B MoE (12B active); 1M context; multimodal; free via OpenRouter' },
-    { provider:'openrouter', model:'thinkingmachines/inkling:free',                     label:'Inkling (free)',                released:'2026-07', contextK:1024, params:975,  media:['text','image'],                tools:true,  thinking:false, rpm:20,  rpd:50,   note:'Thinking Machines; 975B MoE (41B active); 1M context; multimodal; free via OpenRouter' },
-    { provider:'openrouter', model:'minimax/minimax-m3:free',                           label:'MiniMax M3 (free)',             released:'2026-06', contextK:1048, params:428,  media:['text','image'],                tools:true,  thinking:false, rpm:20,  rpd:50,   note:'MiniMax M3; 428B MoE (23B active); multimodal; 1M context; free via OpenRouter' },
-    { provider:'openrouter', model:'minimax/minimax-m2.7:free',                         label:'MiniMax M2.7 (free)',           released:'2026-03', contextK:196,  params:230,  media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'MiniMax M2.7; 230B MoE (10B active); 196K context; free via OpenRouter' },
     // ── OpenCode Zen (requires OpenCode API key or shared key on CF Worker) ──────
     // https://opencode.ai/docs/zen/#endpoints
     { provider:'opencode', model:'big-pickle',                        label:'Big Pickle (free)',               released:'2026-07', contextK:128,  params:null, media:['text'], tools:true,  thinking:false, note:'Large capable model; free via OpenCode Zen' },
@@ -499,7 +504,6 @@ const MODEL_CATALOG = [
     // https://portal.nousresearch.com/models — 300+ models; rotating free tier (50 RPM / 500K TPM).
     // Free-model catalog rotates monthly; check portal for current availability.
     { provider:'nous', model:'stepfun/step-3.7-flash:free',          label:'Step 3.7 Flash (free)',        released:'2026-08', contextK:262, params:196, media:['text','image','video'], tools:true, thinking:true,  note:'196B MoE; 262K ctx; multimodal text/image/video; agent efficiency, coding, search; mandatory thinking; free via Nous Portal' },
-    { provider:'nous', model:'meituan/longcat-2.0:free',             label:'LongCat 2.0 (free)',           released:'2026-08', contextK:1024,params:1600, media:['text'],                 tools:true, thinking:false, note:'1.6T MoE (48B active); 1M ctx; coding, repo-scale edits, long-horizon agentic; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-s-2.1:free',           label:'Laguna S 2.1 (free)',          released:'2026-09', contextK:262, params:118, media:['text'],                 tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent, 70.2% Terminal-Bench; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-xs-2.1:free',          label:'Laguna XS 2.1 (free)',         released:'2026-09', contextK:262, params:33,  media:['text'],                 tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Nous Portal' },
     { provider:'nous', model:'upstage/solar-pro4:free',              label:'Solar Pro 4 (free)',           released:'2026-09', contextK:524, params:null,media:['text'],                 tools:true, thinking:false, note:'524K ctx; long-horizon tasks, agentic workflows, office productivity; free via Nous Portal' },
@@ -520,7 +524,6 @@ const MODEL_CATALOG = [
     { provider:'kilo', model:'stepfun/step-3.7-flash:free',                     label:'Step 3.7 Flash (free)',            released:'2026-07', contextK:262,  params:198, media:['text'],        tools:true, thinking:true,  noKey:true, note:'198B MoE (11B active); 262K ctx; fast reasoning; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-09', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  noKey:true, note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-xs-2.1:free',                     label:'Laguna XS 2.1 (free)',             released:'2026-09', contextK:262,  params:33,  media:['text'],        tools:true, thinking:true,  noKey:true, note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Kilo' },
-    { provider:'kilo', model:'thinkingmachines/inkling:free',                   label:'Inkling (free)',                   released:'2026-09', contextK:1000, params:975, media:['text'],        tools:true, thinking:true,  noKey:true, note:'975B MoE (41B active); 1M ctx; reasoning model; free via Kilo' },
     { provider:'kilo', model:'thinkingmachines/inkling-small:free',             label:'Inkling Small (free)',             released:'2026-09', contextK:1000, params:276, media:['text'],        tools:true, thinking:true,  noKey:true, note:'276B MoE (12B active); 1M ctx; small fast reasoning model; free via Kilo' },
     { provider:'kilo', model:'dots-studio/dots-3-note-preview:free',            label:'Dots 3 Note (free)',               released:'2026-08', contextK:512,  params:280, media:['text'],        tools:true, thinking:false, noKey:true, note:'280B MoE (16B active); 512K ctx; long-context; free via Kilo' },
     { provider:'kilo', model:'cohere/north-mini-code:free',                     label:'North Mini Code (free)',           released:'2026-08', contextK:256,  params:30,  media:['text'],        tools:true, thinking:false, noKey:true, note:'30B MoE (3B active); 256K ctx; code-focused; free via Kilo' },
@@ -564,14 +567,31 @@ function unhideBuiltinModel(key: string) {
     const s = getHiddenModels(); s.delete(key); saveHiddenModels(s);
 }
 
-// All models = visible built-in catalog entries + user custom rows
+// ── Free-model blacklist ──────────────────────────────────────────────────
+// "provider|model" specs that a provider's /models endpoint lists as free and tool-capable,
+// but every request to them fails. Model metadata cannot reveal these — they are found by
+// calling the model — so the list is maintained by hand. Enforced everywhere:
+//   • getAllModels() drops them, even from the user's custom models, and getMainModelList()
+//     then prunes them from saved priority lists (its specs must exist in getAllModels());
+//   • the model update check (model-update.ts) never proposes adding them.
+// Record the error and date for each entry; re-check occasionally and delete entries that
+// start working again.
+export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
+    'openrouter|thinkingmachines/inkling:free',  // HTTP 403 "only available on agentic harnesses" (2026-09-27)
+    'kilo|thinkingmachines/inkling:free',        // HTTP 404 "currently unavailable"; dropped from Kilo's list (2026-09-27)
+    'nous|meituan/longcat-2.0:free',             // HTTP 404 "no longer free" (2026-09-27)
+]);
+function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
+
+// All models = visible built-in catalog entries + user custom rows, minus the blacklist.
 function getAllModels() {
     const hidden = getHiddenModels();
-    const builtins = hidden.size ? MODEL_CATALOG.filter(m => !hidden.has(`${m.provider}|${m.model}`)) : MODEL_CATALOG;
+    const _keep = (m: any) => !hidden.has(`${m.provider}|${m.model}`) && !isBlacklistedModel(`${m.provider}|${m.model}`);
+    const builtins = MODEL_CATALOG.filter(_keep);
     // Exclude custom models whose key duplicates a built-in (avoids duplicates after a
     // built-in is added then the same model is later promoted to the built-in catalog).
     const builtinKeys = new Set(builtins.map(m => `${m.provider}|${m.model}`));
-    const customs = getCustomModels().filter(m => !builtinKeys.has(`${m.provider}|${m.model}`));
+    const customs = getCustomModels().filter(m => _keep(m) && !builtinKeys.has(`${m.provider}|${m.model}`));
     return [...builtins, ...customs];
 }
 
@@ -583,16 +603,15 @@ function getAllModels() {
 // Kilo :free models (noKey:true) work with zero configuration.
 // OpenRouter models appear once the user sets an OpenRouter key.
 // Order: best quality first, Kilo before OpenRouter within each tier for no-key users.
+// Inkling is not here: inkling:free is 404 on Kilo and 403 "agentic harnesses only" on
+// OpenRouter; inkling-small:free works but hits its daily cap almost immediately (2026-09-27).
 const _DEFAULT_MAIN_MODELS = [
-    'kilo|thinkingmachines/inkling:free',              // 975B MoE, 1M ctx, reasoning
-    'openrouter|thinkingmachines/inkling:free',        // same model, OpenRouter quota
     'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx, reasoning
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    'openrouter|minimax/minimax-m3:free',              // 428B MoE, 1M ctx, multimodal
+    'openrouter|qwen/qwen3.8-27b:free',               // 27B dense VLM, coding/agentic, thinking
     'kilo|poolside/laguna-s-2.1:free',                 // 118B MoE, coding agent
     'openrouter|poolside/laguna-s-2.1:free',
-    'kilo|thinkingmachines/inkling-small:free',        // 276B MoE, 1M ctx, fast reasoning
-    'kilo|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
+    'kilo|stepfun/step-3.7-flash:free',               // 198B MoE, fast reasoning
     'openrouter|nvidia/nemotron-3.5-lightning:free',   // 30B, very fast, tools
 ];
 
@@ -789,7 +808,16 @@ function saveWorkerModel(v) { localStorage.setItem(KEYS.WORKER_MODEL, v ?? ''); 
 
 // 'none'              = all utility LLM calls are disabled (no title gen, no suggestions).
 // 'provider|model'    = use that specific model.
-function getUtilityModel() { return ls(KEYS.UTILITY_MODEL, 'google|gemma-4-31b-it'); }
+function getUtilityModel() {
+    const v = ls(KEYS.UTILITY_MODEL, 'google|gemma-4-26b-a4b-it');
+    // gemma-4-31b-it returns HTTP 500 for all requests via Google's API (broken model endpoint);
+    // silently migrate anyone who still has the old default stored.
+    if (v === 'google|gemma-4-31b-it') {
+        localStorage.setItem(KEYS.UTILITY_MODEL, 'google|gemma-4-26b-a4b-it');
+        return 'google|gemma-4-26b-a4b-it';
+    }
+    return v;
+}
 function saveUtilityModel(v) { localStorage.setItem(KEYS.UTILITY_MODEL, v ?? ''); }
 function isUtilityDisabled() { return getUtilityModel() === 'none'; }
 
@@ -1057,7 +1085,7 @@ for (const [name, getter, setter] of [
 
 // Constants, reference types, and all public functions:
 Object.assign(window, {
-    MAX_STEPS, ALL_TOOL_NAMES, OPT_IN_TOOLS, runWithPyodide, runWithWasm, skillsRegistry, activeSkills, disabledRoles, enabledTools, ls,
+    MAX_STEPS, ALL_TOOL_NAMES, OPT_IN_TOOLS, runWithPyodide, runWithWasm, skillsRegistry, activeSkills, disabledRoles, enabledTools, coworkEnabledTools, ls,
     getMode, setMode, isToolActive,
     isRoleEnabled, getRoleBody, setRoleBody, getRoleBodyFn, setRoleBodyFn, getProvider,
     getGeminiKey, getGeminiModel,
@@ -1084,7 +1112,7 @@ Object.assign(window, {
     getEditReviewEnabled, getWorkerThinkingBudget, getPreserveThinking,
     getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels,
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
-    getAllModels, getMainModelList, saveMainModelList,
+    getAllModels, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList,
     getPausedMainModels, savePausedMainModels,
     getActiveMainModelList, specHasKey, loadCfWorkerKeys, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,

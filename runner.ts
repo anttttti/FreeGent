@@ -24,6 +24,7 @@ let _runnerUnblockResolve: ((value: string) => void) | null = null;
 let _runnerSessionLog: { time: string; taskId: string; title: string; outcome: string; reason: string }[]     = [];
 let _runnerConsecutiveFails: number = 0;
 let _runnerPriorChatId: string | null    = null;
+let _runnerChatId: string | null         = null;
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -31,6 +32,16 @@ let _runnerPriorChatId: string | null    = null;
 // Both loops mutate the same fg-tasks/*.md frontmatter and ledger; running them
 // concurrently interleaves status transitions and corrupts task state.
 function isRunnerRunning(): boolean { return _runnerRunning; }
+function getRunnerChatId(): string | null { return _runnerChatId; }
+
+// One agent turn in the runner's chat, rendered into the chat view so opening the task's
+// chat tab shows the prompt and the live steps. runAgentTurn alone would pick the NULL
+// render adapter (workflowMode is on), leaving the tab blank.
+async function _runnerTurn(prompt: string): Promise<any> {
+    if (_runnerChatId && activeChatId !== _runnerChatId) await switchToChat(_runnerChatId);
+    appendMessage('user', renderMarkdown ? renderMarkdown(prompt) : esc(prompt).replace(/\n/g, '<br>'));
+    return runAgentTurn(prompt, null, undefined, { placeholder: createResponsePlaceholder() });
+}
 
 function runnerStart() {
     if (_runnerRunning || agentStreaming) return;
@@ -75,6 +86,8 @@ function runnerStop() {
         _runnerUnblockResolve('');
         _runnerUnblockResolve = null;
     }
+    // Abort any in-flight LLM stream so the stop takes effect immediately.
+    if (typeof agentStreaming !== 'undefined' && agentStreaming) stopNow?.();
 }
 
 // Toggle: stop if running, start if idle.
@@ -139,9 +152,7 @@ async function _runLoop() {
                 _runnerPauseReason = result.blockedReason || 'Worker blocked — needs input';
                 const userReply = await _waitForUnblock();
                 if (_runnerAbort) break;
-                if (userReply) {
-                    await runAgentTurn(userReply, document.getElementById('runner-process'));
-                }
+                if (userReply) await _runnerTurn(userReply);
                 _runnerConsecutiveFails = 0;
                 continue;
             }
@@ -166,6 +177,11 @@ async function _runLoop() {
         _runnerRunning = false;
         _runnerPaused  = false;
         _runnerAbort   = false;
+        _runnerChatId  = null;
+        // Leave autonomous mode: left on, every later chat turn ran with the NULL render
+        // adapter (nothing shown) and skipped the chat-view snapshot.
+        if (typeof setWorkflowMode === 'function') setWorkflowMode(false);
+        if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
         _clearRunnerProcess();
         _updateRunnerCurrentTask(null);
         _updateRunnerUI();
@@ -196,7 +212,14 @@ const _MAX_TURNS_PER_EPISODE = 5;
 async function _runEpisode(task: Task): Promise<EpisodeResult> {
     if (agentStreaming) return { success: false, blocked: false, blockedReason: '', failReason: 'Already streaming' };
 
+    // createNewChat does not persist the chat it replaces — save it first.
+    saveHistory();
     createNewChat();
+    _runnerChatId = activeChatId;
+    // Name the chat after the task so the rail entry is identifiable.
+    const _taskLabel = `${task.fm.id ? '#' + task.fm.id + ' ' : ''}${task.fm.title || task.path}`;
+    const _shortLabel = _taskLabel.length > 50 ? _taskLabel.slice(0, 50) + '…' : _taskLabel;
+    if (typeof setChatName === 'function') setChatName(_runnerChatId, _shortLabel);
     _clearRunnerProcess(false);
     _clearHistory();
 
@@ -205,10 +228,8 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     if (typeof setMainAgentRole === 'function') setMainAgentRole('director');
     if (typeof setWorkflowMode === 'function') setWorkflowMode(true);
 
-    // update_task_status is opt-in (off by default) but the runner always needs it.
-    // Temporarily add it to enabledTools so it appears in the LLM's tool spec; restore on exit.
-    const _addedTaskTool = !enabledTools.has('update_task_status');
-    if (_addedTaskTool) enabledTools.add('update_task_status');
+    // update_task_status availability is governed by coworkEnabledTools (Settings → Tools, Cowork
+    // column). No temporary patch needed — isToolActive() already reads the right set in cowork mode.
 
     // Read task content before mutating the status field so the agent sees the original status.
     let _initialTaskContent: string = '';
@@ -241,7 +262,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\nWhen done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
-        const _lastResult: any = await runAgentTurn(prompt, document.getElementById('runner-process'));
+        const _lastResult: any = await _runnerTurn(prompt);
         const lastMsg: string = typeof _lastResult === 'string' ? _lastResult : (_lastResult?.text ?? '');
 
         if (!_runnerRunning || _runnerAbort) break;
@@ -277,7 +298,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             `Call update_task_status("${task.path}", "done", "<summary>") when finished, or ` +
             `update_task_status("${task.path}", "failed", "<reason>") if it cannot be done.\n\n` +
             `Current task file:\n${taskContent.slice(0, 1200)}`;
-        await runAgentTurn(replanPrompt, document.getElementById('runner-process'));
+        await _runnerTurn(replanPrompt);
         try {
             const content = await agentReadFile(task.path);
             const fm = parseFrontmatter(content);
@@ -330,8 +351,6 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // Restore Director role for any follow-up (e.g. post-task chat).
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
 
-    // Restore update_task_status to its prior state.
-    if (_addedTaskTool) enabledTools.delete('update_task_status');
 
     return { success, blocked, blockedReason, failReason };
 }
@@ -370,7 +389,7 @@ async function runnerInterrupt() {
 
     setSoftStopPending(true);
     activeAbortController?.abort();
-    await runAgentTurn(val, document.getElementById('runner-process'));
+    await _runnerTurn(val);
 }
 
 // ── UI ─────────────────────────────────────────────────────────────────────
@@ -403,7 +422,14 @@ function _updateRunnerUI() {
         if (idle)         statusEl.textContent = 'Idle';
         else if (paused)  statusEl.textContent = `Paused: ${_runnerPauseReason}`;
         else              statusEl.textContent = 'Running…';
+        statusEl.classList.toggle('runner-running', running);
     }
+
+    // Glow the Tasks rail nav button and the Runner label while the loop is active.
+    const tasksRailBtn = document.querySelector('.left-rail .rail-nav-btn[data-tab="tasks"]');
+    if (tasksRailBtn) tasksRailBtn.classList.toggle('runner-glow', _runnerRunning);
+    const runnerLabel  = document.querySelector('.runner-label');
+    if (runnerLabel)  runnerLabel.classList.toggle('runner-running', running);
 
     // Auto-expand runner zone when loop becomes active; don't auto-collapse on idle
     // so the session log stays visible after a run.
@@ -413,9 +439,22 @@ function _updateRunnerUI() {
 function _updateRunnerCurrentTask(task: Task | null): void {
     const el = document.getElementById('runner-current-task');
     if (!el) return;
-    if (!task) { el.textContent = '—'; return; }
+    if (!task) { el.innerHTML = '—'; return; }
     const id = task.fm.id ? `#${task.fm.id} ` : '';
-    el.textContent = `${id}${task.fm.title || task.path}`;
+    const label = `${id}${task.fm.title || task.path}`;
+    const chatId = _runnerChatId;
+    if (chatId) {
+        // Clickable link that switches to the runner's chat; stopPropagation
+        // prevents the runner-header onclick (toggleRunnerZone) from firing too.
+        el.innerHTML = `<a class="runner-chat-link" href="#" title="Open chat">${label}</a>`;
+        (el.querySelector('a') as HTMLAnchorElement).onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (typeof switchToChat === 'function') switchToChat(chatId).catch(() => {});
+            if (typeof activateTab  === 'function') activateTab('chat');
+        };
+    } else {
+        el.textContent = label;
+    }
 }
 
 function _renderRunnerLog() {
@@ -462,4 +501,4 @@ function initRunner() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { runnerStart, runnerPause, runnerResume, runnerStop, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, toggleRunnerZone });
+Object.assign(window, { runnerStart, runnerPause, runnerResume, runnerStop, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

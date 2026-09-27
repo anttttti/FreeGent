@@ -108,6 +108,13 @@ describe('buildTurnPrelude', () => {
         W.activeSkills.add('memory');
         W.applyTurnTriggers({ rawText: 'fix it', history: [], wsPaths: ['a.py'] });
         const out = await W.buildTurnPrelude({ text: 'fix it', isFirstTurn: true });
-        expect(out).toBe('');
+        // The first turn always carries the workspace listing; no skill guidance beside it.
+        expect(out.replace(/<workspace_files>[\s\S]*?<\/workspace_files>/, '').trim()).toBe('');
+    });
+
+    it('adds the workspace listing on the first turn only, in any mode', async () => {
+        W.applyTurnTriggers({ rawText: 'fix it', history: [], wsPaths: [] });
+        expect(await W.buildTurnPrelude({ text: 'fix it', isFirstTurn: true })).toContain('<workspace_files>');
+        expect(await W.buildTurnPrelude({ text: 'fix it', isFirstTurn: false })).not.toContain('<workspace_files>');
     });
 });
