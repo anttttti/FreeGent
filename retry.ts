@@ -23,7 +23,10 @@ export function isTransient(e) {
     // "cancelled" — iOS Safari kills fetch when the tab is backgrounded or the screen locks.
     // "network connection was lost" — iOS Safari network-level disconnect mid-stream.
     // "The operation couldn't be completed" — iOS/macOS generic network failure variant.
-    return /HTTP 5\d\d|Internal error|Failed to fetch|fetch failed|NetworkError|Load failed|rate.?limit|too many requests|request too large|quota exceeded|insufficient balance|maximum context length|not found|file not found|service unavailable|bad gateway|idle timeout|high traffic|high demand|spikes in demand|signal timed out|bodystreambuffer|stream.*aborted|^cancelled$|network connection was lost|the operation couldn't be completed/i.test(msg);
+    // HTTP 429/402 by status: some providers return a bare status with no body ("[nvidia|…] HTTP 429"),
+    // which the text patterns below miss — workers then gave up on the first rate limit instead of
+    // letting the retry handler rotate or wait for a cooldown.
+    return /HTTP 5\d\d|HTTP 429|HTTP 402|Internal error|Failed to fetch|fetch failed|NetworkError|Load failed|rate.?limit|too many requests|request too large|quota exceeded|insufficient balance|maximum context length|not found|file not found|service unavailable|bad gateway|idle timeout|high traffic|high demand|spikes in demand|signal timed out|bodystreambuffer|stream.*aborted|^cancelled$|network connection was lost|the operation couldn't be completed/i.test(msg);
 }
 
 export function parseContextOverflow(e) {

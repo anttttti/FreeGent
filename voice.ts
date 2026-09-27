@@ -9,7 +9,6 @@ let _ttsAudio: HTMLAudioElement | null      = null;
 function _providerKey(provider) {
     switch (provider) {
         case 'groq':       return typeof getGroqKey       === 'function' ? getGroqKey()       : null;
-        case 'mistral':    return typeof getMistralKey    === 'function' ? getMistralKey()    : null;
         case 'openrouter': return typeof getOpenRouterKey === 'function' ? getOpenRouterKey() : null;
         default: return null;
     }
@@ -18,7 +17,6 @@ function _providerKey(provider) {
 function _transcribeUrl(provider) {
     switch (provider) {
         case 'groq':       return 'https://api.groq.com/openai/v1/audio/transcriptions';
-        case 'mistral':    return 'https://api.mistral.ai/v1/audio/transcriptions';
         case 'openrouter': return 'https://openrouter.ai/api/v1/audio/transcriptions';
         default:           return null;
     }
@@ -26,7 +24,6 @@ function _transcribeUrl(provider) {
 
 function _speechUrl(provider) {
     switch (provider) {
-        case 'mistral':    return 'https://api.mistral.ai/v1/audio/speech';
         case 'openrouter': return 'https://openrouter.ai/api/v1/audio/speech';
         default:           return null;
     }
@@ -65,7 +62,7 @@ async function toggleVoiceInput() {
         const key = _providerKey(provider);
         if (key) { await _startMediaRecorder(key, provider, model); return; }
     }
-    alert('No STT provider available. Add a Groq, Mistral, or OpenRouter key in Settings → Models, or add Web Speech to the STT list.');
+    alert('No STT provider available. Add a Groq or OpenRouter key in Settings → Models, or add Web Speech to the STT list.');
 }
 
 async function _startMediaRecorder(key, provider, model) {
@@ -95,7 +92,7 @@ async function _startMediaRecorder(key, provider, model) {
 function _startWebSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-        alert('Web Speech requires Chrome or Edge. Add a Groq/Mistral/OpenRouter key for cross-browser STT.');
+        alert('Web Speech requires Chrome or Edge. Add a Groq/OpenRouter key for cross-browser STT.');
         return;
     }
     const rec = new SR();

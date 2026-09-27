@@ -525,21 +525,9 @@ footer {
             <td>Free API credits for hosted models</td>
           </tr>
           <tr>
-            <td>Mistral</td>
-            <td>—</td>
-            <td><code>MISTRAL_API_KEY</code></td>
-            <td>Devstral, Magistral, Medium 3.5</td>
-          </tr>
-          <tr>
             <td>Groq</td>
             <td>—</td>
             <td><code>GROQ_API_KEY</code></td>
-            <td>Fast inference</td>
-          </tr>
-          <tr>
-            <td>Cerebras</td>
-            <td>—</td>
-            <td><code>CEREBRAS_API_KEY</code></td>
             <td>Fast inference</td>
           </tr>
           <tr>
@@ -649,7 +637,7 @@ footer {
 <br>
 <span class="comment"># Explicit credentials:</span><br>
 <span class="prompt">$ </span>npm run tui -- <span class="flag">--provider</span> google <span class="flag">--api-key</span> AIza...<br>
-<span class="prompt">$ </span>npm run tui -- <span class="flag">--provider</span> mistral <span class="flag">--model</span> mistral-medium-3.5 <span class="flag">--api-key</span> ...<br>
+<span class="prompt">$ </span>npm run tui -- <span class="flag">--provider</span> groq <span class="flag">--model</span> openai/gpt-oss-120b <span class="flag">--api-key</span> ...<br>
 <br>
 <span class="comment"># Against a local model:</span><br>
 <span class="prompt">$ </span>npm run tui -- <span class="flag">--api-url</span> http://localhost:8000/v1 <span class="flag">--provider</span> custom <span class="flag">--model</span> qwen3
@@ -741,9 +729,7 @@ footer {
       <div class="code-body">
 <span class="key">GEMINI_API_KEY</span>=<span class="val">AIza...</span><br>
 <span class="key">OPENROUTER_API_KEY</span>=<span class="val">sk-or-...</span><br>
-<span class="key">MISTRAL_API_KEY</span>=<span class="val">...</span><br>
 <span class="key">GROQ_API_KEY</span>=<span class="val">gsk_...</span><br>
-<span class="key">CEREBRAS_API_KEY</span>=<span class="val">csk-...</span><br>
 <span class="key">NVIDIA_API_KEY</span>=<span class="val">nvapi-...</span><br>
 <span class="key">OPENAI_API_KEY</span>=<span class="val">sk-...</span><br>
 <br>

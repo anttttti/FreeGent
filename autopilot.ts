@@ -137,14 +137,33 @@ function _parsePlanSteps(content) {
     return steps;
 }
 
+// Did a plan step produce nothing useful? Three-band check (step-validator.ts): empty output or a
+// bare stall marker ("*(done)*", "*(max steps reached)*") fails outright; long output, a
+// STATUS: complete footer, a write/status tool mention, or result phrasing passes; anything else —
+// short outputs without clear markers — goes to a yes/no model call. The old rule (under 50 chars
+// and no write-tool name → replan) replanned short but complete answers such as
+// "Fixed in parser.py:88; tests pass."
+const _STEP_OUTPUT_CHECKS = [{
+    name: 'no_meaningful_output',
+    max: Infinity,
+    re_fail: (t: string) => !t.trim()
+        || /^\s*\*\((?:done|stopped|break|stall|loop detected|max steps reached|no text response)[^)]*\)\*\s*$/i.test(t),
+    re_pass: (t: string) => t.trim().length >= 200
+        || /STATUS:\s*(?:complete|partial)/i.test(t)
+        || /write_file|append_file|replace_in_file|apply_patch|update_task_status/i.test(t)
+        || (typeof RESULT_MARKERS_RE !== 'undefined' && RESULT_MARKERS_RE.test(t)),
+    llmPrompt: 'An autonomous agent finished one step of a multi-step plan with the output below. Does the output show that the step produced NOTHING useful — no result, no change, no finding (for example it stalled, gave up, or only restated what it was asked to do)? Answer YES if nothing meaningful was produced; NO if it reports a result, even a brief one.',
+}];
+
 // Returns a string reason if replanning is needed, or null.
-async function _shouldReplan(lastMsgText, steps, currentStepIndex, useLedger, ledgerPath) {
+export async function _shouldReplan(lastMsgText, steps, currentStepIndex, useLedger, ledgerPath) {
     if (/^STATUS:\s*blocked/i.test(lastMsgText)) {
         return 'Worker returned STATUS: blocked';
     }
 
-    // Catches empty output or stall signals like "*(done)*"
-    if (lastMsgText.trim().length < 50 && !/write_file|append_file|replace_in_file|update_task_status/i.test(lastMsgText)) {
+    if (typeof validateOutput === 'function'
+        && await validateOutput(String(lastMsgText ?? ''), _STEP_OUTPUT_CHECKS,
+            { llm: typeof callLLMComplete === 'function' ? callLLMComplete : null, maxTokens: 200 })) {
         return 'Step produced no meaningful output';
     }
 

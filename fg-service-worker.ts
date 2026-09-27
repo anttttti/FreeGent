@@ -21,7 +21,6 @@
 //   https://openrouter.ai/*
 //   https://api.anthropic.com/*
 //   https://api.groq.com/*
-//   https://api.mistral.ai/*
 //   … (extend as providers are added)
 //
 // Phase 5 target — see agentharness_migration_v2.md Phase 5, §E CORS proxy fix.
@@ -38,11 +37,8 @@ export const INTERCEPTED_ORIGINS: ReadonlyArray<string> = [
     'https://openrouter.ai',
     'https://api.anthropic.com',
     'https://api.groq.com',
-    'https://api.mistral.ai',
-    'https://api.cerebras.ai',
     'https://integrate.api.nvidia.com',
     'https://generativelanguage.googleapis.com',
-    'https://opencode.ai',
     'https://tokenharbor.ai',
 ];
 
@@ -155,10 +151,7 @@ export const PROVIDER_BASE_URL_MAP: Record<string, string> = {
     openrouter:  'https://openrouter.ai',
     anthropic:   'https://api.anthropic.com',
     groq:        'https://api.groq.com',
-    mistral:     'https://api.mistral.ai',
-    cerebras:    'https://api.cerebras.ai',
     nvidia:      'https://integrate.api.nvidia.com',
     google:      'https://generativelanguage.googleapis.com',
-    opencode:    'https://opencode.ai',
     tokenharbor: 'https://tokenharbor.ai',
 };

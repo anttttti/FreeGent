@@ -789,6 +789,21 @@ async function _handleSubmitAnswer(args: any) {
     return { ok: true, answer_recorded: answer, note: "submit_answer is not a valid tool — write your answer as plain text in your response, then end with COMPLETED on the last line." };
 }
 
+// Browser only: runs the page in a hidden sandboxed iframe (tabs.ts runPageCheck).
+async function _handleCheckPage(args: any) {
+    if (typeof nativeExec === 'function' || typeof runPageCheck !== 'function')
+        return { error: 'check_page needs the browser app — it is not available in this environment.' };
+    const path = _normToolPath(String(args?.path ?? '').trim());
+    if (!/\.html?$/i.test(path)) return { error: 'check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.' };
+    try {
+        return await runPageCheck(path, {
+            actions: Array.isArray(args.actions) ? args.actions : [],
+            probes:  Array.isArray(args.probes) ? args.probes.map(String).slice(0, 10) : [],
+            waitMs:  args.wait_ms,
+        });
+    } catch (e) { return { error: `check_page: ${(e as any)?.message ?? e}` }; }
+}
+
 async function _handleUpdateTaskStatus(args: any) {
     const { path, status, log_entry } = args;
     if (!path || !status) return { error: 'path and status are required.' };
@@ -2047,6 +2062,7 @@ export async function executeToolAsync(name, args, context = null) {
     if (name === 'search_workspace')   return _handleSearchWorkspace(args);
     if (name === 'submit_answer')      return _handleSubmitAnswer(args);
     if (name === 'update_task_status') return _handleUpdateTaskStatus(args);
+    if (name === 'check_page')         return _handleCheckPage(args);
     return _handlePhantomAlias(name, args, context);
 }
 
@@ -2074,6 +2090,7 @@ export function toolLabel(name, args) {
     if (name === 'run_workers')       return `workers(${(Array.isArray(a.agents) ? a.agents : []).map(w => w.role ? `${w.id}:${w.role}` : w.id).join(',')})`;
     if (name === 'repo_map')                  return `repo_map${a.path_filter ? ':' + a.path_filter : ''}`;
     if (name === 'search_workspace')            return `grep:${(a.pattern || '').slice(0, 32)}${a.path_filter ? ' in ' + a.path_filter : ''}`;
+    if (name === 'check_page')                return `check:${a.path || '?'}`;
     if (name === 'update_task_status')        return `task:${a.path ? a.path.replace('fg-tasks/', '') : '?'} → ${a.status || '?'}`;
     if (name === 'context7_docs')             return `context7:${a.library || ''}${a.topic ? '/' + a.topic : ''}`;
     // Fallback for unknown tool names (custom MCP tools, or a model emitting malformed

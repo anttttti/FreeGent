@@ -183,7 +183,7 @@ export class AppStorage {
  * Extend as FW modules are migrated.
  */
 const _SESSION_LS_KEYS = /^(fg-session-|sessions-|sessionHistory)/;
-const _KEY_LS_KEYS = /^(oai-key|anthropic-key|gemini-key|mistral-key|groq-key|cerebras-key|openrouter-key|nvidia-key|opencode-key|tokenharbor-key)/;
+const _KEY_LS_KEYS = /^(oai-key|anthropic-key|gemini-key|groq-key|openrouter-key|nvidia-key|tokenharbor-key)/;
 
 /**
  * Migrate existing localStorage entries into AppStorage.

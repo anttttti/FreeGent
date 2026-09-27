@@ -7,9 +7,6 @@
 //   'none'    — model doesn't support tool calling; send no schema
 
 const _TOOL_FORMATS = {
-    // Mistral — Voxtral is an audio model; it hallucinates tool calls when given a schema
-    'mistral/voxtral-small-latest':                          'none',
-    'mistral/voxtral-mini-latest':                           'none',
     // NVIDIA NIM — Nemotron models: thinking-focused, no function calling
     'nvidia/nvidia/nemotron-3-super-120b-a12b':             'none',
     'nvidia/nvidia/nemotron-3-ultra-550b-a55b':             'fn-tag',

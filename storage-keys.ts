@@ -24,9 +24,7 @@ export const KEYS = {
     // ── API keys ─────────────────────────────────────────────────────────────
     GEMINI_KEY:         'fg_gemini_key',
     OPENAI_KEY:         'fg_openai_key',
-    MISTRAL_KEY:        'fg_mistral_key',
     GROQ_KEY:           'fg_groq_key',
-    CEREBRAS_KEY:       'fg_cerebras_key',
     NVIDIA_KEY:         'fg_nvidia_key',
     OPENROUTER_KEY:     'fg_openrouter_key',
     TOKENHARBOR_KEY:    'fg_tokenharbor_key',
@@ -42,14 +40,13 @@ export const KEYS = {
     OPENAI_MODEL:       'fg_openai_model',
     OPENAI_URL:         'fg_openai_url',
     OPENAI_CONTEXT:     'fg_openai_context',
-    MISTRAL_MODEL:      'fg_mistral_model',
     NVIDIA_MODEL:       'fg_nvidia_model',
     GROQ_MODEL:         'fg_groq_model',
-    CEREBRAS_MODEL:     'fg_cerebras_model',
     OPENROUTER_MODEL:   'fg_openrouter_model',
     MAIN_MODELS:        'fg_main_models',
     PRIMARY_MODELS:     'fg_primary_models',   // profile-level alias; runtime reads MAIN_MODELS
     PAUSED_MAIN:        'fg_paused_main',
+    MODEL_SUCCESS_COUNTS: 'fg_model_success_counts', // canonical model id → successful main-agent requests
     ENABLED_MODELS:     'fg_enabled_models',
     CUSTOM_MODELS:      'fg_custom_models',
     HIDDEN_MODELS:      'fg_hidden_models',  // built-in models the user has removed

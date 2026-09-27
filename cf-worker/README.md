@@ -4,7 +4,7 @@ A thin passthrough worker that adds CORS headers so the GitHub Pages version of
 FreeGent can reach LLM providers that don't allow direct browser requests.
 
 It also supports **shared API key injection**: store your own Groq, OpenRouter,
-Cerebras, Gemini, or Nous keys as Cloudflare secrets, and GitHub Pages users can
+Gemini, or Nous keys as Cloudflare secrets, and GitHub Pages users can
 use those providers without configuring their own keys.
 
 ## Deploy your own (5 minutes, free)
@@ -30,8 +30,8 @@ use those providers without configuring their own keys.
    Open [FreeGent on GitHub Pages](https://anttttti.github.io/FreeGent/), go to  
    **Settings → CORS Proxy / CF Worker URL** and paste your Worker URL.
 
-That's it — all proxied providers (OpenCode, Kilo, NVIDIA NIM, TokenHarbor,
-Vercel AI Gateway, and, if configured, Groq / OpenRouter / Cerebras / Gemini /
+That's it — all proxied providers (Kilo, NVIDIA NIM, TokenHarbor,
+Vercel AI Gateway, and, if configured, Groq / OpenRouter / Gemini /
 Nous) will now work from the browser.
 
 ## Optional: shared API keys
@@ -44,7 +44,6 @@ in the Worker code or the repository.
 # Run once per key you want to share (prompts for the value securely):
 npx wrangler secret put OPENROUTER_API_KEY
 npx wrangler secret put GROQ_API_KEY
-npx wrangler secret put CEREBRAS_API_KEY
 npx wrangler secret put GEMINI_API_KEY
 npx wrangler secret put NOUS_API_KEY
 ```
@@ -63,10 +62,8 @@ npx wrangler secret put NOUS_API_KEY
 |---|---|---|
 | OpenRouter | ✅ | Free models cost nothing; paid credits needed for paid models |
 | Groq | ✅ | Generous free tier; server-side use is fine |
-| Cerebras | ✅ | Free tier |
 | Gemini | ✅ | Google recommends server-side key use |
 | Nous | ✅ | Free tier |
-| Mistral | ❌ | ToS prohibits shared / multi-user key patterns |
 
 ## Security
 

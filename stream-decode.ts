@@ -289,8 +289,18 @@ export async function nonStreamOAICompat(resp: any, onChunk: any) {
     const j = await resp.json();
     if (j.error) throw new Error(j.error.message || 'Provider error');
     const msg = j.choices?.[0]?.message || {};
-    const reasoning_content = msg.reasoning_content || msg.reasoning || '';
-    const content           = msg.content || '';
+    let reasoning_content = msg.reasoning_content || msg.reasoning || '';
+    let content           = msg.content || '';
+    // Inline reasoning blocks (<think>, <thinking>, <thought> — Gemma 4 on Google's API) are
+    // reasoning, as in the streaming decoder; an unclosed block (cut off at max_tokens) is all
+    // reasoning. Without this a non-streamed reply showed the model's thoughts as its answer.
+    if (typeof content === 'string' && /<(?:think|thinking|thought)>/i.test(content)) {
+        const inline: string[] = [];
+        content = content
+            .replace(/<(think|thinking|thought)>([\s\S]*?)<\/\1>\n?/gi, (_m: string, _t: string, body: string) => { inline.push(body); return ''; })
+            .replace(/<(?:think|thinking|thought)>([\s\S]*)$/i, (_m: string, body: string) => { inline.push(body); return ''; });
+        if (inline.length) reasoning_content = [reasoning_content, ...inline].filter(Boolean).join('\n');
+    }
     if (reasoning_content) onChunk(reasoning_content, 'thinking');
     if (content)           onChunk(content,            'output');
     const effective = content || reasoning_content || null;

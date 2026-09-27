@@ -113,38 +113,6 @@ async function _fetchOpenRouterModels(): Promise<{ id: string; name: string; pri
     }
 }
 
-// Free models on OpenCode Zen as listed at https://opencode.ai/docs/zen#pricing
-// (updated 2026-08-31). Models with a "-free" suffix are also accepted as a
-// forward-compatible heuristic — new free models may follow the same convention.
-const _OPENCODE_ZEN_FREE = new Set([
-    'big-pickle',
-    'mimo-v2.5-free',
-    'ling-3.0-flash-fin-free',
-    'nemotron-3-ultra-free',
-    'nemotron-3.5-lightning-free',
-    'muse-spark-1.2-contributor-free',
-    'laguna-s-2.1-free',
-    'deepseek-v4-flash-free',
-]);
-
-async function _fetchOpenCodeModels(): Promise<FetchResult> {
-    try {
-        const key = typeof getOpenCodeKey === 'function' ? getOpenCodeKey() : (localStorage.getItem('fg_opencode_key') ?? '');
-        // 'public' is the sentinel key OpenCode itself sends for unauthenticated access
-        // to free Zen models. '__nokey__' is unrecognized and may land in a worse bucket.
-        const json = await _proxyBearer('https://opencode.ai/zen/v1/models', key || 'public');
-        if (!json) return { live: [], rejected: [] };
-        const all: any[] = Array.isArray(json?.data) ? json.data : [];
-        // Only accept the exact IDs confirmed free in the pricing table.
-        const live: LiveModel[] = all
-            .filter((m: any) => typeof m.id === 'string' && _OPENCODE_ZEN_FREE.has(m.id))
-            .map((m: any) => ({ id: m.id as string, created: m.created as number | undefined }));
-        return { live, rejected: [] };
-    } catch {
-        return { live: [], rejected: [] };
-    }
-}
-
 // ── TokenHarbor ──────────────────────────────────────────────────────────────
 // Free models on TokenHarbor as listed at https://tokenharbor.ai/models (updated 2026-09-01).
 // IDs have a `:free` suffix; no provider prefix in the model ID.
@@ -328,99 +296,6 @@ async function _fetchGoogleModels(): Promise<FetchResult> {
     }
 }
 
-// Non-chat / alias Mistral model patterns:
-//   non-chat: embeddings, OCR, moderation, audio I/O (voxtral), FIM, CLI tools, labs experiments
-//   aliases:  -latest suffix creates floating duplicates of date-versioned catalog entries
-const _MISTRAL_EXCL = /-embed|-ocr|-moderation|^labs-|vibe-cli|code-agent|-fim|-realtime|-transcribe|-tts\b|^voxtral|-latest$/i;
-
-// ── Alias deduplication ───────────────────────────────────────────────────
-// Mistral (and some other providers) expose the same model under multiple IDs:
-//   semantic version:  mistral-medium-3.5
-//   date snapshot:     mistral-medium-2604  (year 26, month 04)
-//   plain version:     mistral-medium-3
-//   bare name:         mistral-medium
-// Strip the version suffix to get a base name, group by base, then keep only
-// the catalog-known ID (or the "best" representative when nothing is catalogued yet).
-
-// Strip Mistral-style version suffixes to get the base model name.
-// Applied in order so compound suffixes like "-3.5" don't partially match "-\d+$".
-function _aliasBase(id: string): string {
-    return id
-        .replace(/-\d{2}(0[1-9]|1[0-2])$/, '')   // YYMM date: -2604, -2508, -2501 …
-        .replace(/-\d+\.\d+$/, '')                  // X.Y semantic: -3.5, -2.1 …
-        .replace(/-\d+$/, '');                       // X plain: -3, -2 …
-}
-
-// Among a group of alias IDs, pick the canonical one when none is already in the catalog.
-// Preference: semantic (X.Y) > plain (X) > date (YYMM) > bare; newest first within each tier.
-function _aliasBest(ids: string[]): string {
-    const tier = (id: string) =>
-        /\d+\.\d+$/.test(id) ? 0 :
-        /-\d{2}(0[1-9]|1[0-2])$/.test(id) ? 2 :
-        /-\d+$/.test(id) ? 1 : 3;
-
-    return [...ids].sort((a, b) => {
-        const dt = tier(a) - tier(b);
-        return dt !== 0 ? dt : b.localeCompare(a);   // same tier → lexicographically newer first
-    })[0];
-}
-
-// Deduplicate a FetchResult by base name.
-// For each base-name group, keep only the catalog-preferred ID in `live`;
-// silently drop the aliases (they won't appear even with filters turned off,
-// since they add zero information beyond the representative).
-// Rejected models are left untouched — they're hidden by default anyway.
-function _dedupAliases(result: FetchResult, provider: string, catalogKeys: Set<string>): FetchResult {
-    if (result.live.length <= 1) return result;
-
-    // Map base → all live IDs sharing that base
-    const byBase = new Map<string, string[]>();
-    for (const m of result.live) {
-        const base = _aliasBase(m.id);
-        (byBase.get(base) ?? (byBase.set(base, []), byBase.get(base)!)).push(m.id);
-    }
-
-    // Determine which IDs survive deduplication
-    const keepIds = new Set<string>();
-    for (const [, ids] of byBase) {
-        if (ids.length === 1) {
-            keepIds.add(ids[0]);
-            continue;
-        }
-        // Multiple IDs share this base — pick the catalog entry if one exists, else best
-        const catalogHit = ids.find(id => catalogKeys.has(`${provider}|${id}`));
-        keepIds.add(catalogHit ?? _aliasBest(ids));
-    }
-
-    return { live: result.live.filter(m => keepIds.has(m.id)), rejected: result.rejected };
-}
-
-async function _fetchMistralModels(): Promise<FetchResult> {
-    try {
-        const key = typeof getMistralKey === 'function' ? getMistralKey() : (localStorage.getItem('fg_mistral_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
-        const json = await _proxyBearer('https://api.mistral.ai/v1/models', key);
-        if (!json) return { live: [], rejected: [] };
-        const data: any[] = json?.data ?? [];
-
-        const live: LiveModel[] = [];
-        const rejected: { model: LiveModel; reason: FilterKey }[] = [];
-
-        for (const m of data) {
-            if (m.archived) continue;
-            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: m.created as number | undefined };
-            if (m.capabilities?.completion_chat === false || _MISTRAL_EXCL.test(m.id)) {
-                rejected.push({ model: lm, reason: 'non-chat' });
-            } else {
-                live.push(lm);
-            }
-        }
-        return { live, rejected };
-    } catch {
-        return { live: [], rejected: [] };
-    }
-}
-
 // Non-chat Groq model patterns: speech transcription, safety classifiers, TTS, meta-routers
 const _GROQ_EXCL = /^whisper|prompt-guard|canopylabs\/orpheus|^groq\/compound|safeguard/i;
 
@@ -444,20 +319,6 @@ async function _fetchGroqModels(): Promise<FetchResult> {
             }
         }
         return { live, rejected };
-    } catch {
-        return { live: [], rejected: [] };
-    }
-}
-
-async function _fetchCerebrasModels(): Promise<FetchResult> {
-    try {
-        const key = typeof getCerebrasKey === 'function' ? getCerebrasKey() : (localStorage.getItem('fg_cerebras_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
-        const json = await _proxyBearer('https://api.cerebras.ai/v1/models', key);
-        if (!json) return { live: [], rejected: [] };
-        const data: any[] = json?.data ?? [];
-        const live = data.map((m: any) => ({ id: m.id as string, name: m.id as string, created: m.created as number | undefined }));
-        return { live, rejected: [] };
     } catch {
         return { live: [], rejected: [] };
     }
@@ -562,21 +423,7 @@ function _modelPageUrl(provider: string, model: string): string {
         case 'google':
             if (model.startsWith('gemma')) return 'https://ai.google.dev/gemma/docs/gemma-models';
             return `https://ai.google.dev/gemini-api/docs/models#${model}`;
-        case 'mistral': {
-            const slug = model.startsWith('ministral')      ? 'ministral'
-                       : model.startsWith('codestral')      ? 'codestral'
-                       : model.startsWith('pixtral')        ? 'pixtral'
-                       : model.startsWith('devstral')       ? 'devstral'
-                       : model.startsWith('mistral-large')  ? 'mistral-large'
-                       : model.startsWith('mistral-medium') ? 'mistral-medium'
-                       : model.startsWith('mistral-small')  ? 'mistral-small'
-                       : null;
-            return slug ? `https://mistral.ai/models/${slug}/`
-                        : 'https://docs.mistral.ai/getting-started/models/all-models/';
-        }
         case 'groq':       return 'https://console.groq.com/docs/models';
-        case 'cerebras':   return 'https://inference-docs.cerebras.ai/model-catalog';
-        case 'opencode':      return 'https://opencode.ai/docs/zen/#endpoints';
         case 'tokenharbor':   return 'https://tokenharbor.ai/models';
         case 'kilo':          return 'https://kilo.ai/models';
         case 'vercel':        return 'https://vercel.com/ai-gateway/models';
@@ -665,14 +512,11 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     const catalogKeys = new Set(catalog.map((m: ModelEntry) => `${m.provider}|${m.model}`));
 
     // Fetch all providers in parallel
-    const [orModels, ocResult, googleResult, mistralResult, groqResult, cerebrasResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult] =
+    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult] =
         await Promise.all([
             _fetchOpenRouterModels(),
-            _fetchOpenCodeModels(),
             _fetchGoogleModels(),
-            _fetchMistralModels(),
             _fetchGroqModels(),
-            _fetchCerebrasModels(),
             _fetchNvidiaModels(),
             _fetchTokenHarborModels(),
             _fetchKiloModels(),
@@ -719,13 +563,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         }
     }
 
-    // ── OpenCode ─────────────────────────────────────────────────────────
-    if (!ocResult.live.length) {
-        errors.push('OpenCode: could not fetch model list (may require API key)');
-    } else {
-        proposals.push(..._diffProvider('opencode', ocResult, catalog, catalogKeys, 'Free via OpenCode Zen'));
-    }
-
     // ── Google Gemini ─────────────────────────────────────────────────────
     {
         const total = googleResult.live.length + googleResult.rejected.length;
@@ -741,20 +578,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         }
     }
 
-    // ── Mistral ───────────────────────────────────────────────────────────
-    {
-        const total = mistralResult.live.length + mistralResult.rejected.length;
-        if (!total) {
-            const hasKey = !!(typeof getMistralKey === 'function' ? getMistralKey() : localStorage.getItem('fg_mistral_key'));
-            if (hasKey) errors.push('Mistral: could not fetch model list (network error or timeout)');
-        } else {
-            // Deduplicate same-model aliases (semantic version, date snapshot, plain name)
-            // by base name before diffing — keeps only the catalog-known or best representative.
-            const deduped = _dedupAliases(mistralResult, 'mistral', catalogKeys);
-            proposals.push(..._diffProvider('mistral', deduped, catalog, catalogKeys, 'Available on your Mistral account'));
-        }
-    }
-
     // ── Groq ──────────────────────────────────────────────────────────────
     {
         const total = groqResult.live.length + groqResult.rejected.length;
@@ -763,17 +586,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             if (hasKey) errors.push('Groq: could not fetch model list (network error or timeout)');
         } else {
             proposals.push(..._diffProvider('groq', groqResult, catalog, catalogKeys, 'Free via Groq'));
-        }
-    }
-
-    // ── Cerebras ──────────────────────────────────────────────────────────
-    {
-        const total = cerebrasResult.live.length + cerebrasResult.rejected.length;
-        if (!total) {
-            const hasKey = !!(typeof getCerebrasKey === 'function' ? getCerebrasKey() : localStorage.getItem('fg_cerebras_key'));
-            if (hasKey) errors.push('Cerebras: could not fetch model list (network error or timeout)');
-        } else {
-            proposals.push(..._diffProvider('cerebras', cerebrasResult, catalog, catalogKeys, 'Free via Cerebras'));
         }
     }
 
@@ -905,8 +717,8 @@ function _applyProposals(proposals: Proposal[]): void {
                     contextK: 128,
                     note:     p.note,
                     ...(p.cooldownMs != null ? { cooldownMs: p.cooldownMs } : {}),
-                    // opencode uses 'public' key; kilo :free models send no Authorization header
-                    ...((p.provider === 'opencode' || (p.provider === 'kilo' && p.model.endsWith(':free'))) ? { noKey: true } : {}),
+                    // kilo :free models send no Authorization header
+                    ...((p.provider === 'kilo' && p.model.endsWith(':free')) ? { noKey: true } : {}),
                 });
             }
         } else {

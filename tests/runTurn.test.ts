@@ -214,9 +214,9 @@ describe('runTurn — empty reasoning-only response', () => {
         // Two-model list so the retry's fallback switch is instant (a single-model
         // list has no fallback and the retry backs off with a real 8s sleep). Specs
         // must exist in MODEL_CATALOG — getMainModelList prunes unknown entries.
-        // Use models from _DEFAULT_MAIN_MODELS (opencode provider) which are always valid.
+        // Use models from _DEFAULT_MAIN_MODELS (kilo provider, no key needed) which are always valid.
         localStorage.setItem(KEYS.MAIN_MODELS,
-            JSON.stringify(['opencode|big-pickle', 'opencode|nemotron-3-ultra-free']));
+            JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|stepfun/step-3.7-flash:free']));
         const mock = makeReplayFetch([
             { content: '', usage: { completion_tokens: 90 } },
             { content: 'Here is the fix.\nCOMPLETED' },
@@ -261,5 +261,27 @@ describe('runTurn — scratch-only edits at COMPLETED', () => {
         expect(sent).toContain('only files changed this turn are scratch files: repro.py');
         expect(result).toContain('deliverable');
         W.setWorkspaceAdapter(null);
+    });
+});
+
+// fg-chat 2026-09-27-08-44-35: mid-turn narration ("Let me check the player.update function…")
+// was saved by missing_state_line; 30 steps later a bare COMPLETED displayed it as the result.
+describe('runTurn — stale narration is not the final answer', () => {
+    it('asks for a summary on a bare COMPLETED instead of returning earlier narration', async () => {
+        setupChat();
+        const ls = (id: string) => ({ tool_calls: [{ id, type: 'function', function: { name: 'list_files', arguments: '{"path":"/"}' } }] });
+        const mock = makeReplayFetch([
+            ls('a1'),
+            { content: 'Let me check the player.update function to see how it handles jumping:' },
+            ls('a2'),
+            { content: 'COMPLETED' },
+            { content: 'Fixed the jump: the canvas now takes keyboard focus on start.\n\nCOMPLETED' },
+        ]);
+        W.fetch = mock;
+        const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        expect(result).not.toMatch(/Let me check the player\.update/);
+        expect(result).toContain('Fixed the jump');
+        const calls = mock.mock.calls.filter(([u]: [string]) => String(u).includes('/chat/completions'));
+        expect(JSON.stringify(JSON.parse(calls[4][1].body).messages)).toContain('no answer body');
     });
 });

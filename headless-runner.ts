@@ -105,9 +105,7 @@ function _makeCapturingPlaceholder(onFinalize) {
 
 const _KEY_MAP = {
     google:       'fg_gemini_key',
-    mistral:      'fg_mistral_key',
     groq:         'fg_groq_key',
-    cerebras:     'fg_cerebras_key',
     nvidia:       'fg_nvidia_key',
     openrouter:   'fg_openrouter_key',
     tokenharbor:  'fg_tokenharbor_key',
@@ -119,9 +117,7 @@ const _ENV_KEY_MAP: Record<string, string> = {
     GEMINI_API_KEY:        'fg_gemini_key',
     OPENAI_API_KEY:        'fg_openai_key',
     ANTHROPIC_API_KEY:     'fg_openai_key',  // Anthropic uses openai-compat endpoint
-    MISTRAL_API_KEY:       'fg_mistral_key',
     GROQ_API_KEY:          'fg_groq_key',
-    CEREBRAS_API_KEY:      'fg_cerebras_key',
     NVIDIA_API_KEY:        'fg_nvidia_key',
     OPENROUTER_API_KEY:    'fg_openrouter_key',
     TOKENHARBOR_API_KEY:   'fg_tokenharbor_key',

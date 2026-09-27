@@ -764,8 +764,8 @@ function _resolveMediaRouting(
                 if (strip) {
                     const warn = document.createElement('div');
                     warn.className = 'file-chip media-warn-chip';
-                    warn.title = `Add a ${_uncovered.join('/')} capable model to your model list (Gemini, Voxtral, etc.) or set one in Settings → Models → Media Model Routing`;
-                    warn.textContent = `⚠ No ${_uncovered.join('/')} model — add Gemini or Voxtral`;
+                    warn.title = `Add a ${_uncovered.join('/')} capable model to your model list (e.g. Gemini) or set one in Settings → Models → Media Model Routing`;
+                    warn.textContent = `⚠ No ${_uncovered.join('/')} model — add a Gemini model`;
                     strip.appendChild(warn);
                     strip.style.display = 'flex';
                 }
@@ -802,9 +802,9 @@ function _pushHistoryMessage(
         _supportsVideo = _googleMedia.includes('video');
     } else {
         // Only use input_audio / video_url content types for providers that implement
-        // the OpenAI multimodal content-type spec. NVIDIA NIM, Groq, and Cerebras use
+        // the OpenAI multimodal content-type spec. NVIDIA NIM and Groq use
         // different API surfaces and silently drop unknown content types.
-        const _OAI_MEDIA_PROVIDERS = new Set(['mistral', 'openrouter', 'custom', 'openai']);
+        const _OAI_MEDIA_PROVIDERS = new Set(['openrouter', 'custom', 'openai']);
         const _oaiSpec = mediaOAIEndpoint
             ? `${mediaOAIEndpoint.provider}|${mediaOAIEndpoint.model}`
             : (getActiveMainModelList()[0] || '');
@@ -917,6 +917,8 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     const _isFirstTurn = openaiHistory.length === 0;
     applyTurnTriggers({
         rawText,
+        // Interactive turn: three-band task-intent check (a model call only for ambiguous task wording).
+        isTaskCompletion: workflowMode ? null : await isTaskCompletionRequest(rawText),
         history:  openaiHistory,
         wsPaths:  await collectWorkspacePaths(),
         msgMedia: _msgMedia,
@@ -1233,7 +1235,10 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     // Reset reactive-trigger bookkeeping — see agentSend for rationale.
     _resetPerTurnState(_s.history);
     const _isFirstTurn = _s.history.length === 0;
-    applyTurnTriggers({ rawText: prompt, history: _s.history, wsPaths: await collectWorkspacePaths() });
+    // Headless / runner turns (workflowMode) keep the regex: their prompts routinely say "your task
+    // is…", and a model call per turn would slow runs and change benchmark behaviour.
+    applyTurnTriggers({ rawText: prompt, history: _s.history, wsPaths: await collectWorkspacePaths(),
+        isTaskCompletion: _s.workflowMode ? null : await isTaskCompletionRequest(prompt) });
     const _prelude = await buildTurnPrelude({ text: prompt, isFirstTurn: _isFirstTurn });
 
     // increment turn counter and emit turn/start.

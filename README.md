@@ -2,7 +2,7 @@
 
 **Run AI agents against free-tier cloud LLMs and local models — no per-token billing.**
 
-FreeGent is an open-source AI agent runner that works against Gemini free tier, OpenRouter, NVIDIA, Mistral, Groq, and local models via Ollama, vLLM, or LM Studio. It ships three interfaces: a browser WebUI, an interactive terminal TUI, and a headless CLI for scripting.
+FreeGent is an open-source AI agent runner that works against Gemini free tier, OpenRouter, NVIDIA, Groq, and local models via Ollama, vLLM, or LM Studio. It ships three interfaces: a browser WebUI, an interactive terminal TUI, and a headless CLI for scripting.
 
 🌐 **[Try it on GitHub Pages](https://anttttti.github.io/FreeGent/)** — no install needed.
 
@@ -15,14 +15,11 @@ FreeGent is an open-source AI agent runner that works against Gemini free tier, 
 | **Google Gemini** | ✓ 30 RPM / 1 500 RPD | `GEMINI_API_KEY` |
 | **OpenRouter** | ✓ many free models | `OPENROUTER_API_KEY` |
 | **NVIDIA NIM** | ✓ free API credits | `NVIDIA_API_KEY` |
-| **OpenCode Zen** | ✓ rotating free models | `OPENCODE_API_KEY` |
 | **Kilo** | ✓ `:free` models (200 req/hr anon) | `KILO_API_KEY` |
 | **Nous Portal** | ✓ 50 RPM / 500K TPM rotating | `NOUSPORTAL_API_KEY` |
 | **TokenHarbor** | ✓ weekly quota | `TOKENHARBOR_API_KEY` |
 | **Vercel AI Gateway** | ✓ $0/token select models | `VERCEL_API_KEY` |
 | **Groq** | ✓ free tier (rate limited) | `GROQ_API_KEY` |
-| **Mistral** | — | `MISTRAL_API_KEY` |
-| **Cerebras** | — | `CEREBRAS_API_KEY` |
 | **OpenAI** | — | `OPENAI_API_KEY` |
 | **HuggingFace** | ✓ free token (image gen fallback) | `HF_API_KEY` |
 | **Ollama / vLLM / LM Studio** | local | `--api-url http://...` |
@@ -90,7 +87,7 @@ npm run tui
 
 # With explicit credentials:
 npm run tui -- --provider google --api-key AIza...
-npm run tui -- --provider mistral --model mistral-medium-3.5 --api-key ...
+npm run tui -- --provider groq --model openai/gpt-oss-120b --api-key ...
 
 # Against a local model:
 npm run tui -- --api-url http://localhost:8000/v1 --provider custom --model qwen3
@@ -185,9 +182,7 @@ The file uses the same `KEY=VALUE` format as `.env`:
 
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-...
-MISTRAL_API_KEY=...
 GROQ_API_KEY=gsk_...
-CEREBRAS_API_KEY=csk-...
 NVIDIA_API_KEY=nvapi-...
 OPENAI_API_KEY=sk-...
 HF_API_KEY=hf_...        # optional: HuggingFace image fallback

@@ -73,7 +73,7 @@ describe('buildChatPayload — thinking control (the v0.10 bug class)', () => {
     });
 });
 
-describe('buildChatPayload — reasoning_content stripping (Mistral 422 guard)', () => {
+describe('buildChatPayload — reasoning_content stripping (strict-provider 422 guard)', () => {
     const histWithReasoning = [
         { role: 'user', content: 'hi' },
         { role: 'assistant', content: 'The answer is 42', reasoning_content: 'Let me think…' },
@@ -85,8 +85,8 @@ describe('buildChatPayload — reasoning_content stripping (Mistral 422 guard)',
         const asst = p.messages.find(m => m.role === 'assistant');
         expect(asst.reasoning_content).toBe('Let me think…');
     });
-    it('mistral → reasoning_content stripped from assistant messages (avoids HTTP 422)', () => {
-        const p = window.buildChatPayload({ provider: 'mistral', model: 'm' },
+    it('groq → reasoning_content stripped from assistant messages (strict APIs reject it with HTTP 422)', () => {
+        const p = window.buildChatPayload({ provider: 'groq', model: 'm' },
             { messages: histWithReasoning, temperature: 0.2, maxTokens: 1000 });
         const asst = p.messages.find(m => m.role === 'assistant');
         expect('reasoning_content' in asst).toBe(false);
@@ -106,7 +106,7 @@ describe('buildChatPayload — reasoning_content stripping (Mistral 422 guard)',
     });
     it('messages without reasoning_content pass through unchanged for all providers', () => {
         const plain = [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }];
-        for (const prov of ['vllm', 'mistral', 'openrouter', 'custom']) {
+        for (const prov of ['vllm', 'groq', 'openrouter', 'custom']) {
             const p = window.buildChatPayload({ provider: prov, model: 'm', url: 'http://x' },
                 { messages: plain, temperature: 0.2, maxTokens: 1000 });
             expect(p.messages[1]).toEqual({ role: 'assistant', content: 'hello' });
@@ -132,8 +132,11 @@ describe('buildChatPayload — provider quirks', () => {
         expect('tools' in p).toBe(false);
         expect('tool_choice' in p).toBe(false);
     });
-    it('mistral → prompt_cache_key; nvidia → top_p 0.95; others → neither', () => {
-        expect(window.buildChatPayload({ provider: 'mistral', model: 'm' }, base).prompt_cache_key).toBe('freegent');
+    it('nous → tags user=freegent (Nous rejects some models with "missing user tag" otherwise); others → no tags', () => {
+        expect(window.buildChatPayload({ provider: 'nous', model: 'stepfun/step-3.7-flash:free' }, base).tags).toEqual(['user=freegent']);
+        expect('tags' in window.buildChatPayload({ provider: 'openrouter', model: 'm' }, base)).toBe(false);
+    });
+    it('nvidia → top_p 0.95; others → neither top_p nor prompt_cache_key', () => {
         expect(window.buildChatPayload({ provider: 'nvidia', model: 'm' }, base).top_p).toBe(0.95);
         const g = window.buildChatPayload({ provider: 'groq', model: 'm' }, base);
         expect('prompt_cache_key' in g).toBe(false);

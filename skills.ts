@@ -25,6 +25,7 @@ const TOOL_LABELS = {
     run_git:                   'Run Git (run_git)',
     ast_query:                 'AST Query (ast_query)',
     generate_image:            'Generate Image (generate_image)',
+    check_page:                'Check Page (check_page)',
 };
 const TOOL_DESCRIPTIONS = {
     list_files:                'List all files in workspace',
@@ -50,6 +51,7 @@ const TOOL_DESCRIPTIONS = {
     run_git:                   'Run git commands in the workspace',
     ast_query:                 'Query code structure with tree-sitter AST patterns',
     generate_image:            'Generate an image via Hugging Face Inference API',
+    check_page:                'Load an HTML page in a hidden sandbox; report errors and console output, click/press keys, probe state (browser only)',
 };
 
 

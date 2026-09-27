@@ -2,7 +2,7 @@
 
 ## What FreeGent is
 
-Browser-based WebUI for running code and work agents against **free public LLMs** (Gemini free tier, OpenRouter, NVIDIA, Groq, Mistral, Cerebras, and more) and **local LLMs** via Ollama / LM Studio / vLLM (7B–70B, 4k–32k context). Every architectural choice prioritises context budget and reliability on weak models.
+Browser-based WebUI for running code and work agents against **free public LLMs** (Gemini free tier, OpenRouter, NVIDIA, Groq, and more) and **local LLMs** via Ollama / LM Studio / vLLM (7B–70B, 4k–32k context). Every architectural choice prioritises context budget and reliability on weak models.
 
 ## Module model — fully ESM + single-owner domain modules
 
