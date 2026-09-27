@@ -358,7 +358,7 @@ describe('FTS5 full-text search — messages_fts / turn_log_fts', () => {
     it('finds raw-capture rows too — e.g. every request_failed mentioning a specific model', async () => {
         const adapter = new NodeSqliteAdapter(':memory:');
         await adapter.saveRawMessage('c1', { role: 'assistant', kind: 'request_failed', name: 'nvidia|glm-5.2', content: 'HTTP 400: Pass ?q= for search or ?url= for fetch' });
-        await adapter.saveRawMessage('c1', { role: 'assistant', kind: 'request_failed', name: 'mistral|mistral-medium-3.5', content: 'HTTP 429: rate limited' });
+        await adapter.saveRawMessage('c1', { role: 'assistant', kind: 'request_failed', name: 'groq|openai/gpt-oss-120b', content: 'HTTP 429: rate limited' });
         const rows = (adapter as any)._db.prepare(`
             SELECT m.name FROM messages m JOIN messages_fts f ON f.rowid = m.id
             WHERE messages_fts MATCH 'kind:request_failed AND "HTTP 400"'

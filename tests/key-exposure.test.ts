@@ -17,13 +17,13 @@ describe('server keys in the page', () => {
     it('are placeholders, and matching localStorage copies are removed', async () => {
         const real = 'gsk_realvalue_0123456789';
         localStorage.setItem('fg_groq_key', real);                 // copied there by an old Settings save
-        localStorage.setItem('fg_mistral_key', 'user-typed-key');  // user's own key: kept
-        W.__FG_SERVER_KEYS = { fg_groq_key: hash16(real), fg_mistral_key: hash16('a-different-server-key') };
+        localStorage.setItem('fg_nvidia_key', 'user-typed-key');  // user's own key: kept
+        W.__FG_SERVER_KEYS = { fg_groq_key: hash16(real), fg_nvidia_key: hash16('a-different-server-key') };
         await W.loadServerKeys();
         expect(localStorage.getItem('fg_groq_key')).toBeNull();
         expect(W.ls('fg_groq_key')).toBe('__fgsk__fg_groq_key__');
         expect(W.isServerKeyPlaceholder(W.ls('fg_groq_key'))).toBe(true);
-        expect(W.ls('fg_mistral_key')).toBe('user-typed-key');     // a typed key still wins
+        expect(W.ls('fg_nvidia_key')).toBe('user-typed-key');     // a typed key still wins
     });
 });
 

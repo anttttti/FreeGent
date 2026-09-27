@@ -273,6 +273,34 @@ function execToolSpec() {
     };
 }
 
+// check_page: browser-only (runs the page in a hidden sandboxed iframe — tabs.ts runPageCheck).
+const CHECK_PAGE_TOOL_SPEC = {
+    name: 'check_page',
+    description: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path:    { type: 'string', description: 'The HTML file, e.g. "index.html".' },
+            actions: {
+                type: 'array',
+                description: 'Steps run in order after load. Each is one of {"click": "<CSS selector>"}, {"key": "ArrowRight", "hold_ms": 500} (keydown, hold, keyup), {"wait_ms": 1000}.',
+                items: {
+                    type: 'object',
+                    properties: {
+                        click:   { type: 'string', description: 'CSS selector of the element to click.' },
+                        key:     { type: 'string', description: 'Key to press: "ArrowRight", " ", "Enter", "a", …' },
+                        hold_ms: { type: 'number', description: 'How long to hold the key before releasing (default 0, max 5000).' },
+                        wait_ms: { type: 'number', description: 'Pause before the next step (max 5000).' },
+                    },
+                },
+            },
+            probes:  { type: 'array', items: { type: 'string' }, description: 'JS expressions evaluated in the page after load and again at the end.' },
+            wait_ms: { type: 'number', description: 'How long to let the page run after the actions (default 1500, max 10000).' },
+        },
+        required: ['path'],
+    },
+};
+
 const GENERATE_IMAGE_TOOL_SPEC = {
     name: 'generate_image',
     description: 'Generate an image from a text prompt. Uses Pollinations.ai (FLUX, no key needed) by default; falls back to HuggingFace Inference (FLUX / SDXL) if a HF key is configured. Image displayed inline and saved to workspace.',
@@ -390,6 +418,8 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
         ['run_git',        () => getGitEnabled() && getSandboxProvider() === 'local', () => GIT_TOOL_SPEC],
         // generate_image works without credentials (Pollinations); no gating condition needed.
         ['generate_image', () => true,                                                () => GENERATE_IMAGE_TOOL_SPEC],
+        // check_page runs pages in a browser iframe — not available headless (no nativeExec).
+        ['check_page',     () => typeof nativeExec !== 'function' && typeof runPageCheck === 'function', () => CHECK_PAGE_TOOL_SPEC],
         // run_workers: workers may not spawn sub-workers unless their ceiling explicitly includes it.
         ['run_workers',    () => !forWorker || (_ceiling?.has('run_workers') ?? false), () => WORKERS_TOOL_SPEC],
     ];

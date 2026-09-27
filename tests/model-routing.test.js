@@ -11,8 +11,8 @@ describe('resolveWorkerModelSpec — tier routing', () => {
     });
 
     it('returns explicit override regardless of role', () => {
-        const result = W.resolveWorkerModelSpec('mistral|mistral-large', { tier: 'orchestrator' });
-        expect(result).toBe('mistral|mistral-large');
+        const result = W.resolveWorkerModelSpec('groq|openai/gpt-oss-120b', { tier: 'orchestrator' });
+        expect(result).toBe('groq|openai/gpt-oss-120b');
     });
 
     it('returns first active model when no spec and no role', () => {

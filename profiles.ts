@@ -111,7 +111,6 @@ const PROFILE_KEY_META = {
 };
 
 const PROFILE_DEFAULT_PRIMARY_MODELS = JSON.stringify([
-    'mistral|mistral-medium-3.5',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
     'openrouter|nvidia/nemotron-3-super-120b-a12b:free',
 ]);
@@ -120,7 +119,7 @@ const BUILTIN_PROFILES = [
     {
         id: 'paid',
         name: 'Paid',
-        description: 'For paid cloud APIs (Mistral, Qwen3 via OpenRouter). Full system prompt, eager skill injection, rich worker tool sets. Context is compacted only at the hard limit — no proactive trimming.',
+        description: 'For paid cloud APIs (e.g. models via OpenRouter). Full system prompt, eager skill injection, rich worker tool sets. Context is compacted only at the hard limit — no proactive trimming.',
         settings: {
             fg_primary_models:               PROFILE_DEFAULT_PRIMARY_MODELS,
             fg_agent_tool_result_truncation: 'true',

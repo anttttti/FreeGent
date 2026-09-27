@@ -24,9 +24,14 @@ export const AGENT_TOOL_NAMES = [
     'list_files', 'search_workspace', 'repo_map', 'append_file', 'delete_file', 'undo_write',
     'run_workers', 'update_task_status', 'fetch_url', 'web_search',
     'run_git', 'ast_query', 'generate_image', 'deep_research',
-    'context7_docs', 'academic_search', 'package_search',
+    'context7_docs', 'academic_search', 'package_search', 'check_page',
 ];
 const _PAYLOAD_TOOLNAMES = AGENT_TOOL_NAMES.join('|');
+
+// Shared pass-band pattern: output that reports a result — findings or report phrasing, list or
+// heading structure, or a "let me know" sign-off. Used by checks deciding whether an agent's
+// output is an answer/result (llm-loops narration_only, autopilot step output).
+export const RESULT_MARKERS_RE = /\b(?:fixed|found|resolved|root cause|the (?:bug|issue|problem|cause|fix|error) (?:is|was)|(?:it|this|that|everything) (?:now )?works|works now|is (?:now )?working|in summary|summary|changes? made|i (?:changed|added|updated|fixed|removed|replaced|renamed|moved|verified|tested|created|wrote))\b|(?:^|\n)\s*(?:#{1,4}\s|[-*]\s|\d+\.\s)|\blet me know\b/i;
 
 // Deterministic payload extraction: the command inside the first code fence, or the
 // argument list of a pseudo-call — lets fail actions quote the exact intended command.
@@ -96,4 +101,4 @@ export async function validateOutput(text: string, checks: any[], opts: any = {}
 }
 
 // Window bridge for classic scripts.
-Object.assign(window, { validateOutput, extractPayload, AGENT_TOOL_NAMES });
+Object.assign(window, { validateOutput, extractPayload, AGENT_TOOL_NAMES, RESULT_MARKERS_RE });

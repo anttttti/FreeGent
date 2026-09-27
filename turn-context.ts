@@ -36,6 +36,24 @@ export function _isCompletionRequest(text: string): boolean {
     return false;
 }
 
+// Three-band version (step-validator.ts) for interactive turns. The regex above fires; a message
+// with no task vocabulary at all passes (most messages — no model call); a message that mentions
+// tasks/backlog/tickets/#N without matching goes to a yes/no model call. The regex alone missed
+// phrasings like "start on the backlog", "do #3 next" or "clear the remaining tickets".
+const _TASK_VOCAB_RE = /\b(?:tasks?|backlog|tickets?|to-?dos?|kanban|fg-tasks)\b|#\s*\d+/i;
+const _TASK_INTENT_CHECKS = [{
+    name: 'task_completion_request',
+    max: Infinity,
+    re_fail: (t: string) => _isCompletionRequest(t),
+    re_pass: (t: string) => !_TASK_VOCAB_RE.test(t),
+    llmPrompt: 'The message below was sent by a user to an AI agent that keeps a task list (a backlog of task files). Does the message ask the agent to work on, continue, complete, or process items from that task list or backlog — as opposed to a general request that merely mentions the word "task"? Answer YES or NO.',
+}];
+export async function isTaskCompletionRequest(text: string, llm: any = typeof callLLMComplete === 'function' ? callLLMComplete : null): Promise<boolean> {
+    const t = String(text ?? '');
+    if (typeof validateOutput !== 'function') return _isCompletionRequest(t);
+    return !!(await validateOutput(t, _TASK_INTENT_CHECKS, { llm, maxTokens: 200 }));
+}
+
 // ── Workspace index ────────────────────────────────────────────────────────
 // Derive the trigger-matching index from a list of workspace paths. Pure: the caller
 // supplies the paths, so this stays testable and free of DOM/adapter concerns.
@@ -91,11 +109,14 @@ export function applyTurnTriggers({
     history   = [] as any[],
     wsPaths   = [] as string[],
     msgMedia  = new Set<string>(),
+    isTaskCompletion = null as boolean | null,
 }: {
     rawText: string;
     history?: any[];
     wsPaths?: string[];
     msgMedia?: Set<string>;
+    // Precomputed by the caller (await isTaskCompletionRequest); null → the regex decides.
+    isTaskCompletion?: boolean | null;
 }): void {
     const { wsExts, wsNames, wsAllPaths } = buildWorkspaceIndex(wsPaths);
 
@@ -115,7 +136,7 @@ export function applyTurnTriggers({
         lowerText:        rawText.toLowerCase(),
         rawText,
         firstMsg:         history.length === 0,
-        isTaskCompletion: _isCompletionRequest(rawText),
+        isTaskCompletion: isTaskCompletion ?? _isCompletionRequest(rawText),
         turn:             Math.floor(history.length / 2),
         wsExts, wsNames, wsAllPaths, msgMedia, histTools,
     }));
@@ -218,6 +239,6 @@ export function formatWorkspaceListing(rawPaths: string[], { inContainer = false
 }
 
 Object.assign(window, {
-    _isCompletionRequest, buildWorkspaceIndex, collectWorkspacePaths,
+    _isCompletionRequest, isTaskCompletionRequest, buildWorkspaceIndex, collectWorkspacePaths,
     applyTurnTriggers, buildTurnPrelude,
 });

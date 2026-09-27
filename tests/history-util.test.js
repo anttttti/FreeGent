@@ -64,7 +64,7 @@ describe('stripInjected', () => {
 
 describe('lastExchange', () => {
     it('pulls the last assistant response and preceding real user message (OAI)', () => {
-        W.setLastProvider('mistral');
+        W.setLastProvider('groq');
         W.setOpenaiHistory([
             { role: 'user', content: 'first request' },
             { role: 'assistant', content: 'first answer' },
@@ -75,7 +75,7 @@ describe('lastExchange', () => {
     });
 
     it('skips <nudge> nudges and strips injected blocks from the user message', () => {
-        W.setLastProvider('mistral');
+        W.setLastProvider('groq');
         W.setOpenaiHistory([
             { role: 'user', content: '<active_guidance>g</active_guidance>\nthe real request' },
             { role: 'assistant', content: 'partial' },
@@ -86,7 +86,7 @@ describe('lastExchange', () => {
     });
 
     it('returns empties on an empty history', () => {
-        W.setLastProvider('mistral');
+        W.setLastProvider('groq');
         W.setOpenaiHistory([]);
         expect(lastExchange()).toEqual({ userMsg: '', response: '' });
     });

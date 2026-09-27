@@ -254,11 +254,8 @@ export function oaiEndpoint(): any {
     const model    = getActiveModel(); // always reads from priority list
     const sp       = _staticProxy();
     if (provider === 'google')      return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
-    if (provider === 'mistral')     return { provider, url: 'https://api.mistral.ai/v1/chat/completions',          key: getMistralKey(),    model };
     if (provider === 'groq')        return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
-    if (provider === 'cerebras')    return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model, proxy: sp };
     if (provider === 'openrouter')  return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
-    if (provider === 'opencode')    return { provider, url: 'https://opencode.ai/zen/v1/chat/completions',         key: getOpenCodeKey(), model, proxy: !window._fgHeadless };
     if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
     if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
     if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };
@@ -282,11 +279,8 @@ export function specToEndpoint(spec: string): any {
     const model    = idx !== -1 ? spec.slice(idx + 1) : spec;
     const sp = _staticProxy();
     if (provider === 'google')     return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
-    if (provider === 'mistral')    return { provider, url: 'https://api.mistral.ai/v1/chat/completions',          key: getMistralKey(),    model };
     if (provider === 'groq')       return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
-    if (provider === 'cerebras')   return { provider, url: 'https://api.cerebras.ai/v1/chat/completions',         key: getCerebrasKey(),   model, proxy: sp };
     if (provider === 'openrouter') return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
-    if (provider === 'opencode')    return { provider, url: 'https://opencode.ai/zen/v1/chat/completions',         key: getOpenCodeKey(), model, proxy: !window._fgHeadless };
     if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
     if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
     if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };

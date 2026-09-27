@@ -14,7 +14,6 @@
  *
  *   npx wrangler secret put OPENROUTER_API_KEY
  *   npx wrangler secret put GROQ_API_KEY
- *   npx wrangler secret put CEREBRAS_API_KEY
  *   npx wrangler secret put GEMINI_API_KEY
  *   npx wrangler secret put NOUS_API_KEY
  *   npx wrangler secret put TAVILY_API_KEY
@@ -69,14 +68,11 @@ const ALLOWED_ORIGINS = new Set([
 // GET fetch_url requests use _publicUrlOk() instead — any public HTTPS URL.
 const ALLOWED_HOSTS = new Set([
     'generativelanguage.googleapis.com',
-    'api.mistral.ai',
     'api.groq.com',
-    'api.cerebras.ai',
     'openrouter.ai',
     'api.openrouter.ai',
     'nous.hermes.ai',
     'inference-api.nousresearch.com',
-    'opencode.ai',
     'api.kilo.ai',
     'integrate.api.nvidia.com',
     'tokenharbor.ai',
@@ -95,11 +91,9 @@ const ALLOWED_HOSTS = new Set([
 const PROVIDER_KEY_MAP = {
     'generativelanguage.googleapis.com': 'GEMINI_API_KEY',
     'api.groq.com':                      'GROQ_API_KEY',
-    'api.cerebras.ai':                   'CEREBRAS_API_KEY',
     'openrouter.ai':                     'OPENROUTER_API_KEY',
     'api.openrouter.ai':                 'OPENROUTER_API_KEY',
     'inference-api.nousresearch.com':    'NOUS_API_KEY',
-    'opencode.ai':                       'OPENCODE_API_KEY',
     'tokenharbor.ai':                    'TOKENHARBOR_API_KEY',
     'api.tokenharbor.ai':                'TOKENHARBOR_API_KEY',
     'api.tavily.com':                    'TAVILY_API_KEY',

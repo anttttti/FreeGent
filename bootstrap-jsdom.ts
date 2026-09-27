@@ -26,15 +26,11 @@ export const dom = new JSDOM(`<!DOCTYPE html><html><body>
   <div id="fsa-badge" style="display:none"><span id="fsa-name"></span></div>
   <div id="settings-modal" style="display:none"></div>
   <input type="radio" name="provider" value="google">
-  <input type="radio" name="provider" value="mistral">
   <input type="radio" name="provider" value="openai" checked>
   <div id="google-fields"  style="display:none"></div>
-  <div id="mistral-fields" style="display:none"></div>
   <div id="oai-fields"></div>
   <input id="gemini-key"    type="password">
   <select id="gemini-model"><option value="gemini-2.5-flash" selected>gemini-2.5-flash</option></select>
-  <input id="mistral-key"   type="password">
-  <select id="mistral-model"><option value="mistral-medium-3.5" selected>mistral-medium-3.5</option></select>
   <input id="oai-url"       type="url">
   <input id="oai-key"       type="password">
   <input id="oai-model"     type="text">

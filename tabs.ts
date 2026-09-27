@@ -690,6 +690,160 @@ async function _relayPreviewFetch(e: MessageEvent) {
 }
 window.addEventListener('message', _relayPreviewFetch);
 
+// ── check_page: run a workspace page headlessly and report what happens ──────
+// The page is built exactly like a ▶ Preview (workspace CSS/JS inlined, same sandbox) and loaded
+// into a hidden iframe. A capture script injected first reports console output, uncaught errors
+// and failed resources to this page, and answers commands (click, key, eval) posted to it.
+// Agents otherwise debug "the button does nothing" by reading code: in the Cowork game chat of
+// 2026-09-27 a syntax error (`const ring-count`) broke the whole script, and a later "nothing
+// moves" turn spent 100 steps guessing. The sandbox has no allow-same-origin and no allow-modals
+// (alert/confirm are ignored rather than blocking the run).
+const _CHECK_CAPTURE = `<script>(function(){
+var P=parent,T0=Date.now();
+function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v.name+': '+v.message;if(v===undefined)return 'undefined';if(typeof v==='function')return 'function';return JSON.stringify(v)}catch(e){return String(v)}}
+function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,500),t:Date.now()-T0},'*')}catch(e){}}
+['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
+addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href));return}
+ send('error','Uncaught '+(e.error&&e.error.name?e.error.name+': '+e.error.message:e.message)+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':''))},true);
+addEventListener('unhandledrejection',function(e){send('error','Unhandled promise rejection: '+s(e.reason))});
+var FR=0;(function f(){FR++;requestAnimationFrame(f)})();
+function code(k){if(/^Arrow/.test(k))return k;if(k===' ')return 'Space';if(/^[a-z]$/i.test(k))return 'Key'+k.toUpperCase();if(/^[0-9]$/.test(k))return 'Digit'+k;return k}
+function run(d){
+ if(d.cmd==='click'){var el=document.querySelector(d.selector);if(!el)return{error:'no element matches '+d.selector};
+  var r=el.getBoundingClientRect(),cs=getComputedStyle(el),o={bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window};
+  ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){try{el.dispatchEvent(new (t.charAt(0)==='p'&&window.PointerEvent?PointerEvent:MouseEvent)(t,o))}catch(e){}});
+  el.click();return{ok:true,visible:cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0,disabled:!!el.disabled}}
+ if(d.cmd==='key'){var tg=document.activeElement||document.body;tg.dispatchEvent(new KeyboardEvent(d.kind,{key:d.key,code:code(d.key),bubbles:true,cancelable:true}));return{ok:true}}
+ if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,300)}}
+ if(d.cmd==='stats'){return{frames:FR,ms:Date.now()-T0}}
+ return{error:'unknown command'}}
+addEventListener('message',function(e){var d=e.data;if(e.source!==P||!d||d.type!=='fg-check-cmd')return;var r;try{r=run(d)}catch(x){r={error:String(x&&x.message||x)}}
+ P.postMessage({type:'fg-check-reply',id:d.id,result:r},'*')});
+addEventListener('load',function(){P.postMessage({type:'fg-check-ready'},'*')});
+})();<\/script>`;
+
+const _sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const _clampMs = (v: any, dflt: number, max: number) => Math.max(0, Math.min(Number.isFinite(Number(v)) ? Number(v) : dflt, max));
+
+async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500 } = {}) {
+    const html = await agentReadFile(path);
+    if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
+    let content = _wrapArtifact(await _inlineWorkspaceRefs(html));
+    // The capture script must run before every other script, so it goes first in <head>.
+    content = /<head[^>]*>/i.test(content) ? content.replace(/(<head[^>]*>)/i, `$1${_CHECK_CAPTURE}`) : _CHECK_CAPTURE + content;
+
+    const iframe = document.createElement('iframe');
+    // artifact-iframe: lets the page's cross-origin GETs use the preview fetch relay.
+    iframe.className = 'artifact-iframe fg-check-iframe';
+    iframe.setAttribute('sandbox', 'allow-scripts allow-forms');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    // Rendered visibly, as a small live preview in the corner: browsers throttle
+    // requestAnimationFrame in frames they consider hidden — a near-transparent frame behind the
+    // app ran a game at ~3% speed (0.48 s of game time in ~15 s; fg-chat 2026-09-27-08-44-35), so
+    // movement checks were meaningless. The page keeps a full 1024×640 layout, scaled down.
+    const _W = 1024, _H = 640, _SCALE = 0.28;
+    const wrap = document.createElement('div');
+    wrap.className = 'fg-check-preview';
+    wrap.setAttribute('aria-hidden', 'true');
+    wrap.style.cssText = `position:fixed;right:12px;bottom:12px;width:${Math.round(_W * _SCALE)}px;height:${Math.round(_H * _SCALE) + 18}px;`
+        + 'z-index:2147483000;pointer-events:none;border-radius:6px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.35);'
+        + 'background:#111;font:11px/18px system-ui,sans-serif;color:#ddd';
+    const label = document.createElement('div');
+    label.style.cssText = 'height:18px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    label.textContent = `check_page · ${path}`;
+    iframe.style.cssText = `display:block;width:${_W}px;height:${_H}px;border:0;background:#fff;transform:scale(${_SCALE});transform-origin:0 0`;
+    wrap.append(label, iframe);
+
+    const logs: Array<{ level: string; text: string; t: number }> = [];
+    const pending = new Map<number, (r: any) => void>();
+    let seq = 0, readyResolve: (v: boolean) => void = () => {};
+    const ready = new Promise<boolean>(r => { readyResolve = r; });
+    const onMsg = (e: MessageEvent) => {
+        if (e.source !== iframe.contentWindow) return;
+        const d = e.data;
+        if (!d || typeof d !== 'object') return;
+        if (d.type === 'fg-check-log' && logs.length < 500) logs.push({ level: d.level, text: d.text, t: d.t });
+        else if (d.type === 'fg-check-ready') readyResolve(true);
+        else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
+    };
+    const cmd = (c: any): Promise<any> => new Promise(res => {
+        const id = ++seq;
+        pending.set(id, res);
+        iframe.contentWindow?.postMessage({ type: 'fg-check-cmd', id, ...c }, '*');
+        setTimeout(() => { if (pending.has(id)) { pending.delete(id); res({ error: 'no reply — the page script is not running or is stuck' }); } }, 3000);
+    });
+
+    const steps: any[] = [];
+    let loaded = false, fps: number | null = null;
+    window.addEventListener('message', onMsg);
+    try {
+        iframe.srcdoc = content;
+        document.body.appendChild(wrap);
+        loaded = await Promise.race([ready, _sleep(8000).then(() => false)]);
+        await _sleep(300);
+        const probeAll = async (when: string) => {
+            if (!probes.length) return;
+            const values: Record<string, string> = {};
+            for (const expr of probes) { const r = await cmd({ cmd: 'eval', expr }); values[expr] = r.error ? `error: ${r.error}` : r.value; }
+            steps.push({ probes: when, values });
+        };
+        await probeAll('after load');
+        for (const a of actions.slice(0, 20)) {
+            if (!a || typeof a !== 'object') continue;
+            if (typeof a.click === 'string') {
+                steps.push({ click: a.click, ...(await cmd({ cmd: 'click', selector: a.click })) });
+            } else if (typeof a.key === 'string') {
+                const hold = _clampMs(a.hold_ms, 0, 5000);
+                const down = await cmd({ cmd: 'key', kind: 'keydown', key: a.key });
+                if (hold) await _sleep(hold);
+                await cmd({ cmd: 'key', kind: 'keyup', key: a.key });
+                steps.push({ key: a.key, held_ms: hold, ...(down.error ? { error: down.error } : {}) });
+            } else if (a.wait_ms != null) {
+                const w = _clampMs(a.wait_ms, 0, 5000);
+                await _sleep(w);
+                steps.push({ waited_ms: w });
+            }
+            await _sleep(100);   // let handlers and a frame or two run
+        }
+        await _sleep(_clampMs(waitMs, 1500, 10000));
+        await probeAll('at end');
+        const st = await cmd({ cmd: 'stats' });
+        if (typeof st?.frames === 'number' && st.ms > 0) fps = Math.round(st.frames / (st.ms / 1000));
+    } finally {
+        window.removeEventListener('message', onMsg);
+        wrap.remove();
+    }
+
+    // Collapse repeats (an error thrown every frame shows once, with a count).
+    const collapse = (items: typeof logs, max: number) => {
+        const out: Array<{ text: string; count: number; first_ms: number }> = [];
+        const byText = new Map<string, { text: string; count: number; first_ms: number }>();
+        for (const l of items) {
+            const e = byText.get(l.text);
+            if (e) { e.count++; continue; }
+            const n = { text: l.text, count: 1, first_ms: l.t };
+            byText.set(l.text, n); out.push(n);
+        }
+        return out.slice(0, max);
+    };
+    const errors = collapse(logs.filter(l => l.level === 'error'), 20);
+    const warnings = collapse(logs.filter(l => l.level === 'warn'), 10);
+    const consoleOut = collapse(logs.filter(l => l.level !== 'error' && l.level !== 'warn'), 30);
+    const notes: string[] = [];
+    if (!loaded) notes.push('The page did not finish loading within 8 s.');
+    if (fps !== null && fps < 20) notes.push(`Animation frames ran at only ~${fps} fps (browser throttling), so game time advanced far slower than real time — treat movement and timing results as unreliable.`);
+    if (document.hidden) notes.push('The FreeGent tab was in the background, so the browser paused animation frames — movement and timers may look frozen; re-run with the tab visible.');
+    const summary = !errors.length
+        ? `Loaded ${loaded ? 'fine' : 'partially'}; no errors.`
+        : `${errors.reduce((n, e) => n + e.count, 0)} error(s): ${errors[0].text}`;
+    return {
+        path, loaded, summary, ...(fps !== null ? { fps } : {}),
+        errors, ...(warnings.length ? { warnings } : {}), console: consoleOut,
+        ...(steps.length ? { steps } : {}), ...(notes.length ? { notes } : {}),
+    };
+}
+
 async function openArtifactTab(title, html, { isPreview = true } = {}) {
     const inlined = await _inlineWorkspaceRefs(html);
     const content = _wrapArtifact(inlined);
@@ -781,4 +935,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, notifyLocalFileChanged, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, notifyLocalFileChanged, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });

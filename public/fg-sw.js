@@ -88,11 +88,8 @@ const ORIGIN_TO_PROVIDER = new Map([
     ['https://openrouter.ai',                       'openrouter'],
     ['https://api.anthropic.com',                   'anthropic'],
     ['https://api.groq.com',                        'groq'],
-    ['https://api.mistral.ai',                      'mistral'],
-    ['https://api.cerebras.ai',                     'cerebras'],
     ['https://integrate.api.nvidia.com',            'nvidia'],
     ['https://generativelanguage.googleapis.com',   'google'],
-    ['https://opencode.ai',                         'opencode'],
     ['https://tokenharbor.ai',                      'tokenharbor'],
 ]);
 

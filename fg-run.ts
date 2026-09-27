@@ -54,9 +54,9 @@ function _usage(code = 1) {
 
 Options:
   --llm <provider|model>    Combined LLM selector (e.g. google|gemini-2.5-flash,
-                            mistral|mistral-medium-3.5). Overrides --provider/--model.
+                            groq|openai/gpt-oss-120b). Overrides --provider/--model.
   --workspace <path>    Root directory for file operations (default: WORKSPACE_ROOT env or cwd)
-  --provider  <id>      LLM provider: google|openai|mistral|nvidia|groq|… (default: openai)
+  --provider  <id>      LLM provider: google|openai|nvidia|groq|… (default: openai)
   --model     <id>      Model ID
   --api-key   <key>     API key (or FREEGENT_API_KEY env var)
   --api-url   <url>     Base URL for OpenAI-compatible endpoints

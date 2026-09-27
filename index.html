@@ -440,18 +440,12 @@
                         <table class="settings-table" style="width:100%;margin-top:6px"><tbody>
                             <tr><td class="settings-table-label">Gemini Key</td>
                                 <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td></tr>
-                            <tr><td class="settings-table-label">Mistral Key</td>
-                                <td><input class="settings-input" id="mistral-key" type="password" placeholder="..." style="width:100%" onchange="saveSettings()"></td></tr>
                             <tr><td class="settings-table-label">Groq Key</td>
                                 <td><input class="settings-input" id="groq-key" type="password" placeholder="gsk_..." style="width:100%" onchange="saveSettings()"></td></tr>
-                            <tr><td class="settings-table-label">Cerebras Key</td>
-                                <td><input class="settings-input" id="cerebras-key" type="password" placeholder="csk-..." style="width:100%" onchange="saveSettings()"></td></tr>
                             <tr><td class="settings-table-label">OpenRouter Key</td>
                                 <td><input class="settings-input" id="openrouter-key" type="password" placeholder="sk-or-..." style="width:100%" onchange="saveSettings()"></td></tr>
                             <tr><td class="settings-table-label">NVIDIA Key</td>
                                 <td><input class="settings-input" id="nvidia-key" type="password" placeholder="nvapi-..." style="width:100%" onchange="saveSettings()"></td></tr>
-                            <tr><td class="settings-table-label">OpenCode Key</td>
-                                <td><input class="settings-input" id="opencode-key" type="password" placeholder="..." style="width:100%" onchange="saveSettings()"></td></tr>
                             <tr><td class="settings-table-label">TokenHarbor Key</td>
                                 <td><input class="settings-input" id="tokenharbor-key" type="password" placeholder="thk_live_..." style="width:100%" onchange="saveSettings()"></td></tr>
                             <tr><td class="settings-table-label">Kilo Key</td>
@@ -514,7 +508,7 @@
                         <p class="settings-hint">Direct browser call &#8212; no proxy needed.</p>
                         <label class="settings-input-label">CORS Proxy / CF Worker URL</label>
                         <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
-                        <p class="settings-hint">Required on GitHub Pages for providers that block direct browser calls (OpenCode, Kilo, NVIDIA NIM, TokenHarbor, Vercel). Also used for Brave search. Deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL — see <code>cf-worker/README.md</code> for instructions.</p>
+                        <p class="settings-hint">Required on GitHub Pages for providers that block direct browser calls (Kilo, NVIDIA NIM, TokenHarbor, Vercel). Also used for Brave search. Deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL — see <code>cf-worker/README.md</code> for instructions.</p>
                         <label class="settings-input-label">Brave API Key (optional)</label>
                         <input class="settings-input" id="brave-key" type="password" placeholder="BSA...">
                         <p class="settings-hint" style="margin-bottom:0">Sent as <code>X-Brave-Key</code> header.</p>

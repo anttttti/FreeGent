@@ -40,12 +40,9 @@ const execFileAsync = promisify(execFile);
 export const KEY_MAP: Array<[string, string]> = [
     ['GEMINI_API_KEY',        'fg_gemini_key'],
     ['GOOGLE_API_KEY',        'fg_gemini_key'],
-    ['MISTRAL_API_KEY',       'fg_mistral_key'],
     ['GROQ_API_KEY',          'fg_groq_key'],
-    ['CEREBRAS_API_KEY',      'fg_cerebras_key'],
     ['NVIDIA_API_KEY',        'fg_nvidia_key'],
     ['OPENROUTER_API_KEY',    'fg_openrouter_key'],
-    ['OPENCODE_API_KEY',      'fg_opencode_key'],
     ['TOKENHARBOR_API_KEY',   'fg_tokenharbor_key'],
     ['KILO_API_KEY',          'fg_kilo_key'],
     ['VERCEL_API_KEY',        'fg_vercel_key'],
@@ -65,12 +62,9 @@ export const KEY_MAP: Array<[string, string]> = [
 // is refused, so a prompt-injected request can't carry a key to an attacker.
 export const KEY_HOSTS: Record<string, string[]> = {
     fg_gemini_key:        ['generativelanguage.googleapis.com'],
-    fg_mistral_key:       ['api.mistral.ai'],
     fg_groq_key:          ['api.groq.com'],
-    fg_cerebras_key:      ['api.cerebras.ai'],
     fg_nvidia_key:        ['integrate.api.nvidia.com'],
     fg_openrouter_key:    ['openrouter.ai'],
-    fg_opencode_key:      ['opencode.ai'],
     fg_tokenharbor_key:   ['tokenharbor.ai'],
     fg_kilo_key:          ['api.kilo.ai'],
     fg_vercel_key:        ['ai-gateway.vercel.sh'],

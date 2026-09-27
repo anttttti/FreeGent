@@ -267,10 +267,16 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
 
         if (!_runnerRunning || _runnerAbort) break;
 
-        if (/STATUS:\s*blocked/i.test(lastMsg)) {
-            const m = lastMsg.match(/STATUS:\s*blocked[:\s-]+([^\n]+)/i);
+        // The runner's agent (director) declares "BLOCKED: <reason>", which _stripTerminal removes
+        // from the returned text — so a text match for "STATUS: blocked" (the worker footer) never
+        // saw it and blocked tasks were retried/replanned instead of pausing for the user.
+        // runAgentTurn reports the declaration as finishSignal 'blocked'; the text is the reason.
+        const _signal = typeof _lastResult === 'object' ? _lastResult?.finishSignal : null;
+        const _statusBlocked = lastMsg.match(/STATUS:\s*blocked(?:[:\s-]+([^\n]+))?/i);
+        if (_signal === 'blocked' || _statusBlocked) {
             blocked       = true;
-            blockedReason = m ? m[1].trim().slice(0, 200) : 'Task blocked — needs user input';
+            blockedReason = (_statusBlocked?.[1] ?? lastMsg.trim().split('\n').find(l => l.trim()) ?? '').trim().slice(0, 200)
+                || 'Task blocked — needs user input';
             break;
         }
 

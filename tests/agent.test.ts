@@ -186,7 +186,7 @@ describe('settings helpers — defaults', () => {
     // Default comes from _DEFAULT_MAIN_MODELS[0] which is a kilo free model (noKey:true).
     it('getProvider defaults to kilo', () => expect(W.getProvider()).toBe('kilo'));
     it('getGeminiModel defaults to gemini-2.5-flash', () => expect(W.getGeminiModel()).toBe('gemini-2.5-flash'));
-    it('getOAIModel defaults to mistral-medium-3.5', () => expect(W.getOAIModel()).toBe('mistral-medium-3.5'));
+    it('getOAIModel defaults to gpt-5.4-mini', () => expect(W.getOAIModel()).toBe('gpt-5.4-mini'));
     it('getOAIUrl defaults to openai base', () => expect(W.getOAIUrl()).toBe('https://api.openai.com/v1'));
     it('getSearchProvider defaults to auto', () => expect(W.getSearchProvider()).toBe('auto'));
     it('getTavilyKey returns empty string by default', () => expect(W.getTavilyKey()).toBe(''));
@@ -210,28 +210,6 @@ describe('settings helpers — reads localStorage', () => {
     });
 });
 
-// ── getMistralKey / getMistralModel ───────────────────────────────────────────
-
-describe('getMistralKey / getMistralModel defaults', () => {
-    it('getMistralKey returns empty string by default', () => {
-        expect(W.getMistralKey()).toBe('');
-    });
-
-    it('getMistralModel defaults to mistral-medium-3.5', () => {
-        expect(W.getMistralModel()).toBe('mistral-medium-3.5');
-    });
-
-    it('getMistralKey reads from localStorage', () => {
-        localStorage.setItem('fg_mistral_key', 'msk-test');
-        expect(W.getMistralKey()).toBe('msk-test');
-    });
-
-    it('getMistralModel reads from localStorage', () => {
-        localStorage.setItem('fg_mistral_model', 'mistral-small-latest');
-        expect(W.getMistralModel()).toBe('mistral-small-latest');
-    });
-});
-
 // ── oaiEndpoint ───────────────────────────────────────────────────────────────
 
 describe('oaiEndpoint', () => {
@@ -246,14 +224,14 @@ describe('oaiEndpoint', () => {
         expect(ep.url).toContain('/chat/completions');
     });
 
-    it('returns Mistral URL for mistral provider', () => {
-        localStorage.setItem('fg_provider', 'mistral');
-        localStorage.setItem('fg_mistral_key', 'msk-abc');
-        localStorage.setItem('fg_mistral_model', 'mistral-small-latest');
+    it('returns Groq URL for groq provider', () => {
+        localStorage.setItem('fg_provider', 'groq');
+        localStorage.setItem('fg_groq_key', 'gsk-abc');
+        localStorage.setItem('fg_groq_model', 'openai/gpt-oss-20b');
         const ep = W.oaiEndpoint();
-        expect(ep.url).toBe('https://api.mistral.ai/v1/chat/completions');
-        expect(ep.key).toBe('msk-abc');
-        expect(ep.model).toBe('mistral-small-latest');
+        expect(ep.url).toBe('https://api.groq.com/openai/v1/chat/completions');
+        expect(ep.key).toBe('gsk-abc');
+        expect(ep.model).toBe('openai/gpt-oss-20b');
     });
 
     it('strips trailing slash from custom OAI URL', () => {
@@ -283,19 +261,24 @@ describe('getActiveModel', () => {
         expect(W.getActiveModel()).toBe('gemma-4-31b-it');
     });
 
-    it('returns mistral model for mistral provider (via legacy fg_provider migration path)', () => {
+    it('returns groq model for groq provider (via legacy fg_provider migration path)', () => {
         // Setting fg_provider without fg_main_models triggers the migration path that
-        // builds ['mistral|{fg_mistral_model}'] from per-provider localStorage keys.
-        localStorage.setItem('fg_provider', 'mistral');
-        localStorage.setItem('fg_mistral_key', 'msk-test');
-        localStorage.setItem('fg_mistral_model', 'mistral-small-latest');
-        expect(W.getActiveModel()).toBe('mistral-small-latest');
+        // builds ['groq|{fg_groq_model}'] from per-provider localStorage keys.
+        localStorage.setItem('fg_provider', 'groq');
+        localStorage.setItem('fg_groq_key', 'gsk-test');
+        localStorage.setItem('fg_groq_model', 'openai/gpt-oss-20b');
+        expect(W.getActiveModel()).toBe('openai/gpt-oss-20b');
     });
 
-    it('returns mistral model when mistral is in main list', () => {
-        localStorage.setItem('fg_mistral_key', 'msk-test');
-        localStorage.setItem('fg_main_models', JSON.stringify(['mistral|mistral-small-latest']));
-        expect(W.getActiveModel()).toBe('mistral-small-latest');
+    it('returns groq model when groq is in main list', () => {
+        localStorage.setItem('fg_groq_key', 'gsk-test');
+        localStorage.setItem('fg_main_models', JSON.stringify(['groq|openai/gpt-oss-20b']));
+        expect(W.getActiveModel()).toBe('openai/gpt-oss-20b');
+    });
+
+    it('drops mistral entries (provider removed) from a saved main list', () => {
+        localStorage.setItem('fg_main_models', JSON.stringify(['mistral|mistral-medium-3.5', 'groq|openai/gpt-oss-20b']));
+        expect(W.getMainModelList()).toEqual(['groq|openai/gpt-oss-20b']);
     });
 });
 

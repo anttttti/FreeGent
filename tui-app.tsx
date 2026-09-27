@@ -1,5 +1,5 @@
 // tui-app.tsx — Ink component tree for the FreeGent TUI.
-// Layout (full-width, Claude Code / Opencode style):
+// Layout (full-width, Claude Code style):
 //
 //   ┌──────────────────────────────────────────────────────────────┐
 //   │  openai|gpt-4o  ● ready  ctx 3.4K/1050.0K        Alt+? help  │ ← status bar

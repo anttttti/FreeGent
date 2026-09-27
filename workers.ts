@@ -56,7 +56,7 @@ const BUILTIN_ROLES = [
         tier: 'execution',
         tools: new Set(['list_files', 'read_file', 'repo_map', 'search_workspace', 'execute_code',
                         'write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file',
-                        'undo_write', 'ast_query']),
+                        'undo_write', 'ast_query', 'check_page']),
         body_fn(): string {
             const _has = (t: string) => enabledTools.has(t);
 
@@ -281,7 +281,7 @@ ${_roleConciseBlock}`;
         tools: new Set([
             'list_files', 'read_file', 'search_workspace',
             'web_search', 'fetch_url', 'deep_research', 'academic_search',
-            'execute_code', 'repo_map', 'ast_query',
+            'execute_code', 'repo_map', 'ast_query', 'check_page',
         ]),
         body_fn(): string {
             const _has = (t: string) => enabledTools.has(t);
@@ -856,7 +856,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                           roleOverride: localRole, toolFilterOverride: localToolFilter,
                           maxTokens: workerMaxTokens, evtSession: _wEvtSessProxy, evtStep: step,
                           forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null }); },
-                    _makeOAIRetryHandler({
+                    _capWorkerRetryWait(_makeOAIRetryHandler({
                         getEp: () => endpoint ?? oaiEndpoint(),
                         setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
                         onNote: msg => { console.error(`[worker:${_wRole}:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
@@ -875,7 +875,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                             }
                             return false;  // only task message left; bail so caller records error
                         },
-                    }),
+                    }), msg => { console.error(`[worker:${_wRole}:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
                     100,
                     () => (endpoint ?? oaiEndpoint()).provider === 'custom'
                 );
@@ -1015,36 +1015,56 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
             .map(m => m.role === 'system' ? { role: 'user', content: `<nudge>${m.content ?? ''}</nudge>` } : m),
         { role: 'user', content: prompt },
     ] : [{ role: 'user', content: prompt }];
-    const _buildPayload = () => buildChatPayload(ep, {
+    const _buildPayload = (tokens: number) => buildChatPayload(ep, {
         messages: _judgeMsgs,
         temperature,
-        maxTokens,
+        maxTokens: tokens,
         stream: true,
         thinkingBudget: 0,
     });
+    // Models that reason even when asked not to (Gemma 4 on Google's API thinks inline in
+    // <thought> tags and rejects any thinking-off setting with HTTP 400) spend a small budget
+    // entirely on reasoning: a 40-token suggestion or 16-token title came back with no visible
+    // text — "[suggest] utility model failed: TruncatedResponse(empty:no_content)". When the
+    // output is empty but reasoning streamed, retry once on the same endpoint with room for it.
+    // The room is generous: Gemma 4 26B reasoned up to ~750 tokens on the 40-token suggestion
+    // prompt, and a first room of 1024 still ran out with the larger 31B. Only models that
+    // reason use it; the visible answer stays as short as the caller asked.
+    const _REASONING_ROOM = 4096;
     let result = '';
     try {
         let _streaming = '';
         const data = await withRetry(async () => {
-            // Build payload inside the lambda: ep may rotate between retries via the
-            // retry handler's setEp, so provider-specific fields must be fresh each attempt.
-            const payload = _buildPayload();
-            _streaming = '';
-            const _onChunk = (chunk: string, kind: string) => {
-                if (kind === 'output') { _streaming += chunk; handle.setOutput(_streaming); }
-            };
-            const _data = await callLLM(ep, payload, _onChunk, {
-                onRequest: p => handle.setRequest(JSON.stringify(p, null, 2)),
-            });
-            // Empty stream (no output tokens, no text) — provider swallowed the request
-            // (e.g. upstream 429 returned as an empty stream instead of an HTTP error).
-            // Treat as truncated so _makeOAIRetryHandler cycles the endpoint with a cooldown.
-            if (!_streaming.trim()) {
-                const _e: any = new Error('TruncatedResponse(empty:no_content)');
-                _e.isTruncated = true;
-                throw _e;
+            let _tokens = maxTokens;
+            for (let _pass = 0; ; _pass++) {
+                // Build payload inside the lambda: ep may rotate between retries via the
+                // retry handler's setEp, so provider-specific fields must be fresh each attempt.
+                const payload = _buildPayload(_tokens);
+                _streaming = '';
+                let _sawThinking = false, _thinkChars = 0;
+                const _onChunk = (chunk: string, kind: string) => {
+                    if (kind === 'output') { _streaming += chunk; handle.setOutput(_streaming); }
+                    else if (kind === 'thinking' && chunk) { _sawThinking = true; _thinkChars += chunk.length; }
+                };
+                const _data = await callLLM(ep, payload, _onChunk, {
+                    onRequest: p => handle.setRequest(JSON.stringify(p, null, 2)),
+                });
+                if (!_streaming.trim() && _sawThinking && _pass === 0) {
+                    _tokens = maxTokens + _REASONING_ROOM;
+                    continue;
+                }
+                // Empty stream (no output tokens, no text) — provider swallowed the request
+                // (e.g. upstream 429 returned as an empty stream instead of an HTTP error).
+                // Treat as truncated so _makeOAIRetryHandler cycles the endpoint with a cooldown.
+                if (!_streaming.trim()) {
+                    const _e: any = new Error(_sawThinking
+                        ? `TruncatedResponse(empty:only_reasoning — ${_thinkChars} chars of reasoning within max_tokens ${_tokens})`
+                        : 'TruncatedResponse(empty:no_content)');
+                    _e.isTruncated = true;
+                    throw _e;
+                }
+                return _data;
             }
-            return _data;
         }, _makeOAIRetryHandler({
             getEp: () => ep,
             setEp: e => { ep = e; handle.setModel(modelFriendlyName(`${e.provider}|${e.model}`)); },
@@ -1069,6 +1089,25 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
         throw e;
     }
     return result;
+}
+
+// Did a model-merged file replace code with placeholders? Three-band check (step-validator.ts):
+// explicit placeholders fail — ellipsis comments in any comment syntax, "rest of the code",
+// "existing code here", "(same as before)"; content with no ellipsis comments and nearly the
+// length of the largest input passes; anything else goes to a yes/no model call. The old regex
+// only knew `// ...`, `/* ... */` and a few phrases, so e.g. a Python `# ... existing code ...` or
+// an HTML `<!-- rest unchanged -->` was written to disk. A bare Python `...` body (legitimate in
+// stubs) is not a placeholder.
+const _PLACEHOLDER_RE = /(?:\/\/|#|\/\*|<!--|--|;)[ \t]*(?:\.{3}|…)|(?:\.{3}|…)[ \t]*(?:existing|rest|remaining|unchanged|same|other|previous|original)\b|\b(?:rest|remainder) of (?:the )?(?:code|file|function|class|content|implementation)\b|\b(?:existing|unchanged|remaining|previous|original) (?:code|content|implementation|functions?|methods?) (?:here|remains?|unchanged|as before|goes here)\b|merged content here|\[unchanged\]|\((?:same|unchanged) as (?:before|above|original)\)|<!--\s*(?:rest|unchanged|same)\b/i;
+const _MERGE_CHECKS = [{
+    name: 'merge_lost_content',
+    max: Infinity,
+    re_fail: _PLACEHOLDER_RE,
+    re_pass: (t: string, ctx: any) => t.length >= (ctx?.maxLen ?? 0) * 0.9 && !_PLACEHOLDER_RE.test(t) && !/(?:\.{3}|…)[ \t]*(?:\*\/|-->)/.test(t),
+    llmPrompt: 'Below is a source file produced by merging several edited versions of it. Does it contain placeholders or elisions — comments or text such as "... rest of code ...", "existing code here", or visibly missing sections — standing in for code that should be present? Answer YES if content is missing or replaced by a placeholder; NO if it looks complete.',
+}];
+export async function _mergeLostContent(content: string, maxLen: number, llm: any = typeof callLLMComplete === 'function' ? callLLMComplete : null): Promise<boolean> {
+    return !!(await validateOutput(content, _MERGE_CHECKS, { llm, maxTokens: 200, ctx: { maxLen } }));
 }
 
 async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number}}> {
@@ -1115,10 +1154,11 @@ async function resolveFileConflicts(conflicts: Record<string, Record<string, str
     for (const [path, content] of Object.entries(llmResolved)) {
         const versions = needsLLM[path]?.versions;
         if (!versions) { delete llmResolved[path]; continue; }        // filename not in the conflict set
-        const minLen = Math.min(...Object.values(versions).map(s => String(s ?? '').length));
+        const lens   = Object.values(versions).map(s => String(s ?? '').length);
+        const minLen = Math.min(...lens), maxLen = Math.max(...lens);
         const bad = typeof content !== 'string'
             || content.length < minLen * 0.5
-            || /\/\/ \.\.\.|\/\* \.\.\. \*\/|rest of (the )?(code|file)|merged content here|\[unchanged\]/i.test(content);
+            || await _mergeLostContent(content, maxLen);
         if (bad) llmResolved[path] = _longest(versions);
     }
     for (const [path, { versions }] of Object.entries(needsLLM))
@@ -1131,6 +1171,23 @@ async function resolveFileConflicts(conflicts: Record<string, Record<string, str
 
 // Max steps a worker turn may run — distinct from the main-agent cap (getAgentMaxSteps()).
 const _WORKER_MAX_STEPS = 30;
+// Longest a worker waits for a rate-limit cooldown before giving up. Free-tier daily quotas put
+// endpoints on cooldowns of hours (e.g. 34494 s); a worker should wait out a short limit — rather
+// than failing and being relaunched, as happened when every endpoint was cooling — but not that.
+export const WORKER_MAX_RETRY_WAIT_MS = 3 * 60_000;
+
+// Wraps a withRetry onRetry handler: a wait longer than WORKER_MAX_RETRY_WAIT_MS ends the retries.
+export function _capWorkerRetryWait(handler: (n: number, e: any, d: number) => any, note: (msg: string) => void) {
+    return (n: number, e: any, d: number) => {
+        const r = handler(n, e, d);
+        const wait = typeof r === 'number' ? r : (r === undefined ? d : null);
+        if (wait != null && wait > WORKER_MAX_RETRY_WAIT_MS) {
+            note(`[all endpoints rate-limited — next one free in ${Math.round(wait / 60_000)} min; worker stops waiting]`);
+            return false;
+        }
+        return r;
+    };
+}
 
 const WORKER_REDUCE_THRESHOLD = 2000; // chars; if total worker text output exceeds this, synthesise
 

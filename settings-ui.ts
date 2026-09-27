@@ -19,14 +19,12 @@ const _VOICE_STT_CATALOG = [
     { key: 'groq|whisper-large-v3-turbo',             label: 'Whisper Large v3 Turbo',     provider: 'groq',       note: 'Fast · multilingual' },
     { key: 'groq|whisper-large-v3',                   label: 'Whisper Large v3',           provider: 'groq',       note: 'Most accurate' },
     { key: 'groq|distil-whisper-large-v3-en',         label: 'Distil Whisper v3 EN',       provider: 'groq',       note: 'English · fastest' },
-    { key: 'mistral|voxtral-mini-transcribe-v2',      label: 'Voxtral Mini Transcribe v2', provider: 'mistral',    note: 'Free tier · batch' },
     { key: 'openrouter|nvidia/parakeet-tdt-0.6b-v3',  label: 'Parakeet TDT 0.6B v3',       provider: 'openrouter', note: 'NVIDIA · multilingual · free tier' },
     { key: 'openrouter|qwen/qwen3-asr-flash',         label: 'Qwen3 ASR Flash',            provider: 'openrouter', note: 'Alibaba · 11 languages · free tier' },
 ];
 
 const _VOICE_TTS_CATALOG = [
     { key: 'browser|webspeech',                                  label: 'Web Speech Synthesis',     provider: 'browser',    note: 'Free · browser built-in' },
-    { key: 'mistral|voxtral-mini-tts-2603',                      label: 'Voxtral Mini TTS',         provider: 'mistral',    note: 'Free tier · 9 languages · 70ms' },
     { key: 'openrouter|mistralai/voxtral-mini-tts-2603',         label: 'Voxtral Mini TTS',         provider: 'openrouter', note: 'Via OpenRouter · free tier' },
     { key: 'openrouter|hexgrad/kokoro-82m',                      label: 'Kokoro 82M',               provider: 'openrouter', note: 'Open-weight · 8 languages · free tier' },
     { key: 'openrouter|google/gemini-3.1-flash-tts-preview',     label: 'Gemini 3.1 Flash TTS',     provider: 'openrouter', note: '70+ languages' },
@@ -181,12 +179,9 @@ function onSandboxProviderChange() {
 // Mapping from .env variable names → { localStorage key, settings input id }
 const ENV_KEY_MAP: Record<string, { ls: string; input: string }> = {
     GEMINI_API_KEY:       { ls: 'fg_gemini_key',        input: 'gemini-key' },
-    MISTRAL_API_KEY:      { ls: 'fg_mistral_key',       input: 'mistral-key' },
     GROQ_API_KEY:         { ls: 'fg_groq_key',          input: 'groq-key' },
-    CEREBRAS_API_KEY:     { ls: 'fg_cerebras_key',      input: 'cerebras-key' },
     OPENROUTER_API_KEY:   { ls: 'fg_openrouter_key',    input: 'openrouter-key' },
     NVIDIA_API_KEY:       { ls: 'fg_nvidia_key',        input: 'nvidia-key' },
-    OPENCODE_API_KEY:     { ls: 'fg_opencode_key',      input: 'opencode-key' },
     TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key' },
     KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key' },
     VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key' },
@@ -259,12 +254,9 @@ function saveSettings() {
     };
 
     saveKey('fg_gemini_key',        'gemini-key');
-    saveKey('fg_mistral_key',       'mistral-key');
     saveKey('fg_groq_key',          'groq-key');
-    saveKey('fg_cerebras_key',      'cerebras-key');
     saveKey('fg_nvidia_key',        'nvidia-key');
     saveKey('fg_openrouter_key',    'openrouter-key');
-    saveKey('fg_opencode_key',      'opencode-key');
     saveKey('fg_tokenharbor_key',   'tokenharbor-key');
     saveKey('fg_kilo_key',          'kilo-key');
     saveKey('fg_vercel_key',        'vercel-key');
@@ -300,12 +292,9 @@ function populateSettingsForm() {
         if (val) el.dataset.fgLoaded = '1';
     };
     set('gemini-key',     getGeminiKey());
-    set('mistral-key',    getMistralKey());
     set('groq-key',       getGroqKey());
-    set('cerebras-key',   getCerebrasKey());
     set('nvidia-key',     getNvidiaKey());
     set('openrouter-key', getOpenRouterKey());
-    set('opencode-key',      getOpenCodeKey());
     set('tokenharbor-key',   getTokenHarborKey());
     set('kilo-key',          getKiloKey());
     set('vercel-key',        getVercelKey());
@@ -566,7 +555,7 @@ function updateReasoningSelect() {
 
 
 function _providerLabel(p) {
-    return { google:'Google', mistral:'Mistral', groq:'Groq', cerebras:'Cerebras', nvidia:'NVIDIA', openrouter:'OpenRouter', opencode:'OpenCode', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', custom:'Custom' }[p] || p;
+    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', custom:'Custom' }[p] || p;
 }
 
 let _modelSort: { col: string | null; dir: string } = { col: null, dir: 'asc' };
@@ -585,31 +574,14 @@ function _modelPageUrl(provider: string, model: string): string {
             if (model.startsWith('gemma')) return 'https://ai.google.dev/gemma/docs/gemma-models';
             // Gemini: anchor by model name (e.g. #gemini-2.5-flash-lite)
             return `https://ai.google.dev/gemini-api/docs/models#${model}`;
-        case 'mistral': {
-            // Map versioned model IDs to Mistral product pages
-            const slug = model.startsWith('ministral')      ? 'ministral'
-                       : model.startsWith('codestral')      ? 'codestral'
-                       : model.startsWith('pixtral')        ? 'pixtral'
-                       : model.startsWith('devstral')       ? 'devstral'
-                       : model.startsWith('mistral-large')  ? 'mistral-large'
-                       : model.startsWith('mistral-medium') ? 'mistral-medium'
-                       : model.startsWith('mistral-small')  ? 'mistral-small'
-                       : null;
-            return slug ? `https://mistral.ai/models/${slug}/`
-                        : 'https://docs.mistral.ai/getting-started/models/all-models/';
-        }
         case 'groq':
             return 'https://console.groq.com/docs/models';
-        case 'cerebras':
-            return 'https://inference-docs.cerebras.ai/model-catalog';
         case 'nous':
             // Models are vendor/name:free (e.g. stepfun/step-3.7-flash:free).
             // OpenRouter hosts the canonical model pages; Nous Portal index for the provider link.
             return model.includes('/')
                 ? `https://openrouter.ai/${model.replace(/:free$/, '')}`
                 : 'https://portal.nousresearch.com/models';
-        case 'opencode':
-            return 'https://opencode.ai/docs/zen/#endpoints';
         case 'tokenharbor':
             return 'https://tokenharbor.ai/models';
         case 'kilo':
@@ -706,9 +678,7 @@ function renderModelCatalogTable() {
     <tr><td class="settings-table-label">Provider</td>
         <td><select class="settings-input" id="new-model-provider" style="width:100%" onchange="_onNewModelProviderChange()">
           <option value="openrouter">OpenRouter</option>
-          <option value="opencode">OpenCode</option>
           <option value="nous">Nous Portal</option>
-          <option value="mistral">Mistral</option>
           <option value="google">Google</option>
           <option value="nvidia">NVIDIA</option>
           <option value="custom">Custom</option>
@@ -1098,11 +1068,13 @@ function _renderPriorityList(containerId, list) {
     for (const k of _prioritySelected) if (!listSet.has(k)) _prioritySelected.delete(k);
     if (!listSet.has(_priorityLastClicked!)) _priorityLastClicked = null;
 
-    // Filter list to models the user has a key for (or that need no key).
+    // Entries without a key stay visible, shown inactive like paused ones. They used to be filtered
+    // out here, which made a saved entry silently vanish (an NVIDIA provider missing from a ranked
+    // model's group) and skewed the row indices the move/remove buttons pass for the saved list.
     const _allModelMap = new Map((getAllModels() as any[]).map(m => [`${m.provider}|${m.model}`, m]));
-    list = list.filter(k => { const m = _allModelMap.get(k); return !m || _modelHasKey(m); });
-
+    const noKeySet  = new Set(list.filter(k => { const m = _allModelMap.get(k); return !!m && !_modelHasKey(m); }));
     const pausedSet = new Set(getPausedMainModels());
+    const _inactive = (k: string) => pausedSet.has(k) || noKeySet.has(k);
     const multiSel  = _prioritySelected.size > 1;
 
     let html = `<div class="model-priority-list">`;
@@ -1112,12 +1084,14 @@ function _renderPriorityList(containerId, list) {
     for (let i = 0; i < list.length; i++) {
         const key = list[i];
         const paused   = pausedSet.has(key);
+        const noKey    = noKeySet.has(key);
         const selected = _prioritySelected.has(key);
         const lbl = modelFriendlyName(key) || key;
         const rem = typeof getCooldownRemaining === 'function' ? getCooldownRemaining(key) : 0;
         const coolTag = rem > 0 ? `<span class="model-priority-cool">⏳${rem}s</span>` : '';
-        const rankCls     = (i === 0 && !paused) ? ' model-priority-rank-1' : '';
-        const pausedCls   = paused    ? ' model-priority-paused'   : '';
+        const keyTag  = noKey ? `<span class="model-priority-cool" title="No API key for this provider — add one in Settings → Models">no key</span>` : '';
+        const rankCls     = (i === 0 && !_inactive(key)) ? ' model-priority-rank-1' : '';
+        const pausedCls   = (paused || noKey) ? ' model-priority-paused'   : '';
         const selectedCls = selected  ? ' model-priority-selected' : '';
         // ↑/↓ title hints: when multiple rows are selected, the button moves them all.
         const upTitle   = (multiSel && selected) ? 'Move selected up'   : 'Move up';
@@ -1134,8 +1108,8 @@ function _renderPriorityList(containerId, list) {
         ontouchstart="_priorityTouchStart(event,'${containerId}',${i})"
         ontouchmove="_priorityTouchMove(event)"
         ontouchend="_priorityTouchEnd(event)">⠿</span>
-  <span class="model-priority-rank">${paused ? '–' : i + 1 - [...list.slice(0, i)].filter(k => pausedSet.has(k)).length}</span>
-  <span class="model-priority-label">${lbl}${coolTag}</span>
+  <span class="model-priority-rank">${_inactive(key) ? '–' : i + 1 - [...list.slice(0, i)].filter(_inactive).length}</span>
+  <span class="model-priority-label">${lbl}${coolTag}${keyTag}</span>
   <span class="model-priority-actions">
     ${i > 0 ? `<button class="model-table-btn" title="${upTitle}" onclick="_movePriorityItem('${containerId}',${i},-1)">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
     ${i < list.length - 1 ? `<button class="model-table-btn" title="${downTitle}" onclick="_movePriorityItem('${containerId}',${i},1)">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
@@ -1152,8 +1126,8 @@ function _renderPriorityList(containerId, list) {
             ondragleave="_handleDragLeave(event)"
             ondragend="_handleDragEnd(event)"
             ondrop="_handleDrop(event, '${containerId}', ${i})">
-  <span class="model-priority-rank">${paused ? '–' : i + 1 - [...list.slice(0, i)].filter(k => pausedSet.has(k)).length}</span>
-  <span class="model-priority-label">${lbl}${coolTag}</span>
+  <span class="model-priority-rank">${_inactive(key) ? '–' : i + 1 - [...list.slice(0, i)].filter(_inactive).length}</span>
+  <span class="model-priority-label">${lbl}${coolTag}${keyTag}</span>
   <span class="model-priority-actions">
     ${i > 0 ? `<button class="model-table-btn" title="${upTitle}" onclick="_movePriorityItem('${containerId}',${i},-1)">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
     ${i < list.length - 1 ? `<button class="model-table-btn" title="${downTitle}" onclick="_movePriorityItem('${containerId}',${i},1)">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
@@ -1271,6 +1245,107 @@ function saveMediaModel(type, value) {
     else if (type === 'video') saveVideoModel(value);
 }
 
+// ── Model ranking helpers ─────────────────────────────────────────────────
+// Total/active parameter counts (billions) from a model description or id:
+// "55B active parameters out of 550B total", "118B total parameter", "27B dense",
+// or ids like nemotron-3-ultra-550b-a55b / gemma-4-26b-a4b-it / qwen3.8-27b.
+export function parseParamsB(desc: string, id: string): { total: number | null; active: number | null } {
+    const d = String(desc ?? '');
+    const num = (re: RegExp) => { const m = d.match(re); return m ? parseFloat(m[1]) : null; };
+    let total = num(/out of (\d+(?:\.\d+)?)\s*B\b/i)
+        ?? num(/(\d+(?:\.\d+)?)\s*B\s+total/i)
+        ?? num(/(\d+(?:\.\d+)?)\s*B[- ]param/i)
+        ?? num(/(\d+(?:\.\d+)?)\s*billion[- ]param/i);
+    let active = num(/(\d+(?:\.\d+)?)\s*B\s+active/i);
+    const idm = String(id ?? '').toLowerCase().match(/(?:^|[-_.])(\d+(?:\.\d+)?)b(?:-a(\d+(?:\.\d+)?)b)?(?=$|[-_.:])/);
+    if (idm) { total ??= parseFloat(idm[1]); if (idm[2]) active ??= parseFloat(idm[2]); }
+    return { total, active };
+}
+
+type ModelRankGroup = {
+    id: string;                 // shown to the ranker: an org/model id without provider suffixes
+    entries: any[];             // catalog entries (one per provider) serving this model
+    contextK: number | null; paramsB: number | null; activeB: number | null;
+    tools: boolean; thinking: boolean; released: string | null;
+    aa: { intelligence: number | null; coding: number | null; agentic: number | null } | null;
+    live: boolean;              // details came from the live OpenRouter list
+    successes: number;          // successful main-agent requests to this model, all providers (recordModelSuccess)
+};
+
+// Group available catalog entries by canonical model id and merge their features — live
+// OpenRouter details where the model is listed there, else the catalog entries combined
+// (largest context and parameter count; tools/thinking if any provider has them; the most
+// common release month). Order: first appearance in the catalog.
+export function buildModelRankGroups(available: any[], orModels: any[] = [], successCounts: Record<string, number> = {}): ModelRankGroup[] {
+    const live = new Map<string, any>();   // canonical id → best OpenRouter record (prefer non-:free)
+    const liveCtx = new Map<string, number>();   // canonical id → largest context over all its listings
+    for (const om of orModels) {
+        if (typeof om?.id !== 'string') continue;
+        const cid = canonicalModelId(om.id);
+        if (typeof om.context_length === 'number') liveCtx.set(cid, Math.max(liveCtx.get(cid) ?? 0, om.context_length));
+        const prev = live.get(cid);
+        const hasAA = (x: any) => typeof x?.benchmarks?.artificial_analysis?.intelligence_index === 'number';
+        if (!prev || (!hasAA(prev) && hasAA(om)) || (hasAA(prev) === hasAA(om) && /:free$/.test(prev.id) && !/:free$/.test(om.id)))
+            live.set(cid, om);
+    }
+    const byId = new Map<string, ModelRankGroup>();
+    for (const m of available) {
+        const cid = canonicalModelId(m.model);
+        let g = byId.get(cid);
+        if (!g) {
+            g = { id: cid, entries: [], contextK: null, paramsB: null, activeB: null, tools: false, thinking: false, released: null, aa: null, live: false,
+                  successes: Number(successCounts[cid]) || 0 };
+            byId.set(cid, g);
+        }
+        g.entries.push(m);
+    }
+    const _max = (xs: any[]) => { const v = xs.filter(x => typeof x === 'number' && isFinite(x)); return v.length ? Math.max(...v) : null; };
+    const _mode = (xs: any[]) => {
+        const c = new Map<string, number>();
+        for (const x of xs) if (x) c.set(x, (c.get(x) ?? 0) + 1);
+        return [...c.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] ?? null;
+    };
+    for (const g of byId.values()) {
+        const om = live.get(g.id);
+        // Display id: the org/model form when any source has one, minus :free/-free suffixes.
+        const withOrg = [om?.id, ...g.entries.map(e => e.model)].find(x => typeof x === 'string' && x.includes('/'));
+        g.id = withOrg ? withOrg.replace(/:[a-z0-9-]+$/i, '').replace(/-free$/i, '') : g.id;
+        const catParams = _max(g.entries.map(e => e.params));
+        const fromCat = parseParamsB('', g.id);
+        if (om) {
+            g.live = true;
+            const sp: string[] = Array.isArray(om.supported_parameters) ? om.supported_parameters : [];
+            const p = parseParamsB(om.description ?? '', om.id);
+            // Largest context of any listing (e.g. a :free variant offering 1M vs 262K paid).
+            g.contextK = liveCtx.has(canonicalModelId(om.id)) ? Math.round(liveCtx.get(canonicalModelId(om.id))! / 1000) : _max(g.entries.map(e => e.contextK));
+            g.tools    = sp.includes('tools');
+            g.thinking = sp.includes('reasoning') || sp.includes('include_reasoning');
+            g.released = typeof om.created === 'number' ? new Date(om.created * 1000).toISOString().slice(0, 7) : _mode(g.entries.map(e => e.released));
+            g.paramsB  = p.total ?? catParams ?? fromCat.total;
+            g.activeB  = p.active ?? fromCat.active;
+            const aa = om.benchmarks?.artificial_analysis;
+            if (aa && typeof aa.intelligence_index === 'number')
+                g.aa = { intelligence: aa.intelligence_index, coding: aa.coding_index ?? null, agentic: aa.agentic_index ?? null };
+        } else {
+            g.contextK = _max(g.entries.map(e => e.contextK));
+            g.tools    = g.entries.some(e => e.tools);
+            g.thinking = g.entries.some(e => e.thinking);
+            g.released = _mode(g.entries.map(e => e.released));
+            g.paramsB  = catParams ?? fromCat.total;
+            g.activeB  = fromCat.active;
+        }
+    }
+    return [...byId.values()];
+}
+
+export function formatModelRankLine(n: number, g: ModelRankGroup): string {
+    const params = g.paramsB != null ? `${g.paramsB}B${g.activeB != null ? ` (${g.activeB}B active)` : ''}` : 'size unknown';
+    const caps = [g.tools ? 'tools' : 'no tools', g.thinking && 'reasoning'].filter(Boolean).join(', ');
+    const aa = g.aa ? `, AA intelligence ${g.aa.intelligence}${g.aa.coding != null ? ` / coding ${g.aa.coding}` : ''}${g.aa.agentic != null ? ` / agentic ${g.aa.agentic}` : ''}` : '';
+    const used = g.successes > 0 ? `, ${g.successes} successful request${g.successes === 1 ? '' : 's'} here` : ', not used here yet';
+    return `${n}. ${g.id} — ${params}, ${g.contextK != null ? `${g.contextK}K ctx` : 'ctx unknown'}, ${caps}${g.released ? `, released ${g.released}` : ''}${aa}${used}`;
+}
+
 async function autoPopulateModelPriority() {
     const btn = document.getElementById('auto-rank-btn') as HTMLButtonElement;
     const _IDLE_LABEL = '<span style="color:#a855f7">✦</span> Populate';
@@ -1284,21 +1359,19 @@ async function autoPopulateModelPriority() {
             return _fail('buildChatPayload or callLLM not available');
         }
 
-        // All text-capable models that are not currently cooling down
+        // All text-capable models, including ones cooling down after a rate limit: a cooldown is
+        // temporary while the priority list is long-lived (rotation already skips cooling entries).
+        // Filtering them out dropped providers from a model's group — Nemotron Ultra was ranked
+        // with only 2 of its 4 providers while OpenRouter and NVIDIA were rate-limited.
         const all = typeof getAllModels === 'function' ? getAllModels() : [];
-        const available = all.filter(m => {
-            if (m.media && !m.media.includes('text')) return false;
-            const spec = `${m.provider}|${m.model}`;
-            return (typeof getCooldownRemaining !== 'function' || getCooldownRemaining(spec) === 0);
-        });
-        if (!available.length) { alert('No available (non-cooling) models found.'); return; }
+        const available = all.filter(m => !m.media || m.media.includes('text'));
+        if (!available.length) { alert('No text models found in the catalog.'); return; }
 
-        // Fetch Openrouter model list for benchmark data (no auth needed, CORS open).
-        // The response includes benchmarks.artificial_analysis.intelligence_index for some models.
-        // We build: (a) a direct score map for available models, (b) a reference leaderboard
-        // of all scored models sorted by score, to give the LLM a calibration scale.
-        let orBenchmarks: Map<string, number> = new Map(); // OR model_id → intelligence_index
-        let orRefLeaderboard = '';
+        // Current model details from OpenRouter's public model list (no auth, CORS open): context
+        // length, tool/reasoning support, release date, parameter counts from the description, and
+        // Artificial Analysis indices. Matched to catalog models by canonical id, so it also fills in
+        // models served by other providers. Proceeds on catalog data alone if the fetch fails.
+        let orModels: any[] = [];
         try {
             const orResp = await fetch('https://openrouter.ai/api/v1/models', {
                 headers: { Accept: 'application/json' },
@@ -1306,50 +1379,35 @@ async function autoPopulateModelPriority() {
             });
             if (orResp.ok) {
                 const orJson = await orResp.json().catch(() => null);
-                const orAll: any[] = Array.isArray(orJson?.data) ? orJson.data : [];
-                for (const om of orAll) {
-                    const ii = (om?.benchmarks?.artificial_analysis?.intelligence_index) ?? null;
-                    if (typeof ii === 'number') orBenchmarks.set(om.id as string, ii);
-                }
-                // Build reference leaderboard: top scored models, for calibration scale
-                const sorted = [...orBenchmarks.entries()].sort((a, b) => b[1] - a[1]);
-                if (sorted.length) {
-                    // Deduplicate: prefer :free variants, skip :batch and duplicates
-                    const seen = new Set<string>();
-                    const refRows: string[] = [];
-                    for (const [id, ii] of sorted) {
-                        const base = id.replace(/:(?:free|batch)$/, '');
-                        if (seen.has(base)) continue;
-                        seen.add(base);
-                        const tag = id.endsWith(':free') ? ' (free tier)' : '';
-                        refRows.push(`  ${id}${tag}: ${ii}`);
-                        if (refRows.length >= 20) break;
-                    }
-                    orRefLeaderboard = refRows.join('\n');
-                }
+                orModels = Array.isArray(orJson?.data) ? orJson.data : [];
             }
-        } catch { /* network error — proceed without benchmark data */ }
+        } catch { /* network error — catalog data only */ }
 
-        // Number the list so the LLM returns integers — avoids all provider|model format corruption
-        // (slash-vs-pipe confusion, :free suffixes, hallucinated partial specs, etc.)
-        const modelLines = available.map((m, i) => {
-            const params = m.params ? `${m.params}B` : '?B';
-            const caps = [m.tools && 'tools', m.thinking && 'thinking'].filter(Boolean).join('+') || 'basic';
-            // Lookup intelligence_index: try provider|model id and model id (:free stripped)
-            const orId = m.provider === 'openrouter' ? m.model : null;
-            const ii = orId != null
-                ? (orBenchmarks.get(orId) ?? orBenchmarks.get(orId.replace(/:free$/, '')) ?? null)
-                : null;
-            const score = ii != null ? `, AA-index:${ii}` : '';
-            return `${i + 1}. ${m.label} — ${m.contextK}K ctx, ${params}, ${caps}, ${m.released}${score}: ${m.note}`;
-        }).join('\n');
+        // One entry per model, whichever providers serve it; the ranking sees model ids only.
+        const groups = buildModelRankGroups(available, orModels,
+            typeof getModelSuccessCounts === 'function' ? getModelSuccessCounts() : {});
+
+        // Reference scale: top Artificial Analysis intelligence scores across all OpenRouter models
+        // (paid ones included), by canonical id, so the ranker can place the free models on it.
+        const refBest = new Map<string, number>();
+        for (const om of orModels) {
+            const ii = om?.benchmarks?.artificial_analysis?.intelligence_index;
+            if (typeof ii !== 'number' || typeof om?.id !== 'string') continue;
+            const cid = canonicalModelId(om.id);
+            if (!refBest.has(cid) || refBest.get(cid)! < ii) refBest.set(cid, ii);
+        }
+        const orRefLeaderboard = [...refBest.entries()].sort((x, y) => y[1] - x[1]).slice(0, 20)
+            .map(([id, ii]) => `  ${id}: ${ii}`).join('\n');
+
+        // Number the list so the LLM returns integers — avoids id-format corruption.
+        const modelLines = groups.map((g, i) => formatModelRankLine(i + 1, g)).join('\n');
 
         const refSection = orRefLeaderboard
-            ? `\nFor reference — Artificial Analysis Intelligence Index (higher = more capable, includes paid models as calibration scale):\n${orRefLeaderboard}\n`
+            ? `\nFor reference — Artificial Analysis Intelligence Index (higher = more capable; includes paid models as a calibration scale):\n${orRefLeaderboard}\n`
             : '';
 
         const userMsg =
-`Rank these free AI models by overall capability for general-purpose tasks (coding, reasoning, instruction following, tool use). Prefer larger parameter counts, longer context, tool support, recency, and AA-index score where shown.
+`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. A model without tool support is unsuitable for agent work — rank it last.
 ${refSection}
 ${modelLines}
 
@@ -1367,7 +1425,7 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
                         rankings: {
                             type: 'array',
                             description: 'Model list numbers (1-indexed integers from the list above), up to 10, most capable first.',
-                            items: { type: 'integer', minimum: 1, maximum: available.length },
+                            items: { type: 'integer', minimum: 1, maximum: groups.length },
                         },
                     },
                     required: ['rankings'],
@@ -1458,23 +1516,47 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
                 const seen = new Set<number>();
                 for (const m of contentStr.matchAll(/\b(\d{1,3})\b/g)) {
                     const n = parseInt(m[1], 10);
-                    if (n >= 1 && n <= available.length && !seen.has(n)) { seen.add(n); rawIndices.push(n); }
+                    if (n >= 1 && n <= groups.length && !seen.has(n)) { seen.add(n); rawIndices.push(n); }
                 }
             } else {
                 console.warn('[auto-rank] no parseable content — result:', JSON.stringify(result)?.slice(0, 300));
             }
         }
 
+        // Each ranked model expands to all of its providers, kept together so rotation falls
+        // back to the same model elsewhere before moving to the next one. Within a model: its
+        // current priority order first, then providers with a key/no-key access, then the rest.
+        const current = typeof getMainModelList === 'function' ? getMainModelList() : [];
+        const _order = (spec: string) => {
+            const i = current.indexOf(spec);
+            if (i >= 0) return i;
+            return 1000 + (typeof specHasKey === 'function' && specHasKey(spec) ? 0 : 1000);
+        };
         const picked: string[] = [];
+        const pickedGroups = new Set<number>();
         for (const idx of rawIndices) {
-            if (idx >= 1 && idx <= available.length) {
-                const m = available[idx - 1];
-                const spec = `${m.provider}|${m.model}`;
-                if (!picked.includes(spec)) picked.push(spec);
-            }
-            if (picked.length >= 10) break;
+            if (idx < 1 || idx > groups.length || pickedGroups.has(idx)) continue;
+            pickedGroups.add(idx);
+            const specs = groups[idx - 1].entries.map((m: any) => `${m.provider}|${m.model}`);
+            specs.sort((x: string, y: string) => _order(x) - _order(y));
+            for (const spec of specs) if (!picked.includes(spec)) picked.push(spec);
+            if (pickedGroups.size >= 10) break;
         }
         if (!picked.length) return _fail(`no valid indices in response — got: ${JSON.stringify(rawIndices).slice(0, 120)}`);
+
+        // Per-model log: which providers were added, and any provider of the same model left out
+        // (hidden in Settings → Models, i.e. removed or edited) or added without a key.
+        const _hidden = typeof getHiddenModels === 'function' ? [...getHiddenModels()] : [];
+        let _rank = 0;
+        for (const idx of pickedGroups) {
+            const g = groups[idx - 1];
+            const specs = g.entries.map((m: any) => `${m.provider}|${m.model}`);
+            const hidden = _hidden.filter(k => canonicalModelId(k.slice(k.indexOf('|') + 1)) === canonicalModelId(g.entries[0].model));
+            const noKey = specs.filter((k: string) => typeof specHasKey === 'function' && !specHasKey(k));
+            console.info(`[auto-rank] #${++_rank} ${g.id} → ${specs.join(', ')}`
+                + (hidden.length ? ` | hidden in Settings → Models (removed/edited), not added: ${hidden.join(', ')}` : '')
+                + (noKey.length ? ` | no key, shown inactive: ${noKey.join(', ')}` : ''));
+        }
 
         saveMainModelList(picked);
         renderMainModelList();

@@ -155,12 +155,14 @@ declare global {
     var getAgentWorkerReduce: any;
     var getAllModels: any;
     var isBlacklistedModel: (spec: string) => boolean;
+    var canonicalModelId: (model: string) => string;
+    var getModelSuccessCounts: () => Record<string, number>;
+    var recordModelSuccess: (model: string) => void;
     var FREE_MODEL_BLACKLIST: ReadonlySet<string>;
     var getAllModelsForMedia: any;
     var getAstEnabled: any;
     var getAudioModel: any;
     var getBraveKey: any;
-    var getCerebrasKey: any;
     var getContextThreshold: any;
     var getContextUsage: () => { used: number; limit: number };
     var getCustomModels: any;
@@ -181,12 +183,9 @@ declare global {
     var getMainModelList: any;
     var getMediaCapableSpec: any;
     var getMinP: any;
-    var getMistralKey: any;
-    var getMistralModel: any;
     var getNvidiaKey: any;
     var getNvidiaModel: any;
     var getOAIKey: any;
-    var getOpenCodeKey: any;
     var getTokenHarborKey: any;
     var getKiloKey: any;
     var getVercelKey: any;
@@ -246,6 +245,7 @@ declare global {
     var savePausedMainModels: any;
     var saveSamplingSetting: any;
     var saveVideoModel: any;
+    var getHiddenModels: () => Set<string>;
     var hideBuiltinModel: (key: string) => void;
     var unhideBuiltinModel: (key: string) => void;
     var setDisabledTools: any;
@@ -521,6 +521,7 @@ declare global {
     var reactiveSkillGuidance: any;
     // ── bridged by turn-context.ts ──
     var _isCompletionRequest: any;
+    var isTaskCompletionRequest: (text: string, llm?: any) => Promise<boolean>;
     var buildWorkspaceIndex: any;
     var collectWorkspacePaths: any;
     var applyTurnTriggers: any;
@@ -580,6 +581,7 @@ declare global {
     var AGENT_TOOL_NAMES: any;
     var extractPayload: any;
     var validateOutput: any;
+    var RESULT_MARKERS_RE: RegExp;
     // ── bridged by system-prompt.ts ──
     var buildSystemPrompt: () => string;
     var _buildWorkspaceDesc: () => string;
@@ -587,6 +589,7 @@ declare global {
     var _buildEnvContext: () => string;
     // ── bridged by tabs.ts ──
     var openArtifactTab: any;
+    var runPageCheck: (path: string, opts?: { actions?: any[]; probes?: string[]; waitMs?: number }) => Promise<any>;
     // ── bridged by tasks.ts ──
     var loadTaskFiles: any;
     var syncLedgerWithTaskFiles: any;

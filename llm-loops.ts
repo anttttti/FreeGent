@@ -1,7 +1,7 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
-import { validateOutput, AGENT_TOOL_NAMES } from './step-validator.js';
+import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
@@ -17,7 +17,7 @@ import { streamOAICompat, nonStreamOAICompat, decodeOAIResponse } from './stream
 import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
-import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking } from './config.js';
+import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel } from './tools.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
@@ -607,7 +607,7 @@ const _toolNamesRe = () => (typeof AGENT_TOOL_NAMES !== 'undefined' && AGENT_TOO
 // baseline revert) replaced it with bare `ps.saved = text` assignments, reintroducing the
 // bug. Regression guard: tests/loop-protocol.test.js.
 function _saveAnswer(ps: any, text: string): void {
-    if (_stripTerminal(text ?? '').trim() || !ps.saved) ps.saved = text;
+    if (_stripTerminal(text ?? '').trim() || !ps.saved) { ps.saved = text; ps.savedByStateLine = false; }
 }
 
 
@@ -615,6 +615,24 @@ function _saveAnswer(ps: any, text: string): void {
 // "Next, I will add Z." — intent without the tool call that should carry it out.
 // "[.!?](?=\S)" lets file names ("game.js") through; "let me know" is a sign-off, not intent.
 const _INTENT_TAIL_RE = /(?:^|[.!?\n]\s*)(?:(?:ok(?:ay)?|now|next|so|then|first|alright)[,\s]+)*(?:let me(?! know)|let's|i'll|i will|i'm going to|i am going to|i need to|time to)\b(?:[^\n.!?]|[.!?](?=\S))*[.:!…]*$/i;
+
+// Is a no-tool-call message only narration of the agent's next step (not a result for the user)?
+// Three-band check (step-validator.ts): the intent regex above fires deterministically; clear
+// result/report markers pass; anything matching both or neither goes to a yes/no model call.
+// Its verdict decides whether missing_state_line may save the text as the turn's answer and
+// whether a tool call is forced next.
+const _NARRATION_CHECKS = [{
+    name: 'narration_only',
+    max: Infinity,
+    re_fail: (t: string) => _INTENT_TAIL_RE.test(t),
+    re_pass: RESULT_MARKERS_RE,
+    llmPrompt: 'An AI agent working on a task sent the message below without calling a tool. Is the message ONLY narration of what the agent is about to do next (announcing or planning its next step), rather than a result, finding, answer, or summary meant for the user? Answer YES if it only announces next steps; NO if it reports something the user needs.',
+}];
+export async function _isNarrationOnly(text: string, llm: any = typeof callLLMComplete === 'function' ? callLLMComplete : null): Promise<boolean> {
+    const t = (text ?? '').trim();
+    if (!t) return false;
+    return !!(await validateOutput(t, _NARRATION_CHECKS, { llm, maxTokens: 200 }));
+}
 
 const _STEP_CHECKS = [
     {   // Pseudo tool call in any form: text that tries to run a command instead of
@@ -730,7 +748,17 @@ const _STEP_CHECKS = [
         // (the model's next reply after the state-token nudge) can be accepted without
         // requiring the answer to be repeated.  Uses _saveAnswer so an empty text arg
         // (e.g. from a reasoning-only step) cannot overwrite an already-saved answer.
-        onFire: (ps: any, text: string) => { _saveAnswer(ps, text); },
+        // Narration that announces a next action ("Let me check the update function:") is not an
+        // answer — saving it made a later bare COMPLETED display it as the turn's result, 30 steps
+        // after the fact (fg-chat 2026-09-27-08-44-35). ps.savedByStateLine marks the save so a
+        // following tool step (the model carried on working) can drop it.
+        onFire: async (ps: any, text: string) => {
+            ps.lastWasNarration = await _isNarrationOnly(text);
+            if (ps.lastWasNarration) return;
+            const before = ps.saved;
+            _saveAnswer(ps, text);
+            if (ps.saved !== before) ps.savedByStateLine = true;
+        },
     },
 ];
 // Thin wrapper over the shared engine (step-validator.js): runs the band routing,
@@ -744,7 +772,7 @@ async function _validateStepOutput(text: string, ps: any, phase: string, taskGoa
         ctx: taskGoal ? { taskGoal } : null,
     });
     if (!vc) return null;
-    vc.check.onFire?.(ps, text);
+    await vc.check.onFire?.(ps, text);
     // counters[name] is incremented by validateOutput before returning vc — pass it so
     // nudge functions can escalate their message on repeated fires.
     const _fireN = (ps.checkFires ??= {})[vc.name] ?? 1;
@@ -872,7 +900,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
@@ -1256,7 +1284,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Narration announcing its next action ("Let me write the game.js file now.")
                 // means the model intends a tool call but keeps emitting text — the reminder
                 // alone looped five times in a Cowork run. Force the call it announced.
-                if (vcPost.name === 'missing_state_line' && _INTENT_TAIL_RE.test(textContent.trim()))
+                // ps.lastWasNarration: the narration_only verdict set by missing_state_line's onFire.
+                if (vcPost.name === 'missing_state_line' && ps.lastWasNarration)
                     _forceToolCall = true;
                 return { do: 'continue' };
             }
@@ -1535,6 +1564,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (!message) throw new Error('No response from model');
         _endpointNeedsProbe.delete(_epKey);
         recordSuccess(activeEndpoint ?? _defaultEndpoint());
+        // Main-agent requests only (workers and utility calls use other paths): feeds the
+        // per-model reliability count used by the Model Priority ranking.
+        recordModelSuccess((activeEndpoint ?? _defaultEndpoint())?.model);
         sessionSaveRawMessage?.(activeChatId, {
             role: 'assistant', kind: 'response', name: _epKey,
             content: message.content ?? null,
@@ -1657,6 +1689,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
         ps.substCheck = 0;
         ps.checkFires = {};
+        // A text saved by missing_state_line was not the answer after all — the model went on
+        // working. Drop it, so a closing bare COMPLETED asks for a summary instead of showing it.
+        if (ps.savedByStateLine) { ps.saved = null; ps.savedByStateLine = false; }
         // Role mode gets a tighter, explicit cap that emits BLOCKED rather than a silent synthesis.
         if (_s.workflowMode && _s.role) {
             const _roleCap = Math.min(_ROLE_STEP_CAP, getAgentMaxSteps());
@@ -1977,7 +2012,7 @@ async function callLLM(
     if (key) headers['Authorization'] = `Bearer ${key}`;
     if (provider === 'nvidia') headers['Accept'] = 'text/event-stream';
     // OpenRouter identifies apps via HTTP-Referer + X-Title; used for analytics and
-    // partner-tier quota allocation. opencode sends the same pair.
+    // partner-tier quota allocation.
     if (provider === 'openrouter') {
         headers['HTTP-Referer'] = 'https://freegent.app/';
         headers['X-Title'] = 'FreeGent';

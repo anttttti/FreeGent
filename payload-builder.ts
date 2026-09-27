@@ -52,7 +52,7 @@ function _thinkingFields(provider: string, isCustom: boolean, budget: number, pr
         return budget > 0
             ? { chat_template_kwargs: { enable_thinking: true, ...(preserveThinking && { preserve_thinking: true }) }, thinking_token_budget: budget }
             : { chat_template_kwargs: { enable_thinking: false } };
-    // OpenCode Zen is a cloud proxy — not a local vLLM endpoint — so it must NOT receive
+    // Hosted cloud providers are not local vLLM endpoints — they must NOT receive
     // chat_template_kwargs (a vLLM-internal field). Same for any other hosted provider.
     if (isCustom && provider !== 'openai')
         return { chat_template_kwargs: budget > 0
@@ -137,14 +137,16 @@ export function buildChatPayload(ep: any, {
             }),
         }),
         ...(provider === 'openrouter' && { include_reasoning: true }),
-        ...(provider === 'mistral'    && { prompt_cache_key: 'freegent' }),
         ..._thinkingFields(provider, isCustom, thinkingBudget, preserveThinking),
         temperature,
         ...(provider === 'nvidia' && { top_p: 0.95 }),
+        // Nous Portal requires a "user=…" tag from API-key callers on some models (400 "missing
+        // user tag" otherwise — e.g. step-3.7-flash, solar-pro4, 2026-09-27). Undocumented; the
+        // value after "user=" is free-form.
+        ...(provider === 'nous' && { tags: ['user=freegent'] }),
         max_tokens: maxTokens,
         stream,
-        // stream_options is not in Mistral's API contract — they reject unknown fields with 422.
-        ...(stream && provider !== 'mistral' && { stream_options: { include_usage: true } }),
+        ...(stream && { stream_options: { include_usage: true } }),
         ...(sampling ?? {}),
     };
     return payload;
