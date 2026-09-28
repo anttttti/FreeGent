@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairArgEnvelope, _repairBracketPseudoCalls, EXEC_CODE_ALIASES,
+    _repairArgEnvelope, _repairBracketPseudoCalls, _repairInlinePseudoCalls, EXEC_CODE_ALIASES,
 } from '../tool-call-repair.ts';
 
 describe('_repairJsonArgs — fence strip only', () => {
@@ -195,5 +195,36 @@ describe('_repairBracketPseudoCalls — [[{…}]] / [{…}] text format', () => 
     });
     it('returns null for a plain JSON array (not a tool-call envelope)', () => {
         expect(_repairBracketPseudoCalls('["a", "b", "c"]', TOOL_NAMES)).toBeNull();
+    });
+});
+
+// glm5.3-flash wrote its tool calls as text: `read_file("game.js")`, and ended a turn with
+// {"tool":"read_file","path":"fg-tasks/ledger.md"} as the answer (2026-09-29).
+describe('_repairInlinePseudoCalls — whole reply is a call-syntax or flat-JSON pseudo-call', () => {
+    const NAMES = ['read_file', 'write_file', 'execute_code', 'list_files'];
+    const ORDER = { read_file: ['path', 'start_line', 'end_line'], execute_code: ['language', 'code'] };
+    const r = (t) => _repairInlinePseudoCalls(t, NAMES, ORDER);
+    it('python-style call, positional and keyword args', () => {
+        expect(r('read_file("game.js")')).toEqual([{ name: 'read_file', args: { path: 'game.js' } }]);
+        expect(r("read_file('a.js', 10, end_line=20)")).toEqual([{ name: 'read_file', args: { path: 'a.js', start_line: 10, end_line: 20 } }]);
+        expect(r('read_file(path="a, b.js")')).toEqual([{ name: 'read_file', args: { path: 'a, b.js' } }]);
+        expect(r('list_files()')).toEqual([{ name: 'list_files', args: {} }]);
+    });
+    it('several call lines and a fence around the reply', () => {
+        expect(r('```\nread_file("a.js")\nread_file("b.js")\n```')).toEqual([
+            { name: 'read_file', args: { path: 'a.js' } }, { name: 'read_file', args: { path: 'b.js' } }]);
+    });
+    it('flat JSON and JSON with an args envelope', () => {
+        expect(r('{"tool":"read_file","path":"fg-tasks/ledger.md"}')).toEqual([{ name: 'read_file', args: { path: 'fg-tasks/ledger.md' } }]);
+        expect(r('{"name":"read_file","arguments":{"path":"x"}}')).toEqual([{ name: 'read_file', args: { path: 'x' } }]);
+        expect(r('{"name":"read_file","arguments":"{\\"path\\":\\"x\\"}"}')).toEqual([{ name: 'read_file', args: { path: 'x' } }]);
+    });
+    it('mixed or unparseable replies are left alone', () => {
+        expect(r('I will now read the file.\nread_file("game.js")')).toBeNull();
+        expect(r('The bug is in read_file("x") handling.')).toBeNull();
+        expect(r('read_file(game.js)')).toBeNull();
+        expect(r('read_file("a", "b", "c", "d")')).toBeNull();
+        expect(r('{"tool":"unknown_tool","path":"x"}')).toBeNull();
+        expect(r('{"path":"x"}')).toBeNull();
     });
 });
