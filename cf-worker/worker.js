@@ -77,7 +77,7 @@ const ALLOWED_HOSTS = new Set([
     'integrate.api.nvidia.com',
     'tokenharbor.ai',
     'api.tokenharbor.ai',
-    'api.vercel.ai',
+    'ai-gateway.vercel.sh',
     'api.openai.com',
     'api.search.brave.com',
     'api.tavily.com',
