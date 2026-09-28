@@ -707,6 +707,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         _metrics.steps++;
         if (record.promptTokens)   _metrics.input_tokens  += record.promptTokens;
         if (record.responseTokens) _metrics.output_tokens += record.responseTokens;
+        opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
     });
 
     // Fire a hard abort after timeoutMs so the agent doesn't hang in retry loops.

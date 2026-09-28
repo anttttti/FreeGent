@@ -141,7 +141,11 @@ if (promptText) {
     console.error(`[fg-run] mode:      workflow (agent loop)`);
     console.error(`[fg-run] task:      ${task!.slice(0, 120)}${task!.length > 120 ? '…' : ''}`);
     if (logFile) console.error(`[fg-run] log:       ${logFile}`);
-    const { output, error, metrics } = await run(task!, { ...sharedOpts, workflowMode: true });
+    // Piped stdout (benchmark containers): print running totals after every LLM step so a task
+    // killed by the wall-clock limit still leaves its token counts. Consumers take the last line.
+    const onMetrics = process.stdout.isTTY ? undefined
+        : (m: unknown) => { process.stdout.write(`__FG_METRICS__:${JSON.stringify(m)}\n`); };
+    const { output, error, metrics } = await run(task!, { ...sharedOpts, workflowMode: true, onMetrics });
     if (error) console.error(`[fg-run] Error: ${error}`);
     process.stdout.write(`__FG_METRICS__:${JSON.stringify(metrics)}\n`);
     console.log(output);
