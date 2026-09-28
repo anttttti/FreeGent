@@ -52,6 +52,16 @@ describe('read guard: serve again only when the earlier copy is gone', () => {
         expect(String(r5?.note)).toMatch(/still shown in your earlier read_file results/);
     });
 
+    it('the truncated earlier copy was a whole-file read (no range): the lines are served again', async () => {
+        localStorage.setItem('fg_agent_max_tool_result', '800');
+        const whole = { tool_calls: [{ id: 'w0', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'f.py' }) } }] };
+        W.fetch = makeReplayFetch([whole, ...script().slice(1)]);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        const r5 = resultFor(14);
+        expect(String(r5?.content ?? '')).toContain('line 14');
+        expect(String(r5?.note)).toMatch(/shown again below/);
+    });
+
     it('an earlier read was truncated in history: the lines are served again', async () => {
         localStorage.setItem('fg_agent_max_tool_result', '300');   // r0 (100 lines) is cut short
         W.fetch = makeReplayFetch(script());
