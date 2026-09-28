@@ -278,6 +278,81 @@ export function _repairBracketPseudoCalls(text: string, toolNames: string[] | nu
     return results.length ? results : null;
 }
 
+// Parse a reply that is ONLY a pseudo tool call in call or flat-JSON syntax (glm5.3-flash):
+//   read_file("fg-tasks/ledger.md")            python-style, positional or key=value args
+//   read_file(path="game.js", start_line=10)
+//   {"tool":"read_file","path":"fg-tasks/ledger.md"}   flat JSON, args beside the name key
+//   {"name":"read_file","arguments":{"path":"…"}}      JSON with an args envelope
+// A ```fence around the whole reply is allowed. Any other text (a result, an explanation)
+// makes it a mixed reply, left to the pseudo_tool_call nudge. paramOrder maps a tool to its
+// parameter names in schema order, for positional args. Returns [{name, args}] or null.
+const _NAME_KEYS = ['tool', 'name', 'function', 'tool_name'];
+export function _repairInlinePseudoCalls(text: string, toolNames: string[] | null, paramOrder: Record<string, string[]> = {}): Array<{name: string; args: any}> | null {
+    if (!toolNames?.length) return null;
+    const t = String(text ?? '').trim().replace(/^```[\w-]*[ \t]*\n([\s\S]*?)\n?```$/, '$1').trim();
+    if (!t) return null;
+    if (t.startsWith('{')) {
+        let obj: any;
+        try { obj = JSON.parse(t); } catch { return null; }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+        const key = _NAME_KEYS.find(k => typeof obj[k] === 'string' && toolNames.includes(obj[k]));
+        if (!key) return null;
+        const { [key]: name, ...rest } = obj;
+        const env = rest.arguments ?? rest.parameters ?? rest.args ?? rest.input;
+        const args = typeof env === 'string' ? (() => { try { return JSON.parse(env); } catch { return null; } })() : env;
+        return [{ name, args: args && typeof args === 'object' ? args : rest }];
+    }
+    const nameRe = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const lineRe = new RegExp(`^(${nameRe})\\s*\\(([\\s\\S]*)\\)\\s*;?$`);
+    const results: Array<{name: string; args: any}> = [];
+    for (const line of t.split('\n').map(l => l.trim()).filter(Boolean)) {
+        const m = lineRe.exec(line);
+        if (!m) return null;
+        const args = _parseCallArgs(m[2], paramOrder[m[1]] ?? []);
+        if (!args) return null;
+        results.push({ name: m[1], args });
+    }
+    return results.length ? results : null;
+}
+
+// Arg list of a call-syntax pseudo-call: JSON-ish literals, positional or key=value / key: value.
+// A bare {…} object as the sole arg is taken as the args object. Unparseable → null.
+function _parseCallArgs(s: string, order: string[]): Record<string, any> | null {
+    const src = s.trim();
+    if (!src) return {};
+    if (src.startsWith('{')) { try { const o = JSON.parse(src); return o && typeof o === 'object' ? o : null; } catch {} }
+    const parts: string[] = [];
+    let depth = 0, q = '', esc = false, cur = '';
+    for (const c of src) {
+        if (esc) { cur += c; esc = false; continue; }
+        if (q) { if (c === '\\') esc = true; else if (c === q) q = ''; cur += c; continue; }
+        if (c === '"' || c === "'") q = c;
+        else if ('([{'.includes(c)) depth++;
+        else if (')]}'.includes(c)) depth--;
+        else if (c === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+        cur += c;
+    }
+    if (q || depth) return null;
+    parts.push(cur);
+    const args: Record<string, any> = {};
+    let pos = 0;
+    for (const p of parts.map(x => x.trim()).filter(Boolean)) {
+        const kv = /^(\w+)\s*[=:]\s*([\s\S]+)$/.exec(p);
+        const val = _literal(kv ? kv[2] : p);
+        if (val === undefined) return null;
+        if (kv) args[kv[1]] = val;
+        else if (pos < order.length) args[order[pos++]] = val;
+        else return null;
+    }
+    return args;
+}
+function _literal(s: string): any {
+    const t = s.trim();
+    if (/^'(?:[^'\\]|\\.)*'$/.test(t)) return t.slice(1, -1).replace(/\\(['\\])/g, '$1').replace(/\\n/g, '\n');
+    if (/^(?:True|False|None)$/.test(t)) return t === 'None' ? null : t === 'True';
+    try { return JSON.parse(t); } catch { return undefined; }
+}
+
 // Unwrap {arg_keys, arg_values} double-serialized arg envelopes emitted by some models.
 // Applies to all tool calls (not just execute_code). Mutates normCalls in place.
 export function _repairArgEnvelope(normCalls: any[]): void {
@@ -325,6 +400,6 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
 Object.assign(window, {
     EXEC_CODE_ALIASES, EXEC_LANG_ALIASES,
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairArgEnvelope,
+    _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
     repairAllToolCalls,
 });

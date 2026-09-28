@@ -7,7 +7,7 @@ import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, _makeOAI
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneOAIHistory, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
-import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
+import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls } from './model-caps.js';
@@ -661,6 +661,21 @@ export async function _isNarrationOnly(text: string, llm: any = typeof callLLMCo
     return !!(await validateOutput(t, _NARRATION_CHECKS, { llm, maxTokens: 200 }));
 }
 
+// Is the text only a pseudo tool call — nothing left once the call lines, code fences and
+// tool-call XML/JSON are removed? Such a reply carries no answer for the user.
+export function _isBarePseudoCall(text: string): boolean {
+    const names = _toolNamesRe();
+    const rest = String(text ?? '')
+        .replace(/```[\s\S]*?(?:```|$)/g, '')
+        .replace(/<(invoke|tool_call|function_calls)\b[\s\S]*?(?:<\/\1>|$)/gi, '')
+        .replace(new RegExp(`<(${names})\\b[\\s\\S]*?(?:<\\/\\1>|\\/>|$)`, 'gi'), '')
+        .split('\n')
+        .filter(l => !new RegExp(`\\b(?:${names})(?:_tool)?\\s*\\(|"(?:name|tool|function|tool_name)"\\s*:\\s*"(?:${names})"`).test(l))
+        .join('\n')
+        .replace(/[\s{}\[\],"'`]/g, '');
+    return rest.length < 40;
+}
+
 const _STEP_CHECKS = [
     {   // Pseudo tool call in any form: text that tries to run a command instead of
         // making a tool call. re_fail = exact formats (XML invoke/tag, python-call,
@@ -670,7 +685,7 @@ const _STEP_CHECKS = [
         // _isComplete short-circuits ONLY when there is no tool-JSON in the text.
         // A COMPLETED+{"name":"execute_code",...} response must not pass unchecked —
         // the re_fail below catches the JSON syntax and fires the nudge instead.
-        re_pass: t => (_isComplete(t) && !new RegExp('"name"\\s*:\\s*"(?:' + _toolNamesRe() + ')"').test(t))
+        re_pass: t => (_isComplete(t) && !new RegExp('"(?:name|tool|function|tool_name)"\\s*:\\s*"(?:' + _toolNamesRe() + ')"').test(t))
             // Strip inline code spans (`…`) before the tool-name check so that documentation
             // like "`update_task_status(path, status)` to mark" is not treated as suspicious.
             // Code fences (``` … ```) are intentionally preserved — tool calls inside a fence
@@ -690,7 +705,7 @@ const _STEP_CHECKS = [
             // Code fences are NOT stripped — a tool call inside ``` is a real pseudo-call.
             const _bare = t.replace(/`[^`\n]+`/g, '…');
             const m = new RegExp(`\\b(${_toolNamesRe()})(?:_tool)?\\s*\\(`).exec(_bare)
-                   ?? new RegExp(`"name"\\s*:\\s*"(${_toolNamesRe()})"`).exec(t)
+                   ?? new RegExp(`"(?:name|tool|function|tool_name)"\\s*:\\s*"(${_toolNamesRe()})"`).exec(t)
                    ?? new RegExp(`<(${_toolNamesRe()})(?:\\s|>|/|=)`, 'i').exec(t);
             if (m) return m[1];
             return /<invoke\s+name="[^"]+"/i.test(t) || /<tool_name>/i.test(t) || false;
@@ -1162,8 +1177,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // execute_code has yet succeeded this turn. After a correct state
                 // exists, blocking causes models to rework right answers into wrong
                 // ones (T3.3/T3.7: step_validation block→warn when prior result passed).
+                // A response that is nothing but the pseudo-call has no answer to rework: falling
+                // through returned `read_file("game.js")` as the turn's final text (glm5.3-flash,
+                // 2026-09-29). Always retry those; the check's max caps the loop.
                 const _svFirstFire = ((ps.checkFires?.[vc.name] ?? 0) <= 1);
-                if (_svFirstFire && !_execsThisRun) {
+                if ((_svFirstFire && !_execsThisRun) || (vc.name === 'pseudo_tool_call' && _isBarePseudoCall(textContent))) {
                     _forceToolCall = true;
                     return { do: 'continue' };
                 }
@@ -1694,6 +1712,26 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // only mutate _s.history for fn-tag / no-session; native sessions use surface replace below.
                 if (_histLegacy) _s.history[_s.history.length - 1] = { ..._s.history[_s.history.length - 1], tool_calls: _synCalls };
                 _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: m?.content ?? null, tool_calls: _synCalls }), 'bracket-repair');
+                calls = _synCalls;
+            }
+        }
+
+        // Inline pseudo-call repair: the whole reply is `read_file("x")` or
+        // {"tool":"read_file","path":"x"} (glm5.3-flash ended turns with these as the answer,
+        // 2026-09-29). The text is only the call, so history keeps the real call without it —
+        // the model then sees itself using native calls.
+        if (!calls.length) {
+            const _order = Object.fromEntries((activeTools?.() ?? []).map((t: any) => [t.name, Object.keys(t.parameters?.properties ?? {})]));
+            const _inCalls = _repairInlinePseudoCalls(textContent, AGENT_TOOL_NAMES, _order);
+            if (_inCalls) {
+                const _synCalls = _inCalls.map((c, i) => ({
+                    id: `inline_${step}_${i}`, type: 'function' as const,
+                    function: { name: c.name, arguments: JSON.stringify(c.args) },
+                }));
+                sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'inline_pseudo_call_repaired', tool_calls: _synCalls });
+                thinkTask.append(`\n[repair: inline_pseudo_call → ${_inCalls.map(c => c.name).join(', ')}]\n`, 'warn');
+                if (_histLegacy) _s.history[_s.history.length - 1] = { ..._s.history[_s.history.length - 1], content: null, tool_calls: _synCalls };
+                _replaceLastAssistantSurface(_s, step, () => ({ role: 'assistant', content: null, tool_calls: _synCalls }), 'inline-repair');
                 calls = _synCalls;
             }
         }
