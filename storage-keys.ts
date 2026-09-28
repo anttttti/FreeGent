@@ -50,6 +50,7 @@ export const KEYS = {
     ENABLED_MODELS:     'fg_enabled_models',
     CUSTOM_MODELS:      'fg_custom_models',
     HIDDEN_MODELS:      'fg_hidden_models',  // built-in models the user has removed
+    TOOL_FORMATS_LEARNED: 'fg_tool_formats_learned', // model-caps.ts: formats observed for models not in _TOOL_FORMATS
     IMAGE_MODEL:        'fg_image_model',
     AUDIO_MODEL:        'fg_audio_model',
     VIDEO_MODEL:        'fg_video_model',

@@ -3,7 +3,7 @@
 // tools.ts, workers.ts, model-caps.ts, skill-guidance.ts, deep-research.ts,
 // system-prompt.ts, detectors.ts, and history.ts. turn-protocol.ts and llm-loops.ts
 // are imported as real ES modules — the eval-transpile loading hack is gone.
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import {
     _isComplete, _stripTerminal, _isUserQuestion, _handleTurnState,
 } from '../turn-protocol.ts';
@@ -118,6 +118,56 @@ describe('parseFnTagCalls — non-native tool-call formats', () => {
         const { tool_calls } = window.parseFnTagCalls('<function=list_files>{"path":""}</function>');
         expect(tool_calls).toHaveLength(1);
         expect(tool_calls[0].function.name).toBe('list_files');
+    });
+    // glm5.3-flash on NVIDIA NIM, 2026-09-29 — the last block has no </tool_call>.
+    it('parses Format J (GLM <tool_call>name<arg_key>…), unclosed last block included', () => {
+        const text = '<tool_call>read_file\n<arg_key>file_name</arg_key>\n<arg_value>fg-tasks/current.md</arg_value>\n</tool_call>'
+            + '<tool_call>read_file\n<arg_key>file_name</arg_key>\n<arg_value>game.js</arg_value>\n</tool_call>'
+            + '<tool_call>read_file\n<arg_key>file_name</arg_key>\n<arg_value>memory/log.md</arg_value>';
+        const { tool_calls, cleaned } = window.parseFnTagCalls(text);
+        expect(tool_calls.map(c => [c.function.name, JSON.parse(c.function.arguments)])).toEqual([
+            ['read_file', { file_name: 'fg-tasks/current.md' }],
+            ['read_file', { file_name: 'game.js' }],
+            ['read_file', { file_name: 'memory/log.md' }],
+        ]);
+        expect(cleaned).toBe('');
+    });
+    it('Format J: several args, JSON values, prose kept', () => {
+        const text = 'Reading lines.\n<tool_call>read_file\n<arg_key>path</arg_key>\n<arg_value>a.js</arg_value>\n<arg_key>start_line</arg_key>\n<arg_value>10</arg_value>\n</tool_call>';
+        const { tool_calls, cleaned } = window.parseFnTagCalls(text);
+        expect(JSON.parse(tool_calls[0].function.arguments)).toEqual({ path: 'a.js', start_line: 10 });
+        expect(cleaned).toBe('Reading lines.');
+    });
+    describe('tool format: table, then learned, then provider default', () => {
+        const KEY = 'fg_tool_formats_learned';
+        afterEach(() => localStorage.removeItem(KEY));
+        it('unknown NVIDIA models start as fn-tag, other providers as openai; the table wins', () => {
+            expect(window.getModelToolFormat('nvidia', 'z-ai/glm5.3-flash')).toBe('fn-tag');
+            expect(window.getModelToolFormat('groq', 'some/new-model')).toBe('openai');
+            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b')).toBe('none');
+            window.recordToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b', 'openai');
+            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b')).toBe('none');
+        });
+        it('a learned format overrides the default', () => {
+            window.recordToolFormat('nvidia', 'x/native', 'openai');
+            window.recordToolFormat('groq', 'x/no-tools', 'none');
+            expect(window.getModelToolFormat('nvidia', 'x/native')).toBe('openai');
+            expect(window.getModelToolFormat('groq', 'x/no-tools')).toBe('none');
+        });
+        it("a learned 'none' expires after a week", () => {
+            localStorage.setItem(KEY, JSON.stringify({ 'nvidia/x/old': { fmt: 'none', at: Date.now() - 8 * 24 * 3600_000 } }));
+            expect(window.getModelToolFormat('nvidia', 'x/old')).toBe('fn-tag');
+        });
+        it('only a "tools not supported" 4xx counts as a rejection', () => {
+            const err = (status, message) => Object.assign(new Error(message), { status });
+            expect(window.isToolsRejectedError(err(400, 'HTTP 400: "auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set'))).toBe(true);
+            expect(window.isToolsRejectedError(err(404, 'HTTP 404: No endpoints found that support tool use'))).toBe(true);
+            expect(window.isToolsRejectedError(err(400, 'HTTP 400: This model does not support tools'))).toBe(true);
+            expect(window.isToolsRejectedError(err(400, 'HTTP 400: Function calling is not enabled for this model'))).toBe(true);
+            expect(window.isToolsRejectedError(err(400, 'HTTP 400: Invalid tools schema: missing "type"'))).toBe(false);
+            expect(window.isToolsRejectedError(err(429, 'HTTP 429: tools not supported right now'))).toBe(false);
+            expect(window.isToolsRejectedError(err(400, 'HTTP 400: context length exceeded'))).toBe(false);
+        });
     });
     it('returns nothing for plain prose', () => {
         const { tool_calls } = window.parseFnTagCalls('Just a normal sentence with no tool call.');

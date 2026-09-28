@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairArgEnvelope, _repairBracketPseudoCalls, _repairInlinePseudoCalls, EXEC_CODE_ALIASES,
+    _repairArgEnvelope, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, EXEC_CODE_ALIASES,
 } from '../tool-call-repair.ts';
 
 describe('_repairJsonArgs — fence strip only', () => {
@@ -226,5 +226,31 @@ describe('_repairInlinePseudoCalls — whole reply is a call-syntax or flat-JSON
         expect(r('read_file("a", "b", "c", "d")')).toBeNull();
         expect(r('{"tool":"unknown_tool","path":"x"}')).toBeNull();
         expect(r('{"path":"x"}')).toBeNull();
+    });
+});
+
+describe('_repairPathArg — other names for the path argument of file tools', () => {
+    it('moves file_name / file_path / filename to path', () => {
+        const calls = [
+            { name: 'read_file', args: { file_name: 'game.js' } },
+            { name: 'write_file', args: { file_path: 'a.js', content: 'x' } },
+            { name: 'replace_in_file', args: { filename: 'b.js', old_string: 'a', new_string: 'b' } },
+        ];
+        _repairPathArg(calls);
+        expect(calls.map(c => c.args.path)).toEqual(['game.js', 'a.js', 'b.js']);
+        expect(calls[0].args).toEqual({ path: 'game.js' });
+    });
+    it('leaves an existing path, and non-file tools, alone', () => {
+        const calls = [
+            { name: 'read_file', args: { path: 'a.js', file_name: 'b.js' } },
+            { name: 'generate_image', args: { prompt: 'cat', filename: 'cat.png' } },
+        ];
+        _repairPathArg(calls);
+        expect(calls[0].args.path).toBe('a.js');
+        expect(calls[1].args).toEqual({ prompt: 'cat', filename: 'cat.png' });
+    });
+    it('runs inside repairAllToolCalls', () => {
+        const { norm } = repairAllToolCalls([{ function: { name: 'read_file', arguments: '{"file_name":"memory/log.md"}' } }]);
+        expect(norm[0].args).toEqual({ path: 'memory/log.md' });
     });
 });
