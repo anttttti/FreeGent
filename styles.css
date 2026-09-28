@@ -375,6 +375,7 @@ html, body {
 }
 
 #agent-token-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+#ls-usage-label { font-size: 11px; color: var(--muted); white-space: nowrap; cursor: help; }
 
 /* Mode selector — rightmost toolbar item */
 .mode-select { flex-shrink: 0; }
@@ -823,6 +824,7 @@ html, body {
 .project-import-label { display: inline-flex; align-items: center; cursor: pointer; }
 .media-warn-chip { background: rgba(192,57,43,0.08); border-color: #c0392b; color: #c0392b; font-size: 11px; cursor: help; }
 .project-clear-btn { color: #c0392b !important; border-color: #c0392b !important; }
+.project-storage-usage { font-size: 11px; color: var(--muted); padding: 3px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .project-clear-btn:hover { background: #c0392b !important; color: #fff !important; }
 
 .ws-drop-overlay { display: none; position: absolute; inset: 0; background: rgba(74,124,247,0.08); border: 2px dashed var(--accent); z-index: 5; align-items: center; justify-content: center; font-size: 14px; color: var(--accent); font-weight: 600; pointer-events: none; }
@@ -1589,8 +1591,8 @@ html, body {
 }
 
 /* ── Token label context-limit warnings ── */
-.token-warn   { color: #e07b39; }
-.token-danger { color: #e57373; font-weight: 600; }
+.token-warn,   #agent-token-label.token-warn,   #ls-usage-label.token-warn   { color: #e07b39; }
+.token-danger, #agent-token-label.token-danger, #ls-usage-label.token-danger { color: #e57373; font-weight: 600; }
 
 /* ── Code block copy button ── */
 .code-copy-btn {

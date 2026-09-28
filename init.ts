@@ -1,6 +1,6 @@
 // init.js — FreeGent: DOMContentLoaded bootstrap, wires all modules together
 // Depends on: all other modules (loaded last)
-import { KEYS } from './storage-keys.js';
+import { KEYS, chatKey } from './storage-keys.js';
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
 // data-theme is set by an inline <script> in <head> (before styles.css) to
@@ -425,15 +425,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!chatId) return;
         const text = (input as HTMLElement)?.innerText?.trim() ?? '';
         try {
-            if (text) localStorage.setItem(`fg_draft_${chatId}`, text);
-            else localStorage.removeItem(`fg_draft_${chatId}`);
+            if (text) localStorage.setItem(chatKey.draft(chatId), text);
+            else localStorage.removeItem(chatKey.draft(chatId));
         } catch (e) {
             // QuotaExceededError: localStorage full — draft is convenience-only, silently skip.
             if (!(e instanceof DOMException && e.name === 'QuotaExceededError')) console.warn('[init] _saveDraft localStorage failed:', e);
         }
     }
     function _restoreDraft(chatId: string): void {
-        const draft = chatId ? localStorage.getItem(`fg_draft_${chatId}`) : null;
+        const draft = chatId ? localStorage.getItem(chatKey.draft(chatId)) : null;
         if (!draft || !input) return;
         _setInputText?.(input, draft);
         autoResizeTextarea?.(input);
@@ -441,11 +441,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     function clearInputDraft(chatId?: string): void {
         const id = chatId ?? activeChatId;
-        if (id) localStorage.removeItem(`fg_draft_${id}`);
+        if (id) localStorage.removeItem(chatKey.draft(id));
     }
 
     // Restore draft for the current chat on page load
     _restoreDraft(activeChatId);
+    window.refreshStorageUsage?.();
 
     // ── Message content search ─────────────────────────────────────────────
     let _msgSearchIdx = -1;

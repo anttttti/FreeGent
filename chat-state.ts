@@ -1,6 +1,7 @@
 // chat-state.js — FreeGent: chat list, history persistence, chat management UI
 // Depends on: config.js, chat-render.js
 import { KEYS, chatKey } from './storage-keys.js';
+import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './storage-usage.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 
 // ── Chat list helpers ──────────────────────────────────────────────────────
@@ -228,6 +229,7 @@ function saveHistory() {
             _saveHtml(id, html).catch((e: any) => console.warn('[saveHistory] html save failed:', e?.message));
         }
     } catch {}
+    refreshStorageUsage();
 }
 
 async function loadChatHistory(id: string): Promise<boolean> {
@@ -455,6 +457,8 @@ function clearChatStorage(id) {
     // breaking Rewind/Rerun in any chat that was loaded after a delete.
     // IDB checkpoint data is cleaned up per-chat via deleteCheckpointData.
     if (typeof deleteCheckpointData === 'function') deleteCheckpointData(id).catch(() => {});
+    if (typeof deleteChatCheckpoints === 'function') deleteChatCheckpoints(id);
+    refreshStorageUsage();
 }
 
 function renderHistoryFallback() {
@@ -618,6 +622,7 @@ function renderChatsDropdown() {
         el.innerHTML += '<div style="padding:10px 12px;color:var(--muted);font-size:13px">No saved chats</div>';
         return;
     }
+    const lsByChat = computeStorageUsage().chats;
     for (const chat of list) {
         const item = document.createElement('div');
         item.className = 'chat-list-item' + (chat.id === activeChatId ? ' current' : '');
@@ -635,7 +640,11 @@ function renderChatsDropdown() {
         const parts = [];
         if (chat.createdAt) parts.push('Started ' + fmtTime(chat.createdAt));
         if (chat.lastAt && chat.lastAt !== chat.createdAt) parts.push('Last ' + fmtTime(chat.lastAt));
+        // Older chats keep no localStorage cache — their history is in IndexedDB only.
+        const ls = lsByChat.get(chat.id) || 0;
+        if (ls) parts.push('LS ' + fmtStorageSize(ls));
         metaEl.textContent = parts.join('  ·  ');
+        metaEl.title = 'localStorage: history cache, draft and checkpoints of this chat';
 
         info.append(nameEl, metaEl);
 
@@ -874,7 +883,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatList, saveChatList, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.
