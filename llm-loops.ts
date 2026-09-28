@@ -1977,7 +1977,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }, { surfaceOp: 'append' });
         }
 
-        const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, result: r.result })));
+        const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, args: r.args, result: r.result })));
         if (_reactive) { _emitNudge('reactive_guidance', _nudge(_reactive)); _forceToolCall = true; }
         // Track successful file edits — feeds the completion gate ('edit' condition).
         // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.

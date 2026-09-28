@@ -89,6 +89,16 @@ describe('search skill — delegation recipe', () => {
         expect(W.reactiveSkillGuidance(greps)).toContain('### search');
     });
 
+    it('stays quiet when the calls are all on one file', () => {
+        const calls = Array.from({ length: 6 }, () => ({ name: 'read_file', args: { path: 'game.js' }, result: { content: 'x' } }));
+        expect(W.reactiveSkillGuidance(calls)).not.toContain('### search');
+    });
+
+    it('still fires when the calls span several files', () => {
+        const calls = ['a.js', 'b.js', 'c.js', 'd.js', 'e.js', 'f.js'].map(path => ({ name: 'read_file', args: { path }, result: { content: 'x' } }));
+        expect(W.reactiveSkillGuidance(calls)).toContain('### search');
+    });
+
     it('does not fire on a couple of ordinary reads', () => {
         const reads = Array.from({ length: 2 }, () => ({ name: 'read_file', result: { content: 'x' } }));
         expect(W.reactiveSkillGuidance(reads)).not.toContain('### search');
