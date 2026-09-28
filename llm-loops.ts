@@ -10,7 +10,7 @@ import { stripInjected, parseArgs } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
-import { getModelToolFormat, parseFnTagCalls } from './model-caps.js';
+import { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
 import { isCustomEndpoint, buildChatPayload, buildRequestMessages } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { streamOAICompat, nonStreamOAICompat, decodeOAIResponse } from './stream-decode.js';
@@ -2225,7 +2225,22 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         window._lastStreamChunkAt = _lastStreamChunkAt;
         onChunk(chunk, ...rest);
     };
-    const result = await callLLM(ep, payload, _timestampedOnChunk, { onRequest });
+    // Tool format learning for models not in model-caps' table (see getModelToolFormat).
+    // Schema rejected → learn 'none' and resend right away without tools, so the turn goes on.
+    let result: any;
+    try {
+        result = await callLLM(ep, payload, _timestampedOnChunk, { onRequest });
+    } catch (e) {
+        if (!hasTools || forkPrefix || isToolFormatListed(provider, model) || !isToolsRejectedError(e)) throw e;
+        recordToolFormat(provider, model, 'none');
+        console.warn(`[tool-format] ${provider}/${model}: tools rejected — now 'none':`, e.message);
+        const { tools: _t, tool_choice: _tc, ...noTools } = payload;
+        noTools.messages = [{ role: 'system', content: forWorker ? _bwsp(roleOverride) : _bsp() }, ...payload.messages.slice(1)];
+        result = await callLLM(ep, noTools, _timestampedOnChunk, { onRequest });
+    }
+    // Native tool calls from a model that started as fn-tag by default → it is an 'openai' model.
+    if (toolFormat === 'fn-tag' && result.tool_calls?.length && !isToolFormatListed(provider, model))
+        recordToolFormat(provider, model, 'openai');
     // Fallback parser: also fires for 'openai' models when vLLM fails to parse the model's XML
     // tool-call syntax (e.g. ThinkingCap generating <invoke>/<execute_code> instead of
     // <tool_call>{json}</tool_call>). Safe because parseFnTagCalls is restricted to known tool names.

@@ -5,6 +5,7 @@
 //   'openai'  — standard JSON tool_calls delta (OpenAI function-calling spec)
 //   'fn-tag'  — <function=name>{"arg":"val"}</function> inline in content
 //   'none'    — model doesn't support tool calling; send no schema
+import { KEYS } from './storage-keys.js';
 
 const _TOOL_FORMATS = {
     // NVIDIA NIM — Nemotron models: thinking-focused, no function calling
@@ -31,13 +32,48 @@ const _TOOL_FORMATS = {
     'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free':    'openai',
 };
 
-// Returns the tool-call format for a given provider/model pair.
-// Unknown NVIDIA models default to 'none' (safe — avoids hallucinated tool calls).
-// All other providers default to 'openai'.
+// Formats learned at runtime for models NOT in _TOOL_FORMATS (the table always wins):
+//   native tool_calls in a response      → 'openai'
+//   endpoint rejects the tools schema    → 'none' (expires after _NONE_TTL_MS: providers add
+//                                          tool support to models over time)
+// Stored as { "<provider>/<model>": { fmt, at } }. Written by callOAI (llm-loops.ts).
+const _NONE_TTL_MS = 7 * 24 * 3600_000;
+function _readLearned(): Record<string, { fmt: string; at: number }> {
+    try { return JSON.parse(localStorage.getItem(KEYS.TOOL_FORMATS_LEARNED) || '{}') || {}; } catch { return {}; }
+}
+export function isToolFormatListed(provider: any, model: any): boolean {
+    return `${provider}/${model}` in _TOOL_FORMATS;
+}
+export function recordToolFormat(provider: any, model: any, fmt: 'openai' | 'fn-tag' | 'none'): void {
+    const key = `${provider}/${model}`;
+    if (key in _TOOL_FORMATS) return;
+    const all = _readLearned();
+    if (all[key]?.fmt === fmt) return;
+    all[key] = { fmt, at: Date.now() };
+    try { localStorage.setItem(KEYS.TOOL_FORMATS_LEARNED, JSON.stringify(all)); } catch {}
+}
+
+// A 4xx that says the endpoint cannot take the tools schema for this model (vs. a malformed
+// request, which must not switch tools off for good). Seen: vLLM "auto" tool choice requires
+// --enable-auto-tool-choice…; OpenRouter "No endpoints found that support tool use";
+// "<model> does not support tools".
+const _TOOLS_REJECTED_RE = /(?:not|n't) support(?:ed)?\b.{0,40}\b(?:tools?|tool[ _-]?(?:use|calling|calls?|choice)|function[ _-]?calling)\b|\b(?:tools?|tool[ _-]?(?:use|calling|calls?|choice)|function[ _-]?calling)\b.{0,40}\bnot (?:supported|enabled|available)|enable-auto-tool-choice|tool-call-parser|no endpoints? found that supports? tool/i;
+export function isToolsRejectedError(e: any): boolean {
+    const s = e?.status;
+    return (s === 400 || s === 404 || s === 422) && _TOOLS_REJECTED_RE.test(String(e?.message ?? ''));
+}
+
+// Returns the tool-call format for a given provider/model pair: the table, else what was
+// learned for this model, else the provider default. Unknown NVIDIA models start as 'fn-tag':
+// they get the schema (native calls, if the endpoint returns them, switch the model to 'openai')
+// and their text calls are parsed. They used to default to 'none', which cut every new NIM model
+// off from tools until someone listed it (glm5.3-flash, 2026-09-29).
 export function getModelToolFormat(provider: any, model: any): any {
     const key = `${provider}/${model}`;
     if (key in _TOOL_FORMATS) return _TOOL_FORMATS[key];
-    return provider === 'nvidia' ? 'none' : 'openai';
+    const l = _readLearned()[key];
+    if (l && !(l.fmt === 'none' && Date.now() - l.at > _NONE_TTL_MS)) return l.fmt;
+    return provider === 'nvidia' ? 'fn-tag' : 'openai';
 }
 
 // Known tool names — used by Format D to avoid matching arbitrary XML tags.
@@ -64,10 +100,34 @@ const _FORMAT_F_TOOL_NAMES = new Set([
 //   Format G (Anthropic XML):  <invoke name="tool">...</invoke> or <call name="tool">...</call>
 //   Format H (Python-style):   tool_name(arg1="v1", arg2="v2")
 //   Format I (AgentBench/fenced): <|mask_start|>cmd<|mask_end|> or ```bash\ncmd\n``` (last resort)
+//   Format J (GLM native):     <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
 // Returns { tool_calls, cleaned } — cleaned is the text with all tool-call blocks removed.
 export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; } {
     const tool_calls = [];
     let cleaned = text;
+
+    // Format J — GLM native: <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>…</tool_call>
+    // The last block often lacks </tool_call> (it is GLM's stop token), so a block also ends at
+    // the next <tool_call> or the end of the text. The name must follow the tag directly —
+    // Formats E/A start with { or <function=.
+    cleaned = cleaned.replace(
+        /<tool_call>[ \t]*(\w+)\s*((?:<arg_key>[\s\S]*?)?)(?:<\/tool_call>|(?=<tool_call>)|$)/g,
+        (full, name, body) => {
+            const args = {};
+            const pairRe = /<arg_key>\s*([\s\S]*?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)(?:<\/arg_value>|(?=<arg_key>)|$)/g;
+            let m: RegExpExecArray | null;
+            while ((m = pairRe.exec(body)) !== null) {
+                const val = m[2].trim();
+                try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+            }
+            tool_calls.push({
+                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
+                type: 'function',
+                function: { name, arguments: JSON.stringify(args) }
+            });
+            return '';
+        }
+    );
 
     // Format E — Hermes JSON: <tool_call>{"name":"fn","arguments":{...}}</tool_call>
     // Must run before Format A so the <tool_call> wrapper is consumed first.
@@ -306,4 +366,4 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
 }
 
 // Window bridge for classic scripts.
-Object.assign(window, { getModelToolFormat, parseFnTagCalls });
+Object.assign(window, { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError });

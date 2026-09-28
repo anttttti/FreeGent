@@ -367,6 +367,20 @@ export function _repairArgEnvelope(normCalls: any[]): void {
     }
 }
 
+// Other names models give the `path` argument of file tools (GLM: read_file file_name=…).
+// Only tools whose path parameter is `path` — generate_image's own `filename` must stay.
+const _PATH_TOOLS = new Set(['read_file', 'write_file', 'append_file', 'replace_in_file', 'apply_patch',
+    'delete_file', 'undo_write', 'update_task_status', 'list_files', 'ast_query', 'check_page']);
+const _PATH_ALIASES = ['file_path', 'filepath', 'file_name', 'filename', 'file'];
+export function _repairPathArg(normCalls: any[]): void {
+    for (const nc of normCalls) {
+        const a = nc.args;
+        if (!_PATH_TOOLS.has(nc.name) || !a || typeof a !== 'object' || a.path != null) continue;
+        const k = _PATH_ALIASES.find(k => typeof a[k] === 'string');
+        if (k) { a.path = a[k]; delete a[k]; }
+    }
+}
+
 /**
  * One-shot repair pass for a batch of OAI tool_calls.
  *   raw = the tool_calls array from the model response (.function.arguments are strings)
@@ -376,6 +390,7 @@ export function _repairArgEnvelope(normCalls: any[]): void {
  *   2. normalize            — JSON.parse the now-repaired argument strings into {name, args}
  *   3. _repairToolNames     — extract valid tool name from embedded XML artifacts
  *   4. _repairArgEnvelope   — unwrap arg_keys/arg_values double-serialization
+ *   4b. _repairPathArg      — file_name/file_path/… → path on file tools
  *   5. _repairExecCodeArgs  — execute_code alias resolution, fence stripping, lang canon
  *
  * Returns { bad, norm }:
@@ -392,6 +407,7 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
     });
     _repairToolNames(norm);                                  // step 3
     _repairArgEnvelope(norm);                                // step 4
+    _repairPathArg(norm);                                    // step 4b
     const hasEmptyCode = _repairExecCodeArgs(norm);          // step 5
     return { bad, norm, hasEmptyCode };
 }
@@ -401,5 +417,5 @@ Object.assign(window, {
     EXEC_CODE_ALIASES, EXEC_LANG_ALIASES,
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
     _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
-    repairAllToolCalls,
+    _repairPathArg, repairAllToolCalls,
 });
