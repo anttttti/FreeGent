@@ -827,6 +827,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     const _garbledState = { count: 0 };
     let _wEnvFailSig = '', _wEnvFailCount = 0, _wEnvFailTotal = 0;
     let _noToolNudgeFired = false;
+    let _emptyReportNudged = false;
     // Helper: close worker session and clean up registry.
     const _wSessionClose = (reason: import('./session-event.ts').TurnEndReason) => {
         if (!_wSession) return;
@@ -908,6 +909,25 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     _noToolNudgeFired = true;
                     emitNudge('worker_no_tools', { role: 'user', content: `<nudge>You haven't called any tools yet. Use the structured function-call format to call tools — code blocks, backtick names, and prose descriptions do nothing. Call a tool now to start your task.</nudge>` }, { history: localOH });
                     continue;
+                }
+                // Worked but ended with an empty message (some models put everything in reasoning_content):
+                // ask once for the report, then fall back to that reasoning, then to the recent tool calls.
+                if (!text.trim() && _wToolCalls.length > 0) {
+                    if (!_emptyReportNudged) {
+                        _emptyReportNudged = true;
+                        emitNudge('worker_empty_report', { role: 'user', content: `<nudge>Your last message was empty. Reply now in plain text with your report: what you found (file paths and line numbers, with short code excerpts), what you changed, and what is left. Do not call tools.</nudge>` }, { history: localOH });
+                        continue;
+                    }
+                    const _reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
+                    const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
+                    const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
+                        .flatMap(m => m.tool_calls).slice(-4)
+                        .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 200)}) → ${(_results.get(tc.id) ?? '').slice(0, 300)}`)
+                        .join('\n');
+                    const _fallback = `${_reasoning ? `${_reasoning.slice(-4000)}\n\n` : ''}Last tool calls:\n${_recent}\n\nSTATUS: partial — the worker ended without writing a report`;
+                    console.error(`[worker:${_wRole}:step${step}] empty final message after nudge, returning ${_reasoning ? 'reasoning' : 'tool-call'} fallback`);
+                    _wSessionClose({ kind: 'completed' });
+                    return { output: _fallback, toolCalls: _wToolCalls };
                 }
                 console.error(`[worker:${_wRole}:step${step}] no tool calls, returning text`);
                 _wSessionClose({ kind: 'completed' });

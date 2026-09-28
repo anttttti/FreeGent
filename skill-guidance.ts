@@ -164,6 +164,23 @@ function _matchNeedle(needle, result) {
     return JSON.stringify(result ?? '').includes(n);
 }
 
+// File paths of recent calls, keyed by the _toolCallHistory array (replacing that array resets them).
+const _pathHistory = new WeakMap<any[], string[]>();
+function _pathsFor(hist: any[]): string[] {
+    let p = _pathHistory.get(hist);
+    if (!p) { p = []; _pathHistory.set(hist, p); }
+    return p;
+}
+// File a tool call touched: '' when unknown, '*' when it spans the workspace or several files.
+function _touchedPath(r: any): string {
+    if (r?.name !== 'read_file' && r?.name !== 'search_workspace') return '';
+    const filter = String(r.args?.path_filter ?? '').trim();
+    const p = r.name === 'read_file'
+        ? String(r.args?.path ?? r.result?.path ?? '').trim()
+        : (r.args ? (filter && !filter.includes('|') ? filter : '*') : '');
+    return p;
+}
+
 export function reactiveSkillGuidance(toolResults: any): string {
     if (!Array.isArray(toolResults) || !toolResults.length) return '';
     const fired  = _reactiveFired;
@@ -215,8 +232,17 @@ export function reactiveSkillGuidance(toolResults: any): string {
     hist.push(...toolResults.map(r => r.name));
     // Sliding window: keep at most the latest 20 entries to focus on recent patterns
     if (hist.length > 20) hist.splice(0, hist.length - 20);
+    const paths = _pathsFor(hist);
+    paths.push(...toolResults.map(_touchedPath));
+    if (paths.length > 20) paths.splice(0, paths.length - 20);
     for (const s of skillsRegistry.values()) {
         if (!_eligible(s) || !s.trigger_on_repeat) continue;
+        // Delegating a search only pays off across several files; grinding on one file is a read problem.
+        if (s.name === 'search') {
+            const known = paths.filter(Boolean);
+            const top = Math.max(0, ...[...new Set(known)].map(p => known.filter(k => k === p).length));
+            if (known.length && !known.includes('*') && top / known.length >= 0.75) continue;
+        }
         const hit = s.trigger_on_repeat.split(',').some(spec => {
             const m = spec.trim().match(/^(\w+)\s*x\s*(\d+)$/i);
             if (!m) return false;

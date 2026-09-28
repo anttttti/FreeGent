@@ -265,6 +265,25 @@ describe('search_workspace — _handleSearchWorkspace', () => {
         expect(res.note).toMatch(/no matches/i);
     });
 
+    it('retries backslash-escaped patterns as literals when is_regex is not set', async () => {
+        files.set('game.js', 'camera.targetX = 1;\nfunction draw(ctx) {\n}');
+        const a = await W.executeToolAsync('search_workspace',
+            { pattern: 'camera\\.targetX|camera\\.y =' }, null);
+        expect(a.match_count).toBe(1);
+        expect(a.note).toMatch(/is_regex/);
+        const b = await W.executeToolAsync('search_workspace', { pattern: 'draw(ctx) \\{' }, null);
+        expect(b.match_count).toBe(1);
+    });
+
+    it('retries regex-looking patterns as a real regex and hints when still empty', async () => {
+        files.set('a.js', 'const value42 = 1;');
+        const hit = await W.executeToolAsync('search_workspace', { pattern: 'value\\d+' }, null);
+        expect(hit.match_count).toBe(1);
+        const miss = await W.executeToolAsync('search_workspace', { pattern: 'nothing\\d+' }, null);
+        expect(miss.matches).toHaveLength(0);
+        expect(miss.note).toMatch(/is_regex=true/);
+    });
+
     it('respects path_filter, excluding non-matching files', async () => {
         files.set('src/main.ts', 'const target = true;');
         files.set('tests/main.test.ts', 'const target = false;');

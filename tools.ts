@@ -714,17 +714,14 @@ async function _handleSearchWorkspace(args: any) {
         // 'names' matches filenames only. Case-insensitive per args.case_sensitive.
         const scope = String(args.scope ?? 'both').toLowerCase();
 
-        let re;
-        if (isRegex) {
-            re = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
-        } else {
-            // Split on | to allow multi-term literal search (e.g. "foo|bar") without requiring is_regex
-            const terms = pattern.split('|').map(t => t.trim()).filter(Boolean)
-                .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-            re = new RegExp(terms.join('|'), caseSensitive ? 'g' : 'gi');
-        }
+        const _literalRe = (p: string) => new RegExp(
+            p.split('|').map(t => t.trim()).filter(Boolean).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+            caseSensitive ? 'g' : 'gi');
+        // Literal search (default) lets | separate multi-term OR without requiring is_regex.
+        const re = isRegex ? new RegExp(pattern, caseSensitive ? 'g' : 'gi') : _literalRe(pattern);
 
         const files   = await agentListFiles();
+        const scan = async (re: RegExp) => {
         const matches = [];
 
         for (const f of files) {
@@ -775,12 +772,35 @@ async function _handleSearchWorkspace(args: any) {
             }
             if (matches.length >= maxMatches) break;
         }
+        return matches;
+        };
+
+        let matches = await scan(re);
+        let note = '';
+        // Models often send regex syntax (\. \( \{ \d, .*, (?:...)) without is_regex, which the literal
+        // search can never match. Retry once with the escapes stripped, then once as a real regex.
+        const _regexy = !isRegex && (/\\[^\w\s]|\\[dwsb]|\.\*|\.\+|\(\?[:=!]|\[[^\]]+\][*+?]?|^\^|\$$/.test(pattern));
+        if (!matches.length && _regexy) {
+            const unescaped = pattern.replace(/\\([^\w\s])/g, '$1');
+            if (unescaped !== pattern) {
+                matches = await scan(_literalRe(unescaped));
+                if (matches.length) note = 'Pattern contained backslash escapes; matched it as a literal after removing them. Set is_regex=true to use regex syntax.';
+            }
+            if (!matches.length) {
+                try {
+                    matches = await scan(new RegExp(pattern, caseSensitive ? 'g' : 'gi'));
+                    if (matches.length) note = 'No literal match, so the pattern was retried as a regex. Set is_regex=true to use regex syntax explicitly.';
+                } catch { /* not a valid regex either */ }
+            }
+            if (!matches.length) return { matches: [], note: 'No matches found. The pattern looks like a regex but is_regex was not set (patterns are literal by default) — retry with is_regex=true, or a plain literal such as the bare identifier.' };
+        }
 
         if (!matches.length) return { matches: [], note: 'No matches found.' };
         const _capped = matches.length >= maxMatches;
         return {
             matches,
             match_count: matches.length,
+            ...(note && !_capped && { note }),
             ...(_capped && { note: `Results capped at ${maxMatches} matches — there may be more. Narrow your search with path_filter or a more specific pattern. Do not repeat this exact search.` }),
         };
     } catch (e) { return { error: `search_workspace: ${e.message}` }; }
