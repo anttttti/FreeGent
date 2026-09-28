@@ -40,7 +40,7 @@ describe('IDBSessionAdapter — schema', () => {
     it('creates all object stores on open', async () => {
         const adapter = await makeAdapter();
         const names = Array.from((adapter as any)._db.objectStoreNames).sort();
-        expect(names).toEqual(['chats', 'history', 'raw_messages', 'turn_log', 'worker_agents', 'worker_runs']);
+        expect(names).toEqual(['chats', 'checkpoint_attachments', 'history', 'raw_messages', 'turn_log', 'worker_agents', 'worker_runs']);
     });
 });
 
@@ -285,5 +285,74 @@ describe('IDBSessionAdapter — raw_messages', () => {
         // live history untouched
         const loaded = await a.loadHistory('c1');
         expect(loaded).toHaveLength(1);
+    });
+});
+
+// ── Reading back logs / captures, checkpoint attachments (schema v2) ─────────
+// These let the browser keep turn logs, raw captures and checkpoint attachments out of
+// localStorage (session-store.ts sessionHas, agent-core.ts saveCheckpoint).
+
+describe('IDBSessionAdapter — turn log / raw captures read-back', () => {
+    it('loadTurnLog returns one chat\'s most recent turns, oldest first', async () => {
+        const a = await makeAdapter();
+        for (let i = 0; i < 5; i++) await a.logTurn({ chatId: 'c1', ts: `2026-01-01T00:00:0${i}.000Z`, response: `r${i}` });
+        await a.logTurn({ chatId: 'c2', response: 'other' });
+        expect((await a.loadTurnLog('c1', 3)).map(r => r.response)).toEqual(['r2', 'r3', 'r4']);
+        expect(await a.loadTurnLog('c2', 10)).toHaveLength(1);
+    });
+
+    it('pruneTurnLogFrom drops the chat\'s turns at/after the time, keeps other chats', async () => {
+        const a = await makeAdapter();
+        await a.logTurn({ chatId: 'c1', ts: '2026-01-01T00:00:00.000Z', response: 'keep' });
+        await a.logTurn({ chatId: 'c1', ts: '2026-01-01T00:00:05.000Z', response: 'drop' });
+        await a.logTurn({ chatId: 'c2', ts: '2026-01-01T00:00:05.000Z', response: 'other' });
+        await a.pruneTurnLogFrom('c1', Date.parse('2026-01-01T00:00:05.000Z'));
+        expect((await a.loadTurnLog('c1', 10)).map(r => r.response)).toEqual(['keep']);
+        expect(await a.loadTurnLog('c2', 10)).toHaveLength(1);
+    });
+
+    it('loadRawMessages returns { ts, ...entry } and pruneRawFrom drops by time', async () => {
+        const a = await makeAdapter();
+        await a.saveRawMessage('c1', { content: 'before', createdAt: 1000 });
+        await a.saveRawMessage('c1', { content: 'after',  createdAt: 2000 });
+        const list = await a.loadRawMessages('c1');
+        expect(list).toEqual([{ content: 'before', ts: 1000 }, { content: 'after', ts: 2000 }]);
+        await a.pruneRawFrom('c1', 2000);
+        expect((await a.loadRawMessages('c1')).map(r => r.content)).toEqual(['before']);
+    });
+
+    it('deleteChat also removes the chat\'s turn log', async () => {
+        const a = await makeAdapter();
+        await a.logTurn({ chatId: 'c1', response: 'x' });
+        await a.deleteChat('c1');
+        expect(await a.loadTurnLog('c1', 10)).toHaveLength(0);
+    });
+});
+
+describe('IDBSessionAdapter — checkpoint attachments', () => {
+    it('saves, loads and deletes attachments by checkpoint id', async () => {
+        const a = await makeAdapter();
+        const data = { images: [{ mimeType: 'image/png', base64: 'AAAA' }], files: [{ name: 'a.txt', content: 'hi' }] };
+        await a.saveCheckpointAttachments('100', data);
+        expect(await a.loadCheckpointAttachments('100')).toEqual(data);
+        await a.deleteCheckpointAttachments(['100']);
+        expect(await a.loadCheckpointAttachments('100')).toBeNull();
+    });
+});
+
+describe('IDBSessionAdapter — v1 → v2 upgrade', () => {
+    it('adds the turn_log chatId index to an existing v1 database, keeping its rows', async () => {
+        const idb = new IDBFactory();
+        await new Promise<void>((resolve, reject) => {
+            const req = idb.open('fg-upgrade', 1);
+            req.onupgradeneeded = () => {
+                req.result.createObjectStore('turn_log', { autoIncrement: true }).add({ chatId: 'c1', response: 'old' });
+            };
+            req.onsuccess = () => { req.result.close(); resolve(); };
+            req.onerror = () => reject(req.error);
+        });
+        const a = await openIDBSession(idb, 'fg-upgrade');
+        expect((await a.loadTurnLog('c1', 10)).map(r => r.response)).toEqual(['old']);
+        expect(await a.loadCheckpointAttachments('x')).toBeNull();
     });
 });

@@ -86,6 +86,22 @@ const _FILTER_META: { key: FilterKey; label: string; title: string }[] = [
 
 // ── Provider fetchers ─────────────────────────────────────────────────────
 
+// Some /models endpoints put one constant in `created` for every model instead of a release
+// date (seen 2026-09-29: NVIDIA 735790403 = 1993-04-26, TokenHarbor 1700000000 = 2023-11-14,
+// Vercel 2025-08-21), which made the '>1 yr old' filter hide new models. Returns a reader for
+// one provider's full model list: a value shared by more than half the models, or older than
+// 2020, reads as undefined (unknown age).
+const _MIN_REAL_CREATED = Date.UTC(2020, 0, 1) / 1000;
+function _createdReader(all: any[]): (m: any) => number | undefined {
+    const counts = new Map<number, number>();
+    for (const m of all) if (typeof m?.created === 'number') counts.set(m.created, (counts.get(m.created) ?? 0) + 1);
+    return (m: any) => {
+        const c = m?.created;
+        if (typeof c !== 'number' || c < _MIN_REAL_CREATED) return undefined;
+        return all.length >= 3 && counts.get(c)! > all.length / 2 ? undefined : c;
+    };
+}
+
 async function _fetchOpenRouterModels(): Promise<{ id: string; name: string; pricing: any; created?: number }[]> {
     try {
         // OpenRouter has CORS headers — direct browser fetch works
@@ -128,10 +144,11 @@ async function _fetchTokenHarborModels(): Promise<FetchResult> {
         const json = await _proxyBearer('https://tokenharbor.ai/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
         // Only accept models explicitly in the known-free allowlist (`:free` suffix).
         const live: LiveModel[] = all
             .filter((m: any) => typeof m.id === 'string' && _TOKENHARBOR_FREE.has(m.id))
-            .map((m: any) => ({ id: m.id as string, created: m.created as number | undefined }));
+            .map((m: any) => ({ id: m.id as string, created: created(m) }));
         return { live, rejected: [] };
     } catch {
         return { live: [], rejected: [] };
@@ -159,13 +176,14 @@ async function _fetchKiloModels(): Promise<FetchResult> {
         const json = await _proxyFetch('https://api.kilo.ai/api/gateway/models', key || undefined);
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
         const live: LiveModel[] = all
             .filter((m: any) =>
                 typeof m.id === 'string' &&
                 m.isFree === true &&
                 !_KILO_EXCLUDED.has(m.id)
             )
-            .map((m: any) => ({ id: m.id as string, name: m.name as string | undefined, created: m.created as number | undefined }));
+            .map((m: any) => ({ id: m.id as string, name: m.name as string | undefined, created: created(m) }));
         return { live, rejected: [] };
     } catch {
         return { live: [], rejected: [] };
@@ -184,9 +202,6 @@ async function _fetchKiloModels(): Promise<FetchResult> {
 const _VERCEL_FREE_IDS = [
     'poolside/laguna-s-2.1-free',
     'perplexity/sonar',
-    'perplexity/sonar-pro',
-    'perplexity/sonar-reasoning-pro',
-    'inclusionai/ling-3.0-flash-fin',
     'inclusionai/ling-3.0-flash-sante',
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
@@ -216,11 +231,12 @@ async function _fetchVercelModels(): Promise<FetchResult> {
             return results.flatMap(r => (r.status === 'fulfilled' && r.value?.id ? [r.value] : []));
         })();
 
+        const created = _createdReader(listAll.length ? listAll : toProcess);
         const live: LiveModel[] = [];
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
         for (const m of toProcess) {
             if (!m.id || m.type !== 'language') continue;
-            const lm: LiveModel = { id: m.id as string, name: m.name as string | undefined, created: m.created as number | undefined };
+            const lm: LiveModel = { id: m.id as string, name: m.name as string | undefined, created: created(m) };
             const hasTool = Array.isArray(m.tags) && m.tags.includes('tool-use');
             if (_VERCEL_DOMAIN_SPECIFIC.has(m.id)) {
                 rejected.push({ model: lm, reason: 'non-chat' }); // narrow-domain specialists → treat as non-chat
@@ -306,12 +322,13 @@ async function _fetchGroqModels(): Promise<FetchResult> {
         const json = await _proxyBearer('https://api.groq.com/openai/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const data: any[] = json?.data ?? [];
+        const created = _createdReader(data);
 
         const live: LiveModel[] = [];
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
 
         for (const m of data) {
-            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: m.created as number | undefined };
+            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: created(m) };
             if (_GROQ_EXCL.test(m.id)) {
                 rejected.push({ model: lm, reason: 'non-chat' });
             } else {
@@ -358,12 +375,13 @@ async function _fetchNvidiaModels(): Promise<FetchResult> {
         const json = await _proxyBearer('https://integrate.api.nvidia.com/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const data: any[] = json?.data ?? [];
+        const created = _createdReader(data);
 
         const live: LiveModel[] = [];
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
 
         for (const m of data) {
-            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: m.created as number | undefined };
+            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: created(m) };
             if (_NVIDIA_EXCL.test(m.id)) {
                 rejected.push({ model: lm, reason: 'non-chat' });
             } else {
@@ -388,6 +406,7 @@ async function _fetchNousModels(): Promise<FetchResult> {
         const json = await _proxyBearer('https://inference-api.nousresearch.com/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
 
         const live: LiveModel[] = [];
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
@@ -395,7 +414,7 @@ async function _fetchNousModels(): Promise<FetchResult> {
         for (const m of all) {
             const id: string = m.id ?? '';
             if (!id.endsWith(':free')) continue;  // only free-tier models
-            const lm: LiveModel = { id, name: m.name as string | undefined, created: m.created as number | undefined };
+            const lm: LiveModel = { id, name: m.name as string | undefined, created: created(m) };
             const modality: string = m.architecture?.modality ?? '';
             if (_NOUS_EXCL_NONCHAT.test(id) || (modality && !modality.includes('->text'))) {
                 rejected.push({ model: lm, reason: 'non-chat' });
@@ -534,7 +553,8 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         );
         // For removal check, compare all OR catalog entries against all OR live IDs (not just free)
         const orAllIds = new Set(orModels.map((m: any) => m.id));
-        const orFreeWithName = orFree.map((m: any) => ({ id: m.id, name: m.name, created: m.created as number | undefined }));
+        const orCreated = _createdReader(orModels);
+        const orFreeWithName = orFree.map((m: any) => ({ id: m.id, name: m.name, created: orCreated(m) }));
 
         // Add proposals from free models not in catalog — age-filter tagged as 'too-old'
         for (const m of orFreeWithName) {
@@ -685,7 +705,7 @@ function _getSuppressedRemoves(): Set<string> {
     catch { return new Set(); }
 }
 function _saveSuppressedRemoves(s: Set<string>): void {
-    localStorage.setItem('fg_suppressed_removes', JSON.stringify([...s]));
+    try { localStorage.setItem('fg_suppressed_removes', JSON.stringify([...s])); } catch {}  // best-effort
 }
 
 function _applyProposals(proposals: Proposal[]): void {
@@ -703,6 +723,7 @@ function _applyProposals(proposals: Proposal[]): void {
 
     const custom: ModelEntry[] = typeof getCustomModels === 'function' ? getCustomModels() : [];
     const mainList: string[]   = typeof getActiveMainModelList === 'function' ? getActiveMainModelList() : [];
+    const removedSpecs = new Set<string>();
 
     for (const p of selected) {
         if (p.type === 'add') {
@@ -724,13 +745,15 @@ function _applyProposals(proposals: Proposal[]): void {
         } else {
             const idx = custom.findIndex((m: ModelEntry) => m.provider === p.provider && m.model === p.model);
             if (idx !== -1) custom.splice(idx, 1);
-            if (typeof saveMainModelList === 'function') {
-                saveMainModelList(mainList.filter(k => k !== p.spec));
-            }
+            removedSpecs.add(p.spec);
         }
     }
 
+    // Save the model list first: it throws when browser storage is full, and then nothing else changes.
     if (typeof saveCustomModels === 'function') saveCustomModels(custom);
+    if (removedSpecs.size && typeof saveMainModelList === 'function') {
+        saveMainModelList(mainList.filter(k => !removedSpecs.has(k)));
+    }
     if (typeof renderModelCatalogTable === 'function') renderModelCatalogTable();
     if (typeof renderMainModelList === 'function') renderMainModelList();
 }
@@ -959,7 +982,13 @@ export function showModelUpdateModal(): void {
 
         (document.getElementById('fg-mu-cancel') as HTMLButtonElement).onclick = () => overlay.remove();
         (document.getElementById('fg-mu-apply') as HTMLButtonElement).onclick  = () => {
-            _applyProposals(proposals);
+            try {
+                _applyProposals(proposals);
+            } catch (e: any) {
+                const status = document.getElementById('fg-mu-status');
+                if (status) { status.textContent = e?.message || String(e); status.style.color = '#e57373'; }
+                return;
+            }
             overlay.remove();
         };
     });

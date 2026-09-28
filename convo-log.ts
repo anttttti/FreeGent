@@ -5,8 +5,9 @@ import { chatKey, SESSION_KEYS } from './storage-keys.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
 // Each entry records one LLM response turn (may include tool calls).
-// Two-layer persistence: sessionStorage (hot-reload cache, ephemeral) and per-chat
-// localStorage (fg_chat_<id>_log, survives page reloads, restored on chat switch).
+// Two-layer persistence: sessionStorage (hot-reload cache, ephemeral) and a per-chat store
+// that survives page reloads and is restored on chat switch — the session store's turn log
+// (IndexedDB) in the browser, per-chat localStorage (fg_chat_<id>_log) without one.
 
 type ConvoLogEntry = {
     ts: string;
@@ -63,9 +64,9 @@ export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
     conversationLog.push(record);
     if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
     try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
-    // Per-chat localStorage persistence so the log survives full page reloads.
-    // loadChatLog() reads this back when switching to a chat.
-    if (record.chatId) {
+    // Per-chat localStorage persistence so the log survives full page reloads, unless the
+    // session store keeps it (sessionLogTurn below). loadChatLog() reads it back on chat switch.
+    if (record.chatId && !(typeof sessionHas === 'function' && sessionHas('loadTurnLog'))) {
         try {
             const key = chatKey.log(record.chatId);
             const list = JSON.parse(localStorage.getItem(key) || '[]');
@@ -81,14 +82,21 @@ export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
     _metricsWriter?.(record);
 }
 
+// A chat's persisted log: the session store's copy, else the localStorage one.
+async function _loadPersistedLog(chatId: string): Promise<ConvoLogEntry[]> {
+    const fromStore = typeof sessionHas === 'function' && sessionHas('loadTurnLog') ? await sessionLoadTurnLog(chatId, _LOG_CAP) : [];
+    if (fromStore.length) return fromStore;
+    const saved = localStorage.getItem(chatKey.log(chatId));
+    return saved ? JSON.parse(saved) : [];
+}
+
 // Merge a chat's persisted log into the in-memory conversationLog. Called by switchToChat so
 // the log viewer and exports correctly reflect the restored session's history after a reload.
-function loadChatLog(chatId: string | null): void {
+async function loadChatLog(chatId: string | null): Promise<void> {
     if (!chatId) return;
     try {
-        const saved = localStorage.getItem(chatKey.log(chatId));
-        if (!saved) return;
-        const entries = JSON.parse(saved);
+        const entries = await _loadPersistedLog(chatId);
+        if (!entries.length) return;
         // Replace any existing in-memory entries for this chat with the persisted ones
         // (sessionStorage may have a stale subset; localStorage is the authoritative copy).
         conversationLog = [
@@ -126,6 +134,15 @@ function pruneConvoLogFrom(chatId: string, sinceMs: number): void {
         const pruned = list.filter((e: ConvoLogEntry) => new Date(e.ts).getTime() < sinceMs);
         if (pruned.length !== list.length) localStorage.setItem(key, JSON.stringify(pruned));
     } catch {}
+    if (typeof sessionPruneTurnLogFrom === 'function') sessionPruneTurnLogFrom(chatId, sinceMs);
+}
+
+// A chat's LLM history: in memory for the active chat, else its localStorage cache, else the
+// session store (localStorage keeps only the most recent chats — see saveHistory).
+async function _chatHistoryFor(id: string): Promise<any[] | null> {
+    if (id === activeChatId && openaiHistory.length) return openaiHistory;
+    try { const oh = localStorage.getItem(chatKey.oh(id)); if (oh) return JSON.parse(oh); } catch {}
+    return typeof sessionLoadHistory === 'function' ? (await sessionLoadHistory(id)) ?? null : null;
 }
 
 // ── Badge helper ──────────────────────────────────────────────────────────
@@ -165,13 +182,12 @@ function exportConvoLogJson() {
 
 // ── Export all chats ──────────────────────────────────────────────────────
 
-function exportAllChats() {
+async function exportAllChats() {
     const list = getChatList();
     if (!list.length) { alert('No saved chats found.'); return; }
 
-    const chats = list.map(meta => {
-        let oai: string | null = null;
-        try { oai = JSON.parse(localStorage.getItem(chatKey.oh(meta.id)) || 'null'); } catch {}
+    const chats = await Promise.all(list.map(async meta => {
+        const oai = await _chatHistoryFor(meta.id);
         return {
             id:        meta.id,
             name:      meta.name,
@@ -180,7 +196,7 @@ function exportAllChats() {
             geminiHistory: null,
             openaiHistory: oai,
         };
-    });
+    }));
 
     const payload = {
         exportedAt: new Date().toISOString(),
@@ -193,15 +209,15 @@ function exportAllChats() {
     );
 }
 
-function exportChat(id) {
+async function exportChat(id) {
     if (!id) { alert('No chat to export.'); return; }
     const list = getChatList();
     const meta = list.find(c => c.id === id);
+    const oai = await _chatHistoryFor(id);
+    // conversationLog holds only chats opened this session; read other chats' logs from storage.
+    let turns = conversationLog.filter(e => e.chatId === id);
+    if (!turns.length) try { turns = await _loadPersistedLog(id); } catch {}
 
-    let oai: string | null = null;
-    try { oai = JSON.parse(localStorage.getItem(chatKey.oh(id)) || 'null'); } catch {}
-
-    const isActive = id === activeChatId;
     const payload = {
         exportedAt: new Date().toISOString(),
         id,
@@ -209,12 +225,12 @@ function exportChat(id) {
         createdAt:  meta?.createdAt ? new Date(meta.createdAt).toISOString() : null,
         lastAt:     meta?.lastAt    ? new Date(meta.lastAt).toISOString()    : null,
         geminiHistory: null,
-        openaiHistory: isActive && openaiHistory.length ? openaiHistory : oai,
-        sessionLogTurns: conversationLog.filter(e => e.chatId === id),
+        openaiHistory: oai,
+        sessionLogTurns: turns,
         // fn-tag strips, tool-result truncations, and failed requests — content that never
         // enters openaiHistory/sessionLogTurns at all (see session-store.js). Without this,
         // a failure cascade with no successful turn in between is a silent gap in every export.
-        rawCaptures: typeof sessionLoadRawMessages === 'function' ? sessionLoadRawMessages(id) : [],
+        rawCaptures: typeof sessionLoadRawMessages === 'function' ? await sessionLoadRawMessages(id) : [],
     };
     _downloadBlob(
         new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
@@ -228,14 +244,11 @@ function exportCurrentChat() {
 
 // ── Markdown export ───────────────────────────────────────────────────────
 
-function exportChatMarkdown(id) {
+async function exportChatMarkdown(id) {
     if (!id) { alert('No chat to export.'); return; }
     const list = getChatList();
     const meta = list.find(c => c.id === id);
-    const isActive = id === activeChatId;
-    let oai: any[] | null = null;
-    try { oai = JSON.parse(localStorage.getItem(chatKey.oh(id)) || 'null'); } catch {}
-    const history: any[] = (isActive && openaiHistory.length ? openaiHistory : oai) ?? [];
+    const history: any[] = (await _chatHistoryFor(id)) ?? [];
 
     const lines: string[] = [`# ${meta?.name ?? 'Chat'}\n`];
     for (const msg of history) {

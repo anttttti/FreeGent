@@ -283,32 +283,32 @@ describe('session-store wrappers with a NodeSqliteAdapter injected', () => {
 // pre-existing legacy implementation for raw capture to fall through to, and it needs to stay
 // explorable without an adapter injected (plain browser mode today).
 describe('sessionSaveRawMessage / sessionLoadRawMessages — localStorage fallback (no adapter)', () => {
-    it('persists and reads back raw captures for a chat', () => {
+    it('persists and reads back raw captures for a chat', async () => {
         window.sessionSaveRawMessage('c1', { role: 'assistant', content: 'first', kind: 'fn_tag_strip' });
         window.sessionSaveRawMessage('c1', { role: 'tool', content: 'second', kind: 'tool_truncate' });
-        const list = window.sessionLoadRawMessages('c1');
+        const list = await window.sessionLoadRawMessages('c1');
         expect(list).toHaveLength(2);
         expect(list[0].content).toBe('first');
         expect(list[1].kind).toBe('tool_truncate');
         expect(list[0].ts).toBeTypeOf('number');
     });
 
-    it('is scoped per chat', () => {
+    it('is scoped per chat', async () => {
         window.sessionSaveRawMessage('c1', { role: 'assistant', content: 'for c1' });
         window.sessionSaveRawMessage('c2', { role: 'assistant', content: 'for c2' });
-        expect(window.sessionLoadRawMessages('c1')).toHaveLength(1);
-        expect(window.sessionLoadRawMessages('c2')).toHaveLength(1);
-        expect(window.sessionLoadRawMessages('c3')).toHaveLength(0);
+        expect(await window.sessionLoadRawMessages('c1')).toHaveLength(1);
+        expect(await window.sessionLoadRawMessages('c2')).toHaveLength(1);
+        expect(await window.sessionLoadRawMessages('c3')).toHaveLength(0);
     });
 
-    it('is a no-op when chatId is falsy', () => {
+    it('is a no-op when chatId is falsy', async () => {
         expect(() => window.sessionSaveRawMessage(null, { content: 'x' })).not.toThrow();
-        expect(window.sessionLoadRawMessages(null)).toHaveLength(0);
+        expect(await window.sessionLoadRawMessages(null)).toHaveLength(0);
     });
 
-    it('caps the log so it does not grow unbounded', () => {
+    it('caps the log so it does not grow unbounded', async () => {
         for (let i = 0; i < 105; i++) window.sessionSaveRawMessage('c1', { role: 'assistant', content: `msg ${i}` });
-        const list = window.sessionLoadRawMessages('c1');
+        const list = await window.sessionLoadRawMessages('c1');
         expect(list.length).toBeLessThanOrEqual(100);
         expect(list[list.length - 1].content).toBe('msg 104'); // most recent kept
     });
@@ -318,7 +318,7 @@ describe('sessionSaveRawMessage / sessionLoadRawMessages — localStorage fallba
 // captures, not just its openaiHistory — otherwise every retry leaves the old failed
 // attempt's captures sitting alongside the new one forever.
 describe('sessionPruneRawFrom', () => {
-    it('removes entries at/after the checkpoint time, keeps earlier ones', () => {
+    it('removes entries at/after the checkpoint time, keeps earlier ones', async () => {
         // Set explicit ts values directly — sessionSaveRawMessage's Date.now() has only
         // millisecond resolution and two fast calls can otherwise land on the same tick.
         localStorage.setItem('fg_chat_c1_raw', JSON.stringify([
@@ -326,14 +326,14 @@ describe('sessionPruneRawFrom', () => {
             { ts: 2000, content: 'after' },
         ]));
         window.sessionPruneRawFrom('c1', 2000);
-        const list = window.sessionLoadRawMessages('c1');
+        const list = await window.sessionLoadRawMessages('c1');
         expect(list.map(e => e.content)).toEqual(['before']);
     });
-    it('leaves other chats untouched', () => {
+    it('leaves other chats untouched', async () => {
         window.sessionSaveRawMessage('c1', { role: 'assistant', content: 'c1 entry' });
         window.sessionSaveRawMessage('c2', { role: 'assistant', content: 'c2 entry' });
         window.sessionPruneRawFrom('c1', 0);
-        expect(window.sessionLoadRawMessages('c2')).toHaveLength(1);
+        expect(await window.sessionLoadRawMessages('c2')).toHaveLength(1);
     });
     it('is a no-op when chatId is falsy', () => {
         expect(() => window.sessionPruneRawFrom(null, Date.now())).not.toThrow();
@@ -403,5 +403,43 @@ describe('FTS5 full-text search — messages_fts / turn_log_fts', () => {
         db.exec('DELETE FROM turn_log');
         const stale = db.prepare(`SELECT rowid FROM turn_log_fts WHERE turn_log_fts MATCH 'needle'`).all();
         expect(stale).toHaveLength(0);
+    });
+});
+
+// With an adapter that reads raw captures / turn logs back (the browser's IDBSessionAdapter),
+// the localStorage copies are skipped — one per chat filled localStorage.
+describe('session-store with a read-back adapter (IndexedDB)', () => {
+    async function idbAdapter() {
+        const { IDBFactory, IDBKeyRange } = await import('fake-indexeddb');
+        globalThis.IDBKeyRange = IDBKeyRange;
+        const { openIDBSession } = await import('../idb-session-adapter.js');
+        return openIDBSession(new IDBFactory());
+    }
+
+    it('raw captures go to the adapter only and read back from it', async () => {
+        const a = await idbAdapter();
+        window.setSessionStore(a);
+        window.sessionSaveRawMessage('c1', { content: 'x' });
+        await new Promise(r => setTimeout(r, 0));
+        expect(localStorage.getItem('fg_chat_c1_raw')).toBeNull();
+        expect((await window.sessionLoadRawMessages('c1')).map(e => e.content)).toEqual(['x']);
+    });
+
+    it('sessionMigrateLocalStorage moves old localStorage logs into the adapter', async () => {
+        localStorage.setItem('fg_chat_c1_log', JSON.stringify([{ ts: '2026-01-01T00:00:00.000Z', chatId: 'c1', response: 'old turn' }]));
+        localStorage.setItem('fg_chat_c1_raw', JSON.stringify([{ ts: 1234, content: 'old raw' }]));
+        const a = await idbAdapter();
+        window.setSessionStore(a);
+        await window.sessionMigrateLocalStorage();
+        expect(localStorage.getItem('fg_chat_c1_log')).toBeNull();
+        expect(localStorage.getItem('fg_chat_c1_raw')).toBeNull();
+        expect((await a.loadTurnLog('c1', 10)).map(r => r.response)).toEqual(['old turn']);
+        expect(await a.loadRawMessages('c1')).toEqual([{ content: 'old raw', ts: 1234 }]);
+    });
+
+    it('sessionMigrateLocalStorage is a no-op without an adapter', async () => {
+        localStorage.setItem('fg_chat_c1_log', '[]');
+        await window.sessionMigrateLocalStorage();
+        expect(localStorage.getItem('fg_chat_c1_log')).toBe('[]');
     });
 });
