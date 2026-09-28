@@ -8,6 +8,12 @@ describe('formatWorkspaceListing', () => {
         expect(formatWorkspaceListing([])).toContain('(empty — the workspace has no files yet)');
     });
 
+    it('on a real filesystem, says the task files may be elsewhere (AgentBench OS)', () => {
+        const s = formatWorkspaceListing([], { nativeFs: true });
+        expect(s).toContain('may be elsewhere on the filesystem');
+        expect(s).not.toContain('no files yet');
+    });
+
     it('says nothing for an empty container listing (the find may have failed)', () => {
         expect(formatWorkspaceListing([], { inContainer: true })).toBe('');
     });

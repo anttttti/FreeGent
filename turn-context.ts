@@ -170,7 +170,8 @@ export async function buildTurnPrelude({
     if (isFirstTurn) {
         try {
             const inContainer = typeof fgTargetContainer !== 'undefined' && !!fgTargetContainer;
-            wsFilesBlock = formatWorkspaceListing(await collectWorkspacePaths(), { inContainer });
+            const nativeFs = typeof nativeExec === 'function';
+            wsFilesBlock = formatWorkspaceListing(await collectWorkspacePaths(), { inContainer, nativeFs });
         } catch {}
     }
 
@@ -187,7 +188,9 @@ const _WS_LIST_MAX_CHARS = 3000;
 // plus the root-level files. Returns '' when nothing reliable can be said.
 //   inContainer: paths come from `find` inside a task container — an empty result there can
 //   mean the listing failed, so it is not reported as an empty workspace.
-export function formatWorkspaceListing(rawPaths: string[], { inContainer = false } = {}): string {
+//   nativeFs: commands run on a real filesystem, where a task's files often live outside the
+//   working directory (AgentBench OS: /usr, ~, /agent) — an empty listing says so.
+export function formatWorkspaceListing(rawPaths: string[], { inContainer = false, nativeFs = false } = {}): string {
     const raw = (rawPaths || []).filter(p => typeof p === 'string' && p);
     // Adapter notes ("[listing truncated at 500 entries — …]") are not paths, but say the
     // listing is incomplete.
@@ -199,7 +202,10 @@ export function formatWorkspaceListing(rawPaths: string[], { inContainer = false
     const wrap = (body: string) => `<workspace_files>\n${body}\n</workspace_files>`;
     const count = `${paths.length}${truncated ? '+' : ''} file${paths.length === 1 && !truncated ? '' : 's'}${truncated ? ' (listing truncated)' : ''}`;
     if (!paths.length) {
-        return inContainer ? '' : wrap('(empty — the workspace has no files yet)');
+        if (inContainer) return '';
+        return wrap(nativeFs
+            ? '(empty — the working directory has no files; files the task mentions may be elsewhere on the filesystem)'
+            : '(empty — the workspace has no files yet)');
     }
     const full = paths.join('\n');
     if (paths.length <= _WS_LIST_MAX_PATHS && full.length <= _WS_LIST_MAX_CHARS) {

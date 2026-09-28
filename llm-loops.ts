@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -416,9 +416,14 @@ const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace',
 // cycle continues — SWE-bench Lite v0.55 sympy-18189 spent 88 steps this way, and v0.55
 // researcher workers re-read one file 15-20 times. Track which lines of each file were read
 // since the last write; reads that add no new lines are allowed a few times, then refused.
-type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number }>;
+type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number; refused?: number }>;
 const _readLedgers = new WeakMap<Map<string, any>, _ReadLedger>();   // keyed by the per-turn repeat cache
 export const REDUNDANT_READS_BEFORE_REFUSAL = 3;
+// Refusals per file before the guard gives way. A model that keeps asking for the same lines
+// after two refusals doesn't have them in view (pruned, compressed or compacted away): v0.56
+// Verified sympy-14531 was refused 25 of 36 reads, asking for 600–650 about 20 times until the
+// step cap. Serve the lines again, with a warning, instead of refusing forever.
+export const REDUNDANT_READ_REFUSALS_MAX = 2;
 // Whole-file reads longer than this may be cut down before the model sees them — not "covered".
 const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
 
@@ -437,14 +442,18 @@ function _rangeCovered(ranges: Array<[number, number]>, [from, to]: [number, num
 const _fmtRanges = (rs: Array<[number, number]>) =>
     rs.map(([a, b]) => b === Infinity ? (a <= 1 ? 'whole file' : `${a}–end`) : `${a}–${b}`).join(', ');
 
-// Returns a refusal result when this read only repeats lines already read, too many times.
+// For a read that only repeats lines already read: null (run it), { error } (refuse it), or,
+// once the file's refusals are used up, { note } (run it and attach the note to the result).
 export function _checkRedundantRead(ledger: _ReadLedger, args: any): any | null {
     const path = _normPath(String(args?.path ?? ''));
     const entry = path ? ledger.get(path) : null;
     if (!entry || !_rangeCovered(entry.ranges, _readRange(args))) return null;
     entry.redundant++;
     if (entry.redundant < REDUNDANT_READS_BEFORE_REFUSAL) return null;
-    return { error: `read_file refused: these lines of "${args.path}" were already read this turn (${_fmtRanges(entry.ranges)}) and the file has not changed since. Their content is in your earlier tool results — a pruned result names the later read that holds it. Do not read this file again: edit it, run code, or give your answer.` };
+    if ((entry.refused ?? 0) >= REDUNDANT_READ_REFUSALS_MAX)
+        return { note: `You have read these lines of "${args.path}" ${entry.redundant + 1} times without changing the file. They are shown again below; use them now — edit the file, run code, or give your answer.` };
+    entry.refused = (entry.refused ?? 0) + 1;
+    return { error: `read_file refused: these lines of "${args.path}" were already read this turn (${_fmtRanges(entry.ranges)}) and the file has not changed since. Their content is in your earlier tool results — a pruned result names the later read that holds it. Do not read this file again: edit it, run code, or give your answer. If those results no longer show the lines, request them once more and they will be shown.` };
 }
 // Whether an execute_code call may have changed workspace files: reported writes, or a command
 // that writes (redirects, in-place edits, file-moving tools, Python/JS file writes, git mutations).
@@ -473,13 +482,22 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         task?.setPrompt(JSON.stringify({ tool: name, args }, null, 2));
         onStart?.(name, args, i);
         let result;
+        let _rereadNote: string | null = null;
         if (_ledger && name === 'read_file') {
-            const refusal = _checkRedundantRead(_ledger, args);
-            if (refusal) {
-                task?.setOutput(JSON.stringify(refusal, null, 2));
+            const verdict = _checkRedundantRead(_ledger, args);
+            if (verdict?.error) {
+                task?.setOutput(JSON.stringify(verdict, null, 2));
                 task?.complete();
-                onResult?.(name, args, refusal);
-                return { name, args, result: refusal };
+                onResult?.(name, args, verdict);
+                return { name, args, result: verdict };
+            }
+            if (verdict?.note) {
+                // Serving again: let the history dedup gate pass the content instead of an
+                // "Already read" stub (the pruners mark reads 'pruned' the same way).
+                _rereadNote = verdict.note;
+                const pNorm = _normPath(String(args?.path ?? ''));
+                for (const k of _seenReadFiles.keys()) if (k.startsWith(pNorm + ':')) _seenReadFiles.set(k, 'pruned');
+                repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
             }
         }
         if (repeatCache) {
@@ -502,6 +520,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             : null;
         try { result = await executeToolAsync(name, args, context); }
         catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
+        if (_rereadNote && result && !result.error) result = { ...result, note: _rereadNote };
         if (_preMtimes && replFails) {
             for (const [fp, before] of _preMtimes) {
                 const after = await agentFileMtime(fp);
@@ -512,6 +531,11 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         }
         if (repeatCache) {
             const key = `${name}|${JSON.stringify(args)}`;
+            // A non-GET request may change remote state: earlier cached reads (GET, or POST-style
+            // reads such as AutomationBench's /execute) are stale now. Its own entry is still
+            // cached below, so an identical repeat (a duplicate send) is not executed twice.
+            // v0.56: 5 reads after a write were answered from the pre-write cache (v0.55: 10).
+            if (name === 'fetch_url' && !/^(GET|HEAD)$/i.test(String(args?.method ?? 'GET'))) repeatCache.clear();
             if (!result?.error) {
                 // Only cache successful results. Error results are retryable — caching them
                 // would fire a spurious 'tool_repeat' nudge on retry and hand the model the
@@ -569,6 +593,9 @@ async function _stepBudgetStopMessage(max: number): Promise<string> {
 }
 
 async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
+    // A forced stop is otherwise invisible in the step log: the run just ends on a tool call
+    // (v0.56: 12 failure-streak stops and 13 step-cap stops read as "completed").
+    try { convoLogTurn({ type: 'stop', name: reason }); } catch {}
     if (typeof callLLMComplete !== 'function') return `*(stopped: ${reason})*`;
     try {
         const ctx = lastContent ? `Last agent output:\n${lastContent.slice(0, 600)}\n\n` : '';
@@ -1062,6 +1089,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 if (k.startsWith(pNorm + ':')) _seenReadFiles.set(k, 'pruned');
         }
         _repeatCache.clear();
+        // The overlapping-read ledger is keyed by this same Map object, so clear() alone kept it:
+        // v0.56 refused 19 reads (6 SWE tasks) of lines whose only copy had been compacted away.
+        _readLedgers.delete(_repeatCache);
         // After compaction the context window is fresh — the prelude guidance that was
         // injected on earlier turns is gone.  Re-enable those skills by removing them
         // from _reactiveFired so buildTriggeredGuidance re-injects them on the next turn.
@@ -1759,26 +1789,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             ? { ..._repeatGuard, refused: _repeatGuard.refused + 1 }
             : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec));
         const _execOk = _exec.filter(r => !r.result?.error).length;
-        // Meaningful success: a write tool with no error, or execute_code that exited 0
-        // and produced output or wrote files. Read-only successes (read_file, list_files,
-        // search_workspace, fetch_url) do NOT reset the counter — a diagnostic ls between
-        // failing attempts should not mask a repeated-failure loop.
-        const _execMeaningful = _exec.filter(r => {
-            if (r.result?.error) return false;
-            if (_READ_ONLY_TOOLS.has(r.name)) return false;
-            if (r.name === 'execute_code') {
-                const res = r.result;
-                return (res?.exit_code ?? 0) === 0
-                    && (!!res?.stdout?.trim() || (Array.isArray(res?.files_written) && res.files_written.length > 0));
-            }
-            return true;
-        }).length;
-        // Read-only tools (read_file, list_files, search_workspace, fetch_url) are neutral:
-        // they neither reset the counter (no productive progress) nor increment it (no failure).
-        // Only non-read tool calls count against the failure budget.
-        const _execNonRead = _exec.filter(r => !_READ_ONLY_TOOLS.has(r.name)).length;
-        consecutiveToolFails = _execMeaningful > 0 ? 0 : consecutiveToolFails + _execNonRead;
-        if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
+        // Failure streak (detectors.ts updateFailStreak): real progress resets it, real failures
+        // add to it; read-only tools, silent exit-0 runs and missing-environment errors are neutral.
+        // A diagnostic ls between failing attempts therefore neither masks nor extends a loop.
+        const _prevToolFails = consecutiveToolFails;
+        consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
+        const _failedThisStep = consecutiveToolFails > _prevToolFails;
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
             promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
@@ -1789,6 +1805,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
         });
         _updateLogBadge?.();
+        // Checked after the log row, so the step that ends the run is in the step log.
+        if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, args: r.args, result: r.result }));
 
         const oaiDiffs = _buildWriteDiffs(
@@ -1923,7 +1941,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // entire exploration phase, so early termination kills tasks that would have recovered.
         if (stuckNudge)                       _emitNudge('stuck_detected', _nudge(stuckNudge));
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
-        else if (consecutiveToolFails >= 5)   _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
+        else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
         if (!stuckNudge) {
             const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0));

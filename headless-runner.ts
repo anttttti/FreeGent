@@ -29,6 +29,7 @@ import './history-util.js';
 import './fetch-blacklist.js';
 import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
 import { scrubEnv } from './secret-env.js';
+import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
 import './search-providers.js';
 import './skill-guidance.js';
 import './turn-context.js';
@@ -379,7 +380,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         const entry = LANG_CMD[language];
         if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
         const [cmd, cmdArgs] = entry;
-        const MAX_OUTPUT = 200_000, MAX_RETURN = 5_000, TIMEOUT_MS = 120_000;
+        const MAX_OUTPUT = 200_000, TIMEOUT_MS = 120_000;
         // Snapshot workspace before execution (local only — Docker workspace is on the container).
         const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
         // Snapshot .git/hooks to detect hook-injection attempts (non-.sample files planted by the agent).
@@ -388,7 +389,10 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             try { return new Set(readdirSync(hooksDir).filter(f => !f.endsWith('.sample'))); }
             catch { return null; }
         })() : null;
-        let stdout = '', stderr = '', done = false;
+        const out: OutBuf = { text: '', dropped: 0 }, err: OutBuf = { text: '', dropped: 0 };
+        let done = false;
+        // Head + tail of each stream (exec-output.ts); curl's progress meter is dropped from stderr.
+        const _shaped = () => ({ stdout: clipOutput(out.text, out.dropped), stderr: clipOutput(stripCurlProgress(err.text), err.dropped) });
         const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
         // The runner's environment holds the provider keys (loaded from the credentials file);
         // agent commands get it without them. (docker exec doesn't forward it either way.)
@@ -397,14 +401,10 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         // No interactive input: close stdin so a program that reads it gets EOF at once instead of
         // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
         child.stdin?.end();
-        child.stdout?.on('data', d => { stdout += d; if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(-MAX_OUTPUT); });
-        child.stderr?.on('data', d => { stderr += d; if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(-MAX_OUTPUT); });
+        child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
+        child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
         child.on('close', (exitCode) => {
-            const result: Record<string, any> = {
-                stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
-                stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
-                exit_code: exitCode ?? 0,
-            };
+            const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? 0 };
             // Detect files written/modified during execution via post-snapshot diff.
             // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
             if (preSnap && (exitCode ?? 0) === 0 && workspaceRoot) {
@@ -431,11 +431,10 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             }
             _done(result);
         });
-        child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, stdout, stderr, exit_code: 1 }));
+        child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));
         const timer = setTimeout(() => {
             try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-            _done({ stdout: stdout.length > MAX_RETURN ? `…[truncated]\n` + stdout.slice(-MAX_RETURN) : stdout,
-                    stderr: stderr.length > MAX_RETURN ? `…[truncated]\n` + stderr.slice(-MAX_RETURN) : stderr,
+            _done({ ..._shaped(),
                     exit_code: 124, error: 'Command timed out after 120s. If it was waiting for input, pass input through a pipe or file (stdin is closed); run long jobs in the background.' });
         }, TIMEOUT_MS);
     });

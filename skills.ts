@@ -600,7 +600,9 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         description: 'Run Python via execute_code. Body adapts to the active runtime (native subprocess or Pyodide).',
         trigger: 'python, pyodide, pandas, numpy, matplotlib, scipy, micropip',
         trigger_on_filetype: '.py, .ipynb',
-        trigger_on_tool: 'write_file=>.py, write_file=>.ipynb, execute_code',
+        // Not on every execute_code: it fired on the first bash call of 375 of 578 v0.56 tasks,
+        // and its "use language python" advice led models to send `python3 -c "…"` as Python.
+        trigger_on_tool: 'write_file=>.py, write_file=>.ipynb',
         roles: 'coder, director',
         requires_tools: 'execute_code',
         body: '',
@@ -632,7 +634,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 parts.push(`### Environment (native python3 process)
 - Runs in the workspace directory — use relative paths directly
 - Full filesystem and network access
-- Install packages: \`execute_code(language="bash", code="pip3 install pkg")\`
+- Install packages: \`execute_code(language="bash", code="pip3 install pkg")\`; if pip refuses with "externally-managed-environment", add \`--break-system-packages\`
 - \`subprocess\`, \`os.system\` work normally
 - stdout / stderr / exit_code returned; exit_code != 0 means failure${_pkgNote}`);
             }
@@ -644,7 +646,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - Other packages: \`import micropip; await micropip.install(["pkg-name"])\`
 - No \`subprocess\` / \`os.system\` — use \`execute_code(language="bash", ...)\` for shell commands`);
             const pyRules = [
-                'Always use `language: "python"` explicitly.',
+                '`language: "python"` is for Python source only. Shell commands — including `python3 -c "…"`, `python3 script.py` and heredocs — use `language: "bash"`.',
                 'Check `stderr` for tracebacks; `exit_code != 0` means failure.',
             ];
             const _pyRead   = enabledTools.has('read_file');

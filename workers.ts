@@ -969,7 +969,32 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             }
     }
     _wSessionClose({ kind: 'max-turns' });
-    return { output: '*(max steps reached)*', toolCalls: _wToolCalls };
+    // Step limit: ask the worker for its report instead of returning a bare sentinel. The
+    // sentinel was all the director got from 134 of 362 v0.56 workers (37%) — 30 steps of
+    // findings discarded and the worker reported "blocked", including 46 that had written files.
+    // Same history and tools as the loop (cache-friendly prefix); tool calls in the reply are
+    // ignored. No reply → the last thing the worker said plus its recent tool calls.
+    const _capFooter = `STATUS: partial — stopped at the ${maxSteps}-step worker limit before finishing`;
+    let _report = '';
+    try {
+        const _capOH = [...localOH, { role: 'user', content: `<nudge>You have reached the ${maxSteps}-step limit and cannot call more tools. Report now, in plain text: what you found (with file paths and line numbers), what you changed, and what is left to do. Do not call tools.</nudge>` }];
+        const _m = await callOAI(() => {}, () => {}, {
+            localHistory: _capOH, forWorker: true, endpointOverride: endpoint, roleOverride: localRole,
+            toolFilterOverride: localToolFilter, forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null,
+        });
+        _report = typeof _m?.content === 'string' ? _m.content.trim() : '';
+    } catch (e) { console.error(`[worker:step-cap report] ${e.message}`); }
+    if (!_report) {
+        const _lastSaid = [...localOH].reverse().find(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim())?.content?.trim();
+        // The last few calls with their (clipped) results — the labels alone ("exec(bash)") say nothing.
+        const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
+        const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
+            .flatMap(m => m.tool_calls).slice(-4)
+            .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 200)}) → ${(_results.get(tc.id) ?? '').slice(0, 300)}`)
+            .join('\n');
+        _report = `${_lastSaid ? `${_lastSaid}\n\n` : ''}Last tool calls:\n${_recent || '- (none)'}`;
+    }
+    return { output: `${_report.replace(/STATUS:\s*(complete|blocked|partial).*$/im, '').trim()}\n\n${_capFooter}`, toolCalls: _wToolCalls };
 }
 
 // Labels used by the two protocol-compliance judge mechanisms (step-validator.js's generic
@@ -1216,6 +1241,14 @@ const _WORKER_STATUS_CHECKS = [{
     llmPrompt: 'A worker agent ended its turn with the output below, without the required STATUS footer. Does the output indicate the worker FAILED to complete its assigned work — it stalled, gave up, asked a question instead of acting, or only partially finished? Answer YES (incomplete) or NO (the work appears done).',
 }];
 
+// Strip quotes/backticks around a role name. Custom roles may be mixed-case, so lowercase only
+// when that names a registered role.
+export function _normWorkerRole(raw: string, registry: Map<string, any>): string | undefined {
+    const bare = String(raw ?? '').trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+    if (!bare) return undefined;
+    return registry.has(bare) ? bare : registry.has(bare.toLowerCase()) ? bare.toLowerCase() : bare;
+}
+
 async function executeWorkers(args: any): Promise<any> {
     const depth = args.depth || 0;
     // Accept several calling conventions models use instead of {agents:[...]}:
@@ -1233,6 +1266,9 @@ async function executeWorkers(args: any): Promise<any> {
     if (!Array.isArray(rawAgents)) rawAgents = [];
     let agents = rawAgents.filter(a => a && a.id && a.task);
     if (!agents.length) return { error: 'No workers specified.' };
+    // Role names arrive quoted or capitalised ('"researcher"', "'Coder'" — 3–4 per SWE run in
+    // v0.55/v0.56); the registry lookup then missed and the worker ran with no role prompt.
+    agents = agents.map(a => typeof a.role === 'string' ? { ...a, role: _normWorkerRole(a.role, rolesRegistry) } : a);
 
     // Dedup: block an identical run_workers call if the last one failed due to context overflow.
     // Fingerprint = sorted agent ids + task strings (model/role changes are allowed to retry).

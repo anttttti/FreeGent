@@ -14,12 +14,25 @@ describe('_checkRedundantRead', () => {
         const reads = [[1, 400], [280, 350], [250, 310], [200, 250], [200, 350], [210, 350]];
         const verdicts = reads.map(([s, e]) => {
             const args = { path: 'sympy/solvers/diophantine.py', start_line: s, end_line: e };
-            const refusal = M._checkRedundantRead(ledger, args);
-            if (!refusal) M._recordRead(ledger, args, ok());
-            return refusal ? 'refused' : 'ran';
+            const v = M._checkRedundantRead(ledger, args);
+            if (!v?.error) M._recordRead(ledger, args, ok());
+            return v?.error ? 'refused' : v?.note ? 'served+note' : 'ran';
         });
-        // First read is new; the next two redundant ones run; the third and later are refused.
-        expect(verdicts).toEqual(['ran', 'ran', 'ran', 'refused', 'refused', 'refused']);
+        // First read is new; the next two redundant ones run; the next two are refused; after
+        // that the lines are served again with a note rather than refused indefinitely.
+        expect(verdicts).toEqual(['ran', 'ran', 'ran', 'refused', 'refused', 'served+note']);
+    });
+
+    it('gives way after two refusals: serves the lines with a note (v0.56 sympy-14531: 25 refusals)', () => {
+        const ledger = new Map();
+        const args = { path: 'sympy/printing/str.py', start_line: 600, end_line: 650 };
+        M._recordRead(ledger, { path: 'sympy/printing/str.py', start_line: 546, end_line: 849 }, ok(300));
+        const verdicts = Array.from({ length: 7 }, () => {
+            const v = M._checkRedundantRead(ledger, args);
+            return v?.error ? 'refused' : v?.note ? 'served+note' : 'ran';
+        });
+        expect(verdicts).toEqual(['ran', 'ran', 'refused', 'refused', 'served+note', 'served+note', 'served+note']);
+        expect(M.REDUNDANT_READ_REFUSALS_MAX).toBe(2);
     });
 
     it('allows reads that add new lines, and reads of other files', () => {
