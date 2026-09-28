@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -492,11 +492,26 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 return { name, args, result: verdict };
             }
             if (verdict?.note) {
-                // Serving again: let the history dedup gate pass the content instead of an
-                // "Already read" stub (the pruners mark reads 'pruned' the same way).
-                _rereadNote = verdict.note;
                 const pNorm = _normPath(String(args?.path ?? ''));
-                for (const k of _seenReadFiles.keys()) if (k.startsWith(pNorm + ':')) _seenReadFiles.set(k, 'pruned');
+                const seen = [..._seenReadFiles.entries()].filter(([k]) => k.startsWith(pNorm + ':') && !k.includes('::'));
+                // Every earlier read of this file is still in context unpruned (the pruners and
+                // compaction mark a path 'pruned' as soon as any of its results is stubbed): the lines
+                // are on screen, so say so instead of sending them again. Re-serving them regardless
+                // made a loop of its own — pylint-4970 (v0.57) alternated two ranges of similar.py for
+                // 57 steps, each served in full.
+                if (seen.length && seen.every(([, v]) => v === 'full')) {
+                    const stub = { path: args?.path, note: `${verdict.note.replace(/ They are shown again below;.*$/, '')} They are still shown in your earlier read_file results above, unchanged, so they are not repeated here. Use them now — edit the file, run code, or give your answer.` };
+                    task?.setOutput(JSON.stringify(stub, null, 2));
+                    task?.complete();
+                    onResult?.(name, args, stub);
+                    return { name, args, result: stub };
+                }
+                // An earlier copy was pruned or compacted away: serve the lines again. Let the history
+                // dedup gate (keyed by exact range) pass the content instead of an "Already read" stub.
+                // Only this range: marking every range of the file 'pruned' made each later read of
+                // the file look invisible too, so all of them were served.
+                _rereadNote = verdict.note;
+                _seenReadFiles.set(`${pNorm}:${args?.start_line || ''}:${args?.end_line || ''}`, 'pruned');
                 repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
             }
         }
@@ -592,19 +607,32 @@ async function _stepBudgetStopMessage(max: number): Promise<string> {
     return lines.join('\n');
 }
 
-async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
+// The current turn's forced stop (reason given to _gracefulSynthesis) and whether the turn changed
+// files. runAgentTurn copies it into TurnResult so directorLoop can tell a step-limit stop after
+// edits (worth one closing continuation) from any other stop (end the run). Reset per turn.
+let _turnStop: { reason: string | null; edited: boolean } = { reason: null, edited: false };
+export function getTurnStopInfo(): { reason: string | null; edited: boolean } { return { ..._turnStop }; }
+
+export async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
     // A forced stop is otherwise invisible in the step log: the run just ends on a tool call
     // (v0.56: 12 failure-streak stops and 13 step-cap stops read as "completed").
     try { convoLogTurn({ type: 'stop', name: reason }); } catch {}
-    if (typeof callLLMComplete !== 'function') return `*(stopped: ${reason})*`;
+    // A forced stop ends the turn as BLOCKED. The summary alone did not guarantee it: the model
+    // writes "… BLOCKED: x" mid-line, which _BLOCKED_DECLARATION_RE (line-leading) misses, and the
+    // fallback text had no BLOCKED at all. The turn then read as 'running' and directorLoop started
+    // up to 4 more 100-step turns (v0.57: 1,102 SWE steps; pylint-4970 ran 394 steps over three stops).
+    _turnStop.reason = reason;
+    setLastTurnBlockedToken(true);
+    const withBlocked = (t: string) => _BLOCKED_DECLARATION_RE.test(t) ? t : `${t}\n\nBLOCKED: ${reason}`;
+    if (typeof callLLMComplete !== 'function') return withBlocked(`*(stopped: ${reason})*`);
     try {
         const ctx = lastContent ? `Last agent output:\n${lastContent.slice(0, 600)}\n\n` : '';
         const text = await callLLMComplete(
             `${ctx}An autonomous agent was force-stopped (${reason}). In 1-2 sentences summarise what was accomplished and state why it stopped. End with: BLOCKED: <reason>.`,
             { maxTokens: 160, label: 'termination:synthesis', maxAttempts: 1 }
         );
-        return text?.trim() || `*(stopped: ${reason})*`;
-    } catch { return `*(stopped: ${reason})*`; }
+        return withBlocked(text?.trim() || `*(stopped: ${reason})*`);
+    } catch { return withBlocked(`*(stopped: ${reason})*`); }
 }
 
 // ── Generic step-output validation ──────────────────────────────────────────
@@ -936,9 +964,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     _lastMainRequest = null;   // set by this turn's first request; never another chat's
     setLastTurnDoneToken(false);
     setLastTurnBlockedToken(false);
+    _turnStop = { reason: null, edited: false };
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
     // The flag is consumed+cleared by callOAI on the first LLM request of this turn.
     if (forceToolCall) _forceToolCall = true;
+    const _failSigs: string[] = [];   // error signature of each failure in the current streak
+    let _sameErrorGraceUsed = false;
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
@@ -1833,6 +1864,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const _prevToolFails = consecutiveToolFails;
         consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
         const _failedThisStep = consecutiveToolFails > _prevToolFails;
+        if (consecutiveToolFails === 0) _failSigs.length = 0;
+        for (const r of _exec) if (failStreakKind(r.name, r.result, _READ_ONLY_TOOLS) === 'fail') _failSigs.push(failureSignature(r.result));
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
             promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
@@ -1844,6 +1877,16 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         });
         _updateLogBadge?.();
         // Checked after the log row, so the step that ends the run is in the step log.
+        // Same error every time: one directed nudge and 5 more attempts before the stop (once per turn).
+        let _sameErrorNudge: string | null = null;
+        if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS && !_sameErrorGraceUsed) {
+            const _sig = sameErrorStreak(_failSigs);
+            if (_sig) {
+                _sameErrorGraceUsed = true;
+                _sameErrorNudge = sameErrorNudge(_sig, consecutiveToolFails);
+                consecutiveToolFails = _MAX_CONSEC_TOOL_FAILS - 5;
+            }
+        }
         if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, args: r.args, result: r.result }));
 
@@ -1947,6 +1990,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
             && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
             _editsThisRun = true;
+        // For directorLoop's closing continuation: the director's own edits, or a worker's.
+        if (_editsThisRun || results.some(r => r.name === 'run_workers'
+            && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !isScratchPath(String(p))))))
+            _turnStop.edited = true;
         // Which files changed this run — for the scratch-only completion check.
         for (const r of results) {
             if (r.result?.error) continue;
@@ -1977,7 +2024,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // and leave repeating the call as the only move. The repeat guard ends real loops.
         // Do NOT _gracefulSynthesis here: for SWE tasks !_editsThisRun is true throughout the
         // entire exploration phase, so early termination kills tasks that would have recovered.
-        if (stuckNudge)                       _emitNudge('stuck_detected', _nudge(stuckNudge));
+        if (_sameErrorNudge)                  _emitNudge('same_error', _nudge(_sameErrorNudge));
+        else if (stuckNudge)                  _emitNudge('stuck_detected', _nudge(stuckNudge));
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
@@ -2304,7 +2352,7 @@ function _stripThinking(text: string): string {
 // headless: in JSDOM, module free-variable reads resolve through globalThis, which the
 // bootstrap windowProxy forwards here. (Detectors → detectors.ts, history hygiene →
 // history.ts, tool repair → tool-call-repair.ts — each bridges its own exports.)
-Object.assign(window, { runTurn, callLLM, callOAI, getLastMainRequest, _runToolCalls, _validateStepOutput, _saveAnswer, _patchOAIWriteArgs, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
+Object.assign(window, { runTurn, callLLM, callOAI, getLastMainRequest, getTurnStopInfo, _runToolCalls, _validateStepOutput, _saveAnswer, _patchOAIWriteArgs, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
 
 // §7: named ES module exports alongside window bridge (harness adapter / headless import paths).
 // Note: clearSessionFallback and clearReplaceState are already exported via export function above.

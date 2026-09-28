@@ -758,7 +758,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             session,
             task,
             _isDirector
-                ? { maxContinuations: 4, forceFirstToolCall: true }
+                ? { maxContinuations: 4, forceFirstToolCall: true, stepLimitContinuations: 1 }
                 : { maxContinuations: 0 },  // non-director: single turn only
         );
 

@@ -75,7 +75,8 @@ describe('runTurn failure-streak stop', () => {
     });
 
     it('stops after 10 real failures and logs the stopping step and the stop', async () => {
-        W.nativeExec = vi.fn(async () => ({ stdout: '', stderr: 'AssertionError: 1 != 2', exit_code: 1 }));
+        let k = 0;   // a different error each time: no same-error grace
+        W.nativeExec = vi.fn(async () => ({ stdout: '', stderr: `AssertionError: ${k++} != 2`, exit_code: 1 }));
         W.fetch = makeReplayFetch(Array.from({ length: 20 }, (_, i) => curl(i)));
         const before = W.conversationLog?.length ?? 0;
         const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
@@ -84,5 +85,29 @@ describe('runTurn failure-streak stop', () => {
         const rows = (W.conversationLog ?? []).slice(before);
         expect(rows.filter((r: any) => Array.isArray(r.toolCalls) && r.toolCalls.length).length).toBe(10);
         expect(rows.some((r: any) => r.type === 'stop' && /consecutive tool failures/.test(r.name))).toBe(true);
+    });
+
+    // v0.57 Verified xarray-4094: 13 identical pandas-2 TypeErrors, stopped at step 36 with no edit.
+    it('the same error every time gets one same_error nudge and 5 more attempts', async () => {
+        W.nativeExec = vi.fn(async () => ({ stdout: '', stderr: 'Traceback (most recent call last):\n  File "r.py", line 3\nTypeError: unique requires a Series, Index, ExtensionArray, np.ndarray or NumpyExtensionArray got list.', exit_code: 1 }));
+        W.fetch = makeReplayFetch(Array.from({ length: 25 }, (_, i) => curl(i)));
+        const before = W.conversationLog?.length ?? 0;
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        expect(W.nativeExec).toHaveBeenCalledTimes(15);
+        const rows = (W.conversationLog ?? []).slice(before);
+        const n = rows.filter((r: any) => r.type === 'nudge' && r.name === 'same_error');
+        expect(n).toHaveLength(1);
+        expect(n[0].text).toMatch(/TypeError: unique requires/);
+    });
+});
+
+describe('failureSignature / sameErrorStreak', () => {
+    it('takes the last stderr line, not the Traceback header', async () => {
+        const D = await import('../detectors.ts');
+        expect(D.failureSignature({ stderr: 'Traceback (most recent call last):\n  File "x"\nKeyError: 3\n' })).toBe('KeyError: 3');
+        expect(D.failureSignature({ error: 'read_file refused: x' })).toBe('read_file refused: x');
+        expect(D.sameErrorStreak(['a', 'KeyError: 3', 'KeyError: 3', 'KeyError: 3', 'KeyError: 3'])).toBe('KeyError: 3');
+        expect(D.sameErrorStreak(['KeyError: 3', 'KeyError: 3', 'KeyError: 4', 'KeyError: 3'])).toBeNull();
+        expect(D.sameErrorStreak(['KeyError: 3', 'KeyError: 3'])).toBeNull();
     });
 });

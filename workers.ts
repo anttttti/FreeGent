@@ -1249,6 +1249,20 @@ export function _normWorkerRole(raw: string, registry: Map<string, any>): string
     return registry.has(bare) ? bare : registry.has(bare.toLowerCase()) ? bare.toLowerCase() : bare;
 }
 
+// A python-style call `run_workers(agents=[{id: "x", role: "coder", task: "…"}])` arrives parsed as
+// {"agents=[{id": "x", "role": "coder", "task": "…"}}: the first key swallowed "agents=[{", and
+// values may keep their quotes. 59 of the 73 "No workers specified" calls in v0.57 had this shape.
+export function _agentsFromMangledArgs(args: any): any[] | null {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+    const lead = Object.keys(args).find(k => /^\s*agents\s*=\s*\[\s*\{\s*["']?(\w+)["']?\s*$/.test(k));
+    if (!lead) return null;
+    const unq = (v: any) => typeof v === 'string' ? v.trim().replace(/^["'`]+|["'`]+$/g, '').trim() : v;
+    const field = lead.match(/(\w+)["']?\s*$/)![1];
+    const agent: any = { [field]: unq(args[lead]) };
+    for (const k of ['id', 'role', 'task', 'context', 'files', 'model']) if (k in args && !(k in agent)) agent[k] = unq(args[k]);
+    return agent.id && agent.task ? [agent] : null;
+}
+
 async function executeWorkers(args: any): Promise<any> {
     const depth = args.depth || 0;
     // Accept several calling conventions models use instead of {agents:[...]}:
@@ -1263,9 +1277,9 @@ async function executeWorkers(args: any): Promise<any> {
     if (typeof rawAgents === 'string') {
         try { rawAgents = JSON.parse(rawAgents); } catch { rawAgents = []; }
     }
-    if (!Array.isArray(rawAgents)) rawAgents = [];
+    if (!Array.isArray(rawAgents) || !rawAgents.length) rawAgents = _agentsFromMangledArgs(args) ?? [];
     let agents = rawAgents.filter(a => a && a.id && a.task);
-    if (!agents.length) return { error: 'No workers specified.' };
+    if (!agents.length) return { error: 'No workers specified. Call run_workers with {"agents": [{"id": "short-name", "role": "researcher", "task": "what to do"}]}.' };
     // Role names arrive quoted or capitalised ('"researcher"', "'Coder'" — 3–4 per SWE run in
     // v0.55/v0.56); the registry lookup then missed and the worker ran with no role prompt.
     agents = agents.map(a => typeof a.role === 'string' ? { ...a, role: _normWorkerRole(a.role, rolesRegistry) } : a);

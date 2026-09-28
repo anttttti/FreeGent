@@ -20,7 +20,23 @@ export interface DirectorOpts {
     onTurn?: (turnIndex: number, result: TurnResult) => void;
     /** If true, force a tool call on the very first turn (prevents step-0 text exits). */
     forceFirstToolCall?: boolean;
+    /**
+     * Closing turns allowed after a step-limit stop, once the run has changed files. Other forced
+     * stops (repeated calls, failure streak) always end the run. Default 0. Counts toward
+     * maxContinuations.
+     */
+    stepLimitContinuations?: number;
+    /** Prompt for a closing turn after a step-limit stop. */
+    stepLimitPrompt?: string;
 }
+
+// A forced stop ends a turn as BLOCKED. Until v0.57 the stop text often failed the BLOCKED check,
+// so every forced stop, a repeat or failure-streak stop included, was followed by up to 4 blind
+// 100-step turns. 2 of the 12 SWE runs that continued were resolved in a continuation, both after
+// a step-limit stop in a run that had already edited files (Lite xarray-4094, Verified
+// requests-1142): that case gets one explicit closing turn.
+const _STEP_LIMIT_RE = /step budget exhausted|maximum step limit reached|role step cap/;
+export const STEP_LIMIT_PROMPT = 'You reached the step limit for this turn. Your file changes so far are kept. Use this turn to finish: check that your fix is applied (e.g. git diff), run the most relevant test once if you can, correct only what that shows, then end with COMPLETED. Do not start new exploration.';
 
 export type RunOneTurn = (
     prompt: string,
@@ -48,6 +64,8 @@ export async function directorLoop(
         continuationPrompt = 'The task is not yet complete. Take the single most useful next step now.',
         onTurn,
         forceFirstToolCall = false,
+        stepLimitContinuations = 0,
+        stepLimitPrompt = STEP_LIMIT_PROMPT,
     } = opts;
 
     // First turn
@@ -56,13 +74,19 @@ export async function directorLoop(
     onTurn?.(0, result);
 
     // Continuation turns
-    let n = 0;
+    let n = 0, closing = 0;
+    let edited = !!result.stop?.edited;
+    const _closingTurn = (r: TurnResult) => r.finishSignal === 'blocked' && edited
+        && _STEP_LIMIT_RE.test(r.stop?.reason ?? '') && closing < stepLimitContinuations;
     while (
-        result.finishSignal === 'running' &&
+        (result.finishSignal === 'running' || _closingTurn(result)) &&
         !session.softStopPending &&
         n < maxContinuations
     ) {
-        result = await runOneTurn(continuationPrompt, session, { forceToolCall: true });
+        const isClosing = result.finishSignal !== 'running';
+        if (isClosing) closing++;
+        result = await runOneTurn(isClosing ? stepLimitPrompt : continuationPrompt, session, { forceToolCall: true });
+        edited ||= !!result.stop?.edited;
         n++;
         onTurn?.(n, result);
     }

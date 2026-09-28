@@ -115,8 +115,10 @@ function _pushCheckpoint(path, content) {
 // apply_patch / delete_file.  Those tools always operate on plain relative paths stored
 // in IDB; /workspace/ is the bash-internal mount point and is not a valid prefix here.
 // Also strips a lone leading / (e.g. /tictactoe.html → tictactoe.html).
-function _normToolPath(p: string): string {
+export function _normToolPath(p: string): string {
     if (!p) return p;
+    // A Docker task container takes its own absolute paths (/app/…, /workspace/…) unchanged.
+    if (typeof workspaceUsesAbsolutePaths === 'function' && workspaceUsesAbsolutePaths()) return p;
     if (p.startsWith('/workspace/')) return p.slice('/workspace/'.length);
     if (p === '/workspace') return '';
     if (p.startsWith('/')) return p.slice(1);
@@ -1956,7 +1958,10 @@ async function _handleExecuteCodeInner(args, context) {
     if (args.language === 'python' && typeof nativeExec === 'function' && _isShellCompileError(args.code, execResult)) {
         try {
             const asBash = await nativeExec('bash', args.code);
-            execResult = { ...asBash, note: 'This was shell code, not Python — it ran as bash. Use language: "bash" for shell commands.' };
+            // Worded as a success. "This was shell code … Use language: bash" read as a request to redo
+            // the call: in v0.57 CTF, 68 of 90 exact-duplicate calls were re-sends (still as python) of
+            // a call that had just succeeded this way.
+            execResult = { ...asBash, note: 'Ran as bash (the code was shell, not Python). The output above is the real result — do not re-run it. For shell commands, language "bash" is the right choice.' };
         } catch { /* keep the original SyntaxError */ }
     }
     // Explicit bash that failed on what looks like Python: say so (never switch an explicit choice).

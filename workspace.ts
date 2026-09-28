@@ -10,6 +10,9 @@ export interface WorkspaceAdapter {
     agentDeleteFile(path: string): Promise<void>;
     /** Returns the file's last-modified timestamp (ms since epoch), or null if not found. */
     agentFileMtime?(path: string): Promise<number | null>;
+    /** Paths are absolute filesystem paths (a Docker task container), not workspace-relative: the
+     *  file tools must not strip their leading "/". */
+    absolutePaths?: boolean;
 }
 
 let _wa: WorkspaceAdapter | null = null; // injected adapter (Node.js/headless only; null → IndexedDB/FSA)
@@ -627,6 +630,7 @@ async function deleteFsaFile(name) {
 
 
 export function setWorkspaceAdapter(a: WorkspaceAdapter | null) { _wa = a; }
+export function workspaceUsesAbsolutePaths(): boolean { return !!_wa?.absolutePaths; }
 
 // Whether a local folder is synced via the File System Access API this session —
 // the system prompt branches its workspace description on this ("local/" paths
@@ -2619,7 +2623,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8,
     // Agent file ops (called via window.X in tools.js)
     agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentWriteFile, agentDeleteFile, agentFileMtime,
-    setWorkspaceAdapter,
+    setWorkspaceAdapter, workspaceUsesAbsolutePaths,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {
         const recs = await listWorkspaceFiles();

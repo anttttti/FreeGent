@@ -29,6 +29,8 @@ export type TurnUsage = {
 export type TurnResult = {
     text:         string;
     finishSignal: FinishSignal;
+    /** The loop's forced-stop reason for this turn (null when it ended normally), and whether the turn changed files. */
+    stop?:        { reason: string | null; edited: boolean };
     usage:        TurnUsage;
     steps:        StepRecord[];
 };
