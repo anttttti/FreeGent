@@ -186,6 +186,10 @@ export class NodeFsAdapter implements WorkspaceAdapter {
 // instead of the FreeGent container's local workspace.
 export class DockerFsAdapter implements WorkspaceAdapter {
     private _ctr: string;
+    // The agent sees container paths (/app/…, as agentListFiles lists them). Stripping the "/" made
+    // `docker exec cat` resolve them against the image WORKDIR: /app/x → /app/app/x (TerminalBench
+    // v0.55–v0.57: 23/23, 40/41, 25/25 absolute-path read_file calls failed).
+    readonly absolutePaths = true;
     constructor(ctr: string) { this._ctr = ctr; }
 
     async agentReadFile(path: string): Promise<string> {

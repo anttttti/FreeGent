@@ -218,18 +218,24 @@ deep_research takes a "query" string (the research question) and returns a struc
         name: 'failure-recovery',
         description: 'Tool failure recovery tactics: corrected args, re-read exact text, smaller steps, worker replanning, loop detection.',
         trigger_on_failure: 'replace_miss x2, tool_error x2, http_error x1',
-        trigger_on_repeat: 'read_file x8, execute_code x10, replace_in_file x5, write_file x3',
-        body: `**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If still fails, rewrite the function with write_file instead.
-
-**execute_code fails**: narrow the step — test one line at a time, print intermediate values. If a command times out, add a shorter timeout or break into smaller steps.
-
-**Same tool repeated** (read_file, execute_code, replace_in_file, write_file used many times without progress): you may be in a loop. Stop repeating the same approach. Re-read the task, check what information you already have, and try a fundamentally different tactic. If stuck, delegate to a worker for a fresh perspective via run_workers([{id:"fresh-perspective", task:"<current task and what was tried>", role:"director"}]).
-
-**Worker stalls**: re-read the changed file yourself with read_file. If the fix is present, treat verification as passed. If still failing after 2 stalls, spawn replanning:
+        // No "execute_code x10": ten shell calls among the last twenty is ordinary work, not a loop.
+        // It caused 162 of the 272 injections in v0.57 (OS, SQL, Bash included), each opening with
+        // replace_in_file advice. Real loops are caught by the content-aware repeat/stuck detectors.
+        trigger_on_repeat: 'read_file x8, replace_in_file x5, write_file x3',
+        body: '',
+        // Only the paragraphs for tools this session has.
+        body_fn: () => {
+            const has = (t: string) => typeof isToolActive !== 'function' || isToolActive(t);
+            const parts: string[] = [];
+            if (has('replace_in_file')) parts.push(`**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If still fails, rewrite the function with write_file instead.`);
+            if (has('execute_code')) parts.push(`**execute_code fails**: narrow the step — test one line at a time, print intermediate values. If a command times out, add a shorter timeout or break into smaller steps.`);
+            parts.push(`**Same tool repeated** without progress: you may be in a loop. Stop repeating the same approach. Re-read the task, check what information you already have, and try a fundamentally different tactic.${has('run_workers') ? ' If stuck, delegate to a worker for a fresh perspective via run_workers([{id:"fresh-perspective", task:"<current task and what was tried>", role:"director"}]).' : ''}`);
+            if (has('run_workers')) parts.push(`**Worker stalls**: re-read the changed file yourself with read_file. If the fix is present, treat verification as passed. If still failing after 2 stalls, spawn replanning:
 run_workers([{id:"replan", task:"Plan in <task-path> failed at step N because <reason>. Revise ## Execution Plan.", role:"director"}])
-Max 2 replan attempts. If still failing → update_task_status(path, "failed", "<reason>").
-
-**General**: The core's after-fail rule applies — a failed tool is not a stopping condition. If you cannot proceed, state BLOCKED with the exact blocker.`
+Max 2 replan attempts.${has('update_task_status') ? ' If still failing → update_task_status(path, "failed", "<reason>").' : ''}`);
+            parts.push(`**General**: The core's after-fail rule applies — a failed tool is not a stopping condition. If you cannot proceed, state BLOCKED with the exact blocker.`);
+            return parts.join('\n\n');
+        },
     },
 ];
 
@@ -442,7 +448,9 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
         description: 'Stack trace and error debugging — how to trace to root cause efficiently.',
         trigger: 'error, exception, traceback, TypeError, AttributeError, NameError, SyntaxError, undefined is not, is not defined, failed, bug, broken, crash, wrong output, unexpected result',
         trigger_on_message_pattern: 'Traceback|TypeError|AttributeError|NameError|SyntaxError|ReferenceError|at line \\d|\\bError:|Exception:|FAILED\\b|stack trace|\\bat \\w',
-        trigger_on_failure: 'tool_error',
+        // No trigger_on_failure 'tool_error': tool-level errors (file not found, refused read, HTTP
+        // error from fetch_url) carry no stack trace to search for. All 101 v0.57 injections came
+        // from it, 82 in AutomationBench.
         body: `**Debugging errors / stack traces:** Immediately call **search_workspace** for ALL function names and identifiers in the trace (in parallel). Never start with list_files. Use line-range **read_file** with exact line numbers from the trace — never read a whole file to find an error. If errors reference about:srcdoc line numbers that don't match any standalone JS file, check the HTML file that embeds the script.`
     },
     {

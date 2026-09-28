@@ -281,6 +281,7 @@ declare global {
     var fgTargetContainer: any;
     var nativeExec: any;
     var hasLocalFolder: any;
+    var workspaceUsesAbsolutePaths: any;
     // ── bridged by history-util.ts ──
     var activeHistory: any;
     var isRealUserMessage: any;
@@ -410,6 +411,7 @@ declare global {
     var callMCPTool: any;
     // ── bridged by model-caps.ts ──
     var getModelToolFormat: any;
+    var getTurnStopInfo: any;
     var parseFnTagCalls: any;
     // ── bridged by nudge-emitter.ts ──
     var emitNudge: (name: string, textOrEntry: string | { role: string; content: string }, opts?: { role?: string; history?: any[]; step?: string; suppressLog?: boolean; suppressRender?: boolean; suppressHistory?: boolean; appendPartTo?: any[] }) => void;

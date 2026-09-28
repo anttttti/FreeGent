@@ -115,3 +115,37 @@ describe('code-first — absorbed scaffold rules', () => {
         expect(body()).toMatch(/No pseudocode and no .*TODO: implement.* stubs/i);
     });
 });
+
+// v0.57 fixes review §6: 162 of 272 failure-recovery injections came from "execute_code x10"
+// (ordinary shell work), and all 101 debug-strategy injections from plain tool errors.
+describe('failure-recovery / debug-strategy triggers', () => {
+    beforeEach(() => {
+        W.setMainAgentRole('director');
+        W.setReactiveFired(new Set());
+        W.setToolCallHistory([]);
+        W.setFailureCounts({});
+    });
+    afterEach(() => { W.clearMainAgentRole(); });
+    const execs = (n) => Array.from({ length: n }, () => ({ name: 'execute_code', result: { stdout: 'ok', exit_code: 0 } }));
+    const toolErrs = (n) => Array.from({ length: n }, () => ({ name: 'read_file', result: { error: 'File not found: x.py' } }));
+
+    it('ten successful execute_code calls inject nothing', () => {
+        expect(W.reactiveSkillGuidance(execs(12))).toBe('');
+    });
+    it('two tool errors inject failure-recovery but not debug-strategy', () => {
+        const out = W.reactiveSkillGuidance(toolErrs(2));
+        expect(out).toContain('### failure-recovery');
+        expect(out).not.toContain('### debug-strategy');
+    });
+    it('failure-recovery leaves out paragraphs for tools that are off', () => {
+        const off = ['replace_in_file', 'run_workers'].filter(t => W.enabledTools.has(t));
+        off.forEach(t => W.enabledTools.delete(t));
+        try {
+            const out = W.reactiveSkillGuidance(toolErrs(2));
+            expect(out).toContain('### failure-recovery');
+            expect(out).not.toContain('replace_in_file fails');
+            expect(out).not.toContain('run_workers(');
+            expect(out).toContain('execute_code fails');
+        } finally { off.forEach(t => W.enabledTools.add(t)); }
+    });
+});

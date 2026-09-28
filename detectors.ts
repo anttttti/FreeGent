@@ -211,6 +211,29 @@ export function updateFailStreak(prev: number, calls: Array<{ name: string; resu
     return prev + kinds.filter(k => k === 'fail').length;
 }
 
+// The error a failed call ended on: the last non-empty line of stderr (or the tool error). For a
+// Python traceback that is "TypeError: …", where the first line is always "Traceback (most recent
+// call last):", which made every Python error look like the same one.
+export function failureSignature(result: any): string {
+    const text = String(result?.error || result?.stderr || result?.stdout || '');
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    return (lines[lines.length - 1] ?? '').slice(0, 160);
+}
+
+// Failure streak about to reach the stop, and its last `n` failures all ended on the same error:
+// re-running will not change it, and in SWE the error usually comes from the environment (v0.57
+// Verified xarray-4094: 13 identical pandas-2 `TypeError`s from the old xarray under test, stopped
+// at step 36 with no edit; v0.56 had resolved it). Worth one directed nudge before the stop.
+export const SAME_ERROR_GRACE_MIN = 4;
+export function sameErrorStreak(sigs: string[], n = SAME_ERROR_GRACE_MIN): string | null {
+    if (sigs.length < n) return null;
+    const last = sigs.slice(-n);
+    return last[0] && last.every(s => s === last[0]) ? last[0] : null;
+}
+export function sameErrorNudge(sig: string, n: number): string {
+    return `The same error has now repeated ${n} times: "${sig}". Running it again will not change it. If it comes from the environment (a library version, a missing service or build step), stop trying to reproduce or fix the environment: make the change by reading the code, then finish. Otherwise try a different approach. The run stops if the failures continue.`;
+}
+
 export function _updateEnvFailureDetector(
     results: Array<{ name: string; result: any }>,
     envFailSig: string,
@@ -225,13 +248,13 @@ export function _updateEnvFailureDetector(
         return { envFailSig, envFailCount, envFailTotal, envFailMsg: null };
     }
     envFailTotal++;
-    const _sig = (String(_execFails[0].result?.stderr ?? _execFails[0].result?.error ?? '')).split('\n')[0].trim().slice(0, 120);
+    const _sig = failureSignature(_execFails[0].result).slice(0, 120);
     if (_sig && _sig === envFailSig) {
         envFailCount++;
         if (envFailCount >= 3) {
             const _n = envFailCount;
             envFailCount = 0; envFailSig = ''; envFailTotal = 0;
-            return { envFailSig, envFailCount, envFailTotal, envFailMsg: `This command has failed ${_n} times in a row with the same error: "${_sig}". The environment may be missing a required tool or package that cannot be installed. If you cannot proceed without it, declare BLOCKED: <reason>.` };
+            return { envFailSig, envFailCount, envFailTotal, envFailMsg: `This command has failed ${_n} times in a row with the same error: "${_sig}". The environment may be missing a required tool or package that cannot be installed. If the task is to change code, make the change from reading the code without running this; declare BLOCKED: <reason> only if the task cannot be done without it.` };
         }
     } else {
         envFailSig = _sig; envFailCount = 1;

@@ -1369,9 +1369,11 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
         _BLOCKED_DECLARATION_RE.test(finalText) ? 'blocked' :
         'running';
 
+    const _stop = typeof getTurnStopInfo === 'function' ? getTurnStopInfo() : null;
     return {
         text:         finalText,
         finishSignal: _finishSignal,
+        ...(_stop ? { stop: _stop } : {}),
         usage:        { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, // tokens tracked in runTurn; future §4 extension
         steps:        [],  // tool steps tracked in runTurn; future §4 extension
     };

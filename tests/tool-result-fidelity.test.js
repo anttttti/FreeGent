@@ -142,7 +142,8 @@ describe('execute_code language', () => {
         const { r, langs } = await runSeq({ code, language: 'python' }, [compileErr(code.split('\n')[0]), { stdout: 'ok\n', stderr: '', exit_code: 0 }]);
         expect(langs).toEqual(['python', 'bash']);
         expect(r.stdout).toBe('ok\n');
-        expect(r.note).toMatch(/ran as bash/);
+        expect(r.note).toMatch(/ran as bash/i);
+        expect(r.note).toMatch(/do not re-run/);
     });
 
     it('does not re-run real Python errors or import-time SyntaxErrors', async () => {
