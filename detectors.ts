@@ -179,6 +179,38 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
 // "innovative failure" pattern where the model tries a different workaround
 // each step (different error sigs) but never makes progress.
 // Returns {envFailSig, envFailCount, envFailTotal, envFailMsg}.
+// ── Consecutive-failure streak ───────────────────────────────────────────────
+// Feeds the "N consecutive tool failures with no progress" stop. Each tool call is:
+//   progress — a write tool that succeeded, or execute_code that exited 0 and printed or wrote
+//              something: resets the streak;
+//   fail     — a tool error, or execute_code that exited non-zero: counts;
+//   neutral  — read-only tools, execute_code that exited 0 silently (mkdir, cp, sed -i, curl with
+//              an empty body, a grep with no match), and missing-environment failures.
+// v0.56 stopped 12 runs on this streak. 33 of the counted calls had exited 0 silently (TAC
+// pm-schedule-meeting-1 was stopped at step 11 after nine empty `curl` bodies; in v0.55 it scored
+// 5/5), and SWE runs were stopped on missing pytest / blocked pip before editing anything
+// (pytest-8365: 14 steps, empty patch). Missing-environment failures get the env_failure nudge
+// instead; they don't mean the task is hopeless, only that the tool can't be installed.
+export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$/m;
+
+export function failStreakKind(name: string, result: any, readOnly: Set<string>): 'progress' | 'fail' | 'neutral' {
+    if (readOnly.has(name)) return 'neutral';
+    if (result?.error) return 'fail';
+    if (name !== 'execute_code') return 'progress';
+    if ((result?.exit_code ?? 0) === 0) {
+        const wrote = Array.isArray(result?.files_written) && result.files_written.length > 0;
+        return (String(result?.stdout ?? '').trim() || wrote) ? 'progress' : 'neutral';
+    }
+    return ENV_MISSING_RE.test(`${result?.stderr ?? ''}\n${result?.stdout ?? ''}`) ? 'neutral' : 'fail';
+}
+
+// New streak value after one step's tool calls: any progress resets it, each failure adds one.
+export function updateFailStreak(prev: number, calls: Array<{ name: string; result: any }>, readOnly: Set<string>): number {
+    const kinds = calls.map(c => failStreakKind(c.name, c.result, readOnly));
+    if (kinds.includes('progress')) return 0;
+    return prev + kinds.filter(k => k === 'fail').length;
+}
+
 export function _updateEnvFailureDetector(
     results: Array<{ name: string; result: any }>,
     envFailSig: string,

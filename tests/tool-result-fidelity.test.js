@@ -125,4 +125,31 @@ describe('execute_code language', () => {
         const r = await run({ code: 'ls /nope', language: 'bash' }, { stdout: '', stderr: 'ls: cannot access', exit_code: 2 });
         expect(r.note).toBeUndefined();
     });
+
+    // v0.55+v0.56: 302 line-1 SyntaxErrors from shell sent as Python (python3 -c 278, curl 13, cat 8).
+    const compileErr = (line) => ({ stdout: '', stderr: `  File "<string>", line 1\n    ${line}\n               ^^^^\nSyntaxError: invalid syntax\n`, exit_code: 1 });
+    const runSeq = (args, results) => {
+        const langs = [];
+        W.nativeExec = async (language) => { langs.push(language); return results[langs.length - 1]; };
+        return W.executeToolAsync('execute_code', args).then(r => ({ r, langs }));
+    };
+
+    it.each([
+        ['python3 -c "import sys; print(sys.version)"'],
+        ['curl -s http://gw/search?q=x | python3 -m json.tool'],
+        ["cat << 'EOF' > fix.py\nprint(1)\nEOF"],
+    ])('shell sent as Python re-runs as bash after a line-1 compile error: %j', async (code) => {
+        const { r, langs } = await runSeq({ code, language: 'python' }, [compileErr(code.split('\n')[0]), { stdout: 'ok\n', stderr: '', exit_code: 0 }]);
+        expect(langs).toEqual(['python', 'bash']);
+        expect(r.stdout).toBe('ok\n');
+        expect(r.note).toMatch(/ran as bash/);
+    });
+
+    it('does not re-run real Python errors or import-time SyntaxErrors', async () => {
+        const py = await runSeq({ code: 'print "hi"', language: 'python' }, [compileErr('print "hi"')]);
+        expect(py.langs).toEqual(['python']);
+        const imported = { stdout: '', stderr: 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n  File "/w/mod.py", line 3\nSyntaxError: invalid syntax\n', exit_code: 1 };
+        const im = await runSeq({ code: 'python3 -c "import mod"', language: 'python' }, [imported]);
+        expect(im.langs).toEqual(['python']);
+    });
 });

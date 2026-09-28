@@ -1710,6 +1710,16 @@ export function _looksLikePython(code: string): boolean {
     return _PY_LINE_RE.test(code);
 }
 
+// Python compile error at line 1 of the script itself (no Traceback: a SyntaxError raised while
+// importing another module has one) whose first line starts with a shell command.
+const _SHELL_FIRST_LINE_RE = /^\s*(?:sudo\s+)?(?:python3?|pip3?|curl|wget|cat|cd|ls|grep|find|echo|export|sed|awk|git|mkdir|rm|cp|mv|chmod|pytest|bash|sh|head|tail|wc|sort|source|apt(?:-get)?|npm|node)(?:\s|$)|^\s*\.\/\S/;
+export function _isShellCompileError(code: string, result: any): boolean {
+    const err = String(result?.stderr ?? '');
+    if (!result || result.error || !(result.exit_code > 0)) return false;
+    if (!/SyntaxError/.test(err) || /Traceback/.test(err) || !/File "[^"]*", line 1\b/.test(err)) return false;
+    return _SHELL_FIRST_LINE_RE.test(String(code ?? '').replace(/^\s*\n/, '').split('\n', 1)[0]);
+}
+
 // ── In-place edit verification ──────────────────────────────────────────────
 // `sed -i` / `perl -pi` rewrite their target file even when the pattern matched nothing, so the
 // file looks written (mtime changes; sandboxes report it in files_written) while its content is
@@ -1823,7 +1833,8 @@ async function _handleExecuteCodeInner(args, context) {
     const _code = _firstStr(EXEC_CODE_ALIASES) ?? '';
     const _lang = _firstStr(EXEC_LANG_ALIASES);   // undefined when the model omitted it
     // No language given: Python when the code clearly is Python, else bash (the old default).
-    // An explicit language is never overridden.
+    // An explicit language is not overridden up front; the only switch is the compile-error
+    // re-run below, where Python has proven the code isn't Python and nothing has run.
     args = { ...args, code: _code, language: _lang ?? (_looksLikePython(_code) ? 'python' : 'bash') };
     // Strip trailing newlines: a literal \n at the end of a bash code string causes
     // the shell to receive an empty second command that exits 0 with no stdout,
@@ -1936,6 +1947,17 @@ async function _handleExecuteCodeInner(args, context) {
                 ? 'Bash requires a sandbox — enable WASM or Local in Settings → Code Execution.'
                 : 'Load Pyodide in Settings → Code Execution to run Python in the browser.' };
         }
+    }
+    // Shell sent as Python (`python3 -c "…"`, `curl … | python3`, `cat << EOF > x.py`) fails to
+    // compile at line 1. Python compiles the whole script before running any of it, so nothing
+    // ran: re-running it as bash is free of side effects. v0.55+v0.56 had 302 such SyntaxErrors
+    // (python3 278, curl 13, cat 8); each counted as a failed step, and TB tree-directory-parser
+    // was stopped after nine in a row.
+    if (args.language === 'python' && typeof nativeExec === 'function' && _isShellCompileError(args.code, execResult)) {
+        try {
+            const asBash = await nativeExec('bash', args.code);
+            execResult = { ...asBash, note: 'This was shell code, not Python — it ran as bash. Use language: "bash" for shell commands.' };
+        } catch { /* keep the original SyntaxError */ }
     }
     // Explicit bash that failed on what looks like Python: say so (never switch an explicit choice).
     if (_lang === 'bash' && execResult && !execResult.error && execResult.exit_code > 0 && _looksLikePython(args.code))
