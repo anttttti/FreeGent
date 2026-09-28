@@ -148,13 +148,15 @@ export const chatKey = {
     raw:     (id: string) => `fg_chat_${id}_raw`,
     log:     (id: string) => `fg_chat_${id}_log`,
     runCkpt: (id: string) => `fg_chat_${id}_run_ckpt`,
+    draft:   (id: string) => `fg_draft_${id}`,   // unsent composer text
     all:     (id: string): string[] => [
         `fg_chat_${id}_gh`, `fg_chat_${id}_oh`, `fg_chat_${id}_msgs`,
         `fg_chat_${id}_role`, `fg_chat_${id}_raw`, `fg_chat_${id}_log`,
-        `fg_chat_${id}_run_ckpt`,
+        `fg_chat_${id}_run_ckpt`, `fg_draft_${id}`,
     ],
 } as const;
 
+// Checkpoint entries carry a chatId (older ones may not) so they can be counted and deleted per chat.
 export const ckptKey         = (id: string) => `fg_ckpt_${id}`;
 export const roleBodyKey     = (name: string) => `fg_role_body_${name}`;
 // Saved JS source for body_fn roles — stored as the full function string, executed at runtime.

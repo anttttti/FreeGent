@@ -2222,21 +2222,21 @@ function _chatKeys() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && (k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_')))
+        if (k && (k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_') || k.startsWith('fg_draft_')))
             keys.push(k);
     }
     return keys;
 }
 
 // Snapshot every localStorage key that project operations must NOT touch.
-// Project scope = workspace files + chat history + project name only.
+// Project scope = workspace files + chats (history, drafts, checkpoints) + project name.
 function _snapshotSettings() {
     const snap = {};
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
-        if (k === 'fg_chat_list' || k === 'fg_active_chat' ||
-            k.startsWith('fg_chat_') || k === 'fg_project_name') continue;
+        if (k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_') ||
+            k.startsWith('fg_draft_') || k.startsWith('fg_ckpt_') || k === 'fg_project_name') continue;
         snap[k] = localStorage.getItem(k);
     }
     return snap;
@@ -2470,7 +2470,7 @@ async function clearProject() {
           <ul style="margin:0 0 8px;padding-left:18px;line-height:1.8">
             <li>All workspace files</li>
             <li>Local folder connection</li>
-            <li>All chat history</li>
+            <li>All chat history, drafts and checkpoints</li>
             <li>Project name</li>
           </ul>
           <p style="margin:0;color:var(--muted)">Saved projects and settings are not affected.</p>
@@ -2497,10 +2497,15 @@ async function clearProject() {
         // Clear chat history from SQLite/IDB before wiping localStorage so we still have the IDs.
         const _chatListSnap = typeof getChatList === 'function' ? getChatList() : [];
         if (typeof sessionSyncChatList === 'function') sessionSyncChatList([]);
-        if (typeof sessionDeleteChat === 'function') {
-            for (const c of _chatListSnap) sessionDeleteChat(c.id);
+        // Per chat: localStorage cache and draft, message HTML and checkpoint data in IndexedDB,
+        // session-store history.
+        for (const c of _chatListSnap) {
+            if (typeof clearChatStorage === 'function') clearChatStorage(c.id);
+            else if (typeof sessionDeleteChat === 'function') sessionDeleteChat(c.id);
         }
-        // Clear chat history from localStorage (_chatKeys includes fg_chat_list, fg_active_chat, fg_chat_*)
+        // All checkpoints belong to this project's chats, including older ones without a chatId.
+        if (typeof clearCheckpoints === 'function') clearCheckpoints();
+        // Leftovers of chats missing from the list (_chatKeys: fg_chat_list, fg_active_chat, fg_chat_*, fg_draft_*)
         for (const k of _chatKeys()) localStorage.removeItem(k);
         // Reset project name
         localStorage.removeItem('fg_project_name');
@@ -2511,6 +2516,7 @@ async function clearProject() {
         await renderFileList();
         // Restore settings — clear must never affect API keys or model config.
         _applySettingsSnapshot(_settingsSnap);
+        window.refreshStorageUsage?.();
     };
 }
 

@@ -30,6 +30,7 @@ declare global {
     var runAgentTurn: (prompt: string, container?: HTMLElement | null, session?: any, opts?: { placeholder?: any }) => Promise<string>;
     var autoResizeTextarea: any;
     var clearCheckpoints: any;
+    var deleteChatCheckpoints: any;
     var createNewChat: () => void;
     var handleSendButton: () => void;
     var newChat: () => void;
@@ -88,6 +89,8 @@ declare global {
     var _filterChatsDropdown: any;
     var searchMessages: any;
     var updateRailRecentChats: () => void;
+    var clearChatStorage: (id: string) => void;
+    var refreshStorageUsage: () => void;
     // ── bridged by init.ts (inside DOMContentLoaded) ──
     var scrollToLatest: any;
     var _updateScrollBtn: any;

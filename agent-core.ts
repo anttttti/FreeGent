@@ -64,6 +64,7 @@ function _setInputText(el: HTMLElement, text: string): void {
 function saveCheckpoint(userText: string): string {
     const id   = Date.now().toString();
     const base = {
+        chatId:      activeChatId,
         openaiLen:   openaiHistory.length,
         provider:    getProvider(),
         model:       getActiveModel(),
@@ -423,6 +424,22 @@ function clearCheckpoints(): void {
         list.forEach(id => localStorage.removeItem(ckptKey(id)));
         localStorage.removeItem(KEYS.CKPT_LIST);
         if (typeof sessionDeleteCheckpointAttachments === 'function') sessionDeleteCheckpointAttachments(list);
+    } catch {}
+}
+
+// Delete one chat's checkpoints. Checkpoints saved before they recorded a chatId are kept;
+// they age out of the _CKPT_LIST_MAX window or go with clearCheckpoints() on project clear.
+function deleteChatCheckpoints(chatId: string): void {
+    try {
+        const list: string[] = JSON.parse(localStorage.getItem(KEYS.CKPT_LIST) || '[]');
+        const dropped = list.filter(id => {
+            try { return JSON.parse(localStorage.getItem(ckptKey(id)) || 'null')?.chatId === chatId; }
+            catch { return false; }
+        });
+        if (!dropped.length) return;
+        dropped.forEach(id => localStorage.removeItem(ckptKey(id)));
+        localStorage.setItem(KEYS.CKPT_LIST, JSON.stringify(list.filter(id => !dropped.includes(id))));
+        if (typeof sessionDeleteCheckpointAttachments === 'function') sessionDeleteCheckpointAttachments(dropped);
     } catch {}
 }
 
@@ -1380,7 +1397,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat };
