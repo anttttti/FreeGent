@@ -181,6 +181,17 @@ if [ -n "$_PUSH_RANGE" ]; then
     fi
     ok "No bench/ changes in pending commits"
 
+    # 5b. No tracked FreeGent file imports from bench/ — it is gitignored, so such code
+    #     (e.g. tests) breaks in CI, where bench/ isn't checked out. Tests for bench/ live there.
+    _BENCH_IMPORTS=$(git grep -nE "(from|import\()[[:space:]]*['\"](\.\./)+bench/" -- '*.ts' '*.tsx' '*.js' '*.mjs' 2>/dev/null || true)
+    if [ -n "$_BENCH_IMPORTS" ]; then
+        echo -e "${R}✗ Tracked files import from bench/:${N}" >&2
+        echo "$_BENCH_IMPORTS" | sed 's/^/    /' >&2
+        echo >&2
+        fail "bench/ is not part of FreeGent. Move this code or its tests to FreeGentBench."
+    fi
+    ok "No tracked files import from bench/"
+
     # 6. No AI-agent attribution in commit messages or author/committer email
     #    Known attribution patterns (updated 2025-09):
     # All patterns are anchored to line-start (^) so they match actual trailers/
