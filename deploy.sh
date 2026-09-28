@@ -41,11 +41,32 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 step "Safety checks"
 
-# 1. .env must not be git-tracked
-if git ls-files --error-unmatch .env 2>/dev/null; then
-    fail ".env is tracked by git! Run: git rm --cached .env && echo '.env' >> .gitignore"
+# 0. Deploy only committed code. Typecheck/tests/build run on the working tree and
+#    wrangler uploads cf-worker/ straight from disk, so uncommitted edits would
+#    otherwise be tested or deployed without existing in any commit.
+if $DO_DEPLOY; then
+    _DIRTY=$(git status --porcelain --untracked-files=no)
+    if [ -n "$_DIRTY" ]; then
+        echo "$_DIRTY" | sed 's/^/    /' >&2
+        fail "Uncommitted changes to tracked files — commit or stash before deploying."
+    fi
+    if $DO_WORKER; then
+        _WDIRTY=$(git status --porcelain -- cf-worker)
+        if [ -n "$_WDIRTY" ]; then
+            echo "$_WDIRTY" | sed 's/^/    /' >&2
+            fail "Untracked or modified files in cf-worker/ — commit or remove before deploying the Worker."
+        fi
+    fi
+    ok "Working tree clean"
 fi
-ok ".env not tracked"
+
+# 1. No .env files may be git-tracked (.env.example is the only allowed one)
+_TRACKED_ENV=$(git ls-files | grep -E '(^|/)\.env([.~_-].*)?$' | grep -vE '(^|/)\.env\.example$' || true)
+if [ -n "$_TRACKED_ENV" ]; then
+    echo "$_TRACKED_ENV" | sed 's/^/    /' >&2
+    fail "env file(s) tracked by git! Run: git rm --cached <file> and add it to .gitignore"
+fi
+ok "No .env files tracked"
 
 # 2. Credentials file must be outside the repo
 CREDS="${XDG_CONFIG_HOME:-$HOME/.config}/freegent/credentials"
@@ -55,58 +76,8 @@ if [ -n "$REPO_ROOT" ] && [[ "$CREDS" == "$REPO_ROOT"/* ]]; then
 fi
 ok "Credentials file location safe"
 
-# 3. Scan git-tracked source files for secret-shaped strings
-#    (not node_modules or dist — those aren't committed)
-SECRET_PATTERNS=(
-    'gsk_[A-Za-z0-9]{20,}'              # Groq
-    'sk-[A-Za-z0-9T]{20,}'             # OpenAI-style
-    'AIza[A-Za-z0-9_-]{30,}'           # Google / Gemini
-    'cfut_[A-Za-z0-9]{20,}'            # Cloudflare API tokens
-    'eyJhbGci[A-Za-z0-9._-]{30,}'      # JWTs
-    'thk_live_[A-Za-z0-9]{10,}'        # TokenHarbor
-    'Bearer [A-Za-z0-9._-]{30,}["\x27]' # Hardcoded Bearer values
-)
-LEAKS=()
-for pat in "${SECRET_PATTERNS[@]}"; do
-    # grep over files tracked by git, skipping binary blobs
-    while IFS= read -r match; do
-        LEAKS+=("$match")
-    done < <(git ls-files | xargs -r grep -rIlE "$pat" 2>/dev/null || true)
-done
-if [ ${#LEAKS[@]} -gt 0 ]; then
-    warn "Possible secrets found in tracked files:"
-    for f in "${LEAKS[@]}"; do echo "    $f"; done
-    echo
-    read -rp "  Continue anyway? [y/N] " reply
-    [[ "${reply,,}" == y ]] || fail "Aborted by user."
-else
-    ok "No secret patterns in tracked files"
-fi
-
-# 4. CF Worker must use env parameter and have no hardcoded key values
-WORKER="cf-worker/worker.js"
-if [ -f "$WORKER" ]; then
-    # Must accept env: fetch(request, env)
-    grep -q 'fetch(request, env)' "$WORKER" \
-        || fail "$WORKER: missing env parameter in fetch handler (key injection won't work)"
-    ok "CF Worker uses env parameter"
-
-    # Must have origin allowlist
-    grep -q 'ALLOWED_ORIGINS' "$WORKER" \
-        || warn "$WORKER: ALLOWED_ORIGINS not found — worker may be open to any origin"
-
-    # Must not contain hardcoded key values (pattern: key-like strings assigned to variables)
-    if grep -qE "= *['\"]gsk_|= *['\"]sk-[A-Za-z]|= *['\"]AIza|= *['\"]thk_live_" "$WORKER"; then
-        fail "Hardcoded secret value detected in $WORKER"
-    fi
-    ok "CF Worker has no hardcoded secrets"
-fi
-
-# 5. No bench/ changes committed to FreeGent  (bench code belongs in FreeGentBench)
-# 6. No AI-agent-attributed commits            (only human-authored commits allowed)
-# 7. All commits authored by the repo owner    (bypass: FREEGENT_ALLOW_FOREIGN_AUTHOR=1)
-#
-# Resolve the set of commits about to be pushed.
+# Resolve the set of commits about to be pushed (used by the history scan in 3
+# and by checks 5–7).
 _UPSTREAM=$(git rev-parse --abbrev-ref '@{u}' 2>/dev/null || echo "")
 _REMOTE_REF="${_UPSTREAM:-origin/main}"
 if ! git rev-parse --verify "${_REMOTE_REF}" >/dev/null 2>&1; then
@@ -116,6 +87,87 @@ else
     _PUSH_RANGE="${_REMOTE_REF}..HEAD"
 fi
 
+# 3. Scan for secret-shaped strings in tracked files (working tree and HEAD) and in
+#    every line added by the commits about to be pushed — a key committed and later
+#    deleted still ships in history. Matches are a hard failure; values are never
+#    printed. Bypass for a verified false positive: FREEGENT_ALLOW_SECRET_MATCH=1
+SECRET_PATTERNS=(
+    '(^|[^A-Za-z0-9_-])sk-(ant-(api|admin)[0-9]{2}-|or-v1-|proj-|svcacct-)?[A-Za-z0-9_-]{20,}'
+                                         # Anthropic / OpenRouter / OpenAI-style
+    'gsk_[A-Za-z0-9]{20,}'               # Groq
+    'AIza[A-Za-z0-9_-]{30,}'             # Google / Gemini
+    'cfut_[A-Za-z0-9]{20,}'              # Cloudflare API tokens
+    'gh[pousr]_[A-Za-z0-9]{36,}'         # GitHub tokens
+    'github_pat_[A-Za-z0-9_]{40,}'       # GitHub fine-grained tokens
+    'hf_[A-Za-z0-9]{30,}'                # Hugging Face
+    '(AKIA|ASIA)[A-Z0-9]{16}'            # AWS access key IDs
+    'xox[baprs]-[A-Za-z0-9-]{10,}'       # Slack
+    '-----BEGIN [A-Z ]*PRIVATE KEY-----' # PEM private keys
+    'eyJhbGci[A-Za-z0-9._-]{30,}'        # JWTs
+    'thk_live_[A-Za-z0-9]{10,}'          # TokenHarbor
+    "Bearer [A-Za-z0-9._-]{30,}[\"']"    # Hardcoded Bearer values
+)
+SECRET_RE=$(IFS='|'; echo "${SECRET_PATTERNS[*]}")
+
+LEAKS=()
+while IFS= read -r _loc; do
+    [ -n "$_loc" ] && LEAKS+=("$_loc (working tree)")
+done < <(git grep -nIE -e "$SECRET_RE" 2>/dev/null | cut -d: -f1-2 || true)
+while IFS= read -r _loc; do
+    [ -n "$_loc" ] && LEAKS+=("${_loc#HEAD:} (HEAD)")
+done < <(git grep -nIE -e "$SECRET_RE" HEAD 2>/dev/null | cut -d: -f1-3 || true)
+if [ -n "$_PUSH_RANGE" ]; then
+    while IFS= read -r _hash; do
+        if git show --format= --no-color "$_hash" 2>/dev/null \
+                | grep -E '^\+' | grep -qE -e "$SECRET_RE"; then
+            LEAKS+=("$(git log -1 --oneline "$_hash") (added in pending commit)")
+        fi
+    done < <(git rev-list "$_PUSH_RANGE" 2>/dev/null || true)
+fi
+if [ ${#LEAKS[@]} -gt 0 ]; then
+    echo -e "${R}✗ Secret-shaped strings found:${N}" >&2
+    for f in "${LEAKS[@]}"; do echo "    $f" >&2; done
+    echo >&2
+    if [ "${FREEGENT_ALLOW_SECRET_MATCH:-0}" = "1" ]; then
+        warn "FREEGENT_ALLOW_SECRET_MATCH=1 — continuing despite matches"
+    else
+        fail "Remove the secret (rewrite history if it is in a pending commit) and rotate it.\n  For a verified false positive: FREEGENT_ALLOW_SECRET_MATCH=1 ./deploy.sh"
+    fi
+else
+    ok "No secret patterns in tracked files or pending commits"
+fi
+
+# 4. CF Worker must use env parameter, keep its origin allowlist and rate limiter,
+#    and have no hardcoded key values
+WORKER="cf-worker/worker.js"
+WRANGLER="cf-worker/wrangler.toml"
+if [ -f "$WORKER" ]; then
+    # Must accept env: fetch(request, env)
+    grep -q 'fetch(request, env)' "$WORKER" \
+        || fail "$WORKER: missing env parameter in fetch handler (key injection won't work)"
+    ok "CF Worker uses env parameter"
+
+    # Must have origin allowlist
+    grep -q 'ALLOWED_ORIGINS' "$WORKER" \
+        || fail "$WORKER: ALLOWED_ORIGINS not found — worker would be open to any origin"
+
+    # Rate limiter bounds use of the shared keys; it must be both used and bound
+    grep -q 'FG_RATE_LIMITER' "$WORKER" \
+        || fail "$WORKER: FG_RATE_LIMITER not referenced — shared keys would be unmetered"
+    grep -qE '^name *= *"FG_RATE_LIMITER"' "$WRANGLER" \
+        || fail "$WRANGLER: FG_RATE_LIMITER ratelimit binding missing"
+    ok "CF Worker has origin allowlist and rate limiter"
+
+    # Must not contain hardcoded key values (anything secret-shaped, as in check 3)
+    if grep -qE -e "$SECRET_RE" "$WORKER" "$WRANGLER"; then
+        fail "Hardcoded secret value detected in cf-worker/"
+    fi
+    ok "CF Worker has no hardcoded secrets"
+fi
+
+# 5. No bench/ changes committed to FreeGent  (bench code belongs in FreeGentBench)
+# 6. No AI-agent-attributed commits            (only human-authored commits allowed)
+# 7. All commits authored by the repo owner    (bypass: FREEGENT_ALLOW_FOREIGN_AUTHOR=1)
 if [ -n "$_PUSH_RANGE" ]; then
 
     # 5. No bench/ changes
@@ -133,9 +185,13 @@ if [ -n "$_PUSH_RANGE" ]; then
     #    Known attribution patterns (updated 2025-09):
     # All patterns are anchored to line-start (^) so they match actual trailers/
     # footers, not descriptions that merely mention agent names in prose.
+    # Matching is case-insensitive: git trailers are case-insensitive, and Claude
+    # Code writes "Co-Authored-By:".
     _AI_MSG_PATTERNS=(
         '^Claude-Session:'                       # Claude Code (Anthropic)
         '^Co-authored-by:.*[Cc]laude'            # Claude generic co-author
+        '^Co-authored-by:.*noreply@anthropic\.com' # Claude Code co-author email
+        'Generated with \[?Claude Code'          # Claude Code PR/commit footer
         '^Generated-by:.*[Cc]laude'              # Claude trailer variant
         '^Co-authored-by:.*[Cc]opilot'           # GitHub Copilot Workspace
         '^Co-authored-by:.*[Aa]ider'             # Aider  <aider@aider.chat>
@@ -157,6 +213,7 @@ if [ -n "$_PUSH_RANGE" ]; then
     _AI_EMAIL_PATTERNS=(
         '\[bot\]@'                               # Any GitHub App bot
         'aider@aider\.chat'                      # Aider
+        'noreply@anthropic\.com'                 # Claude Code
         'devin-ai-integration'                   # Devin bot account
         'copilot@github\.com'                    # Copilot Workspace
         'openhands@all-hands\.dev'               # OpenHands
@@ -175,14 +232,14 @@ if [ -n "$_PUSH_RANGE" ]; then
         _hit_reason=""
 
         for _pat in "${_AI_MSG_PATTERNS[@]}"; do
-            if echo "$_body" | grep -qE "$_pat"; then
+            if echo "$_body" | grep -qiE "$_pat"; then
                 _hit_reason="message matches '$_pat'"
                 break
             fi
         done
         if [ -z "$_hit_reason" ]; then
             for _epat in "${_AI_EMAIL_PATTERNS[@]}"; do
-                if echo "$_emails" | grep -qE "$_epat"; then
+                if echo "$_emails" | grep -qiE "$_epat"; then
                     _hit_reason="email matches '$_epat' (author: $_ae)"
                     break
                 fi
@@ -202,7 +259,7 @@ if [ -n "$_PUSH_RANGE" ]; then
     fi
     ok "No AI-agent attribution in pending commits"
 
-    # 7. All pending commits authored by the repo owner (git config user.email)
+    # 7. All pending commits authored and committed by the repo owner (git config user.email)
     if [ "${FREEGENT_ALLOW_FOREIGN_AUTHOR:-0}" != "1" ]; then
         _MY_EMAIL=$(git config user.email 2>/dev/null || echo "")
         if [ -z "$_MY_EMAIL" ]; then
@@ -211,12 +268,13 @@ if [ -n "$_PUSH_RANGE" ]; then
             _FOREIGN=()
             while IFS= read -r _line; do
                 [ -n "$_line" ] && _FOREIGN+=("$_line")
-            done < <(git log "$_PUSH_RANGE" --format="%h %ae  %s" 2>/dev/null \
-                | grep -v "^$" \
-                | grep -v " ${_MY_EMAIL}  " || true)
+            done < <(git log "$_PUSH_RANGE" --format="%h%x09%ae%x09%ce%x09%s" 2>/dev/null \
+                | awk -F'\t' -v me="$_MY_EMAIL" \
+                    'NF && (tolower($2) != tolower(me) || tolower($3) != tolower(me)) \
+                     { print $1 "  author=" $2 " committer=" $3 "  " $4 }' || true)
 
             if [ ${#_FOREIGN[@]} -gt 0 ]; then
-                echo -e "${R}✗ Commits not authored by ${_MY_EMAIL}:${N}" >&2
+                echo -e "${R}✗ Commits not authored/committed by ${_MY_EMAIL}:${N}" >&2
                 for _f in "${_FOREIGN[@]}"; do echo "    $_f" >&2; done
                 echo >&2
                 fail "All commits must be authored by you (${_MY_EMAIL}).\n  To override for a merge commit or deliberate exception:\n  FREEGENT_ALLOW_FOREIGN_AUTHOR=1 ./deploy.sh"
@@ -279,11 +337,6 @@ fi
 if $DO_GIT; then
     step "Git push"
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    UNCOMMITTED=$(git status --porcelain | wc -l | tr -d ' ')
-    if [ "$UNCOMMITTED" -gt 0 ]; then
-        warn "$UNCOMMITTED uncommitted change(s) — pushing what's already committed"
-        git status --short
-    fi
     FREEGENT_DEPLOY=1 git push
     ok "Pushed branch '$BRANCH' → https://github.com/anttttti/FreeGent"
     ok "GitHub Pages → https://anttttti.github.io/FreeGent/ (Pages build may take ~60s)"
