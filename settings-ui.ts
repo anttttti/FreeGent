@@ -270,6 +270,9 @@ function saveSettings() {
     saveKey('fg_github_token',      'github-token');
     saveKey('fg_stackexchange_key', 'stackexchange-key');
 
+    // Key changes flip "no key" / ✗ status in the model lists.
+    renderModelCatalogTable();
+    renderMainModelList();
     updateModelLabel();
     updateActiveModelDisplay();
 }
