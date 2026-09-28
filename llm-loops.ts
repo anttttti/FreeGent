@@ -493,7 +493,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             }
             if (verdict?.note) {
                 const pNorm = _normPath(String(args?.path ?? ''));
-                const seen = [..._seenReadFiles.entries()].filter(([k]) => k.startsWith(pNorm + ':') && !k.includes('::'));
+                const seen = [..._seenReadFiles.entries()].filter(([k]) => k.startsWith(pNorm + ':') && !k.endsWith('::__count__'));
                 // Every earlier read of this file is still in context unpruned (the pruners and
                 // compaction mark a path 'pruned' as soon as any of its results is stubbed): the lines
                 // are on screen, so say so instead of sending them again. Re-serving them regardless
