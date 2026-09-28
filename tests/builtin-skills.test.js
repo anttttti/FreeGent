@@ -94,6 +94,19 @@ describe('search skill — delegation recipe', () => {
         expect(W.reactiveSkillGuidance(calls)).not.toContain('### search');
     });
 
+    it('stays quiet when a workspace-wide search led into one file', () => {
+        const calls = [
+            { name: 'search_workspace', args: { pattern: 'camera' }, result: { matches: ['> game.js:3: camera'] } },
+            ...Array.from({ length: 8 }, () => ({ name: 'read_file', args: { path: './game.js' }, result: { content: 'x' } })),
+        ];
+        expect(W.reactiveSkillGuidance(calls)).not.toContain('### search');
+    });
+
+    it('treats a directory path_filter as spanning several files', () => {
+        const greps = Array.from({ length: 4 }, () => ({ name: 'search_workspace', args: { pattern: 'x', path_filter: 'src/' }, result: { matches: [] } }));
+        expect(W.reactiveSkillGuidance(greps)).toContain('### search');
+    });
+
     it('still fires when the calls span several files', () => {
         const calls = ['a.js', 'b.js', 'c.js', 'd.js', 'e.js', 'f.js'].map(path => ({ name: 'read_file', args: { path }, result: { content: 'x' } }));
         expect(W.reactiveSkillGuidance(calls)).toContain('### search');

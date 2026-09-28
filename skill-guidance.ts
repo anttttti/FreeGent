@@ -171,14 +171,14 @@ function _pathsFor(hist: any[]): string[] {
     if (!p) { p = []; _pathHistory.set(hist, p); }
     return p;
 }
+const _normPath = (p: string) => p.trim().toLowerCase().replace(/^(\.\/|\/?workspace\/)+/, '');
 // File a tool call touched: '' when unknown, '*' when it spans the workspace or several files.
+// path_filter is a substring match, so only a filter naming a file (has an extension) counts as one file.
 function _touchedPath(r: any): string {
-    if (r?.name !== 'read_file' && r?.name !== 'search_workspace') return '';
-    const filter = String(r.args?.path_filter ?? '').trim();
-    const p = r.name === 'read_file'
-        ? String(r.args?.path ?? r.result?.path ?? '').trim()
-        : (r.args ? (filter && !filter.includes('|') ? filter : '*') : '');
-    return p;
+    if (r?.name === 'read_file') return _normPath(String(r.args?.path ?? r.result?.path ?? ''));
+    if (r?.name !== 'search_workspace' || !r.args) return '';
+    const filter = _normPath(String(r.args.path_filter ?? ''));
+    return filter && !filter.includes('|') && /\.\w+$/.test(filter) ? filter : '*';
 }
 
 export function reactiveSkillGuidance(toolResults: any): string {
@@ -238,10 +238,12 @@ export function reactiveSkillGuidance(toolResults: any): string {
     for (const s of skillsRegistry.values()) {
         if (!_eligible(s) || !s.trigger_on_repeat) continue;
         // Delegating a search only pays off across several files; grinding on one file is a read problem.
+        // Workspace-wide calls ('*') count toward the total but never as the one file.
         if (s.name === 'search') {
             const known = paths.filter(Boolean);
-            const top = Math.max(0, ...[...new Set(known)].map(p => known.filter(k => k === p).length));
-            if (known.length && !known.includes('*') && top / known.length >= 0.75) continue;
+            const files = known.filter(p => p !== '*');
+            const top = Math.max(0, ...[...new Set(files)].map(p => files.filter(k => k === p).length));
+            if (known.length && top / known.length >= 0.75) continue;
         }
         const hit = s.trigger_on_repeat.split(',').some(spec => {
             const m = spec.trim().match(/^(\w+)\s*x\s*(\d+)$/i);
