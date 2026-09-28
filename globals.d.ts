@@ -100,6 +100,7 @@ declare global {
     var _restoreDraft: any;
     var toggleDarkMode: any;
     var getChatList: any;
+    var evictOldChatCaches: any;
     var loadChatHistory: any;
     var migrateOldStorage: any;
     var renderChatsDropdown: any;
@@ -487,6 +488,14 @@ declare global {
     var sessionSaveRawMessage: any;
     var sessionLoadRawMessages: any;
     var sessionPruneRawFrom: any;
+    var sessionHas: any;
+    var sessionMigrateLocalStorage: any;
+    var migrateCheckpointAttachments: any;
+    var sessionLoadTurnLog: any;
+    var sessionPruneTurnLogFrom: any;
+    var sessionSaveCheckpointAttachments: any;
+    var sessionLoadCheckpointAttachments: any;
+    var sessionDeleteCheckpointAttachments: any;
     var sessionLoadChatList: () => Promise<{id: string; name: string; createdAt: number; lastAt: number}[]>;
     var sessionLoadHistory: (chatId: string) => Promise<any[] | null>;
     // ── bridged by idb-session-adapter.ts ──

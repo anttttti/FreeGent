@@ -14,7 +14,7 @@ import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
 
 // Max binary-attachment size to include in a checkpoint snapshot (bytes).
-// Larger binary files are excluded to keep localStorage usage bounded.
+// Larger binary files are excluded to keep checkpoint storage bounded.
 const _ATTACH_BINARY_MAX = 500_000;
 
 // ── Input history for ↑/↓ recall ─────────────────────────────────────────
@@ -70,8 +70,8 @@ function saveCheckpoint(userText: string): string {
         roleName:    (typeof mainAgentRole !== 'undefined') ? (mainAgentRole?.name ?? null) : null,
         userText,
     };
-    // Capture attachments. Binary files >500 KB are omitted to avoid quota errors;
-    // they will show as missing chips on rerun and need to be re-attached manually.
+    // Capture attachments. Binary files >500 KB are omitted; they will show as missing chips
+    // on rerun and need to be re-attached manually.
     const { images: _snapImages, files: _snapFiles } = getPendingAttachments();
     const images = _snapImages.map(img => ({ mimeType: img.mimeType, base64: img.base64 }));
     const files  = _snapFiles
@@ -84,16 +84,57 @@ function saveCheckpoint(userText: string): string {
         // Skip if already present (idempotent under concurrent saves of the same checkpoint).
         const list: string[] = JSON.parse(localStorage.getItem(KEYS.CKPT_LIST) || '[]');
         if (!list.includes(id)) list.push(id);
-        if (list.length > _CKPT_LIST_MAX)
-            list.splice(0, list.length - _CKPT_LIST_MAX).forEach(old => localStorage.removeItem(ckptKey(old)));
+        if (list.length > _CKPT_LIST_MAX) {
+            const dropped = list.splice(0, list.length - _CKPT_LIST_MAX);
+            dropped.forEach(old => localStorage.removeItem(ckptKey(old)));
+            if (typeof sessionDeleteCheckpointAttachments === 'function') sessionDeleteCheckpointAttachments(dropped);
+        }
         localStorage.setItem(KEYS.CKPT_LIST, JSON.stringify(list));
     };
+    // Attachments (base64 images, file contents) go to the session store (IndexedDB) when it
+    // has one — 50 checkpoints of screenshots filled localStorage. Without it, localStorage.
+    const _inStore = (images.length || files.length)
+        && typeof sessionHas === 'function' && sessionHas('saveCheckpointAttachments');
     try {
-        _commit({ ...base, images, files });
+        if (_inStore) {
+            _commit({ ...base, attachments: true });
+            // If the store write fails, keep them inline after all (best-effort).
+            sessionSaveCheckpointAttachments(id, { images, files }).then((ok: boolean) => {
+                if (!ok) try { localStorage.setItem(ckptKey(id), JSON.stringify({ ...base, images, files })); } catch {}
+            });
+        } else {
+            _commit({ ...base, images, files });
+        }
     } catch {
         try { _commit(base); } catch {}  // fallback: save without attachments if quota exceeded
     }
     return id;
+}
+
+// A checkpoint's attachments: inline (older checkpoints, or no session store) or in the store.
+async function _checkpointAttachments(ckptId: string, ckpt: any): Promise<{ images: any[]; files: any[] }> {
+    if (ckpt?.attachments && typeof sessionLoadCheckpointAttachments === 'function') {
+        const stored = await sessionLoadCheckpointAttachments(ckptId);
+        if (stored) return stored;
+    }
+    return { images: ckpt?.images ?? [], files: ckpt?.files ?? [] };
+}
+
+// One-time move of attachments that earlier versions stored inline in localStorage
+// checkpoints into the session store. Called at startup once the store is injected.
+async function migrateCheckpointAttachments(): Promise<void> {
+    if (typeof sessionHas !== 'function' || !sessionHas('saveCheckpointAttachments')) return;
+    let list: string[] = [];
+    try { list = JSON.parse(localStorage.getItem(KEYS.CKPT_LIST) || '[]'); } catch {}
+    for (const id of list) {
+        try {
+            const d = JSON.parse(localStorage.getItem(ckptKey(id)) || 'null');
+            if (!d || !(d.images?.length || d.files?.length)) continue;
+            const { images = [], files = [], ...rest } = d;
+            if (!await sessionSaveCheckpointAttachments(id, { images, files })) return;
+            localStorage.setItem(ckptKey(id), JSON.stringify({ ...rest, attachments: true }));
+        } catch (e) { console.warn('[checkpoint] attachment migration failed:', id, e); }
+    }
 }
 
 async function _saveCheckpointSnapshot(ckptId: string): Promise<void> {
@@ -358,7 +399,9 @@ async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Prom
         appendMessage?.('model', '<em style="color:var(--muted)">Checkpoint data no longer available — cannot re-run this message.</em>');
         return;
     }
-    const { userText, images = [], files = [] } = JSON.parse(raw);
+    const ckpt = JSON.parse(raw);
+    const { userText } = ckpt;
+    const { images, files } = await _checkpointAttachments(ckptId, ckpt);
     if (!userText && !images.length && !files.length) { console.warn('[checkpoint] no message content in checkpoint:', ckptId); return; }
     if (!await applyCheckpoint(ckptId)) return;
     pruneMessagesAfterCheckpoint(checkpointRow);
@@ -379,6 +422,7 @@ function clearCheckpoints(): void {
         const list = JSON.parse(localStorage.getItem(KEYS.CKPT_LIST) || '[]');
         list.forEach(id => localStorage.removeItem(ckptKey(id)));
         localStorage.removeItem(KEYS.CKPT_LIST);
+        if (typeof sessionDeleteCheckpointAttachments === 'function') sessionDeleteCheckpointAttachments(list);
     } catch {}
 }
 
@@ -505,9 +549,10 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         // Restore attachments stored in the checkpoint
         try {
             const d2 = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
+            const { images, files } = await _checkpointAttachments(ckptId, d2);
             clearImageAttachments();
-            for (const img of (d2.images || [])) addImageAttachment(img.mimeType, img.base64);
-            for (const f of (d2.files || [])) restoreFileAttachment(f);
+            for (const img of images) addImageAttachment(img.mimeType, img.base64);
+            for (const f of files) restoreFileAttachment(f);
         } catch {}
         const inp = document.getElementById('agent-input') as HTMLTextAreaElement | null;
         if (inp) { _setInputText(inp, newText); autoResizeTextarea(inp); }
@@ -982,7 +1027,8 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     }
     const ckptId = saveCheckpoint(rawText); // must come before clearImageAttachments
     // Mark this run as in-progress; cleared on completion so only crashed/aborted runs leave it set.
-    if (activeChatId) localStorage.setItem(chatKey.runCkpt(activeChatId), ckptId);
+    // Best-effort: a full localStorage (QuotaExceededError) must not abort the send.
+    if (activeChatId) try { localStorage.setItem(chatKey.runCkpt(activeChatId), ckptId); } catch {}
     clearImageAttachments(); // clears both _pendingImages and _pendingFiles
     const _thumbsHtml = sendImages.map(img =>
         `<img src="data:${img.mimeType};base64,${img.base64}" class="chat-img-thumb" alt="image">`
@@ -1129,7 +1175,7 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
     } catch {}
     // Mirror the run marker so a failed/aborted retry leaves the same trail that
     // agentSend's run-marker check will auto-prune on the next attempt.
-    if (_regenCkptId && activeChatId) localStorage.setItem(chatKey.runCkpt(activeChatId), _regenCkptId);
+    if (_regenCkptId && activeChatId) try { localStorage.setItem(chatKey.runCkpt(activeChatId), _regenCkptId); } catch {}
 
     const msgs = getMessagesEl();
     if (msgs?.lastElementChild?.classList.contains('agent-msg-model'))
@@ -1332,7 +1378,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat };

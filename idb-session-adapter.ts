@@ -4,12 +4,27 @@
 // Registered as the session store via setSessionStore() on initIDBSession().
 
 const _DB_NAME    = 'fg-session';
-const _DB_VERSION = 1;
+// v2: chatId index on turn_log, checkpoint_attachments store.
+const _DB_VERSION = 2;
 
 function _req<T>(r: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
         r.onsuccess = () => resolve(r.result);
         r.onerror   = () => reject(r.error);
+    });
+}
+
+// Delete the rows of `store` whose chatId index matches `chatId` and for which `match` is true.
+function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (row: any) => boolean = () => true): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        const req = db.transaction(store, 'readwrite').objectStore(store).index('chatId').openCursor(IDBKeyRange.only(chatId));
+        req.onsuccess = () => {
+            const c = req.result;
+            if (!c) { resolve(); return; }
+            if (match(c.value)) c.delete();
+            c.continue();
+        };
+        req.onerror = () => reject(req.error);
     });
 }
 
@@ -51,24 +66,9 @@ export class IDBSessionAdapter {
 
     async deleteChat(id: string) {
         await _req(this._db.transaction('chats', 'readwrite').objectStore('chats').delete(id));
-
-        await new Promise<void>((resolve, reject) => {
-            const req = this._db.transaction('history', 'readwrite')
-                                .objectStore('history')
-                                .index('chatId')
-                                .openCursor(IDBKeyRange.only(id));
-            req.onsuccess = () => { const c = req.result; if (c) { c.delete(); c.continue(); } else { resolve(); } };
-            req.onerror   = () => reject(req.error);
-        });
-
-        await new Promise<void>((resolve, reject) => {
-            const req = this._db.transaction('raw_messages', 'readwrite')
-                                .objectStore('raw_messages')
-                                .index('chatId')
-                                .openCursor(IDBKeyRange.only(id));
-            req.onsuccess = () => { const c = req.result; if (c) { c.delete(); c.continue(); } else { resolve(); } };
-            req.onerror   = () => reject(req.error);
-        });
+        await _deleteByChat(this._db, 'history', id);
+        await _deleteByChat(this._db, 'raw_messages', id);
+        await _deleteByChat(this._db, 'turn_log', id);
     }
 
     async setChatRole(id: string, role: string | null) {
@@ -103,17 +103,59 @@ export class IDBSessionAdapter {
     }
 
     async saveRawMessage(chatId: string, entry: any) {
-        this._db.transaction('raw_messages', 'readwrite')
+        await _req(this._db.transaction('raw_messages', 'readwrite')
                 .objectStore('raw_messages')
-                .add({ chatId, createdAt: Date.now(), ...entry });
+                .add({ chatId, createdAt: Date.now(), ...entry }));
+    }
+
+    // Same shape as the localStorage fallback in session-store.ts: { ts, ...entry }, oldest first.
+    async loadRawMessages(chatId: string): Promise<any[]> {
+        const rows: any[] = await _req(this._db.transaction('raw_messages', 'readonly')
+            .objectStore('raw_messages').index('chatId').getAll(IDBKeyRange.only(chatId)));
+        return rows.map(({ chatId: _c, createdAt, ...entry }) => ({ ...entry, ts: createdAt }));
+    }
+
+    async pruneRawFrom(chatId: string, sinceMs: number) {
+        await _deleteByChat(this._db, 'raw_messages', chatId, r => (r.createdAt ?? 0) >= sinceMs);
     }
 
     // ── Turn log ───────────────────────────────────────────────────────────────
 
     async logTurn(record: any) {
-        this._db.transaction('turn_log', 'readwrite')
+        await _req(this._db.transaction('turn_log', 'readwrite')
                 .objectStore('turn_log')
-                .add({ ts: new Date().toISOString(), ...record });
+                .add({ ts: new Date().toISOString(), ...record }));
+    }
+
+    // The chat's most recent `limit` turns, oldest first.
+    async loadTurnLog(chatId: string, limit: number): Promise<any[]> {
+        const rows: any[] = await _req(this._db.transaction('turn_log', 'readonly')
+            .objectStore('turn_log').index('chatId').getAll(IDBKeyRange.only(chatId)));
+        return rows.slice(-limit);
+    }
+
+    async pruneTurnLogFrom(chatId: string, sinceMs: number) {
+        await _deleteByChat(this._db, 'turn_log', chatId, r => new Date(r.ts).getTime() >= sinceMs);
+    }
+
+    // ── Checkpoint attachments ─────────────────────────────────────────────────
+    // Images and files sent with a message, kept for Rerun/Edit. The rest of the checkpoint
+    // (small metadata) stays in localStorage — see saveCheckpoint in agent-core.ts.
+
+    async saveCheckpointAttachments(id: string, data: { images: any[]; files: any[] }) {
+        await _req(this._db.transaction('checkpoint_attachments', 'readwrite')
+            .objectStore('checkpoint_attachments').put({ id, images: data.images, files: data.files }));
+    }
+
+    async loadCheckpointAttachments(id: string): Promise<{ images: any[]; files: any[] } | null> {
+        const r: any = await _req(this._db.transaction('checkpoint_attachments', 'readonly')
+            .objectStore('checkpoint_attachments').get(id));
+        return r ? { images: r.images ?? [], files: r.files ?? [] } : null;
+    }
+
+    async deleteCheckpointAttachments(ids: string[]) {
+        const store = this._db.transaction('checkpoint_attachments', 'readwrite').objectStore('checkpoint_attachments');
+        await Promise.all(ids.map(id => _req(store.delete(id))));
     }
 
     // ── Worker runs ────────────────────────────────────────────────────────────
@@ -167,6 +209,7 @@ export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_N
         const req = idb.open(dbName, _DB_VERSION);
         req.onupgradeneeded = () => {
             const d = req.result;
+            const tx = req.transaction!;
             if (!d.objectStoreNames.contains('chats'))
                 d.createObjectStore('chats', { keyPath: 'id' });
             if (!d.objectStoreNames.contains('history')) {
@@ -175,6 +218,8 @@ export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_N
             }
             if (!d.objectStoreNames.contains('turn_log'))
                 d.createObjectStore('turn_log', { autoIncrement: true });
+            const turnLog = tx.objectStore('turn_log');
+            if (!turnLog.indexNames.contains('chatId')) turnLog.createIndex('chatId', 'chatId');
             if (!d.objectStoreNames.contains('worker_runs'))
                 d.createObjectStore('worker_runs', { keyPath: 'id' });
             if (!d.objectStoreNames.contains('worker_agents')) {
@@ -185,6 +230,8 @@ export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_N
                 const s = d.createObjectStore('raw_messages', { autoIncrement: true });
                 s.createIndex('chatId', 'chatId');
             }
+            if (!d.objectStoreNames.contains('checkpoint_attachments'))
+                d.createObjectStore('checkpoint_attachments', { keyPath: 'id' });
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror   = () => reject(req.error);

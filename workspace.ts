@@ -2248,6 +2248,15 @@ async function _collectProjectData(name) {
     const wsFiles = await listWorkspaceFiles();
     const chatData = {};
     for (const k of _chatKeys()) chatData[k] = localStorage.getItem(k);
+    // localStorage caches only the most recent chats' history — read the rest from IndexedDB.
+    if (typeof getChatList === 'function' && typeof sessionLoadHistory === 'function') {
+        for (const c of getChatList()) {
+            const k = `fg_chat_${c.id}_oh`;
+            if (chatData[k] != null) continue;
+            const h = await sessionLoadHistory(c.id);
+            if (h?.length) chatData[k] = JSON.stringify(h);
+        }
+    }
     return {
         fwproject: '1.0',
         id: _projectSlug(name),
@@ -2384,7 +2393,14 @@ async function _restoreProjectData(data) {
     // Restore chat data to localStorage
     for (const k of _chatKeys()) localStorage.removeItem(k);
     for (const [k, v] of Object.entries(data.chatData || {})) {
-        if (v != null) localStorage.setItem(k, v as string);
+        if (v == null) continue;
+        // History goes to IndexedDB, which loadChatHistory reads first; the localStorage copy
+        // is a cache that may not fit for every chat (saveHistory prunes it to recent chats).
+        const oh = /^fg_chat_(.+)_oh$/.exec(k);
+        if (oh && typeof sessionSaveHistory === 'function') {
+            try { sessionSaveHistory(oh[1], JSON.parse(v as string)); } catch {}
+        }
+        try { localStorage.setItem(k, v as string); } catch {}
     }
     // Update project name input
     const nameInput = document.getElementById('project-name-input') as HTMLInputElement | null;

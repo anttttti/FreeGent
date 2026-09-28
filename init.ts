@@ -121,6 +121,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Init IndexedDB session adapter — no COOP/COEP headers required.
     // Must run before getChatList() so the warmed localStorage is available immediately.
     await initIDBSession?.().catch((e: Error) => console.warn('[idb-session]', e.message));
+    // Move turn logs, raw captures and checkpoint attachments that older versions kept in
+    // localStorage into IndexedDB (background; readers fall back to localStorage meanwhile).
+    sessionMigrateLocalStorage?.().catch((e: Error) => console.warn('[idb-session] migration:', e.message));
+    migrateCheckpointAttachments?.().catch((e: Error) => console.warn('[checkpoint] migration:', e.message));
 
     // Warm localStorage chat list from SQLite when SQLite has data but localStorage doesn't
     // (e.g. after clearing localStorage, or on first load after the migration).
@@ -463,12 +467,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (modal) modal.style.display = 'none';
     }
 
-    function runMsgSearch(query: string): void {
+    let _msgSearchSeq = 0;
+    async function runMsgSearch(query: string): Promise<void> {
         const results = document.getElementById('msg-search-results');
         if (!results) return;
         _msgSearchIdx = -1;
+        const seq = ++_msgSearchSeq;
         if (!query.trim()) { results.innerHTML = ''; return; }
-        const hits = searchMessages?.(query) ?? [];
+        // Async: chats without a localStorage cache are read from IndexedDB.
+        const hits = (await searchMessages?.(query)) ?? [];
+        if (seq !== _msgSearchSeq) return;  // a newer keystroke started another search
         if (!hits.length) {
             results.innerHTML = `<div class="msg-search-empty">No results for "${_esc(query)}"</div>`;
             return;

@@ -129,6 +129,40 @@ async function _deleteHtml(chatId) {
 // stopNow released agentStreaming) would overwrite the chat's stored history with nothing.
 let _loadingChatId: string | null = null;
 
+// localStorage copies of a chat's history (_oh) and message HTML (_msgs) are a cache: a
+// synchronous write that survives the tab dying before the async IndexedDB save lands, and a
+// fast reload. Only the most recently used chats keep one, and each copy is size-capped, so the
+// cache fits in localStorage's ~5M-character quota next to settings. Older chats load from
+// IndexedDB (loadChatHistory, _loadHtml).
+const _CACHED_CHATS  = 3;
+const _OH_CACHE_MAX  = 1_500_000;
+const _HTML_CACHE_MAX = 1_000_000;
+// Older versions' per-chat logs (convo-log / session-store); dropped along with a chat's cache.
+const _chatCacheKeys = (id: string) => [chatKey.oh(id), chatKey.msgs(id), chatKey.log(id), chatKey.raw(id)];
+
+// Drop the cache of every chat except the active one and the _CACHED_CHATS - 1 most recent others.
+function _pruneChatCaches() {
+    const others = getChatList().filter((c: any) => c.id !== activeChatId)
+        .sort((a: any, b: any) => (b.lastAt || 0) - (a.lastAt || 0));
+    for (const old of others.slice(_CACHED_CHATS - 1))
+        for (const k of [chatKey.oh(old.id), chatKey.msgs(old.id)]) localStorage.removeItem(k);
+}
+
+// Free localStorage when a write hit the quota: drop the cached history/HTML of other chats,
+// oldest first, calling `retry` after each until it returns true. The dropped chats are still
+// in the session store / IDB, which loadChatHistory falls back to. Returns retry's last result.
+function evictOldChatCaches(retry: () => boolean): boolean {
+    const others = getChatList().filter((c: any) => c.id !== activeChatId)
+        .sort((a: any, b: any) => (a.lastAt || 0) - (b.lastAt || 0));
+    for (const old of others) {
+        const keys = _chatCacheKeys(old.id).filter(k => localStorage.getItem(k) !== null);
+        if (!keys.length) continue;
+        keys.forEach(k => localStorage.removeItem(k));
+        if (retry()) return true;
+    }
+    return false;
+}
+
 function saveHistory() {
     if (!activeChatId) return;
     if (activeChatId === _loadingChatId) return;
@@ -144,7 +178,7 @@ function saveHistory() {
     // Browser UI path: write localStorage for fast reload access.
     try {
         let oh: string = JSON.stringify(openaiHistory);
-        if (oh.length >= 3_500_000) {
+        if (oh.length >= _OH_CACHE_MAX) {
             // Too large to persist whole. Persist a trimmed snapshot (first message +
             // recent tail starting on a user turn) instead of silently skipping the
             // save — skipping left a STALE history that restored as mysterious context
@@ -153,22 +187,15 @@ function saveHistory() {
             while (tail.length && tail[0].role !== 'user') tail = tail.slice(1);
             const head = tail[0] === openaiHistory[0] ? [] : [openaiHistory[0]];
             oh = JSON.stringify([...head, ...tail]);
-            console.warn(`[saveHistory] history exceeds 3.5MB — persisted trimmed snapshot (${head.length + tail.length}/${openaiHistory.length} msgs)`);
+            console.warn(`[saveHistory] history exceeds the localStorage cache cap — cached a trimmed snapshot (${head.length + tail.length}/${openaiHistory.length} msgs); the full history goes to IndexedDB`);
         }
+        _pruneChatCaches();
         // Try to write; if quota exceeded, evict the oldest OTHER chat's history and retry once.
         const _lsSet = (key: string, val: string) => {
             try { localStorage.setItem(key, val); return true; } catch { return false; }
         };
         if (!_lsSet(chatKey.oh(activeChatId), oh)) {
-            // Evict oldest chat histories (not the active one) to free space.
-            const _allChats = getChatList();
-            const _others = _allChats.filter((c: any) => c.id !== activeChatId)
-                .sort((a: any, b: any) => (a.lastAt || 0) - (b.lastAt || 0));
-            for (const old of _others) {
-                localStorage.removeItem(chatKey.oh(old.id));
-                localStorage.removeItem(chatKey.msgs(old.id));
-                if (_lsSet(chatKey.oh(activeChatId), oh)) break;
-            }
+            evictOldChatCaches(() => _lsSet(chatKey.oh(activeChatId), oh));
             // Last resort: save an even smaller snapshot (last 10 messages only)
             if (!localStorage.getItem(chatKey.oh(activeChatId))) {
                 const _mini = openaiHistory.slice(-10);
@@ -191,9 +218,12 @@ function saveHistory() {
             // Write to localStorage synchronously — same pattern as openaiHistory above.
             // This ensures the snapshot survives a screen-lock/browser-suspension that kills
             // the async server/IDB saves before they complete.
-            if (html.length < 2_000_000) {
-                try { localStorage.setItem(chatKey.msgs(id), html); } catch {}
-            }
+            // Too large to cache: drop the older cached snapshot too, or _loadHtml would
+            // prefer it over the current one in IDB.
+            try {
+                if (html.length < _HTML_CACHE_MAX) localStorage.setItem(chatKey.msgs(id), html);
+                else localStorage.removeItem(chatKey.msgs(id));
+            } catch { localStorage.removeItem(chatKey.msgs(id)); }
             // Fire-and-forget to server (no size limit) and IDB (durable, survives server restarts).
             _saveHtml(id, html).catch((e: any) => console.warn('[saveHistory] html save failed:', e?.message));
         }
@@ -701,7 +731,7 @@ async function switchToChat(id) {
         loaded   = await loadChatHistory(id);
         // Restore the per-chat turn log alongside the LLM history so the log viewer and exports
         // reflect the exact session history, not just what survived in the ephemeral sessionStorage.
-        loadChatLog?.(id);
+        await loadChatLog?.(id);
         restored = await restoreChatMessages(id);
     } finally {
         if (_loadingChatId === id) _loadingChatId = null;
@@ -799,18 +829,25 @@ function focusChatSearch() {
 
 // ── Message content search ─────────────────────────────────────────────────
 
+// A chat's history for search: in memory for the active chat, else the localStorage cache,
+// else IndexedDB (only recent chats are cached — see _CACHED_CHATS).
+async function _historyForSearch(id: string): Promise<any[] | null> {
+    if (id === activeChatId && openaiHistory.length) return openaiHistory;
+    const raw = localStorage.getItem(chatKey.oh(id));
+    if (raw) { try { return JSON.parse(raw); } catch {} }
+    return (await sessionLoadHistory?.(id)) ?? null;
+}
+
 // Search all chat histories for messages containing `query`.
 // Returns up to 30 results sorted newest-first with an HTML excerpt snippet.
-function searchMessages(query: string): any[] {
+async function searchMessages(query: string): Promise<any[]> {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     const list = getChatList();
     const results: any[] = [];
     for (const chat of list) {
-        const raw = localStorage.getItem(chatKey.oh(chat.id));
-        if (!raw) continue;
-        let history: any[];
-        try { history = JSON.parse(raw); } catch { continue; }
+        const history = await _historyForSearch(chat.id);
+        if (!history) continue;
         for (const msg of history) {
             const content = typeof msg.content === 'string' ? msg.content
                 : Array.isArray(msg.content) ? msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
@@ -837,7 +874,7 @@ function searchMessages(query: string): any[] {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatList, saveChatList, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { getChatList, saveChatList, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

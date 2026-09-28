@@ -26,11 +26,26 @@ export interface SessionStoreAdapter {
     recordWorkerAgent(runId: string, agent: any): Promise<void>;
     loadChatList(): Promise<Array<{id: string; name: string; createdAt: number; lastAt: number}>>;
     loadHistory(chatId: string): Promise<any[] | null>;
+    // Optional (IDBSessionAdapter). An adapter that reads raw captures / turn logs back
+    // takes over their storage: the localStorage copies are then skipped (see sessionHas).
+    loadRawMessages?(chatId: string): Promise<any[]>;
+    pruneRawFrom?(chatId: string, sinceMs: number): Promise<void>;
+    loadTurnLog?(chatId: string, limit: number): Promise<any[]>;
+    pruneTurnLogFrom?(chatId: string, sinceMs: number): Promise<void>;
+    saveCheckpointAttachments?(id: string, data: { images: any[]; files: any[] }): Promise<void>;
+    loadCheckpointAttachments?(id: string): Promise<{ images: any[]; files: any[] } | null>;
+    deleteCheckpointAttachments?(ids: string[]): Promise<void>;
 }
 
 let _store: SessionStoreAdapter | null = null;
 
 function setSessionStore(s: SessionStoreAdapter | null) { _store = s; }
+
+// True when the injected adapter implements `method`. Callers use it to decide whether a
+// localStorage copy is still needed (browser IDB adapter: no; no adapter / SQLite: yes).
+function sessionHas(method: keyof SessionStoreAdapter): boolean {
+    return !!_store && typeof _store[method] === 'function';
+}
 
 function _safeCall(method, ...args) {
     if (!_store) return;
@@ -69,6 +84,22 @@ export function sessionCompactHistory(chatId, preHistory, postHistory) { _safeCa
 // ── Turn log ────────────────────────────────────────────────────────────────
 
 function sessionLogTurn(record) { _safeCall('logTurn', record); }
+async function sessionLoadTurnLog(chatId: string, limit: number): Promise<any[]> {
+    return (await _asyncCall<any[]>('loadTurnLog', chatId, limit)) ?? [];
+}
+function sessionPruneTurnLogFrom(chatId: string, sinceMs: number) { _safeCall('pruneTurnLogFrom', chatId, sinceMs); }
+
+// ── Checkpoint attachments (adapter-only; agent-core.ts keeps them in localStorage otherwise) ──
+
+async function sessionSaveCheckpointAttachments(id: string, data: { images: any[]; files: any[] }): Promise<boolean> {
+    if (!sessionHas('saveCheckpointAttachments')) return false;
+    try { await _store!.saveCheckpointAttachments!(id, data); return true; }
+    catch (e) { console.warn('[session-store] saveCheckpointAttachments failed:', (e as any)?.message); return false; }
+}
+async function sessionLoadCheckpointAttachments(id: string): Promise<{ images: any[]; files: any[] } | null> {
+    return _asyncCall('loadCheckpointAttachments', id);
+}
+function sessionDeleteCheckpointAttachments(ids: string[]) { if (ids.length) _safeCall('deleteCheckpointAttachments', ids); }
 
 // ── Worker runs (net-new — no legacy behavior to preserve) ────────────────────
 
@@ -83,13 +114,16 @@ export function sessionRecordWorkerAgent(runId, agent)   { _safeCall('recordWork
 // not a no-op: there's no pre-existing legacy implementation to fall through to, and the whole
 // point is that it stays explorable (export, future UI) even without a SessionStore adapter
 // injected, per the design discussion — SQLite when available (queryable for benchmarking/
-// debugging), a capped localStorage log otherwise.
+// debugging), a capped localStorage log otherwise. An adapter that can read captures back
+// (IndexedDB in the browser) replaces the localStorage log: captures can be large blobs, and
+// one log per chat filled localStorage.
 
 const _RAW_CAP = 100; // smaller than convo-log's 200 — raw captures can be large blobs
 
 export function sessionSaveRawMessage(chatId, entry) {
     if (!chatId) return;
     _safeCall('saveRawMessage', chatId, entry);
+    if (sessionHas('loadRawMessages')) return;
     try {
         const key = chatKey.raw(chatId);
         const list = JSON.parse(localStorage.getItem(key) || '[]');
@@ -103,7 +137,9 @@ export function sessionSaveRawMessage(chatId, entry) {
     }
 }
 
-function sessionLoadRawMessages(chatId) {
+async function sessionLoadRawMessages(chatId): Promise<any[]> {
+    const fromStore = await _asyncCall<any[]>('loadRawMessages', chatId);
+    if (fromStore?.length) return fromStore;
     try { return JSON.parse(localStorage.getItem(chatKey.raw(chatId)) || '[]'); }
     catch { return []; }
 }
@@ -124,6 +160,7 @@ async function sessionLoadHistory(chatId: string): Promise<any[] | null> {
 
 function sessionPruneRawFrom(chatId: string, sinceMs: number): void {
     if (!chatId) return;
+    _safeCall('pruneRawFrom', chatId, sinceMs);
     try {
         const key = chatKey.raw(chatId);
         const list = JSON.parse(localStorage.getItem(key) || '[]');
@@ -132,12 +169,40 @@ function sessionPruneRawFrom(chatId: string, sinceMs: number): void {
     } catch (e) { console.warn('[session-store] raw prune failed:', e?.message); }
 }
 
+// One-time move, after an adapter that reads logs back is injected: per-chat turn logs and raw
+// captures that earlier versions kept in localStorage go to the adapter, then leave localStorage.
+// The adapter has mirrored both all along, so a chat it already has rows for is only cleared.
+async function sessionMigrateLocalStorage(): Promise<void> {
+    if (!sessionHas('loadTurnLog') || !sessionHas('loadRawMessages')) return;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && /^fg_chat_.+_(log|raw)$/.test(k)) keys.push(k);
+    }
+    for (const key of keys) {
+        const m = /^fg_chat_(.+)_(log|raw)$/.exec(key)!;
+        const [chatId, kind] = [m[1], m[2]];
+        try {
+            const list: any[] = JSON.parse(localStorage.getItem(key) || '[]');
+            if (kind === 'log') {
+                if (list.length && !(await _store!.loadTurnLog!(chatId, 1)).length)
+                    for (const rec of list) await _store!.logTurn({ ...rec, chatId });
+            } else if (list.length && !(await _store!.loadRawMessages!(chatId)).length) {
+                for (const { ts, ...entry } of list) await _store!.saveRawMessage(chatId, { ...entry, createdAt: ts ?? Date.now() });
+            }
+            localStorage.removeItem(key);
+        } catch (e) { console.warn(`[session-store] migrating ${key} failed:`, (e as any)?.message); }
+    }
+}
+
 // Window bridge for classic scripts and inline handlers (ESM migration convention).
 Object.assign(window, {
     setSessionStore,
     sessionSyncChatList, sessionDeleteChat, sessionSetChatRole,
     sessionSaveHistory, sessionCompactHistory,
-    sessionLogTurn,
+    sessionHas, sessionMigrateLocalStorage,
+    sessionLogTurn, sessionLoadTurnLog, sessionPruneTurnLogFrom,
+    sessionSaveCheckpointAttachments, sessionLoadCheckpointAttachments, sessionDeleteCheckpointAttachments,
     sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent,
     sessionSaveRawMessage, sessionLoadRawMessages, sessionPruneRawFrom,
     sessionLoadChatList, sessionLoadHistory,

@@ -461,7 +461,6 @@ const MODEL_CATALOG = [
     { provider:'nvidia',     model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',       label:'Nemotron Nano Omni 30B',        released:'2026-04', contextK:128,  params:30,   media:['text','image'],                tools:false, thinking:true,  note:'Multimodal (text, image); cloud endpoint silently drops data: audio URLs — use OpenRouter or Voxtral for audio' },
     { provider:'nvidia',     model:'nvidia/nemotron-3-super-120b-a12b',                   label:'Nemotron Super 120B',           released:'2026-03', contextK:128,  params:120,  media:['text'],                        tools:false, thinking:true,  note:'High-capability reasoning model' },
     { provider:'nvidia',     model:'nvidia/nemotron-3-ultra-550b-a55b',                   label:'Nemotron Ultra 550B',           released:'2026-06', contextK:1000, params:550,  media:['text'],                        tools:true,  thinking:true,  note:'550B MoE (55B active); 1M context; highest-capability Nemotron reasoning model; fn-tag tool calls' },
-    { provider:'nvidia',     model:'nvidia/llama-3.3-nemotron-super-49b-v1.5',           label:'Nemotron Super 49B',            released:'2026-06', contextK:128,  params:49,   media:['text'],                        tools:false, thinking:false, note:'49B Llama-based Nemotron; efficient alternative to Nemotron Super 120B' },
     { provider:'nvidia',     model:'moonshotai/kimi-k2.6',                               label:'Kimi K2.6 (NVIDIA)',            released:'2026-04', contextK:128,  params:1000, media:['text'],                        tools:false, thinking:false, note:'1T MoE (32B active); coding agent; 256K context; Moonshot AI via NVIDIA NIM' },
     // ── OpenRouter (free tier only) ───────────────────────────────────────────
     // https://openrouter.ai/models
@@ -492,8 +491,8 @@ const MODEL_CATALOG = [
     // ── TokenHarbor ───────────────────────────────────────────────────────────
     // https://tokenharbor.ai/models — unified multi-provider gateway; API key prefix: thk_live_
     // cooldownMs: 7-day flat cooldown on rate-limit/quota errors for free-tier weekly limits.
-    { provider:'tokenharbor', model:'deepseek-v4-flash:free', label:'DeepSeek V4 Flash (free)', released:'2026-04', contextK:128, params:284,  media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'284B MoE (13B active); DeepSeek V4 Flash; free tier via TokenHarbor; weekly quota' },
-    { provider:'tokenharbor', model:'mimo-v2.5:free',         label:'MiMo V2.5 (free)',         released:'2026-04', contextK:128, params:310,  media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'310B MoE (15B active); XiaomiAI MiMo V2.5 reasoning model; free tier via TokenHarbor; weekly quota' },
+    { provider:'tokenharbor', model:'deepseek-v4-flash:free', label:'DeepSeek V4 Flash (free)', released:'2026-04', contextK:1000, params:284,  media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'284B MoE (13B active); DeepSeek V4 Flash; free tier via TokenHarbor; weekly quota' },
+    { provider:'tokenharbor', model:'mimo-v2.5:free',         label:'MiMo V2.5 (free)',         released:'2026-04', contextK:1048, params:310,  media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'310B MoE (15B active); XiaomiAI MiMo V2.5 reasoning model; free tier via TokenHarbor; weekly quota' },
     // ── Kilo ─────────────────────────────────────────────────────────────────
     // https://kilo.ai — OpenAI-compatible inference gateway; :free models work without a key
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
@@ -514,9 +513,6 @@ const MODEL_CATALOG = [
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token)' },
     { provider:'vercel', model:'perplexity/sonar',                     label:'Sonar (free)',                 released:'2025-01', contextK:127,  params:null, media:['text','image'], tools:false, thinking:false, note:'127K ctx; built-in web search; no tool calling; free via Vercel AI Gateway' },
-    { provider:'vercel', model:'perplexity/sonar-pro',                 label:'Sonar Pro (free)',             released:'2025-03', contextK:200,  params:null, media:['text','image'], tools:false, thinking:false, note:'200K ctx; advanced web search; no tool calling; free via Vercel AI Gateway' },
-    { provider:'vercel', model:'perplexity/sonar-reasoning-pro',       label:'Sonar Reasoning Pro (free)',   released:'2025-03', contextK:127,  params:null, media:['text','image'], tools:false, thinking:true,  note:'127K ctx; web search + chain-of-thought reasoning; no tool calling; free via Vercel AI Gateway' },
-    { provider:'vercel', model:'inclusionai/ling-3.0-flash-fin',       label:'Ling 3.0 Flash Fin (free)',    released:'2026-08', contextK:256,  params:124,  media:['text'],        tools:true,  thinking:true,  note:'124B MoE (5.1B active); finance domain; reasoning; free via Vercel AI Gateway ($0/token)' },
     { provider:'vercel', model:'inclusionai/ling-3.0-flash-sante',     label:'Ling 3.0 Flash Santé (free)',  released:'2026-09', contextK:256,  params:124,  media:['text'],        tools:true,  thinking:true,  note:'124B MoE (5.1B active); healthcare domain; reasoning; free via Vercel AI Gateway ($0/token)' },
 ];
 
@@ -531,7 +527,15 @@ function saveEnabledModels(arr) { localStorage.setItem(KEYS.ENABLED_MODELS, JSON
 function getCustomModels() {
     try { return JSON.parse(ls(KEYS.CUSTOM_MODELS, '[]')); } catch { return []; }
 }
-function saveCustomModels(arr) { localStorage.setItem(KEYS.CUSTOM_MODELS, JSON.stringify(arr)); }
+// localStorage fills up with cached chat histories; on a quota error, evict old chats' caches
+// and retry. Throws if it still does not fit, so callers can tell the user.
+function saveCustomModels(arr) {
+    const val = JSON.stringify(arr);
+    const set = () => { try { localStorage.setItem(KEYS.CUSTOM_MODELS, val); return true; } catch { return false; } };
+    if (set()) return;
+    if (typeof evictOldChatCaches === 'function' && evictOldChatCaches(set)) return;
+    throw new Error('Browser storage is full — could not save the model list. Delete some old chats and try again.');
+}
 
 // ── Hidden built-in models (user-removed) ─────────────────────────────────
 function getHiddenModels(): Set<string> {

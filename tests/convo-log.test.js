@@ -49,17 +49,17 @@ describe('convoLogTurn — per-chat localStorage persistence', () => {
 });
 
 describe('loadChatLog — session restoration', () => {
-    it('merges persisted per-chat log into conversationLog', () => {
+    it('merges persisted per-chat log into conversationLog', async () => {
         push(CHAT, '2026-01-01T00:00:00.000Z');
         push(CHAT, '2026-01-01T00:00:05.000Z');
         // Simulate a page reload: clear in-memory log but leave localStorage intact
         window.conversationLog.length = 0;
-        window.loadChatLog(CHAT);
+        await window.loadChatLog(CHAT);
         expect(window.conversationLog).toHaveLength(2);
         expect(window.conversationLog[0].ts).toBe('2026-01-01T00:00:00.000Z');
     });
 
-    it('replaces existing in-memory entries for that chat with the localStorage copy (page-reload simulation)', () => {
+    it('replaces existing in-memory entries for that chat with the localStorage copy (page-reload simulation)', async () => {
         // Simulate pre-reload state: entries written to localStorage but not yet loaded back.
         // Seed localStorage directly so we control what the "pre-reload" log contained.
         localStorage.setItem(`fg_chat_${CHAT}_log`, JSON.stringify([
@@ -69,34 +69,34 @@ describe('loadChatLog — session restoration', () => {
         window.conversationLog.length = 0;
         window.conversationLog.push({ ts: '2025-01-01T00:00:00.000Z', chatId: CHAT, model: 'stale', response: 'stale' });
         // loadChatLog should replace the stale in-memory entries with the localStorage truth.
-        window.loadChatLog(CHAT);
+        await window.loadChatLog(CHAT);
         const entries = window.conversationLog.filter(e => e.chatId === CHAT);
         expect(entries).toHaveLength(1);
         expect(entries[0].ts).toBe('2026-01-01T00:00:00.000Z');
     });
 
-    it('preserves entries for other chats when loading a specific chat', () => {
+    it('preserves entries for other chats when loading a specific chat', async () => {
         push('other_chat', '2026-01-01T00:00:00.000Z');
         push(CHAT, '2026-01-01T00:00:05.000Z');
         window.conversationLog.length = 0;
         window.convoLogTurn({ chatId: 'other_chat', ts: '2026-01-01T00:00:00.000Z', model: 'm', response: 'r' });
-        window.loadChatLog(CHAT);
+        await window.loadChatLog(CHAT);
         const others = window.conversationLog.filter(e => e.chatId === 'other_chat');
         expect(others).toHaveLength(1);
         const ours = window.conversationLog.filter(e => e.chatId === CHAT);
         expect(ours).toHaveLength(1);
     });
 
-    it('is a no-op when chatId is falsy', () => {
+    it('is a no-op when chatId is falsy', async () => {
         push(CHAT, '2026-01-01T00:00:00.000Z');
         window.conversationLog.length = 0;
-        expect(() => window.loadChatLog(null)).not.toThrow();
+        await expect(window.loadChatLog(null)).resolves.toBeUndefined();
         expect(window.conversationLog).toHaveLength(0);
     });
 
-    it('is a no-op when the chat has no persisted log', () => {
+    it('is a no-op when the chat has no persisted log', async () => {
         // conversationLog starts empty; no localStorage key for CHAT
-        window.loadChatLog(CHAT);
+        await window.loadChatLog(CHAT);
         expect(window.conversationLog).toHaveLength(0);
     });
 });
@@ -131,12 +131,30 @@ describe('pruneConvoLogFrom', () => {
         const stored = JSON.parse(localStorage.getItem(`fg_chat_${CHAT}_log`) || '[]');
         expect(stored.map(e => e.ts)).toEqual(['2026-01-01T00:00:00.000Z']);
     });
-    it('loadChatLog after prune does not restore the pruned entries', () => {
+    it('loadChatLog after prune does not restore the pruned entries', async () => {
         push(CHAT, '2026-01-01T00:00:00.000Z');
         push(CHAT, '2026-01-01T00:00:05.000Z');
         window.pruneConvoLogFrom(CHAT, new Date('2026-01-01T00:00:05.000Z').getTime());
         window.conversationLog.length = 0;
-        window.loadChatLog(CHAT);
+        await window.loadChatLog(CHAT);
+        expect(window.conversationLog.map(e => e.ts)).toEqual(['2026-01-01T00:00:00.000Z']);
+    });
+});
+
+// With the browser's IndexedDB session store injected, the turn log lives there only.
+describe('convo-log with a session store that reads turn logs back', () => {
+    afterEach(() => window.setSessionStore(null));
+
+    it('skips the localStorage copy and restores from the store', async () => {
+        const rows = [];
+        window.setSessionStore({
+            logTurn: async r => { rows.push(r); },
+            loadTurnLog: async (id, limit) => rows.filter(r => r.chatId === id).slice(-limit),
+        });
+        push(CHAT, '2026-01-01T00:00:00.000Z');
+        expect(localStorage.getItem(`fg_chat_${CHAT}_log`)).toBeNull();
+        window.conversationLog.length = 0;
+        await window.loadChatLog(CHAT);
         expect(window.conversationLog.map(e => e.ts)).toEqual(['2026-01-01T00:00:00.000Z']);
     });
 });
