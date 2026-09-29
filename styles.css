@@ -874,15 +874,15 @@ html, body {
 .workspace-dir-actions { display: flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity 0.1s; }
 .workspace-dir-row:hover .workspace-dir-actions { opacity: 1; }
 
-.workspace-file-row { display: flex; align-items: center; padding: 5px 12px; gap: 8px; cursor: pointer; transition: background 0.1s; user-select: none; touch-action: none; }
-.workspace-file-row * { touch-action: none; } /* Chrome checks the direct touch target, not just ancestors */
+.workspace-file-row { display: flex; align-items: center; padding: 5px 12px; gap: 8px; cursor: pointer; transition: background 0.1s; user-select: none; touch-action: pan-y; }
 .workspace-file-row:hover { background: #f0f4ff; }
 .workspace-file-row.ws-selected { background: #dce8fd; }
 .workspace-file-row.ws-selected:hover { background: #ccdcfc; }
 .workspace-file-row.tab-open .workspace-file-name { color: var(--accent); }
 
-.workspace-file-name { flex: 1; font-size: 13px; font-family: 'SF Mono','Fira Code',monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.workspace-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
+/* Name shrinks to its text: on touch it is the drag handle, the rest of the row swipe-scrolls */
+.workspace-file-name { flex: 0 1 auto; min-width: 0; font-size: 13px; font-family: 'SF Mono','Fira Code',monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); touch-action: none; -webkit-touch-callout: none; }
+.workspace-file-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
 
 .ws-btn { background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted); font-size: 13px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; line-height: 1; transition: all 0.1s; }
 .ws-btn:hover { border-color: var(--border); background: #f0f0f0; }
