@@ -946,9 +946,11 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     let _mediaOAIEndpoint = _routing.mediaOAIEndpoint;
 
     // Key guard: check local key AND CF Worker shared key via specHasKey.
-    // Pass provider-only spec (provider + '|') so specHasKey falls through to
-    // provider-level checks without requiring a specific model name here.
-    if (!specHasKey(provider + '|')) { showSettings(); return; }
+    // When media routing kept the priority list's provider, check its first active spec: a
+    // provider-only spec ('kilo|') misses per-model noKey, so keyless Kilo models opened Settings.
+    const _activeSpec = getActiveMainModelList()[0];
+    const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
+    if (!specHasKey(_keySpec)) { showSettings(); return; }
 
     const input = document.getElementById('agent-input') as HTMLTextAreaElement | null;
     const rawText = _readInputText(input);
