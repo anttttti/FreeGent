@@ -48,6 +48,53 @@ describe('exec sandbox host', () => {
         await vi.waitFor(() => expect(posted.filter(m => m.error?.startsWith('workspace op not allowed'))).toHaveLength(4));
     });
 
+    describe('network fallback', () => {
+        const realFetch = globalThis.fetch;
+        afterEach(() => { globalThis.fetch = realFetch; delete W.getEffectiveProxy; });
+
+        it('fetches a plain GET through the proxy, never the URL itself', async () => {
+            W.getEffectiveProxy = () => 'https://proxy.test';
+            const f = vi.fn(async () => new Response('page', { headers: { 'Content-Type': 'text/html' } }));
+            globalThis.fetch = f as any;
+            fromFrame({ fg: 'net', id: 11, url: 'https://example.com/a?b=1' });
+            await vi.waitFor(() => expect(posted.some(m => m.fg === 'net-reply')).toBe(true));
+            expect(f).toHaveBeenCalledTimes(1);
+            expect((f.mock.calls[0] as any)[0]).toBe('https://proxy.test?url=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1');
+            const r = posted.find(m => m.fg === 'net-reply');
+            expect(r.value.status).toBe(200);
+            expect(r.value.contentType).toBe('text/html');
+            expect(new TextDecoder().decode(r.value.body)).toBe('page');
+        });
+
+        it('refuses non-http URLs and reports proxy refusals', async () => {
+            W.getEffectiveProxy = () => 'https://proxy.test';
+            globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'private address' }),
+                { status: 403, headers: { 'X-FG-Proxy-Error': '1' } })) as any;
+            fromFrame({ fg: 'net', id: 12, url: 'file:///etc/passwd' });
+            fromFrame({ fg: 'net', id: 13, url: 'https://10.0.0.1/' });
+            await vi.waitFor(() => expect(posted.filter(m => m.fg === 'net-reply')).toHaveLength(2));
+            expect(posted.find(m => m.id === 12).error).toMatch(/only http/);
+            expect(posted.find(m => m.id === 13).error).toMatch(/proxy refused this URL — private address/);
+        });
+
+        it('fails without a proxy instead of fetching directly', async () => {
+            W.getEffectiveProxy = () => '';
+            const f = vi.fn(); globalThis.fetch = f as any;
+            fromFrame({ fg: 'net', id: 14, url: 'https://example.com/' });
+            await vi.waitFor(() => expect(posted.some(m => m.id === 14)).toBe(true));
+            expect(posted.find(m => m.id === 14).error).toMatch(/no fetch proxy/);
+            expect(f).not.toHaveBeenCalled();
+        });
+
+        it('ignores network requests from other windows', async () => {
+            const f = vi.fn(); globalThis.fetch = f as any;
+            W.getEffectiveProxy = () => 'https://proxy.test';
+            fromFrame({ fg: 'net', id: 15, url: 'https://example.com/' }, window);
+            await new Promise(r => setTimeout(r, 20));
+            expect(f).not.toHaveBeenCalled();
+        });
+    });
+
     it('ignores messages from other windows', async () => {
         W.agentListFiles = vi.fn(async () => []);
         fromFrame({ fg: 'ws', id: 9, op: 'agentListFiles', args: [] }, window);

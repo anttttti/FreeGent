@@ -92,7 +92,7 @@ export const gzipCmd: Command = {
       const resolved = ctx.fs.resolvePath(file, ctx.cwd);
       try {
         const data = await ctx.fs.readFile(resolved);
-        const input = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+        const input = typeof data === 'string' ? new TextEncoder().encode(data) : data;
 
         if (decompressMode) {
           const result = await decompress(input);

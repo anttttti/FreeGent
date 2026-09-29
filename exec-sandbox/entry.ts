@@ -10,7 +10,12 @@
 // Bundled into one classic script by dev-api.ts buildExecSandbox().
 
 import './storage-shim';
-import { onCall, post } from './channel';
+import { onCall, post, pageFetch } from './channel';
+import { sandboxFetch } from './net';
+
+// Everything in the frame fetches through sandboxFetch: direct, with a proxied fallback for
+// plain GETs the browser refuses (net.ts).
+globalThis.fetch = sandboxFetch as typeof fetch;
 
 declare const __PYODIDE_WORKER_SRC__: string;
 
@@ -70,7 +75,18 @@ function startPython(): void {
     if (pyWorker) return;
     const url = URL.createObjectURL(new Blob([__PYODIDE_WORKER_SRC__], { type: 'text/javascript' }));
     pyWorker = new Worker(url);
-    pyWorker.onmessage = ({ data }) => post({ fg: 'event', name: 'py', data });
+    pyWorker.onmessage = ({ data }) => {
+        // The worker's fetch asks for a proxied plain GET when the browser refuses one
+        // (pyodide-worker.ts); relay it to the page and the answer back.
+        if (data?.type === 'net') {
+            const w = pyWorker;
+            pageFetch(String(data.url ?? '')).then(
+                value => w?.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
+                err   => w?.postMessage({ type: 'net-reply', id: data.id, error: String(err?.message ?? err) }));
+            return;
+        }
+        post({ fg: 'event', name: 'py', data });
+    };
     pyWorker.onerror = (ev) => { post({ fg: 'event', name: 'py-error', data: String((ev as any).message || 'worker error') }); pyWorker = null; };
 }
 
@@ -84,7 +100,9 @@ onCall(async (d: any) => {
             const { getShell } = await import('../shiro/shell-singleton');
             const shell = await getShell();
             const { stdout, stderr, exitCode } = await shell.exec(String(d.code ?? ''));
-            return { stdout, stderr, exit_code: exitCode ?? 0 };
+            // shell.exec returns terminal output (\n written as \r\n); the agent gets plain lines.
+            const lf = (s: string) => s.replace(/\r\n/g, '\n');
+            return { stdout: lf(stdout), stderr: lf(stderr), exit_code: exitCode ?? 0 };
         }
         case 'py-start':
             startPython();

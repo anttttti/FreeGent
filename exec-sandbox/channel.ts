@@ -8,6 +8,8 @@
 //   frame → page   { fg: 'reply', id, value } | { fg: 'reply', id, error }
 //   frame → page   { fg: 'ws', id, op, args }                    workspace file operation
 //   page → frame   { fg: 'ws-reply', id, value } | { ..., error }
+//   frame → page   { fg: 'net', id, url }                        proxied plain GET (net.ts)
+//   page → frame   { fg: 'net-reply', id, value: { status, contentType, body } } | { ..., error }
 //   frame → page   { fg: 'event', name, data }                   unsolicited (Pyodide worker)
 //   frame → page   { fg: 'ready' }
 
@@ -24,20 +26,31 @@ export function post(msg: any, transfer: Transferable[] = []): void {
 
 export function onCall(h: Handler): void { handler = h; }
 
-// Ask the page to run a workspace operation (see exec-sandbox-host.ts for the allowed ops).
-export function workspaceCall(op: string, args: any[]): Promise<any> {
+function request(msg: any): Promise<any> {
     const id = ++seq;
     return new Promise((resolve, reject) => {
         waiting.set(id, { resolve, reject });
-        post({ fg: 'ws', id, op, args });
+        post({ ...msg, id });
     });
+}
+
+// Ask the page to run a workspace operation (see exec-sandbox-host.ts for the allowed ops).
+export function workspaceCall(op: string, args: any[]): Promise<any> {
+    return request({ fg: 'ws', op, args });
+}
+
+export interface PageFetchResult { status: number; contentType: string; body: ArrayBuffer; }
+
+// Ask the page for a plain GET through the fetch proxy (exec-sandbox-host.ts _answerNet).
+export function pageFetch(url: string): Promise<PageFetchResult> {
+    return request({ fg: 'net', url });
 }
 
 window.addEventListener('message', async (e: MessageEvent) => {
     if (e.source !== parentWin) return;
     const d = e.data;
     if (!d || typeof d !== 'object') return;
-    if (d.fg === 'ws-reply') {
+    if (d.fg === 'ws-reply' || d.fg === 'net-reply') {
         const w = waiting.get(d.id);
         if (!w) return;
         waiting.delete(d.id);

@@ -1959,7 +1959,7 @@ async function _handleExecuteCodeInner(args, context) {
                     // Strip file contents — they're in the workspace now; history only needs the paths
                     execResult = { ...execResult, files_written: writtenPaths };
                 }
-            } catch (e) { return { error: `Local sandbox: ${e.message} — is server.py running?` }; }
+            } catch (e) { return { error: `Local sandbox: ${e.message} — is the dev server (npm run dev) running?` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {
             // Browser bash via x86-64 WASM emulator + musl-static binaries
             try { execResult = await runWithWasm(args.code); }

@@ -652,7 +652,8 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - Top-level \`await\` supported
 - Only these packages auto-load from imports: numpy, pandas, scipy, matplotlib, Pillow, scikit-learn — do not assume any other package is available
 - Other packages: \`import micropip; await micropip.install(["pkg-name"])\`
-- No \`subprocess\` / \`os.system\` — use \`execute_code(language="bash", ...)\` for shell commands`);
+- No \`subprocess\` / \`os.system\` — use \`execute_code(language="bash", ...)\` for shell commands
+- Network: \`from pyodide.http import pyfetch\` — \`resp = await pyfetch(url)\`, then \`await resp.string()\` / \`await resp.json()\` / \`await resp.bytes()\`. Sites that refuse browser requests are fetched through FreeGent's proxy (plain GET only, no custom headers). \`urllib\` and \`socket\` don't work`);
             const pyRules = [
                 '`language: "python"` is for Python source only. Shell commands — including `python3 -c "…"`, `python3 script.py` and heredocs — use `language: "bash"`.',
                 'Check `stderr` for tracebacks; `exit_code != 0` means failure.',
@@ -698,7 +699,14 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - Workspace files available at the working directory via relative paths
 - Full shell access; files written sync back automatically
 - Do NOT use \`/workspace/\` absolute paths — use relative paths or \`$PWD\``);
-            if (!hasNative && !hasLocal) parts.push('*Bash execution is not available in this environment.*');
+            // Same order as execute_code's dispatch (tools.ts): native, then Local, then WASM.
+            const hasWasm = !hasNative && !hasLocal && typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
+            if (hasWasm) parts.push(`### Environment (browser shell)
+- Runs in the browser, isolated from the page; workspace files are at \`/workspace\` — use absolute paths (\`/workspace/src/app.js\`); writes sync back automatically
+- Unix tools built in: grep, rg, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, etc. \`python3\`/\`pip\` are Pyodide; \`node\` runs JavaScript; \`npm install\` works (writes node_modules into the workspace)
+- Not available: \`git\`, compilers
+- **Network:** \`curl\` and \`wget\` work. Requests go out directly, so sites that allow browser requests (npm, PyPI, raw.githubusercontent.com, many public APIs) support any method, headers and body. Other sites are fetched through FreeGent's proxy: plain GET only, without custom headers. Binary downloads need \`-o FILE\`. To read a web page or search, \`fetch_url\` / web search are usually better`);
+            if (!hasNative && !hasLocal && !hasWasm) parts.push('*Bash execution is not available in this environment.*');
             const bashRules = [
                 'Always use `language: "bash"` explicitly.',
                 'Prefer single multi-step scripts over chained execute_code calls to reduce round-trips.',
@@ -714,11 +722,11 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
             if (_bashGit) {
                 bashRules.push('Use `run_git(...)` for git operations rather than calling `git` inside bash.');
             }
-            bashRules.push(
+            if (hasNative || hasLocal) bashRules.push(
                 '**PATH persistence:** each execute_code call runs in a fresh shell — `export PATH=...` in one call does NOT carry over to the next. To persist a new PATH entry: append it to `~/.bashrc` (`echo \'export PATH=$PATH:/new/dir\' >> ~/.bashrc`) and source it at the start of subsequent calls (`source ~/.bashrc && ...`), or use the full absolute path in every call.',
-                '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.',
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
+            bashRules.push('**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
         },

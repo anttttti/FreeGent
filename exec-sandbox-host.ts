@@ -8,9 +8,12 @@
 //
 // The frame loads fg-exec-sandbox.js (exec-sandbox/entry.ts, bundled by dev-api.ts
 // buildExecSandbox and served next to the app). The only things it can ask the page for are the
-// workspace operations in WS_OPS — the same file access the agent's own tools have.
+// workspace operations in WS_OPS — the same file access the agent's own tools have — and a
+// proxied plain GET (_answerNet), the same network access fetch_url has.
 //
 // Not used headless: there execute_code runs through nativeExec.
+
+import { checkFetchAllowed } from './fetch-allow.js';
 
 const LOAD_TIMEOUT_MS = 30_000;
 
@@ -35,6 +38,8 @@ function _onMessage(e: MessageEvent): void {
         if (d.error !== undefined) p.reject(new Error(d.error)); else p.resolve(d.value);
     } else if (d.fg === 'ws') {
         void _answerWorkspace(d);
+    } else if (d.fg === 'net') {
+        void _answerNet(d);
     } else if (d.fg === 'event') {
         for (const l of eventListeners.get(d.name) ?? []) l(d.data);
     }
@@ -47,6 +52,40 @@ async function _answerWorkspace(d: any): Promise<void> {
         const fn = (globalThis as any)[d.op];
         if (typeof fn !== 'function') throw new Error(`workspace op unavailable: ${d.op}`);
         reply({ value: await fn(...d.args) });
+    } catch (err: any) {
+        reply({ error: String(err?.message ?? err) });
+    }
+}
+
+// Network fallback for the frame (exec-sandbox/net.ts). The frame fetches directly first; its
+// requests carry Origin: null, so sites that don't allow cross-origin reads refuse them. For
+// those it may ask the page for a plain GET, which goes through the same proxy as fetch_url's
+// plain GETs: public HTTPS addresses only, no credentials or custom headers, the proxy's rate
+// limit. The page never fetches the URL itself — that would carry the page's origin (and on the
+// dev server its token) — and the frame never reaches the proxy directly: the CF Worker would
+// have to accept Origin: null, which any site's sandboxed iframe can send.
+const NET_TIMEOUT_MS = 30_000;
+const NET_MAX_BYTES  = 25 * 1024 * 1024;
+
+async function _answerNet(d: any): Promise<void> {
+    const reply = (msg: any, transfer: Transferable[] = []) =>
+        frame?.contentWindow?.postMessage({ fg: 'net-reply', id: d.id, ...msg }, '*', transfer);
+    try {
+        const url = String(d.url ?? '');
+        if (!/^https?:\/\//i.test(url)) throw new Error('only http(s) URLs can be fetched');
+        const denied = checkFetchAllowed(url);
+        if (denied) throw new Error(denied);
+        const proxy = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
+        if (!proxy) throw new Error('no fetch proxy is configured');
+        const resp = await fetch(`${proxy}?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(NET_TIMEOUT_MS) });
+        if (resp.headers.get('X-FG-Proxy-Error')) {
+            const why = await resp.json().then(j => j?.error, () => '').catch(() => '');
+            throw new Error(`the proxy refused this URL${why ? ` — ${why}` : ''}`);
+        }
+        if (Number(resp.headers.get('Content-Length') ?? 0) > NET_MAX_BYTES) throw new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`);
+        const body = await resp.arrayBuffer();
+        if (body.byteLength > NET_MAX_BYTES) throw new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`);
+        reply({ value: { status: resp.status, contentType: resp.headers.get('Content-Type') ?? '', body } }, [body]);
     } catch (err: any) {
         reply({ error: String(err?.message ?? err) });
     }

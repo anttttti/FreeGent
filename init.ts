@@ -229,7 +229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
     }
 
-    // Local bash: auto-detect server.py on localhost. Only probe when on localhost and not
+    // Local bash: auto-detect the dev server's /api/execute on localhost. Only probe when on localhost and not
     // already configured, so we don't clobber a deliberate 'none' choice from a previous session.
     if (['localhost', '127.0.0.1'].includes(window.location.hostname) &&
         !localStorage.getItem(KEYS.SANDBOX_PROVIDER)) {

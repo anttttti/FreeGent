@@ -542,7 +542,7 @@
                         <select class="settings-input" id="sandbox-provider" onchange="onSandboxProviderChange()">
                             <option value="wasm">WASM — browser x86-64 emulator (default)</option>
                             <option value="none">None (bash disabled)</option>
-                            <option value="local">Local — via server.py (localhost only)</option>
+                            <option value="local">Local — via the dev server (localhost only)</option>
                         </select>
 
                         <p class="settings-hint" id="sandbox-wasm-hint" style="display:none">
@@ -550,16 +550,19 @@
                             (<code>grep</code>, <code>sed</code>, <code>awk</code>, <code>find</code>, <code>sort</code>, <code>tr</code>, …).
                             Workspace files are available at <code>/workspace</code>; writes sync back automatically.
                             Binaries are fetched on first use and cached in the browser (IndexedDB).
+                            <code>curl</code> / <code>wget</code> reach sites that allow browser requests directly; other sites are
+                            fetched through FreeGent's proxy (plain GET only).
                         </p>
                         <p class="settings-hint" id="sandbox-local-hint" style="display:none">
-                            Runs bash, Python, and JavaScript on your machine via <code>server.py</code>.
+                            Runs bash on your machine through the dev server (<code>npm run dev</code>), isolated with bubblewrap on Linux.
                             Full coreutils, npm, and pip available. Files written by scripts sync back to the workspace automatically.
+                            Python runs on your machine too unless Pyodide is loaded; JavaScript always runs in the browser sandbox.
                         </p>
                     </div>
                     <div class="settings-section">
                         <span class="settings-label">Git Integration</span>
                         <label class="settings-check-row"><input type="checkbox" id="git-enabled" onchange="saveAgentSetting('fg_git_enabled', this.checked)"> Enable git access</label>
-                        <p class="settings-hint">Exposes the <code>run_git</code> tool and injects git instructions when messages mention git, commit, push, or pull. Requires Local Bash Sandbox (server.py). Disabled by default.</p>
+                        <p class="settings-hint">Exposes the <code>run_git</code> tool and injects git instructions when messages mention git, commit, push, or pull. Requires the Local code execution sandbox (dev server). Disabled by default.</p>
                     </div>
                     <div class="settings-section" style="border-bottom:none;margin-bottom:0">
                         <span class="settings-label">Code Structure Queries (AST)</span>
