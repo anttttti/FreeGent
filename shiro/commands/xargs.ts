@@ -5,18 +5,21 @@ export const xargs: Command = {
   name: "xargs",
   description: "Build and execute command lines from stdin",
   async exec(ctx) {
-    const args = ctx.args;
-    const { flags, positional, values } = parseArgs(args, ["n", "I", "i", "d", "delimiter", "0"]);
+    // -0 / --null: parseArgs doesn't take digit flags, so pick it out first.
+    const nullFlag = ctx.args.some(a => a === '-0' || a === '--null');
+    const args = ctx.args.filter(a => a !== '-0' && a !== '--null');
+    const { flags, positional, values } = parseArgs(args, ["n", "I", "i", "d", "delimiter"]);
     const onePerLine = flags.I || flags.L || flags.l;
     const replaceStr = values.I || values.i; // -I{} or -i
     const maxArgs = values.n ? parseInt(values.n) : undefined;
-    const nullDelim = flags['0'] || flags.null;
+    const nullDelim = nullFlag;
     const delimiter = nullDelim ? '\0' : (values.d || values.delimiter || /\s+/);
     const verbose = flags.t || flags.verbose;
     const noRunIfEmpty = flags.r;
 
-    const command = positional.length > 0 ? positional.join(" ") : "echo";
+    // Arguments are re-quoted so words with spaces stay single arguments when run.
     const cmdTemplate = positional.length > 0 ? positional : ["echo"];
+    const command = cmdTemplate.map(escapeArg).join(" ");
 
     // Parse input items — when -I is used, split on newlines (POSIX behavior)
     let inputItems: string[];
@@ -34,6 +37,13 @@ export const xargs: Command = {
       return 0;
     }
 
+    // Runs one command line; shell.execute writes terminal output (\r\n), turned back into \n.
+    const run = async (cmd: string) => {
+      let out = "", err = "";
+      const exitCode = await ctx.shell.execute(cmd, (t: string) => { out += t; }, (t: string) => { err += t; });
+      return { stdout: out.replace(/\r\n/g, "\n"), stderr: err.replace(/\r\n/g, "\n"), exitCode };
+    };
+
     // If we have an exec function (provided by the host shell), use it to actually run commands
     if (ctx.shell) {
       let stdout = "";
@@ -44,9 +54,10 @@ export const xargs: Command = {
       if (replaceStr) {
         const placeholder = typeof replaceStr === "string" ? replaceStr : "{}";
         for (const item of inputItems) {
-          const cmd = command.replace(new RegExp(escapeRegex(placeholder), "g"), item);
+          // The item replaces the placeholder inside each argument, which stays one argument.
+          const cmd = cmdTemplate.map(a => escapeArg(a.split(placeholder).join(item))).join(" ");
           if (verbose) stdout += `+ ${cmd}\n`;
-          const result = await (async () => { let _stdout = ""; let _stderr = ""; const _exitCode = await ctx.shell.execute(cmd, (s: string) => { _stdout += s; }, (s: string) => { _stderr += s; }); return { stdout: _stdout, stderr: _stderr, exitCode: _exitCode }; })();
+          const result = await run(cmd);
           if (result.stdout) stdout += result.stdout;
           if (result.stderr) stderr += result.stderr;
           lastExit = result.exitCode;
@@ -58,7 +69,7 @@ export const xargs: Command = {
           const batch = inputItems.slice(i, i + maxArgs);
           const cmd = `${command} ${batch.map(escapeArg).join(" ")}`;
           if (verbose) stdout += `+ ${cmd}\n`;
-          const result = await (async () => { let _stdout = ""; let _stderr = ""; const _exitCode = await ctx.shell.execute(cmd, (s: string) => { _stdout += s; }, (s: string) => { _stderr += s; }); return { stdout: _stdout, stderr: _stderr, exitCode: _exitCode }; })();
+          const result = await run(cmd);
           if (result.stdout) stdout += result.stdout;
           if (result.stderr) stderr += result.stderr;
           lastExit = result.exitCode;
@@ -69,7 +80,7 @@ export const xargs: Command = {
         for (const item of inputItems) {
           const cmd = `${command} ${escapeArg(item)}`;
           if (verbose) stdout += `+ ${cmd}\n`;
-          const result = await (async () => { let _stdout = ""; let _stderr = ""; const _exitCode = await ctx.shell.execute(cmd, (s: string) => { _stdout += s; }, (s: string) => { _stderr += s; }); return { stdout: _stdout, stderr: _stderr, exitCode: _exitCode }; })();
+          const result = await run(cmd);
           if (result.stdout) stdout += result.stdout;
           if (result.stderr) stderr += result.stderr;
           lastExit = result.exitCode;
@@ -81,7 +92,7 @@ export const xargs: Command = {
           ? `echo ${inputItems.map(escapeArg).join(" ")}`
           : `${command} ${inputItems.map(escapeArg).join(" ")}`;
         if (verbose) stdout += `+ ${cmd}\n`;
-        const result = await (async () => { let _stdout = ""; let _stderr = ""; const _exitCode = await ctx.shell.execute(cmd, (s: string) => { _stdout += s; }, (s: string) => { _stderr += s; }); return { stdout: _stdout, stderr: _stderr, exitCode: _exitCode }; })();
+        const result = await run(cmd);
         if (result.stdout) stdout += result.stdout;
         if (result.stderr) stderr += result.stderr;
         lastExit = result.exitCode;

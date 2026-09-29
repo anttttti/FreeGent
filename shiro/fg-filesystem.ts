@@ -112,6 +112,11 @@ function toWsPath(absPath: string): string | null {
 export class FWFileSystem extends FileSystem {
     /** In-memory store for paths outside /workspace (e.g. /tmp, /home/user). */
     private mem = new Map<string, Uint8Array>();
+    /**
+     * Directories made with mkdir, by absolute path. The workspace stores files only, so a
+     * directory otherwise exists only while it has files in it; these last for the session.
+     */
+    private dirs = new Set<string>();
 
     /** Skip Shiro's IDB init — FreeGent workspace is already ready. */
     override async init(): Promise<void> {
@@ -136,7 +141,7 @@ export class FWFileSystem extends FileSystem {
             // Not a file — check if it is an implicit directory (has child entries)
             const prefix = wsPath + '/';
             const all = await agentListFiles();
-            if (all.some(f => f.name.startsWith(prefix))) {
+            if (all.some(f => f.name.startsWith(prefix)) || this.dirs.has(path)) {
                 return makeStat('dir');
             }
             throw makeError('ENOENT', `no such file or directory: ${path}`);
@@ -146,7 +151,7 @@ export class FWFileSystem extends FileSystem {
             return makeStat('file', this.mem.get(path)!.byteLength);
         }
         // Virtual dirs: /, /tmp, /home, /home/user, /workspace
-        if (this._isVirtualDir(path)) return makeStat('dir');
+        if (this._isVirtualDir(path) || this.dirs.has(path)) return makeStat('dir');
         // Check if any mem file lives under this path as a dir
         const prefix = path.endsWith('/') ? path : path + '/';
         if ([...this.mem.keys()].some(k => k.startsWith(prefix))) return makeStat('dir');
@@ -229,9 +234,18 @@ export class FWFileSystem extends FileSystem {
         this.mem.set(path, merged);
     }
 
-    override async mkdir(_path: string, _opts?: { recursive?: boolean }): Promise<void> {
-        // Workspace dirs are implicit in file paths; mem dirs are also implicit.
-        // No-op (compatible with all callers that ignore the return value).
+    override async mkdir(path: string, opts?: { recursive?: boolean }): Promise<void> {
+        const dir = path.replace(/\/+$/, '') || '/';
+        if (await this.exists(dir)) return;
+        const parent = dir.slice(0, dir.lastIndexOf('/')) || '/';
+        if (!opts?.recursive && !(await this.exists(parent))) {
+            throw makeError('ENOENT', `no such file or directory: ${parent}`);
+        }
+        // Record the directory and, for -p, the parents it creates.
+        for (let d = dir; d && d !== '/' && !(await this.exists(d)); d = d.slice(0, d.lastIndexOf('/'))) {
+            this.dirs.add(d);
+            if (!opts?.recursive) break;
+        }
     }
 
     override async readdir(path: string): Promise<string[]> {
@@ -266,6 +280,12 @@ export class FWFileSystem extends FileSystem {
                 children.add('user');
             }
         }
+        const dirPrefix = path.endsWith('/') ? path : path + '/';
+        for (const d of this.dirs) {
+            if (!d.startsWith(dirPrefix)) continue;
+            const seg = d.slice(dirPrefix.length).split('/')[0];
+            if (seg) children.add(seg);
+        }
         return [...children].sort();
     }
 
@@ -282,7 +302,8 @@ export class FWFileSystem extends FileSystem {
     override async rmdir(path: string): Promise<void> {
         const entries = await this.readdir(path);
         if (entries.length > 0) throw makeError('ENOTEMPTY', `directory not empty: ${path}`);
-        // Virtual/implicit dirs vanish when empty — nothing to persist.
+        // Implicit dirs vanish when empty; ones made with mkdir are forgotten.
+        this.dirs.delete(path);
     }
 
     override async rm(path: string, opts?: { recursive?: boolean }): Promise<void> {
@@ -292,6 +313,7 @@ export class FWFileSystem extends FileSystem {
             if (!opts?.recursive) throw makeError('EISDIR', `is a directory: ${path}`);
             const entries = await this.readdir(path);
             await Promise.all(entries.map(e => this.rm(path + '/' + e, opts)));
+            this.dirs.delete(path);
         } else {
             await this.unlink(path);
         }
@@ -337,6 +359,6 @@ export class FWFileSystem extends FileSystem {
         const memPaths = [...this.mem.keys()];
         // Add canonical dirs
         const dirs = ['/', '/tmp', '/home', '/home/user', WORKSPACE_MOUNT];
-        return [...new Set([...dirs, ...wsPaths, ...memPaths])];
+        return [...new Set([...dirs, ...wsPaths, ...memPaths, ...this.dirs])];
     }
 }
