@@ -216,10 +216,13 @@ async function _fetchVercelModels(): Promise<FetchResult> {
         // The list endpoint is public (no auth required).
         const listJson = await _proxyFetch('https://ai-gateway.vercel.sh/v1/models');
         const listAll: any[] = Array.isArray(listJson?.data) ? listJson.data : [];
+        // Stealth models (stealth/pixel-canary) are $0 but carry no "free" tag.
+        const _zero = (v: any) => v != null && Number(v) === 0;
         const listFree = listAll.filter((m: any) =>
             typeof m.id === 'string' &&
             m.type === 'language' &&
-            Array.isArray(m.tags) && m.tags.includes('free')
+            ((Array.isArray(m.tags) && m.tags.includes('free')) ||
+             (_zero(m.pricing?.input) && _zero(m.pricing?.output)))
         );
 
         // Fallback: the aggregate endpoint sometimes omits free models.
@@ -413,12 +416,15 @@ async function _fetchNousModels(): Promise<FetchResult> {
 
         for (const m of all) {
             const id: string = m.id ?? '';
-            if (!id.endsWith(':free')) continue;  // only free-tier models
+            // Free-tier models: ":free" ids, or $0 pricing (stealth/space-bunny-alpha has no suffix).
+            const _zero = (v: any) => v != null && Number(v) === 0;
+            if (!id.endsWith(':free') && !(_zero(m.pricing?.prompt) && _zero(m.pricing?.completion))) continue;
             const lm: LiveModel = { id, name: m.name as string | undefined, created: created(m) };
             const modality: string = m.architecture?.modality ?? '';
             if (_NOUS_EXCL_NONCHAT.test(id) || (modality && !modality.includes('->text'))) {
                 rejected.push({ model: lm, reason: 'non-chat' });
-            } else if (_NOUS_EXCL_PREVIEW.test(id)) {
+            } else if (_NOUS_EXCL_PREVIEW.test(id) && !id.startsWith('stealth/')) {
+                // Stealth models are named "-alpha" by convention, not because they are unstable variants.
                 rejected.push({ model: lm, reason: 'preview' });
             } else {
                 live.push(lm);
@@ -738,8 +744,9 @@ function _applyProposals(proposals: Proposal[]): void {
                     contextK: 128,
                     note:     p.note,
                     ...(p.cooldownMs != null ? { cooldownMs: p.cooldownMs } : {}),
-                    // kilo :free models send no Authorization header
-                    ...((p.provider === 'kilo' && p.model.endsWith(':free')) ? { noKey: true } : {}),
+                    // Kilo proposals are all isFree models, which work without a key. Not all carry
+                    // a ":free" suffix (stealth/space-bunny-alpha does not).
+                    ...(p.provider === 'kilo' ? { noKey: true } : {}),
                 });
             }
         } else {
