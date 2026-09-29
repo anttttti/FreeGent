@@ -370,9 +370,14 @@
                     <div class="settings-section">
                         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
                             <span class="settings-label" style="margin-bottom:0">Model Priority</span>
+                            <span style="display:flex;gap:6px">
                             <button class="ws-action-btn" id="auto-rank-btn" onclick="autoPopulateModelPriority()"
                                 title="Ask the AI to rank all available (non-cooling) models by capability and replace the priority list with the top 10 results"
                                 style="font-size:11px;padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
+                            <button class="ws-action-btn" id="priority-defaults-btn" onclick="resetModelPriorityDefaults()"
+                                title="Replace the priority list with the default list and resume paused models"
+                                style="font-size:11px;padding:3px 10px">Defaults</button>
+                            </span>
                         </div>
                         <p class="settings-hint" style="margin-bottom:8px">Models tried in order. First non-rate-limited model is used. If all are cooling down, waits for the shortest cooldown.</p>
                         <div id="main-model-list"></div>

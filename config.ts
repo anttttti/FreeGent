@@ -473,6 +473,7 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'poolside/laguna-xs-2.1:free',                         label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262,  params:33,   media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Poolside Laguna XS; 33B MoE (3B active); smallest Laguna; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'cohere/north-mini-code:free',                         label:'North Mini Code (free)',       released:'2026-06', contextK:256,  params:30,   media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Cohere North Mini Code; 30B MoE (3B active); code specialist; 256K context; free via OpenRouter' },
     { provider:'openrouter', model:'qwen/qwen3.8-27b:free',                              label:'Qwen3.8 27B (free)',           released:'2026-08', contextK:262,  params:27,   media:['text','image'],                tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Qwen3.8 27B dense VLM; coding/agentic focus; 262K context; thinking mode; free via OpenRouter' },
+    { provider:'openrouter', model:'stealth/space-bunny-alpha',                          label:'Space Bunny Alpha (free)',     released:'2026-09', contextK:1000, params:null, media:['text','image','video'],       tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Anonymous stealth model; fast; strong coding; adjustable reasoning; 1M context; free via OpenRouter. Prompts may be used for training; stealth models are withdrawn without notice' },
     { provider:'openrouter', model:'inclusionai/ling-3.0-flash-fin:free',               label:'Ling 3.0 Flash Fin (free)',     released:'2026-08', contextK:262,  params:124,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Finance-focused MoE; 124B total (5.1B active); 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'inclusionai/ling-3.0-flash-sante:free',             label:'Ling 3.0 Flash Sante (free)',   released:'2026-09', contextK:262,  params:124,  media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Health/medicine-focused MoE; 124B total (5.1B active); 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'dots-studio/dots-3-note-preview:free',              label:'Dots3-Note Preview (free)',     released:'2026-08', contextK:512,  params:280,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'280B MoE (16B active); 512K context; free via OpenRouter' },
@@ -484,7 +485,9 @@ const MODEL_CATALOG = [
     { provider:'nous', model:'stepfun/step-3.7-flash:free',          label:'Step 3.7 Flash (free)',        released:'2026-05', contextK:262, params:196, media:['text','image','video'], tools:true, thinking:true,  note:'196B MoE; 262K ctx; multimodal text/image/video; agent efficiency, coding, search; mandatory thinking; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-s-2.1:free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:262, params:118, media:['text'],                 tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent, 70.2% Terminal-Bench; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-xs-2.1:free',          label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262, params:33,  media:['text'],                 tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Nous Portal' },
-    { provider:'nous', model:'upstage/solar-pro4:free',              label:'Solar Pro 4 (free)',           released:'2026-08', contextK:524, params:null,media:['text'],                 tools:true, thinking:false, note:'524K ctx; long-horizon tasks, agentic workflows, office productivity; free via Nous Portal' },
+    { provider:'nous', model:'stealth/space-bunny-alpha',            label:'Space Bunny Alpha (free)',     released:'2026-09', contextK:1000, params:null,media:['text','image','video'], tools:true, thinking:true,  note:'Anonymous stealth model; 1M ctx; strong coding; $0 on Nous Portal (not yet tested through Nous). Stealth models are withdrawn without notice' },
+    { provider:'nous', model:'meituan/longcat-2.5-preview:free',     label:'LongCat 2.5 Preview (free)',   released:'2026-09', contextK:1048, params:null,media:['text','image'],        tools:true, thinking:true,  note:'Meituan LongCat 2.5 preview; 1M ctx; $0 on Nous Portal (not yet tested through Nous; longcat-2.0:free was listed at $0 but returned 404 "no longer free")' },
+    { provider:'nous', model:'upstage/solar-pro4:free',            label:'Solar Pro 4 (free)',           released:'2026-08', contextK:524, params:null,media:['text'],                 tools:true, thinking:false, note:'524K ctx; long-horizon tasks, agentic workflows, office productivity; free via Nous Portal' },
     { provider:'nous', model:'inclusionai/ling-3.0-flash-fin:free',   label:'Ling 3.0 Flash Fin (free)',   released:'2026-08', contextK:262, params:124, media:['text'],                 tools:true, thinking:true,  note:'124B MoE (5.1B active); 262K ctx; finance-focused; real-world investment research; free via Nous Portal' },
     { provider:'nous', model:'inclusionai/ling-3.0-flash-sante:free', label:'Ling 3.0 Flash Sante (free)', released:'2026-09', contextK:262, params:124, media:['text'],                 tools:true, thinking:true,  note:'124B MoE (5.1B active); 262K ctx; health/medicine-focused; free via Nous Portal' },
     // ── TokenHarbor ───────────────────────────────────────────────────────────
@@ -495,7 +498,9 @@ const MODEL_CATALOG = [
     // ── Kilo ─────────────────────────────────────────────────────────────────
     // https://kilo.ai — OpenAI-compatible inference gateway; :free models work without a key
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
-    { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',         label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  noKey:true, note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
+    { provider:'kilo', model:'stealth/space-bunny-alpha',                       label:'Space Bunny Alpha (free)',         released:'2026-09', contextK:1000, params:null, media:['text','image','video'], tools:true, thinking:true, noKey:true, note:'Anonymous stealth model; fast; strong coding; adjustable reasoning; 1M ctx; free via Kilo. Prompts may be used for training; stealth models are withdrawn without notice' },
+    { provider:'kilo', model:'qwen/qwen3.8-27b:free',                           label:'Qwen3.8 27B (free)',               released:'2026-08', contextK:262,  params:27,   media:['text','image','video'], tools:true, thinking:true, noKey:true, note:'27B dense VLM; coding/agentic focus; 262K ctx; thinking mode; free via Kilo' },
+    { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  noKey:true, note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  noKey:true, note:'120B MoE (12B active); 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
@@ -625,20 +630,30 @@ function getAllModels() {
 // Each is an ordered array of "provider|model" strings.
 // The first non-cooling entry is used; if all cool, wait for the shortest.
 
-// Default priority list for new GitHub Pages users.
-// Kilo :free models (noKey:true) work with zero configuration.
-// OpenRouter models appear once the user sets an OpenRouter key.
-// Order: best quality first, Kilo before OpenRouter within each tier for no-key users.
+// Default priority list for new users, and for Settings → Model Priority → Defaults.
+// Kilo models (noKey:true) work with zero configuration; entries for providers without a key
+// are skipped, so the keyed ones cost no-key users nothing.
+// Order: quality tiers, best first. Within a tier, one model's providers sit together so a
+// rate limit on one moves to another provider's quota, Kilo first for no-key users.
+// OpenRouter appears only a few times: its free tier is ~50 requests/day per account.
 // Inkling is not here: inkling:free is 404 on Kilo and 403 "agentic harnesses only" on
 // OpenRouter; inkling-small:free works but hits its daily cap almost immediately (2026-09-27).
+// Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
-    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx, reasoning
+    // Top tier
+    'kilo|stealth/space-bunny-alpha',                  // stealth; tools, 1M ctx, multimodal
+    'openrouter|stealth/space-bunny-alpha',
+    'nous|stealth/space-bunny-alpha',
+    'nous|meituan/longcat-2.5-preview:free',
+    // Large reasoning models
+    'tokenharbor|deepseek-v4-flash:free',              // 284B MoE; weekly quota
+    'tokenharbor|mimo-v2.5:free',                      // 310B MoE; weekly quota
+    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
+    'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    'openrouter|qwen/qwen3.8-27b:free',               // 27B dense VLM, coding/agentic, thinking
-    'kilo|poolside/laguna-s-2.1:free',                 // 118B MoE, coding agent
-    'openrouter|poolside/laguna-s-2.1:free',
-    'kilo|stepfun/step-3.7-flash:free',               // 198B MoE, fast reasoning
-    'openrouter|nvidia/nemotron-3.5-lightning:free',   // 30B, very fast, tools
+    'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
+    'kilo|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
+    'nous|stepfun/step-3.7-flash:free',
 ];
 
 function getMainModelList() {
@@ -686,6 +701,13 @@ function saveMainModelList(arr) {
         localStorage.removeItem(KEYS.MAIN_MODELS);
         try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(deduped)); } catch {}
     }
+}
+
+// Settings → Model Priority → Defaults. Saved explicitly rather than removing the key: with no
+// saved list, getMainModelList() migrates a legacy fg_provider setting instead.
+function resetMainModelList() {
+    saveMainModelList([..._DEFAULT_MAIN_MODELS]);
+    savePausedMainModels([]);
 }
 
 // Paused model lists — models kept in the table but excluded from active routing
@@ -827,7 +849,7 @@ function saveWorkerModel(v) { localStorage.setItem(KEYS.WORKER_MODEL, v ?? ''); 
 
 // 'none'              = all utility LLM calls are disabled (no title gen, no suggestions).
 // 'provider|model'    = use that specific model.
-function getUtilityModel() { return ls(KEYS.UTILITY_MODEL, 'google|gemma-4-26b-a4b-it'); }
+function getUtilityModel() { return ls(KEYS.UTILITY_MODEL, 'google|gemma-4-31b-it'); }
 function saveUtilityModel(v) { localStorage.setItem(KEYS.UTILITY_MODEL, v ?? ''); }
 function isUtilityDisabled() { return getUtilityModel() === 'none'; }
 
@@ -1120,7 +1142,7 @@ Object.assign(window, {
     getEditReviewEnabled, getWorkerThinkingBudget, getPreserveThinking,
     getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels,
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
-    getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList,
+    getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
     getActiveMainModelList, specHasKey, loadCfWorkerKeys, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
