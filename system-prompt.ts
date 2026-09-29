@@ -43,10 +43,10 @@ export function _buildLangsDesc(): string {
     if (_l) return 'Languages: **python**, **bash**, **javascript** — run via local sandbox with workspace files at relative paths.';
     const _p = typeof pyodideStatus !== 'undefined' && (pyodideStatus === 'ready' || pyodideStatus === 'loading');
     const _wasm = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
-    if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — fs.readFileSync/writeFileSync, no npm). Note: `python3` inside bash is also Pyodide — use relative paths or `/workspace/…`. Never use `/shiro/workspace/…` (internal path; `os.getcwd()` may print it but it is not a usable path from inside scripts — use `open(\'/workspace/foo\')` or `open(\'foo\')` instead).';
-    if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **javascript** (browser sandbox — fs.readFileSync/writeFileSync, fetch, no npm).';
-    if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — fs.readFileSync/writeFileSync/existsSync, no npm).';
-    return 'Languages: **javascript** (browser sandbox — fs.readFileSync/writeFileSync/existsSync/readdirSync, no npm). Written files sync back to workspace.';
+    if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide — use relative paths or `/workspace/…`. Never use `/shiro/workspace/…` (internal path; `os.getcwd()` may print it but it is not a usable path from inside scripts — use `open(\'/workspace/foo\')` or `open(\'foo\')` instead).';
+    if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
+    if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm).';
+    return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Written files sync back to workspace.';
 }
 
 export function _buildEnvContext(): string {

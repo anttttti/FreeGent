@@ -1884,11 +1884,17 @@ async function _handleExecuteCodeInner(args, context) {
                 }
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
-            // storage or the dev server) with a fs/path shim over this copy of the files.
+            // storage or the dev server) with fs/path over this copy of the files, at /workspace
+            // like bash and Python (exec-sandbox/js-fs.ts). Its writes and deletions apply even
+            // when it throws, as they would in the shell.
             let run;
             try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS); }
             catch (e) { return { stdout: '', stderr: `JS sandbox: ${e.message ?? e}`, exit_code: 1 }; }
-            if (run.failed) return { stdout: run.stdout, stderr: run.stderr, exit_code: 1 };
+            for (const path of (run.deleted ?? []) as string[]) {
+                await agentDeleteFile(path).catch(() => {});
+                if (context?.staging) context.staging.set(path, null);
+                _invalidateReadDedup(path);
+            }
             const write_errors = [];
             for (const [path, content] of Object.entries(run.written as Record<string, string>)) {
                 try {
@@ -1901,7 +1907,8 @@ async function _handleExecuteCodeInner(args, context) {
             }
             const written_ok = Object.keys(run.written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
             const extra_stderr = write_errors.length ? (run.stderr ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
-            return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: write_errors.length && !written_ok.length ? 1 : 0, ...(written_ok.length ? { files_written: written_ok } : {}), ...(write_errors.length ? { write_errors } : {}) };
+            const deleted = (run.deleted ?? []) as string[];
+            return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.failed || (write_errors.length && !written_ok.length) ? 1 : 0, ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}) };
         })();
     } else if (typeof nativeExec === 'function') {
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
