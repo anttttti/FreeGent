@@ -1164,11 +1164,14 @@ function makeDraggable(row, fullname) {
     }
 
     // ── Touch drag-and-drop (mobile) ────────────────────────────────────────
+    // Only the file name is a drag handle (touch-action:none in CSS); a swipe
+    // anywhere else on the row scrolls the list natively.
     // touchmove/touchend go on document so Chrome's scroll compositor can't
     // intercept them. preventDefault() fires on every move (not just after a
     // threshold) because Chrome commits to scroll before the threshold fires.
     row.addEventListener('touchstart', e => {
         if (e.touches.length !== 1) return;
+        if (!(e.target as HTMLElement).closest('.workspace-file-name')) return;
         const t0 = e.touches[0];
         const startX = t0.clientX, startY = t0.clientY;
         let dragActive = false;
