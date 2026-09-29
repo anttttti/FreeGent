@@ -6,7 +6,7 @@
  *   cd cf-worker
  *   npx wrangler deploy
  *
- * Then paste the resulting URL (e.g. https://fg-proxy.you.workers.dev)
+ * Then paste the resulting URL (e.g. https://freegent-proxy.you.workers.dev)
  * into FreeGent Settings → CORS Proxy / CF Worker URL.
  *
  * Optional: add shared API keys as Cloudflare secrets so GitHub Pages
@@ -56,7 +56,9 @@
 
 // ── Allowed request origins ───────────────────────────────────────────────────
 const ALLOWED_ORIGINS = new Set([
-    'https://anttttti.github.io',   // GitHub Pages deployment
+    'https://freegent.ai',           // production
+    'https://www.freegent.ai',
+    'https://anttttti.github.io',   // old GitHub Pages URL — remove once traffic has moved to freegent.ai
     'http://localhost:5173',         // Vite dev server
     'http://localhost:4173',         // Vite preview
     'http://localhost:3000',

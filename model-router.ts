@@ -18,6 +18,8 @@
 //
 // Follows the step-validator/…/history pattern: ES module, exports, window bridge.
 
+import { isStaticHost } from './static-hosts.js';
+
 // ── Endpoint cooldown state ──────────────────────────────────────────────────
 // Shared by all LLM callers (main loops, compaction, workers).
 export const _endpointCooldown          = new Map(); // key → expiry timestamp
@@ -238,14 +240,13 @@ function _customEndpoint(model: string, hintProvider: string): any {
     return { provider, url: `${baseUrl}${path}`, key, model, proxy: useProxy };
 }
 
-// On static hosts (GitHub Pages, *.pages.dev) there is no local server, so route
+// On static hosts (freegent.ai, GitHub Pages, *.pages.dev) there is no local server, so route
 // CORS-capable providers through the CF Worker too — this lets the worker inject
 // shared API keys from its environment when the user hasn't set a local key.
 function _staticProxy(): boolean {
     if (window._fgHeadless) return false;
     try {
-        const h = window.location.hostname;
-        return h.endsWith('.github.io') || h.endsWith('.pages.dev');
+        return isStaticHost(window.location.hostname);
     } catch { return false; }
 }
 

@@ -11,7 +11,9 @@ use those providers without configuring their own keys.
 
 1. **Create a free Cloudflare account** at [cloudflare.com](https://cloudflare.com) if you don't have one.
 
-2. **Deploy:**
+2. **Deploy:**  
+   First remove the `workers_dev = false` and `routes = …` lines from `wrangler.toml`.
+   They serve the official worker at proxy.freegent.ai and will fail in your account.
    ```bash
    cd cf-worker
    npx wrangler deploy
@@ -23,11 +25,11 @@ use those providers without configuring their own keys.
    ```
    After deploying you'll see:
    ```
-   Published fg-proxy (https://fg-proxy.<your-subdomain>.workers.dev)
+   Published freegent-proxy (https://freegent-proxy.<your-subdomain>.workers.dev)
    ```
 
 3. **Configure FreeGent:**  
-   Open [FreeGent on GitHub Pages](https://anttttti.github.io/FreeGent/), go to  
+   Open [FreeGent](https://freegent.ai), go to  
    **Settings → CORS Proxy / CF Worker URL** and paste your Worker URL.
 
 That's it — all proxied providers (Kilo, NVIDIA NIM, TokenHarbor,
@@ -94,4 +96,4 @@ on slow models may time out; upgrade if that's an issue.
 ## Rename the worker
 
 Edit `name` in `wrangler.toml` before deploying to change the URL slug from
-`fg-proxy` to something else.
+`freegent-proxy` to something else.
