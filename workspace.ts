@@ -771,6 +771,10 @@ export async function agentWriteFile(path, content, encoding = null) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
         } else {
+            // local/ is reserved for a synced folder. Without one, only an imported snapshot of it
+            // (local/ files already in IDB) takes writes; otherwise a look-alike folder would be made.
+            const snapshot = (await listWorkspaceFilesMetaOnly()).some(f => f.name.startsWith('local/'));
+            if (!snapshot) throw new Error(`No local folder is synced — "local/" is reserved for one. Use the path without "local/" (e.g. "${path.slice(6)}").`);
             // No FSA — write back to IDB (imported snapshot; no write-back to filesystem)
             await writeWorkspaceFile(path, content, null, encoding);
         }

@@ -24,7 +24,7 @@ export function _buildWorkspaceDesc(): string {
     }
     // WASM bash: workspace files are pre-loaded at /workspace; bash is the primary file tool.
     if (typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm') {
-        return 'Files are pre-loaded at `/workspace` — use `execute_code` (bash) with absolute paths (e.g. `/workspace/src/main.js`). Files written under /workspace sync back to the browser workspace automatically. **Important:** `read_file`/`write_file` tools use plain relative paths without the `/workspace/` prefix (e.g. `game.html`, not `/workspace/game.html`) — the prefix is bash-internal only.';
+        return 'Files live in the browser workspace. Use plain relative paths everywhere: `src/main.js` names the same file in read_file/write_file, check_page and the preview, and in bash, Python and JavaScript, which all start in the workspace directory (mounted at `/workspace`, so `/workspace/src/main.js` also works). Changes made by code sync back to the workspace automatically.';
     }
     // Check if the individual file tools are enabled (they're OPT_IN, off by default).
     if (enabledTools.has('read_file')) {
@@ -43,8 +43,8 @@ export function _buildLangsDesc(): string {
     if (_l) return 'Languages: **python**, **bash**, **javascript** — run via local sandbox with workspace files at relative paths.';
     const _p = typeof pyodideStatus !== 'undefined' && (pyodideStatus === 'ready' || pyodideStatus === 'loading');
     const _wasm = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
-    if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide — use relative paths or `/workspace/…`. Never use `/shiro/workspace/…` (internal path; `os.getcwd()` may print it but it is not a usable path from inside scripts — use `open(\'/workspace/foo\')` or `open(\'foo\')` instead).';
-    if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; workspace at /workspace — use absolute paths), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
+    if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide and also starts in the workspace — use relative paths (`open(\'foo\')`). Never use `/shiro/workspace/…` (an internal path `os.getcwd()` may print).';
+    if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
     if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm).';
     return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Written files sync back to workspace.';
 }
