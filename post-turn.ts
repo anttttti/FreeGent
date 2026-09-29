@@ -1,6 +1,6 @@
 // post-turn.js — FreeGent: post-turn background agent system
-// Depends on: config.js, workers.js, state.js (agentStreaming, activeChatId).
-import { agentStreaming, activeChatId } from './state.js';
+// Depends on: config.js, workers.js, state.js (aiBusy, setAiJob, activeChatId).
+import { activeChatId, aiBusy, setAiJob } from './state.js';
 
 export async function runPostTurnAgents(): Promise<void> {
     if (getAgentReviewLogs()) {
@@ -169,7 +169,7 @@ export async function repairLedgerIfBroken(): Promise<void> {
 // ── Auto-init: write AGENTS.md when a local folder is opened with no project context ──
 
 export async function maybeRunInitAgent(): Promise<void> {
-    if (agentStreaming) return;
+    if (aiBusy()) return;
 
     let files: Array<{ name: string; size?: number; lastModified?: number; isLocal?: boolean }>;
     try { files = await agentListFiles(); } catch { return; }
@@ -221,11 +221,17 @@ Steps (run in order):
 
 Omit sections where no information was found. Do not invent commands.`;
 
+    // Re-check after the awaits above; the worker runs outside any chat turn, so mark it as
+    // the AI job or a chat turn could start and write the workspace alongside it.
+    if (aiBusy()) return;
+    setAiJob('init');
     try {
         await executeWorkers({ agents: [{ id: 'init', task, role: 'coder' }] });
         loadAgentsContext?.();
     } catch (e) {
         console.warn('[init] background init failed:', e.message);
+    } finally {
+        setAiJob('');
     }
 }
 

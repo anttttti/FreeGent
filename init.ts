@@ -289,10 +289,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (input) {
         // keypress is a fallback for mobile soft-keyboards that skip keydown on contenteditable
         input.addEventListener('keypress', e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); userSend(); }
         });
         input.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); userSend(); }
             if (e.key === 'Tab' && !e.shiftKey) {
                 const accepted = acceptSuggestion?.();
                 if (accepted) { e.preventDefault(); autoResizeTextarea(input); _updateSendBtnVisibility?.(); }
@@ -741,7 +741,7 @@ function _onAttachFiles(input: HTMLInputElement): void {
 // window via their own bridges (config.js, llm-shared.js, workers.js, etc.).
 Object.assign(window, {
     _resetModelWarmup,
-    agentSend, handleSendButton, newChat, retryLastTurn, stopAfterStep,
+    agentSend, userSend, handleSendButton, newChat, retryLastTurn, stopAfterStep,
     showSettings, saveSettings, switchSettingsTab,
     applyHdrReasoning, applyHdrCompactTokens,
     updateActiveModelDisplay,

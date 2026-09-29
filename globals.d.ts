@@ -33,6 +33,7 @@ declare global {
     var deleteChatCheckpoints: any;
     var createNewChat: () => void;
     var handleSendButton: () => void;
+    var userSend: () => void;
     var newChat: () => void;
     var rerunCheckpoint: any;
     var rewindToCheckpoint: any;
@@ -561,6 +562,9 @@ declare global {
     var setSessionToolFilter: (v: Set<string> | null) => void;
     var softStopPending: any;
     var agentStreaming: any;
+    var aiJob: string;
+    var setAiJob: (v: string) => void;
+    var aiBusy: () => boolean;
     var workflowMode: boolean;
     var currentTurnSkills: any;
     var lastProvider: any;

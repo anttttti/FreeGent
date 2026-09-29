@@ -23,16 +23,17 @@ function stopAutopilot() {
 
 async function startAutopilot() {
     if (autopilotActive || agentStreaming) return;
-    // Both loops transition the same fg-tasks/*.md frontmatter and ledger — running them
-    // concurrently interleaves status writes and corrupts task state.
-    if (typeof isRunnerRunning === 'function' && isRunnerRunning()) {
-        console.warn('[autopilot] Agent loop is running — stop it first (Agent tab).');
+    // One AI job at a time. The runner in particular transitions the same fg-tasks/*.md
+    // frontmatter and ledger — running both interleaves status writes and corrupts task state.
+    if (aiBusy()) {
+        console.warn(`[autopilot] ${aiJob === 'runner' ? 'Agent loop is running — stop it first (Agent tab)' : 'another AI task is running'}.`);
         return;
     }
     // Tabs from a previous run are stale: their chats are gone and their task statuses
     // have moved on. Without this the tab bar accumulates one entry per task, forever.
     _clearTaskTabs();
     autopilotActive = true;
+    setAiJob('autopilot');
     _updateAutopilotBtn();
     _setTasksTabGlow(true);
     try {
@@ -43,6 +44,7 @@ async function startAutopilot() {
         console.error('[autopilot] stopped:', e?.message || e);
     } finally {
         stopAutopilot();
+        setAiJob('');
     }
 }
 

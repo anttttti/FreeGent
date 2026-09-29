@@ -1,6 +1,6 @@
 // runner.ts — FreeGent: task runner — autonomous task loop
 // Depends on: config.js, qa.js, tasks.js, chat-state.js, agent-core.js, state.js
-import { setWorkflowMode, _clearHistory } from './state.js';
+import { setWorkflowMode, _clearHistory, aiJob, setAiJob, aiBusy } from './state.js';
 import { enabledTools } from './config.js';
 
 interface Task {
@@ -45,9 +45,11 @@ async function _runnerTurn(prompt: string): Promise<any> {
 
 function runnerStart() {
     if (_runnerRunning || agentStreaming) return;
-    if (typeof isAutopilotRunning === 'function' && isAutopilotRunning()) {
+    if (aiBusy()) {
         const statusEl = document.getElementById('runner-status');
-        if (statusEl) statusEl.textContent = 'Autopilot is running — stop it first (Tasks tab)';
+        if (statusEl) statusEl.textContent = aiJob === 'autopilot'
+            ? 'Autopilot is running — stop it first (Tasks tab)'
+            : 'Another AI task is running — wait for it to finish';
         return;
     }
     _runnerPriorChatId = activeChatId;
@@ -115,6 +117,7 @@ function runnerRestart() {
 
 async function _runLoop() {
     _runnerRunning       = true;
+    setAiJob('runner');
     _runnerPaused        = false;
     _runnerAbort         = false;
     _runnerConsecutiveFails = 0;
@@ -175,6 +178,7 @@ async function _runLoop() {
         }
     } finally {
         _runnerRunning = false;
+        setAiJob('');
         _runnerPaused  = false;
         _runnerAbort   = false;
         _runnerChatId  = null;
