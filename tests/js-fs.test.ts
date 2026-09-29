@@ -59,6 +59,16 @@ describe('execute_code JavaScript fs', () => {
         expect(path.extname('.bashrc')).toBe('');
     });
 
+    it('reads binary files as bytes, or as text with an encoding, and writes bytes back', () => {
+        const { fs, written } = createWorkspaceFs({ 'img.bin': { base64: btoa('\x00\x01hi') } });
+        const bytes = fs.readFileSync('img.bin') as Uint8Array;
+        expect([...bytes]).toEqual([0, 1, 104, 105]);
+        expect(fs.readFileSync('/workspace/img.bin', 'utf8')).toBe('\x00\x01hi');
+        expect(fs.statSync('img.bin').size).toBe(4);
+        fs.writeFileSync('out.bin', new Uint8Array([255, 0]));
+        expect(written['out.bin']).toEqual(new Uint8Array([255, 0]));
+    });
+
     it('throws ENOENT for missing files', () => {
         const { fs } = ws();
         expect(() => fs.readFileSync('missing.txt')).toThrow(/ENOENT/);

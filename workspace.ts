@@ -718,8 +718,20 @@ async function readFileAsDataUrl(path) {
     if (rec?.encoding === 'base64') return `data:${_mimeOf(path)};base64,${rec.content}`;
     throw new Error('File content is not a data URI');
 }
+// Workspace file names are relative ("src/app.js"). The browser runtimes mount the workspace at
+// /workspace, so "/workspace/src/app.js", "/src/app.js" and "./src/app.js" from any caller name
+// the same file — never a file literally called "/workspace/…", which listed as a "workspace"
+// folder inside the workspace.
+export function workspaceName(path: string): string {
+    let p = String(path ?? '');
+    if (p === '/workspace') return '';
+    if (p.startsWith('/workspace/')) p = p.slice('/workspace/'.length);
+    return p.replace(/^\/+/, '').replace(/^(\.\/)+/, '');
+}
+
 export async function agentReadFile(path) {
     if (_wa) return _wa.agentReadFile(path);
+    path = workspaceName(path);
     const _fsaRead = async (name) => {
         if (_isDocExt(name)) {
             const b64 = await readFsaFile(name, true);
@@ -753,6 +765,7 @@ function _refuseGitMetadata(path: string, op: string): void {
 
 export async function agentWriteFile(path, content, encoding = null) {
     if (_wa) return _wa.agentWriteFile(path, content, encoding);
+    path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
     if (path.startsWith('local/')) {
         if (fsaHandle) {
@@ -784,6 +797,7 @@ export async function agentWriteFile(path, content, encoding = null) {
 
 export async function agentDeleteFile(path) {
     if (_wa) return _wa.agentDeleteFile(path);
+    path = workspaceName(path);
     _refuseGitMetadata(path, 'delete');
     if (path.startsWith('local/')) {
         try { await deleteFsaFile(path.slice('local/'.length)); }

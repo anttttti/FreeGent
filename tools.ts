@@ -4,7 +4,7 @@
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
-import { sandboxCall } from './exec-sandbox-host.js';
+import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 120_000;
@@ -1874,13 +1874,18 @@ async function _handleExecuteCodeInner(args, context) {
         && typeof nativeExec !== 'function';
     if (_isStaticJS) {
         execResult = await (async () => {
-            // Collect workspace files into memory
-            const files = {};
+            // Copy the workspace for this run: raw records (binary files as base64, no text
+            // extraction), plus a synced local folder's files if one is open.
+            const files: Record<string, string | { base64: string }> = {};
             try {
-                const allFiles = await agentListFiles();
-                for (const f of allFiles) {
+                for (const rec of (await listWorkspaceFiles()) || []) {
+                    if (!rec?.name || typeof rec.content !== 'string' || rec.content.length > EXEC_FILE_MAX_CHARS) continue;
+                    files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content } : rec.content;
+                }
+                for (const f of await agentListFiles()) {
+                    if (!f.isLocal || f.name in files) continue;
                     const c = await agentReadFile(f.name).catch(() => null);
-                    if (c != null && c.length <= 500_000) files[f.name] = c;
+                    if (typeof c === 'string' && c.length <= EXEC_FILE_MAX_CHARS) files[f.name] = c;
                 }
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
@@ -1896,10 +1901,14 @@ async function _handleExecuteCodeInner(args, context) {
                 _invalidateReadDedup(path);
             }
             const write_errors = [];
-            for (const [path, content] of Object.entries(run.written as Record<string, string>)) {
+            for (const [path, content] of Object.entries(run.written as Record<string, string | Uint8Array>)) {
                 try {
-                    await agentWriteFile(path, content);
-                    if (context?.staging) context.staging.set(path, content);
+                    if (typeof content === 'string') {
+                        await agentWriteFile(path, content);
+                        if (context?.staging) context.staging.set(path, content);
+                    } else {
+                        await agentWriteFile(path, _bytesToBase64(content), 'base64');   // binary
+                    }
                     _invalidateReadDedup(path);
                 } catch (e) {
                     write_errors.push(`${path}: ${e.message ?? e}`);
@@ -2000,6 +2009,12 @@ async function _handleExecuteCodeInner(args, context) {
     if (execResult && !execResult.error && !(execResult.exit_code > 0) && _STDERR_ERROR_RE.test(execResult.stderr ?? ''))
         execResult = { ...execResult, note: 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.' };
     return execResult;
+}
+
+function _bytesToBase64(bytes: Uint8Array): string {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
 }
 
 async function _handlePhantomAlias(name, args, context) {

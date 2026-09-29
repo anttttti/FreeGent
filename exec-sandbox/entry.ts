@@ -12,7 +12,7 @@
 import './storage-shim';
 import { onCall, post, pageFetch } from './channel';
 import { sandboxFetch } from './net';
-import { createWorkspaceFs, path, WORKSPACE } from './js-fs';
+import { createWorkspaceFs, path, WORKSPACE, type WorkspaceFileData } from './js-fs';
 
 // Everything in the frame fetches through sandboxFetch: direct, with a proxied fallback for
 // plain GETs the browser refuses (net.ts).
@@ -22,7 +22,7 @@ declare const __PYODIDE_WORKER_SRC__: string;
 
 // ── JavaScript ────────────────────────────────────────────────────────────────
 
-async function runJs(code: string, files: Record<string, string>) {
+async function runJs(code: string, files: Record<string, WorkspaceFileData>) {
     const stdout: string[] = [], stderr: string[] = [];
     // The same /workspace as bash and Python (js-fs.ts). Writes and deletions made before an
     // error still apply, as they would in the shell.
