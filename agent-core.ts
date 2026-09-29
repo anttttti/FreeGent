@@ -1,6 +1,6 @@
 // agent-core.js — FreeGent: checkpoints, input state, main send/abort/clear, textarea resize
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
-import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, setMainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken } from './state.js';
+import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, setMainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, aiBusy } from './state.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
@@ -384,7 +384,7 @@ function pruneMessagesAfterCheckpoint(checkpointRow: HTMLElement): void {
 }
 
 async function rewindToCheckpoint(ckptId: string, checkpointRow: HTMLElement): Promise<void> {
-    if (agentStreaming) { console.warn('[rewind] blocked — agent is still streaming'); return; }
+    if (aiBusy()) { console.warn('[rewind] blocked — an AI task is running'); return; }
     if (!await applyCheckpoint(ckptId)) return;
     pruneMessagesAfterCheckpoint(checkpointRow);
     saveHistory();
@@ -393,7 +393,7 @@ async function rewindToCheckpoint(ckptId: string, checkpointRow: HTMLElement): P
 }
 
 async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Promise<void> {
-    if (agentStreaming) { console.warn('[rerun] blocked — agent is still streaming'); return; }
+    if (aiBusy()) { console.warn('[rerun] blocked — an AI task is running'); return; }
     const raw = localStorage.getItem(ckptKey(ckptId));
     if (!raw) {
         console.warn('[checkpoint] not found in localStorage:', ckptId);
@@ -493,7 +493,7 @@ function _pruneFromUserMsg(msgEl: HTMLElement): void {
 }
 
 async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
-    if (agentStreaming) return;
+    if (aiBusy()) return;
     const ckptId = msgEl.dataset.checkpointId;
     if (!ckptId) return;
     const raw = localStorage.getItem(ckptKey(ckptId));
@@ -552,6 +552,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
     const doSave = async () => {
         const newText = ta.value.trim();
         if (!newText) { ta.focus(); return; }
+        if (aiBusy()) return;   // an AI task started while the editor was open
         // Update checkpoint with edited text
         try {
             const d = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
@@ -1172,7 +1173,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
 }
 
 async function retryLastTurn(container: HTMLElement | null = null): Promise<void> {
-    if (agentStreaming || !lastUserMessageText) return;
+    if (aiBusy() || !lastUserMessageText) return;
     const provider = getProvider();
 
     // Truncate to just after the last real user message
@@ -1238,7 +1239,19 @@ function stopNow(): void {
 
 function handleSendButton(): void {
     if (agentStreaming) stopNow();
-    else agentSend();
+    else userSend();
+}
+
+// Send from the composer (Enter / send button). While a background AI job owns the chat
+// (task runner, autopilot, init agent), a user turn — or a queued message dequeued after the
+// job's turn — would interleave with the job's next turn. Keep the text in the input instead.
+function userSend(): void {
+    if (aiJob) {
+        const what = { runner: 'The task runner', autopilot: 'Autopilot', init: 'The project-init agent' }[aiJob] || 'An AI task';
+        appendMessage?.('model', `<em style="color:var(--muted)">${what} is running — stop it or wait for it to finish before sending.</em>`);
+        return;
+    }
+    agentSend();
 }
 
 function createNewChat(): void {
@@ -1273,7 +1286,7 @@ function createNewChat(): void {
 }
 
 function newChat(): void {
-    if (agentStreaming) return;
+    if (aiBusy()) return;
     const hasHistory = openaiHistory.length > 0;
     if (!hasHistory) {
         const msgs = getMessagesEl();
@@ -1397,7 +1410,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat };

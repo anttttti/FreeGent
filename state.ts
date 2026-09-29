@@ -88,6 +88,9 @@ export let _currentUserIntent: string    = ''; // set at turn start (agent-core)
 export let _lastTurnDoneToken: boolean    = false; // set when a turn declares COMPLETED; read by the Director continuation loop
 export let _lastTurnBlockedToken: boolean = false; // set when a turn accepts a BLOCKED declaration; read by the Director continuation loop
 export let _sessionToolFilter: Set<string> | null = null; // classifier output; null = use full active tool set
+// Background AI job that owns the chat between its turns: 'runner' | 'autopilot' | 'init' | ''.
+// One AI job at a time — aiBusy() gates every entry point that would start another.
+export let aiJob: string = '';
 
 export function setOpenaiHistory(v: any): void         { openaiHistory         = v; }
 export function setAgentStreaming(v: any): void        { agentStreaming = v; (window as any).updateRailRecentChats?.(); }
@@ -115,6 +118,8 @@ export function setCurrentUserIntent(v: any): void     { _currentUserIntent    =
 export function setLastTurnDoneToken(v: any): void     { _lastTurnDoneToken    = v; }
 export function setLastTurnBlockedToken(v: any): void  { _lastTurnBlockedToken = v; }
 export function setSessionToolFilter(v: Set<string> | null): void { _sessionToolFilter = v; }
+export function setAiJob(v: string): void              { aiJob                 = v; }
+export function aiBusy(): boolean                      { return agentStreaming || !!aiJob; }
 
 // defaultSession proxies the module-level globals — existing call sites that pass no
 // session get exactly the same behaviour as before A2.
@@ -173,7 +178,7 @@ const _setters = {
     setActiveAbortController, setLastProvider, setSoftStopPending, setPendingAgentsContextInject,
     setCurrentTurnSkills, setReactiveFired, setFailureCounts,
     setActiveChatId, setSeenReadFiles, setSeenListFiles, setMainAgentRole, setWorkflowMode, setToolCallHistory,
-    setSessionToolFilter, _clearHistory,
+    setSessionToolFilter, _clearHistory, setAiJob, aiBusy,
     // §A2: createSession exposed so headless / test code that reads window.createSession can
     // build a proper AgentSession without falling back to the bare {history,abortController,role} stub.
     createSession,
@@ -200,6 +205,7 @@ const _reactiveProps: Array<[string, () => any, (v: any) => void]> = [
     ['_lastTurnDoneToken',    () => _lastTurnDoneToken,    setLastTurnDoneToken],
     ['_lastTurnBlockedToken', () => _lastTurnBlockedToken, setLastTurnBlockedToken],
     ['_sessionToolFilter',   () => _sessionToolFilter,   setSessionToolFilter],
+    ['aiJob',                () => aiJob,                setAiJob],
 ];
 
 // Targets: globalThis first (always), then window only when it's a different object

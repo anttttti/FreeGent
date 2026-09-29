@@ -64,24 +64,22 @@ describe('autopilot — wiring', () => {
     });
 
     it('refuses to start while the Agent-tab loop owns the task files', () => {
-        const real = W.isRunnerRunning;
-        W.isRunnerRunning = () => true;
+        W.setAiJob('runner');
         try {
             W.toggleAutopilot();
             expect(W.isAutopilotRunning()).toBe(false);
-        } finally { W.isRunnerRunning = real; }
+        } finally { W.setAiJob(''); }
     });
 
     it('blocks the Agent-tab loop while autopilot is running, and says why', () => {
-        const real = W.isAutopilotRunning;
-        W.isAutopilotRunning = () => true;
+        W.setAiJob('autopilot');
         document.body.insertAdjacentHTML('beforeend', '<div id="runner-status"></div>');
         try {
             W.runnerStart();
             expect(W.isRunnerRunning()).toBe(false);
             expect(document.getElementById('runner-status').textContent)
                 .toMatch(/Autopilot is running/);
-        } finally { W.isAutopilotRunning = real; }
+        } finally { W.setAiJob(''); }
     });
 });
 
