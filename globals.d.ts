@@ -247,6 +247,7 @@ declare global {
     var saveEnabledModels: any;
     var saveImageModel: any;
     var saveMainModelList: any;
+    var resetMainModelList: any;
     var savePausedMainModels: any;
     var saveSamplingSetting: any;
     var saveVideoModel: any;
