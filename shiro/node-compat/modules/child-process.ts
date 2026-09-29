@@ -83,10 +83,11 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
     const whichMatch = trimmed.match(/^(which|command\s+-v)\s+(\S+)$/);
     if (whichMatch) {
       const cmdName = whichMatch[2];
-      const knownCmds = ['node', 'npm', 'npx', 'git', 'cat', 'ls', 'grep', 'sed', 'find', 'echo',
+      // Commands FreeGent's shell registers (shiro/shell-singleton.ts) — no git, vi, tput, stty, pgrep, nproc, ed.
+      const knownCmds = ['node', 'npm', 'npx', 'cat', 'ls', 'grep', 'sed', 'find', 'echo',
         'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'head', 'tail', 'sort', 'uniq', 'wc', 'tr',
-        'tee', 'diff', 'env', 'which', 'test', 'sh', 'bash', 'vi', 'rg', 'curl', 'mktemp', 'jq',
-        'tput', 'stty', 'gzip', 'gunzip', 'wget', 'pgrep', 'pkill', 'nproc', 'getconf', 'ed'];
+        'tee', 'diff', 'env', 'which', 'test', 'sh', 'bash', 'rg', 'curl', 'mktemp', 'jq',
+        'gzip', 'gunzip', 'wget'];
       if (knownCmds.includes(cmdName)) {
         return { stdout: `/usr/local/bin/${cmdName}\n`, stderr: '', status: 0 };
       }
