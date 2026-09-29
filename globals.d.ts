@@ -303,7 +303,6 @@ declare global {
     var addVoiceButtons: any;
     var applyHdrCompactTokens: any;
     var applyHdrReasoning: any;
-    var applyHdrSearch: any;
     var closeFileTab: any;
     var createRuleFromForm: any;
     var createSkillFromForm: any;
