@@ -90,6 +90,7 @@ export const ls: Command = {
     const { flags, positional } = parseArgs(processedArgs);
     const paths = positional.length > 0 ? positional : ["."];
     const showAll = flags.a;
+    const almostAll = flags.A;
     const longFormat = flags.l;
     const humanReadable = flags.h;
     const recursive = flags.R;
@@ -100,7 +101,8 @@ export const ls: Command = {
 
     async function listDir(dirPath: string, label: string, showLabel: boolean) {
       const entries = await readdirEntries(ctx.fs, dirPath);
-      let filtered = showAll ? entries : entries.filter((e) => !e.name.startsWith("."));
+      let filtered = showAll || almostAll ? entries : entries.filter((e) => !e.name.startsWith("."));
+      if (showAll) filtered = [{ ...(await statEntry(ctx.fs, dirPath)), name: '.' }, { ...(await statEntry(ctx.fs, dirPath)), name: '..' }, ...filtered];
 
       // Sort entries
       if (sortBySize) {
@@ -108,7 +110,7 @@ export const ls: Command = {
       } else if (sortByTime) {
         filtered.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
       } else {
-        filtered.sort((a, b) => a.name.localeCompare(b.name));
+        filtered.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);   // C locale: byte order
       }
 
       // Group directories first
@@ -152,9 +154,21 @@ export const ls: Command = {
       }
     }
 
+    // GNU order: file operands first (sorted), then each directory's listing.
+    let status = 0;
+    const existing: { p: string; resolved: string; stat: any }[] = [];
     for (const p of paths) {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
-      const stat = await statEntry(ctx.fs, resolved);
+      try { existing.push({ p, resolved, stat: await ctx.fs.stat(resolved).then(() => statEntry(ctx.fs, resolved)) }); }
+      catch { ctx.stderr += `ls: cannot access '${p}': No such file or directory\n`; status = 2; }
+    }
+    const byName = (a: { p: string }, b: { p: string }) => a.p < b.p ? -1 : a.p > b.p ? 1 : 0;
+    const ordered = dirsOnly ? existing.sort(byName) : [
+      ...existing.filter(e => e.stat.type !== 'dir').sort(byName),
+      ...existing.filter(e => e.stat.type === 'dir').sort(byName),
+    ];
+    let first = true;
+    for (const { p, resolved, stat } of ordered) {
 
       if (dirsOnly) {
         // -d: list the directory entry itself
@@ -175,11 +189,13 @@ export const ls: Command = {
       }
 
       const showLabel = paths.length > 1 || recursive;
+      if (showLabel && (results.length || !first)) results.push('');
+      first = false;
       await listDir(resolved, p, showLabel);
     }
 
-    ctx.stdout += results.join("\n") + "\n";
-    return 0;
+    if (results.length) ctx.stdout += results.join("\n") + "\n";
+    return status;
   },
 };
 

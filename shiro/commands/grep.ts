@@ -1,291 +1,228 @@
 import type { Command, CommandContext } from './index';
+import { breToJs, ereToJs } from '../utils/posix-regex';
+
+// GNU grep: BRE by default (-E extended, -F fixed strings, -P Perl-like = JavaScript regex).
+// Output, file-name prefixes, context separators and exit status (0 match, 1 none, 2 error) match
+// GNU grep.
+
+/** Lines of a file or stream; a final newline ends the last line rather than starting another. */
+export function splitLines(text: string): string[] {
+  if (text === '') return [];
+  const lines = text.split('\n');
+  if (text.endsWith('\n')) lines.pop();
+  return lines;
+}
+
+const LONG_FLAGS: Record<string, string> = {
+  '--ignore-case': 'i', '--invert-match': 'v', '--line-number': 'n', '--count': 'c',
+  '--files-with-matches': 'l', '--files-without-match': 'L', '--recursive': 'r',
+  '--dereference-recursive': 'r', '--only-matching': 'o', '--word-regexp': 'w',
+  '--line-regexp': 'x', '--fixed-strings': 'F', '--extended-regexp': 'E', '--basic-regexp': 'G',
+  '--perl-regexp': 'P', '--quiet': 'q', '--silent': 'q', '--no-messages': 's',
+  '--with-filename': 'H', '--no-filename': 'h',
+};
+const LONG_VALUES: Record<string, string> = {
+  '--regexp': 'e', '--file': 'f', '--max-count': 'm', '--after-context': 'A', '--before-context': 'B', '--context': 'C',
+};
 
 export const grepCmd: Command = {
   name: 'grep',
   description: 'Search for patterns in files',
   async exec(ctx: CommandContext) {
-    let ignoreCase = false;
-    let invertMatch = false;
-    let lineNumbers = false;
-    let countOnly = false;
-    let filesOnly = false;
-    let recursive = false;
-    let onlyMatching = false;
-    let wordMatch = false;
-    let fixedStrings = false;
-    let quiet = false;
-    let wholeLineMatch = false;
-    let maxCount = 0;
-    let alwaysFilename = false;
-    let neverFilename = false;
-    let colorMode = 'never'; // 'always', 'auto', 'never'
-    let beforeCtx = 0;
-    let afterCtx = 0;
-    let pattern = '';
+    const f = new Set<string>();
+    const patterns: string[] = [];
+    let maxCount = -1, before = 0, after = 0;
+    let color = false;
     const files: string[] = [];
-    const includeGlobs: string[] = [];
-    const excludeGlobs: string[] = [];
+    const include: string[] = [], exclude: string[] = [], excludeDir: string[] = [];
+    let optionsDone = false;
 
-    let i = 0;
-    while (i < ctx.args.length) {
-      const arg = ctx.args[i];
-      if (arg === '-i') { ignoreCase = true; }
-      else if (arg === '-v') { invertMatch = true; }
-      else if (arg === '-n') { lineNumbers = true; }
-      else if (arg === '-c') { countOnly = true; }
-      else if (arg === '-l') { filesOnly = true; }
-      else if (arg === '-r' || arg === '-R') { recursive = true; }
-      else if (arg === '-o') { onlyMatching = true; }
-      else if (arg === '-w') { wordMatch = true; }
-      else if (arg === '-F') { fixedStrings = true; }
-      else if (arg === '-q') { quiet = true; }
-      else if (arg === '-x') { wholeLineMatch = true; }
-      else if (arg === '-H') { alwaysFilename = true; }
-      else if (arg === '-h') { neverFilename = true; }
-      else if (arg === '-e' && i + 1 < ctx.args.length) { pattern = ctx.args[++i]; }
-      else if (arg === '-m' && i + 1 < ctx.args.length) { maxCount = parseInt(ctx.args[++i], 10) || 0; }
-      else if (arg === '-A' && i + 1 < ctx.args.length) { afterCtx = parseInt(ctx.args[++i], 10) || 0; }
-      else if (arg === '-B' && i + 1 < ctx.args.length) { beforeCtx = parseInt(ctx.args[++i], 10) || 0; }
-      else if (arg === '-C' && i + 1 < ctx.args.length) { beforeCtx = afterCtx = parseInt(ctx.args[++i], 10) || 0; }
-      else if (arg === '--color' || arg === '--color=always' || arg === '--colour' || arg === '--colour=always') { colorMode = 'always'; }
-      else if (arg === '--color=auto' || arg === '--colour=auto') { colorMode = 'auto'; }
-      else if (arg === '--color=never' || arg === '--colour=never') { colorMode = 'never'; }
-      else if (arg === '--include' && i + 1 < ctx.args.length) { includeGlobs.push(ctx.args[++i]); }
-      else if (arg.startsWith('--include=')) { includeGlobs.push(arg.slice('--include='.length)); }
-      else if (arg === '--exclude' && i + 1 < ctx.args.length) { excludeGlobs.push(ctx.args[++i]); }
-      else if (arg.startsWith('--exclude=')) { excludeGlobs.push(arg.slice('--exclude='.length)); }
-      else if (arg.startsWith('-') && arg.length > 1 && !arg.startsWith('--')) {
-        // Combined flags like -in, or -A3 shorthand
-        let j = 1;
-        while (j < arg.length) {
-          const ch = arg[j];
-          if (ch === 'i') ignoreCase = true;
-          else if (ch === 'v') invertMatch = true;
-          else if (ch === 'n') lineNumbers = true;
-          else if (ch === 'c') countOnly = true;
-          else if (ch === 'l') filesOnly = true;
-          else if (ch === 'r' || ch === 'R') recursive = true;
-          else if (ch === 'o') onlyMatching = true;
-          else if (ch === 'w') wordMatch = true;
-          else if (ch === 'F') fixedStrings = true;
-          else if (ch === 'q') quiet = true;
-          else if (ch === 'x') wholeLineMatch = true;
-          else if (ch === 'H') alwaysFilename = true;
-          else if (ch === 'A' || ch === 'B' || ch === 'C' || ch === 'm') {
-            const rest = arg.slice(j + 1);
-            const num = rest ? parseInt(rest, 10) : (ctx.args[++i] ? parseInt(ctx.args[i], 10) : 0);
-            if (ch === 'A') afterCtx = num || 0;
-            else if (ch === 'B') beforeCtx = num || 0;
-            else if (ch === 'C') { beforeCtx = afterCtx = num || 0; }
-            else if (ch === 'm') { maxCount = num || 0; }
-            break;
-          }
-          j++;
-        }
-      } else if (!pattern) {
-        pattern = arg;
-      } else {
-        files.push(arg);
-      }
-      i++;
-    }
-
-    // Build include/exclude matchers
-    const globToRe = (g: string) => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
-    const includeRes = includeGlobs.map(globToRe);
-    const excludeRes = excludeGlobs.map(globToRe);
-    const matchesFileFilter = (name: string): boolean => {
-      if (includeRes.length > 0 && !includeRes.some(re => re.test(name))) return false;
-      if (excludeRes.length > 0 && excludeRes.some(re => re.test(name))) return false;
-      return true;
+    const patternFiles: string[] = [];
+    const setValue = (opt: string, v: string) => {
+      if (opt === 'e') patterns.push(v);
+      else if (opt === 'f') { patternFiles.push(v); f.add('patternGiven'); }
+      else if (opt === 'm') maxCount = parseInt(v, 10);
+      else if (opt === 'A') after = parseInt(v, 10) || 0;
+      else if (opt === 'B') before = parseInt(v, 10) || 0;
+      else if (opt === 'C') before = after = parseInt(v, 10) || 0;
     };
+    const args = ctx.args;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (optionsDone || a === '-' || !a.startsWith('-')) {
+        if (!patterns.length && !f.has('patternGiven')) { patterns.push(a); f.add('patternGiven'); }
+        else files.push(a);
+        continue;
+      }
+      if (a === '--') { optionsDone = true; continue; }
+      if (a.startsWith('--')) {
+        const [name, val] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, undefined];
+        if (LONG_FLAGS[name]) { f.add(LONG_FLAGS[name]); continue; }
+        if (LONG_VALUES[name]) { setValue(LONG_VALUES[name], val ?? args[++i] ?? ''); if (name === '--regexp') f.add('patternGiven'); continue; }
+        if (name === '--include') { include.push(val ?? args[++i]); continue; }
+        if (name === '--exclude') { exclude.push(val ?? args[++i]); continue; }
+        if (name === '--exclude-dir') { excludeDir.push(val ?? args[++i]); continue; }
+        if (name === '--color' || name === '--colour') { color = val === undefined || val === 'always'; continue; }
+        ctx.stderr += `grep: unrecognized option '${a}'\n`;
+        return 2;
+      }
+      // Short options, possibly bundled (-in, -A3, -e PATTERN, -m1)
+      for (let j = 1; j < a.length; j++) {
+        const ch = a[j];
+        if ('eABCmf'.includes(ch)) {
+          const rest = a.slice(j + 1);
+          setValue(ch, rest !== '' ? rest : (args[++i] ?? ''));
+          if (ch === 'e') f.add('patternGiven');
+          break;
+        }
+        if (/\d/.test(ch)) { before = after = parseInt(a.slice(j), 10); break; }   // -2 = -C2
+        f.add(ch);
+      }
+    }
+    // -f FILE: one pattern per line (an empty file matches nothing).
+    let noPatterns = false;
+    for (const pf of patternFiles) {
+      let text: string;
+      try { text = pf === '-' ? ctx.stdin : await ctx.fs.readFile(ctx.fs.resolvePath(pf, ctx.cwd), 'utf8') as string; }
+      catch { ctx.stderr += `grep: ${pf}: No such file or directory\n`; return 2; }
+      const lines = splitLines(text);
+      patterns.push(...lines);
+      if (!lines.length && !patterns.length) noPatterns = true;
+    }
+    if (noPatterns) return 1;
+    if (!patterns.length) { ctx.stderr += 'Usage: grep [OPTION]... PATTERNS [FILE]...\n'; return 2; }
 
-    if (!pattern) {
-      ctx.stderr = 'grep: missing pattern\n';
-      return 2;
-    }
+    const ignoreCase = f.has('i'), invert = f.has('v'), lineNumbers = f.has('n'), countOnly = f.has('c');
+    const listMatching = f.has('l'), listNonMatching = f.has('L'), onlyMatching = f.has('o');
+    const quiet = f.has('q'), noMessages = f.has('s'), recursive = f.has('r') || f.has('R');
 
-    // Build effective pattern
-    let effectivePattern = pattern;
-    if (fixedStrings) {
-      effectivePattern = effectivePattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-    if (wordMatch) {
-      effectivePattern = `\\b${effectivePattern}\\b`;
-    }
-    if (wholeLineMatch) {
-      effectivePattern = `^${effectivePattern}$`;
-    }
-
-    const regexFlags = 'g' + (ignoreCase ? 'i' : '');
+    // One pattern per line of each -e; all are alternatives.
+    const toJs = (p: string) => f.has('F') ? p.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')
+      : f.has('E') ? ereToJs(p) : f.has('P') ? p : breToJs(p);
+    const parts = patterns.flatMap(p => p.split('\n')).map(p => {
+      let src = toJs(p);
+      if (f.has('w')) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
+      if (f.has('x')) src = `^(?:${src})$`;
+      return src;
+    });
     let regex: RegExp;
     try {
-      regex = new RegExp(effectivePattern, regexFlags);
+      regex = new RegExp(parts.length === 1 ? parts[0] : parts.map(p => `(?:${p})`).join('|'), 'g' + (ignoreCase ? 'i' : ''));
     } catch {
-      ctx.stderr = `grep: invalid pattern '${pattern}'\n`;
+      ctx.stderr += `grep: Invalid regular expression\n`;
       return 2;
     }
+    const matches = (line: string) => { regex.lastIndex = 0; return regex.test(line); };
 
-    const useColor = colorMode === 'always';
-    const hasContext = beforeCtx > 0 || afterCtx > 0;
-    let found = false;
+    const multi = recursive || files.length > 1;
+    const showName = (f.has('H') || multi) && !f.has('h');
+    let anySelected = false, anyListed = false, error = false;
 
-    const colorizeMatch = (line: string): string => {
-      if (!useColor) return line;
-      regex.lastIndex = 0;
-      return line.replace(regex, (match) => `\x1b[1;31m${match}\x1b[0m`);
-    };
-
-    const searchFile = async (filePath: string, displayPath: string, multiFile: boolean) => {
-      let content: string;
-      try {
-        content = await ctx.fs.readFile(filePath, 'utf8') as string;
-      } catch {
-        ctx.stderr += `grep: ${displayPath}: No such file or directory\n`;
-        return;
-      }
-      // Skip binary files
-      if (content.includes('\0')) return;
-
-      const showFilename = (alwaysFilename || multiFile) && !neverFilename;
-      const lines = content.split('\n');
-      let matchCount = 0;
-
-      if (hasContext && !countOnly && !filesOnly && !onlyMatching && !quiet) {
-        // Two-pass context approach
-        const matchedLineNums = new Set<number>();
-        const contextLineNums = new Set<number>();
-
-        for (let ln = 0; ln < lines.length; ln++) {
-          if (maxCount > 0 && matchCount >= maxCount) break;
-          regex.lastIndex = 0;
-          const match = regex.test(lines[ln]);
-          if (match !== invertMatch) {
-            matchedLineNums.add(ln);
-            matchCount++;
-            for (let b = Math.max(0, ln - beforeCtx); b < ln; b++) contextLineNums.add(b);
-            for (let a = ln + 1; a <= Math.min(lines.length - 1, ln + afterCtx); a++) contextLineNums.add(a);
-          }
-        }
-
-        if (matchCount === 0) return;
-        found = true;
-
-        const allLineNums = new Set([...matchedLineNums, ...contextLineNums]);
-        const sorted = [...allLineNums].sort((a, b) => a - b);
-        let lastLn = -2;
-        for (const ln of sorted) {
-          if (lastLn >= 0 && ln > lastLn + 1) ctx.stdout += '--\n';
-          const prefix = showFilename ? displayPath + ':' : '';
-          const ctxSep = matchedLineNums.has(ln) ? ':' : '-';
-          const lineNum = lineNumbers ? (ln + 1) + ctxSep : '';
-          const text = matchedLineNums.has(ln) ? colorizeMatch(lines[ln]) : lines[ln];
-          ctx.stdout += prefix + lineNum + text + '\n';
-          lastLn = ln;
-        }
-        return;
-      }
-
+    // Returns true to stop everything (-q found a match).
+    const searchText = (text: string, name: string): boolean => {
+      const lines = splitLines(text);
+      const prefix = (sep: string) => (showName ? name + sep : '');
+      const selected: number[] = [];
       for (let ln = 0; ln < lines.length; ln++) {
-        if (maxCount > 0 && matchCount >= maxCount) break;
-        regex.lastIndex = 0;
-        const match = regex.test(lines[ln]);
-        if (match !== invertMatch) {
-          found = true;
-          matchCount++;
-          if (quiet) continue;
-          if (filesOnly) {
-            ctx.stdout += displayPath + '\n';
-            return;
-          }
-          if (!countOnly) {
-            const prefix = showFilename ? displayPath + ':' : '';
-            const lineNum = lineNumbers ? (ln + 1) + ':' : '';
-            if (onlyMatching && !invertMatch) {
-              regex.lastIndex = 0;
-              let m;
-              while ((m = regex.exec(lines[ln])) !== null) {
-                const matchText = useColor ? `\x1b[1;31m${m[0]}\x1b[0m` : m[0];
-                ctx.stdout += prefix + lineNum + matchText + '\n';
-                if (!regex.global) break;
-              }
-            } else {
-              ctx.stdout += prefix + lineNum + colorizeMatch(lines[ln]) + '\n';
-            }
+        if (maxCount >= 0 && selected.length >= maxCount) break;
+        if (matches(lines[ln]) !== invert) selected.push(ln);
+      }
+      if (selected.length) anySelected = true;
+      if (quiet) return selected.length > 0;
+      if (listMatching || listNonMatching) {
+        if ((selected.length > 0) === listMatching) { ctx.stdout += name + '\n'; anyListed = true; }
+        return false;
+      }
+      if (countOnly) { ctx.stdout += prefix(':') + selected.length + '\n'; return false; }
+      const hl = (s: string) => color ? s.replace(regex, m => `\x1b[01;31m\x1b[K${m}\x1b[m\x1b[K`) : s;
+      if (onlyMatching) {
+        if (invert) return false;
+        for (const ln of selected) {
+          regex.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = regex.exec(lines[ln])) !== null) {
+            if (m[0] === '') { regex.lastIndex++; continue; }
+            ctx.stdout += prefix(':') + (lineNumbers ? `${ln + 1}:` : '') + m[0] + '\n';
           }
         }
+        return false;
       }
-      if (countOnly && !quiet) {
-        const prefix = showFilename ? displayPath + ':' : '';
-        ctx.stdout += prefix + matchCount + '\n';
+      // Selected lines plus context, "--" between non-adjacent groups.
+      const sel = new Set(selected);
+      const shown = new Set<number>();
+      for (const ln of selected) {
+        for (let k = Math.max(0, ln - before); k <= Math.min(lines.length - 1, ln + after); k++) shown.add(k);
       }
+      let last = -1;
+      for (const ln of [...shown].sort((a, b) => a - b)) {
+        if ((before || after) && last >= 0 && ln > last + 1) ctx.stdout += '--\n';
+        const sep = sel.has(ln) ? ':' : '-';
+        ctx.stdout += prefix(sep) + (lineNumbers ? `${ln + 1}${sep}` : '') + (sel.has(ln) ? hl(lines[ln]) : lines[ln]) + '\n';
+        last = ln;
+      }
+      return false;
     };
 
-    const searchDir = async (dirPath: string) => {
-      let entries: string[];
+    const globRe = (g: string) => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+    const inc = include.map(globRe), exc = exclude.map(globRe), excDir = excludeDir.map(globRe);
+    const wanted = (base: string) => (!inc.length || inc.some(r => r.test(base))) && !exc.some(r => r.test(base));
+
+    const readText = async (display: string, path: string): Promise<string | null> => {
       try {
-        entries = await ctx.fs.readdir(dirPath);
-      } catch { return; }
-      for (const entry of entries) {
-        // Skip .git and node_modules
-        if (entry === '.git' || entry === 'node_modules') continue;
-        const childPath = dirPath === '/' ? '/' + entry : dirPath + '/' + entry;
-        const stat = await ctx.fs.stat(childPath);
-        if (stat.isDirectory()) {
-          await searchDir(childPath);
-        } else {
-          if (!matchesFileFilter(entry)) continue;
-          await searchFile(childPath, childPath, true);
-        }
+        return await ctx.fs.readFile(path, 'utf8') as string;
+      } catch {
+        if (!noMessages) ctx.stderr += `grep: ${display}: No such file or directory\n`;
+        error = true;
+        return null;
       }
     };
 
-    if (files.length === 0 && !recursive) {
-      // Read from stdin
-      const stdinLines = ctx.stdin.split('\n');
-      let matchCount = 0;
-      for (let ln = 0; ln < stdinLines.length; ln++) {
-        if (maxCount > 0 && matchCount >= maxCount) break;
-        regex.lastIndex = 0;
-        const match = regex.test(stdinLines[ln]);
-        if (match !== invertMatch) {
-          found = true;
-          matchCount++;
-          if (quiet) continue;
-          if (!countOnly) {
-            const lineNum = lineNumbers ? (ln + 1) + ':' : '';
-            if (onlyMatching && !invertMatch) {
-              regex.lastIndex = 0;
-              let m;
-              while ((m = regex.exec(stdinLines[ln])) !== null) {
-                const matchText = useColor ? `\x1b[1;31m${m[0]}\x1b[0m` : m[0];
-                ctx.stdout += lineNum + matchText + '\n';
-                if (!regex.global) break;
-              }
-            } else {
-              ctx.stdout += lineNum + colorizeMatch(stdinLines[ln]) + '\n';
-            }
-          }
+    // Recursive search: names shown as reached from the argument ("src/a.js", "./src/a.js").
+    const walk = async (display: string, path: string): Promise<boolean> => {
+      let entries: string[];
+      try { entries = await ctx.fs.readdir(path); } catch { return false; }
+      for (const e of entries.sort()) {
+        const childPath = path === '/' ? `/${e}` : `${path}/${e}`;
+        const childDisplay = display === '' ? e : display.endsWith('/') ? display + e : `${display}/${e}`;
+        const st = await ctx.fs.stat(childPath).catch(() => null);
+        if (!st) continue;
+        if (st.isDirectory()) {
+          if (excDir.some(r => r.test(e))) continue;
+          if (await walk(childDisplay, childPath)) return true;
+        } else if (wanted(e)) {
+          const text = await readText(childDisplay, childPath);
+          if (text !== null && !text.includes('\0') && searchText(text, childDisplay)) return true;
         }
       }
-      if (countOnly && !quiet) ctx.stdout += matchCount + '\n';
-    } else if (recursive && files.length === 0) {
-      await searchDir(ctx.cwd);
+      return false;
+    };
+
+    if (!files.length && recursive) {
+      await walk('', ctx.cwd);
+    } else if (!files.length) {
+      searchText(ctx.stdin, '(standard input)');
     } else {
-      const multiFile = files.length > 1 || recursive;
-      for (const f of files) {
-        const resolved = ctx.fs.resolvePath(f, ctx.cwd);
-        const stat = await ctx.fs.stat(resolved).catch(() => null);
-        if (stat?.isDirectory() && recursive) {
-          await searchDir(resolved);
-        } else if (stat?.isDirectory()) {
-          ctx.stderr += `grep: ${f}: Is a directory\n`;
-        } else {
-          await searchFile(resolved, f, multiFile || alwaysFilename);
+      for (const file of files) {
+        if (file === '-') { if (searchText(ctx.stdin, '(standard input)')) break; continue; }
+        const path = ctx.fs.resolvePath(file, ctx.cwd);
+        const st = await ctx.fs.stat(path).catch(() => null);
+        if (st?.isDirectory()) {
+          if (recursive) { if (await walk(file, path)) break; continue; }
+          if (!noMessages) ctx.stderr += `grep: ${file}: Is a directory\n`;
+          continue;
         }
+        const text = await readText(file, path);
+        if (text === null) continue;
+        if (text.includes('\0')) {
+          if (matches(text) && !quiet && !countOnly && !listMatching) ctx.stdout += `Binary file ${file} matches\n`;
+          continue;
+        }
+        if (searchText(text, file)) break;
       }
     }
-
-    return found ? 0 : 1;
+    if (quiet && anySelected) return 0;
+    if (error) return 2;
+    // -L succeeds when it lists a file; everything else when a line was selected.
+    return (listNonMatching ? anyListed : anySelected) ? 0 : 1;
   },
 };

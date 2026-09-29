@@ -160,3 +160,38 @@ export async function statEntry(fs: FileSystem, path: string): Promise<StatEntry
   }
   return result;
 }
+
+/**
+ * Lines of a text. A final separator ends the last line rather than starting another;
+ * `lastNl` says whether the text had it (GNU tools keep a missing final newline missing).
+ */
+export function toLines(text: string, sep = '\n'): { lines: string[]; lastNl: boolean } {
+  if (text === '') return { lines: [], lastNl: true };
+  const lines = text.split(sep);
+  const lastNl = text.endsWith(sep);
+  if (lastNl) lines.pop();
+  return { lines, lastNl };
+}
+
+/** Lines back to text: each line ends with sep, except the last when lastNl is false. */
+export function fromLines(lines: string[], lastNl = true, sep = '\n'): string {
+  if (!lines.length) return '';
+  return lines.join(sep) + (lastNl ? sep : '');
+}
+
+/**
+ * Reads each operand ("-" or none = stdin) for commands that handle files one at a time.
+ * Missing files are reported as "cmd: name: No such file or directory" and skipped.
+ */
+export async function readOperands(
+  ctx: { args: string[]; stdin: string; stderr: string; cwd: string; fs: { readFile(path: string, encoding?: string): Promise<string | Uint8Array>; resolvePath(p: string, cwd: string): string } },
+  cmd: string, files: string[],
+): Promise<{ name: string; text: string }[] & { failed?: boolean }> {
+  const out: { name: string; text: string }[] & { failed?: boolean } = [];
+  for (const f of files.length ? files : ['-']) {
+    if (f === '-') { out.push({ name: '-', text: ctx.stdin }); continue; }
+    try { out.push({ name: f, text: await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string }); }
+    catch { ctx.stderr += `${cmd}: ${f}: No such file or directory\n`; out.failed = true; }
+  }
+  return out;
+}

@@ -3,6 +3,7 @@
  */
 
 import type { Command } from './index';
+import { toLines, fromLines } from './flags';
 import { parseArgs, readInput } from './flags';
 
 function suffixFor(index: number): string {
@@ -49,14 +50,10 @@ export const splitCmd: Command = {
           pieces.push(content.substring(i, i + chunkSize));
         }
       } else {
-        // Split by lines (default)
-        const lines = content.split('\n');
-        // If content ends with newline, last element is empty — keep it attached
+        // Split by lines (default); each piece keeps its lines' newlines.
+        const { lines, lastNl } = toLines(content);
         for (let i = 0; i < lines.length; i += lineCount) {
-          const chunk = lines.slice(i, i + lineCount);
-          const text = chunk.join('\n');
-          // Don't write empty trailing chunks
-          if (text || i === 0) pieces.push(text);
+          pieces.push(fromLines(lines.slice(i, i + lineCount), i + lineCount < lines.length || lastNl));
         }
       }
 

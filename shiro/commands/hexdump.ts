@@ -1,100 +1,81 @@
+import type { Command, CommandContext } from './index';
 
-import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+// hexdump (util-linux): default is 16-bit little-endian words, 8 per line; -C canonical
+// ("%08x  " 8 bytes, 8 bytes, " |ascii|"); -x/-d/-o/-c variants of the word format. Repeated
+// lines are shown as "*" unless -v. -n LENGTH, -s OFFSET.
+async function readBytes(ctx: CommandContext, files: string[]): Promise<Uint8Array> {
+  if (!files.length) return new TextEncoder().encode(ctx.stdin);
+  const parts: Uint8Array[] = [];
+  for (const f of files) {
+    const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
+    parts.push(typeof c === 'string' ? new TextEncoder().encode(c) : c);
+  }
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
 export const hexdump: Command = {
   name: "hexdump",
   description: "Display file contents in hexadecimal",
   async exec(ctx) {
+    let mode = 'x2', verbose = false, length = Infinity, skip = 0;
+    const files: string[] = [];
     const args = ctx.args;
-    const { values, positional, flags } = parseArgs(args, ["n", "s", "C"]);
-
-    const canonical = flags.C;
-    const length = values.n ? parseInt(values.n) : undefined;
-    const skip = values.s ? parseInt(values.s) : 0;
-
-    try {
-      const { content } = await readInput(
-        positional,
-        ctx.stdin,
-        ctx.fs,
-        ctx.cwd,
-        ctx.fs.resolvePath
-      );
-
-      let data = content.substring(skip, length ? skip + length : undefined);
-      const output: string[] = [];
-
-      if (canonical) {
-        // Canonical hex+ASCII display
-        for (let i = 0; i < data.length; i += 16) {
-          const chunk = data.substring(i, i + 16);
-          const offset = (skip + i).toString(16).padStart(8, "0");
-
-          // Hex part (two groups of 8 bytes)
-          const hex1 = formatHexGroup(chunk.substring(0, 8));
-          const hex2 = formatHexGroup(chunk.substring(8, 16));
-
-          // ASCII part
-          const ascii = formatAscii(chunk);
-
-          output.push(`${offset}  ${hex1}  ${hex2}  |${ascii}|`);
-        }
-
-        // Final offset
-        const finalOffset = (skip + data.length).toString(16).padStart(8, "0");
-        output.push(finalOffset);
-      } else {
-        // Default hexdump format
-        for (let i = 0; i < data.length; i += 16) {
-          const chunk = data.substring(i, i + 16);
-          const offset = (skip + i).toString(16).padStart(7, "0");
-
-          const words: string[] = [];
-          for (let j = 0; j < chunk.length; j += 2) {
-            const byte1 = chunk.charCodeAt(j);
-            const byte2 = j + 1 < chunk.length ? chunk.charCodeAt(j + 1) : 0;
-            const word = ((byte1 << 8) | byte2).toString(16).padStart(4, "0");
-            words.push(word);
-          }
-
-          output.push(`${offset} ${words.join(" ")}`);
-        }
-
-        // Final offset
-        const finalOffset = (skip + data.length).toString(16).padStart(7, "0");
-        output.push(finalOffset);
-      }
-
-      ctx.stdout += output.join("\n") + "\n";
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `hexdump: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '-C' || a === '--canonical') mode = 'C';
+      else if (a === '-x') mode = 'x2';
+      else if (a === '-d') mode = 'd2';
+      else if (a === '-o') mode = 'o2';
+      else if (a === '-c') mode = 'c';
+      else if (a === '-b') mode = 'b';
+      else if (a === '-v') verbose = true;
+      else if (a === '-n') length = parseInt(args[++i], 10);
+      else if (a === '-s') skip = parseInt(args[++i], 10);
+      else files.push(a);
     }
+    let data: Uint8Array;
+    try { data = await readBytes(ctx, files); } catch { ctx.stderr += `hexdump: ${files[0]}: No such file or directory\n`; return 1; }
+    data = data.slice(skip, skip + length);
+    const hex = (n: number, w: number) => n.toString(16).padStart(w, '0');
+    let out = '';
+    let prev = '';
+    let starred = false;
+    for (let off = 0; off < data.length; off += 16) {
+      const row = data.slice(off, off + 16);
+      const key = Array.from(row).join(',');
+      if (!verbose && key === prev && row.length === 16) { if (!starred) out += '*\n'; starred = true; continue; }
+      prev = key; starred = false;
+      if (mode === 'C') {
+        let line = hex(off, 8) + '  ';
+        for (let k = 0; k < 16; k++) {
+          line += k < row.length ? hex(row[k], 2) + ' ' : '   ';
+          if (k === 7) line += ' ';
+        }
+        line += ' |' + Array.from(row).map(b => b >= 32 && b < 127 ? String.fromCharCode(b) : '.').join('') + '|';
+        out += line + '\n';
+      } else if (mode === 'c' || mode === 'b') {
+        let line = hex(off, 7);
+        for (let k = 0; k < 16; k++) {
+          if (k >= row.length) { line += '    '; continue; }
+          const b = row[k];
+          if (mode === 'b') line += ' ' + b.toString(8).padStart(3, '0');
+          else line += ' ' + (({ 0: ' \\0', 7: ' \\a', 8: ' \\b', 9: ' \\t', 10: ' \\n', 11: ' \\v', 12: ' \\f', 13: ' \\r' } as Record<number, string>)[b] ?? (b >= 32 && b < 127 ? '   ' + String.fromCharCode(b) : ' ' + b.toString(8).padStart(3, '0')));
+        }
+        out += line + '\n';
+      } else {
+        let line = hex(off, 7);
+        for (let k = 0; k < 16; k += 2) {
+          if (k >= row.length) { line += mode === 'x2' ? '     ' : mode === 'd2' ? '      ' : '       '; continue; }
+          const w = row[k] | ((row[k + 1] ?? 0) << 8);
+          line += mode === 'x2' ? ' ' + hex(w, 4) : mode === 'd2' ? '  ' + String(w).padStart(5, '0') : '  ' + w.toString(8).padStart(6, '0');
+        }
+        out += line + '\n';
+      }
+    }
+    if (data.length) out += (mode === 'C' ? hex(data.length, 8) : hex(data.length, 7)) + '\n';
+    ctx.stdout += out;
+    return 0;
   },
 };
-
-function formatHexGroup(chunk: string): string {
-  const bytes: string[] = [];
-  for (let i = 0; i < 8; i++) {
-    if (i < chunk.length) {
-      bytes.push(chunk.charCodeAt(i).toString(16).padStart(2, "0"));
-    } else {
-      bytes.push("  ");
-    }
-  }
-  return bytes.join(" ");
-}
-
-function formatAscii(chunk: string): string {
-  let result = "";
-  for (let i = 0; i < 16; i++) {
-    if (i < chunk.length) {
-      const code = chunk.charCodeAt(i);
-      result += (code >= 32 && code < 127) ? chunk[i] : ".";
-    } else {
-      result += " ";
-    }
-  }
-  return result;
-}

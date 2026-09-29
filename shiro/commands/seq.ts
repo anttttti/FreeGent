@@ -1,90 +1,45 @@
-
 import type { Command } from './index';
-import { parseArgs } from './flags';
+import { sprintf } from './awk';
+
+// GNU seq: [FIRST [INCREMENT]] LAST, -s separator (the last number ends with a newline), -w equal
+// width (zero padded), -f printf format. Decimal places follow the widest of the operands.
 export const seq: Command = {
   name: "seq",
-  description: "Generate sequences of numbers",
+  description: "Print a sequence of numbers",
   async exec(ctx) {
+    let sep = '\n', equal = false, format: string | null = null;
+    const nums: string[] = [];
     const args = ctx.args;
-    const { flags, values, positional } = parseArgs(args, ["separator", "s", "format", "f"]);
-
-    if (positional.length === 0) {
-      ctx.stderr += "seq: missing operand\n";
-      return 1;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '-s' || a === '--separator') sep = args[++i];
+      else if (a.startsWith('--separator=')) sep = a.slice(12);
+      else if (a.startsWith('-s') && a.length > 2) sep = a.slice(2);
+      else if (a === '-w' || a === '--equal-width') equal = true;
+      else if (a === '-f' || a === '--format') format = args[++i];
+      else if (a.startsWith('--format=')) format = a.slice(9);
+      else if (a.startsWith('-f') && a.length > 2) format = a.slice(2);
+      else nums.push(a);
     }
-
-    let start = 1;
-    let increment = 1;
-    let end: number;
-
-    // Parse arguments: seq [FIRST [INCREMENT]] LAST
-    if (positional.length === 1) {
-      end = parseFloat(positional[0]);
-    } else if (positional.length === 2) {
-      start = parseFloat(positional[0]);
-      end = parseFloat(positional[1]);
-    } else if (positional.length >= 3) {
-      start = parseFloat(positional[0]);
-      increment = parseFloat(positional[1]);
-      end = parseFloat(positional[2]);
-    } else {
-      end = 1;
+    if (!nums.length || nums.length > 3) { ctx.stderr += `seq: ${nums.length ? 'extra operand' : 'missing operand'}\n`; return 1; }
+    for (const n of nums) if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(n)) { ctx.stderr += `seq: invalid floating point argument: '${n}'\n`; return 1; }
+    const [first, step, last] = nums.length === 1 ? ['1', '1', nums[0]] : nums.length === 2 ? [nums[0], '1', nums[1]] : nums;
+    const decimals = (s: string) => /e/i.test(s) ? 0 : (s.split('.')[1] ?? '').length;
+    const prec = Math.max(decimals(first), decimals(step));
+    const a = parseFloat(first), d = parseFloat(step), z = parseFloat(last);
+    if (d === 0) { ctx.stderr += `seq: invalid Zero increment value: '${step}'\n`; return 1; }
+    const values: string[] = [];
+    for (let k = 0; ; k++) {
+      const v = a + k * d;
+      if (d > 0 ? v > z + 1e-10 : v < z - 1e-10) break;
+      values.push(format ? sprintf(format, [v]) : v.toFixed(prec));
     }
-
-    // Validate numbers
-    if (isNaN(start) || isNaN(increment) || isNaN(end)) {
-      ctx.stderr += "seq: invalid number\n";
-      return 1;
+    let out = values;
+    if (equal && !format) {
+      const w = Math.max(...values.map(v => v.replace('-', '').length));
+      out = values.map(v => v.startsWith('-') ? '-' + v.slice(1).padStart(w, '0') : v.padStart(w, '0'));
     }
-
-    if (increment === 0) {
-      ctx.stderr += "seq: increment must not be 0\n";
-      return 1;
-    }
-
-    const separator = values.s || values.separator || "\n";
-    const format = values.f || values.format;
-    const equalWidth = flags.w;
-
-    const numbers: string[] = [];
-
-    // Generate sequence
-    if (increment > 0) {
-      for (let i = start; i <= end; i += increment) {
-        numbers.push(String(i));
-      }
-    } else {
-      for (let i = start; i >= end; i += increment) {
-        numbers.push(String(i));
-      }
-    }
-
-    // Apply equal width padding if requested
-    if (equalWidth) {
-      const maxLen = Math.max(...numbers.map(n => n.length));
-      for (let i = 0; i < numbers.length; i++) {
-        numbers[i] = numbers[i].padStart(maxLen, "0");
-      }
-    }
-
-    // Apply format if specified (simple %g support)
-    if (format && typeof format === "string") {
-      for (let i = 0; i < numbers.length; i++) {
-        const num = parseFloat(numbers[i]);
-        // Simple format support: just %g, %f, %e
-        if (format.includes("%g") || format.includes("%d") || format.includes("%i")) {
-          numbers[i] = format.replace(/%[gdi]/, String(num));
-        } else if (format.includes("%f")) {
-          numbers[i] = format.replace(/%f/, num.toFixed(6));
-        } else if (format.includes("%e")) {
-          numbers[i] = format.replace(/%e/, num.toExponential());
-        }
-      }
-    }
-
-    const output = numbers.join(separator);
-    const finalSeparator = typeof separator === "string" ? separator : "\n";
-    ctx.stdout += output + (finalSeparator === "\n" ? "\n" : "");
+    ctx.stdout += out.length ? out.join(sep) + '\n' : '';
     return 0;
   },
 };

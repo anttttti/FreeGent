@@ -1,95 +1,81 @@
-
 import type { Command } from './index';
-import { parseArgs, readFileText } from './flags';
+import { toLines } from './flags';
+
+// GNU join: a merge join of two files sorted on the join field. -1/-2/-j field, -t CHAR (default:
+// blank-separated, leading blanks ignored, output joined with a space), -a N unpaired lines too,
+// -v N only unpaired lines, -e EMPTY for missing fields, -o FORMAT (N.M list, 0, auto),
+// -i ignore case, --header.
 export const join: Command = {
   name: "join",
   description: "Join lines of two files on a common field",
   async exec(ctx) {
+    let f1 = 1, f2 = 1, tab: string | null = null, empty: string | null = null, format: string | null = null;
+    const unpaired = new Set<number>();
+    let onlyUnpaired = false, ignoreCase = false, header = false;
+    const files: string[] = [];
     const args = ctx.args;
-    const { values, positional, flags } = parseArgs(args, ["1", "2", "t", "o"]);
-
-    if (positional.length < 2) {
-      ctx.stderr += "join: missing file operand\n";
-      return 1;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      const val = (len: number) => a.length > len ? a.slice(len) : args[++i];
+      if (a === '-i' || a === '--ignore-case') ignoreCase = true;
+      else if (a === '--header') header = true;
+      else if (a === '--check-order' || a === '--nocheck-order') { /* no-op */ }
+      else if (a.startsWith('-1')) f1 = parseInt(val(2), 10);
+      else if (a.startsWith('-2')) f2 = parseInt(val(2), 10);
+      else if (a.startsWith('-j')) f1 = f2 = parseInt(val(2), 10);
+      else if (a.startsWith('-t')) tab = val(2);
+      else if (a.startsWith('-e')) empty = val(2);
+      else if (a.startsWith('-o')) format = val(2);
+      else if (a.startsWith('-a')) unpaired.add(parseInt(val(2), 10));
+      else if (a.startsWith('-v')) { unpaired.add(parseInt(val(2), 10)); onlyUnpaired = true; }
+      else files.push(a);
     }
-
-    const field1 = values["1"] ? parseInt(values["1"]) - 1 : 0; // Convert to 0-indexed
-    const field2 = values["2"] ? parseInt(values["2"]) - 1 : 0;
-    const delimiter = values.t || /\s+/;
-    const outputFormat = values.o; // e.g., "1.1,2.2"
-    const ignoreCase = flags.i;
-
-    try {
-      // Read both files
-      const file1Path = ctx.fs.resolvePath(positional[0], ctx.cwd);
-      const file2Path = ctx.fs.resolvePath(positional[1], ctx.cwd);
-
-      const content1 = await readFileText(ctx.fs, file1Path);
-      const content2 = await readFileText(ctx.fs, file2Path);
-
-      const lines1 = content1.split("\n").filter(l => l.trim() !== "");
-      const lines2 = content2.split("\n").filter(l => l.trim() !== "");
-
-      // Parse lines into fields
-      const parseLines = (lines: string[]) => {
-        return lines.map(line => {
-          const fields = typeof delimiter === "string"
-            ? line.split(delimiter)
-            : line.split(delimiter);
-          return fields;
-        });
-      };
-
-      const records1 = parseLines(lines1);
-      const records2 = parseLines(lines2);
-
-      // Build index for file2
-      const index2 = new Map<string, string[][]>();
-      for (const record of records2) {
-        const key = (record[field2] || "").trim();
-        const normalizedKey = ignoreCase ? key.toLowerCase() : key;
-        if (!index2.has(normalizedKey)) {
-          index2.set(normalizedKey, []);
-        }
-        index2.get(normalizedKey)!.push(record);
+    if (files.length !== 2) { ctx.stderr += `join: ${files.length < 2 ? 'missing operand' : 'extra operand'}\n`; return 1; }
+    const read = async (f: string) => f === '-' ? ctx.stdin : await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string;
+    let t1: string, t2: string;
+    try { t1 = await read(files[0]); t2 = await read(files[1]); }
+    catch { ctx.stderr += `join: ${files[0]}: No such file or directory\n`; return 1; }
+    const split = (l: string) => tab === null ? l.split(/[ \t]+/).filter((x, k) => x !== '' || k > 0).filter(x => x !== '') : l.split(tab);
+    const rec1 = toLines(t1).lines.map(split), rec2 = toLines(t2).lines.map(split);
+    const out: string[] = [];
+    const sep = tab ?? ' ';
+    const key = (r: string[], f: number) => { const k = r[f - 1] ?? ''; return ignoreCase ? k.toLowerCase() : k; };
+    const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+    const fmt = (r1: string[] | null, r2: string[] | null): string => {
+      const joinVal = r1 ? r1[f1 - 1] ?? '' : r2 ? r2[f2 - 1] ?? '' : '';
+      const e = empty ?? '';
+      if (format && format !== 'auto') {
+        return format.split(/[ ,]+/).map(spec => {
+          if (spec === '0') return joinVal;
+          const [fnum, field] = spec.split('.').map(Number);
+          const r = fnum === 1 ? r1 : r2;
+          return r ? (r[field - 1] ?? e) : e;
+        }).join(sep);
       }
-
-      const output: string[] = [];
-
-      // Join records
-      for (const record1 of records1) {
-        const key = (record1[field1] || "").trim();
-        const normalizedKey = ignoreCase ? key.toLowerCase() : key;
-
-        const matches = index2.get(normalizedKey) || [];
-        for (const record2 of matches) {
-          let joinedLine: string;
-
-          if (outputFormat) {
-            // Custom output format: -o 1.1,2.2
-            const parts = outputFormat.split(",").map(spec => {
-              const [fileNum, fieldNum] = spec.split(".").map(n => parseInt(n));
-              const record = fileNum === 1 ? record1 : record2;
-              return record[fieldNum - 1] || "";
-            });
-            joinedLine = parts.join(" ");
-          } else {
-            // Default: join field + remaining fields from file1 + remaining fields from file2
-            const joinField = record1[field1] || "";
-            const rest1 = record1.filter((_, i) => i !== field1);
-            const rest2 = record2.filter((_, i) => i !== field2);
-            joinedLine = [joinField, ...rest1, ...rest2].join(" ");
-          }
-
-          output.push(joinedLine);
-        }
+      const rest = (r: string[] | null, f: number, n: number) => r ? r.filter((_, k) => k !== f - 1) : format === 'auto' ? Array(Math.max(0, n - 1)).fill(e) : [];
+      const n1 = rec1[0]?.length ?? 0, n2 = rec2[0]?.length ?? 0;
+      return [joinVal, ...rest(r1, f1, n1), ...rest(r2, f2, n2)].join(sep);
+    };
+    let i = 0, j = 0;
+    if (header && rec1.length && rec2.length) { out.push(fmt(rec1[0], rec2[0])); i = 1; j = 1; }
+    while (i < rec1.length || j < rec2.length) {
+      if (j >= rec2.length || (i < rec1.length && cmp(key(rec1[i], f1), key(rec2[j], f2)) < 0)) {
+        if (unpaired.has(1)) out.push(fmt(rec1[i], null));
+        i++; continue;
       }
-
-      ctx.stdout += output.join("\n") + (output.length > 0 ? "\n" : "");
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `join: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+      if (i >= rec1.length || cmp(key(rec1[i], f1), key(rec2[j], f2)) > 0) {
+        if (unpaired.has(2)) out.push(fmt(null, rec2[j]));
+        j++; continue;
+      }
+      // Equal keys: every pairing of the two runs.
+      const k = key(rec1[i], f1);
+      let i2 = i, j2 = j;
+      while (i2 < rec1.length && key(rec1[i2], f1) === k) i2++;
+      while (j2 < rec2.length && key(rec2[j2], f2) === k) j2++;
+      if (!onlyUnpaired) for (let a = i; a < i2; a++) for (let b = j; b < j2; b++) out.push(fmt(rec1[a], rec2[b]));
+      i = i2; j = j2;
     }
+    ctx.stdout += out.map(l => l + '\n').join('');
+    return 0;
   },
 };

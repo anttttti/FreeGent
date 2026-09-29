@@ -54,17 +54,17 @@ export const lnCmd: Command = {
       ctx.stderr = 'ln: missing file operand\n';
       return 1;
     }
-    if (!symbolic) {
-      ctx.stderr = 'ln: hard links not supported, use -s for symbolic\n';
-      return 1;
-    }
+    // The workspace has no links: hard and symbolic links are both created as copies.
+    void symbolic;
     const target = args[0];
-    const linkPath = ctx.fs.resolvePath(args[1], ctx.cwd);
+    let linkPath = ctx.fs.resolvePath(args[1], ctx.cwd);
+    if (await ctx.fs.stat(linkPath).then(st => st.isDirectory(), () => false)) linkPath += '/' + target.replace(/\/+$/, '').split('/').pop();
+    const targetForFs = symbolic ? target : ctx.fs.resolvePath(target, ctx.cwd);
     try {
       if (force) {
         try { await ctx.fs.unlink(linkPath); } catch {}
       }
-      await ctx.fs.symlink(target, linkPath);
+      await ctx.fs.symlink(targetForFs, linkPath);
       return 0;
     } catch (e: any) {
       ctx.stderr = `ln: ${e.message}\n`;
@@ -191,94 +191,6 @@ export const revCmd: Command = {
   },
 };
 
-export const cutCmd: Command = {
-  name: 'cut',
-  description: 'Remove sections from each line',
-  async exec(ctx) {
-    let delimiter = '\t';
-    let fields: number[] = [];
-    let bytes: number[] = [];
-    let chars: number[] = [];
-    const files: string[] = [];
-
-    for (let i = 0; i < ctx.args.length; i++) {
-      const arg = ctx.args[i];
-      if (arg === '-d' && ctx.args[i + 1]) {
-        delimiter = ctx.args[++i];
-        if (delimiter.length === 0) delimiter = ' ';
-      } else if (arg.startsWith('-d')) {
-        delimiter = arg.slice(2) || ' ';
-      } else if (arg === '-f' && ctx.args[i + 1]) {
-        fields = parseRange(ctx.args[++i]);
-      } else if (arg.startsWith('-f')) {
-        fields = parseRange(arg.slice(2));
-      } else if (arg === '-b' && ctx.args[i + 1]) {
-        bytes = parseRange(ctx.args[++i]);
-      } else if (arg.startsWith('-b')) {
-        bytes = parseRange(arg.slice(2));
-      } else if (arg === '-c' && ctx.args[i + 1]) {
-        chars = parseRange(ctx.args[++i]);
-      } else if (arg.startsWith('-c')) {
-        chars = parseRange(arg.slice(2));
-      } else if (!arg.startsWith('-')) {
-        files.push(arg);
-      }
-    }
-
-    let input = ctx.stdin;
-    if (files.length > 0) {
-      const parts: string[] = [];
-      for (const f of files) {
-        const path = ctx.fs.resolvePath(f, ctx.cwd);
-        try {
-          parts.push(await ctx.fs.readFile(path, 'utf8') as string);
-        } catch (e: any) {
-          ctx.stderr += `cut: ${f}: ${e.message}\n`;
-          return 1;
-        }
-      }
-      input = parts.join('');
-    }
-
-    input = input.replace(/\r\n/g, '\n');
-
-    const lines = input.split('\n');
-    const output: string[] = [];
-
-    for (const line of lines) {
-      if (!line && lines.indexOf(line) === lines.length - 1) continue;
-
-      if (fields.length > 0) {
-        const parts = line.split(delimiter);
-        const selected = fields.map(f => parts[f - 1] || '').filter(Boolean);
-        output.push(selected.join(delimiter));
-      } else if (bytes.length > 0 || chars.length > 0) {
-        const indices = bytes.length > 0 ? bytes : chars;
-        const selected = indices.map(i => line[i - 1] || '').join('');
-        output.push(selected);
-      } else {
-        output.push(line);
-      }
-    }
-
-    ctx.stdout = output.join('\n') + '\n';
-    return 0;
-  },
-};
-
-function parseRange(spec: string): number[] {
-  const result: number[] = [];
-  for (const part of spec.split(',')) {
-    if (part.includes('-')) {
-      const [start, end] = part.split('-').map(Number);
-      for (let i = start; i <= (end || start); i++) result.push(i);
-    } else {
-      result.push(Number(part));
-    }
-  }
-  return result.filter(n => !isNaN(n) && n > 0);
-}
-
 export const shasumCmd: Command = {
   name: 'shasum',
   description: 'Compute SHA checksums',
@@ -336,15 +248,6 @@ export const shasumCmd: Command = {
     }
 
     return 0;
-  },
-};
-
-export const sha256sumCmd: Command = {
-  name: 'sha256sum',
-  description: 'Compute SHA-256 checksums',
-  async exec(ctx) {
-    const newCtx = { ...ctx, args: ['-a', '256', ...ctx.args] };
-    return shasumCmd.exec(newCtx);
   },
 };
 
@@ -413,6 +316,7 @@ export const shiroCmds: Command[] = [
   hostnameCmd, unameCmd,
   whichCmd, typeCmd,
   rmdirCmd, revCmd,
-  cutCmd, shasumCmd, sha256sumCmd,
+  // cut and sha256sum come from cut.ts and hashsum.ts (GNU-compatible)
+  shasumCmd,
   openCmd, { name: 'xdg-open', description: 'Open a URL in the browser', exec: (ctx) => openCmd.exec(ctx) },
 ];

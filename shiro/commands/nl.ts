@@ -1,96 +1,46 @@
-
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { readOperands, toLines } from './flags';
+import { breToJs } from '../utils/posix-regex';
+
+// GNU nl: -b STYLE (a all, t non-empty [default], n none, pBRE matching), -n FORMAT (ln, rn
+// [default], rz), -w WIDTH (6), -s SEP (tab), -v START, -i INCR. Unnumbered lines get
+// WIDTH + length(SEP) spaces.
 export const nl: Command = {
   name: "nl",
   description: "Number lines of files",
   async exec(ctx) {
+    let style = 't', format = 'rn', width = 6, sep = '\t', start = 1, incr = 1;
+    const files: string[] = [];
     const args = ctx.args;
-    const { values, positional, flags } = parseArgs(args, ["b", "s", "w", "n", "v"]);
-
-    const bodyNumbering = values.b || "t"; // t=non-empty, a=all, n=none
-    const separator = values.s || "\t";
-    const width = parseInt(values.w || "6", 10);
-    const format = values.n || "rn"; // rn=right no leading zeros, ln=left, rz=right with zeros
-    const startNumber = parseInt(values.v || "1", 10);
-
-    const noRenumber = flags.p;
-    const blankLines = flags.ba; // same as -b a
-
-    try {
-      const { content } = await readInput(
-        positional,
-        ctx.stdin,
-        ctx.fs,
-        ctx.cwd,
-        ctx.fs.resolvePath
-      );
-
-      const lines = content.split("\n");
-      const output: string[] = [];
-      let lineNumber = startNumber;
-
-      for (const line of lines) {
-        let shouldNumber = false;
-
-        // Determine if we should number this line
-        const actualBodyNumbering = blankLines ? "a" : bodyNumbering;
-
-        switch (actualBodyNumbering) {
-          case "a":
-            shouldNumber = true;
-            break;
-          case "t":
-            shouldNumber = line.trim() !== "";
-            break;
-          case "n":
-            shouldNumber = false;
-            break;
-          default:
-            // Pattern matching (e.g., p^#)
-            if (actualBodyNumbering.startsWith("p")) {
-              const pattern = actualBodyNumbering.substring(1);
-              try {
-                const regex = new RegExp(pattern);
-                shouldNumber = regex.test(line);
-              } catch {
-                shouldNumber = false;
-              }
-            }
-        }
-
-        if (shouldNumber) {
-          const numStr = formatNumber(lineNumber, width, format);
-          output.push(numStr + separator + line);
-          lineNumber++;
-        } else {
-          output.push(" ".repeat(width) + separator + line);
-        }
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      const m = /^-([bnwsvi])(.*)$/.exec(a) ?? /^--(body-numbering|number-format|number-width|number-separator|starting-line-number|line-increment)=(.*)$/.exec(a);
+      if (m) {
+        const key = { 'body-numbering': 'b', 'number-format': 'n', 'number-width': 'w', 'number-separator': 's', 'starting-line-number': 'v', 'line-increment': 'i' }[m[1]] ?? m[1];
+        const v = m[2] !== '' || a.startsWith('--') ? m[2] : (args[++i] ?? '');
+        if (key === 'b') style = v; else if (key === 'n') format = v; else if (key === 'w') width = parseInt(v, 10);
+        else if (key === 's') sep = v; else if (key === 'v') start = parseInt(v, 10); else if (key === 'i') incr = parseInt(v, 10);
+        continue;
       }
-
-      ctx.stdout += output.join("\n") + (content.endsWith("\n") ? "\n" : "");
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `nl: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+      if (/^-[hfdlp]/.test(a)) { if (a.length === 2 && 'hfdl'.includes(a[1])) i++; continue; }
+      files.push(a);
     }
+    const re = style.startsWith('p') ? new RegExp(breToJs(style.slice(1))) : null;
+    const want = (line: string) => style === 'a' ? true : style === 'n' ? false : re ? re.test(line) : line !== '';
+    let n = start;
+    const inputs = await readOperands(ctx, 'nl', files);
+    for (const { text } of inputs) {
+      const { lines, lastNl } = toLines(text);
+      lines.forEach((line, k) => {
+        let out: string;
+        if (want(line)) {
+          const num = String(n);
+          out = (format === 'ln' ? num.padEnd(width) : format === 'rz' ? num.padStart(width, '0') : num.padStart(width)) + sep + line;
+          n += incr;
+        } else out = ' '.repeat(width + sep.length) + line;
+        ctx.stdout += out + (k < lines.length - 1 || lastNl ? '\n' : '');
+      });
+    }
+    return inputs.failed ? 1 : 0;
   },
 };
-
-function formatNumber(num: number, width: number, format: string): string {
-  const numStr = String(num);
-
-  switch (format) {
-    case "ln":
-      // Left justified, no leading zeros
-      return numStr.padEnd(width, " ");
-    case "rn":
-      // Right justified, no leading zeros (default)
-      return numStr.padStart(width, " ");
-    case "rz":
-      // Right justified, leading zeros
-      return numStr.padStart(width, "0");
-    default:
-      return numStr.padStart(width, " ");
-  }
-}

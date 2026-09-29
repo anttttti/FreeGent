@@ -88,56 +88,64 @@ export const shufCmd: Command = {
   },
 };
 
+// GNU cmp: first difference as "A B differ: char N, line M" (-b: "byte N, line M is O C O C"),
+// "cmp: EOF on A after byte N, line M" when one is a prefix of the other, -l every difference
+// ("%*d %3o %3o", offsets as wide as the larger file — 19 for pipes), -s silent. -i SKIP, -n LIMIT.
 export const cmpCmd: Command = {
   name: 'cmp',
   description: 'Compare two files byte by byte',
   async exec(ctx) {
-    try {
-      const { positional, flags } = parseArgs(ctx.args, []);
-      if (positional.length < 2) {
-        ctx.stderr += 'cmp: missing operand\n';
-        return 2;
-      }
-
-      const silent = flags.s;
-      const listAll = flags.l;
-
-      const path1 = ctx.fs.resolvePath(positional[0], ctx.cwd);
-      const path2 = ctx.fs.resolvePath(positional[1], ctx.cwd);
-      const data1 = await ctx.fs.readFile(path1, 'utf8') as string;
-      const data2 = await ctx.fs.readFile(path2, 'utf8') as string;
-
-      const len = Math.min(data1.length, data2.length);
-      let diffFound = false;
-
-      for (let i = 0; i < len; i++) {
-        if (data1[i] !== data2[i]) {
-          diffFound = true;
-          if (silent) return 1;
-          if (listAll) {
-            const byte = i + 1;
-            ctx.stdout += `${byte} ${data1.charCodeAt(i).toString(8)} ${data2.charCodeAt(i).toString(8)}\n`;
-          } else {
-            ctx.stdout += `${positional[0]} ${positional[1]} differ: byte ${i + 1}, line ${countLines(data1, i)}\n`;
-            return 1;
-          }
-        }
-      }
-
-      if (data1.length !== data2.length) {
-        diffFound = true;
-        if (!silent) {
-          const shorter = data1.length < data2.length ? positional[0] : positional[1];
-          ctx.stderr += `cmp: EOF on ${shorter}\n`;
-        }
+    let list = false, silent = false, printBytes = false, limit = Infinity;
+    let skip1 = 0, skip2 = 0;
+    const files: string[] = [];
+    const args = ctx.args;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '-l' || a === '--verbose') list = true;
+      else if (a === '-s' || a === '--quiet' || a === '--silent') silent = true;
+      else if (a === '-b' || a === '--print-bytes') printBytes = true;
+      else if (a === '-n' || a === '--bytes') limit = parseInt(args[++i], 10);
+      else if (a.startsWith('--bytes=')) limit = parseInt(a.slice(8), 10);
+      else if (a === '-i' || a === '--ignore-initial') { const [x, y] = (args[++i] ?? '0').split(':'); skip1 = parseInt(x, 10); skip2 = parseInt(y ?? x, 10); }
+      else if (/^-[lsb]+$/.test(a)) { if (a.includes('l')) list = true; if (a.includes('s')) silent = true; if (a.includes('b')) printBytes = true; }
+      else files.push(a);
+    }
+    if (files.length < 2) files.push('-');
+    const read = async (f: string): Promise<Uint8Array> => {
+      if (f === '-') return new TextEncoder().encode(ctx.stdin);
+      const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
+      return typeof c === 'string' ? new TextEncoder().encode(c) : c;
+    };
+    let d1: Uint8Array, d2: Uint8Array;
+    try { d1 = await read(files[0]); } catch { ctx.stderr += `cmp: ${files[0]}: No such file or directory\n`; return 2; }
+    try { d2 = await read(files[1]); } catch { ctx.stderr += `cmp: ${files[1]}: No such file or directory\n`; return 2; }
+    d1 = d1.slice(skip1); d2 = d2.slice(skip2);
+    const n = Math.min(d1.length, d2.length, limit);
+    // Process substitutions are files here but pipes for bash: they get the pipe width.
+    const isPipe = (f: string) => f === '-' || f.startsWith('/dev/fd/') || /(^|\/)\.procsub_/.test(f);
+    const width = files.some(isPipe) ? 19 : String(Math.max(d1.length, d2.length)).length;
+    const show = (b: number) => b < 32 ? '^' + String.fromCharCode(b + 64) : b === 127 ? '^?' : b >= 128 ? 'M-' + (b - 128 < 32 ? '^' + String.fromCharCode(b - 64) : String.fromCharCode(b - 128)) : String.fromCharCode(b);
+    let line = 1, differ = false;
+    for (let i = 0; i < n; i++) {
+      if (d1[i] !== d2[i]) {
+        differ = true;
+        if (silent) return 1;
+        if (list) { ctx.stdout += `${String(i + 1).padStart(width)} ${d1[i].toString(8).padStart(3)} ${d2[i].toString(8).padStart(3)}\n`; continue; }
+        ctx.stdout += printBytes
+          ? `${files[0]} ${files[1]} differ: byte ${i + 1}, line ${line} is ${d1[i].toString(8).padStart(3)} ${show(d1[i])} ${d2[i].toString(8).padStart(3)} ${show(d2[i])}\n`
+          : `${files[0]} ${files[1]} differ: char ${i + 1}, line ${line}\n`;
         return 1;
       }
-
-      return diffFound ? 1 : 0;
-    } catch (e: unknown) {
-      ctx.stderr += `cmp: ${e instanceof Error ? e.message : e}\n`;
-      return 2;
+      if (d1[i] === 10) line++;
     }
+    if (d1.length !== d2.length && n < limit) {
+      if (!silent) {
+        const shorter = d1.length < d2.length ? files[0] : files[1];
+        ctx.stderr += n === 0 ? `cmp: EOF on ${shorter} which is empty\n` : `cmp: EOF on ${shorter} after byte ${n}, line ${line - (d1[n - 1] === 10 ? 1 : 0)}\n`;
+      }
+      return 1;
+    }
+    return differ ? 1 : 0;
   },
 };
 

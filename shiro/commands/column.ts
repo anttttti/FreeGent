@@ -1,108 +1,83 @@
-
 /**
- * column - Format input into columns
+ * column — util-linux column.
  *
- * Formats text into columns based on input separators.
+ * -t: a table. Cells split on whitespace (runs merged) or, with -s, on any of the given characters
+ * (empty cells kept). Columns are padded to their widest cell and joined with two spaces (-o to
+ * change); the last column is not padded, and short rows get empty cells.
+ * Otherwise: fill mode — entries in columns (-x: across rows) that fit in 80 characters (-c),
+ * each column as wide as the widest entry rounded up to a tab stop, padded with tabs.
  */
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { readOperands, toLines } from './flags';
+
 export const column: Command = {
   name: "column",
   description: "Format input into columns",
   async exec(ctx) {
+    let table = false, across = false, width = 80;
+    let seps: string | null = null, outSep = '  ';
+    const files: string[] = [];
     const args = ctx.args;
-    const { flags, values, positional } = parseArgs(args, ["t", "s", "c", "x", "n"]);
-
-    try {
-      const { content } = await readInput(
-        positional,
-        ctx.stdin,
-        ctx.fs,
-        ctx.cwd,
-        ctx.fs.resolvePath
-      );
-
-      const lines = content.split("\n");
-      if (lines.length > 0 && lines[lines.length - 1] === "") {
-        lines.pop();
-      }
-
-      // -t: create a table (determine number of columns automatically)
-      if (flags.t) {
-        const separator = values.s || "\t";
-        const sepRegex = new RegExp(separator);
-
-        // Split each line into columns
-        const rows = lines.map(line => line.split(sepRegex));
-
-        // Find maximum width for each column
-        const maxColumns = Math.max(...rows.map(r => r.length));
-        const columnWidths: number[] = new Array(maxColumns).fill(0);
-
-        for (const row of rows) {
-          for (let i = 0; i < row.length; i++) {
-            columnWidths[i] = Math.max(columnWidths[i] || 0, row[i].length);
-          }
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--table') table = true;
+      else if (a === '--fillrows') across = true;
+      else if (a.startsWith('--separator=')) seps = a.slice(12);
+      else if (a.startsWith('--output-separator=')) outSep = a.slice(19);
+      else if (a.startsWith('--output-width=')) width = parseInt(a.slice(15), 10);
+      else if (a.startsWith('-') && a.length > 1) {
+        for (let j = 1; j < a.length; j++) {
+          const c = a[j];
+          const rest = a.slice(j + 1);
+          if (c === 't') table = true;
+          else if (c === 'x') across = true;
+          else if (c === 's') { seps = rest || args[++i]; break; }
+          else if (c === 'o') { outSep = rest || args[++i]; break; }
+          else if (c === 'c') { width = parseInt(rest || args[++i], 10); break; }
+          else if (c === 'n' || c === 'e' || c === 'L') { /* no-op */ }
         }
-
-        // Format output
-        const output = rows.map(row => {
-          return row.map((cell, i) => {
-            const width = columnWidths[i];
-            return cell.padEnd(width);
-          }).join("  ");
-        }).join("\n");
-
-        ctx.stdout += output ? output + "\n" : "";
-        return 0;
-      }
-
-      // -x: fill columns before rows (default is fill rows)
-      // -c: output width (default is terminal width)
-      // -n: don't merge multiple adjacent delimiters
-      const width = values.c ? parseInt(values.c) : 80;
-
-      // Simple column formatting (fill rows)
-      // Find max word length to determine column width
-      const words = lines.flatMap(line => line.split(/\s+/).filter(w => w));
-      if (words.length === 0) {
-        return 0;
-      }
-
-      const maxWordLen = Math.max(...words.map(w => w.length));
-      const colWidth = maxWordLen + 2; // Add spacing
-      const numCols = Math.max(1, Math.floor(width / colWidth));
-
-      if (flags.x) {
-        // Fill columns before rows
-        const numRows = Math.ceil(words.length / numCols);
-        const grid: string[][] = Array(numRows).fill(null).map(() => []);
-
-        for (let i = 0; i < words.length; i++) {
-          const row = i % numRows;
-          grid[row].push(words[i]);
-        }
-
-        const output = grid.map(row => {
-          return row.map(word => word.padEnd(colWidth)).join("").trimEnd();
-        }).join("\n");
-
-        ctx.stdout += output ? output + "\n" : "";
-        return 0;
-      } else {
-        // Fill rows before columns (default)
-        const output: string[] = [];
-        for (let i = 0; i < words.length; i += numCols) {
-          const row = words.slice(i, i + numCols);
-          output.push(row.map(word => word.padEnd(colWidth)).join("").trimEnd());
-        }
-
-        ctx.stdout += output.join("\n") + "\n";
-        return 0;
-      }
-    } catch (err: any) {
-      ctx.stderr += `column: ${err.message}\n`;
-      return 1;
+      } else files.push(a);
     }
+    const inputs = await readOperands(ctx, 'column', files);
+    const lines = inputs.flatMap(inp => toLines(inp.text).lines).filter(l => l.trim() !== '');
+
+    if (table) {
+      const rows = lines.map(l => seps === null
+        ? l.split(/[ \t]+/).filter(Boolean)
+        : l.split(new RegExp('[' + seps.replace(/[\]\\^-]/g, '\\$&') + ']')));
+      const ncol = Math.max(0, ...rows.map(r => r.length));
+      const widths = Array(ncol).fill(0);
+      for (const r of rows) r.forEach((c, k) => { widths[k] = Math.max(widths[k], [...c].length); });
+      for (const r of rows) {
+        while (r.length < ncol) r.push('');
+        ctx.stdout += r.map((c, k) => k === ncol - 1 ? c : c + ' '.repeat(widths[k] - [...c].length) + outSep).join('') + '\n';
+      }
+      return inputs.failed ? 1 : 0;
+    }
+
+    // Fill mode
+    const items = lines;
+    if (!items.length) return 0;
+    const maxLen = Math.max(...items.map(s => [...s].length));
+    const colWidth = (maxLen + 8) & ~7;
+    const numCols = Math.max(1, Math.floor(width / colWidth));
+    if (numCols <= 1) { ctx.stdout += items.map(s => s + '\n').join(''); return 0; }
+    const numRows = Math.ceil(items.length / numCols);
+    const grid: string[][] = [];
+    if (across) for (let r = 0; r < numRows; r++) grid.push(items.slice(r * numCols, (r + 1) * numCols));
+    else for (let r = 0; r < numRows; r++) { const row: string[] = []; for (let c = 0; c < numCols; c++) { const k = c * numRows + r; if (k < items.length) row.push(items[k]); } grid.push(row); }
+    for (const row of grid) {
+      let out = '', col = 0;
+      row.forEach((s, k) => {
+        out += s;
+        col += [...s].length;
+        if (k < row.length - 1) {
+          const target = (k + 1) * colWidth;
+          while (col < target) { out += '\t'; col = (col & ~7) + 8; }
+        }
+      });
+      ctx.stdout += out + '\n';
+    }
+    return inputs.failed ? 1 : 0;
   },
 };

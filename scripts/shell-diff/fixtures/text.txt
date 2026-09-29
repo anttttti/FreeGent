@@ -1,0 +1,3 @@
+  leading and trailing  
+	tabbed	line
+Mixed Case Line

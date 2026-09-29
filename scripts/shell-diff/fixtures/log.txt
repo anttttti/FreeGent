@@ -1,0 +1,5 @@
+2026-09-01 INFO start
+2026-09-01 ERROR disk full
+2026-09-02 WARN slow
+2026-09-02 ERROR timeout
+2026-09-03 INFO done

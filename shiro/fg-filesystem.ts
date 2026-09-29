@@ -320,6 +320,23 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async rename(oldPath: string, newPath: string): Promise<void> {
+        const st = await this.stat(oldPath);
+        if (st.isDirectory()) {
+            // Move every file under the directory, and the empty directories made with mkdir.
+            const prefix = oldPath.replace(/\/+$/, '') + '/';
+            for (const p of await this._allPaths()) {
+                if (!p.startsWith(prefix) || this.dirs.has(p)) continue;
+                const s2 = await this.stat(p).catch(() => null);
+                if (!s2 || s2.isDirectory()) continue;
+                await this.writeFile(newPath + '/' + p.slice(prefix.length), await this.readFile(p));
+                await this.unlink(p);
+            }
+            for (const d of [...this.dirs]) {
+                if (d === oldPath || d.startsWith(prefix)) { this.dirs.delete(d); this.dirs.add(newPath + d.slice(oldPath.length)); }
+            }
+            this.dirs.add(newPath);
+            return;
+        }
         const content = await this.readFile(oldPath);
         await this.writeFile(newPath, content);
         await this.unlink(oldPath);
@@ -329,8 +346,12 @@ export class FWFileSystem extends FileSystem {
         // FreeGent workspace has no Unix permissions — no-op.
     }
 
-    override async symlink(_target: string, _path: string): Promise<void> {
-        throw makeError('EPERM', 'symlinks not supported by FreeGent workspace');
+    // The workspace has no links: a link is created as a copy of its target (reads work; later
+    // changes to one don't show in the other).
+    override async symlink(target: string, path: string): Promise<void> {
+        const dir = path.slice(0, path.lastIndexOf('/')) || '/';
+        const resolved = target.startsWith('/') ? target : dir + '/' + target;
+        await this.writeFile(path, await this.readFile(resolved));
     }
 
     override async readlink(_path: string): Promise<string> {
@@ -359,6 +380,11 @@ export class FWFileSystem extends FileSystem {
         const memPaths = [...this.mem.keys()];
         // Add canonical dirs
         const dirs = ['/', '/tmp', '/home', '/home/user', WORKSPACE_MOUNT];
-        return [...new Set([...dirs, ...wsPaths, ...memPaths, ...this.dirs])];
+        // Directories implied by file paths (the workspace stores files only).
+        const implied: string[] = [];
+        for (const f of [...wsPaths, ...memPaths]) {
+            for (let k = f.indexOf('/', 1); k > 0; k = f.indexOf('/', k + 1)) implied.push(f.slice(0, k));
+        }
+        return [...new Set([...dirs, ...implied, ...wsPaths, ...memPaths, ...this.dirs])];
     }
 }
