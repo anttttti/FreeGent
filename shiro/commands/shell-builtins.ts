@@ -112,6 +112,9 @@ export const commandCmd: Command = {
   },
 };
 
+// The shell writes terminal output (\n as \r\n); captured output goes on as plain lines.
+const lf = (s: string) => s.replace(/\r\n/g, '\n');
+
 // sh/bash: execute shell commands from stdin or -c flag
 export const shCmd: Command = {
   name: 'sh',
@@ -119,13 +122,11 @@ export const shCmd: Command = {
   async exec(ctx) {
     const cIdx = ctx.args.indexOf('-c');
     if (cIdx !== -1 && ctx.args[cIdx + 1]) {
-      const cmd = ctx.args[cIdx + 1];
-      let stdout = '';
-      let stderr = '';
-      const code = await ctx.shell.execute(cmd, (s) => { stdout += s; }, (s) => { stderr += s; }, false, undefined, true);
-      ctx.stdout += stdout;
-      ctx.stderr += stderr;
-      return code;
+      // A child shell, like a new process: variables it sets don't reach the caller.
+      const r = await ctx.shell.fork().exec(ctx.args[cIdx + 1]);
+      ctx.stdout += lf(r.stdout);
+      ctx.stderr += lf(r.stderr);
+      return r.exitCode;
     }
 
     if (ctx.args.length > 0 && !ctx.args[0].startsWith('-')) {
@@ -141,8 +142,8 @@ export const shCmd: Command = {
           (s: string) => { stdout += s; },
           (s: string) => { stderr += s; },
         );
-        ctx.stdout += stdout;
-        ctx.stderr += stderr;
+        ctx.stdout += lf(stdout);
+        ctx.stderr += lf(stderr);
         return exitCode;
       } catch (e: any) {
         ctx.stderr += `sh: ${ctx.args[0]}: ${e.message}\n`;
@@ -158,8 +159,8 @@ export const shCmd: Command = {
         (s: string) => { stdout += s; },
         (s: string) => { stderr += s; },
       );
-      ctx.stdout += stdout;
-      ctx.stderr += stderr;
+      ctx.stdout += lf(stdout);
+      ctx.stderr += lf(stderr);
       return exitCode;
     }
 

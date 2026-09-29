@@ -726,7 +726,9 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 '**PATH persistence:** each execute_code call runs in a fresh shell — `export PATH=...` in one call does NOT carry over to the next. To persist a new PATH entry: append it to `~/.bashrc` (`echo \'export PATH=$PATH:/new/dir\' >> ~/.bashrc`) and source it at the start of subsequent calls (`source ~/.bashrc && ...`), or use the full absolute path in every call.',
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
-            bashRules.push('**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
+            bashRules.push(hasWasm
+                ? '**State across calls:** the browser shell keeps functions, variables, aliases and the current directory between calls until the page reloads — a `cd` also applies to later calls, so prefer absolute `/workspace/…` paths. Write important results to workspace files so they survive compaction and reloads.'
+                : '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
         },
