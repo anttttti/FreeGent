@@ -364,6 +364,44 @@ function _wrapArtifact(content) {
     return _STORAGE_POLYFILL + content;
 }
 
+// The workspace file a page's reference points to, resolved as a browser would: relative to the
+// referring file's folder, or from the workspace root for "/x" (or "/workspace/x"). Query and
+// fragment are dropped. Preview pages are srcdoc documents with no base URL of their own, so
+// without this "app.js" in app/index.html was looked up as the root's app.js.
+export function resolvePageRef(ref: string, fromPath: string): string {
+    const clean = ref.split(/[?#]/)[0].replace(/^\/workspace(?=\/|$)/, '');
+    const dir = clean.startsWith('/') || !fromPath.includes('/') ? '' : fromPath.slice(0, fromPath.lastIndexOf('/') + 1);
+    const parts: string[] = [];
+    for (const seg of (dir + clean).split('/')) {
+        if (!seg || seg === '.') continue;
+        if (seg === '..') parts.pop(); else parts.push(seg);
+    }
+    return parts.join('/');
+}
+
+// A reference to a workspace file, not a URL scheme, protocol-relative URL or in-page anchor.
+const _isLocalRef = (r: string) => !!r && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(r.trim());
+
+// A workspace file as a data: URL (binary files are stored as base64; SVG may be stored as text).
+async function _dataUrlFor(name: string): Promise<string | null> {
+    try { if (typeof readFileAsDataUrl === 'function') { const d = await readFileAsDataUrl(name); if (d) return d; } } catch {}
+    try {
+        const t = await agentReadFile(name);
+        if (typeof t === 'string' && /\.svg$/i.test(name)) return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(t);
+    } catch {}
+    return null;
+}
+
+// url(...) references to workspace files in CSS become data: URLs, resolved from fromPath (the
+// stylesheet's own file, or the page for inline <style>).
+async function _inlineCssUrls(css: string, fromPath: string): Promise<string> {
+    return _replaceAsync(css, /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, async (m, q, val) => {
+        if (!_isLocalRef(val)) return m;
+        const d = await _dataUrlFor(resolvePageRef(val, fromPath));
+        return d ? `url(${q || '"'}${d}${q || '"'})` : m;
+    });
+}
+
 // Recursively inline a JS module: strip import/export statements, inline imported files first.
 // visited guards against circular imports.
 async function _inlineJsModule(path, readFile, visited = new Set()) {
@@ -383,12 +421,7 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
         // never resolve them as relative URLs and we cannot inline them from the workspace.
         if (!dep.startsWith('http') && !dep.startsWith('//') &&
             (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/'))) {
-            // Resolve relative to the directory of path
-            const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
-            const depPath = dep.startsWith('./') ? dir + dep.slice(2)
-                          : dep.startsWith('../') ? dep  // best-effort; skip complex traversal
-                          : dep;
-            imports.push(depPath);
+            imports.push(resolvePageRef(dep, path));
         }
     }
 
@@ -408,9 +441,10 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
 // Inline external CSS and JS file references so the HTML is self-contained for srcdoc.
 // Handles: <link rel="stylesheet" href="...">, <script src="..." [type="module"]>,
 //          inline <script> blocks containing static ES import statements.
-async function _inlineWorkspaceRefs(html) {
+async function _inlineWorkspaceRefs(html, pagePath = '') {
     const readFile = typeof agentReadFile === 'function' ? agentReadFile : null;
     if (!readFile) return html;
+    const ref = (r: string) => resolvePageRef(r, pagePath);
 
     // Inline <link rel="stylesheet" href="...">
     html = await _replaceAsync(html,
@@ -418,11 +452,26 @@ async function _inlineWorkspaceRefs(html) {
         async (match, href) => {
             if (href.startsWith('http') || href.startsWith('//')) return match;
             try {
-                const css = await readFile(href);
+                const css = await readFile(ref(href));
                 if (css == null) return match;
-                return `<style>\n${css}\n</style>`;
+                return `<style>\n${await _inlineCssUrls(css, ref(href))}\n</style>`;
             } catch { return match; }
         });
+
+    // Remaining url(...) in the page's own <style> blocks resolve from the page.
+    html = await _replaceAsync(html, /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+        async (m, open, css, close) => `${open}${await _inlineCssUrls(css, pagePath)}${close}`);
+
+    // Workspace images, media and icons in the page's tags become data: URLs: a srcdoc page has no
+    // base URL, so a relative src/href in it would not load.
+    html = await _replaceAsync(html, /<(img|audio|video|source|track|input|embed|link)\b[^>]*>/gi, async (tag, name) => {
+        if (name.toLowerCase() === 'link' && !/\brel=["'][^"']*\b(?:icon|apple-touch-icon|preload)\b/i.test(tag)) return tag;
+        return _replaceAsync(tag, /\b(src|href|poster)=(["'])([^"']*)\2/gi, async (m, attr, q, val) => {
+            if (!_isLocalRef(val)) return m;
+            const d = await _dataUrlFor(ref(val));
+            return d ? `${attr}=${q}${d}${q}` : m;
+        });
+    });
 
     // Inline <script src="..." [type="module"]>
     // Note: check `match` (full tag) for type="module" — `attrs` only captures before src=,
@@ -434,8 +483,8 @@ async function _inlineWorkspaceRefs(html) {
             try {
                 const isModule = /\btype=["']module["']/i.test(match);
                 const js = isModule
-                    ? await _inlineJsModule(src, readFile)
-                    : await readFile(src);
+                    ? await _inlineJsModule(ref(src), readFile)
+                    : await readFile(ref(src));
                 if (js == null) return match;
                 return `<script>\n${js}\n</script>`;
             } catch { return match; }
@@ -464,7 +513,7 @@ async function _inlineWorkspaceRefs(html) {
                     // are external and cannot be inlined from the workspace.
                     if (!dep.startsWith('http') && !dep.startsWith('//') &&
                         (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/')))
-                        localDeps.push(dep.startsWith('./') ? dep.slice(2) : dep);
+                        localDeps.push(ref(dep));
                 }
                 if (!localDeps.length) {
                     // All imports are external (http/CDN) — the browser handles them natively,
@@ -519,7 +568,7 @@ async function _inlineWorkspaceRefs(html) {
     const readDataUrl = typeof readFileAsDataUrl === 'function' ? readFileAsDataUrl : null;
     if (readDataUrl) {
         await Promise.all([...assetPaths].map(async p => {
-            try { const d = await readDataUrl(p); if (d) assetMap[p] = d; } catch {}
+            try { const d = await readDataUrl(ref(p)); if (d) assetMap[p] = d; } catch {}
         }));
     }
 
@@ -728,7 +777,7 @@ const _clampMs = (v: any, dflt: number, max: number) => Math.max(0, Math.min(Num
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500 } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
-    let content = _wrapArtifact(await _inlineWorkspaceRefs(html));
+    let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
     // The capture script must run before every other script, so it goes first in <head>.
     content = /<head[^>]*>/i.test(content) ? content.replace(/(<head[^>]*>)/i, `$1${_CHECK_CAPTURE}`) : _CHECK_CAPTURE + content;
 
@@ -844,8 +893,9 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     };
 }
 
+// title is the page's workspace path when it is a workspace file; its references resolve from there.
 async function openArtifactTab(title, html, { isPreview = true } = {}) {
-    const inlined = await _inlineWorkspaceRefs(html);
+    const inlined = await _inlineWorkspaceRefs(html, title);
     const content = _wrapArtifact(inlined);
     const key = `artifact:${title}`;
     const existing = fileTabs.get(key);

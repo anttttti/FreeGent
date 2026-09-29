@@ -823,7 +823,12 @@ async function _handleCheckPage(args: any) {
             probes:  Array.isArray(args.probes) ? args.probes.map(String).slice(0, 10) : [],
             waitMs:  args.wait_ms,
         });
-    } catch (e) { return { error: `check_page: ${(e as any)?.message ?? e}` }; }
+    } catch (e) {
+        const msg = String((e as any)?.message ?? e);
+        return { error: /not found/i.test(msg)
+            ? `check_page: "${path}" is not in the workspace. check_page, read_file and the bash shell's /workspace are the same files — write the page under /workspace (not /tmp or /home), then pass its path, e.g. "${path.split('/').pop()}" or "app/index.html".`
+            : `check_page: ${msg}` };
+    }
 }
 
 async function _handleUpdateTaskStatus(args: any) {

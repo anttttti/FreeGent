@@ -702,7 +702,8 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
             // Same order as execute_code's dispatch (tools.ts): native, then Local, then WASM.
             const hasWasm = !hasNative && !hasLocal && typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
             if (hasWasm) parts.push(`### Environment (browser shell)
-- Runs in the browser, isolated from the page; workspace files are at \`/workspace\` — use absolute paths (\`/workspace/src/app.js\`); writes sync back automatically
+- Runs in the browser, isolated from the page, starting in the workspace directory (\`/workspace\`). Use relative paths (\`src/app.js\`): the same path works in read_file, write_file, check_page and the preview. Writes sync back automatically
+- Files outside the workspace (\`/tmp\`, \`/home/user\`) exist only in this shell
 - Unix tools built in: grep, rg, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, etc. \`python3\`/\`pip\` are Pyodide; \`node\` runs JavaScript; \`npm install\` works (writes node_modules into the workspace)
 - Not available: \`git\`, compilers
 - **Network:** \`curl\` and \`wget\` work. Requests go out directly, so sites that allow browser requests (npm, PyPI, raw.githubusercontent.com, many public APIs) support any method, headers and body. Other sites are fetched through FreeGent's proxy: plain GET only, without custom headers. Binary downloads need \`-o FILE\`. To read a web page or search, \`fetch_url\` / web search are usually better`);
@@ -727,7 +728,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
             bashRules.push(hasWasm
-                ? '**State across calls:** the browser shell keeps functions, variables, aliases and the current directory between calls until the page reloads — a `cd` also applies to later calls, so prefer absolute `/workspace/…` paths. Write important results to workspace files so they survive compaction and reloads.'
+                ? '**State across calls:** the browser shell keeps functions, variables, aliases and the current directory between calls until the page reloads — a `cd` also applies to later calls, so `cd /workspace` first if you moved elsewhere. Write important results to workspace files so they survive compaction and reloads.'
                 : '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
