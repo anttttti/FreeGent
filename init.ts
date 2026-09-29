@@ -743,7 +743,7 @@ Object.assign(window, {
     _resetModelWarmup,
     agentSend, handleSendButton, newChat, retryLastTurn, stopAfterStep,
     showSettings, saveSettings, switchSettingsTab,
-    applyHdrSearch, applyHdrReasoning, applyHdrCompactTokens,
+    applyHdrReasoning, applyHdrCompactTokens,
     updateActiveModelDisplay,
     renderModelCatalogTable, renderMainModelList,
     showAddCustomModelForm, addCustomModel, deleteCustomModel,
