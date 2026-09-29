@@ -17,6 +17,10 @@ import { checkFetchAllowed } from './fetch-allow.js';
 
 const LOAD_TIMEOUT_MS = 30_000;
 
+// Largest workspace file (stored characters; base64 for binary files) copied into a JavaScript or
+// Python run. Bash reads the workspace directly and has no limit.
+export const EXEC_FILE_MAX_CHARS = 10_000_000;
+
 let frame: HTMLIFrameElement | null = null;
 let ready: Promise<void> | null = null;
 let seq = 0;

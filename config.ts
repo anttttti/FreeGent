@@ -1,7 +1,7 @@
 // config.js — FreeGent: global state, settings helpers, model catalog, pyodide, utilities
 // Loaded first; all other modules depend on this.
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
-import { createSandboxedPyodideWorker, sandboxCall } from './exec-sandbox-host.js';
+import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { isStaticHost } from './static-hosts.js';
 export { KEYS } from './storage-keys.js';
 
@@ -1003,7 +1003,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
     const wsFiles = await listWorkspaceFiles();
     const files   = Object.fromEntries(
         wsFiles
-            .filter(f => typeof f.content === 'string' && f.content.length <= 512_000)
+            .filter(f => typeof f.content === 'string' && f.content.length <= EXEC_FILE_MAX_CHARS)
             // Binary IDB files (encoding='base64') are tagged so the worker writes binary bytes,
             // not the raw base64 string, into Pyodide's IDBFS.
             .map(f => [f.name, f.encoding === 'base64' ? `\x00BIN\x00${f.content}` : f.content])
@@ -1016,7 +1016,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
             if (!f.isLocal || /^local\/logs\//.test(f.name)) continue;
             try {
                 const content = await agentReadFile(f.name);
-                if (typeof content === 'string' && content.length <= 512_000)
+                if (typeof content === 'string' && content.length <= EXEC_FILE_MAX_CHARS)
                     files[f.name] = content;
             } catch {}
         }

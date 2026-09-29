@@ -703,7 +703,7 @@ var P=parent,T0=Date.now();
 function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v.name+': '+v.message;if(v===undefined)return 'undefined';if(typeof v==='function')return 'function';return JSON.stringify(v)}catch(e){return String(v)}}
 function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,500),t:Date.now()-T0},'*')}catch(e){}}
 ['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
-addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href));return}
+addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href)+(t.integrity?' — it has integrity="'+t.integrity+'": a wrong hash blocks the file, so check it or remove the attribute':''));return}
  send('error','Uncaught '+(e.error&&e.error.name?e.error.name+': '+e.error.message:e.message)+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':''))},true);
 addEventListener('unhandledrejection',function(e){send('error','Unhandled promise rejection: '+s(e.reason))});
 var FR=0;(function f(){FR++;requestAnimationFrame(f)})();

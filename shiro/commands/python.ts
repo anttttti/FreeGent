@@ -165,6 +165,24 @@ async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<st
 }
 
 /**
+ * Empties Pyodide's copy of the workspace (/shiro/workspace) after a run, once its changes are
+ * synced back: the workspace is the only lasting copy, and a kept one would still show files
+ * deleted from the workspace since. The next run copies the workspace in again.
+ */
+function clearNative(py: any, dir = '/shiro/workspace') {
+  let entries: string[];
+  try { entries = py.FS.readdir(dir); } catch { return; }
+  for (const entry of entries) {
+    if (entry === '.' || entry === '..') continue;
+    const path = `${dir}/${entry}`;
+    let isDir = false;
+    try { isDir = py.FS.isDir(py.FS.lstat(path).mode); } catch { /* vanished */ }
+    if (isDir) { clearNative(py, path); try { py.FS.rmdir(path); } catch { /* not empty */ } }
+    else { try { py.FS.unlink(path); } catch { /* vanished */ } }
+  }
+}
+
+/**
  * Python preamble injected before every script/one-liner.
  * Sets sys.argv, cwd, sys.path, and redirects stdout/stderr into StringIO buffers.
  * Exported for testing.
@@ -178,6 +196,10 @@ os.chdir(${JSON.stringify(pyDir)})
 for _p in [${JSON.stringify(pyDir)}, '/shiro/workspace']:
     if _p not in sys.path:
         sys.path.insert(0, _p)
+# Workspace modules imported by an earlier run are reloaded, so edits since take effect.
+for _k, _m in list(sys.modules.items()):
+    if str(getattr(_m, '__file__', '') or '').startswith(('/shiro/workspace/', '/workspace/')):
+        del sys.modules[_k]
 # Make /workspace an alias for /shiro/workspace so scripts using hardcoded
 # /workspace/... paths (common in agent-generated code) work without changes.
 try:
@@ -265,6 +287,7 @@ export const pythonCmd: Command = {
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
+        clearNative(py);
       }
       return exitCode;
     }
@@ -286,6 +309,7 @@ export const pythonCmd: Command = {
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
+        clearNative(py);
       }
       return exitCode;
     }
@@ -316,6 +340,7 @@ export const pythonCmd: Command = {
         exitCode = _extractExitCode(err, ctx);
       } finally {
         await syncFromNative(py, ctx, beforeMtimes);
+        clearNative(py);
       }
       return exitCode;
     }

@@ -36,8 +36,9 @@ async function init() {
         });
         await pyodide.loadPackage("micropip");
 
-        // In-memory /workspace: the page sends the workspace files with every run, and the worker
-        // runs in the exec sandbox's opaque origin, where IndexedDB (IDBFS) is not available.
+        // In-memory /workspace: the page sends the workspace files with every run and it is
+        // emptied after the run (the workspace is the only lasting copy). The worker runs in the
+        // exec sandbox's opaque origin, where IndexedDB (IDBFS) is not available.
         pyodide.FS.mkdirTree('/workspace');
 
         self.postMessage({ type: 'ready' });
@@ -46,24 +47,17 @@ async function init() {
     }
 }
 
-function purgeStale(dir, prefix, validFiles) {
+// Empties a directory tree in Pyodide's in-memory FS (the directory itself stays).
+function clearDir(dir) {
     let entries: string[];
     try { entries = pyodide.FS.readdir(dir); } catch { return; }
     for (const entry of entries) {
         if (entry === '.' || entry === '..') continue;
         const fullPath = `${dir}/${entry}`;
-        const relPath  = prefix ? `${prefix}/${entry}` : entry;
-        let isDir: boolean = false;
-        try { pyodide.FS.readdir(fullPath); isDir = true; } catch {}
-        if (isDir) {
-            purgeStale(fullPath, relPath, validFiles);
-            try {
-                const left = pyodide.FS.readdir(fullPath).filter(e => e !== '.' && e !== '..');
-                if (!left.length) pyodide.FS.rmdir(fullPath);
-            } catch {}
-        } else if (!(relPath in validFiles)) {
-            try { pyodide.FS.unlink(fullPath); } catch {}
-        }
+        let isDir = false;
+        try { isDir = pyodide.FS.isDir(pyodide.FS.lstat(fullPath).mode); } catch {}
+        if (isDir) { clearDir(fullPath); try { pyodide.FS.rmdir(fullPath); } catch {} }
+        else { try { pyodide.FS.unlink(fullPath); } catch {} }
     }
 }
 
@@ -122,6 +116,8 @@ function snapshotDir(dir, prefix) {
     return snap;
 }
 
+let _runChain: Promise<void> = Promise.resolve();
+
 self.onmessage = async ({ data }) => {
     if (data.type === 'net-reply') {
         const w = _netWaiting.get(data.id);
@@ -147,6 +143,7 @@ self.onmessage = async ({ data }) => {
     if (data.type !== 'run') return;
     const { id, code, files } = data;
 
+
     // Libraries that require a display/screen and cannot run in a Web Worker.
     const _DISPLAY_LIBS = /^\s*(?:import|from)\s+(pygame|pygame_ce|turtle|tkinter|wx|gi\.repository|PyQt[456]|PySide[26])\b/m;
     if (_DISPLAY_LIBS.test(code)) {
@@ -157,8 +154,15 @@ self.onmessage = async ({ data }) => {
         return;
     }
 
+    // One run at a time: they share /workspace, which each run fills and then empties, and a
+    // run awaiting (pyfetch, micropip) would otherwise see another run's files come and go.
+    const prevRun = _runChain;
+    let releaseRun!: () => void;
+    _runChain = new Promise<void>(r => { releaseRun = r; });
+    await prevRun;
+
     try {
-        // Bring /workspace up to date with the files the page sent.
+        // Fill /workspace (empty between runs) with the files the page sent.
         for (const [name, content] of Object.entries(files || {})) {
             const path = `/workspace/${name}`;
             const dir  = path.slice(0, path.lastIndexOf('/'));
@@ -175,15 +179,9 @@ self.onmessage = async ({ data }) => {
                 try { pyodide.FS.unlink(path); } catch {}
                 pyodide.FS.writeFile(path, bytes);
             } else {
-                let existing: string | null = null;
-                try { existing = pyodide.FS.readFile(path, { encoding: 'utf8' }); } catch {}
-                if (existing !== (content ?? '')) pyodide.FS.writeFile(path, content ?? '');
+                pyodide.FS.writeFile(path, content ?? '');
             }
         }
-
-        // Remove /workspace files not in the loaded files dict so stale data from prior
-        // sessions doesn't bleed into the workspace or mask Python writes.
-        purgeStale('/workspace', '', files);
 
         const before = snapshotDir('/workspace', '');
 
@@ -300,6 +298,10 @@ await micropip.install(${JSON.stringify(toInstall)})
         });
     } catch (e) {
         self.postMessage({ type: 'result', id, stdout: '', stderr: e.message, exit_code: 1, changedFiles: {} });
+    } finally {
+        // The changes went back to the page; the workspace is the only lasting copy.
+        clearDir('/workspace');
+        releaseRun();
     }
 };
 

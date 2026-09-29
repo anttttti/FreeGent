@@ -276,7 +276,7 @@ function execToolSpec() {
 // check_page: browser-only (runs the page in a hidden sandboxed iframe — tabs.ts runPageCheck).
 const CHECK_PAGE_TOOL_SPEC = {
     name: 'check_page',
-    description: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code.',
+    description: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code. Pages run with internet access, like the ▶ Preview: CDN scripts and styles (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com) and fetch() of public URLs work, so load libraries from a CDN rather than inlining or downloading them. Add integrity= attributes only when copied from the library\'s docs: a wrong hash blocks the file.',
     parameters: {
         type: 'object',
         properties: {

@@ -47,10 +47,18 @@ function fsError(code: string, op: string, p: string): Error {
     return e;
 }
 
-export function createWorkspaceFs(files: Record<string, string>) {
-    const written: Record<string, string> = {};
+/** A workspace file as the page sends it: text, or binary as base64. */
+export type WorkspaceFileData = string | { base64: string };
+type Content = string | Uint8Array;
+
+const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>) {
+    const files: Record<string, Content> = {};
+    for (const [name, v] of Object.entries(sent)) files[name] = typeof v === 'string' ? v : fromBase64(v.base64);
+    const written: Record<string, Content> = {};
     const deleted = new Set<string>();
-    const scratch = new Map<string, string>();     // outside /workspace: this run only
+    const scratch = new Map<string, Content>();    // outside /workspace: this run only
     const dirs = new Set<string>();                 // made with mkdirSync
 
     // Absolute path → workspace-relative name, or null when outside /workspace.
@@ -59,7 +67,7 @@ export function createWorkspaceFs(files: Record<string, string>) {
         const abs = posix.resolve(p), name = wsName(abs);
         return name === null ? scratch.get(abs) : files[name];
     };
-    const put = (p: string, content: string) => {
+    const put = (p: string, content: Content) => {
         const abs = posix.resolve(p), name = wsName(abs);
         if (name === null) { scratch.set(abs, content); return; }
         if (name === '') throw fsError('EISDIR', 'open', p);
@@ -71,15 +79,19 @@ export function createWorkspaceFs(files: Record<string, string>) {
         return abs === WORKSPACE || abs === '/' || dirs.has(abs) || keys().some(k => k.startsWith(abs + '/'));
     };
     const toText = (c: any) => typeof c === 'string' ? c : c instanceof Uint8Array ? new TextDecoder().decode(c) : String(c);
+    const size = (c: Content) => typeof c === 'string' ? new TextEncoder().encode(c).length : c.length;
 
     const fs = {
-        readFileSync(p: string, _enc?: any): string {
+        // Text files read as strings. Binary files read as bytes, or as text with an encoding.
+        readFileSync(p: string, enc?: any): Content {
             const c = get(p);
             if (c === undefined) throw fsError(isDir(p) ? 'EISDIR' : 'ENOENT', 'open', p);
-            return c;
+            return typeof c !== 'string' && (typeof enc === 'string' || enc?.encoding) ? toText(c) : c;
         },
-        writeFileSync(p: string, c: any) { put(p, toText(c)); },
-        appendFileSync(p: string, c: any) { put(p, (get(p) ?? '') + toText(c)); },
+        writeFileSync(p: string, c: any) {
+            put(p, c instanceof Uint8Array ? c : ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : toText(c));
+        },
+        appendFileSync(p: string, c: any) { put(p, toText(get(p) ?? '') + toText(c)); },
         existsSync(p: string) { return get(p) !== undefined || isDir(p); },
         readdirSync(p: string = '.') {
             if (!isDir(p)) throw fsError('ENOENT', 'scandir', p);
@@ -89,7 +101,7 @@ export function createWorkspaceFs(files: Record<string, string>) {
         statSync(p: string) {
             const c = get(p), dir = c === undefined && isDir(p);
             if (c === undefined && !dir) throw fsError('ENOENT', 'stat', p);
-            return { size: c?.length ?? 0, isFile: () => !dir, isDirectory: () => dir, mtime: new Date(), mtimeMs: Date.now() };
+            return { size: c === undefined ? 0 : size(c), isFile: () => !dir, isDirectory: () => dir, mtime: new Date(), mtimeMs: Date.now() };
         },
         mkdirSync(p: string, _opts?: any) { dirs.add(posix.resolve(p)); },
         unlinkSync(p: string) {
