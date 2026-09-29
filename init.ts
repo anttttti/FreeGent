@@ -195,9 +195,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Auto-save settings on any input/change inside the settings panel
     const settingsPanel = document.querySelector('.settings-panel-scroll');
     if (settingsPanel) {
+        // Model combo-box search fields are excluded: they save through their own handlers, and
+        // saveSettings() re-renders Model Priority, replacing the search field on every keystroke.
         const autoSave = e => {
             if (!_settingsPopulating &&
-                e.target.matches('input.settings-input, select.settings-input, input[name="provider"]'))
+                e.target.matches('input.settings-input:not(.model-combo-input), select.settings-input, input[name="provider"]'))
                 saveSettings();
         };
         settingsPanel.addEventListener('change', autoSave);
