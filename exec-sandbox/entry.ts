@@ -3,7 +3,7 @@
 // The frame is an <iframe sandbox="allow-scripts"> with an opaque origin (exec-sandbox-host.ts),
 // so code running here can't read the app's storage, its DOM, or the dev-server token, and its
 // requests to the dev server are refused as cross-origin. Three runners live here:
-//   js     — execute_code in JavaScript, with a small fs/path shim over a copy of the files
+//   js     — execute_code in JavaScript, with fs/path over a copy of the workspace (js-fs.ts)
 //   bash   — the WASM shell (shiro), whose /workspace is the page's workspace (workspace-rpc.ts)
 //   python — Pyodide, in a worker started from this frame (so it shares the opaque origin)
 //
@@ -12,6 +12,7 @@
 import './storage-shim';
 import { onCall, post, pageFetch } from './channel';
 import { sandboxFetch } from './net';
+import { createWorkspaceFs, path, WORKSPACE } from './js-fs';
 
 // Everything in the frame fetches through sandboxFetch: direct, with a proxied fallback for
 // plain GETs the browser refuses (net.ts).
@@ -22,34 +23,16 @@ declare const __PYODIDE_WORKER_SRC__: string;
 // ── JavaScript ────────────────────────────────────────────────────────────────
 
 async function runJs(code: string, files: Record<string, string>) {
-    const written: Record<string, string> = {};
     const stdout: string[] = [], stderr: string[] = [];
-    const norm = (p: string) => p.replace(/^\.\//, '');
-    const fs = {
-        readFileSync:  (p: string, _enc?: any) => {
-            const k = norm(p);
-            if (!(k in files)) { const e: any = new Error(`ENOENT: no such file or directory, open '${p}'`); e.code = 'ENOENT'; throw e; }
-            return files[k];
-        },
-        writeFileSync: (p: string, c: any) => { const k = norm(p); written[k] = typeof c === 'string' ? c : String(c); files[k] = written[k]; },
-        appendFileSync:(p: string, c: any) => { const k = norm(p); written[k] = (files[k] ?? '') + c; files[k] = written[k]; },
-        existsSync:    (p: string) => norm(p) in files,
-        readdirSync:   (p: string) => {
-            const pre = (p === '.' || p === '') ? '' : p.replace(/\/?$/, '/');
-            return [...new Set(Object.keys(files).filter(f => f.startsWith(pre)).map(f => f.slice(pre.length).split('/')[0]).filter(Boolean))];
-        },
-    };
-    const path = {
-        join:     (...a: string[]) => a.join('/').replace(/\/+/g, '/').replace(/\/$/, '') || '.',
-        dirname:  (p: string) => p.includes('/') ? p.split('/').slice(0, -1).join('/') || '/' : '.',
-        basename: (p: string, e?: string) => { const b = p.split('/').pop()!; return e && b.endsWith(e) ? b.slice(0, -e.length) : b; },
-        extname:  (p: string) => { const m = p.match(/\.[^./]+$/); return m ? m[0] : ''; },
-        resolve:  (...a: string[]) => a.join('/').replace(/\/+/g, '/'),
-    };
+    // The same /workspace as bash and Python (js-fs.ts). Writes and deletions made before an
+    // error still apply, as they would in the shell.
+    const { fs, written, deleted } = createWorkspaceFs(files);
     const require = (m: string) => {
-        if (m === 'fs') return fs;
-        if (m === 'path') return path;
-        throw new Error(`Cannot find module '${m}' — only 'fs' and 'path' are available in the browser JS sandbox`);
+        const name = m.replace(/^node:/, '');
+        if (name === 'fs') return fs;
+        if (name === 'fs/promises') return fs.promises;
+        if (name === 'path') return path;
+        throw new Error(`Cannot find module '${m}' — only 'fs', 'fs/promises' and 'path' are available in the browser JS sandbox`);
     };
     const con = {
         log:   (...a: any[]) => stdout.push(a.map(String).join(' ')),
@@ -57,13 +40,16 @@ async function runJs(code: string, files: Record<string, string>) {
         error: (...a: any[]) => stderr.push(a.map(String).join(' ')),
         warn:  (...a: any[]) => stderr.push(a.map(String).join(' ')),
     };
+    const process = { env: {}, argv: ['node', 'script.js'], cwd: () => WORKSPACE, platform: 'linux' };
+    const result = (extra: Record<string, any> = {}) =>
+        ({ stdout: stdout.join('\n'), stderr: stderr.join('\n'), written, deleted: [...deleted], ...extra });
     try {
         // eslint-disable-next-line no-new-func
         const fn = new Function('fs', 'require', 'console', 'process', `return (async()=>{ ${code} })()`);
-        await fn(fs, require, con, { env: {}, argv: ['node', 'script.js'], cwd: () => '.' });
-        return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), written };
+        await fn(fs, require, con, process);
+        return result();
     } catch (e: any) {
-        return { stdout: stdout.join('\n'), stderr: String(e?.stack || e?.message || e), written: {}, failed: true };
+        return result({ stderr: [...stderr, String(e?.stack || e?.message || e)].join('\n'), failed: true });
     }
 }
 
