@@ -1,0 +1,536 @@
+# One case per line, run in a fresh copy of fixtures/ by real bash and by the browser shell.
+# Lines starting with # and blank lines are skipped. Avoid output that legitimately differs
+# between the two (timestamps, ls -l, absolute paths, random order, file sizes on disk).
+
+# ── grep ──────────────────────────────────────────────────────────────────────
+grep apple words.txt
+grep -c ERROR log.txt
+grep -v INFO log.txt | wc -l
+grep -o 'ERROR.*' log.txt
+grep -i apple mixed.txt
+grep -w app words.txt; echo "rc=$?"
+grep -n banana words.txt
+grep -x apple mixed.txt
+grep -E 'ERROR|WARN' log.txt
+grep -E '^[0-9]{4}-09-0[12] ' log.txt | cut -d' ' -f2 | sort -u
+grep -oE '[0-9]+' nums.txt | paste -sd' '
+grep -e apple -e cherry words.txt
+grep -F '.' versions.txt | head -2
+grep -c '' mixed.txt
+grep -m 2 apple words.txt
+grep -A1 disk log.txt
+grep -B1 timeout log.txt
+grep -C1 WARN log.txt
+grep -l TODO src/*.js
+grep -L TODO src/*.js src/lib/helper.py
+grep -r TODO src | sort
+grep -rn 'return' src | sort
+grep -rl --include='*.py' def .
+grep -h TODO src/app.js src/util.js
+grep -q ERROR log.txt && echo found
+grep -q nothing log.txt; echo "rc=$?"
+grep 'a\(p\)\1' words.txt | head -1
+grep -E '(an){2}' words.txt
+grep '[[:upper:]]' mixed.txt
+grep -c '^$' mixed.txt
+grep -o '[aeiou]' words.txt | sort | uniq -c | sort -rn | head -3
+grep -P '\d{2}' nums.txt
+grep -vc x words.txt
+
+# ── sed ───────────────────────────────────────────────────────────────────────
+sed 's/apple/APPLE/g' words.txt | head -3
+sed -n '2,3p' data.csv
+sed -e 's/,/ | /g' data.csv
+sed 's/\(.*\),\(.*\),\(.*\)/\3-\1/' data.csv
+sed -E 's/([a-z]+),([0-9]+).*/\2:\1/' data.csv
+sed 's/a/[&]/2' words.txt | head -2
+sed '/^$/d' mixed.txt
+sed -n '/ERROR/p' log.txt
+sed '1d;$d' data.csv
+sed -n '$p' words.txt
+sed 's/o/0/gi' mixed.txt | head -3
+sed 'y/abc/ABC/' words.txt | head -3
+sed '2i\inserted' nums.txt | head -3
+sed '2a appended' nums.txt | head -4
+sed -n '/start/,/timeout/p' log.txt
+sed 's#/#_#g' <<< "a/b/c"
+sed -e '1s/^/# /' -e 's/$/;/' nums.txt | head -3
+sed 's/[[:space:]]\+/ /g' text.txt
+sed -E 's/^ +| +$//g' text.txt | head -1
+sed -i 's/Oslo/OSLO/' data.csv; cat data.csv
+sed 's/\bapple\b/X/' words.txt | head -1
+sed 's/^\(.\)/\U\1/' words.txt | head -2
+sed '=' nums.txt | head -4
+sed -n 'l' text.txt
+
+# ── awk ───────────────────────────────────────────────────────────────────────
+awk -F, 'NR>1 {sum += $2} END {print sum}' data.csv
+awk -F, '$3 == "Oslo" {print $1}' data.csv
+awk '{print NF}' text.txt
+awk -F, 'NR>1 {c[$3]++} END {for (k in c) print k, c[k]}' data.csv | sort
+awk '{ printf "%-8s|%5.1f\n", $1, NR * 1.5 }' words.txt | head -3
+awk 'length($0) > 5' words.txt
+awk '{gsub(/a/, "4"); print}' words.txt | head -3
+awk -F, '{print toupper(substr($1, 1, 1)) substr($1, 2)}' data.csv
+awk 'BEGIN {n = split("a:b:c", p, ":"); print n, p[2]}'
+awk -v m=3 '$1 > m' nums.txt
+awk 'NR % 2 == 0' words.txt
+awk 'END {print NR}' words.txt
+awk -F, -v OFS=';' '{$1 = $1; print}' data.csv
+awk '/ERROR/ {print $3, $4}' log.txt
+awk '{ s = s $0 } END { print length(s) }' words.txt
+awk 'BEGIN { printf "%d %s %c\n", 3.9, "x", 65 }'
+awk '{ print $NF }' log.txt | sort | uniq -c
+awk 'NR==FNR {a[$1]=$2; next} ($1 in a) {print $2, a[$1]}' ids.txt cities.txt
+awk '{ $2 = ""; print }' log.txt | head -2
+
+# ── find ──────────────────────────────────────────────────────────────────────
+find . -name '*.txt' | sort
+find dir -type f | sort
+find . -type d | sort
+find . -maxdepth 1 -name '*.csv' | sort
+find . -mindepth 2 -type f | sort
+find src -name '*.js' -o -name '*.py' | sort
+find . -iname 'READ*' | sort
+find . -path './src/*' -type f | sort
+find . -type f -not -name '*.txt' | sort
+find . -empty -type f
+find src -type f -exec wc -l {} \; | sort -k2
+find src -name '*.js' -exec cat {} + | wc -l
+find . -name '*.md' -print0 | xargs -0 cat
+find . -type f -name '*file*' | sort
+find src -newer /dev/null -type f 2>/dev/null | wc -l
+find . -type f | wc -l
+find . \( -name '*.js' -o -name '*.py' \) -print | sort
+find . -name src -prune -o -type f -print | sort
+find src -type f -printf '%f %d\n' | sort
+find . -maxdepth 1 -type d | sort
+find . -type f -name '*.csv' -exec grep -l alice {} +
+find dir/sub -depth
+find src -name '*.js' -exec basename {} .js \; | sort
+find . -regex '.*/[a-d][a-z]*\.csv' | sort
+find . -type f -size -1k -name '*.md' | sort
+find . -name 'my file.txt' -exec cat {} \;
+
+# ── sort / uniq / cut / tr ────────────────────────────────────────────────────
+sort words.txt | uniq -c | sort -rn
+sort -u words.txt
+sort -n nums.txt | tail -2
+sort -rn nums.txt | head -3
+sort -t, -k2 -n data.csv
+sort -t, -k3,3 -k1,1r data.csv
+sort -f mixed.txt | uniq -i
+sort -V versions.txt
+sort -h sizes.txt
+sort -c words.txt; echo "rc=$?"
+sort -s -k1,1 log.txt | head -3
+uniq -d <(sort words.txt)
+uniq -u <(sort words.txt)
+uniq -c <(sort mixed.txt)
+cut -d, -f1,3 data.csv
+cut -c1-3 words.txt | sort -u
+cut -d' ' -f2- log.txt | head -2
+cut -d, -f2 --complement data.csv
+tail -n +2 data.csv | cut -d, -f2 | sort -n
+tr a-z A-Z < words.txt | sort | uniq
+tr -d '\n' < nums.txt
+tr -s ' ' <<< "a  b   c"
+tr -cd '[:digit:]\n' < log.txt | head -2
+tr '[:lower:]' '[:upper:]' <<< "Hello World"
+tr -c 'a-z\n' '_' <<< "Hi there!"
+
+# ── head / tail / wc / cat ────────────────────────────────────────────────────
+head -c 10 words.txt
+head -n -2 words.txt
+tail -n 3 words.txt
+tail -n +5 words.txt
+tail -c 8 words.txt
+wc -l words.txt nums.txt
+wc -w text.txt
+wc -c < words.txt
+wc -m data.csv
+wc -l < empty.txt
+cat -n words.txt | tail -2
+cat -A text.txt
+cat -s mixed.txt | wc -l
+cat words.txt nums.txt | wc -l
+
+# ── other text tools ──────────────────────────────────────────────────────────
+paste -sd+ nums.txt | bc
+paste -d, ids.txt cities.txt
+paste - - < words.txt
+join ids.txt cities.txt
+join -a1 ids.txt cities.txt
+comm -12 <(sort -u words.txt) <(printf 'apple\ncherry\nzebra\n')
+comm -3 <(sort -u words.txt) <(printf 'apple\nzebra\n')
+column -t -s, data.csv
+tac nums.txt
+rev <<< "hello"
+nl -ba words.txt | head -2
+nl -s': ' nums.txt | head -2
+fold -w 5 <<< "abcdefghijklmnop"
+expand -t 4 text.txt | sed -n 2p | cat -A
+seq 5 | paste -sd,
+seq 1 3 10
+seq -w 8 11
+seq -s: 3
+printf '%s\n' c a b | sort
+printf '%05.2f|%-6s|%3d\n' 3.14159 ab 7
+printf '%x %o %X\n' 255 8 255
+printf '%s=%s\n' a 1 b 2
+printf '%b\n' 'tab\there'
+echo "a b  c" | tr -s ' '
+echo hello | rev
+basename dir/sub/file.txt .txt
+dirname dir/sub/file.txt
+expr 7 \* 6
+expr length hello
+expr 10 - 2 - 3
+expr 2 + 3 \* 4
+expr \( 2 + 3 \) \* 4
+expr abc123 : '[a-z]*'
+expr file.txt : '\(.*\)\.txt'
+expr substr hello 2 3
+expr index hello l
+expr 5 \> 3
+expr apple \< banana
+expr 7 / 0; echo "rc=$?"
+expr 0; echo "rc=$?"
+echo '2^10' | bc
+echo 'scale=3; 10/3' | bc
+factor 84
+od -c <<< "hi" | head -1
+xxd -p <<< "hi"
+base64 <<< "hello"
+base64 -d <<< "aGVsbG8K"
+md5sum words.txt
+sha256sum < nums.txt
+diff <(printf 'a\nb\nc\n') <(printf 'a\nx\nc\n')
+diff -q words.txt nums.txt; echo "rc=$?"
+diff -u --label a --label b <(printf 'a\nb\nc\nd\ne\n') <(printf 'a\nB\nc\nd\ne\nf\n')
+diff --label a --label b -c <(printf '1\n2\n3\n') <(printf '1\n3\n4\n')
+diff <(printf 'x\ny') <(printf 'x\nz\n')
+diff -s words.txt words.txt
+diff -i <(echo Hello) <(echo hello); echo "rc=$?"
+diff -w <(echo 'a  b') <(echo 'a b'); echo "rc=$?"
+diff <(seq 1 10) <(seq 1 10 | sed '3d;7a extra')
+base64 words.txt
+base64 -w 20 data.csv
+printf 'caf\xc3\xa9' | base64
+echo 'Y2Fmw6k=' | base64 -d
+cmp -s words.txt words.txt && echo same
+jq -r '.[] | select(.age > 28) | .name' data.json
+jq '[.[].age] | add' data.json
+jq -c 'map({n: .name, t: (.tags | length)})' data.json
+jq -r '.[0].tags | join(",")' data.json
+split -l 3 words.txt part_ && ls part_* && cat part_ab
+date -u -d @0 +%Y-%m-%d
+date -u -d '2024-03-05 07:08:09'
+date -u -d '2024-03-05 07:08:09' '+%a %A %b %B %j %u %w %e|%k|%l %p %I'
+date -u -d '2024-03-05 07:08:09' '+%s %N %Z %z %:z'
+date -u -d '2024-03-05 07:08:09' '+%D %T %F %R %y %C %V %U %W %%'
+date -u -d '2024-03-05 07:08:09' -R
+date -u -d '2024-03-05 07:08:09' -Iseconds
+date -u -d '2024-01-31 +1 month' +%F
+date -u -d '2024-03-05 3 days ago' +%F
+date -u -d '2024-03-05T10:00:00+02:00' +%H:%M
+date -u -d 'Mar 5 2024' +%F
+date -u -d @86399 '+%-d/%-m %_H'
+yes | head -3
+
+# ── bc ────────────────────────────────────────────────────────────────────────
+echo '10/3' | bc
+echo 'scale=3; 10/3' | bc
+echo '2^10' | bc
+echo '1/4' | bc
+echo 'scale=2; -1/4' | bc
+echo 'sqrt(2)' | bc
+echo 'scale=10; sqrt(2)' | bc
+echo '5%3' | bc
+echo 'scale=2; 5.5%2' | bc
+echo '3.5*2.25' | bc
+echo 'x=5; x*2' | bc
+echo 'obase=16; 255' | bc
+echo 'ibase=2; 1010' | bc
+echo '2^-2' | bc
+echo 'scale=5; 2^-2' | bc
+echo 'a[1]=3; a[1]+1' | bc
+echo 'define f(n) { if (n<2) return(1); return(n*f(n-1)); }; f(10)' | bc
+echo '99999999999999999999*99999999999999999999' | bc
+echo '0.1+0.2' | bc
+echo '-0.5' | bc
+echo '1 > 2; 2 >= 2' | bc
+echo '2^200' | bc
+echo 'scale=4; l(10)' | bc -l
+echo 'e(1)' | bc -l
+echo 'l(2)' | bc -l
+echo 's(1)' | bc -l
+echo 'c(1)' | bc -l
+echo '4*a(1)' | bc -l
+echo 'scale=5; e(2.5)' | bc -l
+echo 'j(1,2)' | bc -l
+echo 'sqrt(10)' | bc -l
+
+# ── files and directories ─────────────────────────────────────────────────────
+mkdir -p out/a && touch out/a/f.txt && ls out/a
+cp words.txt w2.txt && diff words.txt w2.txt && echo copied
+mv nums.txt n.txt && ls n.txt && [ ! -e nums.txt ] && echo moved
+rm empty.txt && [ -e empty.txt ]; echo "rc=$?"
+echo hi > new.txt && cat new.txt && echo more >> new.txt && wc -l < new.txt
+echo x | tee t1.txt t2.txt > /dev/null; cat t1.txt t2.txt
+ls src | sort
+ls -1 dir
+ls -a dir | sort
+ls *.csv
+ls -d */ | sort
+test -d src && test -f src/app.js && echo ok
+[ -s empty.txt ] || echo empty
+du -a src >/dev/null && echo du-ok
+
+# ── shell syntax ──────────────────────────────────────────────────────────────
+for f in *.txt; do echo "[$f]"; done
+for i in $(seq 3); do echo "n$i"; done
+for w in $(cat words.txt | sort -u); do printf '%s ' "$w"; done; echo
+i=0; while read -r w; do i=$((i+1)); done < words.txt; echo "$i"
+while IFS=, read -r n a c; do echo "$c:$n"; done < <(tail -n +2 data.csv)
+x=$(grep -c apple words.txt); echo "apples=$x"
+set -- "a b" c; printf '<%s>\n' "$@"
+set -- "a b" c; echo "$#" "$*"
+arr=(one "two three"); echo "${#arr[@]} ${arr[1]}"
+arr=(c a b); arr+=(d); echo "${arr[@]}" "${!arr[@]}"
+read -ra parts <<< "x y z"; echo "${parts[2]} ${#parts[@]}"
+declare -A m=([k1]=v1 [k2]=v2); echo "${m[k2]}"
+f() { echo "args=$#"; }; f "a b" c d
+f() { local v=inner; echo "$v"; }; v=outer; f; echo "$v"
+f() { return 3; }; f; echo "rc=$?"
+{ echo 1; echo 2; } | wc -l
+( cd dir && ls )
+(exit 4); echo "rc=$?"
+[ -f data.csv ] && echo yes || echo no
+[[ "abc" == a* ]] && echo match
+[[ "abc123" =~ ^[a-z]+([0-9]+)$ ]] && echo "${BASH_REMATCH[1]}"
+[[ 10 -gt 9 && "b" > "a" ]] && echo both
+case log.txt in *.txt) echo text;; *) echo other;; esac
+echo $(( 7 * 6 )) $(( 10 / 3 )) $(( 10 % 3 )) $(( 2 ** 8 ))
+n=5; ((n++)); ((n += 2)); echo "$n"
+s="hello world"; echo "${s^^} ${#s} ${s/world/there} ${s:0:5}"
+p=dir/sub/file.txt; echo "${p##*/} ${p%/*} ${p%.txt} ${p#*/}"
+v=; echo "${v:-default}" "${v:=set}" "$v"
+s=aXbXc; echo "${s//X/-}"
+echo {a,b}{1,2}
+echo pre{1..3} {5..1..2}
+read -r a b <<< "x y z"; echo "$a|$b"
+false; echo "rc=$?"
+false | true; echo "${PIPESTATUS[@]}"
+true && false || echo fallback
+echo "$(echo "nested $(echo deep)")"
+echo 'single $HOME' "double \$HOME" "tab:\t"
+echo -e 'a\tb\nc'
+echo -n no-newline; echo
+printf -v out '%03d' 7; echo "$out"
+X=1 bash -c 'echo "X=$X"'
+export Y=2; bash -c 'echo "Y=$Y"'
+seq 3 | while read -r n; do echo "$((n * n))"; done
+ls dir/sub | xargs -I{} echo "file: {}"
+echo a b c d | xargs -n2
+printf 'a b\0c\0' | xargs -0 -n1 echo
+cat words.txt | sort | uniq -c | sort -k1,1nr -k2 | head -2
+
+# ── second batch: more of each tool ──────────────────────────────────────────
+sed -n '1~2p' words.txt
+sed '0,/apple/s//APPLE/' words.txt
+sed -n '/banana/{n;p}' words.txt
+sed '$!N;s/\n/ /' words.txt
+sed -n 'h;n;G;p' nums.txt
+sed '/^$/N;/\n$/D' mixed.txt
+sed -E 's/(^|,)([a-z])/\1\u\2/g' data.csv
+sed 's/.*/"&"/' nums.txt | head -2
+sed -e :a -e '$!N;s/\n//;ta' nums.txt
+sed '2,4!d' words.txt
+sed 's/a/A/3g' <<< "banana bandana"
+sed 'y/0123456789/##########/' log.txt | head -1
+sed -n '2{p;q}' words.txt
+sed '1!G;h;$!d' nums.txt
+sed = words.txt | sed 'N;s/\n/\t/' | head -3
+awk '{print length}' words.txt | paste -sd' '
+awk -F, 'NR==1 {for (i=1;i<=NF;i++) h[i]=$i; next} {print h[1]"="$1, h[2]"="$2}' data.csv
+awk '{a[NR]=$0} END {for (i=NR; i>0; i--) print a[i]}' nums.txt
+awk 'BEGIN {x = 7; y = 2; print x/y, x%y, x^y, -x, int(x/y)}'
+awk 'BEGIN {printf "%5.2f|%-5s|%05d|%x|%o|%e|%g|%c\n", 3.14159, "ab", 42, 255, 8, 12345.678, 0.0001234, "hello"}'
+awk 'BEGIN {s = "hello world"; n = split(s, w, " "); print n, w[1], toupper(w[2]), index(s, "wor"), substr(s, 7)}'
+awk 'BEGIN {s = "aaa"; n = gsub(/a/, "b&", s); print n, s}'
+awk 'BEGIN {if (match("foo123bar", /[0-9]+/)) print RSTART, RLENGTH}'
+awk 'function fact(n) { return n <= 1 ? 1 : n * fact(n - 1) } BEGIN { print fact(10) }'
+awk '{ sum[$1] += 1 } END { n = asort_ok; for (k in sum) print k ": " sum[k] }' words.txt | sort
+awk 'BEGIN { while ((getline line < "nums.txt") > 0) s += line; print s }'
+awk -v OFS='\t' '{ print NR, $0 }' words.txt | head -2
+awk 'NR > 1 { print prev } { prev = $0 }' words.txt
+awk '/start/,/slow/' log.txt
+awk 'BEGIN { print 1e6, 1e-3, 100/3, 2^53, 0.1 + 0.2 }'
+awk 'BEGIN { print substr("hello", 0, 2), substr("hello", -1), substr("hello", 2, 100) }'
+awk '{ $3 = toupper($3) } 1' log.txt | head -2
+awk 'BEGIN { "echo hi" | getline x; print x; close("echo hi") }'
+awk -F: '{ print NF }' <<< "a:b::c"
+awk 'BEGIN { printf "%s %s\n", "only" }'
+awk '{ print > "out_" NR ".txt" } END { close("out_1.txt"); while ((getline l < "out_1.txt") > 0) print "read:", l }' nums.txt
+grep -E '^(apple|date)$' words.txt | sort -u
+grep -c -v -e apple -e banana words.txt
+grep -ow '[a-z]\{4,5\}' log.txt | sort -u
+grep -n '' nums.txt | tail -2
+grep -e '-' log.txt | head -1
+grep -iE 'error|WARN' log.txt | cut -d' ' -f2 | uniq -c
+grep -rh --include='*.js' 'function' . | sort
+grep '\<a[a-z]*e\>' words.txt | sort -u
+grep -E 'a{2,}|n{2}' <<< $'baaa\nbnn\nabc'
+grep -x -F -f <(printf 'apple\ndate\n') words.txt
+tr '[:upper:][:lower:]' '[:lower:][:upper:]' <<< "Hello World"
+tr -s '\n' < mixed.txt | wc -l
+tr 'a-y' 'b-z' <<< "hal"
+tr -d '[:punct:]' <<< "a,b.c!d"
+tr '\n' ',' < nums.txt
+echo "a:b:c" | tr ':' '\n'
+sort -k2 -t, data.csv | head -2
+sort -k1.2,1.3 words.txt | head -3
+sort -rk2 -n -t, data.csv
+sort -u -f mixed.txt
+sort -n -k1,1 -k2,2r <<< $'2 b\n1 z\n2 a\n1 a'
+sort -t. -k1,1n -k2,2n versions.txt
+uniq -f1 <<< $'1 a\n2 a\n3 b'
+uniq -s1 <<< $'xa\nya\nzb'
+uniq -w2 <<< $'abc\nabd\nxyz'
+uniq -ci mixed.txt
+cut -c2- words.txt | head -2
+cut -d, -f1 --output-delimiter=';' data.csv | head -2
+cut -f2 <<< $'a\tb\tc'
+cut -s -d, -f1 <<< $'a,b\nnodelim'
+head -c -3 nums.txt
+tail -c +3 nums.txt | head -2
+head -n 1 words.txt nums.txt
+tac words.txt | head -2
+nl nums.txt
+nl -w3 -s'. ' words.txt | head -2
+nl -bt mixed.txt
+od -An -tx1 <<< "AB"
+od -c words.txt | head -2
+xxd words.txt | head -2
+hexdump -C <<< "hello" | head -1
+strings -n 3 words.txt | head -2
+cksum words.txt
+sum words.txt
+numfmt --to=iec 1048576 2000 1023 1536 10000000
+numfmt --to=si 1000 1500000
+numfmt --from=iec 1K 2M 1.5K
+numfmt --to=iec-i 4096
+numfmt --padding=8 42
+numfmt --format=%.2f 3.14159
+numfmt --to=iec --suffix=B 2048
+numfmt --from=auto 1Ki 1K
+numfmt --to=iec 10239 1047552 123456789
+printf '1024 a\n2048 b\n' | numfmt --to=iec
+numfmt --from=iec --to=si 1M
+numfmt --to=iec --format='%8.1f' 1536
+base32 <<< "hi"
+fmt -w 20 <<< "the quick brown fox jumps over the lazy dog"
+fmt <<< "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+fmt -w 30 <<< $'First sentence here.  Second one follows. And a third\nline that continues the paragraph.\n\nNew paragraph (with parens) and more words to wrap around nicely.'
+fmt -w 40 <<< $'  indented paragraph with several words that need wrapping here\n  and continues on the next line too'
+fmt -s -w 15 <<< $'short line\na much longer line that must be split'
+fmt -u -w 30 <<< "spaced    out     words   and more    words here to wrap"
+fmt -w 25 words.txt
+fmt -w 60 text.txt
+unexpand -a <<< "        eight spaces"
+expand <<< $'a\tb'
+rev words.txt | head -2
+echo 'a b c' | tee t.txt | wc -w; cat t.txt
+echo more | tee -a words.txt > /dev/null; tail -1 words.txt
+csplit -s -f cs_ data.csv 3 && cat cs_00 && echo -- && cat cs_01
+cmp words.txt nums.txt; echo "rc=$?"
+cmp -l <(echo abc) <(echo abd)
+shuf -e a | head -1
+comm -23 <(sort -u words.txt) <(echo apple)
+join -t, <(sort scores.csv) <(sort -t, -k1,1 <<< $'1,x\n3,y')
+paste -d'|' - - - < nums.txt
+paste -s nums.txt
+seq -f '%03g' 3
+seq 10 -3 1
+seq 0.5 0.5 2
+printf '%q\n' "a b" 'c$d' "e'f"
+printf '%s|%5s|%-5s|%.2s\n' x y z abcdef
+printf '%d %i %u\n' 42 -7 3
+printf '%e %.3f %g %G\n' 1234.5 2.71828 0.00001234 1e20
+printf '%c%c\n' A Bcd
+printf '%5.1f%%\n' 99.44
+printf '[%*d]\n' 5 42
+factor 1 17 360
+basename -s .txt dir/sub/file.txt
+basename -a a/b c/d
+dirname /a/b/ c
+
+# ── files, archives ───────────────────────────────────────────────────────────
+mkdir -p a/b/c && touch a/b/c/f && find a | sort
+cp -r src src2 && find src2 -type f | sort
+mv dir renamed && ls renamed && ls dir 2>&1 | head -1; echo "rc=$?"
+rm -r src && [ ! -d src ] && echo gone
+rm -f nothing.txt; echo "rc=$?"
+rmdir dir/sub 2>/dev/null; echo "rc=$?"
+touch new1 new2 && ls new*
+cp words.txt dir/ && ls dir
+ln -s words.txt link.txt 2>/dev/null && cat link.txt | head -1
+tar cf arch.tar words.txt nums.txt && tar tf arch.tar
+mkdir x && tar cf a.tar words.txt && tar xf a.tar -C x && cat x/words.txt | wc -l
+gzip -c words.txt | gunzip | md5sum
+gzip -k nums.txt && ls nums.txt* && gunzip -c nums.txt.gz | head -2
+test -e words.txt -a -f nums.txt && echo both
+[ -d nope ] || [ -e words.txt ] && echo ok
+[ "abc" \< "abd" ] && echo lt
+[ 3 -ge 3 ] && [ ! 2 -eq 3 ] && echo nums
+wc -L words.txt
+
+# ── more shell ────────────────────────────────────────────────────────────────
+case "$(echo AbC)" in [Aa]*[cC]) echo glob-case;; esac
+case 7 in [0-5]) echo low;; [6-9]) echo high;; esac
+s="path/to/file.tar.gz"; echo "${s%%.*} ${s%.*} ${s##*.} ${s#*.}"
+s=abcdef; echo "${s:2} ${s:1:3} ${s: -2} ${#s}"
+s="Hello"; echo "${s,,} ${s^^} ${s,} ${s^}"
+u=; echo "[${u:-d1}] [${u-d2}] [${u:+alt}]"; v=x; echo "[${v:+alt}] [${v:-d}]"
+arr=(z y x); echo "${arr[@]:1}" "${#arr[0]}" "${arr[-1]}"
+declare -A ages=([bob]=25 [amy]=30); for k in $(printf '%s\n' "${!ages[@]}" | sort); do echo "$k=${ages[$k]}"; done
+x=5; y=$((x * 2 + 1)); (( y > 10 )) && echo "y=$y"
+echo $(( (3 + 4) * 2 )) $(( 17 / 5 )) $(( -17 / 5 )) $(( 1 << 4 )) $(( 0xff )) $(( 8#17 ))
+i=0; until (( i >= 3 )); do (( i++ )); done; echo "$i"
+for ((i=0; i<3; i++)); do printf '%d ' "$i"; done; echo
+f() { local IFS=,; echo "$*"; }; f a b c
+f() { echo "$1-$2"; shift 2; echo "rest: $*"; }; f a b c d
+g() { return $(( $1 % 2 )); }; g 3 && echo even || echo odd
+eval 'z=42'; echo "$z"
+cmd="echo hello"; $cmd world
+set -- c b a; for x; do echo "$x"; done
+IFS=: read -r a b c <<< "1:2:3"; echo "$c$b$a"
+while read -r line; do echo "${#line}"; done <<< $'ab\ncde'
+x=$(printf 'a\nb'); echo "${#x}"
+echo "$(( $(wc -l < words.txt) * 2 ))"
+out=$( { echo o1; echo e1 >&2; } 2>&1 ); echo "$out"
+{ echo to-file; } > g.txt; cat g.txt
+echo err >&2 2>/dev/null; echo after
+ls nonexistent 2>/dev/null || echo missing
+true | false | true; echo "${PIPESTATUS[*]}"
+set -o pipefail; false | true; echo "rc=$?"
+(set -e; false; echo not-reached); echo "sub=$?"
+trap 'echo trapped' EXIT; echo body
+getopts_demo() { local OPTIND o; while getopts "ab:" o; do echo "$o=${OPTARG:-}"; done; }; getopts_demo -a -b val
+printf -v v '%s-%s' a b; echo "$v"
+type -t cd; type -t ls
+echo {1..3}{a,b} | wc -w
+echo "tab	here" | cat -A
+echo -e 'x\ty' | cut -f2
+mapfile -t lines < words.txt; echo "${#lines[@]} ${lines[2]}"
+readarray -t arr < <(seq 3); echo "${arr[@]}"
+echo "${!HO*}" | tr ' ' '\n' | grep -c HOME
+cd dir && pwd | sed 's#.*/##' && cd - >/dev/null && ls data.csv
+type -t cd; type -t ls; type -t if; type ls; type cd; type -t nosuchcmd; echo $?
+f() { :; }; type -t f; command -v ls; command -v cd; command -v nosuchcmd; echo $?
+cd dir; cd - >/dev/null; ls data.csv; cd; cd - | sed 's#.*/##' | grep -c .
+case "$(echo AbC)" in [Aa]*[cC]) echo glob-case;; esac
+declare -A ages=([bob]=25 [amy]=30); printf '%s\n' "${!ages[@]}" | sort
+a=(x y z); for i in "${!a[@]}"; do echo "$i:${a[$i]}"; done
+echo if then fi done; echo esac

@@ -5,6 +5,7 @@
  * Also re-exports grep/sed/diff so they override the unix.ts versions.
  */
 import type { Command } from './index';
+import { bracket } from './posix-test';
 import { grepCmd } from './grep';
 import { sedCmd } from './sed';
 import { diffCmd } from './diff';
@@ -13,13 +14,18 @@ export const cdCmd: Command = {
   name: 'cd',
   description: 'Change directory',
   async exec(ctx) {
-    const target = ctx.args[0] || ctx.env['HOME'] || '/';
+    const args = ctx.args[0] === '--' ? ctx.args.slice(1) : ctx.args;
+    const dash = args[0] === '-';
+    if (dash && !ctx.env['OLDPWD']) { ctx.stderr = 'bash: cd: OLDPWD not set\n'; return 1; }
+    const target = dash ? ctx.env['OLDPWD'] : args[0] || ctx.env['HOME'] || '/';
     const resolved = ctx.fs.resolvePath(target === '~' ? (ctx.env['HOME'] || '/') : target, ctx.cwd);
     const stat = await ctx.fs.stat(resolved).catch(() => null);
     if (!stat) { ctx.stderr = `cd: no such file or directory: ${target}\n`; return 1; }
     if (!stat.isDirectory()) { ctx.stderr = `cd: not a directory: ${target}\n`; return 1; }
+    ctx.shell.env['OLDPWD'] = ctx.shell.cwd;
     ctx.shell.cwd = resolved;
     ctx.shell.env['PWD'] = resolved;
+    if (dash) ctx.stdout += resolved + '\n';
     return 0;
   },
 };
@@ -185,11 +191,6 @@ export const shellBuiltins: Command[] = [
   shCmd, bashCmd,
   // Re-exports that override unix.ts versions:
   grepCmd, sedCmd, diffCmd,
-  // POSIX test bracket alias (delegates to test command)
-  { name: '[', description: 'Evaluate conditional expression', async exec(ctx) {
-    const testCmd = ctx.shell.commands.get('test');
-    if (testCmd) return testCmd.exec(ctx);
-    ctx.stderr = '[: test command not found\n';
-    return 2;
-  }},
+  // [ … ] (posix-test.ts: requires the closing ])
+  bracket,
 ];

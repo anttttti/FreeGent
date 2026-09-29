@@ -1,159 +1,108 @@
-/**
- * numfmt — convert numbers from/to human-readable strings
- */
-
 import type { Command } from './index';
-import { parseArgs } from './flags';
+import { sprintf } from './awk';
 
-const SI_SUFFIXES = ['', 'K', 'M', 'G', 'T', 'P', 'E'];
-const IEC_SUFFIXES = ['', 'K', 'M', 'G', 'T', 'P', 'E'];
-const IECI_SUFFIXES = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei'];
-
-function parseNumber(s: string, from: string): number {
-  s = s.trim();
-  if (from === 'none') return parseFloat(s);
-
-  // Try to extract suffix
-  const m = s.match(/^([0-9]*\.?[0-9]+)\s*([A-Za-z]*)$/);
-  if (!m) return parseFloat(s);
-
-  const num = parseFloat(m[1]);
-  const suffix = m[2].toUpperCase();
-  if (!suffix) return num;
-
-  // Determine base from suffix and mode
-  let base: number;
-  if (from === 'iec' || (from === 'auto' && suffix.endsWith('I'))) {
-    base = 1024;
-  } else {
-    base = 1000;
-  }
-
-  const letter = suffix.charAt(0);
-  const idx = 'KMGTPE'.indexOf(letter);
-  if (idx === -1) return num;
-  return num * Math.pow(base, idx + 1);
-}
-
-function formatNumber(value: number, to: string, fmt: string, roundMethod: string): string {
-  if (to === 'none') return applyFormat(value, fmt, roundMethod);
-
-  const base = (to === 'iec' || to === 'iec-i') ? 1024 : 1000;
-  const suffixes = to === 'iec-i' ? IECI_SUFFIXES : (to === 'iec' ? IEC_SUFFIXES : SI_SUFFIXES);
-
-  let idx = 0;
-  let v = Math.abs(value);
-  while (v >= base && idx < suffixes.length - 1) {
-    v /= base;
-    idx++;
-  }
-  if (value < 0) v = -v;
-
-  const formatted = applyFormat(v, fmt, roundMethod);
-  return formatted + suffixes[idx];
-}
-
-function applyFormat(value: number, fmt: string, roundMethod: string): string {
-  // Apply rounding
-  const rounded = applyRounding(value, fmt, roundMethod);
-
-  // Parse format string like %.2f
-  const fmtMatch = fmt.match(/^%\.?(\d*)f$/);
-  if (fmtMatch) {
-    const decimals = fmtMatch[1] ? parseInt(fmtMatch[1], 10) : 1;
-    return rounded.toFixed(decimals);
-  }
-  // Default: 1 decimal place
-  return rounded.toFixed(1);
-}
-
-function applyRounding(value: number, fmt: string, method: string): number {
-  const fmtMatch = fmt.match(/^%\.?(\d*)f$/);
-  const decimals = fmtMatch && fmtMatch[1] ? parseInt(fmtMatch[1], 10) : 1;
-  const factor = Math.pow(10, decimals);
-
-  switch (method) {
-    case 'up': return Math.ceil(value * factor) / factor;
-    case 'down': return Math.floor(value * factor) / factor;
-    case 'from-zero':
-      return value >= 0
-        ? Math.ceil(value * factor) / factor
-        : Math.floor(value * factor) / factor;
-    case 'towards-zero':
-      return value >= 0
-        ? Math.floor(value * factor) / factor
-        : Math.ceil(value * factor) / factor;
-    case 'nearest':
-    default:
-      return Math.round(value * factor) / factor;
-  }
-}
+// GNU numfmt: --from/--to none|si|iec|iec-i|auto, --round (default from-zero), --format (printf
+// %f with width/precision, text around it), --padding, --suffix, --field, -d, --header,
+// --invalid. Scaled output has one decimal below 10 ("9.6M") and none from 10 up; values read
+// with a --from unit become integers.
+const UNITS = 'KMGTPEZY';
 
 export const numfmtCmd: Command = {
   name: 'numfmt',
-  description: 'Convert numbers from/to human-readable strings',
+  description: 'Convert numbers to/from human-readable strings',
   async exec(ctx) {
-    try {
-      // Pre-process args to split --key=value into --key value
-      const expandedArgs: string[] = [];
-      for (const arg of ctx.args) {
-        const eqMatch = arg.match(/^(--[a-z-]+)=(.*)$/);
-        if (eqMatch) {
-          expandedArgs.push(eqMatch[1], eqMatch[2]);
-        } else {
-          expandedArgs.push(arg);
-        }
-      }
-      const { values, positional, flags } = parseArgs(expandedArgs, [
-        'from', 'to', 'format', 'padding', 'suffix', 'header', 'round',
-      ]);
-
-      const from = values.from || 'none';
-      const to = values.to || 'none';
-      const fmt = values.format || '%.1f';
-      const padding = values.padding ? parseInt(values.padding, 10) : 0;
-      const suffix = values.suffix || '';
-      const headerCount = values.header ? parseInt(values.header, 10) || 1 : (flags.header ? 1 : 0);
-      const roundMethod = values.round || 'nearest';
-
-      let inputs: string[];
-      if (positional.length > 0) {
-        inputs = positional;
-      } else if (ctx.stdin) {
-        inputs = ctx.stdin.trimEnd().split('\n');
-      } else {
-        return 0;
-      }
-
-      for (let i = 0; i < inputs.length; i++) {
-        const line = inputs[i];
-        // Pass through header lines
-        if (i < headerCount) {
-          ctx.stdout += line + '\n';
-          continue;
-        }
-
-        const num = parseNumber(line, from);
-        if (isNaN(num)) {
-          ctx.stderr += `numfmt: invalid number: '${line}'\n`;
-          return 1;
-        }
-
-        let result = formatNumber(num, to, fmt, roundMethod) + suffix;
-
-        // Apply padding
-        if (padding > 0 && result.length < padding) {
-          result = ' '.repeat(padding - result.length) + result;
-        } else if (padding < 0 && result.length < -padding) {
-          result = result + ' '.repeat(-padding - result.length);
-        }
-
-        ctx.stdout += result + '\n';
-      }
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `numfmt: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+    let from = 'none', to = 'none', round = 'from-zero', format: string | null = null, padding = 0;
+    let suffix = '', field = 1, delim: string | null = null, header = 0, invalid = 'abort';
+    const nums: string[] = [];
+    for (let i = 0; i < ctx.args.length; i++) {
+      const a = ctx.args[i];
+      const [k, v] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, undefined];
+      const val = () => v ?? ctx.args[++i];
+      if (k === '--from') from = val();
+      else if (k === '--to') to = val();
+      else if (k === '--round') round = val();
+      else if (k === '--format') format = val();
+      else if (k === '--padding') padding = parseInt(val(), 10);
+      else if (k === '--suffix') suffix = val();
+      else if (k === '--field') field = parseInt(val(), 10);
+      else if (k === '-d' || k === '--delimiter') delim = val();
+      else if (k.startsWith('-d') && k.length > 2) delim = k.slice(2);
+      else if (k === '--header') header = v ? parseInt(v, 10) : 1;
+      else if (k === '--invalid') invalid = val();
+      else if (k === '--grouping' || k === '-z' || k === '--zero-terminated' || k === '--debug') { /* C locale: no grouping */ }
+      else nums.push(a);
     }
+    const doRound = (x: number) => {
+      switch (round) {
+        case 'up': return Math.ceil(x);
+        case 'down': return Math.floor(x);
+        case 'towards-zero': return Math.trunc(x);
+        case 'nearest': return Math.sign(x) * Math.round(Math.abs(x));
+        default: return Math.sign(x) * Math.ceil(Math.abs(x));
+      }
+    };
+    const roundTo = (x: number, dp: number) => doRound(x * 10 ** dp) / 10 ** dp;
+    const parse = (s: string): number => {
+      const m = /^\s*([-+]?(?:\d+\.?\d*|\.\d+))([A-Za-z]{0,2})\s*$/.exec(s);
+      if (!m) throw new Error(`invalid number: '${s}'`);
+      const n = parseFloat(m[1]);
+      const sfx = m[2];
+      if (!sfx) return n;
+      const u = UNITS.indexOf(sfx[0]);
+      const withI = sfx.length === 2 && sfx[1] === 'i';
+      if (u < 0 || (sfx.length === 2 && !withI) || from === 'none' || (from === 'si' && withI) || (from === 'iec' && withI) || (from === 'iec-i' && !withI)) {
+        throw new Error(from === 'none' ? `invalid suffix in input: '${s}'` : `invalid suffix in input: '${s}'`);
+      }
+      const base = from === 'si' || (from === 'auto' && !withI) ? 1000 : 1024;
+      return doRound(n * base ** (u + 1));
+    };
+    const render = (x: number): string => {
+      let out: string;
+      if (to === 'none') {
+        out = format ? '' : Number.isInteger(x) ? String(x) : String(x);
+      } else {
+        const base = to === 'si' ? 1000 : 1024;
+        let p = 0, v = Math.abs(x);
+        while (v >= base && p < UNITS.length) { v /= base; p++; }
+        if (p === 0) out = String(doRound(x));
+        else {
+          let r = v < 10 ? roundTo(v, 1) : doRound(v);
+          if (r >= base && p < UNITS.length) { r = roundTo(r / base, 1); p++; }
+          const s = r < 10 ? r.toFixed(1) : String(r);
+          out = (x < 0 ? '-' : '') + s + UNITS[p - 1] + (to === 'iec-i' ? 'i' : '');
+        }
+      }
+      if (format) {
+        const m = /^(.*?)%('?)(-?)(0?)(\d*)(?:\.(\d+))?f(.*)$/.exec(format);
+        if (!m) throw new Error(`invalid format '${format}'`);
+        const [, pre, , left, zero, width, prec, post] = m;
+        const body = to === 'none' ? (prec !== undefined ? sprintf(`%.${prec}f`, [roundTo(x, parseInt(prec, 10))]) : String(x)) : out;
+        const w = parseInt(width || '0', 10);
+        const padded = body.length >= w ? body : left ? body.padEnd(w) : zero ? body.padStart(w, '0') : body.padStart(w);
+        out = pre + padded + post;
+      }
+      out += suffix;
+      if (padding) out = padding > 0 ? out.padStart(padding) : out.padEnd(-padding);
+      return out;
+    };
+    const convertLine = (line: string): string => {
+      const parts = delim === null ? line.split(/(\s+)/) : line.split(delim);
+      const idx = delim === null ? (() => { let n = 0; for (let k = 0; k < parts.length; k++) { if (/^\s+$/.test(parts[k]) || parts[k] === '') continue; n++; if (n === field) return k; } return -1; })() : field - 1;
+      if (idx < 0 || idx >= parts.length) return line;
+      parts[idx] = render(parse(parts[idx]));
+      return delim === null ? parts.join('') : parts.join(delim);
+    };
+    let rc = 0;
+    const lines = nums.length ? nums : ctx.stdin.split('\n').filter((l, k, arr) => k < arr.length - 1 || l !== '');
+    lines.forEach((l, k) => {
+      if (!nums.length && k < header) { ctx.stdout += l + '\n'; return; }
+      try { ctx.stdout += convertLine(l) + '\n'; }
+      catch (e: any) {
+        ctx.stderr += `numfmt: ${e.message}\n`;
+        rc = 2;
+        if (invalid === 'warn' || invalid === 'ignore') ctx.stdout += l + '\n';
+      }
+    });
+    return rc;
   },
 };

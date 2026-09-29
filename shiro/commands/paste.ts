@@ -1,79 +1,63 @@
-
 import type { Command } from './index';
-import { parseArgs, readFileText } from './flags';
+import { toLines } from './flags';
+
+// GNU paste: lines of the files side by side (or one file per line with -s), delimiters cycled
+// from the -d list (\t \n \\ and \0 for none). Each "-" takes the next line of stdin in turn.
+function delimList(spec: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < spec.length; i++) {
+    if (spec[i] === '\\' && i + 1 < spec.length) {
+      const c = spec[++i];
+      out.push(c === 't' ? '\t' : c === 'n' ? '\n' : c === '0' ? '' : c === '\\' ? '\\' : c);
+    } else out.push(spec[i]);
+  }
+  return out.length ? out : ['\t'];
+}
+
 export const paste: Command = {
   name: "paste",
   description: "Merge lines of files",
   async exec(ctx) {
+    let delims = ['\t'], serial = false;
+    const files: string[] = [];
     const args = ctx.args;
-    const { values, positional, flags } = parseArgs(args, ["d", "delimiters"]);
-
-    const delimiters = values.d || values.delimiters || "\t";
-    const serial = flags.s;
-
-    if (positional.length === 0) {
-      // Read from stdin
-      positional.push("-");
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--serial') serial = true;
+      else if (a.startsWith('--delimiters=')) delims = delimList(a.slice(13));
+      else if (a.startsWith('-') && a !== '-') {
+        // Bundled short options: -s, -d LIST (the rest of the argument or the next one), -z
+        for (let j = 1; j < a.length; j++) {
+          if (a[j] === 's') serial = true;
+          else if (a[j] === 'd') { delims = delimList(j + 1 < a.length ? a.slice(j + 1) : (args[++i] ?? '')); break; }
+        }
+      } else files.push(a);
     }
-
-    try {
-      // Read all files
-      const fileContents: string[][] = [];
-
-      for (const file of positional) {
-        let content: string;
-        if (file === "-") {
-          content = ctx.stdin;
-        } else {
-          const resolved = ctx.fs.resolvePath(file, ctx.cwd);
-          content = await readFileText(ctx.fs, resolved);
-        }
-        fileContents.push(content.split("\n").filter((line, idx, arr) => {
-          // Keep all lines except the last empty one (from trailing newline)
-          return idx < arr.length - 1 || line !== "";
-        }));
+    if (!files.length) files.push('-');
+    const stdinLines = toLines(ctx.stdin).lines;
+    let stdinPos = 0;
+    const sources: { lines: string[] | null }[] = [];
+    for (const f of files) {
+      if (f === '-') { sources.push({ lines: null }); continue; }
+      try { sources.push({ lines: toLines(await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string).lines }); }
+      catch { ctx.stderr += `paste: ${f}: No such file or directory\n`; return 1; }
+    }
+    if (serial) {
+      for (const s of sources) {
+        const lines = s.lines ?? stdinLines.slice(stdinPos, (stdinPos = stdinLines.length));
+        ctx.stdout += lines.map((l, k) => (k ? delims[(k - 1) % delims.length] : '') + l).join('') + '\n';
       }
-
-      const output: string[] = [];
-
-      if (serial) {
-        // Serial mode: paste each file's lines on one line
-        for (const lines of fileContents) {
-          const delimiterChars = delimiters.split("");
-          const mergedLine: string[] = [];
-          for (let i = 0; i < lines.length; i++) {
-            mergedLine.push(lines[i]);
-            if (i < lines.length - 1) {
-              mergedLine.push(delimiterChars[i % delimiterChars.length]);
-            }
-          }
-          output.push(mergedLine.join(""));
-        }
-      } else {
-        // Parallel mode: paste corresponding lines from each file
-        const maxLines = Math.max(...fileContents.map(f => f.length));
-        const delimiterChars = delimiters.split("");
-
-        for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
-          const lineParts: string[] = [];
-          for (let fileIdx = 0; fileIdx < fileContents.length; fileIdx++) {
-            const line = fileContents[fileIdx][lineIdx] || "";
-            lineParts.push(line);
-
-            // Add delimiter between files (but not after last file)
-            if (fileIdx < fileContents.length - 1) {
-              lineParts.push(delimiterChars[fileIdx % delimiterChars.length]);
-            }
-          }
-          output.push(lineParts.join(""));
-        }
-      }
-
-      ctx.stdout += output.join("\n") + (output.length > 0 ? "\n" : "");
       return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `paste: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
     }
+    const pos = sources.map(() => 0);
+    for (;;) {
+      const parts: (string | null)[] = sources.map((s, k) => {
+        if (s.lines === null) return stdinPos < stdinLines.length ? stdinLines[stdinPos++] : null;
+        return pos[k] < s.lines.length ? s.lines[pos[k]++] : null;
+      });
+      if (parts.every(p => p === null)) break;
+      ctx.stdout += parts.map((p, k) => (k ? delims[(k - 1) % delims.length] : '') + (p ?? '')).join('') + '\n';
+    }
+    return 0;
   },
 };

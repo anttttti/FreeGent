@@ -1,136 +1,149 @@
 
-import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import type { Command, CommandContext } from './index';
 
-interface KeySpec {
-  startField: number;
-  startChar: number;
-  endField: number;
-  endChar: number;
-  numeric: boolean;
-  reverse: boolean;
-  ignoreCase: boolean;
-  humanNumeric: boolean;
-  versionSort: boolean;
-}
+// GNU sort in the C locale: byte order; keys (-k) with their own options overriding the global
+// ones; a last-resort whole-line comparison unless -s or -u; -n, -g, -h, -V, -M, -f, -d, -i, -b,
+// -r, -u, -c/-C, -o, -t, -z.
 
-function parseKeySpec(spec: string): KeySpec {
-  const ks: KeySpec = { startField: 1, startChar: 0, endField: 0, endChar: 0, numeric: false, reverse: false, ignoreCase: false, humanNumeric: false, versionSort: false };
-  // Format: FIELD[.CHAR][FLAGS][,FIELD[.CHAR][FLAGS]]
-  const [startPart, endPart] = spec.split(',');
-  const parseFieldPart = (s: string) => {
-    let field = 0, char = 0, flags = '';
-    const m = s.match(/^(\d+)(?:\.(\d+))?([nrfhV]*)?$/);
-    if (m) {
-      field = parseInt(m[1], 10);
-      char = m[2] ? parseInt(m[2], 10) : 0;
-      flags = m[3] || '';
-    }
-    return { field, char, flags };
-  };
-  const start = parseFieldPart(startPart);
-  ks.startField = start.field;
-  ks.startChar = start.char;
-  const applyFlags = (flags: string) => {
-    if (flags.includes('n')) ks.numeric = true;
-    if (flags.includes('r')) ks.reverse = true;
-    if (flags.includes('f')) ks.ignoreCase = true;
-    if (flags.includes('h')) ks.humanNumeric = true;
-    if (flags.includes('V')) ks.versionSort = true;
-  };
-  applyFlags(start.flags);
-  if (endPart) {
-    const end = parseFieldPart(endPart);
-    ks.endField = end.field;
-    ks.endChar = end.char;
-    applyFlags(end.flags);
+interface Opts { b: boolean; d: boolean; f: boolean; g: boolean; i: boolean; M: boolean; n: boolean; r: boolean; V: boolean; h: boolean }
+interface Key { sf: number; sc: number; ef: number; ec: number; opts: Opts; hasOpts: boolean }
+
+const noOpts = (): Opts => ({ b: false, d: false, f: false, g: false, i: false, M: false, n: false, r: false, V: false, h: false });
+const setOpt = (o: Opts, ch: string) => { if (ch in o) (o as any)[ch] = true; };
+
+function parseKey(spec: string): Key {
+  const [a, b] = spec.split(',');
+  const pa = /^(\d+)(?:\.(\d+))?([bdfgiMnrVhR]*)$/.exec(a);
+  if (!pa) throw new Error(`invalid number at field start: invalid count at start of '${spec}'`);
+  const opts = noOpts();
+  for (const ch of pa[3]) setOpt(opts, ch);
+  let ef = 0, ec = 0;
+  let hasOpts = pa[3].length > 0;
+  if (b !== undefined) {
+    const pb = /^(\d+)(?:\.(\d+))?([bdfgiMnrVhR]*)$/.exec(b);
+    if (!pb) throw new Error(`invalid number after ',': invalid count at start of '${b}'`);
+    ef = parseInt(pb[1], 10); ec = pb[2] ? parseInt(pb[2], 10) : 0;
+    for (const ch of pb[3]) setOpt(opts, ch);
+    hasOpts = hasOpts || pb[3].length > 0;
   }
-  return ks;
+  return { sf: parseInt(pa[1], 10), sc: pa[2] ? parseInt(pa[2], 10) : 1, ef, ec, opts, hasOpts };
 }
 
-function extractField(line: string, spec: KeySpec, delim: string | null): string {
-  const parts = delim ? line.split(delim) : line.split(/\s+/).filter(Boolean);
-  const si = spec.startField - 1;
-  const ei = spec.endField > 0 ? spec.endField - 1 : si;
-  let result = parts.slice(si, ei + 1).join(delim || ' ');
-  if (spec.startChar > 0) result = result.slice(spec.startChar - 1);
-  if (spec.endChar > 0 && spec.endField > 0) {
-    // endChar is relative to the end field
-    const endFieldContent = parts[ei] || '';
-    const endFieldStart = result.length - endFieldContent.length;
-    if (endFieldStart >= 0 && spec.endChar < endFieldContent.length) {
-      result = result.slice(0, endFieldStart + spec.endChar);
-    }
+const isBlank = (c: string) => c === ' ' || c === '\t';
+
+/** Field start offsets (default: a field is its leading blanks + non-blanks). */
+function fieldStarts(line: string, tab: string | null): number[] {
+  const starts = [0];
+  if (tab !== null) {
+    for (let k = 0; k < line.length; k++) if (line[k] === tab) starts.push(k + 1);
+    return starts;
   }
-  return result;
+  let k = 0;
+  while (k < line.length) {
+    while (k < line.length && isBlank(line[k])) k++;
+    while (k < line.length && !isBlank(line[k])) k++;
+    if (k < line.length) starts.push(k);
+  }
+  return starts;
 }
 
-function parseHumanSize(s: string): number {
-  const m = s.trim().match(/^([+-]?\d+(?:\.\d+)?)\s*([KMGTPE]i?)?B?$/i);
-  if (!m) return parseFloat(s) || 0;
-  let num = parseFloat(m[1]);
-  const suffix = (m[2] || '').toUpperCase().replace('I', '');
-  const multipliers: Record<string, number> = { K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18 };
-  if (suffix && multipliers[suffix]) num *= multipliers[suffix];
-  return num;
+function keyText(line: string, key: Key, tab: string | null, bStart: boolean, bEnd: boolean): string {
+  const starts = fieldStarts(line, tab);
+  const fieldEnd = (f: number) => {
+    if (f >= starts.length) return line.length;
+    if (tab !== null) return f + 1 < starts.length ? starts[f + 1] - 1 : line.length;
+    return f + 1 < starts.length ? starts[f + 1] : line.length;
+  };
+  // Start
+  let s: number;
+  if (key.sf - 1 >= starts.length) s = line.length;
+  else {
+    s = starts[key.sf - 1];
+    if (bStart) while (s < line.length && isBlank(line[s])) s++;
+    s = Math.min(s + key.sc - 1, fieldEnd(key.sf - 1));
+  }
+  // End
+  let e: number;
+  if (key.ef === 0) e = line.length;
+  else if (key.ec === 0) e = fieldEnd(key.ef - 1);
+  else if (key.ef - 1 >= starts.length) e = line.length;
+  else {
+    let fs = starts[key.ef - 1];
+    if (bEnd) while (fs < line.length && isBlank(line[fs])) fs++;
+    e = Math.min(fs + key.ec, fieldEnd(key.ef - 1));
+  }
+  return e > s ? line.slice(s, e) : '';
 }
 
-function versionCompare(a: string, b: string): number {
-  const splitVersion = (s: string) => s.split(/(\d+)/).filter(Boolean);
-  const pa = splitVersion(a);
-  const pb = splitVersion(b);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const x = pa[i] || '';
-    const y = pb[i] || '';
-    const xn = parseInt(x, 10);
-    const yn = parseInt(y, 10);
-    if (!isNaN(xn) && !isNaN(yn)) {
-      if (xn !== yn) return xn - yn;
-    } else {
-      const cmp = x.localeCompare(y);
-      if (cmp !== 0) return cmp;
+const numPrefix = (s: string): number => {
+  const m = /^[ \t]*(-?)(\d*)(?:\.(\d*))?/.exec(s);
+  if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) return 0;
+  return parseFloat(`${m[1]}${m[2] || '0'}.${m[3] || '0'}`);
+};
+const generalNum = (s: string): number => {
+  const m = /^[ \t]*[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?|inf(?:inity)?|nan)/i.exec(s);
+  return m ? parseFloat(m[0].trim().replace(/^([-+]?)inf.*/i, '$1Infinity')) : -Infinity;
+};
+const humanKey = (s: string): [number, number] => {
+  const m = /^[ \t]*(-?)(\d*(?:\.\d*)?)([KMGTPEZY]?)/i.exec(s);
+  if (!m || !m[2]) return [0, 0];
+  const n = parseFloat(m[1] + m[2]) || 0;
+  const mag = m[3] ? 'KMGTPEZY'.indexOf(m[3].toUpperCase()) + 1 : 0;
+  return [n < 0 ? -mag : mag, n];
+};
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const monthKey = (s: string) => MONTHS.indexOf(s.trim().slice(0, 3).toUpperCase()) + 1;
+
+// GNU filevercmp, simplified: compare non-digit parts (letters < non-letters, ~ first) and
+// digit runs numerically.
+function verCmp(a: string, b: string): number {
+  const order = (c: string | undefined) => c === undefined ? 0 : c === '~' ? -1 : /[A-Za-z]/.test(c) ? c.charCodeAt(0) : c.charCodeAt(0) + 256;
+  let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    let first = 0;
+    while ((i < a.length && !/\d/.test(a[i])) || (j < b.length && !/\d/.test(b[j]))) {
+      const ac = i < a.length && !/\d/.test(a[i]) ? a[i] : undefined;
+      const bc = j < b.length && !/\d/.test(b[j]) ? b[j] : undefined;
+      const d = order(ac) - order(bc);
+      if (d) return d;
+      i++; j++;
     }
+    while (a[i] === '0') i++;
+    while (b[j] === '0') j++;
+    while (i < a.length && /\d/.test(a[i]) && j < b.length && /\d/.test(b[j])) {
+      if (!first) first = a.charCodeAt(i) - b.charCodeAt(j);
+      i++; j++;
+    }
+    if (i < a.length && /\d/.test(a[i])) return 1;
+    if (j < b.length && /\d/.test(b[j])) return -1;
+    if (first) return first;
   }
   return 0;
 }
 
-function makeComparator(keys: KeySpec[], delim: string | null, globalNumeric: boolean, globalReverse: boolean, globalIgnoreCase: boolean, globalHuman: boolean, globalVersion: boolean, ignoreBlanks: boolean): (a: string, b: string) => number {
-  return (a: string, b: string) => {
-    if (keys.length > 0) {
-      for (const key of keys) {
-        let fa = extractField(a, key, delim);
-        let fb = extractField(b, key, delim);
-        if (ignoreBlanks) { fa = fa.trimStart(); fb = fb.trimStart(); }
-        const numeric = key.numeric || globalNumeric;
-        const ignoreCase = key.ignoreCase || globalIgnoreCase;
-        const human = key.humanNumeric || globalHuman;
-        const version = key.versionSort || globalVersion;
-        const reverse = key.reverse || globalReverse;
-        let cmp = 0;
-        if (human) {
-          cmp = parseHumanSize(fa) - parseHumanSize(fb);
-        } else if (version) {
-          cmp = versionCompare(fa, fb);
-        } else if (numeric) {
-          cmp = (parseFloat(fa) || 0) - (parseFloat(fb) || 0);
-        } else {
-          if (ignoreCase) { fa = fa.toLowerCase(); fb = fb.toLowerCase(); }
-          cmp = fa.localeCompare(fb);
-        }
-        if (cmp !== 0) return reverse ? -cmp : cmp;
-      }
-      return 0;
-    }
-    // No key specs — sort whole line
-    let la = ignoreBlanks ? a.trimStart() : a;
-    let lb = ignoreBlanks ? b.trimStart() : b;
-    if (globalHuman) return parseHumanSize(la) - parseHumanSize(lb);
-    if (globalVersion) return versionCompare(la, lb);
-    if (globalNumeric) return (parseFloat(la) || 0) - (parseFloat(lb) || 0);
-    if (globalIgnoreCase) { la = la.toLowerCase(); lb = lb.toLowerCase(); }
-    return la.localeCompare(lb);
-  };
+const bytesCmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+
+function compareBy(a: string, b: string, o: Opts): number {
+  if (o.b) { a = a.replace(/^[ \t]+/, ''); b = b.replace(/^[ \t]+/, ''); }
+  if (o.n) return Math.sign(numPrefix(a) - numPrefix(b));
+  if (o.g) { const x = generalNum(a), y = generalNum(b); return x === y ? 0 : x < y ? -1 : 1; }
+  if (o.h) { const [ma, na] = humanKey(a), [mb, nb] = humanKey(b); return ma !== mb ? Math.sign(ma - mb) : Math.sign(na - nb); }
+  if (o.M) return Math.sign(monthKey(a) - monthKey(b));
+  if (o.V) return Math.sign(verCmp(a, b));
+  if (o.d) { a = a.replace(/[^A-Za-z0-9 \t]/g, ''); b = b.replace(/[^A-Za-z0-9 \t]/g, ''); }
+  if (o.i) { a = a.replace(/[^\x20-\x7e]/g, ''); b = b.replace(/[^\x20-\x7e]/g, ''); }
+  if (o.f) { a = a.toUpperCase(); b = b.toUpperCase(); }
+  return bytesCmp(a, b);
+}
+
+async function readAll(ctx: CommandContext, files: string[]): Promise<string> {
+  if (!files.length) return ctx.stdin;
+  let text = '';
+  for (const f of files) {
+    const t = f === '-' ? ctx.stdin : await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string;
+    text += t && !t.endsWith('\n') ? t + '\n' : t;
+  }
+  return text;
 }
 
 export const sort: Command = {
@@ -138,89 +151,103 @@ export const sort: Command = {
   description: "Sort lines of text",
   async exec(ctx) {
     const args = ctx.args;
-    // Custom parsing for -k and -t which need value arguments
-    const keys: KeySpec[] = [];
-    let delim: string | null = null;
-    let numeric = false, reverse = false, unique = false, stable = false;
-    let ignoreCase = false, humanNumeric = false, versionSort = false;
-    let ignoreBlanks = false, checkSorted = false;
-    const positional: string[] = [];
-
-    let i = 0;
-    while (i < args.length) {
-      const arg = args[i];
-      if (arg === '-k' && i + 1 < args.length) {
-        keys.push(parseKeySpec(args[++i]));
-      } else if (arg.startsWith('-k') && arg.length > 2) {
-        keys.push(parseKeySpec(arg.slice(2)));
-      } else if (arg === '-t' && i + 1 < args.length) {
-        delim = args[++i];
-      } else if (arg.startsWith('-t') && arg.length > 2) {
-        delim = arg.slice(2);
-      } else if (arg === '--') {
-        positional.push(...args.slice(i + 1));
-        break;
-      } else if (arg.startsWith('-') && !arg.startsWith('--') && arg.length > 1) {
-        for (const ch of arg.slice(1)) {
-          if (ch === 'n') numeric = true;
-          else if (ch === 'r') reverse = true;
-          else if (ch === 'u') unique = true;
-          else if (ch === 's') stable = true;
-          else if (ch === 'f') ignoreCase = true;
-          else if (ch === 'h') humanNumeric = true;
-          else if (ch === 'V') versionSort = true;
-          else if (ch === 'b') ignoreBlanks = true;
-          else if (ch === 'c') checkSorted = true;
-        }
-      } else {
-        positional.push(arg);
-      }
-      i++;
-    }
-
+    const g = noOpts();
+    const keys: Key[] = [];
+    let tab: string | null = null;
+    let unique = false, stable = false, check: false | 'c' | 'C' = false, zero = false;
+    let output: string | null = null;
+    const files: string[] = [];
     try {
-      const { content } = await readInput(
-        positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath
-      );
-      let lines = content.split("\n").filter(Boolean);
-
-      const cmp = makeComparator(keys, delim, numeric, false, ignoreCase, humanNumeric, versionSort, ignoreBlanks);
-
-      if (checkSorted) {
-        for (let j = 1; j < lines.length; j++) {
-          if (cmp(lines[j - 1], lines[j]) > 0) {
-            ctx.stderr += `sort: -:${j + 1}: disorder: ${lines[j]}\n`;
-            return 1;
-          }
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--') { files.push(...args.slice(i + 1)); break; }
+        if (a.startsWith('--')) {
+          const [k, v] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, undefined];
+          const map: Record<string, string> = { '--numeric-sort': 'n', '--reverse': 'r', '--ignore-case': 'f', '--general-numeric-sort': 'g',
+            '--human-numeric-sort': 'h', '--version-sort': 'V', '--month-sort': 'M', '--ignore-leading-blanks': 'b',
+            '--dictionary-order': 'd', '--ignore-nonprinting': 'i' };
+          if (map[k]) setOpt(g, map[k]);
+          else if (k === '--unique') unique = true;
+          else if (k === '--stable') stable = true;
+          else if (k === '--check') check = v === 'quiet' || v === 'silent' ? 'C' : 'c';
+          else if (k === '--key') keys.push(parseKey(v ?? args[++i]));
+          else if (k === '--field-separator') tab = v ?? args[++i];
+          else if (k === '--output') output = v ?? args[++i];
+          else if (k === '--zero-terminated') zero = true;
+          else if (k === '--merge' || k === '--parallel' || k === '--buffer-size' || k === '--temporary-directory') { if (v === undefined && k !== '--merge') i++; }
+          else { ctx.stderr += `sort: unrecognized option '${a}'\n`; return 2; }
+          continue;
         }
-        return 0;
+        if (a.startsWith('-') && a.length > 1) {
+          for (let j = 1; j < a.length; j++) {
+            const ch = a[j];
+            const rest = a.slice(j + 1);
+            if (ch === 'k') { keys.push(parseKey(rest || args[++i])); break; }
+            if (ch === 't') { tab = rest || args[++i]; if (tab === '\\t') tab = '\t'; if (tab === '\\0') tab = '\0'; break; }
+            if (ch === 'o') { output = rest || args[++i]; break; }
+            if (ch === 'S' || ch === 'T') { if (!rest) i++; break; }
+            if (ch === 'u') unique = true;
+            else if (ch === 's') stable = true;
+            else if (ch === 'c') check = 'c';
+            else if (ch === 'C') check = 'C';
+            else if (ch === 'z') zero = true;
+            else if (ch === 'm' || ch === 'R') { /* merge: sorting is fine; random: unsupported */ }
+            else if ('bdfgiMnrVh'.includes(ch)) setOpt(g, ch);
+            else { ctx.stderr += `sort: invalid option -- '${ch}'\n`; return 2; }
+          }
+          continue;
+        }
+        files.push(a);
       }
-
-      if (stable) {
-        // Stable sort (JS sort is stable in modern engines, but we make it explicit)
-        lines.sort(cmp);
-      } else {
-        lines.sort(cmp);
-      }
-
-      if (unique) {
-        lines = lines.filter((line, idx) => idx === 0 || cmp(lines[idx - 1], line) !== 0);
-      }
-
-      if (reverse && keys.length === 0) {
-        lines.reverse();
-      } else if (reverse && keys.length > 0) {
-        // Reverse was not already applied per-key for global reverse
-        // Only apply if no key has its own reverse flag
-        const anyKeyReverse = keys.some(k => k.reverse);
-        if (!anyKeyReverse) lines.reverse();
-      }
-
-      ctx.stdout += lines.join("\n") + "\n";
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `sort: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+    } catch (e: any) {
+      ctx.stderr += `sort: ${e.message}\n`;
+      return 2;
     }
+
+    let text: string;
+    try { text = await readAll(ctx, files); }
+    catch { ctx.stderr += `sort: cannot read: ${files.find(f => f !== '-') ?? '-'}: No such file or directory\n`; return 2; }
+    const sep = zero ? '\0' : '\n';
+    const lines = text === '' ? [] : text.split(sep);
+    if (text.endsWith(sep)) lines.pop();
+
+    const keyCmp = (a: string, b: string): number => {
+      for (const k of keys) {
+        const o = k.hasOpts ? k.opts : { ...g, r: g.r };
+        const r = o.r;
+        const c = compareBy(keyText(a, k, tab, o.b, o.b), keyText(b, k, tab, o.b, o.b), { ...o, r: false, b: false });
+        if (c) return r ? -c : c;
+      }
+      if (!keys.length) {
+        const c = compareBy(a, b, { ...g, r: false });
+        if (c) return g.r ? -c : c;
+      }
+      return 0;
+    };
+    // Last resort (no -s, -u): whole lines as bytes, reversed with -r.
+    const cmp = (a: string, b: string): number => {
+      const c = keyCmp(a, b);
+      if (c || stable || unique) return c;
+      const l = bytesCmp(a, b);
+      return g.r ? -l : l;
+    };
+
+    if (check) {
+      for (let j = 1; j < lines.length; j++) {
+        const c = cmp(lines[j - 1], lines[j]);
+        if (c > 0 || (unique && c === 0)) {
+          if (check === 'c') ctx.stderr += `sort: ${files[0] ?? '-'}:${j + 1}: disorder: ${lines[j]}\n`;
+          return 1;
+        }
+      }
+      return 0;
+    }
+
+    const sorted = lines.map((l, k) => [l, k] as [string, number]).sort((x, y) => cmp(x[0], y[0]) || x[1] - y[1]).map(x => x[0]);
+    const out = unique ? sorted.filter((l, k) => k === 0 || keyCmp(sorted[k - 1], l) !== 0) : sorted;
+    const result = out.map(l => l + sep).join('');
+    if (output) await ctx.fs.writeFile(ctx.fs.resolvePath(output, ctx.cwd), result);
+    else ctx.stdout += result;
+    return 0;
   },
 };
