@@ -1,6 +1,11 @@
-name = "fg-proxy"
+name = "freegent-proxy"
 main = "worker.js"
 compatibility_date = "2024-09-23"
+
+# Served only at proxy.freegent.ai; the account's *.workers.dev URL is disabled.
+# Self-hosting in your own account: delete these two settings and use the workers.dev URL.
+workers_dev = false
+routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 
 # Optional: add shared API keys so GitHub Pages users can access those
 # providers without configuring their own keys in the browser.

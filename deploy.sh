@@ -341,7 +341,7 @@ if $DO_WORKER; then
         || fail "CLOUDFLARE_API_TOKEN not set.\n  Export it, or add to: $CREDS"
 
     (cd cf-worker && CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" npx wrangler deploy)
-    ok "CF Worker deployed → https://fg-proxy.antti-puurula.workers.dev"
+    ok "CF Worker deployed → https://proxy.freegent.ai"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -350,7 +350,7 @@ if $DO_GIT; then
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
     FREEGENT_DEPLOY=1 git push
     ok "Pushed branch '$BRANCH' → https://github.com/anttttti/FreeGent"
-    ok "GitHub Pages → https://anttttti.github.io/FreeGent/ (Pages build may take ~60s)"
+    ok "GitHub Pages → https://freegent.ai (Pages build may take ~60s)"
 fi
 
 echo

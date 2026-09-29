@@ -2,7 +2,7 @@
 // rate limit, and the public-URL check on the open fetch path.
 import worker from '../cf-worker/worker.js';
 
-const ORIGIN = 'https://anttttti.github.io';
+const ORIGIN = 'https://freegent.ai';
 const limiter = (success: boolean) => ({ limit: vi.fn().mockResolvedValue({ success }) });
 
 function post(body: any, origin: string | null = ORIGIN) {

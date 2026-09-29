@@ -22,7 +22,7 @@
   "bugs": {
     "url": "https://github.com/anttttti/FreeGent/issues"
   },
-  "homepage": "https://anttttti.github.io/FreeGent/",
+  "homepage": "https://freegent.ai",
   "scripts": {
     "dev": "vite",
     "dev:lan": "vite --host",
