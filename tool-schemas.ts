@@ -426,6 +426,9 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
     for (const [name, cond, spec] of _conditionalTools) {
         if (isToolActive(name) && cond() && _allows(name)) t.push(spec());
     }
+    // MCP tools: enabled per server and per tool in Settings → MCP (mcp.ts), not in enabledTools.
+    if (typeof mcpToolSpecs === 'function')
+        for (const spec of mcpToolSpecs()) if (_allows(spec.name)) t.push(spec);
     return t;
 }
 

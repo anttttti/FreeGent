@@ -199,10 +199,17 @@ async function gate_scope_check(taskPath, content) {
 }
 
 
+// QA gate input sizes. Reviewers judging code they can only partly see give unreliable verdicts,
+// so files go in nearly whole (4–5 files × 20K ≈ 25K tokens, within the ~80K working budget).
+// Test/build output is already tail-limited by the command itself.
+const _QA_TEXT_MAX   = 20_000;
+const _QA_FILE_MAX   = 20_000;
+const _QA_OUTPUT_MAX = 10_000;
+
 async function gate_task_enrichment(taskPath, content) {
     if (/^## Acceptance/m.test(content)) return { blocks: false };
     const fm   = parseFrontmatter(content);
-    const body = content.replace(/^---[\s\S]*?---\n/, '').slice(0, 2000);
+    const body = content.replace(/^---[\s\S]*?---\n/, '').slice(0, _QA_TEXT_MAX);
     const prompt =
         `Given this task, write 4–7 concrete, verifiable acceptance criteria as a markdown list ` +
         `under the heading "## Acceptance". Output ONLY that section.\n\nTask: ${fm.title || taskPath}\n\n${body}`;
@@ -222,7 +229,7 @@ async function gate_self_review(taskPath, content) {
 
     let fileContents: string = '';
     for (const fp of filePaths) {
-        try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, 2000)}\n\`\`\`\n`; }
+        try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, _QA_FILE_MAX)}\n\`\`\`\n`; }
         catch {}
     }
 
@@ -256,7 +263,7 @@ async function gate_acceptance_review(taskPath, content) {
 
     let fileContents: string = '';
     for (const fp of filePaths) {
-        try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, 2500)}\n\`\`\`\n`; }
+        try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, _QA_FILE_MAX)}\n\`\`\`\n`; }
         catch {}
     }
 
@@ -313,7 +320,7 @@ async function gate_test_runner(taskPath, content) {
 
     try {
         const res    = await executeToolAsync('execute_code', { language: 'bash', code: cmd }, null);
-        const output = ((res.stdout || '') + (res.stderr || '')).slice(0, 1200);
+        const output = ((res.stdout || '') + (res.stderr || '')).slice(0, _QA_OUTPUT_MAX);
         if (res.exit_code !== 0) {
             const ts = new Date().toISOString().slice(0, 16) + 'Z';
             await appendGateNote(taskPath, `## QA: Test Failures (${ts})\nCommand: ${cmd}\n${output}`);
@@ -347,7 +354,7 @@ async function gate_regression_guard(taskPath) {
         const res = await executeToolAsync('execute_code', { language: 'bash', code: `${cmd} 2>&1 | tail -30` }, null);
         if (res.exit_code !== 0) {
             const ts  = new Date().toISOString().slice(0, 16) + 'Z';
-            const out = ((res.stdout || '') + (res.stderr || '')).slice(0, 600);
+            const out = ((res.stdout || '') + (res.stderr || '')).slice(0, _QA_OUTPUT_MAX);
             await appendGateNote(taskPath, `## QA: Regression Guard (${ts})\nCommand: ${cmd}\nExit: ${res.exit_code}\n${out}`);
             return { blocks: true, reason: `Regression: \`${cmd}\` failed (exit ${res.exit_code})` };
         }

@@ -131,11 +131,13 @@ ${toolSection}`;
         tier: 'orchestrator',
         // Getter evaluated at call time (not module load) so nativeExec is reliably set.
         // • Browser (WebUI / TUI): ALL_TOOL_NAMES ceiling — every named tool the user enables
-        //   in Settings is available.  Dynamic tools not in ALL_TOOL_NAMES (generate_image)
+        //   in Settings is available, plus the MCP tools enabled in Settings → MCP.
+        //   Dynamic tools not in ALL_TOOL_NAMES (generate_image)
         //   are excluded: they are not Director workflow tools and should be delegated.
         // • Headless (benchmarks, fg-run): controlled set for reproducible benchmark runs.
         get tools() {
-            if (typeof nativeExec !== 'function') return new Set(ALL_TOOL_NAMES as string[]);
+            if (typeof nativeExec !== 'function')
+                return new Set([...ALL_TOOL_NAMES as string[], ...(typeof mcpToolNames === 'function' ? mcpToolNames() : [])]);
             // Headless ceiling (benchmarks / fg-run): tools the director can call directly.
             // Write tools (write_file, replace_in_file, apply_patch) are intentionally excluded
             // here — the director should delegate editing work to coder workers rather than
@@ -922,7 +924,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
                     const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
                         .flatMap(m => m.tool_calls).slice(-4)
-                        .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 200)}) → ${(_results.get(tc.id) ?? '').slice(0, 300)}`)
+                        .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 2000)}) → ${(_results.get(tc.id) ?? '').slice(0, 4000)}`)
                         .join('\n');
                     const _fallback = `${_reasoning ? `${_reasoning.slice(-4000)}\n\n` : ''}Last tool calls:\n${_recent}\n\nSTATUS: partial — the worker ended without writing a report`;
                     console.error(`[worker:${_wRole}:step${step}] empty final message after nudge, returning ${_reasoning ? 'reasoning' : 'tool-call'} fallback`);
@@ -1010,7 +1012,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
         const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
         const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
             .flatMap(m => m.tool_calls).slice(-4)
-            .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 200)}) → ${(_results.get(tc.id) ?? '').slice(0, 300)}`)
+            .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 2000)}) → ${(_results.get(tc.id) ?? '').slice(0, 4000)}`)
             .join('\n');
         _report = `${_lastSaid ? `${_lastSaid}\n\n` : ''}Last tool calls:\n${_recent || '- (none)'}`;
     }

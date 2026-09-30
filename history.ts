@@ -166,7 +166,7 @@ export function _historyResult(name: string, result: any, forWorker: boolean, st
 // the agent knows to read them in a separate step instead of silently missing content.
 export function truncateResultForHistory(name: string, result: any, { isDirector = false, seenReadFiles = null, seenListFiles = null, stepBudget = null }: any = {}): any {
     if (ls('fg_agent_tool_result_truncation', 'true') === 'false') return result;
-    const configLimit = parseInt(ls('fg_agent_max_tool_result', '20000'), 10);
+    const configLimit = getAgentMaxToolResult();
     // Per-result limit: min of configLimit and remaining step budget (if tracking).
     const limit = stepBudget ? Math.min(configLimit, Math.max(0, stepBudget.remaining)) : configLimit;
     const _rf = seenReadFiles ?? _seenReadFiles;
@@ -276,6 +276,10 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
 
     if (name === 'repo_map' && typeof result.map === 'string' && result.map.length > limit) {
         return { ...result, map: result.map.slice(0, limit) + `\n[…truncated, ${result.files_mapped} files total]` };
+    }
+
+    if (name.startsWith('mcp__') && typeof result.content === 'string' && result.content.length > limit) {
+        return { ...result, content: result.content.slice(0, limit) + `\n[…${result.content.length - limit} chars not shown]` };
     }
 
     if (name === 'search_workspace' && Array.isArray(result.matches)) {

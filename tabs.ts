@@ -750,7 +750,7 @@ window.addEventListener('message', _relayPreviewFetch);
 const _CHECK_CAPTURE = `<script>(function(){
 var P=parent,T0=Date.now();
 function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v.name+': '+v.message;if(v===undefined)return 'undefined';if(typeof v==='function')return 'function';return JSON.stringify(v)}catch(e){return String(v)}}
-function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,500),t:Date.now()-T0},'*')}catch(e){}}
+function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,4000),t:Date.now()-T0},'*')}catch(e){}}
 ['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
 addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href)+(t.integrity?' — it has integrity="'+t.integrity+'": a wrong hash blocks the file, so check it or remove the attribute':''));return}
  send('error','Uncaught '+(e.error&&e.error.name?e.error.name+': '+e.error.message:e.message)+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':''))},true);
@@ -763,7 +763,7 @@ function run(d){
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){try{el.dispatchEvent(new (t.charAt(0)==='p'&&window.PointerEvent?PointerEvent:MouseEvent)(t,o))}catch(e){}});
   el.click();return{ok:true,visible:cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0,disabled:!!el.disabled}}
  if(d.cmd==='key'){var tg=document.activeElement||document.body;tg.dispatchEvent(new KeyboardEvent(d.kind,{key:d.key,code:code(d.key),bubbles:true,cancelable:true}));return{ok:true}}
- if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,300)}}
+ if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,4000)}}
  if(d.cmd==='stats'){return{frames:FR,ms:Date.now()-T0}}
  return{error:'unknown command'}}
 addEventListener('message',function(e){var d=e.data;if(e.source!==P||!d||d.type!=='fg-check-cmd')return;var r;try{r=run(d)}catch(x){r={error:String(x&&x.message||x)}}

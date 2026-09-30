@@ -109,6 +109,9 @@ export function _repairToolNames(normCalls: any[], toolNames: string[] | null = 
     const normCanon = new Map<string, string>(names.map((n: string) => [_normName(n), n]));
     for (const c of normCalls) {
         if (names.includes(c.name)) continue;
+        // MCP tools aren't in the canonical list; substring repair would turn
+        // mcp__github__read_file into read_file.
+        if (typeof c.name === 'string' && c.name.startsWith('mcp__')) continue;
         const norm = _normName(c.name);
         // 1. Semantic alias (normalized lookup)
         const aliased = _ALIASES_NORM.get(norm);

@@ -145,8 +145,8 @@ export const SETTINGS_DEF: PanelDef = {
                   description: 'Compact history before hitting the hard context limit.' },
                 { kind: 'toggle', key: 'fg_agent_tool_result_truncation', label: 'Tool result truncation',
                   description: 'Cap tool results stored in history to avoid context bloat.' },
-                { kind: 'number', key: 'fg_agent_max_tool_result',    label: 'Max result size — workers (chars)',    placeholder: '8000'  },
-                { kind: 'number', key: 'fg_director_max_tool_result', label: 'Max result size — main agent (chars)', placeholder: '20000' },
+                { kind: 'number', key: 'fg_agent_max_tool_result',    label: 'Max result size — workers (chars)',    placeholder: '100000'  },
+                { kind: 'number', key: 'fg_director_max_tool_result', label: 'Max result size — main agent (chars)', placeholder: '100000' },
             ],
         },
         {

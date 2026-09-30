@@ -20,6 +20,7 @@ export const KEYS = {
     DISABLED_TOOLS:           'fg_disabled_tools',
     ENABLED_TOOLS:            'fg_enabled_tools',         // legacy; migrated to DISABLED_TOOLS on first load
     DISABLED_TOOLS_COWORK:    'fg_disabled_tools_cowork', // separate disabled set for cowork mode
+    MCP_SERVERS:              'fg_mcp_servers',           // MCP server entries (mcp.ts); hold auth headers — never in profiles
 
     // ── API keys ─────────────────────────────────────────────────────────────
     GEMINI_KEY:         'fg_gemini_key',

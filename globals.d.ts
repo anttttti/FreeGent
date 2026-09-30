@@ -413,6 +413,22 @@ declare global {
     // ── bridged by mcp.ts ──
     var MCP_CONTEXT7_URL: any;
     var callMCPTool: any;
+    var getMcpServers: any;
+    var getMcpLibrary: any;
+    var addMcpLibraryServer: any;
+    var addMcpServer: any;
+    var removeMcpServer: any;
+    var refreshMcpServer: any;
+    var setMcpServerEnabled: any;
+    var setMcpToolEnabled: any;
+    var mcpToolSpecs: any;
+    var mcpToolNames: any;
+    var mcpServerInstructionsBlock: any;
+    var mcpToolName: any;
+    var mcpToolRisk: any;
+    var executeMcpTool: any;
+    var sanitizeMcpSchema: any;
+    var redactMcpSecrets: any;
     // ── bridged by model-caps.ts ──
     var getModelToolFormat: any;
     var getTurnStopInfo: any;
@@ -507,6 +523,10 @@ declare global {
     // ── bridged by idb-session-adapter.ts ──
     var initIDBSession: () => Promise<void>;
     // ── bridged by settings-ui.ts ──
+    var renderMcpTab: any;
+    var showAddMcpForm: any;
+    var _onNewMcpAuthChange: any;
+    var submitAddMcpServer: any;
     var _handleDragLeave: any;
     var _handleDragOver: any;
     var _handleDragStart: any;

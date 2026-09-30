@@ -2175,4 +2175,203 @@ function _comboSelect(comboId: string, value: string): void {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl });
+// ── MCP servers tab ──────────────────────────────────────────────────────────
+// Server entries and discovery live in mcp.ts; this renders them. Tool names and descriptions
+// come from the external server, so they are set with textContent, never innerHTML.
+
+function _mcpEl(tag: string, cls = '', text = ''): HTMLElement {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text) el.textContent = text;
+    return el;
+}
+
+// Standard-library entries: one card each, with a key field when the server needs one.
+function _renderMcpLibrary(servers: any[]) {
+    const el = document.getElementById('settings-mcp-library');
+    if (!el) return;
+    el.innerHTML = '';
+    const library = getMcpLibrary();
+    const section = document.getElementById('settings-mcp-library-section');
+    if (section) section.style.display = library.length ? '' : 'none';
+    for (const lib of library) {
+        const box  = _mcpEl('div', 'mcps-server');
+        const head = _mcpEl('div', 'mcps-head');
+        const info = _mcpEl('div', 'model-item-info');
+        info.appendChild(_mcpEl('div', 'model-item-name', lib.name));
+        info.appendChild(_mcpEl('div', 'model-item-meta', lib.description));
+        if (lib.notes) info.appendChild(_mcpEl('div', 'model-item-meta', lib.notes));
+        head.appendChild(info);
+        box.appendChild(head);
+
+        const added = servers.some(s => s.libraryId === lib.id || s.url === lib.url);
+        if (added) {
+            head.appendChild(_mcpEl('span', 'model-item-meta', 'Added ✓'));
+        } else {
+            const form = _mcpEl('div', 'mcps-lib-form');
+            let keyInput: HTMLInputElement | null = null;
+            if (lib.auth) {
+                keyInput = document.createElement('input');
+                keyInput.type = 'password';
+                keyInput.autocomplete = 'off';
+                keyInput.className = 'settings-input';
+                keyInput.placeholder = lib.auth.label;
+                const link = _mcpEl('a', 'model-item-meta', 'Get a key') as HTMLAnchorElement;
+                link.href = lib.auth.keyUrl;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                form.append(keyInput, link);
+            }
+            const btn = _mcpEl('button', 'ws-action-btn', 'Add') as HTMLButtonElement;
+            const status = _mcpEl('span', 'model-item-meta mcps-err');
+            btn.addEventListener('click', async () => {
+                btn.disabled = true; btn.textContent = 'Connecting…'; status.textContent = '';
+                try {
+                    await addMcpLibraryServer(lib.id, keyInput?.value || '');
+                    renderMcpTab();
+                } catch (e) {
+                    status.textContent = `✗ ${e.message}`;
+                    btn.disabled = false; btn.textContent = 'Add';
+                }
+            });
+            form.append(btn, status);
+            box.appendChild(form);
+        }
+        el.appendChild(box);
+    }
+}
+
+function renderMcpTab() {
+    const el = document.getElementById('settings-mcp-list');
+    if (!el) return;
+    el.innerHTML = '';
+    const servers = getMcpServers();
+    _renderMcpLibrary(servers);
+    if (!servers.length) {
+        el.appendChild(_mcpEl('p', 'settings-hint', 'No servers added yet.'));
+        return;
+    }
+    for (const s of servers) {
+        const box  = _mcpEl('div', 'mcps-server');
+        const head = _mcpEl('div', 'mcps-head');
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = s.enabled;
+        cb.title = 'Offer this server\'s enabled tools to the agent';
+        cb.addEventListener('change', () => { setMcpServerEnabled(s.id, cb.checked); });
+
+        const info = _mcpEl('div', 'model-item-info');
+        info.appendChild(_mcpEl('div', 'model-item-name', s.name));
+        let host = s.url;
+        try { host = new URL(s.url).host; } catch { /* keep raw */ }
+        const tools = s.tools || [];
+        const onCount = tools.filter(t => (s.enabledTools || []).includes(t.name)).length;
+        const meta = _mcpEl('div', 'model-item-meta', `${host} · ${tools.length} tool${tools.length === 1 ? '' : 's'}, ${onCount} enabled`);
+        if (s.error) meta.appendChild(_mcpEl('span', 'mcps-err', ` · ${s.error}`));
+        info.appendChild(meta);
+
+        const refresh = _mcpEl('button', 'ws-action-btn', 'Refresh') as HTMLButtonElement;
+        refresh.title = 'Reconnect and reload the tool list';
+        refresh.addEventListener('click', async () => {
+            refresh.disabled = true; refresh.textContent = 'Connecting…';
+            try { await refreshMcpServer(s.id); } catch { /* error saved on the entry */ }
+            renderMcpTab();
+        });
+        const remove = _mcpEl('button', 'ws-action-btn', 'Remove') as HTMLButtonElement;
+        remove.addEventListener('click', () => {
+            if (!confirm(`Remove MCP server "${s.name}"?`)) return;
+            removeMcpServer(s.id);
+            renderMcpTab();
+        });
+        head.append(cb, info, refresh, remove);
+        box.appendChild(head);
+
+        if (tools.length) {
+            const det = _mcpEl('details', 'mcps-tools') as HTMLDetailsElement;
+            det.appendChild(_mcpEl('summary', '', 'Tools'));
+            for (const t of tools) {
+                const row = _mcpEl('label', 'mcps-tool');
+                const tcb = document.createElement('input');
+                tcb.type = 'checkbox';
+                tcb.checked = (s.enabledTools || []).includes(t.name);
+                tcb.addEventListener('change', () => {
+                    setMcpToolEnabled(s.id, t.name, tcb.checked);
+                    const cur = getMcpServers().find(x => x.id === s.id);
+                    const n = (cur?.enabledTools || []).length;
+                    meta.firstChild!.textContent = `${host} · ${tools.length} tool${tools.length === 1 ? '' : 's'}, ${n} enabled`;
+                });
+                const ti = _mcpEl('div', 'model-item-info');
+                const nm = _mcpEl('div', 'model-item-name', t.name);
+                const risk = mcpToolRisk(mcpToolName(s.id, t.name));
+                const riskLabel = risk === 'read' ? 'read-only' : risk === 'write' ? 'writes' : 'may modify';
+                const badge = _mcpEl('span', `mcps-risk${risk === 'destructive' ? ' mcps-risk-destructive' : ''}`, riskLabel);
+                badge.title = risk === 'read' ? 'The server marks this tool read-only'
+                    : risk === 'write' ? 'The server marks this tool as changing data, non-destructively'
+                    : 'Not marked read-only: may change or delete data. Asks for approval when tool approval is on.';
+                nm.appendChild(badge);
+                ti.appendChild(nm);
+                if (t.description) ti.appendChild(_mcpEl('div', 'model-item-meta', t.description));
+                row.append(tcb, ti);
+                det.appendChild(row);
+            }
+            box.appendChild(det);
+        }
+        el.appendChild(box);
+    }
+}
+
+function showAddMcpForm(show?: boolean) {
+    const f = document.getElementById('add-mcp-form');
+    if (!f) return;
+    f.style.display = (show ?? f.style.display === 'none') ? '' : 'none';
+    const st = document.getElementById('add-mcp-status');
+    if (st) st.textContent = '';
+    _onNewMcpAuthChange();
+}
+
+function _onNewMcpAuthChange() {
+    const v = (document.getElementById('new-mcp-auth') as HTMLSelectElement)?.value || 'none';
+    const hr = document.getElementById('new-mcp-header-row');
+    const kr = document.getElementById('new-mcp-key-row');
+    if (hr) hr.style.display = v === 'header' ? '' : 'none';
+    if (kr) kr.style.display = v === 'none' ? 'none' : '';
+}
+
+async function submitAddMcpServer() {
+    const val = (id: string) => ((document.getElementById(id) as HTMLInputElement)?.value || '').trim();
+    const st  = document.getElementById('add-mcp-status');
+    const btn = document.getElementById('add-mcp-btn') as HTMLButtonElement | null;
+    const setStatus = (text: string, err = false) => { if (st) { st.textContent = text; st.classList.toggle('mcps-err', err); } };
+    const url = val('new-mcp-url');
+    if (!url) { setStatus('Enter the server URL.', true); return; }
+    const auth = val('new-mcp-auth') || 'none';
+    const key  = val('new-mcp-key');
+    const headers: Record<string, string> = {};
+    if (auth === 'bearer') {
+        if (!key) { setStatus('Enter the token.', true); return; }
+        headers['Authorization'] = `Bearer ${key}`;
+    } else if (auth === 'header') {
+        const h = val('new-mcp-header');
+        if (!/^[A-Za-z0-9-]+$/.test(h)) { setStatus('Enter a valid header name.', true); return; }
+        if (!key) { setStatus('Enter the key.', true); return; }
+        headers[h] = key;
+    }
+    if (btn) btn.disabled = true;
+    setStatus('Connecting…');
+    try {
+        const entry = await addMcpServer({ name: val('new-mcp-name'), url, headers });
+        setStatus('');
+        for (const id of ['new-mcp-name', 'new-mcp-url', 'new-mcp-key', 'new-mcp-header'])
+            { const i = document.getElementById(id) as HTMLInputElement | null; if (i) i.value = ''; }
+        showAddMcpForm(false);
+        renderMcpTab();
+        if (!entry.tools?.length) alert(`Connected to ${entry.name}, but it lists no tools.`);
+    } catch (e) {
+        setStatus(`✗ ${e.message}`, true);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
