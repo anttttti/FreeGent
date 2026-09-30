@@ -9,7 +9,7 @@
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { KEYS } from './storage-keys.js';
-import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync, renameSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -322,6 +322,13 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     // Logs elapsed ms at each checkpoint to logFile so we can identify freezes.
     // Each line: {"timing":{"step":"...","ms":<elapsed>}}
     const _t0 = Date.now();
+    // A benchmark task log holds one run. A re-run of the task (restarted run_all, --retry-infra)
+    // appended a second run to the same file: v0.58's OS, DB and Lite logs each held an aborted
+    // run followed by the real one, which read as 223 steps/task and multi-hour stalls. The
+    // previous run is kept beside it as <file>.prev.
+    if (harness && logFile) {
+        try { if (existsSync(logFile) && statSync(logFile).size > 0) renameSync(logFile, `${logFile}.prev`); } catch {}
+    }
     const _t = (step: string) => {
         const ms = Date.now() - _t0;
         try { appendFileSync(logFile || '/tmp/fg-tui.log',
@@ -760,7 +767,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             session,
             task,
             _isDirector
-                ? { maxContinuations: 4, forceFirstToolCall: true, stepLimitContinuations: 1 }
+                ? { maxContinuations: 4, forceFirstToolCall: true, stepLimitContinuations: 1,
+                    closingSteps: 25, closingExcludeTools: ['run_workers'] }
                 : { maxContinuations: 0 },  // non-director: single turn only
         );
 

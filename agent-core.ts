@@ -1307,7 +1307,8 @@ function newChat(): void {
 // turn-context.js — see that module for why it has to be shared.
 // `placeholder` lets a caller that already owns a render target reuse it across turns.
 async function runAgentTurn(prompt: string, container: HTMLElement | null = null, session?: AgentSession,
-                            { placeholder: _reusePh = null as RenderAdapter | null, forceToolCall = false } = {}): Promise<TurnResult> {
+                            { placeholder: _reusePh = null as RenderAdapter | null, forceToolCall = false,
+                              maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {}): Promise<TurnResult> {
     const _s = session ?? defaultSession;
 
     // Reset reactive-trigger bookkeeping — see agentSend for rationale.
@@ -1349,7 +1350,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     let _turnEndReason: import('./session-event.ts').TurnEndReason = { kind: 'completed' };
     let _errored = false;
     try {
-        finalText = await runTurn(null, placeholder, { session: _s, forceToolCall });
+        finalText = await runTurn(null, placeholder, { session: _s, forceToolCall, maxSteps, excludeTools });
         if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
         placeholder.finalize(_doStripTerminal(finalText));
     } catch (err) {

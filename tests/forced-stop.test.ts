@@ -31,6 +31,41 @@ describe('_gracefulSynthesis', () => {
     });
 });
 
+describe('_gracefulSynthesis keeps an answer on the last line (v0.58 CTF 48)', () => {
+    it('BLOCKED comes first, so the graded last line is the summary or answer', async () => {
+        (globalThis as any).callLLMComplete = vi.fn(async () => 'picoCTF{c0nv3rt1ng_fr0m_ba5e_64_e3152bf4}');
+        const t = await L._gracefulSynthesis('it kept repeating calls that had already returned the same result many times');
+        expect(t).toMatch(BLOCKED_RE);
+        expect(t.trim().split('\n').at(-1)).toBe('picoCTF{c0nv3rt1ng_fr0m_ba5e_64_e3152bf4}');
+        const { _stripTerminal } = await import('../turn-protocol.ts');
+        expect(_stripTerminal(t).trim().split('\n').at(-1)).toBe('picoCTF{c0nv3rt1ng_fr0m_ba5e_64_e3152bf4}');
+    });
+    it('the summary request carries the task and the recent tool outputs', async () => {
+        const { makeReplayFetch, FAKE_EP } = await import('./replay-harness.ts');
+        const { NULL_RENDER_ADAPTER } = await import('../render-adapter.ts');
+        await import('../step-validator.ts');
+        localStorage.clear();
+        localStorage.setItem('fg_main_models', JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
+        localStorage.setItem('fg_openrouter_key', 'test-key');
+        (window as any).mainAgentRole = null;
+        (window as any)._sessionToolFilter = new Set(['list_files']);
+        const s = (window as any).createSession({ workflowMode: true });
+        s.history.push({ role: 'user', content: 'Decode the flag in flag.txt.' });
+        const prompts: string[] = [];
+        (globalThis as any).callLLMComplete = vi.fn(async (p: string) => { prompts.push(p); return 'FLAG-VALUE'; });
+        const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({ path: `d${i}` }) } }] });
+        (window as any).fetch = makeReplayFetch(Array.from({ length: 6 }, (_, i) => call(i)));
+        const origList = (window as any).agentListFiles;
+        (window as any).agentListFiles = async () => [{ name: 'flag.txt', size: 12 }];
+        let text = '';
+        try { text = await (window as any).runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s, maxSteps: 3 }); }
+        finally { (window as any).agentListFiles = origList; }
+        expect(prompts.at(-1)).toContain('Task:\nDecode the flag in flag.txt.');
+        expect(prompts.at(-1)).toContain('Most recent tool outputs:');
+        expect(text.trim().split('\n').at(-1)).toBe('FLAG-VALUE');
+    });
+});
+
 describe('directorLoop after a forced stop', () => {
     const turn = (finishSignal: any, stop: any = { reason: null, edited: false }) => ({ text: '', finishSignal, stop, usage: {} as any, steps: [] });
     const run = (results: any[]) => {
@@ -55,7 +90,7 @@ describe('directorLoop after a forced stop', () => {
         ]);
         const r = await directorLoop(fn, {} as any, 'task', opts);
         expect(fn).toHaveBeenCalledTimes(2);
-        expect(prompts[1]).toBe(STEP_LIMIT_PROMPT);
+        expect(prompts[1]).toBe(STEP_LIMIT_PROMPT(undefined));
         expect(r.finishSignal).toBe('blocked');
     });
     it('edits from an earlier turn count', async () => {
