@@ -367,7 +367,7 @@ async function _getReplaceFailNudge(_replFails: Map<string, number>, _replNudge:
         }
         let content = '';
         try { content = await agentReadFile(fp); } catch {}
-        const preview = content.length > 3000 ? content.slice(0, 2800) + '\n...[truncated — ' + content.length + ' chars total]' : content;
+        const preview = content.length > 20_000 ? content.slice(0, 20_000) + '\n...[truncated — ' + content.length + ' chars total; read_file with start_line for the rest]' : content;
         return `[EDIT FAILED ${n}x on "${fp}"] Current file content:\n\`\`\`\n${preview}\n\`\`\`\nCopy the old_string character-for-character from the content above. Do not paraphrase or reconstruct from memory.`;
     }
     return null;
@@ -1184,7 +1184,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // Skipped after compaction: the pinned [TASK …] anchor already keeps it in view.
             const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
             if (_firstUser && !_firstUser.content.startsWith('[TASK')) {
-                const _taskSnippet = _originalTask(_histR(_s)).slice(0, 2000);
+                const _taskSnippet = _originalTask(_histR(_s));
                 if (_taskSnippet) qc.nudge += `\n\nOriginal task:\n${_taskSnippet}`;
             }
             _emitNudge('quality_check', nudge(qc.nudge));
@@ -1195,7 +1195,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Generic step-output validation, pre-state phase: deterministic gates first,
         // minimal LLM yes/no for what regexes can't decide (see _STEP_CHECKS).
         const _task = _originalTask(_histR(_s));
-        const _taskGoal = _task.slice(0, 400);
+        const _taskGoal = _task.slice(0, 4000);
         // Run validation even on COMPLETED responses so pseudo-calls embedded
         // alongside COMPLETED are caught before the session terminates.
         // re_pass in pseudo_tool_call fast-exits for clean COMPLETED (no LLM call).

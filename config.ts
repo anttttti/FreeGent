@@ -380,7 +380,7 @@ export async function prefetchGeoCache(): Promise<void> {
 // ── Agent loop settings ────────────────────────────────────────────────────
 function getAgentToolTruncation()   { return ls('fg_agent_tool_result_truncation', 'true') !== 'false'; }
 function getAgentMaxToolResult()    { return parseInt(ls('fg_agent_max_tool_result', '100000'), 10); }
-function getDirectorMaxToolResult() { return parseInt(ls('fg_director_max_tool_result', '20000'), 10); } // 0 = disabled
+function getDirectorMaxToolResult() { return parseInt(ls('fg_director_max_tool_result', '100000'), 10); } // 0 = disabled
 export function getAgentProactiveCompact() { return ls('fg_agent_proactive_compact', 'true') !== 'false'; }
 export function getAgentCompactAt()        { return parseFloat(ls('fg_agent_compact_at', '0.75')); }
 export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '80000'), 10); }

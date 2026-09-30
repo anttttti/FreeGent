@@ -577,11 +577,18 @@ async function _handleDeepResearch(args: any) {
 
 async function _handleContext7Docs(args: any) {
     try {
-        const library_id = await callMCPTool(MCP_CONTEXT7_URL, 'resolve-library-id', { libraryName: args.library ?? args.library_id });
-        const mcpArgs: any = { context7CompatibleLibraryId: library_id.trim() };
-        if (args.topic)  mcpArgs.topic  = args.topic;
-        if (args.tokens) mcpArgs.tokens = args.tokens;
-        const result = await callMCPTool(MCP_CONTEXT7_URL, 'get-library-docs', mcpArgs);
+        const library = String(args.library ?? args.library_id ?? '').trim();
+        if (!library) return { error: 'context7_docs: library is required' };
+        const query = String(args.topic || '').trim() || `${library} overview and usage`;
+        // "/org/project" is already a Context7 ID; otherwise resolve the name. resolve-library-id
+        // returns a ranked list of libraries — take the first ID.
+        let libraryId = library.startsWith('/') ? library : '';
+        if (!libraryId) {
+            const listing = await callMCPTool(MCP_CONTEXT7_URL, 'resolve-library-id', { libraryName: library, query });
+            libraryId = listing.match(/Context7-compatible library ID:\s*(\S+)/)?.[1] ?? '';
+            if (!libraryId) return { error: `context7_docs: no library found for "${library}"` };
+        }
+        const result = await callMCPTool(MCP_CONTEXT7_URL, 'query-docs', { libraryId, query });
         return { content: result };
     } catch (e) { return { error: `context7_docs: ${e.message}` }; }
 }
@@ -1432,7 +1439,10 @@ async function _handleWebSearch(args) {
 }
 
 // Serialized size above which a fetch_url JSON response is shrunk by _fitJson.
-const _FETCH_JSON_MAX = 8000;
+const _FETCH_JSON_MAX = 50_000;
+// Text/HTML bodies after tag stripping. Pages beyond this are cut; `extract` pulls the relevant
+// passages out of the whole page instead. The shared tool-result limit (history.ts) applies after.
+const _FETCH_TEXT_MAX = 50_000;
 
 // Shrink a parsed JSON value to fit `budget` serialized chars while keeping it valid JSON:
 // whole array items / object keys are kept in order; the first one that doesn't fit is shrunk
@@ -1563,7 +1573,7 @@ async function _handleFetchUrl(args) {
                         const _rawResp = await fetch(_rawUrl, { signal: AbortSignal.timeout(15_000) });
                         if (_rawResp.ok) {
                             const _rawText = await _rawResp.text();
-                            return { status: _rawResp.status, content: _rawText.slice(0, 8000),
+                            return { status: _rawResp.status, content: _rawText.slice(0, _FETCH_TEXT_MAX),
                                      note: `github.com blocked (HTTP ${status}); served README from ${_rawUrl}` };
                         }
                     } catch (_e) { /* try next branch */ }
@@ -1622,11 +1632,11 @@ async function _handleFetchUrl(args) {
                 .trim();
             const ex = await _maybeExtract(stripped, args.url);
             if (ex) return ex;
-            return { status, content: stripped.slice(0, 8000) };
+            return { status, content: stripped.slice(0, _FETCH_TEXT_MAX) };
         }
         const ex = await _maybeExtract(text, args.url);
         if (ex) return ex;
-        return { status, content: text.slice(0, 8000) };
+        return { status, content: text.slice(0, _FETCH_TEXT_MAX) };
     } catch (e) {
         // Network-level failure (timeout, CORS, connection refused) on a plain GET —
         // treat as a temporary block and refresh the blacklist timer.
@@ -2097,9 +2107,12 @@ export async function executeToolAsync(name, args, context = null) {
     if (!_toolApprovalSession.has(name)) {
         const approval = getToolApproval();
         const onHost = _runsOnHost(name, args);
+        // MCP tools: 'destructive' (the MCP default for unannotated tools) counts as high risk,
+        // anything not marked read-only as a write.
+        const mcpRisk = name.startsWith('mcp__') && typeof mcpToolRisk === 'function' ? mcpToolRisk(name) : null;
         const needsApproval =
-            (approval === 'high' && (onHost || (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python')))) ||
-            (approval === 'all'  && (onHost || _APPROVAL_ALL_WRITE.has(name)));
+            (approval === 'high' && (onHost || mcpRisk === 'destructive' || (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python')))) ||
+            (approval === 'all'  && (onHost || (mcpRisk && mcpRisk !== 'read') || _APPROVAL_ALL_WRITE.has(name)));
         if (needsApproval && (!context || onHost)) {
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
@@ -2137,6 +2150,7 @@ export async function executeToolAsync(name, args, context = null) {
     if (name === 'submit_answer')      return _handleSubmitAnswer(args);
     if (name === 'update_task_status') return _handleUpdateTaskStatus(args);
     if (name === 'check_page')         return _handleCheckPage(args);
+    if (name.startsWith('mcp__'))      return executeMcpTool(name, args);
     return _handlePhantomAlias(name, args, context);
 }
 
@@ -2167,6 +2181,10 @@ export function toolLabel(name, args) {
     if (name === 'check_page')                return `check:${a.path || '?'}`;
     if (name === 'update_task_status')        return `task:${a.path ? a.path.replace('fg-tasks/', '') : '?'} → ${a.status || '?'}`;
     if (name === 'context7_docs')             return `context7:${a.library || ''}${a.topic ? '/' + a.topic : ''}`;
+    if (String(name).startsWith('mcp__')) {
+        const [, server = '', tool = ''] = String(name).split('__');
+        return `${server}:${tool}`.slice(0, 48);
+    }
     // Fallback for unknown tool names (custom MCP tools, or a model emitting malformed
     // markup as a tool name): strip tags and clamp so the badge can't become a wall of text.
     const clean = String(name).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();

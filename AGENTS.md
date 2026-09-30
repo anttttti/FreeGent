@@ -2,7 +2,9 @@
 
 ## What FreeGent is
 
-Browser-based WebUI for running code and work agents against **free public LLMs** (Gemini free tier, OpenRouter, NVIDIA, Groq, and more) and **local LLMs** via Ollama / LM Studio / vLLM (7B–70B, 4k–32k context). Every architectural choice prioritises context budget and reliability on weak models.
+Browser-based WebUI for running code and work agents against **free public LLMs** (Gemini free tier, OpenRouter, NVIDIA, Groq, and more) and **local LLMs** via Ollama / LM Studio / vLLM. Every architectural choice prioritises reliability on weak models.
+
+**Context budget.** Expected models have >200K context windows, but agents work best when history is compacted at ~80K tokens (`fg_agent_compact_tokens`, default 80000) — quality degrades well before the window fills. Size prompt additions against that ~80K working budget, not the window: guidance a model needs to use a tool correctly (tool descriptions, MCP server instructions) goes in full; repeated or per-turn boilerplate still costs every request, so keep it lean.
 
 ## Module model — fully ESM + single-owner domain modules
 
@@ -213,6 +215,7 @@ Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a ma
 - `workers.ts` — `callLLMComplete()`, `executeWorkers()`, `runWorkerTurn()`, roles, diff/merge utils
 - `agent-core.ts` — `agentSend` entry point, checkpoint system, per-turn skill/tool trigger evaluation, Agent→Director handover
 - `search-providers.ts` — web-search backends (split out of tools.js)
+- `mcp.ts` — MCP client (Streamable HTTP) + server registry (`fg_mcp_servers`): discovery, `mcp__<server>__<tool>` specs appended in `activeTools()`, dispatch via `executeMcpTool`, standard library (`MCP_LIBRARY`). Servers' `instructions` go into the system prompt in full ("## MCP servers", only for servers with an enabled tool the role can call). Settings → MCP tab lives in `settings-ui.ts`
 - `chat-render.ts` — `createTask()` stepbox rendering, `_friendlyLabel()` label → display name
 - `settings-ui.ts` — settings form, `updateActiveModelDisplay()`, `applyHdrReasoning()`
 - `profiles.ts` — `PROFILE_KEYS`, `profileApply()` — **credentials must never be in `PROFILE_KEYS`**

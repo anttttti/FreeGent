@@ -361,6 +361,7 @@
                     <button class="settings-tab-btn"        data-tab="agent"    onclick="switchSettingsTab('agent')">Agent</button>
                     <button class="settings-tab-btn"        data-tab="skills"   onclick="switchSettingsTab('skills')">Skills</button>
                     <button class="settings-tab-btn"        data-tab="tools"    onclick="switchSettingsTab('tools')">Tools</button>
+                    <button class="settings-tab-btn"        data-tab="mcp"      onclick="switchSettingsTab('mcp');renderMcpTab()">MCP</button>
                     <button class="settings-tab-btn"        data-tab="roles"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
                     <button class="settings-tab-btn"        data-tab="voice"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
                 </div>
@@ -577,9 +578,9 @@
                         <label class="settings-check-row"><input type="checkbox" id="agent-tool-truncation" onchange="saveAgentSetting('fg_agent_tool_result_truncation', this.checked)"> Tool result truncation</label>
                         <p class="settings-hint agent-hint">Cap tool results stored in history to avoid context bloat.</p>
                         <label class="settings-input-label" style="margin-top:8px">Max result size — workers (chars)</label>
-                        <input class="settings-input" id="agent-tool-result-size" type="number" min="500" max="32000" step="100" style="width:120px" oninput="saveAgentSetting('fg_agent_max_tool_result', this.value)">
+                        <input class="settings-input" id="agent-tool-result-size" type="number" min="500" max="500000" step="1000" style="width:120px" oninput="saveAgentSetting('fg_agent_max_tool_result', this.value)">
                         <label class="settings-input-label" style="margin-top:8px">Max result size — main agent (chars, 0 = off)</label>
-                        <input class="settings-input" id="director-max-tool-result" type="number" min="0" max="32000" step="100" style="width:120px" oninput="saveAgentSetting('fg_director_max_tool_result', this.value)">
+                        <input class="settings-input" id="director-max-tool-result" type="number" min="0" max="500000" step="1000" style="width:120px" oninput="saveAgentSetting('fg_director_max_tool_result', this.value)">
                         <p class="settings-hint agent-hint">When a read_file result in the main agent context exceeds this length, it is replaced with a structural index of definitions (with line numbers) plus as many full function bodies as fit. Other tools are passed through as-is. 0 disables. Default: 20000.</p>
                         <label class="settings-check-row" style="margin-top:12px"><input type="checkbox" id="agent-proactive-compact" onchange="saveAgentSetting('fg_agent_proactive_compact', this.checked)"> Proactive compaction</label>
                         <p class="settings-hint agent-hint">Compact history before hitting the hard context limit.</p>
@@ -716,6 +717,46 @@
                         <span class="settings-label">Tools</span>
                         <p class="settings-hint" style="margin-bottom:10px">Enable tools per mode. Chat: standard conversations. Cowork: task-runner sessions (also applies to the runner).</p>
                         <div id="settings-tools-list"></div>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="mcp">
+                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
+                        <span class="settings-label">MCP Servers</span>
+                        <p class="settings-hint" style="margin-bottom:10px">Connect external Model Context Protocol servers (Streamable HTTP). Each server's tools start disabled — enable the ones the agent should see. Tool calls send their arguments to the server's host. Context7 is built in: Tools → Context7 Docs.</p>
+                        <div id="settings-mcp-list"></div>
+                        <div id="settings-mcp-library-section" style="display:none">
+                            <span class="settings-label" style="margin-top:14px">Standard library</span>
+                            <p class="settings-hint" style="margin-bottom:6px">Servers checked to work from the browser, set up in one step.</p>
+                            <div id="settings-mcp-library"></div>
+                        </div>
+                        <span class="settings-label" style="margin-top:14px">Custom server</span>
+                        <div class="model-table-add-row">
+                            <button class="ws-action-btn" onclick="showAddMcpForm()">+ Add server</button>
+                        </div>
+                        <div id="add-mcp-form" style="display:none;margin-top:8px">
+                            <table class="settings-table" style="width:100%"><tbody>
+                                <tr><td class="settings-table-label">Name</td>
+                                    <td><input class="settings-input" id="new-mcp-name" type="text" placeholder="e.g. DeepWiki" style="width:100%"></td></tr>
+                                <tr><td class="settings-table-label">URL</td>
+                                    <td><input class="settings-input" id="new-mcp-url" type="url" placeholder="https://mcp.deepwiki.com/mcp" style="width:100%"></td></tr>
+                                <tr><td class="settings-table-label">Auth</td>
+                                    <td><select class="settings-input" id="new-mcp-auth" style="width:100%" onchange="_onNewMcpAuthChange()">
+                                        <option value="none">None</option>
+                                        <option value="bearer">Bearer token (Authorization header)</option>
+                                        <option value="header">Custom header</option>
+                                    </select></td></tr>
+                                <tr id="new-mcp-header-row" style="display:none"><td class="settings-table-label">Header</td>
+                                    <td><input class="settings-input" id="new-mcp-header" type="text" placeholder="e.g. X-API-Key" style="width:100%"></td></tr>
+                                <tr id="new-mcp-key-row" style="display:none"><td class="settings-table-label">Key</td>
+                                    <td><input class="settings-input" id="new-mcp-key" type="password" autocomplete="off" style="width:100%"></td></tr>
+                            </tbody></table>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <button class="btn-save" id="add-mcp-btn" onclick="submitAddMcpServer()">Connect &amp; add</button>
+                                <button class="ws-action-btn" onclick="showAddMcpForm(false)">Cancel</button>
+                                <span id="add-mcp-status" class="model-item-meta"></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

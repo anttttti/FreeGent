@@ -49,7 +49,7 @@ describe('fetch_url JSON fitting', () => {
     beforeEach(() => { W.mainAgentRole = null; llmSpy = vi.fn(); W.callLLMComplete = llmSpy; });
     afterEach(() => vi.unstubAllGlobals());
 
-    const tools = Array.from({ length: 100 }, (_, i) => ({ name: `tool_${i}`, description: 'x'.repeat(150), parameters: { q: 'string' } }));
+    const tools = Array.from({ length: 500 }, (_, i) => ({ name: `tool_${i}`, description: 'x'.repeat(150), parameters: { q: 'string' } }));
 
     it('small responses are returned as-is', async () => {
         serve({ ok: 1, items: [1, 2] });
@@ -62,19 +62,19 @@ describe('fetch_url JSON fitting', () => {
         serve(tools);
         const r = await W.executeToolAsync('fetch_url', { url: 'http://api.test/search' });
         expect(Array.isArray(r.content)).toBe(true);
-        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(8000);
+        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(50000);
         expect(r.content).toEqual(tools.slice(0, r.content.length));
         expect(r.truncated).toBe(true);
-        expect(r.note).toContain(`dropped ${100 - r.content.length} array item(s)`);
+        expect(r.note).toContain(`dropped ${500 - r.content.length} array item(s)`);
         expect(llmSpy).not.toHaveBeenCalled();
     });
 
     it('a long string with escaped characters stays within the budget', async () => {
-        serve({ log: 'line "quoted"\n\t'.repeat(2000) });   // every char pair escapes in JSON
+        serve({ log: 'line "quoted"\n\t'.repeat(10000) });   // every char pair escapes in JSON
         const r = await W.executeToolAsync('fetch_url', { url: 'http://api.test/log' });
         expect(typeof r.content.log).toBe('string');
         expect(r.content.log.endsWith('…')).toBe(true);
-        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(8000);
+        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(50000);
     });
 
     it('a large array nested under a key is shrunk in place', async () => {
@@ -82,8 +82,11 @@ describe('fetch_url JSON fitting', () => {
         const r = await W.executeToolAsync('fetch_url', { url: 'http://api.test/search' });
         expect(r.content.query).toBe('q');
         expect(r.content.results.length).toBeGreaterThan(0);
-        expect(r.content.results).toEqual(tools.slice(0, r.content.results.length));
-        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(8000);
+        // Whole leading items; the last one may itself be shrunk to use the remaining room.
+        const n = r.content.results.length;
+        expect(r.content.results.slice(0, -1)).toEqual(tools.slice(0, n - 1));
+        expect(r.content.results[n - 1].name).toBe(tools[n - 1].name);
+        expect(JSON.stringify(r.content).length).toBeLessThanOrEqual(50000);
     });
 });
 

@@ -76,18 +76,23 @@ export function getModelToolFormat(provider: any, model: any): any {
     return provider === 'nvidia' ? 'fn-tag' : 'openai';
 }
 
-// Known tool names — used by Format D to avoid matching arbitrary XML tags.
-// Keep in sync with AGENT_TOOL_NAMES in step-validator.ts — that list is the canonical source.
-const _FORMAT_D_TOOLS_RE = /<(list_files|read_file|write_file|replace_in_file|apply_patch|append_file|undo_write|delete_file|execute_code|search_workspace|repo_map|web_search|fetch_url|update_task_status|run_workers|run_git|ast_query|generate_image|deep_research|context7_docs|academic_search|package_search)>([\s\S]*?)<\/\1>/g;
-
-// Known tool names for Format F attribute-style matching.
-// Keep in sync with AGENT_TOOL_NAMES in step-validator.ts.
-const _FORMAT_F_TOOL_NAMES = new Set([
+// Built-in tool names the text formats D, F, G-b and H accept (those carry the name as the tag
+// or call itself, so an unrestricted match would grab arbitrary XML/prose). Keep in sync with
+// AGENT_TOOL_NAMES in step-validator.ts. The enabled MCP tools (mcp__<server>__<tool>) are
+// added per call — see _knownToolNames().
+const _BUILTIN_TEXT_TOOL_NAMES = [
     'list_files','read_file','write_file','replace_in_file','apply_patch','append_file',
     'undo_write','delete_file','execute_code','search_workspace','repo_map','web_search','fetch_url',
     'update_task_status','run_workers','run_git','ast_query','generate_image','deep_research',
     'context7_docs','academic_search','package_search',
-]);
+];
+
+function _knownToolNames(): Set<string> {
+    const mcp = typeof mcpToolNames === 'function' ? mcpToolNames() : [];
+    return new Set([..._BUILTIN_TEXT_TOOL_NAMES, ...mcp]);
+}
+
+const _reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
 
 // Parse tool-call XML blocks emitted by models that don't use native function calling.
 // Handles eight formats:
@@ -105,6 +110,8 @@ const _FORMAT_F_TOOL_NAMES = new Set([
 export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; } {
     const tool_calls = [];
     let cleaned = text;
+    const _known = _knownToolNames();
+    const _knownAlt = [..._known].map(_reEsc).join('|');
 
     // Format J — GLM native: <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>…</tool_call>
     // The last block often lacks </tool_call> (it is GLM's stop token), so a block also ends at
@@ -215,7 +222,7 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
             const args = _parseInvokeBody(body);
             let resolvedName = name;
             let resolvedArgs = args;
-            if (!_FORMAT_F_TOOL_NAMES.has(name)) {
+            if (!_known.has(name)) {
                 const code = args.run ?? args.command ?? args.cmd ?? args.code;
                 if (!code) return full; // Unknown tool with no shell mapping — leave as-is
                 resolvedName = 'execute_code';
@@ -233,7 +240,7 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
     // Format H — Python-style: tool_name(arg1="val1", arg2="val2") on a single line
     // Matches greedily to the last ) on the line so code="cmd(a,b)" is captured whole.
     cleaned = cleaned.replace(
-        new RegExp(`^(${[..._FORMAT_F_TOOL_NAMES].join('|')})\\((.*)\\)\\s*$`, 'gm'),
+        new RegExp(`^(${_knownAlt})\\((.*)\\)\\s*$`, 'gm'),
         (full, name, argsStr) => {
             const args: Record<string, any> = {};
             const attrRe = /(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
@@ -292,9 +299,9 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
     // Handles models that emit tool calls as HTML-attribute-style tags (e.g. ThinkingCap's
     // <execute_code language="bash" code="..."/>). Only matches known tool names.
     cleaned = cleaned.replace(
-        /<(\w+)(\s+\w+=(?:"[^"]*"|'[^']*')(?:\s+\w+=(?:"[^"]*"|'[^']*'))*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/g,
+        /<(\w[\w-]*)(\s+\w+=(?:"[^"]*"|'[^']*')(?:\s+\w+=(?:"[^"]*"|'[^']*'))*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/g,
         (full, name, attrStr, body) => {
-            if (!_FORMAT_F_TOOL_NAMES.has(name)) return full; // unknown tag — leave as-is
+            if (!_known.has(name)) return full; // unknown tag — leave as-is
             const args: Record<string, any> = {};
             const attrRe = /(\w+)=(?:"([^"]*)"|'([^']*)')/g;
             let m: RegExpExecArray | null;
@@ -315,8 +322,7 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
 
     // Format D — DeepSeek: <tool_name><param>value</param>...</tool_name>
     // Restricted to known tool names to avoid matching arbitrary XML in responses.
-    _FORMAT_D_TOOLS_RE.lastIndex = 0;
-    cleaned = cleaned.replace(_FORMAT_D_TOOLS_RE, (_, name, body) => {
+    cleaned = cleaned.replace(new RegExp(`<(${_knownAlt})>([\\s\\S]*?)<\\/\\1>`, 'g'), (_, name, body) => {
         const args = {};
         const paramRe = /<(\w+)>([\s\S]*?)<\/\1>/g;
         let m: RegExpExecArray | null;

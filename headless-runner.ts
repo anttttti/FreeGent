@@ -45,6 +45,7 @@ import './retry.js';
 import './turn-protocol.js';
 import './system-prompt.js';
 import './tool-schemas.js';
+import './mcp.js';
 import './deep-research.js';
 import './post-turn.js';
 import './llm-shared.js';

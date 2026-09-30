@@ -191,7 +191,11 @@ export function buildSystemPrompt(): string {
     const _coworkSummary = (typeof getMode === 'function' && getMode() === 'cowork')
         ? '\n## Cowork turn summary\nIf this turn created, changed, or updated the status of any task, your final message (before COMPLETED / BLOCKED) must end with a summary:\n- **Changes**: the files created or modified, one line each on what changed.\n- **Tasks added**: id, title, and status of each task created this turn.\n- **Tasks worked on**: id, title, the status each ended in, and what was done or what remains.\nOmit a section that would be empty. Skip the summary when the turn did not touch any task.'
         : '';
-    return `${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
+    // MCP servers' published usage notes, for servers with tools this role can call.
+    const _mcpCtx = typeof mcpServerInstructionsBlock === 'function'
+        ? mcpServerInstructionsBlock((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n))
+        : '';
+    return `${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
 }
 
 // Window bridge for classic scripts.
