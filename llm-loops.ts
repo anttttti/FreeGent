@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -305,6 +305,35 @@ async function _readOldContent(path: string): Promise<string | null> {
 }
 
 
+// Rewrite tool-call arguments of the last assistant message, by call id. Native sessions: the
+// event log is what the next request reads (deriveMessages), so surface-replace the event;
+// fn-tag / no-session: mutate _s.history. Must run before the step's tool results are appended.
+function _patchLastAssistantArgs(s: AgentSession, histLegacy: boolean, step: number, edits: Map<string, (a: any) => any>): void {
+    const apply = (tcs: any[]) => tcs.map((tc: any) => {
+        const f = edits.get(tc.id);
+        if (!f) return tc;
+        try { return { ...tc, function: { ...tc.function, arguments: JSON.stringify(f(JSON.parse(tc.function.arguments))) } }; }
+        catch { return tc; }
+    });
+    if (histLegacy) {
+        const m = s.history[s.history.length - 1];
+        if (m?.tool_calls?.length) m.tool_calls = apply(m.tool_calls);
+        return;
+    }
+    const sess = _getEvtSession(s);
+    if (!sess) return;
+    const seq = sess.surface[sess.surface.length - 1];
+    if (seq === undefined || sess.events[seq]?.type !== 'assistant/message') return;
+    const d = sess.events[seq].data;
+    if (!d.message?.tool_calls?.length) return;
+    const msg = { ...d.message, tool_calls: apply(d.message.tool_calls) };
+    try {
+        (sess.append as _AppendSurface)('assistant/message',
+            { turn: d.turn ?? 0, step: d.step ?? step, message: msg },
+            { surfaceOp: { op: 'replace', start: seq, end: seq } });
+    } catch (_e) { console.warn('[session-event] tool-call args surface replace failed:', _e); }
+}
+
 function _patchOAIWriteArgs(assistantMsg: any, diffs: Map<string, string>): void {
     // diffs: Map<tool_call_id, diffString>
     if (!assistantMsg?.tool_calls?.length || !diffs.size) return;
@@ -473,7 +502,7 @@ export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     ledger.set(path, e);
 }
 
-async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null }): Promise<Array<{name: string; args: any; result: any}>> {
+async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null }): Promise<Array<{name: string; args: any; result: any}>> {
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
@@ -483,6 +512,13 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         onStart?.(name, args, i);
         let result;
         let _rereadNote: string | null = null;
+        if (blockedTools?.has(name)) {
+            const refused = { error: `${name} is not available in this turn. Do the remaining work yourself with the other tools, then end with COMPLETED.` };
+            task?.setOutput(JSON.stringify(refused, null, 2));
+            task?.complete();
+            onResult?.(name, args, refused);
+            return { name, args, result: refused };
+        }
         if (_ledger && name === 'read_file') {
             const verdict = _checkRedundantRead(_ledger, args);
             if (verdict?.error) {
@@ -587,6 +623,10 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
 // patch was an 87 KB report.xml). Never part of a fix: they should not be the only edit behind COMPLETED, and the
 // SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
 export const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
+// Test runner / packaging configuration. Edits to these are almost never the fix itself.
+export const _ENV_CONFIG_RE = /(?:^|\/)(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setup\.py|pyproject\.toml|\.coveragerc|requirements[\w.-]*\.txt)$/;
+// Model-native tool-call markup left in a reply's text (Gemma-4: <|tool_call>, <tool_call|>, <|"|>).
+export const _BROKEN_CALL_RE = /<tool_call\|>|<\|tool_call>|<\|"\|>/;
 export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
 
 // Final message when an interactive turn reaches its step limit. The pending tool call of the
@@ -611,7 +651,27 @@ async function _stepBudgetStopMessage(max: number): Promise<string> {
 // files. runAgentTurn copies it into TurnResult so directorLoop can tell a step-limit stop after
 // edits (worth one closing continuation) from any other stop (end the run). Reset per turn.
 let _turnStop: { reason: string | null; edited: boolean } = { reason: null, edited: false };
+// Tools the current main-agent turn may not use (directorLoop's closing turn drops run_workers:
+// v0.58 xarray-4094's closing turn re-edited its fix through a worker). Set per runTurn; never
+// applied to worker requests.
+let _turnExcludedTools: Set<string> | null = null;
 export function getTurnStopInfo(): { reason: string | null; edited: boolean } { return { ..._turnStop }; }
+
+// What the stop summary needs to recover an answer: the task and the last few successful tool
+// outputs of this turn. Set by runTurn.
+let _stopTask = '';
+let _stopRecent: string[] = [];
+function _noteStopOutputs(results: Array<{ name: string; result: any }>): void {
+    for (const r of results) {
+        const res = r.result;
+        if (!res || res.error || (res.exit_code != null && res.exit_code !== 0)) continue;
+        const body = typeof res.stdout === 'string' ? res.stdout
+            : typeof res.content === 'string' ? res.content : JSON.stringify(res);
+        if (!body?.trim()) continue;
+        _stopRecent.push(`${r.name}: ${body.length > 1500 ? body.slice(0, 1500) + ' […]' : body}`);
+    }
+    if (_stopRecent.length > 3) _stopRecent = _stopRecent.slice(-3);
+}
 
 export async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
     // A forced stop is otherwise invisible in the step log: the run just ends on a tool call
@@ -623,13 +683,18 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
     // up to 4 more 100-step turns (v0.57: 1,102 SWE steps; pylint-4970 ran 394 steps over three stops).
     _turnStop.reason = reason;
     setLastTurnBlockedToken(true);
-    const withBlocked = (t: string) => _BLOCKED_DECLARATION_RE.test(t) ? t : `${t}\n\nBLOCKED: ${reason}`;
+    // BLOCKED goes first and the summary (or recovered answer) last: benchmark graders take the last
+    // line as the answer, and with BLOCKED last the answer became the stop reason — v0.58 CTF 48 had
+    // the flag in its step-1 output and was graded "it kept repeating calls that…".
+    const withBlocked = (t: string) => _BLOCKED_DECLARATION_RE.test(t) ? t : `BLOCKED: ${reason}\n\n${t}`;
     if (typeof callLLMComplete !== 'function') return withBlocked(`*(stopped: ${reason})*`);
     try {
+        const task = _stopTask ? `Task:\n${_stopTask.slice(0, 1500)}\n\n` : '';
+        const outs = _stopRecent.length ? `Most recent tool outputs:\n${_stopRecent.join('\n---\n')}\n\n` : '';
         const ctx = lastContent ? `Last agent output:\n${lastContent.slice(0, 600)}\n\n` : '';
         const text = await callLLMComplete(
-            `${ctx}An autonomous agent was force-stopped (${reason}). In 1-2 sentences summarise what was accomplished and state why it stopped. End with: BLOCKED: <reason>.`,
-            { maxTokens: 160, label: 'termination:synthesis', maxAttempts: 1 }
+            `${task}${outs}${ctx}An autonomous agent working on this task was force-stopped (${reason}). If the task asks for a specific answer (a value, name, flag, path, command or query) and the tool outputs above show it, reply with only that answer, in the form the task asks for. Otherwise summarise in 1-2 sentences what was accomplished and why it stopped.`,
+            { maxTokens: 300, label: 'termination:synthesis', maxAttempts: 1 }
         );
         return withBlocked(text?.trim() || `*(stopped: ${reason})*`);
     } catch { return withBlocked(`*(stopped: ${reason})*`); }
@@ -933,7 +998,7 @@ type StepAction =
 // Unified turn function: always uses openaiHistory as canonical format.
 // Main turn loop — dispatches through callOAI (all providers including Google via OAI-compat).
 // Cross-provider fallback is handled by changing activeEndpoint with no history conversion.
-async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOverride = null as Set<string> | null, session, forceToolCall = false }: { toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean } = {}): Promise<string> {
+async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOverride = null as Set<string> | null, session, forceToolCall = false, maxSteps, excludeTools }: { toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] } = {}): Promise<string> {
     const _s = session ?? defaultSession;
     // Every nudge must land in THIS turn's history. emitNudge() defaults to the
     // module-level openaiHistory, which is only the same array when _s is defaultSession
@@ -965,6 +1030,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     setLastTurnDoneToken(false);
     setLastTurnBlockedToken(false);
     _turnStop = { reason: null, edited: false };
+    _turnExcludedTools = excludeTools?.length ? new Set(excludeTools) : null;
+    _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
+    _stopRecent = [];
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
     // The flag is consumed+cleared by callOAI on the first LLM request of this turn.
     if (forceToolCall) _forceToolCall = true;
@@ -972,8 +1040,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _sameErrorGraceUsed = false;
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
+    const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
@@ -1029,7 +1098,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _lastEstTokens    = 0;    // cached result of estimateTokens for that length
     let _lastMaxTokensSent = 0;   // max_tokens of the last request (callOAI's clamp), for truncation checks
 
-    const _loopMax = getAgentMaxSteps();
+    // A caller-set budget (directorLoop's closing turn) overrides the per-turn setting.
+    const _loopMax = maxSteps && maxSteps > 0 ? Math.min(maxSteps, getAgentMaxSteps()) : getAgentMaxSteps();
+    // One "N steps left" note before the step limit. Autonomous runs: so a run that has its fix can
+    // apply and check it inside the turn (v0.58: 18 of 36 Lite first turns ran to the limit).
+    // Interactive chat: so the pause lands at a clean point, not mid-edit.
+    const _stepsLeftWarnAt = _loopMax - Math.max(3, Math.min(10, Math.round(_loopMax * 0.1)));
 
     // On the first user turn: apply keyword matching on top of the LLM-classified set.
     // Classification itself is the caller's responsibility (agentSend / runAgentTurn /
@@ -1043,6 +1117,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // Called when the token budget is full.  Compacts history and re-injects any pending nudge.
     async function _doCompact(step: number): Promise<void> {
         _forceCompact = false;
+        _dupSeen.clear();   // stubs point at earlier copies; after compaction those are gone
         // Capture any pending nudge so it can be re-injected if compaction drops it.
         const _lastPre = _histR(_s).at(-1);  // read from session
         const _pendingNudge = (_lastPre?.role === 'user' && typeof _lastPre.content === 'string' && _lastPre.content.startsWith('<nudge>'))
@@ -1169,6 +1244,19 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _forceCompact = true;
             return { do: 'retry' };  // caller: step--; continue
         }
+        // Native tool-call markup that no parser could turn into a call (Gemma's
+        // `thought<tool_call|>`, or a call cut off mid-arguments): nothing ran, and it is not an
+        // answer. Ending the turn on it cost v0.58 requests-1142 (a 2-step first turn, then a blind
+        // 54-step continuation). Drop the reply and ask for the call again, up to 3 times a turn.
+        if (_BROKEN_CALL_RE.test(textContent) && (ps.brokenCallRetries ?? 0) < 3 && step < _loopMax - 1 && !softStopPending) {
+            ps.brokenCallRetries = (ps.brokenCallRetries ?? 0) + 1;
+            thinkTask.append('\n[tool call arrived as unparseable text — asking again]\n', 'warn');
+            if (histLegacy) _s.history.pop();
+            _replaceLastAssistantSurface(_s, step, _m => ({ role: 'assistant', content: null }), 'pop-tombstone');
+            _emitNudge('broken_tool_call', nudge('Your last reply was a tool call written as text (tool-call markup in the message), so nothing ran. Send it again as a proper tool call.'));
+            _forceToolCall = true;
+            return { do: 'continue' };
+        }
         // Quality gate before turn-state checks
         const qc = _checkTextResponse(textContent, step, _loopMax, _garbledState);
         if (qc) {
@@ -1230,6 +1318,23 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _saveAnswer(ps, textContent);
             _emitNudge('scratch_only_edits', nudge(`You declared COMPLETED, but the only files changed this turn are scratch files: ${[..._editedPaths].slice(0, 6).join(', ')}. No project file was modified, so if the task was to change the code, the fix is not applied — check with \`git diff\` (or read the file) and apply it, then remove the scratch files. If these files are the deliverable, reply COMPLETED again.`));
             return { do: 'continue' };
+        }
+        // Test-environment workarounds in the change set: a rewritten conftest.py / pytest.ini /
+        // setup.cfg that made tests run locally ships with the fix and can break every graded test
+        // (v0.58 xarray-5131: a root conftest.py monkeypatching pandas; collection then failed on all
+        // 34 graded tests). Such patches rose from 3 to 11 over v0.56–v0.58, 1 of them resolved.
+        // One bounce per turn, skipped when the task itself names the file; a second COMPLETED passes.
+        if (_s.workflowMode && _isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
+            && step < _loopMax - 1 && !softStopPending && !ps.envConfigCheck) {
+            const _task = _originalTask(_histR(_s));
+            const _cfg = [..._editedPaths].filter(p => _ENV_CONFIG_RE.test(p)
+                && !_task.includes(String(p).split('/').pop() ?? ''));
+            if (_cfg.length) {
+                ps.envConfigCheck = 1;
+                _saveAnswer(ps, textContent);
+                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file you created), keep only the fix itself, then reply COMPLETED again.`));
+                return { do: 'continue' };
+            }
         }
         // Completion gate: context-dependent rules (trigger_on_completion in skills.js)
         // fire once when the model first declares completion. _reactiveFired dedup in
@@ -1793,16 +1898,24 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (ps.savedByStateLine) { ps.saved = null; ps.savedByStateLine = false; }
         // Role mode gets a tighter, explicit cap that emits BLOCKED rather than a silent synthesis.
         if (_s.workflowMode && _s.role) {
-            const _roleCap = Math.min(_ROLE_STEP_CAP, getAgentMaxSteps());
+            const _roleCap = Math.min(_ROLE_STEP_CAP, _loopMax);
             if (_stepCount + 1 >= _roleCap)
                 return await _gracefulSynthesis(`role step cap (${_roleCap} steps) reached`, textContent);
         }
-        if (++_stepCount >= getAgentMaxSteps()) {
+        if (++_stepCount >= _loopMax) {
             // Interactive chat: the user can simply continue, so say that plainly (with the open
             // tasks in Cowork) — the 160-token synthesis came back empty and left a bare
             // "*(stopped: …)*" after a 100-step Cowork build (fg-chat 2026-09-27-01-29-29).
-            if (!_s.workflowMode) return await _stepBudgetStopMessage(getAgentMaxSteps());
+            if (!_s.workflowMode) return await _stepBudgetStopMessage(_loopMax);
             return await _gracefulSynthesis('step budget exhausted', textContent);
+        }
+        if (_stepCount === _stepsLeftWarnAt) {
+            const _left = _loopMax - _stepCount;
+            // Autonomous runs (benchmarks, Cowork runner) end at the limit, so finish. Interactive chat
+            // only pauses — the user can continue — so reach a clean stopping point rather than wrap up.
+            _emitNudge('steps_left', _nudge(_s.workflowMode
+                ? `${_left} steps left in this turn. Finish now: if you changed code, check that the change is applied (e.g. git diff) and end with COMPLETED; if the task asks for an answer, give it. Do not start new exploration.`
+                : `${_left} steps left in this turn before it pauses. Reach a clean stopping point: finish the change you are making, don't start new ones, and leave files in a working state. The user can continue from there.`));
         }
 
         // Cap per-turn tool calls — see _MAX_CALLS_PER_TURN comment above.
@@ -1848,6 +1961,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             })
             : await _runToolCalls(_normCalls, toolTasks, {
                 forWorker: false,
+                blockedTools: _turnExcludedTools,
                 repeatCache: _repeatCache,
                 onTaskDone: () => { _taskDoneCalledThisStep = true; },
                 onRepeat: (name) => _repeatedNames.push(name),
@@ -1889,44 +2003,25 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, args: r.args, result: r.result }));
+        _noteStopOutputs(results);
 
         const oaiDiffs = _buildWriteDiffs(
             results.map(({ tc, name, args, result }) => ({ name, args, result, key: tc.id })),
             oaiOldContents
         );
-        // for native sessions apply write-arg diff via surface replace so the LLM
-        // (reading from deriveMessages()) sees the patched tool_call arguments.
-        if (oaiDiffs.size) {
-            if (_histLegacy) {
-                // fn-tag / no-session: mutate _s.history directly.
-                _patchOAIWriteArgs(_s.history[_s.history.length - 1], oaiDiffs);
-            } else {
-                // Native session: apply patch to a mutable copy, then surface-replace.
-                const _pwaSess = _getEvtSession(_s);
-                if (_pwaSess) {
-                    const _pwaSeq = _pwaSess.surface[_pwaSess.surface.length - 1];
-                    if (_pwaSeq !== undefined && _pwaSess.events[_pwaSeq]?.type === 'assistant/message') {
-                        const _pwaD = _pwaSess.events[_pwaSeq].data;
-                        const _pwaMsg = { ..._pwaD.message };
-                        if (_pwaMsg.tool_calls?.length) {
-                            _pwaMsg.tool_calls = _pwaMsg.tool_calls.map((tc: any) => {
-                                const d = oaiDiffs.get(tc.id); if (!d) return tc;
-                                try {
-                                    const a = JSON.parse(tc.function.arguments);
-                                    a.content = d; a._contentCompressed = true;
-                                    return { ...tc, function: { ...tc.function, arguments: JSON.stringify(a) } };
-                                } catch { return tc; }
-                            });
-                        }
-                        try {
-                            (_pwaSess.append as _AppendSurface)('assistant/message',
-                                { turn: _pwaD.turn ?? 0, step: _pwaD.step ?? step, message: _pwaMsg },
-                                { surfaceOp: { op: 'replace', start: _pwaSeq, end: _pwaSeq } });
-                        } catch (_e) { console.warn('[session-event] patchWriteArgs surface replace failed:', _e); }
-                    }
-                }
-            }
+        // Rewrites of this step's tool-call arguments in history, by call id. Write tools: content
+        // replaced by the diff. Shell sent as Python that ran as bash: recorded as bash, so the
+        // model sees the call that actually ran. With the call left as python and a "Ran as bash —
+        // do not re-run it" note, 20% of the next calls were identical re-sends (8.5% after other
+        // results; v0.58), and CTF 48 re-sent a call that had printed the flag 10 times.
+        const _argEdits = new Map<string, (a: any) => any>();
+        for (const [id, d] of oaiDiffs) _argEdits.set(id, (a: any) => ({ ...a, content: d, _contentCompressed: true }));
+        for (const r of results) {
+            if (!r.result?._ranAsBash) continue;
+            delete r.result._ranAsBash;
+            _argEdits.set(r.tc.id, (a: any) => ({ ...a, language: 'bash' }));
         }
+        if (_argEdits.size) _patchLastAssistantArgs(_s, _histLegacy, step, _argEdits);
 
         const replaceFailNudge = await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
 
@@ -1937,8 +2032,30 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         let envFailNudge: string | null;
         ({ envFailSig: _envFailSig, envFailCount: _envFailCount, envFailTotal: _envFailTotal, envFailMsg: envFailNudge } = _updateEnvFailureDetector(results, _envFailSig, _envFailCount, _envFailTotal));
 
-        const _stepBudgetChars = parseInt(ls(KEYS.AGENT_STEP_BUDGET, String(parseInt(ls(KEYS.AGENT_MAX_TOOL_RESULT, '20000'), 10))), 10);
+        const _stepBudgetChars = parseInt(ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())), 10);
         const stepBudget = { remaining: _stepBudgetChars };
+
+        // The same call returning the same result for the 4th time within the repeat guard's window:
+        // history gets a short stub instead of another full copy (the earlier copies are still in
+        // context). Nothing is refused or stopped — v0.57's review found every refusal/stop variant
+        // cut more scoring runs than loops — but a cycling loop (v0.58 CTF 71: one unzip|grep 14×
+        // among variants; OS 40: one cat 25×) stops re-sending the same output. Simulated on v0.58:
+        // 1,644 results, 3.1M characters. read_file has its own guard.
+        const _histStub = new Map<string, any>();
+        for (const r of results) {
+            if (r.name === 'read_file') continue;
+            const key = `${r.name}|${JSON.stringify(r.args)}|${JSON.stringify(r.result, _fpTrunc)}`;
+            const prev = (_dupSeen.get(key) ?? []).filter(s => _stepCount - s < REPEAT_WINDOW);
+            if (prev.length >= 3) {
+                _histStub.set(r.tc.id, {
+                    ...(r.result?.exit_code != null ? { exit_code: r.result.exit_code } : {}),
+                    note: `Same result as the ${prev.length} earlier runs of this exact call in your last ${REPEAT_WINDOW} steps — still shown above, not repeated here. Running it again will not change it: use that result, change the command, or give your answer.`,
+                });
+            }
+            prev.push(_stepCount);
+            _dupSeen.set(key, prev);
+        }
+        const _forHist = (tc: any, result: any) => _histStub.get(tc.id) ?? result;
 
         const _errPrefix = (r: any): string => {
             if (r?.error) return `[TOOL ERROR: ${String(r.error).slice(0, 200)}]\n`;
@@ -1952,13 +2069,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (_isFnTag) {
                 const parts = results.map(({ tc, name, result }) => {
                     const _pfx = _errPrefix(result);
-                    return `<tool_response>\n<tool_name>${name}</tool_name>\n<result>\n${_pfx}${JSON.stringify(_historyResult(name, result, false, stepBudget))}\n</result>\n</tool_response>`;
+                    return `<tool_response>\n<tool_name>${name}</tool_name>\n<result>\n${_pfx}${JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget))}\n</result>\n</tool_response>`;
                 });
                 if (parts.length) _s.history.push({ role: 'user', content: parts.join('\n\n') });
             } else {
                 for (const { tc, name, result } of results) {
                     const _pfx = _errPrefix(result);
-                    _s.history.push({ role: 'tool', tool_call_id: tc.id, name, content: _pfx + JSON.stringify(_historyResult(name, result, false, stepBudget)) });
+                    _s.history.push({ role: 'tool', tool_call_id: tc.id, name, content: _pfx + JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget)) });
                 }
             }
         }
@@ -1966,7 +2083,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // always individual regardless of fn-tag vs. native — the event log captures semantic truth).
         for (const { tc, name, result } of results) {
             const _pfx = _errPrefix(result);
-            const _histContent = _pfx + JSON.stringify(_historyResult(name, result, false, stepBudget));
+            const _histContent = _pfx + JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget));
             _evtAppend(_s, 'tool/result', {
                 turn: _s._evtTurn ?? 0,
                 step,
@@ -1990,10 +2107,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
             && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
             _editsThisRun = true;
-        // For directorLoop's closing continuation: the director's own edits, or a worker's.
-        if (_editsThisRun || results.some(r => r.name === 'run_workers'
-            && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !isScratchPath(String(p))))))
-            _turnStop.edited = true;
         // Which files changed this run — for the scratch-only completion check.
         for (const r of results) {
             if (r.result?.error) continue;
@@ -2007,6 +2120,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 for (const p of r.result.files_written) _editedPaths.add(String(p));
             }
         }
+        // For directorLoop's closing turn: a project (non-scratch) file changed, by the director or a
+        // worker. Repro/debug scripts alone don't make a fix worth finishing.
+        if ([..._editedPaths].some(p => !isScratchPath(p)) || results.some(r => r.name === 'run_workers'
+            && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !isScratchPath(String(p))))))
+            _turnStop.edited = true;
         // Track successful execute_code — feeds step_validation advisory mode.
         // A prior successful exec means the model can already use tools; further
         // step_validation fires should warn rather than block (T3.3/T3.7).
@@ -2256,7 +2374,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const _ftc = _forceToolCall; _forceToolCall = false; // consume and reset before the call
     const payload = buildChatPayload(ep, {
         messages: [{ role: 'system', content: sysPrompt }, ..._hist],
-        tools: forkPrefix ? forkPrefix.tools : (hasTools ? buildOAITools(forWorker, toolFilterOverride) : null),
+        tools: forkPrefix ? forkPrefix.tools : (hasTools
+            ? buildOAITools(forWorker, toolFilterOverride).filter(t => forWorker || !_turnExcludedTools?.has(t.function?.name))
+            : null),
         temperature: getTemperature(),
         maxTokens: effectiveMaxTokens,
         stream: true,

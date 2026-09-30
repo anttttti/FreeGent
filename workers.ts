@@ -956,7 +956,17 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             // Record every tool call this step into the per-worker log (name + compact label).
             for (const c of _normCalls) _wToolCalls.push({ name: c.name, label: toolLabel(c.name, c.args) });
             const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, result: r.result }));
-            const wStepBudgetChars = parseInt((typeof ls === 'function' ? ls(KEYS.AGENT_STEP_BUDGET, ls(KEYS.AGENT_MAX_TOOL_RESULT, '20000')) : '20000'), 10);
+            // Shell sent as Python ran as bash: record the call as bash (see the main loop).
+            const _asBashIds = new Set(results.filter(r => r.result?._ranAsBash).map(r => { delete r.result._ranAsBash; return r.tc.id; }));
+            if (_asBashIds.size) {
+                const _am = [...localOH].reverse().find((m: any) => m.role === 'assistant' && m.tool_calls?.length);
+                if (_am) _am.tool_calls = _am.tool_calls.map((tc: any) => {
+                    if (!_asBashIds.has(tc.id)) return tc;
+                    try { return { ...tc, function: { ...tc.function, arguments: JSON.stringify({ ...JSON.parse(tc.function.arguments), language: 'bash' }) } }; }
+                    catch { return tc; }
+                });
+            }
+            const wStepBudgetChars = parseInt((typeof ls === 'function' ? ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())) : '100000'), 10);
             const wStepBudget = { remaining: wStepBudgetChars };
             for (const { tc, name, result } of results) {
                 const histResult = truncateResultForHistory(name, result, { seenReadFiles: localSeenRF, seenListFiles: localSeenLF, stepBudget: wStepBudget });

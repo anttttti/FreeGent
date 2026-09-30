@@ -26,8 +26,16 @@ export interface DirectorOpts {
      * maxContinuations.
      */
     stepLimitContinuations?: number;
-    /** Prompt for a closing turn after a step-limit stop. */
-    stepLimitPrompt?: string;
+    /** Prompt for a closing turn after a step-limit stop; receives the turn's step budget. */
+    stepLimitPrompt?: string | ((steps: number | undefined) => string);
+    /**
+     * Step budget of a closing turn. Unset = the normal per-turn budget. v0.58 gave closing turns
+     * the full 100 steps: 35 SWE runs, 2,064 steps, 53.8M prompt tokens, and 10 of them ran to the
+     * limit again. Runs that only had to check their fix finished in 5–16 steps.
+     */
+    closingSteps?: number;
+    /** Tools a closing turn may not use (run_workers: a closing turn should not delegate new work). */
+    closingExcludeTools?: string[];
 }
 
 // A forced stop ends a turn as BLOCKED. Until v0.57 the stop text often failed the BLOCKED check,
@@ -36,12 +44,13 @@ export interface DirectorOpts {
 // a step-limit stop in a run that had already edited files (Lite xarray-4094, Verified
 // requests-1142): that case gets one explicit closing turn.
 const _STEP_LIMIT_RE = /step budget exhausted|maximum step limit reached|role step cap/;
-export const STEP_LIMIT_PROMPT = 'You reached the step limit for this turn. Your file changes so far are kept. Use this turn to finish: check that your fix is applied (e.g. git diff), run the most relevant test once if you can, correct only what that shows, then end with COMPLETED. Do not start new exploration.';
+export const STEP_LIMIT_PROMPT = (steps?: number): string =>
+    `You reached the step limit for this turn. Your file changes so far are kept. Use this closing turn${steps ? ` (${steps} steps)` : ''} to finish: check that your fix is applied (e.g. git diff), run the most relevant test once if you can, correct only what that shows, then end with COMPLETED. Do not start new exploration.`;
 
 export type RunOneTurn = (
     prompt: string,
     session: AgentSession,
-    opts?: { forceToolCall?: boolean; placeholder?: any },
+    opts?: { forceToolCall?: boolean; placeholder?: any; maxSteps?: number; excludeTools?: string[] },
 ) => Promise<TurnResult>;
 
 /**
@@ -66,7 +75,10 @@ export async function directorLoop(
         forceFirstToolCall = false,
         stepLimitContinuations = 0,
         stepLimitPrompt = STEP_LIMIT_PROMPT,
+        closingSteps,
+        closingExcludeTools,
     } = opts;
+    const _closingPrompt = typeof stepLimitPrompt === 'function' ? stepLimitPrompt(closingSteps) : stepLimitPrompt;
 
     // First turn
     let result = await runOneTurn(task, session,
@@ -85,7 +97,11 @@ export async function directorLoop(
     ) {
         const isClosing = result.finishSignal !== 'running';
         if (isClosing) closing++;
-        result = await runOneTurn(isClosing ? stepLimitPrompt : continuationPrompt, session, { forceToolCall: true });
+        result = isClosing
+            ? await runOneTurn(_closingPrompt, session, { forceToolCall: true,
+                ...(closingSteps ? { maxSteps: closingSteps } : {}),
+                ...(closingExcludeTools?.length ? { excludeTools: closingExcludeTools } : {}) })
+            : await runOneTurn(continuationPrompt, session, { forceToolCall: true });
         edited ||= !!result.stop?.edited;
         n++;
         onTurn?.(n, result);

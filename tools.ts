@@ -2009,10 +2009,11 @@ async function _handleExecuteCodeInner(args, context) {
     if (args.language === 'python' && typeof nativeExec === 'function' && _isShellCompileError(args.code, execResult)) {
         try {
             const asBash = await nativeExec('bash', args.code);
-            // Worded as a success. "This was shell code … Use language: bash" read as a request to redo
-            // the call: in v0.57 CTF, 68 of 90 exact-duplicate calls were re-sends (still as python) of
-            // a call that had just succeeded this way.
-            execResult = { ...asBash, note: 'Ran as bash (the code was shell, not Python). The output above is the real result — do not re-run it. For shell commands, language "bash" is the right choice.' };
+            // No note: the main loop records the call itself as language "bash" (_ranAsBash, removed
+            // before the result reaches history), so the model sees the call that ran. Any note made
+            // it re-send the call still as python: v0.57 "use language bash" → 68 of 90 CTF
+            // duplicates; v0.58 "do not re-run it" → 20% identical next calls, CTF 48 ten times.
+            execResult = { ...asBash, _ranAsBash: true };
         } catch { /* keep the original SyntaxError */ }
     }
     // Explicit bash that failed on what looks like Python: say so (never switch an explicit choice).

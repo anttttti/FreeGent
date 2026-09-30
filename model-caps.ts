@@ -94,6 +94,69 @@ function _knownToolNames(): Set<string> {
 
 const _reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
 
+// Gemma-4 native call syntax, when vLLM leaves it in the content:
+//   <|tool_call>call:execute_code{code:<|"|>ls -a<|"|>,language:<|"|>bash<|"|>}<tool_call|>
+// Keys are bare; strings are delimited by <|"|>; numbers, booleans, objects and arrays are bare.
+// About 20 replies per run (v0.55–v0.58) arrived like this with no tool call; each ended its turn,
+// and in SWE started a blind 100-step continuation (v0.58 requests-1142 was lost that way).
+const _GQ = '<|"|>';
+function _gemmaValue(s: string, i: number): [any, number] {
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (s.startsWith(_GQ, i)) {
+        i += _GQ.length;
+        // A closing delimiter is one followed by , } ] or the end. A model sometimes drops the
+        // closing delimiter before the next key (body:<|"|>{…},method:<|"|>POST<|"|>…): end the
+        // string at a ",key:<|"|>" that comes first.
+        let j = i;
+        let close = -1;
+        while ((j = s.indexOf(_GQ, j)) !== -1) {
+            const after = s.slice(j + _GQ.length).trimStart();
+            if (!after || /^[,}\]]/.test(after)) { close = j; break; }
+            j += _GQ.length;
+        }
+        const nextKey = /,\s*[A-Za-z_][\w-]*:(?=<\|"\|>)/g;
+        nextKey.lastIndex = i;
+        const nk = nextKey.exec(s);
+        if (nk && (close === -1 || nk.index < close)) return [s.slice(i, nk.index), nk.index];
+        if (close === -1) return [s.slice(i), s.length];
+        return [s.slice(i, close), close + _GQ.length];
+    }
+    if (s[i] === '{') return _gemmaObject(s, i);
+    if (s[i] === '[') {
+        const arr: any[] = [];
+        i++;
+        while (i < s.length) {
+            while (i < s.length && /[\s,]/.test(s[i])) i++;
+            if (s[i] === ']') return [arr, i + 1];
+            const [v, n] = _gemmaValue(s, i);
+            if (n <= i) break;
+            arr.push(v); i = n;
+        }
+        return [arr, i];
+    }
+    const m = /^[^,}\]]*/.exec(s.slice(i))!;
+    const raw = m[0].trim();
+    let v: any = raw;
+    try { v = JSON.parse(raw); } catch {}
+    return [v, i + m[0].length];
+}
+function _gemmaObject(s: string, i: number): [Record<string, any>, number] {
+    const obj: Record<string, any> = {};
+    i++;   // '{'
+    while (i < s.length) {
+        while (i < s.length && /[\s,]/.test(s[i])) i++;
+        if (s[i] === '}') return [obj, i + 1];
+        const km = /^([A-Za-z_][\w-]*)\s*:/.exec(s.slice(i));
+        if (!km) break;
+        i += km[0].length;
+        const [v, n] = _gemmaValue(s, i);
+        obj[km[1]] = v;
+        if (n <= i) break;
+        i = n;
+    }
+    return [obj, s.length];
+}
+
 // Parse tool-call XML blocks emitted by models that don't use native function calling.
 // Handles eight formats:
 //   Format A (Hermes/trinity): <tool_call><function=name><parameter=k>v</parameter>...</function></tool_call>
@@ -106,12 +169,36 @@ const _reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
 //   Format H (Python-style):   tool_name(arg1="v1", arg2="v2")
 //   Format I (AgentBench/fenced): <|mask_start|>cmd<|mask_end|> or ```bash\ncmd\n``` (last resort)
 //   Format J (GLM native):     <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
+//   Format K (Gemma native):   <|tool_call>call:name{k:<|"|>v<|"|>,n:3}<tool_call|>  (wrappers optional)
 // Returns { tool_calls, cleaned } — cleaned is the text with all tool-call blocks removed.
 export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; } {
     const tool_calls = [];
     let cleaned = text;
     const _known = _knownToolNames();
     const _knownAlt = [..._known].map(_reEsc).join('|');
+
+    // Format K — Gemma native (see _gemmaValue). Known tool names only.
+    {
+        const re = /(?:<\|tool_call>\s*)?call:([A-Za-z_][\w-]*)\s*(?=\{)/g;
+        let m: RegExpExecArray | null;
+        let out = '', last = 0;
+        while ((m = re.exec(cleaned)) !== null) {
+            if (!_known.has(m[1])) continue;
+            const [args, end] = _gemmaObject(cleaned, m.index + m[0].length);
+            let stop = end;
+            const tail = /^\s*<tool_call\|>/.exec(cleaned.slice(stop));
+            if (tail) stop += tail[0].length;
+            tool_calls.push({
+                id: `call_${m[1]}_${Date.now()}_${tool_calls.length}`,
+                type: 'function',
+                function: { name: m[1], arguments: JSON.stringify(args) }
+            });
+            out += cleaned.slice(last, m.index);
+            last = stop;
+            re.lastIndex = stop;
+        }
+        if (last) cleaned = out + cleaned.slice(last);
+    }
 
     // Format J — GLM native: <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>…</tool_call>
     // The last block often lacks </tool_call> (it is GLM's stop token), so a block also ends at
