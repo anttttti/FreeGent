@@ -176,61 +176,120 @@ function onSandboxProviderChange() {
     saveSettings();
 }
 
-// Mapping from .env variable names → { localStorage key, settings input id }
-const ENV_KEY_MAP: Record<string, { ls: string; input: string }> = {
-    GEMINI_API_KEY:       { ls: 'fg_gemini_key',        input: 'gemini-key' },
-    GROQ_API_KEY:         { ls: 'fg_groq_key',          input: 'groq-key' },
-    OPENROUTER_API_KEY:   { ls: 'fg_openrouter_key',    input: 'openrouter-key' },
-    NVIDIA_API_KEY:       { ls: 'fg_nvidia_key',        input: 'nvidia-key' },
-    TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key' },
-    KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key' },
-    VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key' },
-    NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key' },
-    HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key' },
-    TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key' },
-    BRAVE_API_KEY:        { ls: 'fg_brave_key',         input: 'brave-key' },
-    GITHUB_TOKEN:         { ls: 'fg_github_token',      input: 'github-token' },
-    STACKEXCHANGE_API_KEY:{ ls: 'fg_stackexchange_key', input: 'stackexchange-key' },
+// Mapping from .env variable names → { localStorage key, settings input id, label, key prefixes }.
+// Prefixes let the paste box recognise bare keys; Stack Exchange keys have none.
+const ENV_KEY_MAP: Record<string, { ls: string; input: string; label: string; prefixes: string[] }> = {
+    GEMINI_API_KEY:       { ls: 'fg_gemini_key',        input: 'gemini-key',        label: 'Gemini',        prefixes: ['AIza'] },
+    GROQ_API_KEY:         { ls: 'fg_groq_key',          input: 'groq-key',          label: 'Groq',          prefixes: ['gsk_'] },
+    OPENROUTER_API_KEY:   { ls: 'fg_openrouter_key',    input: 'openrouter-key',    label: 'OpenRouter',    prefixes: ['sk-or-'] },
+    NVIDIA_API_KEY:       { ls: 'fg_nvidia_key',        input: 'nvidia-key',        label: 'NVIDIA',        prefixes: ['nvapi-'] },
+    TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key',   label: 'TokenHarbor',   prefixes: ['thk_'] },
+    KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key',          label: 'Kilo',          prefixes: ['sk-kilo-'] },
+    VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key',        label: 'Vercel',        prefixes: ['aig_'] },
+    NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['nsk-'] },
+    HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key',            label: 'HuggingFace',   prefixes: ['hf_'] },
+    TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key',        label: 'Tavily',        prefixes: ['tvly-'] },
+    BRAVE_API_KEY:        { ls: 'fg_brave_key',         input: 'brave-key',         label: 'Brave',         prefixes: ['BSA'] },
+    GITHUB_TOKEN:         { ls: 'fg_github_token',      input: 'github-token',      label: 'GitHub',        prefixes: ['ghp_', 'github_pat_'] },
+    STACKEXCHANGE_API_KEY:{ ls: 'fg_stackexchange_key', input: 'stackexchange-key', label: 'Stack Exchange', prefixes: [] },
 };
 
+// Parse KEY=VALUE lines for known variables; strip quotes and inline comments.
+function parseEnvText(text: string): Record<string, string> {
+    const found: Record<string, string> = {};
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim().replace(/^export\s+/, '');
+        if (!line || line.startsWith('#')) continue;
+        const eq = line.indexOf('=');
+        if (eq < 1) continue;
+        const key = line.slice(0, eq).trim();
+        if (!ENV_KEY_MAP[key]) continue;          // ignore unknown vars
+        let val = line.slice(eq + 1).trim();
+        val = val.replace(/^['"]|['"]$/g, '');    // strip surrounding quotes
+        val = val.replace(/\s*#.*$/, '').trim();  // strip inline comments
+        if (val) found[key] = val;
+    }
+    return found;
+}
+
+// Find every recognised key in free text (bare keys, .env lines, JSON, prose).
+// Each token of key characters is matched against all prefixes, longest first;
+// the first key per provider wins. NAME=value lines fill in prefix-less keys.
+export function findKeysInText(text: string): Record<string, string> {
+    const prefixes = Object.entries(ENV_KEY_MAP)
+        .flatMap(([env, { prefixes }]) => prefixes.map(p => ({ env, p })))
+        .sort((a, b) => b.p.length - a.p.length);
+    const found: Record<string, string> = {};
+    for (const tok of text.match(/[A-Za-z0-9_-]{20,}/g) || []) {
+        const hit = prefixes.find(({ p }) => tok.startsWith(p));
+        if (hit && !found[hit.env]) found[hit.env] = tok;
+    }
+    for (const [env, val] of Object.entries(parseEnvText(text))) {
+        if (!found[env]) found[env] = val;
+    }
+    return found;
+}
+
+function applyFoundKeys(found: Record<string, string>) {
+    for (const [envVar, val] of Object.entries(found)) {
+        const { ls, input: inputId } = ENV_KEY_MAP[envVar];
+        localStorage.setItem(ls, val);
+        const el = document.getElementById(inputId) as HTMLInputElement | null;
+        if (el) { el.value = val; el.dataset.fgLoaded = '1'; }
+    }
+    (window as any).renderModelCatalogTable?.();
+    (window as any).renderMainModelList?.();
+}
+
+// "Extract from file": same prefix scan as the paste box, over any text file.
 (window as any).importEnvFile = function(input: HTMLInputElement) {
     const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
-        const text = (e.target?.result as string) || '';
-        // Parse KEY=VALUE lines; strip quotes and inline comments.
-        const found: Record<string, string> = {};
-        for (const raw of text.split(/\r?\n/)) {
-            const line = raw.trim();
-            if (!line || line.startsWith('#')) continue;
-            const eq = line.indexOf('=');
-            if (eq < 1) continue;
-            const key = line.slice(0, eq).trim();
-            if (!ENV_KEY_MAP[key]) continue;          // ignore unknown vars
-            let val = line.slice(eq + 1).trim();
-            val = val.replace(/^['"]|['"]$/g, '');    // strip surrounding quotes
-            val = val.replace(/\s*#.*$/, '').trim();  // strip inline comments
-            if (val) found[key] = val;
-        }
-        const keys = Object.keys(found);
-        if (!keys.length) { alert('No recognised API keys found in file.'); input.value = ''; return; }
-        const names = keys.join(', ');
-        if (!confirm(`Found ${keys.length} key${keys.length > 1 ? 's' : ''}:\n${names}\n\nImport into Settings?`)) {
-            input.value = '';
-            return;
-        }
-        for (const [envVar, val] of Object.entries(found)) {
-            const { ls, input: inputId } = ENV_KEY_MAP[envVar];
-            localStorage.setItem(ls, val);
-            const el = document.getElementById(inputId) as HTMLInputElement | null;
-            if (el) { el.value = val; el.dataset.fgLoaded = '1'; }
-        }
+        fillKeysFromText((e.target?.result as string) || '');
         input.value = '';  // reset so same file can be re-imported if needed
-        (window as any).renderModelCatalogTable?.();
-        (window as any).renderMainModelList?.();
     };
     reader.readAsText(file);
+};
+
+function fillKeysFromText(text: string) {
+    const status = document.getElementById('key-paste-status');
+    const box = document.getElementById('key-paste') as HTMLTextAreaElement | null;
+    const found = findKeysInText(text);
+    const labels = Object.keys(found).map(env => ENV_KEY_MAP[env].label);
+    if (labels.length) {
+        applyFoundKeys(found);
+        if (box) { box.value = ''; _keyPasteLen = 0; }  // don't leave keys sitting in plain text
+    }
+    if (status) status.textContent = labels.length
+        ? `✓ Filled ${labels.length}: ${labels.join(', ')}`
+        : 'No recognised keys found.';
+}
+
+// Scan whenever ≥20 chars arrive at once: paste, drop, or a mobile keyboard's clipboard
+// chip (which inserts as typing, with no paste event). Keystrokes never trigger a scan.
+let _keyPasteLen = 0;
+(window as any).onKeyPasteInput = function(box: HTMLTextAreaElement) {
+    const grew = box.value.length - _keyPasteLen;
+    if (grew >= 20) fillKeysFromText(box.value);
+    _keyPasteLen = box.value.length;
+};
+// Clipboard reads need a secure context (https or localhost), browser support and
+// permission. On failure, say which and focus the box so a manual paste is one keystroke.
+(window as any).pasteKeysFromClipboard = async function() {
+    const fail = (why: string) => {
+        const status = document.getElementById('key-paste-status');
+        if (status) status.textContent = `${why} — paste into the box (Ctrl+V / long-press).`;
+        document.getElementById('key-paste')?.focus();
+    };
+    if (!window.isSecureContext) return fail('Clipboard needs https or localhost');
+    if (!navigator.clipboard?.readText) return fail('This browser does not allow reading the clipboard');
+    try {
+        fillKeysFromText(await navigator.clipboard.readText());
+    } catch (e: any) {
+        fail(e?.name === 'NotAllowedError' ? 'Clipboard permission denied' : `Clipboard read failed (${e?.name || e})`);
+    }
 };
 
 function saveSettings() {
