@@ -121,8 +121,38 @@ function _thinkEnd(s: string, from: number): TagMatch {
     return best;
 }
 
+// ── Degenerate-output check ───────────────────────────────────────────────────
+// A model that falls into a repetition loop keeps generating until the output cap: v0.60 had 253
+// such cut-offs (2.02M tokens, 38% of everything generated), most of them repeated lines, a URL
+// query growing `a|b|a_b|…` for 8K tokens, or the same comment line in execute_code. Checked on the
+// tail of the text and of each tool call's arguments as they stream; null when the output looks
+// normal. Short outputs are never checked — normal steps are 40–200 tokens.
+export const DEGENERATE_MIN_CHARS = 3000;
+const _DEGEN_TAIL = 2000;
+export function _degenerateTail(s: string): string | null {
+    if (s.length < DEGENERATE_MIN_CHARS) return null;
+    const t = s.slice(-_DEGEN_TAIL);
+    // 1. Exactly periodic tail: one unit (up to 200 chars) repeated over the last 1,000+ chars.
+    for (let p = 1; p <= 200; p++) {
+        const span = Math.max(1000, p * 6);
+        if (span > t.length) break;
+        let ok = true;
+        for (let i = t.length - span + p; i < t.length; i++) if (t[i] !== t[i - p]) { ok = false; break; }
+        if (ok) return `the same ${p}-character sequence repeated`;
+    }
+    // 2. Few distinct items: lines, or `|`/`,`-separated terms in a query string.
+    const items = t.split(/\\n|\n|\||,/).map(x => x.trim()).filter(x => x.length >= 4);
+    if (items.length >= 40 && new Set(items).size / items.length < 0.3) return 'the same few lines or terms repeated';
+    return null;
+}
+// A fetch_url URL this long is a runaway query, not an address.
+const _RUNAWAY_URL_RE = /"url"\s*:\s*"[^"]{2000}/;
+
 export async function streamOAICompat(resp: any, onChunk: any) {
     const tcMap: Record<string, any> = {};
+    let degenerate: string | null = null;
+    let _checkedAt = 0;   // output length (text + tool arguments) at the last degenerate check
+    const _grown = () => content.length + Object.values(tcMap).reduce((n: number, tc: any) => n + tc.function.arguments.length, 0);
     let content: string          = '';
     let reasoningContent: string = '';
     let usage: any    = null;
@@ -212,6 +242,18 @@ export async function streamOAICompat(resp: any, onChunk: any) {
                 if (tc.function?.arguments) tcMap[idx].function.arguments += tc.function.arguments;
             }
         }
+        const _n = _grown();
+        if (_n - _checkedAt >= 1000) {
+            _checkedAt = _n;
+            degenerate = _degenerateTail(content);
+            for (const tc of Object.values(tcMap) as any[]) {
+                if (degenerate) break;
+                const a = tc.function.arguments;
+                degenerate = tc.function.name === 'fetch_url' && _RUNAWAY_URL_RE.test(a)
+                    ? 'a fetch_url URL over 2,000 characters' : _degenerateTail(a);
+            }
+            if (degenerate) break;
+        }
     } } catch (e) {
         // Idle timeout mid-stream: return what arrived rather than retrying from scratch and losing it,
         // but flag it — the response is cut off, not finished. Unflagged, the partial narration
@@ -224,6 +266,14 @@ export async function streamOAICompat(resp: any, onChunk: any) {
             }
         }
         else if (e.name !== 'AbortError' || !softStopPending) throw e;
+    }
+    if (degenerate) {
+        // Close the connection so the server stops generating, and report it like a cut-off at the
+        // token cap: the caller discards the response and tells the model why.
+        try { await resp.body?.cancel?.(); } catch {}
+        finish_reason = 'repetition';
+        const _chars = _grown();
+        usage = { ...(usage ?? {}), completion_tokens: usage?.completion_tokens ?? Math.round(_chars / 4) };
     }
     if (!content && reasoningContent) { content = reasoningContent; onChunk('', 'output'); }
     const tool_calls = Object.values(tcMap).filter(tc => tc.function.name);
@@ -282,7 +332,8 @@ export async function streamOAICompat(resp: any, onChunk: any) {
         // Preserve reasoning_content so callers that feed history back to vLLM can re-insert
         // the <think> block via preserve_thinking in chat_template_kwargs (multi-turn continuity).
         ...(reasoningContent && { reasoning_content: reasoningContent }),
-        ...(tool_calls.length && { tool_calls }), usage, finish_reason };
+        ...(tool_calls.length && { tool_calls }), usage, finish_reason,
+        ...(degenerate && { degenerate }) };
 }
 
 export async function nonStreamOAICompat(resp: any, onChunk: any) {

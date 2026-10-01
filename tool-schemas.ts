@@ -142,7 +142,10 @@ const TOOLS_SPEC = [
                 url:     { type: 'string', description: 'Full URL including https://.' },
                 method:  { type: 'string', description: 'HTTP method: GET (default), POST, PUT, PATCH, DELETE.' },
                 headers: { type: 'object', description: 'Request headers as key/value pairs. Common: Authorization, Content-Type, Accept, X-Api-Key.' },
-                body:    { description: 'Request body. Objects are JSON-serialised automatically; Content-Type is set to application/json unless overridden.' },
+                // Typed: a property without a type reaches Gemma's chat template as `type:""`, and
+                // v0.60 AutomationBench sent 57% of its POST /execute calls with no body at all.
+                // The handler still accepts a string for non-JSON bodies.
+                body:    { type: 'object', description: 'Request body for POST/PUT/PATCH, as a JSON object. Sent as JSON; Content-Type is set to application/json unless overridden. A non-JSON body may be given as a string.' },
                 extract: { type: 'string', description: 'Optional. What you are looking for on the page. When set and the response body is large, only passages relevant to this goal are returned instead of the full page — keeps boilerplate out of your context. Omit to get the full (truncated) body.' },
             },
             required: ['url']

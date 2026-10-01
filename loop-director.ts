@@ -48,7 +48,7 @@ export interface DirectorOpts {
 const _STEP_LIMIT_RE = /step budget exhausted|maximum step limit reached|role step cap/;
 export const STEP_LIMIT_PROMPT = (steps?: number, envFiles: string[] = []): string =>
     `You reached the step limit for this turn. Your work so far is kept. Use this closing turn${steps ? ` (${steps} steps)` : ''} to finish: `
-    + (envFiles.length ? `first restore these test/packaging configuration edits, which ship with your change and can break the graded tests (\`git checkout -- <file>\`, or delete a file you created): ${envFiles.slice(0, 6).join(', ')}. Then ` : '')
+    + (envFiles.length ? `first restore these test/packaging configuration edits or stub packages, which ship with your change and can break the graded tests (\`git checkout -- <file>\`, or delete a file or folder you created): ${envFiles.slice(0, 6).join(', ')}. Then ` : '')
     + `if you changed code, check that the change is applied (e.g. git diff), run the most relevant test once if you can, and correct only what that shows; if the task asks for an answer (a value, flag, command or file), give it now from what you found. End with COMPLETED. Do not start new exploration.`;
 
 export type RunOneTurn = (

@@ -384,6 +384,21 @@ export function _repairPathArg(normCalls: any[]): void {
     }
 }
 
+// Other names models give fetch_url's request body. v0.60 AutomationBench: 640 of 1,125
+// POST /execute calls had no body, and 153 of them held a complete {tool, params} body under
+// `params` or `parameters` — each answered "Missing field tool" and retried. Only for methods that
+// send a body; a GET's `params` may mean a query string.
+const _BODY_ALIASES = ['params', 'parameters', 'json', 'data', 'payload', 'post_data', 'request_body'];
+export function _repairFetchBody(normCalls: any[]): void {
+    for (const nc of normCalls) {
+        const a = nc.args;
+        if (nc.name !== 'fetch_url' || !a || typeof a !== 'object' || a.body != null) continue;
+        if (/^(GET|HEAD)$/i.test(String(a.method ?? 'GET'))) continue;
+        const k = _BODY_ALIASES.find(k => a[k] != null && (typeof a[k] === 'object' || typeof a[k] === 'string'));
+        if (k) { a.body = a[k]; delete a[k]; }
+    }
+}
+
 /**
  * One-shot repair pass for a batch of OAI tool_calls.
  *   raw = the tool_calls array from the model response (.function.arguments are strings)
@@ -394,6 +409,7 @@ export function _repairPathArg(normCalls: any[]): void {
  *   3. _repairToolNames     — extract valid tool name from embedded XML artifacts
  *   4. _repairArgEnvelope   — unwrap arg_keys/arg_values double-serialization
  *   4b. _repairPathArg      — file_name/file_path/… → path on file tools
+ *   4c. _repairFetchBody    — params/parameters/json/… → body on non-GET fetch_url
  *   5. _repairExecCodeArgs  — execute_code alias resolution, fence stripping, lang canon
  *
  * Returns { bad, norm }:
@@ -411,6 +427,7 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
     _repairToolNames(norm);                                  // step 3
     _repairArgEnvelope(norm);                                // step 4
     _repairPathArg(norm);                                    // step 4b
+    _repairFetchBody(norm);                                  // step 4c
     const hasEmptyCode = _repairExecCodeArgs(norm);          // step 5
     return { bad, norm, hasEmptyCode };
 }
@@ -420,5 +437,5 @@ Object.assign(window, {
     EXEC_CODE_ALIASES, EXEC_LANG_ALIASES,
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
     _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
-    _repairPathArg, repairAllToolCalls,
+    _repairPathArg, _repairFetchBody, repairAllToolCalls,
 });

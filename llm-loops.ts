@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, STUCK_SAME_OUTPUT_MSG, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -239,7 +239,8 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
 //   FILTERED   — safety / content filter; different model may respond.
 //   FR_ERROR   — server-side error surfaced as finish_reason inside a 200 response.
 //   NORMAL     — well-formed completion; no retry action.
-const _FR_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'other']);
+// 'repetition': stream-decode stopped a degenerate (repeating) output early — handled as a cut-off.
+const _FR_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'other', 'repetition']);
 const _FR_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
 const _FR_ERROR     = new Set(['error', 'abort']);
 // Set by stream-decode when the stream went silent mid-response (SSE idle timeout).
@@ -261,6 +262,8 @@ const _STEP_OUTPUT_CAP = 8192;
 
 // Tail chars kept from a file-read result for the per-file snippet map (used in step diffs).
 const _FILE_SNIP_TAIL = 500;
+// …and for the file read last before a compaction (see the post-compaction file block).
+const _FILE_SNIP_LAST = 4000;
 
 // Max entries in _repeatCache before oldest entries are evicted (FIFO). Each entry can
 // hold a full read_file result (up to _READ_INLINE_MAX chars), so cap at 150 entries
@@ -437,6 +440,8 @@ const _WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'replace_in_file', 'd
 // An ls or read_file between failing attempts would otherwise mask a repeated-failure
 // loop (flask-4992: hit 7 consecutive fails but ls resets kept it running for 5.7M tokens).
 const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace', 'fetch_url']);
+// Workspace reads that a stuck turn can do without for a couple of steps (see _stepPausedTools).
+const _PAUSABLE_READ_TOOLS = new Set(['read_file', 'list_files', 'search_workspace']);
 
 // ── Overlapping-read guard ───────────────────────────────────────────────────
 // The repeat cache only catches byte-identical calls. A model can instead rotate through
@@ -445,7 +450,7 @@ const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace',
 // cycle continues — SWE-bench Lite v0.55 sympy-18189 spent 88 steps this way, and v0.55
 // researcher workers re-read one file 15-20 times. Track which lines of each file were read
 // since the last write; reads that add no new lines are allowed a few times, then refused.
-type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number; refused?: number; servedAt?: number }>;
+type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number; refused?: number; servedAt?: number; stubs?: number }>;
 const _readLedgers = new WeakMap<Map<string, any>, _ReadLedger>();   // keyed by the per-turn repeat cache
 // Tool-call steps run against each ledger (one per _runToolCalls call) — the clock for servedAt.
 const _ledgerTicks = new WeakMap<_ReadLedger, number>();
@@ -458,6 +463,12 @@ export const REDUNDANT_READS_BEFORE_REFUSAL = 3;
 // Verified sympy-14531 was refused 25 of 36 reads, asking for 600–650 about 20 times until the
 // step cap. Serve the lines again, with a warning, instead of refusing forever.
 export const REDUNDANT_READ_REFUSALS_MAX = 2;
+// "Still shown above" stubs per file before the guard serves the lines once more and pauses
+// read_file. The stub is true (v0.60 astropy-12907: the whole file was in history) but the model
+// re-asked regardless — 13 times there, 45 in sympy-18189 — until the repeat guard stopped the run
+// with an empty patch. A fresh copy at the end of the context plus no read_file for a couple of
+// steps leaves editing, running code or answering.
+export const READ_STUBS_BEFORE_PAUSE = 2;
 // Whole-file reads longer than this may be cut down before the model sees them — not "covered".
 const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
 
@@ -510,7 +521,7 @@ export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     ledger.set(path, e);
 }
 
-async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null }): Promise<Array<{name: string; args: any; result: any}>> {
+async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => void) | null }): Promise<Array<{name: string; args: any; result: any}>> {
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
@@ -523,6 +534,14 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         let _rereadNote: string | null = null;
         if (blockedTools?.has(name)) {
             const refused = { error: `${name} is not available in this turn. Do the remaining work yourself with the other tools, then end with COMPLETED.` };
+            task?.setOutput(JSON.stringify(refused, null, 2));
+            task?.complete();
+            onResult?.(name, args, refused);
+            return { name, args, result: refused };
+        }
+        // Paused for this step (not offered in the tool list); a call written anyway is refused.
+        if (pausedTools?.has(name)) {
+            const refused = { error: `${name} is paused for a moment because the last calls repeated without progress. Use what you already have: edit a file, run code, or give your answer.` };
             task?.setOutput(JSON.stringify(refused, null, 2));
             task?.complete();
             onResult?.(name, args, refused);
@@ -550,7 +569,16 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 const _e = _ledger.get(pNorm);
                 const _recent = _e?.servedAt != null && (_ledgerTicks.get(_ledger) ?? 0) - _e.servedAt <= RECENT_READ_STEPS
                     && !seen.some(([, v]) => v === 'truncated');   // a copy cut short in history doesn't count
-                if (_recent || (seen.length && seen.every(([, v]) => v === 'full'))) {
+                const _stubbable = _recent || (seen.length && seen.every(([, v]) => v === 'full'));
+                if (_stubbable && _e && (_e.stubs ?? 0) >= READ_STUBS_BEFORE_PAUSE && onPause) {
+                    // Stubbed enough: serve the lines once more (below) and take read_file away
+                    // for the next steps.
+                    _e.stubs = 0;
+                    onPause('read_file');
+                    _rereadNote = `You have asked for these lines of "${args.path}" ${_e.redundant + 1} times without changing the file. Here they are once more. read_file is paused for the next ${TOOL_PAUSE_STEPS} steps: use these lines now — edit the file, run code, or give your answer.`;
+                    repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
+                } else if (_stubbable) {
+                    if (_e) _e.stubs = (_e.stubs ?? 0) + 1;
                     const stub = { path: args?.path, note: `${verdict.note.replace(/ They are shown again below;.*$/, '')} They are still shown in your earlier read_file results above, unchanged, so they are not repeated here. Use them now — edit the file, run code, or give your answer.` };
                     task?.setOutput(JSON.stringify(stub, null, 2));
                     task?.complete();
@@ -561,8 +589,10 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 // dedup gate (keyed by exact range) pass the content instead of an "Already read" stub.
                 // Only this range: marking every range of the file 'pruned' made each later read of
                 // the file look invisible too, so all of them were served.
-                _rereadNote = verdict.note;
-                repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
+                else {
+                    _rereadNote = verdict.note;
+                    repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
+                }
             }
         }
         if (repeatCache) {
@@ -653,11 +683,21 @@ export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(
 // own edit tracking with git's view of the workspace where the runner provides one (headless:
 // fgChangedFiles), which also sees edits a worker made with shell commands — v0.59 sphinx-8595 and
 // sklearn-10297 shipped worker-made environment edits the loop never saw.
+// Also a new top-level package (headless: fgNewFiles) the task doesn't name — a stub standing in
+// for a dependency missing locally. v0.60 shipped asgiref/ and pytz/ (django-12747) and erfa/
+// (astropy-13398); in the graded environment the real package is installed and the stub shadows
+// it. None of the 69 sampled gold patches adds a top-level directory.
 export async function envConfigEdits(task: string, edited: Iterable<string> = []): Promise<string[]> {
-    let changed: string[] = [];
+    let changed: string[] = [], created: string[] = [];
     try { changed = (await (globalThis as any).fgChangedFiles?.()) ?? []; } catch {}
-    return [...new Set([...edited, ...changed].map(String))]
+    try { created = (await (globalThis as any).fgNewFiles?.()) ?? []; } catch {}
+    const config = [...new Set([...edited, ...changed].map(String))]
         .filter(p => _ENV_CONFIG_RE.test(p) && !task.includes(p.split('/').pop() ?? ''));
+    const stubPkgs = created.map(String)
+        .map(p => /^([\w.-]+)\/__init__\.py$/.exec(p)?.[1])
+        .filter((d): d is string => !!d && !new RegExp(`\\b${d.replace(/[.-]/g, '\\$&')}\\b`).test(task))
+        .map(d => `${d}/`);
+    return [...config, ...stubPkgs];
 }
 
 // Final message when an interactive turn reaches its step limit. The pending tool call of the
@@ -686,6 +726,12 @@ let _turnStop: { reason: string | null; edited: boolean } = { reason: null, edit
 // v0.58 xarray-4094's closing turn re-edited its fix through a worker). Set per runTurn; never
 // applied to worker requests.
 let _turnExcludedTools: Set<string> | null = null;
+// Tools paused for the current step of the main-agent turn (set by runTurn before each request).
+// A model stuck re-requesting one call ignores refusals and stubs worded any way: v0.60 SWE runs
+// with 5+ read stubs resolved 0 of 8, re-asking the same lines 13–45 times until the repeat guard
+// ended the run. Taking the tool away for a couple of steps forces a different action.
+let _stepPausedTools: Set<string> | null = null;
+export const TOOL_PAUSE_STEPS = 2;
 export function getTurnStopInfo(): { reason: string | null; edited: boolean } { return { ..._turnStop }; }
 
 // What the stop summary needs to recover an answer: the task and the last few successful tool
@@ -1062,6 +1108,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     setLastTurnBlockedToken(false);
     _turnStop = { reason: null, edited: false };
     _turnExcludedTools = excludeTools?.length ? new Set(excludeTools) : null;
+    _stepPausedTools = null;
+    const _toolPauses = new Map<string, number>();   // tool → last step it is paused for
     _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
     _stopRecent = [];
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
@@ -1074,6 +1122,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
+    let _stuckCallSigs: string[] = [];     // calls of the last 3 steps, for the stuck nudge's wording
     const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
@@ -1220,11 +1269,19 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             const sl = val.start_line != null ? val.start_line : '';
             const el = val.end_line   != null ? val.end_line   : '';
             const label = sl !== '' ? `${val.path} (lines ${sl}–${el})` : val.path as string;
-            const c: string = val.content;
-            _fileSnips.set(val.path, { label, snippet: c.length > _FILE_SNIP_TAIL ? c.slice(-_FILE_SNIP_TAIL) : c });
+            _fileSnips.delete(val.path);   // keep insertion order = read order; the last is the newest
+            _fileSnips.set(val.path, { label, snippet: val.content as string });
         }
         if (_fileSnips.size) {
-            const body = [..._fileSnips.values()].map(({ label, snippet }) => `${label}:\n${snippet}`).join('\n\n');
+            // The file read last — usually the one being worked on — keeps more: a 500-char tail under a
+            // "lines 101–250" label read as the whole range, and v0.60 sympy-18189 re-requested lines
+            // 130–150 45 times after compaction. Each label says how much is shown.
+            const _snips = [..._fileSnips.values()];
+            const body = _snips.map(({ label, snippet }, i) => {
+                const max = i === _snips.length - 1 ? _FILE_SNIP_LAST : _FILE_SNIP_TAIL;
+                if (snippet.length <= max) return `${label}:\n${snippet}`;
+                return `${label} — only its last ${max} characters are shown:\n${snippet.slice(-max)}`;
+            }).join('\n\n');
             const _flsContent = `[Files read before compaction — last-read content retained so you can verify fix state without re-reading:\n\n${body}]`;
             const _isFnTagC2 = getModelToolFormat(
                 (activeEndpoint ?? _defaultEndpoint()).provider ?? getProvider(),
@@ -1366,7 +1423,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 ps.envConfigCheck = (ps.envConfigCheck ?? 0) + 1;
                 ps.envConfigAt = _editEvents;
                 _saveAnswer(ps, textContent);
-                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file you created), keep only the fix itself, then reply COMPLETED again. If local tests can't run without them, check the fix with a short script instead.`));
+                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration${_cfg.some(f => f.endsWith('/')) ? ', or added a new top-level package (a stand-in for a missing dependency)' : ''}: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test, and a stub package hides the real one. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file or folder you created), keep only the fix itself, then reply COMPLETED again. If local tests can't run without them, check the fix with a short script instead.`));
                 return { do: 'continue' };
             }
         }
@@ -1521,6 +1578,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     for (let step = 0; step < _loopMax; step++) {
         if (softStopPending || activeAbortController?.signal.aborted) return '*(break)*';
         let _taskDoneCalledThisStep = false;
+        const _paused = [..._toolPauses].filter(([, until]) => step <= until).map(([t]) => t);
+        _stepPausedTools = _paused.length ? new Set(_paused) : null;
 
         // ── history pruning ────────────────────────────────────────────────────
         // Native sessions prune directly on the event-log surface;
@@ -1653,7 +1712,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                             const _args = (msg.tool_calls ?? []).map((t: any) => `${t.function?.name}(${t.function?.arguments ?? ''})`).join(' ');
                             const _cut = `${_text}${_args ? ` ${_args}` : ''}`;
                             _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length, maxTokens: (msg as any)._maxTokens ?? 0,
-                                head: _cut.slice(0, 500), tail: _cut.length > 1000 ? _cut.slice(-500) : '' };
+                                head: _cut.slice(0, 500), tail: _cut.length > 1000 ? _cut.slice(-500) : '',
+                                degenerate: (msg as any).degenerate ?? null };
                         }
                         if (_frFiltered) _e.isFiltered = true;
                         if (_frStalled) _e.streamStalled = true;
@@ -1709,12 +1769,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Output cut off at the token cap: the response was discarded (not executed, not in
                 // history). Tell the model why before retrying, or it tends to repeat the runaway.
                 if (e.outputCapHit) {
-                    const { tokens, toolCall, maxTokens, head, tail } = e.outputCapHit;
-                    try { convoLogTurn({ type: 'cut_off', name: toolCall ? 'tool_call' : 'text', responseTokens: tokens, response: tail ? `${head}\n[…]\n${tail}` : head }); } catch {}
+                    const { tokens, toolCall, maxTokens, head, tail, degenerate } = e.outputCapHit;
+                    try { convoLogTurn({ type: 'cut_off', name: toolCall ? 'tool_call' : 'text', responseTokens: tokens, response: tail ? `${head}\n[…]\n${tail}` : head, ...(degenerate ? { degenerate } : {}) }); } catch {}
                     // Below the step cap, the limit came from the context clamp: the context is
                     // nearly full, so an unchanged retry is cut off again (v0.55: 46 in a row).
-                    if (maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
-                    _emitNudge('output_cut_off', _nudge(`Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
+                    if (!degenerate && maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
+                    _emitNudge('output_cut_off', _nudge(degenerate
+                        ? `Your last response was stopped after about ${tokens} tokens because it had fallen into a loop (${degenerate}${toolCall ? ', in tool-call arguments' : ''}) and was discarded — nothing was executed. Write the next call short and specific: one command or request, no repeated terms, and your reasoning in the reply text, not in code comments.`
+                        : `Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
                 }
                 // Stalled mid-response: typically a very large tool call (a whole app in one
                 // write_file) that the provider buffers until done. Ask for smaller pieces.
@@ -1993,9 +2055,17 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // (error result, not executed); after a few refusals the turn ends as BLOCKED below.
         const _thisCallSig = _callSig(_normCalls);
         const _refused = _repeatRefused(_repeatGuard, _thisCallSig);
+        // A refused call made only of workspace reads pauses those tools for the next steps instead
+        // of counting toward the turn stop: v0.60 SWE runs ended on read-only repeat stops with
+        // 20–75 steps unused, 5 of 8 Verified ones with an empty patch. fetch_url is not paused — in
+        // AutomationBench it is often the only tool that can act.
+        const _readOnlyRefusal = _refused && _normCalls.every(c => _PAUSABLE_READ_TOOLS.has(c.name));
         const _exec = _refused
             ? _normCalls.map(({ name, args }, i) => {
-                const result = _repeatRefusalResult(_repeatCount(_repeatGuard, _thisCallSig));
+                const _r = _repeatRefusalResult(_repeatCount(_repeatGuard, _thisCallSig));
+                const result = _readOnlyRefusal
+                    ? { error: `${_r.error} ${[...new Set(_normCalls.map(c => c.name))].join(' and ')} ${_normCalls.length > 1 ? 'are' : 'is'} paused for the next ${TOOL_PAUSE_STEPS} steps.` }
+                    : _r;
                 toolTasks?.[i]?.setOutput(JSON.stringify(result, null, 2));
                 toolTasks?.[i]?.complete();
                 return { name, args, result };
@@ -2003,14 +2073,17 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             : await _runToolCalls(_normCalls, toolTasks, {
                 forWorker: false,
                 blockedTools: _turnExcludedTools,
+                pausedTools: _stepPausedTools,
+                onPause: (t) => _toolPauses.set(t, step + TOOL_PAUSE_STEPS),
                 repeatCache: _repeatCache,
                 onTaskDone: () => { _taskDoneCalledThisStep = true; },
                 onRepeat: (name) => _repeatedNames.push(name),
                 replFails: _s._replaceFailures,
                 replNudge: _s._replaceNudgeSent,
             });
+        if (_readOnlyRefusal) for (const c of _normCalls) _toolPauses.set(c.name, step + TOOL_PAUSE_STEPS);
         _repeatGuard = _refused
-            ? { ..._repeatGuard, refused: _repeatGuard.refused + 1 }
+            ? { ..._repeatGuard, refused: _repeatGuard.refused + (_readOnlyRefusal ? 0 : 1) }
             : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec));
         const _execOk = _exec.filter(r => !r.result?.error).length;
         // Failure streak (detectors.ts updateFailStreak): real progress resets it, real failures
@@ -2070,6 +2143,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const stalledPaths = new Set(calls.map(tc => parseArgs(tc.function.arguments)?.path).filter(Boolean).map(_normPath)) as Set<string>;
         let stuckNudge;
         ({ resultHashes, stuckMsg: stuckNudge } = _updateStuckDetector(resSig, stalledPaths, resultHashes));
+        _stuckCallSigs = [..._stuckCallSigs, _thisCallSig].slice(-3);
+        if (stuckNudge && results.every(r => r.name === 'execute_code') && new Set(_stuckCallSigs).size > 1)
+            stuckNudge = STUCK_SAME_OUTPUT_MSG;
         let envFailNudge: string | null;
         ({ envFailSig: _envFailSig, envFailCount: _envFailCount, envFailTotal: _envFailTotal, envFailMsg: envFailNudge } = _updateEnvFailureDetector(results, _envFailSig, _envFailCount, _envFailTotal));
 
@@ -2103,7 +2179,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // 4 all-stubbed steps would have fired in 86 runs (64 AutomationBench). One nudge per turn.
         _stubStreak = results.length && results.every(r => _histStub.has(r.tc.id)) ? _stubStreak + 1 : 0;
         const _cycleNudge = _stubStreak >= 4 && !_cycleNudged
-            ? (_cycleNudged = true, `Your last ${_stubStreak} steps only repeated earlier calls exactly, with the same results — you are cycling through the same few commands, and they will not show anything new. Give your answer from what you already have (if what you were looking for isn't there, say so), or take a genuinely different approach.`)
+            // Points at the last result rather than at answering: "give your answer from what you
+            // already have" made v0.60 AutomationBench runs, whose task is to act through an API, give
+            // up ~5 steps sooner (−0.14 partial credit where it fired; −0.03 for the same runs
+            // without it in v0.59). Most of those loops re-sent a request the server had rejected.
+            ? (_cycleNudged = true, `Your last ${_stubStreak} steps only repeated earlier calls exactly, with the same results — you are cycling through the same few commands, and they will not show anything new. Read the last error or result literally: it usually says what is wrong (a missing field, a wrong name, the wrong place for a value). Change the request itself — arguments, body, endpoint or command — rather than re-sending it. If the information you need does not exist, say so in your answer.`)
             : null;
 
         const _errPrefix = (r: any): string => {
@@ -2429,7 +2509,13 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const payload = buildChatPayload(ep, {
         messages: [{ role: 'system', content: sysPrompt }, ..._hist],
         tools: forkPrefix ? forkPrefix.tools : (hasTools
-            ? buildOAITools(forWorker, toolFilterOverride).filter(t => forWorker || !_turnExcludedTools?.has(t.function?.name))
+            ? (() => {
+                const all = buildOAITools(forWorker, toolFilterOverride).filter(t => forWorker || !_turnExcludedTools?.has(t.function?.name));
+                if (forWorker || !_stepPausedTools) return all;
+                // A pause never leaves the request without tools.
+                const rest = all.filter(t => !_stepPausedTools!.has(t.function?.name));
+                return rest.length ? rest : all;
+            })()
             : null),
         temperature: getTemperature(),
         maxTokens: effectiveMaxTokens,

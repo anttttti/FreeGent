@@ -372,6 +372,12 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         return String(r.stdout).split('\n').filter(Boolean)
             .map(l => l.slice(3).replace(/^.* -> /, '').replace(/^"|"$/g, ''));
     };
+    // Files created in the workspace (untracked, not git-ignored). null when not a git repo.
+    (globalThis as any).fgNewFiles = async (): Promise<string[] | null> => {
+        const r: any = await _nativeExecFn('bash', 'git ls-files --others --exclude-standard 2>/dev/null | head -500');
+        if (r?.exit_code !== 0) return null;
+        return String(r.stdout ?? '').split('\n').filter(Boolean).map(l => l.replace(/^"|"$/g, ''));
+    };
 
     _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit, temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs);
     if (maxRounds > 0) _ls.setItem('fg_agent_max_rounds', String(maxRounds));
