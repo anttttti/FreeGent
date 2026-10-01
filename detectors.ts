@@ -47,6 +47,10 @@ const _STUCK_MSGS: Record<string, string> = {
     run_workers:  'Your last 3 run_workers calls returned identical results — delegating the same task again will not help. Do the step yourself, or give the workers a different, more specific task.' + _BLOCKED_TAIL,
     '':           'Your last 3 steps produced identical results. Try a different approach: use start_line/end_line to read a specific section, or search_workspace with a literal string from the error message or function name to find the right file. Do not search by filename — search by content.' + _BLOCKED_TAIL,
 };
+// Three *different* execute_code calls with the same output: the probes aren't telling the cases
+// apart. The same-command wording was wrong there — v0.60 pylint-7993 got it 16 times while varying
+// a regex whose every version printed `[]`, and never edited the file.
+export const STUCK_SAME_OUTPUT_MSG = 'Your last 3 execute_code calls were different but all printed the same output — these variations are not distinguishing anything. Stop probing this way: make the change in the code itself and check it, or give your answer.' + _BLOCKED_TAIL;
 // Maintains a rolling window of the last 3 result fingerprints; when all 3 match,
 // evicts read caches (targeted by path when possible) and returns a stuck nudge.
 // Returns {resultHashes, stuckMsg} — caller must reassign resultHashes.

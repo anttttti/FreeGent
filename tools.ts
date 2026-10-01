@@ -2202,9 +2202,19 @@ export async function executeToolAsync(name, args, context = null) {
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
         && !mainAgentRole.tools.has(name) && !mainAgentRole.tools.has(_PHANTOM_ALIASES[name]?.tool)) {
-        const hint = mainAgentRole.name === 'director'
-            ? 'Delegate this via run_workers if needed.'
-            : `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`;
+        // v0.60: the headless director, which has no write tools, kept calling edit_file (an alias of
+        // replace_in_file), and AutomationBench runs called service operations
+        // (google_drive_find_multiple_files ×11) as if they were tools. Say what works instead.
+        const _target = _PHANTOM_ALIASES[name]?.tool ?? name;
+        const _isWrite = ['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'create_file'].includes(_target);
+        const _known = typeof ALL_TOOL_NAMES !== 'undefined' && (ALL_TOOL_NAMES as string[]).includes(_target);
+        const hint = mainAgentRole.name !== 'director'
+            ? `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`
+            : _isWrite && mainAgentRole.tools.has('execute_code')
+                ? 'Edit files with execute_code instead (e.g. a short Python script that reads the file, replaces the exact text and writes it back), or delegate the edit via run_workers.'
+                : !_known
+                    ? `'${name}' is not one of your tools; yours are: ${[...mainAgentRole.tools].join(', ')}. If it is an operation of an external service, call that service's API with the tools you have.`
+                    : 'Delegate this via run_workers if needed.';
         return { error: `Tool '${name}' is not available in the current role (${mainAgentRole.name}). ${hint}` };
     }
 

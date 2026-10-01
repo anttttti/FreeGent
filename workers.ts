@@ -890,6 +890,13 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
 
             const { usage, ...msg } = message;
+            // stream-decode stopped a repeating output early: its tool arguments are cut off, so
+            // nothing of it runs or enters history.
+            if ((message as any).degenerate) {
+                localOH.push({ role: 'user', content: `<nudge>Your last response fell into a loop (${(message as any).degenerate}) and was discarded — nothing was executed. Make the next call short and specific, with your reasoning in the reply text, not in code comments.</nudge>` });
+                continue;
+            }
+            delete (msg as any).degenerate;
             localOH.push(msg);
             const text  = typeof message.content === 'string' ? message.content : '';
             const calls = message.tool_calls || [];
