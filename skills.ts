@@ -501,6 +501,15 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
         body: `**Include key results in your final response.** Before COMPLETED: state the actual outcome — numbers, rankings, key findings, or a summary table. Writing results to a file is fine; also state the main values inline (e.g. "Best accuracy: 87.3%"). Do not end with just "analysis complete" or a bare COMPLETED without results.`
     },
     {
+        name: 'api-request-shape',
+        type: 'rule',
+        description: 'When a service API rejects request parameters, find the documented request shape instead of guessing names.',
+        // v0.59 TAC: 9 runs got these errors 37 times; qa-escalate-emergency tried flat {rid, text},
+        // {rid, message}, {roomId, message} … for 30 steps — v0.58 found the nested form by step 10.
+        trigger_on_tool: 'execute_code=>must be provided, execute_code=>error-invalid-params, execute_code=>missing required, execute_code=>required parameter, fetch_url=>must be provided, fetch_url=>error-invalid-params, fetch_url=>missing required, fetch_url=>required parameter',
+        body: `**An API rejected the request's parameters.** Don't cycle through parameter names. Read the error literally — it often names the object a field belongs in (e.g. "the 'rid' property on the message object" means \`{"message": {"rid": …, "msg": …}}\`, nested, not top-level). Then get the documented shape: recall the API's documented request for this endpoint, look for docs or an OpenAPI/info endpoint on the service, or find a working example in the workspace. Try the corrected shape once; if a different endpoint does the same job more simply (e.g. a post-message endpoint taking a room and text), use that.`
+    },
+    {
         name: 'blocked-verify',
         type: 'rule',
         description: 'Before declaring BLOCKED because a value cannot be found, retry with normalized formats.',
@@ -519,7 +528,8 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
 A test suite is present. Before COMPLETED:
 
 1. **Run the full test file** for any file you edited — \`python -m pytest tests/test_foo.py\`, \`npm test\`, etc. Never use \`-k\` to exclude tests: filters hide regressions the evaluator will catch. A passing run across the full file is required. Code review, diff inspection, and "the logic looks correct" are not substitutes.
-2. **If the environment blocks execution after one genuine attempt** (no compiler, pytest not installed, C extension import fails, missing system library): declare \`BLOCKED: <specific reason>\` — e.g. \`BLOCKED: C extensions require gcc which is not installed\`. One attempt is enough to confirm the environment limit; do not try to rebuild, patch build systems, or install missing dependencies.`,
+2. **If the environment blocks execution after one genuine attempt** (no compiler, pytest not installed, C extension import fails, missing system library, tests fail to collect because of tool versions): check the changed code directly with a short script instead, and say the suite could not run here. If even that can't run, declare \`BLOCKED: <specific reason>\` — e.g. \`BLOCKED: C extensions require gcc which is not installed\`. One attempt is enough to confirm the environment limit; do not try to rebuild, patch build systems, or install missing dependencies.
+3. **Never edit test or packaging setup to make tests run** — \`conftest.py\`, \`pytest.ini\`, \`tox.ini\`, \`setup.cfg\`, \`setup.py\`, \`pyproject.toml\`, or a package's \`__init__.py\` — unless the task asks for it. Those edits ship with your change, and a graded run in a properly set-up environment then fails on them.`,
     },
     {
         name: 'task-continuity',

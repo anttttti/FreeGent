@@ -7,15 +7,15 @@ import { pruneOAIHistory, pruneSessionHistory } from '../history.ts';
 import { Session } from '../session.ts';
 
 const BIG = 'x'.repeat(900);   // above the 800-char pruning minimum
-type Call = [name: string, args: any];
+type Call = [name: string, args: any, content?: string];
 
 let _n = 0;
 function oaiHistory(calls: Call[]): any[] {
-    return calls.flatMap(([name, args]) => {
+    return calls.flatMap(([name, args, content]: any[]) => {
         const id = `c${++_n}`;
         return [
             { role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] },
-            { role: 'tool', tool_call_id: id, name, content: BIG },
+            { role: 'tool', tool_call_id: id, name, content: content ?? BIG },
         ];
     });
 }
@@ -39,6 +39,15 @@ const A = { path: 'f.py', start_line: 514, end_line: 572 };
 const B = { path: 'f.py', start_line: 450, end_line: 513 };
 
 describe.each([['pruneOAIHistory', prunedOAI], ['pruneSessionHistory', prunedSession]])('%s', (_name, pruned) => {
+    // v0.59 xarray-6744: full copies were pruned in favour of later "Already read" notes, so the
+    // lines were in no result at all and the model re-read the window ~40 times.
+    it('a later read whose result holds no lines (a note or refusal) does not cover', () => {
+        const note = JSON.stringify({ path: 'f.py', note: 'Already read "f.py" — the full content is in your prior tool result for this file.' });
+        expect(pruned([['read_file', A], ['read_file', A, note]])).toEqual([false, false]);
+        expect(pruned([['read_file', A], ['read_file', A, '[TOOL ERROR: read_file refused: these lines were already read]']])).toEqual([false, false]);
+        expect(pruned([['read_file', A], ['read_file', A, note], ['read_file', A]])).toEqual([true, false, false]);
+    });
+
     it('keeps two different ranges of one file visible', () => {
         expect(pruned([['read_file', A], ['read_file', B]])).toEqual([false, false]);
     });

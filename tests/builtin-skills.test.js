@@ -172,3 +172,16 @@ describe('failure-recovery / debug-strategy triggers', () => {
         } finally { off.forEach(t => W.enabledTools.add(t)); }
     });
 });
+
+// v0.59 TAC qa-escalate-emergency: 30 steps guessing RocketChat parameter names.
+describe('api-request-shape skill', () => {
+    beforeEach(() => { W.setReactiveFired(new Set()); W.setToolCallHistory([]); });
+    it('fires on an API parameter error in execute_code output, once', () => {
+        const err = { name: 'execute_code', result: { stdout: '{"success":false,"error":"The \\"message\\" parameter must be provided [error-invalid-params]"}', exit_code: 0 } };
+        expect(W.reactiveSkillGuidance([err])).toContain('### api-request-shape');
+        expect(W.reactiveSkillGuidance([err])).not.toContain('### api-request-shape');
+    });
+    it('stays quiet on ordinary output', () => {
+        expect(W.reactiveSkillGuidance([{ name: 'execute_code', result: { stdout: 'ok', exit_code: 0 } }])).not.toContain('### api-request-shape');
+    });
+});

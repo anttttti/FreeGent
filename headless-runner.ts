@@ -62,7 +62,7 @@ import './qa.js';
 import './chat-state.js';
 import './session-store.js';
 import { setConvoLogWriter, convoLogTurn, setMetricsWriter } from './convo-log.js';
-import './llm-loops.js';
+import { envConfigEdits } from './llm-loops.js';
 import './chat-attachments.js';
 import './agent-core.js';
 import './skills.js'; // populates BUILTIN_RULES/BUILTIN_SKILLS; loadSkills() called in run()
@@ -448,6 +448,15 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     });
     dom.window.nativeExec = _nativeExecFn;
     globalThis.nativeExec = _nativeExecFn;
+    // Files changed in the workspace, from git: modified, added and untracked. The loop's own edit
+    // tracking misses changes a worker makes with shell commands (v0.59 sphinx-8595 rewrote
+    // tests/conftest.py that way and shipped it). null when the workspace is not a git repo.
+    (globalThis as any).fgChangedFiles = async (): Promise<string[] | null> => {
+        const r: any = await _nativeExecFn('bash', 'git status --porcelain --untracked-files=all 2>/dev/null | head -500');
+        if (r?.exit_code !== 0 || !r.stdout) return r?.exit_code === 0 ? [] : null;
+        return String(r.stdout).split('\n').filter(Boolean)
+            .map(l => l.slice(3).replace(/^.* -> /, '').replace(/^"|"$/g, ''));
+    };
 
     _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit, temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs);
     if (maxRounds > 0) _ls.setItem('fg_agent_max_rounds', String(maxRounds));
@@ -768,7 +777,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             task,
             _isDirector
                 ? { maxContinuations: 4, forceFirstToolCall: true, stepLimitContinuations: 1,
-                    closingSteps: 25, closingExcludeTools: ['run_workers'] }
+                    closingSteps: 25, closingExcludeTools: ['run_workers'],
+                    closingEnvCheck: () => envConfigEdits(task) }
                 : { maxContinuations: 0 },  // non-director: single turn only
         );
 

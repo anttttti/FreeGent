@@ -1029,7 +1029,10 @@ async function _handleReadFile(args, context) {
         return lines.slice(s, e).join('\n');
     };
     let sl = args.start_line || null, el = args.end_line || null;
-    if (sl && el && sl > el) return { error: `read_file: start_line (${sl}) must be ≤ end_line (${el}).` };
+    // start_line past end_line is nearly always "continue after line N" with a stale end
+    // (v0.59: 77 errors, most start = end + 1). Read on from start_line instead of failing the step.
+    let _rangeNote: string | undefined;
+    if (sl && el && sl > el) { _rangeNote = `end_line (${el}) was before start_line (${sl}); showing lines from ${sl} instead.`; el = sl + 99; }
     // Block known binary extensions before reading — avoids 4M-char dead turns on PDFs.
     if (/\.(pdf)$/i.test(args.path))
         return { error: `binary file: ${args.path} is a PDF — read_file cannot extract text`, hint: 'extract text with execute_code: pdftotext <path> - | head -200' };
@@ -1049,7 +1052,7 @@ async function _handleReadFile(args, context) {
             ...((sl || el) ? { total_lines: totalLines } : {}),
             ...(sl ? { start_line: sl } : {}),
             ...(el ? { end_line: el }   : {}),
-            ...(_oob ? { note: _oob } : {}),
+            ...((_oob || _rangeNote) ? { note: [_rangeNote, _oob].filter(Boolean).join(' ') } : {}),
         };
     };
     const _imgPreview = (path, content) => {
@@ -2033,45 +2036,48 @@ function _bytesToBase64(bytes: Uint8Array): string {
     return btoa(bin);
 }
 
-async function _handlePhantomAlias(name, args, context) {
-    // Shared remap helpers — each maps the alias's argument bag to the canonical tool's args.
-    const _rBash   = (a) => ({ language: 'bash',              code: a.command ?? a.code ?? a.cmd ?? '' });
-    const _rPy     = (a) => ({ language: 'python',            code: a.code ?? a.command ?? '' });
-    const _rLang   = (a) => ({ language: a.language ?? 'bash', code: a.code ?? a.command ?? a.cmd ?? '' });
-    const _rRead   = (a) => ({ path: a.path ?? a.file ?? a.filename ?? '' });
-    const _rSearch = (a) => ({ pattern: a.pattern ?? a.query ?? a.regex ?? '' });
+// Hallucinated tool names mapped to the real tool and its arguments. Module-level so the role
+// filter can check the target tool: an alias is a request for that tool (`bash` → execute_code).
+// Shared remap helpers — each maps the alias's argument bag to the canonical tool's args.
+const _rBash   = (a) => ({ language: 'bash',              code: a.command ?? a.code ?? a.cmd ?? '' });
+const _rPy     = (a) => ({ language: 'python',            code: a.code ?? a.command ?? '' });
+const _rLang   = (a) => ({ language: a.language ?? 'bash', code: a.code ?? a.command ?? a.cmd ?? '' });
+const _rRead   = (a) => ({ path: a.path ?? a.file ?? a.filename ?? '' });
+const _rSearch = (a) => ({ pattern: a.pattern ?? a.query ?? a.regex ?? '' });
 
-    const _PHANTOM_ALIASES = {
-        // execute_code aliases — bash
-        execute_bash:    { tool: 'execute_code',     remap: a => ({ language: 'bash', code: a.command ?? a.code ?? a.cmd ?? a.bash ?? '' }), hint: "Use execute_code(language='bash', code=…)" },
-        execute_shell:   { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        run_bash:        { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        run_shell:       { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        bash:            { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        Bash:            { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        execute_command: { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
-        run_tests:       { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…) to run tests" },
-        // execute_code aliases — python
-        execute_python:  { tool: 'execute_code',     remap: _rPy,    hint: "Use execute_code(language='python', code=…)" },
-        run_python:      { tool: 'execute_code',     remap: _rPy,    hint: "Use execute_code(language='python', code=…)" },
-        // execute_code aliases — language passthrough
-        execute:         { tool: 'execute_code',     remap: _rLang,  hint: "Use execute_code(language='bash', code=…)" },
-        execute_tool:    { tool: 'execute_code',     remap: _rLang,  hint: "Use execute_code(language='bash', code=…)" },
-        // read_file aliases
-        read:            { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
-        cat:             { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
-        view:            { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
-        read_code:       { tool: 'read_file',        remap: a => ({ path: a.path ?? a.file ?? '' }), hint: "Use read_file(path=…)" },
-        // replace_in_file aliases
-        edit_file:       { tool: 'replace_in_file',  remap: a => ({ path: a.path ?? a.file ?? '', old_string: a.old_string ?? a.old ?? '', new_string: a.new_string ?? a.new ?? a.replacement ?? '' }), hint: "Use replace_in_file(path=…, old_string=…, new_string=…)" },
-        apply_change:    { tool: 'replace_in_file',  remap: a => ({ path: a.path ?? '',             old_string: a.old_string ?? a.old ?? '', new_string: a.new_string ?? a.new ?? '' }),                  hint: "Use replace_in_file(path=…, old_string=…, new_string=…)" },
-        // write_file alias
-        create_file:     { tool: 'write_file',       remap: a => ({ path: a.path ?? a.file ?? '', content: a.content ?? a.text ?? '' }), hint: "Use write_file(path=…, content=…)" },
-        // search_workspace aliases
-        grep:            { tool: 'search_workspace', remap: _rSearch, hint: "Use search_workspace(pattern=…)" },
-        grep_files:      { tool: 'search_workspace', remap: a => ({ pattern: a.pattern ?? a.query ?? '' }), hint: "Use search_workspace(pattern=…)" },
-        grep_workspace:  { tool: 'search_workspace', remap: _rSearch, hint: "Use search_workspace(pattern=…)" },
-    };
+const _PHANTOM_ALIASES = {
+    // execute_code aliases — bash
+    execute_bash:    { tool: 'execute_code',     remap: a => ({ language: 'bash', code: a.command ?? a.code ?? a.cmd ?? a.bash ?? '' }), hint: "Use execute_code(language='bash', code=…)" },
+    execute_shell:   { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    run_bash:        { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    run_shell:       { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    bash:            { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    Bash:            { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    execute_command: { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…)" },
+    run_tests:       { tool: 'execute_code',     remap: _rBash,  hint: "Use execute_code(language='bash', code=…) to run tests" },
+    // execute_code aliases — python
+    execute_python:  { tool: 'execute_code',     remap: _rPy,    hint: "Use execute_code(language='python', code=…)" },
+    run_python:      { tool: 'execute_code',     remap: _rPy,    hint: "Use execute_code(language='python', code=…)" },
+    // execute_code aliases — language passthrough
+    execute:         { tool: 'execute_code',     remap: _rLang,  hint: "Use execute_code(language='bash', code=…)" },
+    execute_tool:    { tool: 'execute_code',     remap: _rLang,  hint: "Use execute_code(language='bash', code=…)" },
+    // read_file aliases
+    read:            { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
+    cat:             { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
+    view:            { tool: 'read_file',        remap: _rRead,  hint: "Use read_file(path=…)" },
+    read_code:       { tool: 'read_file',        remap: a => ({ path: a.path ?? a.file ?? '' }), hint: "Use read_file(path=…)" },
+    // replace_in_file aliases
+    edit_file:       { tool: 'replace_in_file',  remap: a => ({ path: a.path ?? a.file ?? '', old_string: a.old_string ?? a.old ?? '', new_string: a.new_string ?? a.new ?? a.replacement ?? '' }), hint: "Use replace_in_file(path=…, old_string=…, new_string=…)" },
+    apply_change:    { tool: 'replace_in_file',  remap: a => ({ path: a.path ?? '',             old_string: a.old_string ?? a.old ?? '', new_string: a.new_string ?? a.new ?? '' }),                  hint: "Use replace_in_file(path=…, old_string=…, new_string=…)" },
+    // write_file alias
+    create_file:     { tool: 'write_file',       remap: a => ({ path: a.path ?? a.file ?? '', content: a.content ?? a.text ?? '' }), hint: "Use write_file(path=…, content=…)" },
+    // search_workspace aliases
+    grep:            { tool: 'search_workspace', remap: _rSearch, hint: "Use search_workspace(pattern=…)" },
+    grep_files:      { tool: 'search_workspace', remap: a => ({ pattern: a.pattern ?? a.query ?? '' }), hint: "Use search_workspace(pattern=…)" },
+    grep_workspace:  { tool: 'search_workspace', remap: _rSearch, hint: "Use search_workspace(pattern=…)" },
+};
+
+async function _handlePhantomAlias(name, args, context) {
     const _alias = _PHANTOM_ALIASES[name];
     if (_alias) {
         const result = await executeToolAsync(_alias.tool, _alias.remap(args ?? {}), context);
@@ -2088,7 +2094,7 @@ export async function executeToolAsync(name, args, context = null) {
     // Role tool-filter enforcement: reject calls to tools outside the role's allowed set.
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
-        && !mainAgentRole.tools.has(name)) {
+        && !mainAgentRole.tools.has(name) && !mainAgentRole.tools.has(_PHANTOM_ALIASES[name]?.tool)) {
         const hint = mainAgentRole.name === 'director'
             ? 'Delegate this via run_workers if needed.'
             : `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`;

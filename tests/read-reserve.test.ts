@@ -70,4 +70,19 @@ describe('read guard: serve again only when the earlier copy is gone', () => {
         expect(String(r5?.content ?? '')).toContain('line 14');
         expect(String(r5?.note)).toMatch(/shown again below/);
     });
+
+    // v0.59: 219 of 245 re-served reads came within 2 steps of a full copy of the same file.
+    it('a full copy served in the last few steps: a note, even after an earlier copy was pruned', async () => {
+        W.fetch = makeReplayFetch([
+            read('r0', 1, 100), read('r0b', 1, 100),   // the second prunes the first copy
+            read('r1', 10, 20), read('r2', 11, 21), read('r3', 12, 22), read('r4', 13, 23),
+            read('r5', 14, 24),
+            { content: 'Done.\nCOMPLETED' },
+        ]);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        const r5 = resultFor(14);
+        expect(r5?.content).toBeUndefined();
+        expect(String(r5?.note)).toMatch(/still shown in your earlier read_file results/);
+    });
 });
+
