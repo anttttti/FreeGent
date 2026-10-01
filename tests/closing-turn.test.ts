@@ -36,6 +36,17 @@ describe('directorLoop closing turn options', () => {
         expect(calls[1].p).toContain('(25 steps)');
     });
 
+    it('names test/packaging config edits to restore in the closing prompt', async () => {
+        const calls: any[] = [];
+        const results = [turn('blocked', { reason: 'maximum step limit reached', edited: true }), turn('complete')];
+        const fn = vi.fn(async (p: string, _s: any, o: any) => { calls.push({ p, o }); return results.shift() as any; });
+        await directorLoop(fn, {} as any, 'task', { maxContinuations: 4, stepLimitContinuations: 1, closingSteps: 25,
+            closingEnvCheck: async () => ['tests/conftest.py'] });
+        expect(calls[1].p).toBe(STEP_LIMIT_PROMPT(25, ['tests/conftest.py']));
+        expect(calls[1].p).toMatch(/first restore these test\/packaging configuration edits.*tests\/conftest\.py/);
+        expect(calls[1].p).toContain('if the task asks for an answer');
+    });
+
     it('blind continuations keep the normal budget and all tools', async () => {
         const calls: any[] = [];
         const results = [turn('running'), turn('complete')];

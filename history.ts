@@ -326,11 +326,15 @@ function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
 // in between — only then is this read redundant. Pruning every earlier read of the path left the
 // model one range at a time, and it re-read two ranges alternately until the step limit (v0.55).
 // Returns the covering read's meta, or null.
-function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta }>): _CallMeta | null {
+// The covering read must hold the lines: a later "Already read" note, refusal or pruned stub does not
+// (v0.59 xarray-6744: full copies were pruned in favour of "Already read" notes, so the window was in
+// no result at all and the model re-read it ~40 times).
+function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta; content?: any }>): _CallMeta | null {
     for (const r of results) {
         if (r.pos <= pos || r.meta.path !== meta.path) continue;
         if (_PRUNE_WRITE_TOOLS.has(r.meta.name)) return null;   // file changed before any covering read
-        if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to) return r.meta;
+        if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to
+            && _clen(r.content) >= _PRUNE_MIN_CHARS && !String(r.content).startsWith('[')) return r.meta;
     }
     return null;
 }
@@ -346,10 +350,10 @@ function _prunedReadStub(meta: _CallMeta, cover: _CallMeta, chars: number): stri
 
 export function pruneOAIHistory(history: any[]): number {
     const callMeta = _callMetaMap(history);
-    const results: Array<{ pos: number; msg: any; meta: _CallMeta }> = [];
+    const results: Array<{ pos: number; msg: any; meta: _CallMeta; content: any }> = [];
     for (let i = 0; i < history.length; i++) {
         const msg = history[i]; if (msg.role !== 'tool') continue;
-        const meta = callMeta.get(msg.tool_call_id); if (meta) results.push({ pos: i, msg, meta });
+        const meta = callMeta.get(msg.tool_call_id); if (meta) results.push({ pos: i, msg, meta, content: msg.content });
     }
     let saved = 0;
     for (const { pos: idx, msg, meta } of results) {
@@ -378,13 +382,13 @@ export function pruneOAIHistory(history: any[]): number {
 export function pruneSessionHistory(sess: Session): number {
     const callMeta = _callMetaMap(sess.deriveMessages());
     // tool/result events in surface (message) order; pos is the surface position.
-    const results: Array<{ pos: number; seq: number; d: any; meta: _CallMeta }> = [];
+    const results: Array<{ pos: number; seq: number; d: any; meta: _CallMeta; content: any }> = [];
     sess.surface.forEach((seq, pos) => {
         const ev = sess.events[seq];
         if (ev?.type !== 'tool/result') return;
         const d = ev.data as any;
         const meta = callMeta.get(d.callId);
-        if (meta) results.push({ pos, seq, d, meta });
+        if (meta) results.push({ pos, seq, d, meta, content: d.content });
     });
     let saved = 0;
     for (const { pos, seq, d, meta } of results) {

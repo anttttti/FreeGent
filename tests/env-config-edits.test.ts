@@ -21,7 +21,7 @@ beforeEach(() => {
     origNative = W.nativeExec;
     (globalThis as any).nativeExec = W.nativeExec = async () => ({ stdout: '', stderr: '', exit_code: 0, files_written: ['xarray/core/groupby.py', 'conftest.py'] });
 });
-afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; });
+afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; delete (globalThis as any).fgChangedFiles; });
 
 async function run(task: string) {
     const s = W.createSession({ workflowMode: true });
@@ -48,4 +48,32 @@ describe('env_config_edits', () => {
         expect(reqs).toHaveLength(2);
         expect(reqs.join('')).not.toContain('You changed test or packaging configuration');
     });
+
+    // v0.59 sphinx-8595: a worker's shell commands rewrote tests/conftest.py; the director's own
+    // edit tracking never saw it. The runner's git view (fgChangedFiles) does.
+    it('sees config edits only git knows about (a worker\'s shell edit)', async () => {
+        (globalThis as any).nativeExec = W.nativeExec = async () => ({ stdout: '', stderr: '', exit_code: 0, files_written: ['xarray/core/groupby.py'] });
+        (globalThis as any).fgChangedFiles = async () => ['xarray/core/groupby.py', 'tests/conftest.py'];
+        const reqs = await run('Fix the trailing whitespace in DatasetGroupBy repr.');
+        expect(reqs).toHaveLength(3);
+        expect(reqs[2]).toContain('You changed test or packaging configuration: tests/conftest.py');
+    });
+
+    // v0.59 flask-4045: restored conftest.py after the bounce, then rewrote it to make a test run.
+    it('bounces again after new edits, but not a COMPLETED repeated without edits', async () => {
+        const s = W.createSession({ workflowMode: true });
+        s.history.push({ role: 'user', content: 'Fix the blueprint name check.' });
+        const edit = (id: string) => ({ tool_calls: [{ id, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: `echo ${id} > conftest.py` }) } }] });
+        const bodies: any[] = [];
+        W.fetch = makeReplayFetch([
+            edit('c1'), { content: 'Done.\nCOMPLETED' },
+            edit('c2'), { content: 'Done.\nCOMPLETED' },
+            { content: 'Done.\nCOMPLETED' },
+        ], { onRequest: b => bodies.push(b) });
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s });
+        const nudges = s.history.filter((m: any) => m.role === 'user' && /You changed test or packaging configuration/.test(String(m.content)));
+        expect(nudges).toHaveLength(2);
+        expect(bodies).toHaveLength(5);
+    });
 });
+

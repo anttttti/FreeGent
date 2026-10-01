@@ -27,7 +27,9 @@ export interface DirectorOpts {
      */
     stepLimitContinuations?: number;
     /** Prompt for a closing turn after a step-limit stop; receives the turn's step budget. */
-    stepLimitPrompt?: string | ((steps: number | undefined) => string);
+    stepLimitPrompt?: string | ((steps: number | undefined, envFiles?: string[]) => string);
+    /** Test/packaging config edits to name in the closing-turn prompt (headless: envConfigEdits). */
+    closingEnvCheck?: () => Promise<string[]>;
     /**
      * Step budget of a closing turn. Unset = the normal per-turn budget. v0.58 gave closing turns
      * the full 100 steps: 35 SWE runs, 2,064 steps, 53.8M prompt tokens, and 10 of them ran to the
@@ -44,8 +46,10 @@ export interface DirectorOpts {
 // a step-limit stop in a run that had already edited files (Lite xarray-4094, Verified
 // requests-1142): that case gets one explicit closing turn.
 const _STEP_LIMIT_RE = /step budget exhausted|maximum step limit reached|role step cap/;
-export const STEP_LIMIT_PROMPT = (steps?: number): string =>
-    `You reached the step limit for this turn. Your file changes so far are kept. Use this closing turn${steps ? ` (${steps} steps)` : ''} to finish: check that your fix is applied (e.g. git diff), run the most relevant test once if you can, correct only what that shows, then end with COMPLETED. Do not start new exploration.`;
+export const STEP_LIMIT_PROMPT = (steps?: number, envFiles: string[] = []): string =>
+    `You reached the step limit for this turn. Your work so far is kept. Use this closing turn${steps ? ` (${steps} steps)` : ''} to finish: `
+    + (envFiles.length ? `first restore these test/packaging configuration edits, which ship with your change and can break the graded tests (\`git checkout -- <file>\`, or delete a file you created): ${envFiles.slice(0, 6).join(', ')}. Then ` : '')
+    + `if you changed code, check that the change is applied (e.g. git diff), run the most relevant test once if you can, and correct only what that shows; if the task asks for an answer (a value, flag, command or file), give it now from what you found. End with COMPLETED. Do not start new exploration.`;
 
 export type RunOneTurn = (
     prompt: string,
@@ -77,8 +81,14 @@ export async function directorLoop(
         stepLimitPrompt = STEP_LIMIT_PROMPT,
         closingSteps,
         closingExcludeTools,
+        closingEnvCheck,
     } = opts;
-    const _closingPrompt = typeof stepLimitPrompt === 'function' ? stepLimitPrompt(closingSteps) : stepLimitPrompt;
+    const _closingPrompt = async () => {
+        if (typeof stepLimitPrompt !== 'function') return stepLimitPrompt;
+        let env: string[] = [];
+        try { env = (await closingEnvCheck?.()) ?? []; } catch {}
+        return stepLimitPrompt(closingSteps, env);
+    };
 
     // First turn
     let result = await runOneTurn(task, session,
@@ -98,7 +108,7 @@ export async function directorLoop(
         const isClosing = result.finishSignal !== 'running';
         if (isClosing) closing++;
         result = isClosing
-            ? await runOneTurn(_closingPrompt, session, { forceToolCall: true,
+            ? await runOneTurn(await _closingPrompt(), session, { forceToolCall: true,
                 ...(closingSteps ? { maxSteps: closingSteps } : {}),
                 ...(closingExcludeTools?.length ? { excludeTools: closingExcludeTools } : {}) })
             : await runOneTurn(continuationPrompt, session, { forceToolCall: true });

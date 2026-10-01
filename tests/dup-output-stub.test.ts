@@ -40,4 +40,18 @@ describe('duplicate-output stubs', () => {
             expect(t).not.toContain('Not executed');
         }
     });
+
+    // v0.59 AutomationBench: a cycle through three commands — each stubbed, none refused.
+    it('a cycle of stubbed steps gets one dup_cycle nudge', async () => {
+        (globalThis as any).nativeExec = W.nativeExec = async (_l: string, code: string) => ({ stdout: `out of ${code}`, stderr: '', exit_code: 0 });
+        const s = W.createSession({ workflowMode: true });
+        s.history.push({ role: 'user', content: 'Find the keyword config.' });
+        const cmds = ['ls -R /workspace', 'ls -la /workspace', 'ls /data'];
+        const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: cmds[i % 3] }) } }] });
+        W.fetch = makeReplayFetch([...Array.from({ length: 16 }, (_, i) => call(i)), { content: 'Not found.\nCOMPLETED' }]);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s });
+        const nudges = s.history.filter((m: any) => m.role === 'user' && /you are cycling through the same few commands/.test(String(m.content)));
+        expect(nudges).toHaveLength(1);
+    });
 });
+

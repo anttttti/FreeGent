@@ -445,8 +445,13 @@ const _READ_ONLY_TOOLS = new Set(['read_file', 'list_files', 'search_workspace',
 // cycle continues — SWE-bench Lite v0.55 sympy-18189 spent 88 steps this way, and v0.55
 // researcher workers re-read one file 15-20 times. Track which lines of each file were read
 // since the last write; reads that add no new lines are allowed a few times, then refused.
-type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number; refused?: number }>;
+type _ReadLedger = Map<string, { ranges: Array<[number, number]>; redundant: number; refused?: number; servedAt?: number }>;
 const _readLedgers = new WeakMap<Map<string, any>, _ReadLedger>();   // keyed by the per-turn repeat cache
+// Tool-call steps run against each ledger (one per _runToolCalls call) — the clock for servedAt.
+const _ledgerTicks = new WeakMap<_ReadLedger, number>();
+// A read of this file served in full this recently is still in context (compaction drops the
+// ledger): v0.59 re-served 219 of 245 repeat reads within 2 steps of a full copy.
+export const RECENT_READ_STEPS = 5;
 export const REDUNDANT_READS_BEFORE_REFUSAL = 3;
 // Refusals per file before the guard gives way. A model that keeps asking for the same lines
 // after two refusals doesn't have them in view (pruned, compressed or compacted away): v0.56
@@ -493,12 +498,15 @@ export function _execMayWrite(args: any, result: any): boolean {
 }
 export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     if (!result || result.error || typeof result.content !== 'string') return;
+    const _p = _normPath(String(args?.path ?? ''));
+    if (_p && ledger.has(_p)) ledger.get(_p)!.servedAt = _ledgerTicks.get(ledger) ?? 0;
     const [from, to] = _readRange(args);
     if (to === Infinity && from <= 1 && (result.content.length > _READ_LEDGER_FULL_MAX_CHARS || /Only the first \d+ lines shown/.test(result.content))) return;
     const path = _normPath(String(args?.path ?? ''));
     if (!path) return;
     const e = ledger.get(path) ?? { ranges: [], redundant: 0 };
     e.ranges.push([from, to]);
+    e.servedAt = _ledgerTicks.get(ledger) ?? 0;
     ledger.set(path, e);
 }
 
@@ -506,6 +514,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
+    if (_ledger) _ledgerTicks.set(_ledger, (_ledgerTicks.get(_ledger) ?? 0) + 1);
     return Promise.all(normCalls.map(async ({ name, args }, i) => {
         const task = toolTasks?.[i];
         task?.setPrompt(JSON.stringify({ tool: name, args }, null, 2));
@@ -535,7 +544,13 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 // are on screen, so say so instead of sending them again. Re-serving them regardless
                 // made a loop of its own — pylint-4970 (v0.57) alternated two ranges of similar.py for
                 // 57 steps, each served in full.
-                if (seen.length && seen.every(([, v]) => v === 'full')) {
+                // Or a full copy was served in the last few steps, so it can't have been compacted
+                // away; pruning only stubs a copy that a later full read covers. v0.59 xarray-6744
+                // was re-served the same window ~36 times, each pruning the copy before it.
+                const _e = _ledger.get(pNorm);
+                const _recent = _e?.servedAt != null && (_ledgerTicks.get(_ledger) ?? 0) - _e.servedAt <= RECENT_READ_STEPS
+                    && !seen.some(([, v]) => v === 'truncated');   // a copy cut short in history doesn't count
+                if (_recent || (seen.length && seen.every(([, v]) => v === 'full'))) {
                     const stub = { path: args?.path, note: `${verdict.note.replace(/ They are shown again below;.*$/, '')} They are still shown in your earlier read_file results above, unchanged, so they are not repeated here. Use them now — edit the file, run code, or give your answer.` };
                     task?.setOutput(JSON.stringify(stub, null, 2));
                     task?.complete();
@@ -547,7 +562,6 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 // Only this range: marking every range of the file 'pruned' made each later read of
                 // the file look invisible too, so all of them were served.
                 _rereadNote = verdict.note;
-                _seenReadFiles.set(`${pNorm}:${args?.start_line || ''}:${args?.end_line || ''}`, 'pruned');
                 repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
             }
         }
@@ -571,7 +585,13 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             : null;
         try { result = await executeToolAsync(name, args, context); }
         catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
-        if (_rereadNote && result && !result.error) result = { ...result, note: _rereadNote };
+        if (_rereadNote && result && !result.error) {
+            result = { ...result, note: _rereadNote };
+            // Let the history dedup gate pass this copy. It keys on the range read_file returned,
+            // which is widened around small requests (215–245 → 203–253); marking the requested
+            // range instead left that mark 'pruned' for good, so every later read looked invisible.
+            _seenReadFiles.set(`${_normPath(String(args?.path ?? ''))}:${result.start_line || ''}:${result.end_line || ''}`, 'pruned');
+        }
         if (_preMtimes && replFails) {
             for (const [fp, before] of _preMtimes) {
                 const after = await agentFileMtime(fp);
@@ -628,6 +648,17 @@ export const _ENV_CONFIG_RE = /(?:^|\/)(?:conftest\.py|pytest\.ini|tox\.ini|setu
 // Model-native tool-call markup left in a reply's text (Gemma-4: <|tool_call>, <tool_call|>, <|"|>).
 export const _BROKEN_CALL_RE = /<tool_call\|>|<\|tool_call>|<\|"\|>/;
 export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
+
+// Test/packaging configuration changed in this run that the task doesn't name. Combines the loop's
+// own edit tracking with git's view of the workspace where the runner provides one (headless:
+// fgChangedFiles), which also sees edits a worker made with shell commands — v0.59 sphinx-8595 and
+// sklearn-10297 shipped worker-made environment edits the loop never saw.
+export async function envConfigEdits(task: string, edited: Iterable<string> = []): Promise<string[]> {
+    let changed: string[] = [];
+    try { changed = (await (globalThis as any).fgChangedFiles?.()) ?? []; } catch {}
+    return [...new Set([...edited, ...changed].map(String))]
+        .filter(p => _ENV_CONFIG_RE.test(p) && !task.includes(p.split('/').pop() ?? ''));
+}
 
 // Final message when an interactive turn reaches its step limit. The pending tool call of the
 // last step was not run; saying so keeps the user from assuming it was.
@@ -1041,10 +1072,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
+    let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
+    let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
     let _emptyFsNudged = false;     // empty-FS fallback fires at most once per turn
     const _emptyListTargets = new Map(); // path → count of consecutive empty list_files results
@@ -1322,17 +1355,18 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Test-environment workarounds in the change set: a rewritten conftest.py / pytest.ini /
         // setup.cfg that made tests run locally ships with the fix and can break every graded test
         // (v0.58 xarray-5131: a root conftest.py monkeypatching pandas; collection then failed on all
-        // 34 graded tests). Such patches rose from 3 to 11 over v0.56–v0.58, 1 of them resolved.
-        // One bounce per turn, skipped when the task itself names the file; a second COMPLETED passes.
+        // 34 graded tests). Skipped when the task itself names the file; a COMPLETED repeated with
+        // no edits in between passes. A second bounce follows new edits: v0.59 flask-4045 restored
+        // conftest.py after the first, then rewrote it to make the checklist's test run pass.
         if (_s.workflowMode && _isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && step < _loopMax - 1 && !softStopPending && !ps.envConfigCheck) {
-            const _task = _originalTask(_histR(_s));
-            const _cfg = [..._editedPaths].filter(p => _ENV_CONFIG_RE.test(p)
-                && !_task.includes(String(p).split('/').pop() ?? ''));
+            && step < _loopMax - 1 && !softStopPending
+            && (ps.envConfigCheck ?? 0) < 2 && (ps.envConfigCheck ? _editEvents > (ps.envConfigAt ?? 0) : true)) {
+            const _cfg = await envConfigEdits(_originalTask(_histR(_s)), _editedPaths);
             if (_cfg.length) {
-                ps.envConfigCheck = 1;
+                ps.envConfigCheck = (ps.envConfigCheck ?? 0) + 1;
+                ps.envConfigAt = _editEvents;
                 _saveAnswer(ps, textContent);
-                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file you created), keep only the fix itself, then reply COMPLETED again.`));
+                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file you created), keep only the fix itself, then reply COMPLETED again. If local tests can't run without them, check the fix with a short script instead.`));
                 return { do: 'continue' };
             }
         }
@@ -1613,7 +1647,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                         _e.isTruncated = true;
                         _e.truncReason = _truncReason;
                         if (_frTokenCap || _toolCapHit) {
-                            _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length, maxTokens: (msg as any)._maxTokens ?? 0 };
+                            // Head and tail of what was discarded, for the log: the text was in no log
+                            // before, so the cause of v0.59's 154 cut-offs (repetition? long code?)
+                            // couldn't be checked.
+                            const _args = (msg.tool_calls ?? []).map((t: any) => `${t.function?.name}(${t.function?.arguments ?? ''})`).join(' ');
+                            const _cut = `${_text}${_args ? ` ${_args}` : ''}`;
+                            _e.outputCapHit = { tokens: msg.usage?.completion_tokens ?? 0, toolCall: !!msg.tool_calls?.length, maxTokens: (msg as any)._maxTokens ?? 0,
+                                head: _cut.slice(0, 500), tail: _cut.length > 1000 ? _cut.slice(-500) : '' };
                         }
                         if (_frFiltered) _e.isFiltered = true;
                         if (_frStalled) _e.streamStalled = true;
@@ -1669,7 +1709,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Output cut off at the token cap: the response was discarded (not executed, not in
                 // history). Tell the model why before retrying, or it tends to repeat the runaway.
                 if (e.outputCapHit) {
-                    const { tokens, toolCall, maxTokens } = e.outputCapHit;
+                    const { tokens, toolCall, maxTokens, head, tail } = e.outputCapHit;
+                    try { convoLogTurn({ type: 'cut_off', name: toolCall ? 'tool_call' : 'text', responseTokens: tokens, response: tail ? `${head}\n[…]\n${tail}` : head }); } catch {}
                     // Below the step cap, the limit came from the context clamp: the context is
                     // nearly full, so an unchanged retry is cut off again (v0.55: 46 in a row).
                     if (maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
@@ -2049,13 +2090,21 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (prev.length >= 3) {
                 _histStub.set(r.tc.id, {
                     ...(r.result?.exit_code != null ? { exit_code: r.result.exit_code } : {}),
-                    note: `Same result as the ${prev.length} earlier runs of this exact call in your last ${REPEAT_WINDOW} steps — still shown above, not repeated here. Running it again will not change it: use that result, change the command, or give your answer.`,
+                    note: `Same result as the ${prev.length} earlier runs of this exact call in your last ${REPEAT_WINDOW} steps — still shown above, not repeated here. If that result answers the task, give your answer now ("not found" is an answer too); otherwise take a different approach. Running it again will not change it.`,
                 });
             }
             prev.push(_stepCount);
             _dupSeen.set(key, prev);
         }
         const _forHist = (tc: any, result: any) => _histStub.get(tc.id) ?? result;
+        // A cycle through a few commands: each is stubbed, none reaches the repeat guard's 8-in-12
+        // refusal, and stuck_detected (3 identical in a row) never sees it. v0.59 AutomationBench
+        // cycled `ls -R /workspace` / `ls -R / | grep …` / `ls -la /workspace` this way; a streak of
+        // 4 all-stubbed steps would have fired in 86 runs (64 AutomationBench). One nudge per turn.
+        _stubStreak = results.length && results.every(r => _histStub.has(r.tc.id)) ? _stubStreak + 1 : 0;
+        const _cycleNudge = _stubStreak >= 4 && !_cycleNudged
+            ? (_cycleNudged = true, `Your last ${_stubStreak} steps only repeated earlier calls exactly, with the same results — you are cycling through the same few commands, and they will not show anything new. Give your answer from what you already have (if what you were looking for isn't there, say so), or take a genuinely different approach.`)
+            : null;
 
         const _errPrefix = (r: any): string => {
             if (r?.error) return `[TOOL ERROR: ${String(r.error).slice(0, 200)}]\n`;
@@ -2120,6 +2169,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 for (const p of r.result.files_written) _editedPaths.add(String(p));
             }
         }
+        if (results.some(r => !r.result?.error && (r.name === 'run_workers' || r.name === 'write_file'
+            || r.name === 'replace_in_file' || r.name === 'apply_patch'
+            || (r.name === 'execute_code' && Array.isArray(r.result?.files_written) && r.result.files_written.length))))
+            _editEvents++;
         // For directorLoop's closing turn: a project (non-scratch) file changed, by the director or a
         // worker. Repro/debug scripts alone don't make a fix worth finishing.
         if ([..._editedPaths].some(p => !isScratchPath(p)) || results.some(r => r.name === 'run_workers'
@@ -2136,6 +2189,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // after tool execution — tool results are already in history above, so the
         // assistant tool_calls → role:'tool' pairing is intact.
         if (_callsOverflowNudge)               _emitNudge('calls_overflow', _nudge(_callsOverflowNudge));
+        if (_cycleNudge)                       _emitNudge('dup_cycle', _nudge(_cycleNudge));
         // stuck_detected: 3 consecutive identical full-result signatures — the model is in a
         // genuine loop with no new information. Nudge only: the nudge offers answering or BLOCKED,
         // both text replies, so forcing a tool call (tool_choice 'required') would rule them out
