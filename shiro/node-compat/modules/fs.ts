@@ -1,4 +1,5 @@
 import type { CommandContext } from '../../commands/index';
+import { bytesToText, textToBytes, toDisplayText } from '../../utils/bytes';
 
 export interface FsDeps {
   ctx: CommandContext;
@@ -58,9 +59,50 @@ function createRemovalHelpers(
   return { isProtectedRecentTaskOutput, removePathFromCaches };
 }
 
+/**
+ * File contents are cached as data strings (shiro/utils/bytes.ts: bytes that aren't UTF-8 are
+ * escaped). asRead gives what fs returns for an encoding (none → a Buffer of the exact bytes);
+ * asData turns written data — a string in some encoding, or bytes — into a data string.
+ */
+function dataCodec(FakeBuffer: any) {
+  const isUtf8 = (e: string) => /^utf-?8$/i.test(e);
+  const asRead = (cached: string, encoding?: string | null) =>
+    !encoding ? FakeBuffer.from(textToBytes(cached))
+      : isUtf8(encoding) ? toDisplayText(cached)
+      : FakeBuffer.from(textToBytes(cached)).toString(encoding);
+  const asData = (data: any, encoding?: string | null): string =>
+    typeof data === 'string'
+      ? (encoding && !isUtf8(encoding) ? bytesToText(FakeBuffer.from(data, encoding)) : data)
+      : bytesToText(ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data));
+  const encodingOf = (opts: any): string | null => (typeof opts === 'string' ? opts : opts?.encoding) ?? null;
+  return { asRead, asData, encodingOf };
+}
+
+/**
+ * A write into a directory that doesn't exist fails with ENOENT, as in Node (writing anyway made
+ * the directory appear in the workspace). The file cache knows every directory the node command
+ * preloaded (preload.ts: the cwd, home and /tmp, 5 levels deep) or made; deeper or other
+ * directories aren't known, so writes there are let through.
+ */
+function parentCheck(ctx: CommandContext, fileCache: Map<string, string>, homeDir: string) {
+  const roots = [ctx.cwd, homeDir, '/tmp'];
+  const known = (dir: string) => dir === '/' || fileCache.has(dir + '/.')
+    || [...fileCache.keys()].some(k => k.startsWith(dir + '/'));
+  const covered = (dir: string) => roots.some(r => (dir === r || dir.startsWith(r + '/'))
+    && dir.slice(r.length).split('/').filter(Boolean).length <= 5);
+  return (resolved: string, p: string, syscall = 'open') => {
+    const dir = resolved.slice(0, resolved.lastIndexOf('/')) || '/';
+    if (!known(dir) && covered(dir))
+      throw fsError('ENOENT', `ENOENT: no such file or directory, ${syscall} '${p}'`, syscall, p);
+  };
+}
+
 export function createFsModule(deps: FsDeps): any {
   const { ctx, fileCache, fileMtimes, pendingPromises, tickSyncOps, FakeBuffer, getBuiltinModule, homeDir } = deps;
   const { removePathFromCaches } = createRemovalHelpers(ctx, fileCache, fileMtimes);
+
+  const { asRead, asData, encodingOf } = dataCodec(FakeBuffer);
+  const requireParent = parentCheck(ctx, fileCache, homeDir);
 
   const materializeOpenFile = (resolved: string) => {
     const content = fileCache.get(resolved) || '';
@@ -92,15 +134,13 @@ export function createFsModule(deps: FsDeps): any {
           }
           throw fsError('ENOENT', `ENOENT: no such file or directory, open '${p}'`, 'open', p);
       }
-      const encoding = typeof opts === 'string' ? opts : opts?.encoding;
-      if (encoding === 'utf8' || encoding === 'utf-8' || encoding === 'utf8') return cached;
-      if (!encoding) return FakeBuffer.from(cached);
-      return cached;
+      return asRead(cached, encodingOf(opts));
     },
-    writeFileSync: (p: string, data: string | Uint8Array) => {
+    writeFileSync: (p: string, data: string | Uint8Array, opts?: any) => {
       tickSyncOps();
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
-      const strData = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      requireParent(resolved, p);
+      const strData = asData(data, encodingOf(opts));
       if (resolved.includes('/tasks/') || resolved.includes('/tmp/claude')) {
         console.warn(`[fs-debug] writeFileSync: ${resolved} (${strData.length} bytes)`);
       }
@@ -177,7 +217,7 @@ export function createFsModule(deps: FsDeps): any {
         if (key.startsWith(prefix)) {
           const rest = key.slice(prefix.length);
           const first = rest.split('/')[0];
-          if (first) {
+          if (first && first !== '.') {   // "dir/." marks a directory; it isn't an entry
             entries.add(first);
             if (rest.includes('/')) dirSet.add(first);
           }
@@ -273,6 +313,7 @@ export function createFsModule(deps: FsDeps): any {
     copyFileSync: (src: string, dst: string) => {
       const srcRes = ctx.fs.resolvePath(src, ctx.cwd);
       const dstRes = ctx.fs.resolvePath(dst, ctx.cwd);
+      requireParent(dstRes, dst, 'copyfile');
       const cached = fileCache.get(srcRes);
       if (cached !== undefined) {
         fileCache.set(dstRes, cached);
@@ -401,7 +442,7 @@ export function createFsModule(deps: FsDeps): any {
       const fdInfo = (globalThis as any).__shiroFds?.[fd];
       if (fdInfo) {
         const existing = fileCache.get(fdInfo.path) || '';
-        const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
+        const str = typeof data === 'string' ? data : bytesToText(data);
         const newContent = existing + str;
         fileCache.set(fdInfo.path, newContent);
         fileMtimes.set(fdInfo.path, Date.now());
@@ -416,7 +457,7 @@ export function createFsModule(deps: FsDeps): any {
       if (fdInfo.path.includes('/tasks/') && fdInfo.path.includes('.output')) {
         console.warn(`[fs-debug] readSync fd=${fd} path=${fdInfo.path} content=${content.length}bytes offset=${fdInfo.offset}`);
       }
-      const bytes = new TextEncoder().encode(content);
+      const bytes = textToBytes(content);
       const pos = position ?? fdInfo.offset;
       const len = Math.min(length ?? buf.length, Math.max(0, bytes.length - pos));
       for (let i = 0; i < len; i++) buf[(offset ?? 0) + i] = bytes[pos + i];
@@ -446,8 +487,9 @@ export function createFsModule(deps: FsDeps): any {
     },
     appendFileSync: (p: string, data: string | Uint8Array) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
+      requireParent(resolved, p);
       const existing = fileCache.get(resolved) || '';
-      const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      const str = typeof data === 'string' ? data : bytesToText(data);
       fileCache.set(resolved, existing + str);
       pendingPromises.push(ctx.fs.writeFile(resolved, existing + str).catch(() => {}));
     },
@@ -465,7 +507,7 @@ export function createFsModule(deps: FsDeps): any {
       const encoding = opts?.encoding || (typeof opts === 'string' ? opts : null);
       ctx.fs.readFile(resolved, encoding || 'utf8').then((data: any) => {
         if (typeof data === 'string') {
-          rs.emit('data', encoding ? data : FakeBuffer.from(data));
+          rs.emit('data', encoding ? data : FakeBuffer.from(textToBytes(data)));
         } else {
           rs.emit('data', data);
         }
@@ -483,14 +525,14 @@ export function createFsModule(deps: FsDeps): any {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
       ws.write = function(chunk: any, enc?: any, cb?: any) {
         const callback = typeof enc === 'function' ? enc : cb;
-        chunks.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
+        chunks.push(typeof chunk === 'string' ? chunk : bytesToText(chunk));
         if (callback) callback();
         return true;
       };
       ws.end = function(chunk?: any, enc?: any, cb?: any) {
         const callback = typeof chunk === 'function' ? chunk : typeof enc === 'function' ? enc : cb;
         if (chunk && typeof chunk !== 'function') {
-          chunks.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
+          chunks.push(typeof chunk === 'string' ? chunk : bytesToText(chunk));
         }
         const content = chunks.join('');
         fileCache.set(resolved, content);
@@ -517,19 +559,19 @@ export function createFsModule(deps: FsDeps): any {
       // Check fileCache first — sync writes may have updated it
       const cached = fileCache.get(resolved);
       if (cached !== undefined) {
-        const encoding = typeof opts2 === 'string' ? opts2 : opts2?.encoding;
-        const result = encoding ? cached : FakeBuffer.from(cached);
+        const result = asRead(cached, encodingOf(opts2));
         queueMicrotask(() => callback?.(null, result));
         return;
       }
-      ctx.fs.readFile(resolved, 'utf8')
-        .then((data: any) => callback?.(null, data))
+      ctx.fs.readFile(resolved)
+        .then((data: any) => callback?.(null, asRead(typeof data === 'string' ? data : bytesToText(data), encodingOf(opts2))))
         .catch((e: any) => callback?.(e));
     },
     writeFile: (p: string, data: any, optsOrCb?: any, cb?: any) => {
       const callback = typeof optsOrCb === 'function' ? optsOrCb : cb;
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
-      const strData = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      try { requireParent(resolved, p); } catch (e) { queueMicrotask(() => callback?.(e)); return; }
+      const strData = asData(data, typeof optsOrCb === 'function' ? null : encodingOf(optsOrCb));
       // Update fileCache so subsequent sync reads see the new data
       fileCache.set(resolved, strData);
       fileMtimes.set(resolved, Date.now());
@@ -744,7 +786,7 @@ export function createFsModule(deps: FsDeps): any {
         return;
       }
       const content = fileCache.get(fdInfo.path) || '';
-      const bytes = new TextEncoder().encode(content);
+      const bytes = textToBytes(content);
       const p2 = pos ?? fdInfo.offset;
       const n = Math.min(len, Math.max(0, bytes.length - p2));
       for (let i = 0; i < n; i++) buf[(off ?? 0) + i] = bytes[p2 + i];
@@ -758,7 +800,7 @@ export function createFsModule(deps: FsDeps): any {
       const fdInfo = (globalThis as any).__shiroFds?.[fd];
       if (fdInfo) {
         const existing = fileCache.get(fdInfo.path) || '';
-        const str = typeof buf === 'string' ? buf : new TextDecoder().decode(buf instanceof Uint8Array ? buf.slice(off, off + len) : buf);
+        const str = typeof buf === 'string' ? buf : bytesToText(buf instanceof Uint8Array ? buf.slice(off, off + len) : buf);
         const newContent = existing + str;
         fileCache.set(fdInfo.path, newContent);
         fileMtimes.set(fdInfo.path, Date.now());
@@ -860,15 +902,14 @@ export function createFsModule(deps: FsDeps): any {
         const encoding = typeof opts === 'string' ? opts : opts?.encoding;
         // Check fileCache first (may have data from writeFileSync not yet flushed)
         const cached = fileCache.get(resolved);
-        if (cached !== undefined) {
-          if (encoding === 'utf8' || encoding === 'utf-8') return cached;
-          return FakeBuffer.from(cached);
-        }
-        return await ctx.fs.readFile(resolved, encoding || 'utf8');
+        if (cached !== undefined) return asRead(cached, encoding);
+        const data = await ctx.fs.readFile(resolved);
+        return asRead(typeof data === 'string' ? data : bytesToText(data), encoding);
       },
       writeFile: async (p: string, data: any) => {
         const resolved = ctx.fs.resolvePath(p, ctx.cwd);
-        const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
+        requireParent(resolved, p);
+        const content = typeof data === 'string' ? data : bytesToText(data);
         fileCache.set(resolved, content); // Keep fileCache in sync for readFileSync/renameSync
         fileMtimes.set(resolved, Date.now());
         await ctx.fs.writeFile(resolved, content);
@@ -974,6 +1015,8 @@ export function createFsModule(deps: FsDeps): any {
 
 export function createFsPromisesModule(deps: FsDeps): any {
   const { ctx, fileCache, fileMtimes, FakeBuffer, homeDir } = deps;
+  const { asRead } = dataCodec(FakeBuffer);
+  const requireParent = parentCheck(ctx, fileCache, homeDir);
   const { removePathFromCaches } = createRemovalHelpers(ctx, fileCache, fileMtimes);
 
   // Async fs promises API
@@ -988,19 +1031,14 @@ export function createFsPromisesModule(deps: FsDeps): any {
       // Check fileCache first (may have data from writeFileSync not yet flushed)
       const cached = fileCache.get(resolved);
       const encoding = typeof opts === 'string' ? opts : opts?.encoding;
-      if (cached !== undefined) {
-        if (encoding === 'utf8' || encoding === 'utf-8') return cached;
-        return FakeBuffer.from(cached);
-      }
+      if (cached !== undefined) return asRead(cached, encoding);
       const data = await ctx.fs.readFile(resolved);
-      if (encoding === 'utf8' || encoding === 'utf-8') {
-        return typeof data === 'string' ? data : new TextDecoder().decode(data);
-      }
-      return typeof data === 'string' ? FakeBuffer.from(data) : FakeBuffer.from(data);
+      return asRead(typeof data === 'string' ? data : bytesToText(data), encoding);
     },
     writeFile: async (p: string, data: any) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
-      const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      requireParent(resolved, p);
+      const content = typeof data === 'string' ? data : bytesToText(data);
       fileCache.set(resolved, content); // Keep fileCache in sync for readFileSync
       await ctx.fs.writeFile(resolved, content);
       // localStorage WAL for critical config files
@@ -1146,15 +1184,17 @@ export function createFsPromisesModule(deps: FsDeps): any {
       await ctx.fs.rename(oldRes, newRes);
     },
     copyFile: async (src: string, dst: string) => {
+      requireParent(ctx.fs.resolvePath(dst, ctx.cwd), dst, 'copyfile');
       const data = await ctx.fs.readFile(ctx.fs.resolvePath(src, ctx.cwd));
-      const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      const content = typeof data === 'string' ? data : bytesToText(data);
       await ctx.fs.writeFile(ctx.fs.resolvePath(dst, ctx.cwd), content);
     },
     appendFile: async (p: string, data: any) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
+      requireParent(resolved, p);
       let existing = '';
-      try { const d = await ctx.fs.readFile(resolved); existing = typeof d === 'string' ? d : new TextDecoder().decode(d); } catch {}
-      const append = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      try { const d = await ctx.fs.readFile(resolved); existing = typeof d === 'string' ? d : bytesToText(d); } catch {}
+      const append = typeof data === 'string' ? data : bytesToText(data);
       await ctx.fs.writeFile(resolved, existing + append);
     },
     symlink: async (target: string, path: string) => {
@@ -1185,14 +1225,11 @@ export function createFsPromisesModule(deps: FsDeps): any {
           const encoding = typeof opts === 'string' ? opts : opts?.encoding;
           // Check fileCache first (consistent with readFileSync)
           const cached = fileCache.get(resolved);
-          if (cached !== undefined) {
-            if (!encoding || encoding === 'utf8' || encoding === 'utf-8') return cached;
-            return FakeBuffer.from(cached);
-          }
+          if (cached !== undefined) return asRead(cached, encoding ?? 'utf8');
           return ctx.fs.readFile(resolved, encoding || 'utf8');
         },
         writeFile: async (data: any) => {
-          const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
+          const content = typeof data === 'string' ? data : bytesToText(data);
           fileCache.set(resolved, content); // Keep fileCache in sync for readFileSync/renameSync
           await ctx.fs.writeFile(resolved, content);
         },

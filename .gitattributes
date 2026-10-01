@@ -1,0 +1,3 @@
+# Parity-test fixtures are compared byte for byte (CRLF, BOM, Latin-1, binary): never convert them.
+scripts/shell-diff/fixtures/** -text
+scripts/exec-diff/cases/** -text

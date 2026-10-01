@@ -2,6 +2,7 @@ import type { CommandContext } from '../commands/index';
 import type { SharedState } from './types';
 import { ProcessExitError } from '../commands/jseval/utils';
 import { getShiroOrigin } from '../utils/shiro-origin';
+import { bytesToText } from '../utils/bytes';
 
 /**
  * Create the fake process object for the Node.js compat layer.
@@ -169,7 +170,7 @@ function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState
   const stdoutEvents: Record<string, Function[]> = {};
   const stdoutObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
-      let str = typeof s === 'string' ? s : new TextDecoder().decode(s);
+      let str = typeof s === 'string' ? s : bytesToText(s);
       // Detect OAuth URL in Claude Code login flow and append a clickable link
       // Fix redirect_uri from localhost to manual code flow
       const oauthMatch = str.match(/(https:\/\/claude\.ai\/oauth\/authorize\S+)/);
@@ -272,7 +273,7 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
   const stderrEvts: Record<string, Function[]> = {};
   const stderrObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
-      const str = typeof s === 'string' ? s : new TextDecoder().decode(s);
+      const str = typeof s === 'string' ? s : bytesToText(s);
       stderrBuf.push(str);
       if (ctx.terminal) {
         _st.streamedToTerminal = true;

@@ -934,8 +934,11 @@ export function lanUrls(port: number, https: boolean): string[] {
 //   - the Pyodide worker source is inlined; the frame starts it from a blob URL
 export async function buildExecSandbox(root: string): Promise<string> {
     const esbuild = await import('esbuild');
-    const workerTs = await readFile(join(root, 'pyodide-worker.ts'), 'utf-8');
-    const worker = await esbuild.transform(workerTs, { loader: 'ts', target: 'es2020' });
+    const workerBuild = await esbuild.build({
+        entryPoints: [join(root, 'pyodide-worker.ts')],
+        bundle: true, format: 'iife', platform: 'browser', target: 'es2020', write: false, logLevel: 'silent',
+    });
+    const worker = { code: workerBuild.outputFiles[0].text };
     const workspaceShim = join(root, 'exec-sandbox', 'workspace-rpc.ts');
     const result = await esbuild.build({
         entryPoints: [join(root, 'exec-sandbox', 'entry.ts')],

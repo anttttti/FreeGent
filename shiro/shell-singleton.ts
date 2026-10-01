@@ -77,6 +77,19 @@ export async function getShell(): Promise<Shell> {
 }
 
 /**
+ * A new shell on the singleton's filesystem and commands, starting in /workspace — for a run
+ * that should start fresh, like a new bash process: no variables, functions, aliases, options or
+ * traps from earlier runs. Files (the workspace, /tmp, folders made with mkdir) are shared.
+ */
+export async function newShell(): Promise<Shell> {
+    const base = await getShell();
+    const shell = new Shell(base.fs, base.commands);
+    shell.cwd = WORKSPACE_MOUNT;
+    shell.env['PWD'] = WORKSPACE_MOUNT;
+    return shell;
+}
+
+/**
  * Reset the singleton (e.g. after a workspace switch).
  * The next call to getShell() creates a fresh instance.
  */

@@ -1,4 +1,5 @@
 import type { Command } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 import { readOperands, toLines, fromLines } from './flags';
 
 // GNU cut: -f fields (-d delimiter, -s only delimited lines, --output-delimiter), -c characters,
@@ -57,9 +58,8 @@ export const cut: Command = {
           if (!line.includes(delim)) { if (!onlyDelimited) out.push(line); continue; }
           out.push(line.split(delim).filter((_, k) => want(k + 1)).join(outDelim ?? delim));
         } else {
-          const units = mode === 'c' ? [...line] : [...new TextEncoder().encode(line)].map(b => String.fromCharCode(b));
-          const picked = units.filter((_, k) => want(k + 1)).join('');
-          out.push(mode === 'b' ? new TextDecoder().decode(Uint8Array.from(picked, c => c.charCodeAt(0))) : picked);
+          // -c counts bytes, as GNU cut does (it has no multibyte support).
+          out.push(bytesToText(textToBytes(line).filter((_, k) => want(k + 1))));
         }
       }
       ctx.stdout += fromLines(out, lastNl || out.length > 0, sep);

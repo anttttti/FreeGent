@@ -60,8 +60,10 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
         if (stalledPaths.size) {
             for (const key of [..._rf.keys()])
                 if (stalledPaths.has(key.split(':')[0])) _rf.delete(key);
-            for (const key of [..._lf])
-                if (stalledPaths.has(typeof _normPath === 'function' ? _normPath(key) : key)) _lf.delete(key);
+            for (const key of [..._lf]) {
+                const p = String(key).split('\u0000')[0];   // "<path>\0<listing hash>" (history.ts)
+                if (stalledPaths.has(typeof _normPath === 'function' ? _normPath(p) : p)) _lf.delete(key);
+            }
         }
         // else: stuck on non-read calls (execute_code etc.) — don't clear the read cache;
         // doing so doesn't help and forces redundant re-reads of already-seen files.

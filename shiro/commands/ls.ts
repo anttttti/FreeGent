@@ -147,7 +147,8 @@ export const ls: Command = {
           if (entry.type === "dir") {
             results.push("");
             const subPath = dirPath === "/" ? "/" + entry.name : dirPath + "/" + entry.name;
-            const subLabel = label === "." ? entry.name : label + "/" + entry.name;
+            // GNU keeps the operand: "./dir:" under `ls -R`, "dir/sub:" under `ls -R dir`.
+            const subLabel = label.endsWith("/") ? label + entry.name : label + "/" + entry.name;
             await listDir(subPath, subLabel, true);
           }
         }

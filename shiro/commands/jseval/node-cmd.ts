@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from '../index';
 import { executeNodeScript } from '../../node-compat/execution';
+import { stripShebang, transformESModules } from './module-transform';
 
 /**
  * node: A Node.js-like command that executes JS files from the virtual filesystem.
@@ -20,6 +21,7 @@ export const nodeCmd: Command = {
   async exec(ctx: CommandContext): Promise<number> {
     let code = '';
     let printResult = false;
+    let checkOnly = false;
 
     // Parse args — once we see a script file, everything after is script args
     const fileArgs: string[] = [];
@@ -29,6 +31,8 @@ export const nodeCmd: Command = {
         fileArgs.push(ctx.args[i]);
       } else if (ctx.args[i] === '-e' || ctx.args[i] === '--eval') {
         code = ctx.args[++i] || '';
+      } else if (ctx.args[i] === '-c' || ctx.args[i] === '--check') {
+        checkOnly = true;
       } else if (ctx.args[i] === '-p' || ctx.args[i] === '--print') {
         code = ctx.args[++i] || '';
         printResult = true;
@@ -75,6 +79,19 @@ export const nodeCmd: Command = {
     // If no file and no -e, read from stdin
     if (!code && ctx.stdin) {
       code = ctx.stdin;
+    }
+
+    // -c / --check: syntax only, nothing runs (exit 1 with the SyntaxError, as node prints it).
+    if (checkOnly) {
+      try {
+        // eslint-disable-next-line no-new-func
+        new Function(`return (async () => {\n${transformESModules(stripShebang(code))}\n})`);
+        return 0;
+      } catch (e: any) {
+        if (!(e instanceof SyntaxError)) return 0;
+        ctx.stderr += `${scriptPath || '[eval]'}\n${e.name}: ${e.message}\n`;
+        return 1;
+      }
     }
 
     if (!code) {

@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, statEntry } from './flags';
+import { cannotCreate, parseArgs, statEntry } from './flags';
 export const mv: Command = {
   name: "mv",
   description: "Move or rename files",
@@ -32,6 +32,8 @@ export const mv: Command = {
         const srcResolved = ctx.fs.resolvePath(src, ctx.cwd);
         const name = src.split("/").pop()!;
         const target = destIsDir ? dest + "/" + name : dest;
+        const why = await cannotCreate(ctx.fs, target);
+        if (why) throw new Error(`cannot move '${src}' to '${positional[positional.length - 1]}': ${why}`);
         await ctx.fs.rename(srcResolved, target);
       }
       return 0;

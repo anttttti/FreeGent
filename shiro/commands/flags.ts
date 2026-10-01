@@ -195,3 +195,15 @@ export async function readOperands(
   }
   return out;
 }
+
+/**
+ * Why a file can't be created at an absolute path, as coreutils reports it — its directory
+ * doesn't exist ("No such file or directory") or isn't a directory ("Not a directory") — or null
+ * when it can. The workspace would otherwise make the missing directory appear.
+ */
+export async function cannotCreate(fs: { exists(p: string): Promise<boolean>; stat(p: string): Promise<{ isDirectory(): boolean }> }, abs: string): Promise<string | null> {
+  const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
+  if (!(await fs.exists(parent))) return 'No such file or directory';
+  if (!(await fs.stat(parent)).isDirectory()) return 'Not a directory';
+  return null;
+}

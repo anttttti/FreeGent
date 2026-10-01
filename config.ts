@@ -3,6 +3,7 @@
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { isStaticHost } from './static-hosts.js';
+import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -1006,7 +1007,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
             .filter(f => typeof f.content === 'string' && f.content.length <= EXEC_FILE_MAX_CHARS)
             // Binary IDB files (encoding='base64') are tagged so the worker writes binary bytes,
             // not the raw base64 string, into Pyodide's IDBFS.
-            .map(f => [f.name, f.encoding === 'base64' ? `\x00BIN\x00${f.content}` : f.content])
+            .map(f => [f.name, encodeInputFile(f)])
     );
     // Include FSA local-folder files so Python can read and write them at local/ paths.
     // Skip large dirs (logs) to keep startup time reasonable.
@@ -1027,42 +1028,36 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
             const imageNames = [];
             const writeErrors: string[] = [];
             if (data.changedFiles && Object.keys(data.changedFiles).length) {
-                for (const [name, content] of Object.entries(data.changedFiles)) {
+                for (const [name, content] of Object.entries(data.changedFiles as Record<string, string | null>)) {
                     if (content === null) {
                         await agentDeleteFile(name).catch(e => writeErrors.push(`delete ${name}: ${(e as any).message ?? e}`));
-                    } else if (typeof content === 'string' && content.startsWith('\x00IMG\x00')) {
-                        // Binary image — store as data URL for UI rendering; lives in IDBFS for Python
-                        const parts = content.split('\x00'); // ['','IMG',mime,b64]
-                        const dataUrl = `data:${parts[2]};base64,${parts[3]}`;
-                        _pyodideImageStore = _pyodideImageStore || {};
-                        _pyodideImageStore[name] = dataUrl;
-                        imageNames.push(name);
-                        // Also persist to IDB as base64 so download works
-                        await agentWriteFile(name, parts[3], 'base64').catch(e => writeErrors.push(`write ${name}: ${(e as any).message ?? e}`));
-                    } else if (typeof content === 'string' && content.startsWith('\x00BIN\x00')) {
-                        // Non-image binary (xlsx, pdf, zip, …) — write to IDB with base64 encoding
-                        const b64 = content.slice(5);
-                        await agentWriteFile(name, b64, 'base64').catch(e => writeErrors.push(`write ${name}: ${(e as any).message ?? e}`));
-                    } else {
+                        continue;
+                    }
+                    // Text as is; binary (xlsx, pdf, zip, Latin-1 text …) and images as base64.
+                    const { data: fileData, encoding, imageMime } = decodeOutputFile(content);
+                    try {
                         // agentWriteFile routes local/ paths to FSA, bare names to IDB
-                        try {
-                            await agentWriteFile(name, content);
-                            // SVG files are text but need special inline rendering in the chat
-                            if (/\.svg$/i.test(name) && typeof content === 'string' && content.includes('<svg')) {
-                                _pyodideImageStore = _pyodideImageStore || {};
-                                _pyodideImageStore[name] = { type: 'svg', content };
-                                imageNames.push(name);
-                            }
-                        } catch (e) {
-                            writeErrors.push(`write ${name}: ${(e as any).message ?? e}`);
-                        }
+                        await agentWriteFile(name, fileData, encoding);
+                    } catch (e) {
+                        writeErrors.push(`write ${name}: ${(e as any).message ?? e}`);
+                        continue;
+                    }
+                    _pyodideImageStore = _pyodideImageStore || {};
+                    if (imageMime) {
+                        // Shown inline in the chat
+                        _pyodideImageStore[name] = `data:${imageMime};base64,${fileData}`;
+                        imageNames.push(name);
+                    } else if (/\.svg$/i.test(name) && !encoding && fileData.includes('<svg')) {
+                        // SVG files are text but need special inline rendering in the chat
+                        _pyodideImageStore[name] = { type: 'svg', content: fileData };
+                        imageNames.push(name);
                     }
                 }
                 renderFileList?.();
             }
             let { stdout, stderr, exit_code } = data;
             if (imageNames.length)
-                stdout = (stdout ? stdout + '\n' : '') + imageNames.map(n => `[IMAGE:${n}]`).join('\n');
+                stdout = (stdout && !stdout.endsWith('\n') ? stdout + '\n' : stdout) + imageNames.map(n => `[IMAGE:${n}]`).join('\n');
             if (writeErrors.length)
                 stderr = (stderr ? stderr + '\n' : '') + writeErrors.map(e => `[workspace-write-error] ${e}`).join('\n');
             resolve({

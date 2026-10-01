@@ -9,7 +9,7 @@ describe('execute_code JavaScript fs', () => {
         const { fs } = ws();
         for (const p of ['a.txt', './a.txt', '/workspace/a.txt', 'src/../a.txt', '/workspace/src/../a.txt'])
             expect(fs.readFileSync(p, 'utf8')).toBe('A');
-        expect(fs.readFileSync(path.join('src', 'lib', 'util.js'))).toBe('u');
+        expect(fs.readFileSync(path.join('src', 'lib', 'util.js'), 'utf8')).toBe('u');
     });
 
     it('lists directories by any path form', () => {
@@ -25,6 +25,7 @@ describe('execute_code JavaScript fs', () => {
 
     it('records writes and deletions as workspace names', () => {
         const { fs, written, deleted } = ws();
+        fs.mkdirSync('out');
         fs.writeFileSync('/workspace/out/b.txt', 'B');
         fs.appendFileSync('./a.txt', '+');
         fs.unlinkSync('/workspace/src/app.js');
@@ -44,7 +45,7 @@ describe('execute_code JavaScript fs', () => {
     it('keeps paths outside /workspace out of the workspace', () => {
         const { fs, written } = ws();
         fs.writeFileSync('/tmp/scratch.txt', 'tmp');
-        expect(fs.readFileSync('/tmp/scratch.txt')).toBe('tmp');
+        expect(fs.readFileSync('/tmp/scratch.txt', 'utf8')).toBe('tmp');
         expect(written).toEqual({});
     });
 

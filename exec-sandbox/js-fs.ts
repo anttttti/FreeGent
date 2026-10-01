@@ -16,12 +16,13 @@ const posix = {
             if (seg === '..') { if (out.length && out[out.length - 1] !== '..') out.pop(); else if (!abs) out.push('..'); continue; }
             out.push(seg);
         }
-        return (abs ? '/' : '') + out.join('/') || (abs ? '/' : '.');
+        const joined = (abs ? '/' : '') + out.join('/') || (abs ? '/' : '.');
+        return p.endsWith('/') && !joined.endsWith('/') ? joined + '/' : joined;   // Node keeps a trailing /
     },
     resolve(...parts: string[]): string {
         let p = '';
         for (const part of parts) p = part.startsWith('/') ? part : (p ? `${p}/${part}` : part);
-        return posix.normalize(p.startsWith('/') ? p : `${WORKSPACE}/${p}`);
+        return posix.normalize(p.startsWith('/') ? p : `${WORKSPACE}/${p}`).replace(/(.)\/$/, '$1');   // no trailing /
     },
 };
 
@@ -53,7 +54,11 @@ type Content = string | Uint8Array;
 
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
-export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>) {
+/**
+ * Buffer stands in for Node's Buffer (shiro/node-compat/buffer.ts in the sandbox): reads without
+ * an encoding return one, as in Node. Without it they return plain Uint8Arrays.
+ */
+export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffer?: { from(data: any, enc?: string): Uint8Array & { toString(enc?: string): string } }) {
     const files: Record<string, Content> = {};
     for (const [name, v] of Object.entries(sent)) files[name] = typeof v === 'string' ? v : fromBase64(v.base64);
     const written: Record<string, Content> = {};
@@ -69,6 +74,9 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>) {
     };
     const put = (p: string, content: Content) => {
         const abs = posix.resolve(p), name = wsName(abs);
+        // As in Node: the directory must exist (mkdirSync first). Writing anyway made it appear.
+        const dir = abs.slice(0, abs.lastIndexOf('/')) || '/';
+        if (!isDir(dir)) throw fsError('ENOENT', 'open', p);
         if (name === null) { scratch.set(abs, content); return; }
         if (name === '') throw fsError('EISDIR', 'open', p);
         files[name] = content; written[name] = content; deleted.delete(name);
@@ -76,22 +84,42 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>) {
     const keys = () => [...Object.keys(files).map(n => `${WORKSPACE}/${n}`), ...scratch.keys(), ...dirs];
     const isDir = (p: string) => {
         const abs = posix.resolve(p);
-        return abs === WORKSPACE || abs === '/' || dirs.has(abs) || keys().some(k => k.startsWith(abs + '/'));
+        return abs === WORKSPACE || abs === '/' || abs === '/tmp' || dirs.has(abs) || keys().some(k => k.startsWith(abs + '/'));
     };
-    const toText = (c: any) => typeof c === 'string' ? c : c instanceof Uint8Array ? new TextDecoder().decode(c) : String(c);
-    const size = (c: Content) => typeof c === 'string' ? new TextEncoder().encode(c).length : c.length;
+    const toText = (c: any) => typeof c === 'string' ? c : ArrayBuffer.isView(c) ? new TextDecoder().decode(c) : String(c);
+    const bytesOf = (c: Content) => typeof c === 'string' ? new TextEncoder().encode(c) : c;
+    const size = (c: Content) => bytesOf(c).length;
+    const encodingOf = (o: any): string | undefined => typeof o === 'string' ? o : o?.encoding ?? undefined;
+    const isUtf8 = (e: string) => /^utf-?8$/i.test(e);
+    // Written data as stored: a string in a non-UTF-8 encoding ('base64', 'hex', 'latin1' …) and
+    // typed arrays become bytes, other strings stay text.
+    const toContent = (c: any, enc?: string): Content =>
+        typeof c === 'string' ? (enc && !isUtf8(enc) && Buffer ? new Uint8Array(Buffer.from(c, enc)) : c)
+            : c instanceof Uint8Array ? c : ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : toText(c);
 
+    const stored = (p: string): Content => {
+        const c = get(p);
+        if (c === undefined) throw fsError(isDir(p) ? 'EISDIR' : 'ENOENT', 'open', p);
+        return c;
+    };
     const fs = {
-        // Text files read as strings. Binary files read as bytes, or as text with an encoding.
-        readFileSync(p: string, enc?: any): Content {
+        // As in Node: bytes (a Buffer) without an encoding, text with one.
+        readFileSync(p: string, opts?: any): any {
             const c = get(p);
             if (c === undefined) throw fsError(isDir(p) ? 'EISDIR' : 'ENOENT', 'open', p);
-            return typeof c !== 'string' && (typeof enc === 'string' || enc?.encoding) ? toText(c) : c;
+            const enc = encodingOf(opts);
+            if (!enc) return Buffer ? Buffer.from(bytesOf(c)) : bytesOf(c);
+            if (isUtf8(enc)) return toText(c);
+            return Buffer ? Buffer.from(bytesOf(c)).toString(enc) : toText(c);
         },
-        writeFileSync(p: string, c: any) {
-            put(p, c instanceof Uint8Array ? c : ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : toText(c));
+        writeFileSync(p: string, c: any, opts?: any) { put(p, toContent(c, encodingOf(opts))); },
+        appendFileSync(p: string, c: any, opts?: any) {
+            const was = get(p) ?? '', add = toContent(c, encodingOf(opts));
+            if (typeof was === 'string' && typeof add === 'string') { put(p, was + add); return; }
+            const a = bytesOf(was), b = bytesOf(add), all = new Uint8Array(a.length + b.length);
+            all.set(a); all.set(b, a.length);
+            put(p, all);
         },
-        appendFileSync(p: string, c: any) { put(p, toText(get(p) ?? '') + toText(c)); },
         existsSync(p: string) { return get(p) !== undefined || isDir(p); },
         readdirSync(p: string = '.') {
             if (!isDir(p)) throw fsError('ENOENT', 'scandir', p);
@@ -120,8 +148,14 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>) {
             }
             if (!opts?.force) throw fsError('ENOENT', 'rm', p);
         },
-        renameSync(from: string, to: string) { const c = fs.readFileSync(from); fs.unlinkSync(from); put(to, c); },
-        copyFileSync(from: string, to: string) { put(to, fs.readFileSync(from)); },
+        // The stored content as is: a text file stays text.
+        renameSync(from: string, to: string) {
+            const c = stored(from);
+            if (posix.resolve(from) === posix.resolve(to)) return;
+            put(to, c);   // first: when the target can't be written, the source stays
+            fs.unlinkSync(from);
+        },
+        copyFileSync(from: string, to: string) { put(to, stored(from)); },
     };
     const promises = Object.fromEntries(Object.entries(fs).map(([k, f]) =>
         [k.replace(/Sync$/, ''), async (...a: any[]) => (f as any)(...a)]));

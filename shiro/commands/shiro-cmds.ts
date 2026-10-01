@@ -186,7 +186,7 @@ export const revCmd: Command = {
   async exec(ctx) {
     const input = ctx.stdin || (ctx.args.length ? await ctx.fs.readFile(
       ctx.fs.resolvePath(ctx.args[0], ctx.cwd), 'utf8') as string : '');
-    ctx.stdout = input.split('\n').map(l => l.split('').reverse().join('')).join('\n');
+    ctx.stdout = input.split('\n').map(l => Array.from(l).reverse().join('')).join('\n');
     return 0;
   },
 };

@@ -5,6 +5,7 @@ import { recordCommand } from './favicon';
 import { isAvailableAsPackage, getCompiledModule } from './wasi-packages';
 import { ereToJs } from './utils/posix-regex';
 import { sprintf as cSprintf } from './commands/awk';
+import { bytesToText, byteChar, normalizeBytes } from './utils/bytes';
 
 // Lazy-load the WASI runtime (~960 lines) only when WASM execution is needed
 let _wasiRuntime: typeof import('./wasi-runtime') | null = null;
@@ -99,6 +100,8 @@ export class Shell {
   currentLine: number = 1;
   /** Depth of execute() recursion — only top-level resets LINENO */
   private executeDepth: number = 0;
+  /** File writes of built-in output under > / >> (see execute), in order. */
+  private redirectWrites: Promise<void> = Promise.resolve();
   private nextJobId = 1;
   private terminal?: ShiroTerminal;
 
@@ -257,7 +260,8 @@ export class Shell {
       ),
     };
     this.backgroundJobs.set(jobId, job);
-    writeStdout(`[${jobId}] started\n`);
+    // A non-interactive shell prints nothing for `cmd &` (bash prints job numbers only interactively).
+    if (this.terminal) writeStdout(`[${jobId}] started\n`);
     return 0;
   }
 
@@ -269,10 +273,13 @@ export class Shell {
     terminalOverride?: any,
     skipHistory: boolean = false,
   ): Promise<number> {
-    // Handle backslash line continuations: \<newline> joins lines
-    const joined = line.replace(/\\\n/g, '');
+    // Built-ins print through writeStdout; under > / >> it is swapped per command (below).
+    const baseWriteStdout = writeStdout;
+    // Handle backslash line continuations: \<newline> joins lines; comments go, as in bash
+    // (a script starting with "# …" used to run nothing, and "cmd # note" passed "# note" on).
+    const joined = stripComments(line.replace(/\\\n/g, ''));
     const trimmed = joined.trim();
-    if (!trimmed || trimmed.startsWith('#')) return 0;
+    if (!trimmed) return 0;
 
     // LINENO tracking: reset at top-level execute, track depth
     this.executeDepth++;
@@ -367,6 +374,13 @@ export class Shell {
       if (compound.operator === '&&' && exitCode !== 0) continue;
       if (compound.operator === '||' && exitCode === 0) continue;
 
+      // `cmd &` inside a list runs in the background; the list goes on at once with status 0.
+      if (compounds.length > 1 && /[^&]&$/.test(compound.command.trim())) {
+        this.executeBackground(compound.command.trim().slice(0, -1).trim(), writeStdout, writeStderr);
+        exitCode = 0; this.lastExitCode = 0; this.env['?'] = '0';
+        continue;
+      }
+
       // Check for function definition in this compound
       const compFuncDef = this.parseFunctionDef(compound.command.trim());
       if (compFuncDef) {
@@ -448,8 +462,13 @@ export class Shell {
       // Undoes `VAR=value cmd` prefix assignments once cmd has run (next segment or loop end).
       let restorePrefix: (() => void) | null = null;
 
+      // Output a built-in printed directly while piped (see below), for the next command's input.
+      let builtinPiped: string | null = null;
       for (let i = 0; i < pipeline.length; i++) {
         if (restorePrefix) { restorePrefix(); restorePrefix = null; }
+        await this.redirectWrites;
+        writeStdout = baseWriteStdout;
+        if (builtinPiped !== null) { lastOutput = builtinPiped.replace(/\r\n/g, '\n'); builtinPiped = null; }
         // Check for SIGINT (abort)
         if (this.abortController?.signal.aborted) {
           exitCode = 130; // 128 + SIGINT(2)
@@ -485,6 +504,48 @@ export class Shell {
           continue;
         }
         let expandedArgs = globResult;
+
+        // Output redirections are opened before the command runs, as bash does: a target in a
+        // directory that doesn't exist (or that is a directory) fails the command, which doesn't
+        // run. (Writing anyway made the directory appear: "> workspace/x" from /workspace made
+        // /workspace/workspace.)
+        {
+          let bad = '';
+          for (const r of redirects) {
+            if (!['>', '>>', '2>', '2>>'].includes(r.type) || !r.target || r.target.startsWith('/dev/') || /^>\(/.test(r.target)) continue;
+            const abs = this.fs.resolvePath(r.target, this.cwd);
+            const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
+            if (!(await this.fs.exists(parent))) { bad = `shiro: ${r.target}: No such file or directory`; break; }
+            const st = await this.fs.stat(abs).catch(() => null);
+            if (st?.isDirectory()) { bad = `shiro: ${r.target}: Is a directory`; break; }
+          }
+          if (bad) {
+            stderrWriter(bad + '\r\n');
+            exitCode = 1; this.lastExitCode = 1; this.env['?'] = '1'; lastOutput = '';
+            continue;
+          }
+          // Built-ins that print directly (type, command -v, alias, declare -p, trap, shopt …)
+          // follow the redirection too: `type x >/dev/null` printed anyway. The last > / >>
+          // wins, as in bash; other commands' output goes through the redirect handling below.
+          const out = [...redirects].reverse().find(r => (r.type === '>' || r.type === '>>') && r.target);
+          if (!out && i < pipeline.length - 1) {
+            // In a pipe, it is the next command's input (`set -o | grep errexit` grepped nothing).
+            writeStdout = (t: string) => { builtinPiped = (builtinPiped ?? '') + t; };
+          } else if (out && out.target !== '/dev/stdout') {
+            if (out.target === '/dev/null') writeStdout = () => {};
+            else if (out.target === '/dev/stderr') writeStdout = (t: string) => stderrWriter(t);
+            else {
+              const target = this.fs.resolvePath(out.target, this.cwd);
+              let truncate = out.type === '>';
+              writeStdout = (t: string) => {
+                const data = t.replace(/\r\n/g, '\n');
+                const first = truncate;
+                truncate = false;
+                this.redirectWrites = this.redirectWrites.then(() => first ? this.fs.writeFile(target, data) : this.fs.appendFile(target, data)).catch(() => {});
+              };
+            }
+          }
+        }
 
         // Expand process substitution: <(cmd) and >(cmd)
         expandedArgs = await this.expandProcessSubstitution(expandedArgs, stderrWriter);
@@ -776,7 +837,7 @@ export class Shell {
             const toShow = optNames.length > 0 ? optNames : allShopts;
             for (const opt of toShow) {
               if (!allShopts.includes(opt)) { stderrWriter(`shopt: ${opt}: invalid shell option name\r\n`); exitCode = 1; continue; }
-              writeStdout(`${opt}\t\t${this.shoptopts.has(opt) ? 'on' : 'off'}\r\n`);
+              writeStdout(`${opt.padEnd(15)}\t${this.shoptopts.has(opt) ? 'on' : 'off'}\r\n`);
             }
           }
           this.lastExitCode = exitCode;
@@ -837,10 +898,14 @@ export class Shell {
           }
           // declare -p: show variable values
           if (declFlags.includes('p') && declPositional.length > 0) {
+            // An unknown name is an error (status 1), as in bash: `declare -p x` tests for x.
+            let missing = false;
             for (const name of declPositional) {
               const val = this.env[name];
               if (val !== undefined) writeStdout(`declare -- ${name}="${val}"\r\n`);
+              else if (!this.arrays.has(name) && !this.assocArrays.has(name)) { stderrWriter(`bash: declare: ${name}: not found\r\n`); missing = true; }
             }
+            exitCode = missing ? 1 : 0; this.lastExitCode = exitCode; this.env['?'] = String(exitCode);
             continue;
           }
           for (const arg of declPositional) {
@@ -1420,8 +1485,8 @@ export class Shell {
                     case 'b': {
                       // %b: escape sequences in the argument
                       formatted = arg.replace(/\\(0[0-7]{0,3}|x[0-9a-fA-F]{1,2}|.)/g, (_m: string, e: string) => {
-                        if (e[0] === '0') return String.fromCharCode(parseInt(e.slice(1) || '0', 8));
-                        if (e[0] === 'x') return String.fromCharCode(parseInt(e.slice(1), 16));
+                        if (e[0] === '0') return String.fromCharCode(BYTE + (parseInt(e.slice(1) || '0', 8) & 255));
+                        if (e[0] === 'x') return String.fromCharCode(BYTE + parseInt(e.slice(1), 16));
                         return ({ n: '\n', t: '\t', r: '\r', '\\': '\\', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v' } as any)[e] ?? '\\' + e;
                       });
                       if (precision !== null) formatted = formatted.slice(0, parseInt(precision, 10) || 0);
@@ -1469,8 +1534,9 @@ export class Shell {
               }
               if (argIdx === passStart) break;   // no conversions: printed once
             } while (argIdx < fmtArgs.length);
-            // Escaped bytes (\xHH, \NNN) are decoded as UTF-8: '\xc3\xa9' is "é".
-            result = result.replace(/[\ue000-\ue0ff]+/g, run => new TextDecoder().decode(Uint8Array.from(run, c => c.charCodeAt(0) - BYTE)));
+            // Escaped bytes (\xHH, \NNN) are decoded as UTF-8: '\xc3\xa9' is "é"; bytes that aren't
+            // UTF-8 stay bytes ('\xe9' writes the one byte E9, utils/bytes.ts).
+            result = result.replace(/[\ue000-\ue0ff]+/g, run => bytesToText(Uint8Array.from(run, c => c.charCodeAt(0) - BYTE)));
             if (printfVarName) {
               this.env[printfVarName] = result;
             } else if (redirects.some(r => r.type === '>&2')) {
@@ -1875,7 +1941,7 @@ export class Shell {
                 if (!optName) {
                   const allOpts = ['errexit', 'nounset', 'xtrace', 'verbose', 'noexec', 'pipefail'];
                   for (const opt of allOpts) {
-                    writeStdout(`${opt}\t\t${this.options.has(opt) ? 'on' : 'off'}\r\n`);
+                    writeStdout(`${opt.padEnd(15)}\t${this.options.has(opt) ? 'on' : 'off'}\r\n`);
                   }
                 } else {
                   const optMap: Record<string, string> = { errexit: 'errexit', nounset: 'nounset', xtrace: 'xtrace', verbose: 'verbose', noexec: 'noexec', pipefail: 'pipefail' };
@@ -2267,6 +2333,7 @@ export class Shell {
         // Handle stdin redirect (<). The first command of a function, group or loop body
         // piped into reads that input (__PIPE_STDIN), unless it has a heredoc.
         let stdin = i > 0 ? lastOutput : (heredocStdin ? '' : (this.env['__PIPE_STDIN'] ?? ''));
+        let inputFailed = false;
         for (const redir of redirects) {
           if (redir.type === '<') {
             if (redir.target === '/dev/null') {
@@ -2285,12 +2352,19 @@ export class Shell {
               stdin = await this.fs.readFile(targetPath, 'utf8') as string;
             } catch (e: any) {
               stderrWriter(`shiro: ${redir.target}: ${e.message}\r\n`);
-              exitCode = 1;
+              inputFailed = true;
               break;
             }
           }
         }
-        if (exitCode !== 0 && i === 0) break;
+        // The command doesn't run and fails; in a pipeline the next command reads nothing and the
+        // pipeline's status is the last command's, as in bash (`tr x < missing | cat` exits 0).
+        if (inputFailed) {
+          exitCode = 1; this.lastExitCode = 1; this.env['?'] = '1';
+          pipeExitCodes.push(1);
+          lastOutput = '';
+          continue;
+        }
 
         // Inject heredoc content as stdin if present and this is the first pipeline segment
         if (heredocStdin && i === 0 && !stdin) {
@@ -2487,6 +2561,8 @@ export class Shell {
       }
 
       if (restorePrefix) { restorePrefix(); restorePrefix = null; }
+      await this.redirectWrites;
+      writeStdout = baseWriteStdout;
 
       // pipefail: use last non-zero exit code from any pipe segment
       if (this.options.has('pipefail') && pipeExitCodes.length > 1) {
@@ -2914,11 +2990,11 @@ export class Shell {
       const name = arrElemLenMatch[1];
       const key = arrElemLenMatch[2];
       const assoc = this.assocArrays.get(name);
-      if (assoc) return String((assoc.get(key) ?? '').length);
+      if (assoc) return String([...(assoc.get(key) ?? '')].length);
       const arr = this.arrays.get(name);
       if (arr) {
         const idx = parseInt(key, 10);
-        return String((arr[idx] ?? '').length);
+        return String([...(arr[idx] ?? '')].length);
       }
       return '0';
     }
@@ -3023,7 +3099,7 @@ export class Shell {
     // ${#VAR} — string length
     const lenMatch = inner.match(/^#([A-Za-z_][A-Za-z0-9_]*)$/);
     if (lenMatch) {
-      return String((this.env[lenMatch[1]] ?? '').length);
+      return String([...(this.env[lenMatch[1]] ?? '')].length);
     }
 
     // ${!prefix*} or ${!prefix@} — list variable names matching prefix
@@ -3291,6 +3367,26 @@ export class Shell {
   }
 
   /** Split multi-line input into statements, keeping heredoc blocks and quoted strings intact. */
+  /**
+   * True while text has an unclosed command substitution — $( … ) or ` … ` — or, with quotes,
+   * an unclosed quote: the statement goes on to the next line. Plain ( … ) groups don't count.
+   */
+  static openConstruct(text: string, quotes = true): boolean {
+    let depth = 0, q = '', back = false;
+    for (let k = 0; k < text.length; k++) {
+      const c = text[k];
+      if (c === '\\' && q !== "'") { k++; continue; }
+      if (q === "'") { if (c === "'") q = ''; continue; }
+      if (c === '`') { back = !back; continue; }
+      if (c === '$' && text[k + 1] === '(') { depth++; k++; continue; }
+      if (depth > 0 && c === '(') { depth++; continue; }
+      if (depth > 0 && c === ')') { depth--; continue; }
+      if (c === '"') { q = q === '"' ? '' : '"'; continue; }
+      if (c === "'" && !q) q = "'";
+    }
+    return depth > 0 || back || (quotes && q !== '');
+  }
+
   private splitStatements(input: string): string[] {
     const lines = input.split(/\r?\n/);
     if (lines.length <= 1) return [input];
@@ -3333,8 +3429,25 @@ export class Shell {
           if (lines[i].trim() === delimiter) break;
           i++;
         }
-        statements.push(block);
         i++;
+        // A heredoc inside $( … ) or quotes: the statement goes on after the terminator until
+        // they close (x="$(cat <<'E' … E\n)"). Checked without the heredoc body, which is data.
+        let code = line;
+        while (i < lines.length && Shell.openConstruct(code)) {
+          block += '\n' + lines[i];
+          code += '\n' + lines[i];
+          i++;
+        }
+        statements.push(block);
+        continue;
+      }
+
+      // A command substitution over several lines is one statement: echo $(cmd1\ncmd2).
+      if (Shell.openConstruct(line, false)) {
+        let acc = line;
+        i++;
+        while (i < lines.length && Shell.openConstruct(acc, false)) { acc += '\n' + lines[i]; i++; }
+        statements.push(acc);
         continue;
       }
 
@@ -3598,6 +3711,8 @@ export class Shell {
     // Find <<DELIM on the first line (could be anywhere in the command)
     const heredocMatch = lines[0].match(/(?<!<)<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
     if (!heredocMatch) return null;
+    // A heredoc inside $( … ) belongs to the command in there, not to this one.
+    if (Shell.openConstruct(lines[0].slice(0, heredocMatch.index), false)) return null;
 
     const delimiter = heredocMatch[1] || heredocMatch[2] || heredocMatch[3];
     const quoted = !!(heredocMatch[1] || heredocMatch[2]);
@@ -3726,6 +3841,15 @@ export class Shell {
           }
           if (ch === ';') {
             if (current.trim()) result.push({ operator: currentOp, command: current.trim() });
+            currentOp = ';';
+            current = '';
+            i++;
+            continue;
+          }
+          // A lone & ends a background command, like ; ends one (`sleep 1 & echo after`).
+          // Not &&, |&, >&, &>, 2>&1.
+          if (ch === '&' && line[i + 1] !== '&' && line[i + 1] !== '>' && !/[>|&<]/.test(prevCh)) {
+            if (current.trim()) result.push({ operator: currentOp, command: current.trim() + ' &' });
             currentOp = ';';
             current = '';
             i++;
@@ -3892,7 +4016,7 @@ export class Shell {
               case 'v': current += '\v'; i += 2; break;
               case 'x': {
                 const hex = input.slice(i + 2, i + 4).match(/^[0-9a-fA-F]{1,2}/);
-                if (hex) { current += String.fromCharCode(parseInt(hex[0], 16)); i += 2 + hex[0].length; }
+                if (hex) { current += byteChar(parseInt(hex[0], 16)); i += 2 + hex[0].length; }
                 else { current += '\\x'; i += 2; }
                 break;
               }
@@ -3905,7 +4029,7 @@ export class Shell {
               default:
                 if (esc >= '0' && esc <= '7') {
                   const oct = input.slice(i + 1, i + 4).match(/^[0-7]{1,3}/);
-                  if (oct) { current += String.fromCharCode(parseInt(oct[0], 8)); i += 1 + oct[0].length; }
+                  if (oct) { current += byteChar(parseInt(oct[0], 8) & 255); i += 1 + oct[0].length; }
                   else { current += '\\'; i++; }
                 } else {
                   current += '\\' + esc; i += 2;
@@ -3916,6 +4040,7 @@ export class Shell {
           }
         }
         if (i < input.length) i++; // skip closing '
+        current = normalizeBytes(current);   // $'\xc3\xa9' is "é"; $'\xe9' stays the byte E9
         continue;
       }
 
@@ -4655,6 +4780,19 @@ export class Shell {
       if (c === '\\' && !inS && k + 1 < inner.length) { cur += c + inner[++k]; continue; }
       if (c === "'" && !inD) { inS = !inS; cur += c; continue; }
       if (c === '"' && !inS) { inD = !inD; cur += c; continue; }
+      // $( … ), ${ … } and ` … ` are one word, spaces inside included ([[ $(cmd arg) == x ]]).
+      if (!inS && ((c === '$' && (inner[k + 1] === '(' || inner[k + 1] === '{')) || c === '`')) {
+        const open = c === '`' ? '`' : inner[k + 1], close = open === '(' ? ')' : open === '{' ? '}' : '`';
+        let j = c === '`' ? k + 1 : k + 2, depth = 1;
+        while (j < inner.length && depth > 0) {
+          const d = inner[j];
+          if (d === '\\') { j += 2; continue; }
+          if (close !== '`' && d === open) depth++;
+          else if (d === close) depth--;
+          j++;
+        }
+        cur += inner.slice(k, j); k = j - 1; continue;
+      }
       if (!inS && !inD) {
         if (/\s/.test(c)) { flush(); continue; }
         const two = inner.slice(k, k + 2);
@@ -4742,6 +4880,17 @@ export class Shell {
     };
     const ok = await orE();
     return ok ? 0 : 1;
+  }
+
+  /**
+   * An if / while / until condition ready for evalCondition. [[ … ]] expands its own words (an empty
+   * or unset $x stays an empty operand); expanding the text first made `[[ $x =~ re ]]` with x
+   * unset a one-word test, always true.
+   */
+  private async conditionText(condition: string, writeStderr: (s: string) => void): Promise<string> {
+    const t = condition.trim();
+    if (t.startsWith('[[') && this.doubleBracketEnd(t, 0) === t.length) return t;
+    return this.expandVars(this.expandArithmetic(await this.expandCommandSubstitution(condition, writeStderr)));
   }
 
   private async evalCondition(
@@ -4934,8 +5083,7 @@ export class Shell {
 
     // Evaluate branches in order
     for (const branch of branches) {
-      const expandedCond = this.expandVars(this.expandArithmetic(await this.expandCommandSubstitution(branch.condition, writeStderr)));
-      const condResult = await this.evalCondition(expandedCond, writeStdout, writeStderr);
+      const condResult = await this.evalCondition(await this.conditionText(branch.condition, writeStderr), writeStdout, writeStderr);
       if (condResult === 0) {
         return branch.body.trim() ? this.execute(branch.body, writeStdout, writeStderr) : 0;
       }
@@ -5024,6 +5172,8 @@ export class Shell {
     input: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void,
     pipeStdin?: string,
   ): Promise<number> {
+    // A loop’s status is its body’s last command’s (0 when the body never ran or ended in break).
+    let loopStatus = 0;
     const parsed = this.parseLoopConstruct(input, 'while');
     if (!parsed) { writeStderr('while: syntax error\r\n'); return 1; }
 
@@ -5036,12 +5186,12 @@ export class Shell {
     let iter = 0;
     while (iter++ < 10000) {
       // Expand vars in condition each iteration (loop vars like $X change)
-      const expandedCond = this.expandVars(this.expandArithmetic(await this.expandCommandSubstitution(parsed.condition, writeStderr)));
+      const expandedCond = await this.conditionText(parsed.condition, writeStderr);
       if ((await this.evalCondition(expandedCond, writeStdout, writeStderr)) !== 0) break;
       try {
-        if (parsed.body.trim()) await this.execute(parsed.body, writeStdout, writeStderr);
+        loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
       } catch (e) {
-        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); break; }
+        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); loopStatus = 0; break; }
         if (e instanceof ContinueSignal) { if (e.levels > 1) throw new ContinueSignal(e.levels - 1); continue; }
         throw e;
       }
@@ -5052,33 +5202,37 @@ export class Shell {
       if (savedPipeStdin === undefined) delete this.env['__PIPE_STDIN'];
       else this.env['__PIPE_STDIN'] = savedPipeStdin;
     }
-    return 0;
+    return loopStatus;
   }
 
   private async execUntil(
     input: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
   ): Promise<number> {
+    // A loop’s status is its body’s last command’s (0 when the body never ran or ended in break).
+    let loopStatus = 0;
     const parsed = this.parseLoopConstruct(input, 'until');
     if (!parsed) { writeStderr('until: syntax error\r\n'); return 1; }
 
     let iter = 0;
     while (iter++ < 10000) {
-      const expandedCond = this.expandVars(this.expandArithmetic(await this.expandCommandSubstitution(parsed.condition, writeStderr)));
+      const expandedCond = await this.conditionText(parsed.condition, writeStderr);
       if ((await this.evalCondition(expandedCond, writeStdout, writeStderr)) === 0) break;
       try {
-        if (parsed.body.trim()) await this.execute(parsed.body, writeStdout, writeStderr);
+        loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
       } catch (e) {
-        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); break; }
+        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); loopStatus = 0; break; }
         if (e instanceof ContinueSignal) { if (e.levels > 1) throw new ContinueSignal(e.levels - 1); continue; }
         throw e;
       }
     }
-    return 0;
+    return loopStatus;
   }
 
   private async execFor(
     input: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
   ): Promise<number> {
+    // A loop’s status is its body’s last command’s (0 when the body never ran or ended in break).
+    let loopStatus = 0;
     const parsed = this.parseLoopConstruct(input, 'for');
     if (!parsed) { writeStderr('for: syntax error\r\n'); return 1; }
 
@@ -5097,16 +5251,16 @@ export class Shell {
         if (test && this.evalArithmetic(test) === 0) break;
         // Execute body
         try {
-          if (parsed.body.trim()) await this.execute(parsed.body, writeStdout, writeStderr);
+          loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
         } catch (e) {
-          if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); break; }
+          if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); loopStatus = 0; break; }
           if (e instanceof ContinueSignal) { if (e.levels > 1) throw new ContinueSignal(e.levels - 1); /* fall through to update */ }
           else throw e;
         }
         // Execute update
         if (update) this.evalArithmetic(update);
       }
-      return 0;
+      return loopStatus;
     }
 
     // Parse "VAR in item1 item2 item3" from condition
@@ -5120,14 +5274,14 @@ export class Shell {
     for (const item of items) {
       this.env[varName] = item;
       try {
-        if (parsed.body.trim()) await this.execute(parsed.body, writeStdout, writeStderr);
+        loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
       } catch (e) {
-        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); break; }
+        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); loopStatus = 0; break; }
         if (e instanceof ContinueSignal) { if (e.levels > 1) throw new ContinueSignal(e.levels - 1); continue; }
         throw e;
       }
     }
-    return 0;
+    return loopStatus;
   }
 
   /**
@@ -5143,6 +5297,8 @@ export class Shell {
   private async execSelect(
     input: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
   ): Promise<number> {
+    // A loop’s status is its body’s last command’s (0 when the body never ran or ended in break).
+    let loopStatus = 0;
     const parsed = this.parseLoopConstruct(input, 'select');
     if (!parsed) { writeStderr('select: syntax error\r\n'); return 1; }
 
@@ -5189,9 +5345,9 @@ export class Shell {
       }
 
       try {
-        if (parsed.body.trim()) await this.execute(parsed.body, writeStdout, writeStderr);
+        loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
       } catch (e) {
-        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); break; }
+        if (e instanceof BreakSignal) { if (e.levels > 1) throw new BreakSignal(e.levels - 1); loopStatus = 0; break; }
         if (e instanceof ContinueSignal) { if (e.levels > 1) throw new ContinueSignal(e.levels - 1); continue; }
         throw e;
       }
@@ -5200,7 +5356,7 @@ export class Shell {
       if (!hasPipeStdin) break;
     }
 
-    return 0;
+    return loopStatus;
   }
 
   private async execCase(
@@ -5732,3 +5888,54 @@ export class Shell {
   }
 }
 
+/**
+ * Removes shell comments: a `#` that starts a word, outside quotes, to the end of its line. Not a
+ * `#` inside a word (a#b, $#, ${#x}, *#*), in quotes, after a backslash, or in a heredoc body,
+ * which is data. Lines and their order stay, so line numbers in messages do too.
+ */
+export function stripComments(src: string): string {
+  if (!src.includes('#')) return src;
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  let quote: '' | "'" | '"' | '`' = '';
+  const heredocs: { tag: string; dash: boolean }[] = [];
+  while (i < n) {
+    const c = src[i];
+    if (quote) {
+      out += c;
+      if (c === '\\' && quote !== "'" && i + 1 < n) { out += src[i + 1]; i += 2; continue; }
+      if (c === quote) quote = '';
+      i++;
+      continue;
+    }
+    if (c === '\\' && i + 1 < n) { out += c + src[i + 1]; i += 2; continue; }
+    if (c === "'" || c === '"' || c === '`') { quote = c; out += c; i++; continue; }
+    if (c === '<' && src[i + 1] === '<' && src[i + 2] !== '<') {
+      const m = /^<<(-?)[ \t]*(['"]?)([A-Za-z_][\w.-]*)\2/.exec(src.slice(i));
+      if (m) { heredocs.push({ tag: m[3], dash: m[1] === '-' }); out += m[0]; i += m[0].length; continue; }
+    }
+    if (c === '#') {
+      const prev = i === 0 ? '\n' : src[i - 1];
+      if (/[\s;&|()<>]/.test(prev)) {   // starts a word: a comment to the end of the line
+        while (i < n && src[i] !== '\n') i++;
+        continue;
+      }
+    }
+    out += c;
+    i++;
+    if (c === '\n' && heredocs.length) {
+      // Heredoc bodies follow the line that opened them, verbatim up to each terminator.
+      for (const h of heredocs.splice(0)) {
+        while (i < n) {
+          const end = src.indexOf('\n', i);
+          const lineText = src.slice(i, end < 0 ? n : end);
+          out += lineText + (end < 0 ? '' : '\n');
+          i = end < 0 ? n : end + 1;
+          if ((h.dash ? lineText.replace(/^\t+/, '') : lineText) === h.tag) break;
+        }
+      }
+    }
+  }
+  return out;
+}

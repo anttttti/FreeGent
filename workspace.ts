@@ -178,7 +178,11 @@ export async function readWorkspaceFile(name) {
 async function writeWorkspaceFile(name, content, lastModified = null, encoding = null) {
     await ensureDB();
     return new Promise<void>((resolve, reject) => {
-        const record: any = { name, content, lastModified: lastModified || Date.now(), size: (content || '').length };
+        // size in bytes: decoded for base64 records, UTF-8 for text (not the stored string length)
+        const size = encoding === 'base64'
+            ? Math.floor(String(content || '').replace(/[^A-Za-z0-9+/]/g, '').length * 3 / 4)
+            : new TextEncoder().encode(content || '').length;
+        const record: any = { name, content, lastModified: lastModified || Date.now(), size };
         if (encoding) record.encoding = encoding;
         const req = db.transaction(STORE, 'readwrite').objectStore(STORE).put(record);
         req.onsuccess = () => resolve();
@@ -631,6 +635,8 @@ async function deleteFsaFile(name) {
 
 export function setWorkspaceAdapter(a: WorkspaceAdapter | null) { _wa = a; }
 export function workspaceUsesAbsolutePaths(): boolean { return !!_wa?.absolutePaths; }
+/** The directory a workspace adapter serves (headless: the workspace on disk), or '' in the browser. */
+export function workspaceRootDir(): string { return String((_wa as any)?.root ?? ''); }
 
 // Whether a local folder is synced via the File System Access API this session —
 // the system prompt branches its workspace description on this ("local/" paths
@@ -722,11 +728,23 @@ async function readFileAsDataUrl(path) {
 // /workspace, so "/workspace/src/app.js", "/src/app.js" and "./src/app.js" from any caller name
 // the same file — never a file literally called "/workspace/…", which listed as a "workspace"
 // folder inside the workspace.
+// The path is normalized as a shell would: "a//b", "a/./b", "x/../a/b" and "a/b/" are "a/b", so
+// every tool stores and finds one name per file. A path that climbs out of the workspace ("../x",
+// "/workspace/../etc") is refused rather than stored under a name like "../x".
 export function workspaceName(path: string): string {
-    let p = String(path ?? '');
-    if (p === '/workspace') return '';
-    if (p.startsWith('/workspace/')) p = p.slice('/workspace/'.length);
-    return p.replace(/^\/+/, '').replace(/^(\.\/)+/, '');
+    let p = String(path ?? '').trim();
+    if (p === '/workspace' || p.startsWith('/workspace/')) p = p.slice('/workspace'.length);
+    const out: string[] = [];
+    for (const seg of p.split('/')) {
+        if (!seg || seg === '.') continue;
+        if (seg === '..') {
+            if (!out.length) throw new Error(`Path '${path}' is outside the workspace — use a path inside it, e.g. '${p.split('/').filter(x => x && x !== '.' && x !== '..').join('/') || 'file.txt'}'`);
+            out.pop();
+            continue;
+        }
+        out.push(seg);
+    }
+    return out.join('/');
 }
 
 export async function agentReadFile(path) {
@@ -2650,7 +2668,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8,
     // Agent file ops (called via window.X in tools.js)
     agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentWriteFile, agentDeleteFile, agentFileMtime,
-    setWorkspaceAdapter, workspaceUsesAbsolutePaths,
+    setWorkspaceAdapter, workspaceUsesAbsolutePaths, workspaceRootDir, workspaceName,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {
         const recs = await listWorkspaceFiles();

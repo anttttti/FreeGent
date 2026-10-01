@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU md5sum / sha1sum / sha256sum / sha512sum: "HASH  NAME" per file ("-" for stdin), -c to check
 // a list of sums. File bytes are hashed as stored (binary files as bytes).
@@ -43,9 +44,9 @@ async function digest(algo: string, data: Uint8Array): Promise<string> {
 }
 
 async function readBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
-  if (f === '-') return new TextEncoder().encode(ctx.stdin);
+  if (f === '-') return textToBytes(ctx.stdin);
   const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-  return typeof c === 'string' ? new TextEncoder().encode(c) : c;
+  return typeof c === 'string' ? textToBytes(c) : c;
 }
 
 function hashCommand(name: string, algo: string): Command {
@@ -68,7 +69,7 @@ function hashCommand(name: string, algo: string): Command {
         let failed = 0;
         for (const list of files) {
           let text: string;
-          try { text = new TextDecoder().decode(await readBytes(ctx, list)); }
+          try { text = bytesToText(await readBytes(ctx, list)); }
           catch { ctx.stderr += `${name}: ${list}: No such file or directory\n`; rc = 1; continue; }
           for (const line of text.split('\n').filter(Boolean)) {
             const m = /^([0-9a-fA-F]+) [ *](.+)$/.exec(line);

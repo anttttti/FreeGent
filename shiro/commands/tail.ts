@@ -1,10 +1,11 @@
 import type { Command } from './index';
 import { readOperands } from './flags';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU tail: -n N / -n +N (from line N), -c N / -c +N, -q / -v, "==> name <==" headers. Output is
 // the input's bytes, so a missing final newline stays missing.
 export function tailText(text: string, n: number, bytes: boolean, fromStart: boolean): string {
-  if (bytes) return fromStart ? text.slice(Math.max(0, n - 1)) : n === 0 ? '' : text.slice(-n);
+  if (bytes) { const b = textToBytes(text); return bytesToText(fromStart ? b.slice(Math.max(0, n - 1)) : n === 0 ? new Uint8Array(0) : b.slice(-n)); }
   const starts = [0];
   for (let k = text.indexOf('\n'); k >= 0 && k < text.length - 1; k = text.indexOf('\n', k + 1)) starts.push(k + 1);
   if (text === '') return '';

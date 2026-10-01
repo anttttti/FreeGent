@@ -4,6 +4,7 @@
 
 import type { Command } from './index';
 import { parseArgs, readInput } from './flags';
+import { fromByteString, toByteString } from '../utils/bytes';
 
 export const xxdCmd: Command = {
   name: 'xxd',
@@ -48,12 +49,12 @@ export const xxdCmd: Command = {
         for (let i = 0; i + 1 < hex.length; i += 2) {
           result += String.fromCharCode(parseInt(hex.substring(i, i + 2), 16));
         }
-        ctx.stdout += result;
+        ctx.stdout += fromByteString(result);
         return 0;
       }
 
       // Forward: create hex dump
-      let data = content;
+      let data = toByteString(content);   // one char per byte (utils/bytes.ts)
       if (seekOffset > 0) data = data.substring(seekOffset);
       if (limit >= 0) data = data.substring(0, limit);
 

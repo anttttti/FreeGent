@@ -8,12 +8,12 @@ const TOOLS_SPEC = [
         name: 'list_files',
         description: 'List workspace files. Do not list the same path twice.',
         parameters: { type: 'object', properties: {
-            path: { type: 'string', description: 'Prefix filter, e.g. "fg-tasks/" — "local/" prefix optional.' }
+            path: { type: 'string', description: 'A folder (lists the files in it) or a name prefix, e.g. "src" or "fg-tasks/04" — "local/" prefix optional.' }
         }, required: [] }
     },
     {
         name: 'read_file',
-        description: 'Read a file with optional 1-based line range. Prefer a range over reading whole files. "local/foo" and "foo" are the same path — avoid duplicate reads.',
+        description: 'Read a file with optional 1-based line range. A range shorter than 50 lines is widened to 50 lines around it. Prefer a range over reading whole files. When a local folder is synced, "local/foo" and "foo" are the same file — avoid duplicate reads.',
         parameters: {
             type: 'object',
             properties: {
@@ -58,7 +58,7 @@ const TOOLS_SPEC = [
             type: 'object',
             properties: {
                 path:  { type: 'string', description: 'Relative path from workspace root. Never use /workspace/ prefix.' },
-                patch: { type: 'string', description: 'Unified diff (--- a/file / +++ b/file / @@ hunks). Header filenames are ignored.' }
+                patch: { type: 'string', description: 'Unified diff (--- a/file / +++ b/file / @@ hunks). The header file names are used only when path is not given.' }
             },
             required: ['path', 'patch']
         }
@@ -79,7 +79,7 @@ const TOOLS_SPEC = [
             type: 'object',
             properties: {
                 path:    { type: 'string' },
-                content: { type: 'string', description: 'Text to append. Newline auto-inserted before content.' }
+                content: { type: 'string', description: 'Text to append. A newline is added before the content when the file does not already end with one.' }
             },
             required: ['path', 'content']
         }
@@ -236,13 +236,13 @@ function execToolSpec() {
         const hasWasm    = p === 'wasm';
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
-                `Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) running via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. ${_noReadBash}` +
+                `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. ${_noReadBash}` +
                 'Python: workspace files pre-loaded, writes sync back. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'python', 'javascript'];
         } else if (hasWasm) {
             description = 'Execute Bash or JavaScript (browser sandbox) in-page. ' +
-                'Bash: real musl-static Unix tools (grep, sed, awk, find, sort, tr, …) via x86-64 WASM emulator; workspace at /workspace — use absolute paths. Files written under /workspace sync back automatically. ' +
+                'Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'javascript'];
         } else if (hasPyodide) {
@@ -255,6 +255,9 @@ function execToolSpec() {
             languages = ['javascript'];
         }
     }
+    // Every backend starts each call fresh (a new process headless; a new shell and namespace
+    // in the browser).
+    description += ' Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over to the next call; files do.';
     const hasBashLang = languages.includes('bash');
     const languageDesc = hasBashLang
         ? 'Language: "bash", "python", or "javascript". Always specify.'
@@ -342,7 +345,7 @@ const GIT_TOOL_SPEC = {
 
 const WORKERS_TOOL_SPEC = {
     name: 'run_workers',
-    description: 'Run independent worker agents in parallel. Each gets a workspace snapshot; writes are merged after all finish. Workers cannot see each other\'s writes.',
+    description: 'Run independent worker agents in parallel. Each gets a workspace snapshot. File edits a worker makes are merged after all finish; files its code writes are shared at once. Workers should not depend on each other\'s results.',
     parameters: {
         type: 'object',
         properties: {

@@ -29,7 +29,7 @@ import './history-util.js';
 import './fetch-blacklist.js';
 import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
 import { scrubEnv } from './secret-env.js';
-import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
+import { createNativeExec } from './native-exec.js';
 import './search-providers.js';
 import './skill-guidance.js';
 import './turn-context.js';
@@ -360,92 +360,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     // Mirror to globalThis so ES-module free-variable reads in tools.ts see it
     // (dom.window.x = y bypasses the windowProxy set-trap; globalThis.nativeExec stays
     // undefined otherwise and execute_code bash falls through to the "Local sandbox" error).
-    // Snapshot workspace files (path → mtimeMs) for detecting writes during execute_code.
-    // Only used for local (non-Docker) execution where we can stat the filesystem directly.
-    const _snapWorkspace = (dir: string): Map<string, number> => {
-        const snap = new Map<string, number>();
-        const walk = (d: string, depth: number) => {
-            if (depth > 8) return; // guard against deeply nested repos
-            try {
-                for (const ent of readdirSync(d, { withFileTypes: true })) {
-                    if (ent.name.startsWith('.git')) continue; // skip git internals (large + uninteresting)
-                    const full = join(d, ent.name);
-                    if (ent.isFile()) {
-                        try { snap.set(full, statSync(full).mtimeMs); } catch {}
-                    } else if (ent.isDirectory()) walk(full, depth + 1);
-                }
-            } catch {}
-        };
-        if (dir) walk(dir, 0);
-        return snap;
-    };
-
-    const _nativeExecFn = (language, code) => new Promise((resolve) => {
-        const _dc = (bin: string, flag: string) => ['docker', ['exec', '-i', targetContainer, bin, flag, code]] as const;
-        const LANG_CMD = targetContainer
-            ? { bash: _dc('bash', '-c'), python: _dc('python3', '-c'), javascript: _dc('node', '-e') }
-            : { bash: ['bash', ['-c', code]], python: ['python3', ['-c', code]], javascript: ['node', ['-e', code]] };
-        const entry = LANG_CMD[language];
-        if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
-        const [cmd, cmdArgs] = entry;
-        const MAX_OUTPUT = 200_000, TIMEOUT_MS = 120_000;
-        // Snapshot workspace before execution (local only — Docker workspace is on the container).
-        const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
-        // Snapshot .git/hooks to detect hook-injection attempts (non-.sample files planted by the agent).
-        const hooksDir = (!targetContainer && workspaceRoot) ? join(workspaceRoot, '.git', 'hooks') : null;
-        const preHooks: Set<string> | null = hooksDir ? (() => {
-            try { return new Set(readdirSync(hooksDir).filter(f => !f.endsWith('.sample'))); }
-            catch { return null; }
-        })() : null;
-        const out: OutBuf = { text: '', dropped: 0 }, err: OutBuf = { text: '', dropped: 0 };
-        let done = false;
-        // Head + tail of each stream (exec-output.ts); curl's progress meter is dropped from stderr.
-        const _shaped = () => ({ stdout: clipOutput(out.text, out.dropped), stderr: clipOutput(stripCurlProgress(err.text), err.dropped) });
-        const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
-        // The runner's environment holds the provider keys (loaded from the credentials file);
-        // agent commands get it without them. (docker exec doesn't forward it either way.)
-        const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true, env: scrubEnv(process.env) });
-        child.unref();
-        // No interactive input: close stdin so a program that reads it gets EOF at once instead of
-        // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
-        child.stdin?.end();
-        child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
-        child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
-        child.on('close', (exitCode) => {
-            const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? 0 };
-            // Detect files written/modified during execution via post-snapshot diff.
-            // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
-            if (preSnap && (exitCode ?? 0) === 0 && workspaceRoot) {
-                const written: string[] = [];
-                try {
-                    const postSnap = _snapWorkspace(workspaceRoot);
-                    for (const [p, mtime] of postSnap) {
-                        if (!preSnap.has(p) || preSnap.get(p) !== mtime)
-                            written.push(p.startsWith(workspaceRoot + '/') ? p.slice(workspaceRoot.length + 1) : p);
-                    }
-                } catch {}
-                if (written.length > 0) result.files_written = written;
-            }
-            // Detect .git/hooks planted by the executed code (hook-injection guard).
-            if (hooksDir && preHooks !== null) {
-                try {
-                    const postHooks = readdirSync(hooksDir).filter(f => !f.endsWith('.sample'));
-                    const planted = postHooks.filter(h => !preHooks.has(h));
-                    if (planted.length > 0) {
-                        for (const h of planted) { try { unlinkSync(join(hooksDir, h)); } catch {} }
-                        result.warning = `execute_code planted .git/hooks — removed: ${planted.join(', ')}. Check for other .git/ writes.`;
-                    }
-                } catch {}
-            }
-            _done(result);
-        });
-        child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));
-        const timer = setTimeout(() => {
-            try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-            _done({ ..._shaped(),
-                    exit_code: 124, error: 'Command timed out after 120s. If it was waiting for input, pass input through a pipe or file (stdin is closed); run long jobs in the background.' });
-        }, TIMEOUT_MS);
-    });
+    const _nativeExecFn = createNativeExec({ workspaceRoot, targetContainer });
     dom.window.nativeExec = _nativeExecFn;
     globalThis.nativeExec = _nativeExecFn;
     // Files changed in the workspace, from git: modified, added and untracked. The loop's own edit

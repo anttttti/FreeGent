@@ -693,6 +693,8 @@ export class LazySnapshot {
     get size(): number { return this._sizes.size; }
     has(name: string): boolean { return this._sizes.has(name); }
     list(): Array<{ name: string; size: number }> { return [...this._sizes].map(([name, size]) => ({ name, size })); }
+    /** A file that appeared in the workspace since (a binary file a worker's code wrote: staging holds text only). */
+    note(name: string, size: number): void { this._sizes.set(name, size); this._content.delete(name); }
     // undefined when the file isn't in the listing or can't be read (e.g. a directory).
     get(name: string): Promise<string | undefined> {
         if (!this._sizes.has(name)) return Promise.resolve(undefined);

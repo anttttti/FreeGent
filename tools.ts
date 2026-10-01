@@ -5,6 +5,7 @@ import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
+import { isTextBytes } from './shiro/utils/bytes.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 120_000;
@@ -119,10 +120,27 @@ export function _normToolPath(p: string): string {
     if (!p) return p;
     // A Docker task container takes its own absolute paths (/app/…, /workspace/…) unchanged.
     if (typeof workspaceUsesAbsolutePaths === 'function' && workspaceUsesAbsolutePaths()) return p;
-    if (p.startsWith('/workspace/')) return p.slice('/workspace/'.length);
-    if (p === '/workspace') return '';
-    if (p.startsWith('/')) return p.slice(1);
-    return p;
+    // Headless: an absolute path inside the workspace directory (as pwd or os.getcwd() give it)
+    // is that file. Stripping only the "/" nested it: <root>/<root>/file.
+    const root = typeof workspaceRootDir === 'function' ? workspaceRootDir() : '';
+    if (root && (p === root || p.startsWith(root + '/'))) p = p.slice(root.length) || '/';
+    // workspace.ts workspaceName: "/workspace/a", "/a", "./a", "x/../a" and "a//" are all "a".
+    // A path outside the workspace is left for the tool to refuse with workspaceName's message.
+    try { return workspaceName(p); } catch { return p; }
+}
+
+/**
+ * A tool path given relative to the workspace's parent — "workspace/app.js" for /workspace/app.js
+ * — names a file at the workspace root when the workspace has no "workspace" folder. Taken
+ * literally it made one: /workspace/workspace/app.js.
+ */
+async function _rootRelativeToolPath(p: string): Promise<string> {
+    if (!/^workspace\/./.test(p) || (typeof workspaceUsesAbsolutePaths === 'function' && workspaceUsesAbsolutePaths())) return p;
+    try {
+        const files = await agentListFiles();
+        if ((files || []).some((f: any) => String(f?.name ?? f).startsWith('workspace/'))) return p;
+    } catch { return p; }
+    return p.slice('workspace/'.length);
 }
 
 
@@ -525,6 +543,7 @@ async function _handleRunGit(args: any) {
 }
 
 async function _handleUndoWrite(args: any) {
+    args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
     const stack = _fileCheckpoints.get(args.path);
     if (!stack || !stack.length) return { error: `undo_write: no checkpoint for "${args.path}" in this session.` };
     const previous = stack.pop();
@@ -534,25 +553,34 @@ async function _handleUndoWrite(args: any) {
             return { success: true, path: args.path, note: 'File deleted (it did not exist before the write).' };
         }
         await agentWriteFile(args.path, previous);
-        return { success: true, path: args.path, bytes: previous.length, note: 'Restored previous content.' };
+        return { success: true, path: args.path, bytes: _byteLen(previous), note: 'Restored previous content.' };
     } catch (e) { return { error: `undo_write: ${e.message}` }; }
 }
 
 async function _handleDeleteFile(args: any, context: any) {
-    args = { ...args, path: _normToolPath(args.path ?? '') };
+    args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
     if (context) { context.staging.set(args.path, null); return { success: true }; }
-    try   { await agentDeleteFile(args.path); return { success: true }; }
+    try {
+        // A file that isn't there is reported, not "deleted" (the workspace delete is silent).
+        if (!workspaceUsesAbsolutePaths?.() && !(await agentListFiles()).some((f: any) => (f?.name ?? f) === args.path))
+            return { error: `delete_file: ${args.path} not found` };
+        await agentDeleteFile(args.path);
+        return { success: true };
+    }
     catch (e) { return { error: e.message }; }
 }
 
 async function _handleAppendFile(args: any, context: any) {
-    args = { ...args, content: args.content ?? args.text ?? args.body ?? args.data ?? '' };
+    args = { ...args,
+        path:    await _rootRelativeToolPath(_normToolPath(args.path ?? args.filename ?? args.file ?? '')),
+        content: args.content ?? args.text ?? args.body ?? args.data ?? '',
+    };
     const doAppend = async (read: () => Promise<string>, write: (c: string) => Promise<void>) => {
         const existing = await read().catch(() => '');
         const sep = existing && !existing.endsWith('\n') ? '\n' : '';
         const newContent = existing + sep + args.content;
         await write(newContent);
-        return { success: true, path: args.path, bytes: newContent.length };
+        return { success: true, path: args.path, bytes: _byteLen(newContent) };
     };
     if (context) {
         return doAppend(
@@ -895,7 +923,10 @@ async function _syntaxCheck(path) {
     if (!ext || typeof nativeExec !== 'function') return null;
     let r = null;
     if (ext === 'py') {
-        r = await nativeExec('bash', `python3 -m py_compile ${JSON.stringify(path)} 2>&1`).catch(() => null);
+        // Compiled in memory: py_compile writes __pycache__/*.pyc into the workspace (git status
+        // noise), and a later edit within the same second ran the stale .pyc instead.
+        const check = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
+        r = await nativeExec('bash', `python3 -c ${JSON.stringify(check)} ${JSON.stringify(path)} 2>&1`).catch(() => null);
     } else if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
         r = await nativeExec('bash', `node --check ${JSON.stringify(path)} 2>&1`).catch(() => null);
     }
@@ -964,17 +995,22 @@ async function _handleListFiles(args, context) {
     // (list everything), and a leading "./" is dropped — the filter is a literal name
     // prefix, so an unnormalised "." only matched dotfiles and returned an empty list
     // for a populated workspace (fg-chat 2026-07-16).
-    const pathFilter = (args.path || '').trim().replace(/^(["']).*\1$/, m => m.slice(1, -1)).trim()
-        .replace(/^(?:\.\/?|\/)$/, '')
-        .replace(/^\.\/(?=.)/, '');
+    const quoted = (args.path ?? args.dir ?? args.directory ?? '').trim().replace(/^(["']).*\1$/, m => m.slice(1, -1)).trim();
+    // Any form of a workspace path ("/workspace/src", "./src/", "src") names the same folder.
+    const pathFilter = await _rootRelativeToolPath(_normToolPath(quoted));
     // Normalise both the filter and each filename by stripping the leading "local/" (or bare
     // "local") so that "tasks/", "local/tasks/", and "local" all work as filters.
     // "local" → "" (match all local files), "local/tasks/" → "tasks/", "tasks/" → "tasks/"
     const normFilter = pathFilter.replace(/^local(\/|$)/, '');
     const normName   = f => (f.name || f).replace(/^local\//, '');
     const applyFilter = files => {
+        // By name, so a listing reads the same every time (headless walks folders concurrently).
+        files = [...files].sort((a, b) => normName(a) < normName(b) ? -1 : normName(a) > normName(b) ? 1 : 0);
         if (!pathFilter) return files;
-        const filtered = files.filter(f => normName(f).startsWith(normFilter));
+        // A folder lists what is in it ("src" is not "src2/…"); a filter that names no file or
+        // folder is a name prefix ("fg-tasks/04" → fg-tasks/042-…).
+        const inFolder = files.filter(f => normName(f) === normFilter || normName(f).startsWith(normFilter + '/'));
+        const filtered = inFolder.length ? inFolder : files.filter(f => normName(f).startsWith(normFilter));
         // Sort so files directly at the requested path come before subdirectory files,
         // ensuring e.g. local/tasks/038-*.md appears before local/tasks/archive/*.md
         const base = normFilter.endsWith('/') ? normFilter : normFilter + '/';
@@ -994,7 +1030,7 @@ async function _handleListFiles(args, context) {
         for (const f of _snapshotFiles(context.snapshot))
             if (!context.staging.has(f.name)) files.push(f);
         for (const [n, c] of context.staging)
-            if (c !== null) files.push({ name: n, size: (c || '').length });
+            if (c !== null) files.push({ name: n, size: _byteLen(c || '') });
         return { path: pathFilter, ..._cap(applyFilter(files)) };
     }
     try   { return { path: pathFilter, ..._cap(applyFilter(await agentListFiles())) }; }
@@ -1005,7 +1041,7 @@ async function _handleReadFile(args, context) {
     args = { ...args, path: args.path ?? args.filename ?? args.file ?? args.filepath
                           ?? (typeof args.paths === 'string' ? JSON.parse(args.paths)[0] : args.paths?.[0])
                           ?? '' };
-    args = { ...args, path: _normToolPath(args.path) };
+    args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path)) };
     if (!args.path) return { error: 'read_file: missing required argument "path". Use: read_file({"path": "relative/path/to/file"})' };
     // line_range may arrive as a JSON string ('[1,100]') instead of an array — parse it.
     if (typeof args.line_range === 'string') { try { args.line_range = JSON.parse(args.line_range); } catch {} }
@@ -1123,11 +1159,12 @@ async function _handleWriteFile(args, context) {
         path:    _normToolPath(args.path    ?? args.filename ?? args.file ?? args.filepath ?? ''),
         content: args.content ?? args.text     ?? args.body ?? args.data    ?? '',
     };
+    args.path = await _rootRelativeToolPath(args.path);
     if (!args.path) return { error: 'write_file: "path" is required' };
     if (args.encoding === 'base64') {
         try {
             await agentWriteFile(args.path, args.content, 'base64');
-            return { success: true, path: args.path, bytes: Math.round(args.content.length * 0.75) };
+            return { success: true, path: args.path, bytes: _base64Len(args.content) };
         } catch (e) { return { error: e.message }; }
     }
     if (!context && _requireReadBack.has(args.path)) {
@@ -1159,7 +1196,7 @@ async function _handleWriteFile(args, context) {
         }
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
-        return { success: true, path: args.path, bytes: args.content.length, ...imgDisplay };
+        return { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
     }
     try {
         let previous = '';
@@ -1177,7 +1214,7 @@ async function _handleWriteFile(args, context) {
         await agentWriteFile(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path);
-        const wfResult = { success: true, path: args.path, bytes: args.content.length, ...imgDisplay };
+        const wfResult = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
         return synErr ? { ...wfResult, syntax_error: synErr } : wfResult;
     } catch (e) { return { error: e.message }; }
 }
@@ -1189,6 +1226,7 @@ async function _handleReplaceInFile(args, context) {
         old_string: args.old_string ?? args.old_content ?? args.old_str ?? args.old_text ?? args.original_text ?? args.original ?? args.old_target ?? args.old_lines ?? args.search ?? args.find ?? args.old ?? '',
         new_string: args.new_string ?? args.new_content ?? args.new_str ?? args.new_text ?? args.replacement_text ?? args.replace ?? args.replacement ?? args.new ?? args.content ?? args.text ?? '',
     };
+    args.path = await _rootRelativeToolPath(args.path);
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `replace_in_file: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
     }
@@ -1251,7 +1289,7 @@ async function _handleReplaceInFile(args, context) {
         const absIdx = searchOffset + idx;
         const updated = original.slice(0, absIdx) + args.new_string + original.slice(absIdx + matchLen);
         await write(updated);
-        return { success: true, path: args.path, replacements_made: 1, bytes: updated.length, note: 'Change applied. No need to re-read the file to verify.' };
+        return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(updated), note: 'Change applied. No need to re-read the file to verify.' };
     };
     if (context) {
         return doReplace(
@@ -1300,7 +1338,7 @@ async function _handleApplyPatch(args, context) {
         if (m) args = { ...args, path: m[1] };
     }
     // Normalize /workspace/ prefix (WASM bash mount point) to a plain relative path.
-    args = { ...args, path: _normToolPath(args.path ?? '') };
+    args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
     if (typeof nativeExec === 'function' && args.path && _SWE_TEST_RE.test(args.path)) {
         return { error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${args.path}).` };
     }
@@ -1310,10 +1348,13 @@ async function _handleApplyPatch(args, context) {
     const doApply = async (read, write) => {
         let jsdiff;
         try {
-            // Always use CDN — avoids bare-specifier import('diff') which causes Vite to
-            // inject /@vite/client into tools.ts, breaking module loading on Safari 12.
-            // @ts-ignore — ESM URL import has no TypeScript type declarations
-            jsdiff = await import(/* @vite-ignore */ 'https://esm.sh/diff@7');
+            // Browser: the CDN — a bare-specifier import('diff') makes Vite inject /@vite/client
+            // into tools.ts, breaking module loading on Safari 12. Node (headless, TUI) can't
+            // import https: URLs, so every headless apply_patch failed: there it is the npm
+            // package (a dependency), named through a variable so Vite leaves it alone.
+            const inNode = !!(globalThis as any).process?.versions?.node;
+            const spec = inNode ? 'diff' : 'https://esm.sh/diff@7';
+            jsdiff = await import(/* @vite-ignore */ spec);
         } catch (e: any) {
             return { error: `apply_patch: failed to load diff library: ${e?.message}` };
         }
@@ -1331,12 +1372,12 @@ async function _handleApplyPatch(args, context) {
         if (result !== false) {
             await write(result);
             const note = countFixes.length ? `Recomputed hunk counts: ${countFixes.join('; ')}` : undefined;
-            return { success: true, path: args.path, bytes: result.length, ...(note ? { note } : {}) };
+            return { success: true, path: args.path, bytes: _byteLen(result), ...(note ? { note } : {}) };
         }
         const fixed = await _tryFixPatchOffsets(args.path, original, patch, jsdiff);
         if (fixed?.result) {
             await write(fixed.result);
-            return { success: true, path: args.path, bytes: fixed.result.length, ...(fixed.note ? { note: fixed.note } : {}) };
+            return { success: true, path: args.path, bytes: _byteLen(fixed.result), ...(fixed.note ? { note: fixed.note } : {}) };
         }
         return { error: `apply_patch: patch did not apply to "${args.path}". ${fixed?.hint ?? 'Context lines may not match — read the file first and regenerate the patch.'}` };
     };
@@ -1857,12 +1898,68 @@ export async function _annotateUnchangedInPlace(result: any, before: Map<string,
     return out;
 }
 
+// Language names as models write them. Anything not bash or JavaScript runs as Python, so "sh",
+// "shell" or "node" must be mapped here, not left to fall through to Python.
+const _LANGS: Record<string, string> = {
+    bash: 'bash', sh: 'bash', shell: 'bash', zsh: 'bash', console: 'bash', terminal: 'bash',
+    python: 'python', python3: 'python', py: 'python',
+    javascript: 'javascript', js: 'javascript', node: 'javascript', nodejs: 'javascript', typescript: 'javascript', ts: 'javascript',
+};
+function _canonLanguage(lang: string): string {
+    const l = String(lang).trim().toLowerCase();
+    return _LANGS[l] ?? l;
+}
+
 async function _handleExecuteCode(args, context) {
     const _rawCode = EXEC_CODE_ALIASES.map(k => args?.[k]).find(v => typeof v === 'string' && v) ?? '';
     const _targets = _inPlaceTargets(_rawCode);
     const _before  = _targets.length ? await _readInPlaceTargets(_targets) : null;
+    // A worker's file edits are staged until run_workers commits them. The code it runs must see
+    // them (a coder that wrote main.py and ran it ran the old one, or got "No such file"), and
+    // what the code writes must show in the worker's own read_file / list_files.
+    const _stamps = context?.staging ? await _applyStagingForRun(context.staging) : null;
     const result   = await _handleExecuteCodeInner(args, context);
+    if (_stamps) await _stageRunChanges(context.staging, _stamps, context.snapshot);
     return _before?.size ? _annotateUnchangedInPlace(result, _before) : result;
+}
+
+type _RunStamps = { files: Map<string, string>; t0: number };
+const _stamp = (f: any) => `${f.size ?? ''}:${f.lastModified ?? ''}`;
+
+/** Writes a worker's staged edits (null = deleted) to the workspace for a run; returns the listing. */
+async function _applyStagingForRun(staging: Map<string, string | null>): Promise<_RunStamps> {
+    for (const [path, content] of staging) {
+        try {
+            if (content === null) await agentDeleteFile(path);
+            else await agentWriteFile(path, content);
+        } catch { /* the run sees the workspace as it is */ }
+    }
+    const files = new Map<string, string>();
+    try { for (const f of await agentListFiles()) if (!f.isLocal) files.set(f.name, _stamp(f)); } catch {}
+    return { files, t0: Date.now() };
+}
+
+/** Records in the worker's staging the files a run created, changed (text) or deleted. */
+async function _stageRunChanges(staging: Map<string, string | null>, before: _RunStamps, snapshot?: any): Promise<void> {
+    // A binary file is listed through the snapshot (workers.ts LazySnapshot.note).
+    const context_snapshot_note = (name: string, size: number) => snapshot?.note?.(name, size);
+    let after: any[];
+    try { after = (await agentListFiles()).filter((f: any) => !f.isLocal); } catch { return; }
+    const seen = new Set<string>();
+    for (const f of after) {
+        seen.add(f.name);
+        const changed = before.files.get(f.name) !== _stamp(f) || (f.lastModified ?? 0) >= before.t0;
+        if (!changed) continue;
+        _invalidateReadDedup(f.name);
+        // Binary files stay out of staging (it holds text); they are in the workspace already.
+        const rec = !workspaceUsesAbsolutePaths?.() && typeof readWorkspaceFile === 'function'
+            ? await readWorkspaceFile(f.name).catch(() => null) : null;
+        const text = rec ? (rec.encoding === 'base64' ? null : rec.content)
+                         : await agentReadFile(f.name).then((c: any) => typeof c === 'string' && !c.includes('\0') ? c : null, () => null);
+        if (text !== null) staging.set(f.name, text);
+        else { staging.delete(f.name); context_snapshot_note(f.name, f.size ?? 0); }
+    }
+    for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
 }
 
 async function _handleExecuteCodeInner(args, context) {
@@ -1875,7 +1972,7 @@ async function _handleExecuteCodeInner(args, context) {
     // No language given: Python when the code clearly is Python, else bash (the old default).
     // An explicit language is not overridden up front; the only switch is the compile-error
     // re-run below, where Python has proven the code isn't Python and nothing has run.
-    args = { ...args, code: _code, language: _lang ?? (_looksLikePython(_code) ? 'python' : 'bash') };
+    args = { ...args, code: _code, language: _lang ? _canonLanguage(_lang) : (_looksLikePython(_code) ? 'python' : 'bash') };
     // Strip trailing newlines: a literal \n at the end of a bash code string causes
     // the shell to receive an empty second command that exits 0 with no stdout,
     // silently masking the real command's absence. Safe for all languages. (T1.5)
@@ -1921,11 +2018,14 @@ async function _handleExecuteCodeInner(args, context) {
             const write_errors = [];
             for (const [path, content] of Object.entries(run.written as Record<string, string | Uint8Array>)) {
                 try {
-                    if (typeof content === 'string') {
-                        await agentWriteFile(path, content);
-                        if (context?.staging) context.staging.set(path, content);
+                    // Bytes that are UTF-8 text (a Buffer of a text file) are stored as text; others
+                    // (binary, Latin-1 …) as base64, so they come back unchanged.
+                    const text = typeof content === 'string' ? content : isTextBytes(content) ? _utf8.decode(content) : null;
+                    if (text !== null) {
+                        await agentWriteFile(path, text);
+                        if (context?.staging) context.staging.set(path, text);
                     } else {
-                        await agentWriteFile(path, _bytesToBase64(content), 'base64');   // binary
+                        await agentWriteFile(path, _bytesToBase64(content as Uint8Array), 'base64');   // binary
                     }
                     _invalidateReadDedup(path);
                 } catch (e) {
@@ -1935,7 +2035,7 @@ async function _handleExecuteCodeInner(args, context) {
             const written_ok = Object.keys(run.written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
             const extra_stderr = write_errors.length ? (run.stderr ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
             const deleted = (run.deleted ?? []) as string[];
-            return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.failed || (write_errors.length && !written_ok.length) ? 1 : 0, ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}) };
+            return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.exit_code || (write_errors.length && !written_ok.length ? 1 : 0), ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}) };
         })();
     } else if (typeof nativeExec === 'function') {
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
@@ -2020,7 +2120,7 @@ async function _handleExecuteCodeInner(args, context) {
         } catch { /* keep the original SyntaxError */ }
     }
     // Explicit bash that failed on what looks like Python: say so (never switch an explicit choice).
-    if (_lang === 'bash' && execResult && !execResult.error && execResult.exit_code > 0 && _looksLikePython(args.code))
+    if (_lang && _canonLanguage(_lang) === 'bash' && execResult && !execResult.error && execResult.exit_code > 0 && _looksLikePython(args.code))
         execResult = { ...execResult, note: 'This looks like Python code but ran as bash — set language: "python".' };
     // Exit 0 with an error signature in stderr: a multi-command script's exit code reflects only
     // its last command, so an earlier failure can hide behind it. Annotate; never strip or replace
@@ -2029,6 +2129,13 @@ async function _handleExecuteCodeInner(args, context) {
         execResult = { ...execResult, note: 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.' };
     return execResult;
 }
+
+const _utf8 = new TextDecoder('utf-8', { ignoreBOM: true });
+const _utf8enc = new TextEncoder();
+/** Size in bytes of text as stored (UTF-8), not its UTF-16 length: "é" is 2 bytes, "😀" 4. */
+function _byteLen(s: string): number { return _utf8enc.encode(s ?? '').length; }
+/** Bytes a base64 string decodes to. */
+function _base64Len(b64: string): number { const t = String(b64 ?? '').replace(/[^A-Za-z0-9+/]/g, ''); return Math.floor(t.length * 3 / 4); }
 
 function _bytesToBase64(bytes: Uint8Array): string {
     let bin = '';

@@ -11,6 +11,7 @@ const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pyc
 export class NodeFsAdapter implements WorkspaceAdapter {
     constructor(root, { sidecarRoot = null, sidecarPrefixes = [] } = {}) {
         this._root = resolve(root);
+        this.root = this._root;
         this._sidecarRoot = sidecarRoot ? resolve(sidecarRoot) : null;
         this._sidecarPrefixes = sidecarPrefixes;
     }
@@ -23,20 +24,23 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         // actionable error so the model uses execute_code instead of getting a confusing
         // "file not found". Absolute paths that start with the workspace root are fine — strip
         // the prefix to normalise (avoids join('/workspace', '/workspace/x') double-nesting).
-        if (rel.startsWith('/') && !rel.startsWith(this._root + '/') && !rel.startsWith(this._root)) {
+        // Inside means the root itself or below it: "/root/ws2/x" is not inside "/root/ws".
+        const inside = (p: string, root: string) => p === root || p.startsWith(root.endsWith('/') ? root : root + '/');
+        if (rel.startsWith('/') && !inside(rel, this._root)) {
             throw new Error(`Path '${path}' is an absolute container path — use execute_code(language='bash', code='cat "${path}"') to read files outside the workspace`);
         }
-        const norm = rel.startsWith(this._root + '/') ? rel.slice(this._root.length + 1)
+        const norm = rel === this._root ? ''
+                   : rel.startsWith(this._root + '/') ? rel.slice(this._root.length + 1)
                    : rel.startsWith('/') ? rel.slice(1)
                    : rel;
         let abs: string;
         if (this._sidecarRoot && this._sidecarPrefixes.some(p => norm.startsWith(p))) {
             abs = join(this._sidecarRoot, norm);
-            if (!abs.startsWith(this._sidecarRoot))
+            if (!inside(abs, this._sidecarRoot))
                 throw new Error(`Path '${path}' escapes workspace — use a relative path`);
         } else {
             abs = join(this._root, norm);
-            if (!abs.startsWith(this._root))
+            if (!inside(abs, this._root))
                 throw new Error(`Path '${path}' escapes workspace — use a relative path`);
         }
         return abs;

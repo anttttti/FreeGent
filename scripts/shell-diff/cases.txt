@@ -1,6 +1,8 @@
 # One case per line, run in a fresh copy of fixtures/ by real bash and by the browser shell.
 # Lines starting with # and blank lines are skipped. Avoid output that legitimately differs
 # between the two (timestamps, ls -l, absolute paths, random order, file sizes on disk).
+# Besides stdout and the exit status, the files each case creates, changes or deletes are
+# compared by SHA-256 — remove files that legitimately differ (archives carry mtimes).
 
 # ── grep ──────────────────────────────────────────────────────────────────────
 grep apple words.txt
@@ -476,10 +478,10 @@ rmdir dir/sub 2>/dev/null; echo "rc=$?"
 touch new1 new2 && ls new*
 cp words.txt dir/ && ls dir
 ln -s words.txt link.txt 2>/dev/null && cat link.txt | head -1
-tar cf arch.tar words.txt nums.txt && tar tf arch.tar
-mkdir x && tar cf a.tar words.txt && tar xf a.tar -C x && cat x/words.txt | wc -l
+tar cf arch.tar words.txt nums.txt && tar tf arch.tar && rm arch.tar
+mkdir x && tar cf a.tar words.txt && tar xf a.tar -C x && cat x/words.txt | wc -l && rm a.tar
 gzip -c words.txt | gunzip | md5sum
-gzip -k nums.txt && ls nums.txt* && gunzip -c nums.txt.gz | head -2
+gzip -k nums.txt && ls nums.txt* && gunzip -c nums.txt.gz | head -2 && rm nums.txt.gz
 test -e words.txt -a -f nums.txt && echo both
 [ -d nope ] || [ -e words.txt ] && echo ok
 [ "abc" \< "abd" ] && echo lt
@@ -534,3 +536,227 @@ case "$(echo AbC)" in [Aa]*[cC]) echo glob-case;; esac
 declare -A ages=([bob]=25 [amy]=30); printf '%s\n' "${!ages[@]}" | sort
 a=(x y z); for i in "${!a[@]}"; do echo "$i:${a[$i]}"; done
 echo if then fi done; echo esac
+
+# ── bytes and encodings (fixtures/enc: UTF-8, CRLF, lone CR, BOM, Latin-1, binary) ─────────────
+cat enc/utf8.txt
+cat enc/crlf.txt
+cat enc/mixed-eol.txt | od -c
+cat enc/bom.txt | od -An -tx1
+cat enc/no-eol.txt; echo
+cat enc/päivä.txt
+ls enc
+wc -c enc/utf8.txt enc/crlf.txt enc/bom.txt enc/latin1.txt enc/blob.bin
+wc -m enc/utf8.txt
+wc -l enc/crlf.txt enc/mixed-eol.txt enc/no-eol.txt
+wc -c < enc/blob.bin
+stat -c '%s %n' enc/utf8.txt enc/crlf.txt enc/blob.bin enc/latin1.txt
+od -c enc/crlf.txt
+od -An -tx1 enc/latin1.txt
+sha256sum enc/*
+md5sum enc/blob.bin enc/latin1.txt
+cut -c1-4 enc/utf8.txt
+head -c 5 enc/utf8.txt | od -An -tx1
+tail -c 6 enc/crlf.txt | od -c
+rev enc/utf8.txt
+sort enc/utf8.txt
+tr a-z A-Z < enc/crlf.txt | od -c
+sed 's/a/A/g' enc/crlf.txt | od -c
+grep -c $'\r' enc/crlf.txt
+grep -n 'ä' enc/utf8.txt enc/päivä.txt
+awk '{ print NR": "$0 }' enc/crlf.txt | od -c | head -3
+x=$(cat enc/crlf.txt); echo "${#x}"
+x=$(cat enc/utf8.txt); echo "${#x}"
+echo é | od -An -tx1
+printf '%s' 'ä😀' | wc -c
+base64 enc/blob.bin | head -2
+xxd enc/bom.txt | head -1
+iconv -f latin1 -t utf-8 enc/latin1.txt
+diff enc/crlf.txt enc/crlf.txt && echo same
+cmp enc/blob.bin enc/blob.bin && echo same
+
+# ── files written by the shell keep their bytes ───────────────────────────────────────────────
+cp enc/crlf.txt c1.txt
+cp enc/blob.bin c2.bin
+cp enc/latin1.txt c3.txt
+cp enc/bom.txt c4.txt
+cp enc/mixed-eol.txt c5.txt
+cat enc/blob.bin > c6.bin
+cat enc/crlf.txt > c7.txt
+cat enc/latin1.txt > c8.txt
+mv enc/crlf.txt moved.txt
+tee t.txt < enc/utf8.txt > /dev/null
+printf 'caf\xc3\xa9\n' > p1.txt
+printf '\xe9\xff\n' > p2.txt
+printf '\x00\x01\x02' > p3.bin
+printf 'a\r\nb\r\n' > p4.txt
+printf '\xef\xbb\xbfhi\n' > p5.txt
+echo 'more' >> enc/crlf.txt
+echo 'more' >> enc/blob.bin
+echo 'more' >> enc/latin1.txt
+printf '\x00' >> enc/utf8.txt
+sed -i 's/beta/BETA/' enc/crlf.txt
+sed -i 's/x/y/' enc/bom.txt
+tr -d '\r' < enc/crlf.txt > unix.txt
+head -c 100 enc/blob.bin > h.bin
+gzip -c enc/blob.bin | gunzip > g.bin
+touch enc/ñ.txt; ls enc
+rm enc/päivä.txt; ls enc
+
+# ── python3 (Pyodide): arguments, output bytes, exit codes, file sync ────────────────────────
+python3 -c 'import sys; print(sys.argv)' a 'b c' é ''
+python3 -c 'import sys; print(sys.argv[1:])' -c x -m y
+python3 -u -c 'print(5)'
+printf 'import sys\nprint(sys.argv)\n' > s.py && python3 s.py one 'two words' --flag=x -c
+printf 'import sys\nprint(sys.argv[1:])\n' > s.py && python3 s.py -m json.tool
+printf 'print(__name__)\n' > s.py && python3 s.py
+printf 'x = 1\n' > s.py && python3 s.py && python3 -c 'print("x" in globals())'
+python3 -m json.tool data.json | head -3
+echo 'print(6 * 7)' | python3
+python3 - <<< 'print("from stdin")'
+echo hello | python3 -c 'import sys; print(sys.stdin.read().upper(), end="")'
+python3 -c 'import sys; print(repr(sys.stdin.read()))' < enc/crlf.txt
+python3 -c 'print("café", "中文", "😀")'
+python3 -c 'import sys; sys.stdout.write("no newline")'; echo
+python3 -c 'print("a\n\n")'
+python3 -c 'print("trailing   ")' | od -c
+python3 -c 'print("a\r\nb")' | od -c
+python3 -c 'import sys; sys.stdout.buffer.write(b"\xc3\xa9\n")'
+python3 -c 'import sys; print("err", file=sys.stderr); print("out")' 2>/dev/null
+python3 -c 'import sys; sys.exit(3)'; echo "rc=$?"
+python3 -c 'import sys; sys.exit(0)'; echo "rc=$?"
+python3 -c 'import sys; sys.exit()'; echo "rc=$?"
+python3 -c 'import sys; sys.exit(256)'; echo "rc=$?"
+python3 -c 'raise SystemExit("bye")' 2>/dev/null; echo "rc=$?"
+python3 -c 'print("before"); 1/0' 2>/dev/null; echo "rc=$?"
+python3 -c 'import json; print(json.dumps({"k": "ä"}, ensure_ascii=False))'
+python3 -c 'print(open("enc/utf8.txt").read(), end="")'
+python3 -c 'print(open("enc/crlf.txt", "rb").read())'
+python3 -c 'print(open("enc/mixed-eol.txt", newline="").read().encode())'
+python3 -c 'print(open("enc/bom.txt", "rb").read()[:4])'
+python3 -c 'print(open("enc/latin1.txt", "rb").read())'
+python3 -c 'print(len(open("enc/blob.bin", "rb").read()))'
+python3 -c 'import os; print(sorted(os.listdir("enc")))'
+python3 -c 'open("o1.txt", "w").write("x\r\ny\n")'
+python3 -c 'open("o2.bin", "wb").write(bytes(range(256)))'
+python3 -c 'open("o3.txt", "wb").write(b"caf\xe9\n")'
+python3 -c 'open("o4.txt", "w", encoding="utf-8-sig").write("bom\n")'
+python3 -c 'open("words.txt", "a").write("zebra\n")'
+python3 -c 'open("words.txt", "w").write("replaced\n")'
+python3 -c 'import os; os.remove("words.txt")'
+python3 -c 'import os; os.makedirs("new/dir", exist_ok=True); open("new/dir/f.txt", "w").write("deep\n")'
+python3 -c 'import shutil; shutil.copy("enc/blob.bin", "copy.bin")'
+python3 -c 'import os; os.rename("enc/latin1.txt", "renamed.txt")'
+python3 -c 'import os; open(os.path.abspath("abs.txt"), "w").write("absolute\n")'
+printf 'open("w.txt","w").write("é\\n")\n' > s.py && python3 s.py
+
+# ── node: arguments, console.log formatting, exit codes, file sync ───────────────────────────
+node -e 'console.log(process.argv.slice(1))' a 'b c' é
+printf 'console.log(process.argv.slice(2))\n' > s.js && node s.js x 'y z' -e
+node -e 'console.log([1, 2, { a: NaN }], new Map([["k", 1]]), -0, 10n, undefined, null)'
+node -e 'console.log({ a: 1, b: "x", c: [1, 2, 3], d: { e: { f: { g: 1 } } } })'
+node -e 'console.log("%s=%d %i %j", "x", 42.5, 42.5, { a: 1 })'
+node -e 'console.log([Infinity, -Infinity, 1e21, 0.1 + 0.2])'
+node -e 'console.log(new Set([1, "a"]), [undefined, , 3], function f() {}, Symbol("s"))'
+node -e 'console.log(new Error("boom").message, [new Date(0)])'
+node -e 'console.log(Array.from({ length: 30 }, (_, i) => i))'
+node -e 'console.log("café 中文 😀")'
+node -e 'console.log("tab\there")'
+node -e 'process.stdout.write("no newline")'; echo
+node -e 'process.exit(4)'; echo "rc=$?"
+node -e 'throw new Error("boom")' 2>/dev/null; echo "rc=$?"
+node -p '6 * 7'
+node -p '[1, "a"]'
+echo hi | node -e 'let d = ""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.stringify(d)))'
+node -e 'const fs = require("fs"); console.log(fs.readFileSync("enc/utf8.txt", "utf8").length)'
+node -e 'const fs = require("fs"); console.log(fs.readFileSync("enc/blob.bin").length)'
+node -e 'const fs = require("fs"); console.log(JSON.stringify(fs.readFileSync("enc/crlf.txt", "utf8")))'
+node -e 'const fs = require("fs"); fs.writeFileSync("n1.txt", "a\r\nb\n")'
+node -e 'const fs = require("fs"); fs.writeFileSync("n2.bin", Buffer.from([0, 255, 128]))'
+node -e 'const fs = require("fs"); fs.writeFileSync("n3.txt", "ä😀\n")'
+node -e 'const fs = require("fs"); fs.unlinkSync("words.txt")'
+node -e 'const fs = require("fs"); fs.copyFileSync("enc/blob.bin", "n4.bin")'
+
+# ── paths: forms, missing directories, cwd across tools ───────────────────────────────────────
+echo x > ./p1.txt && echo y > "$PWD/p2.txt" && cat p1.txt p2.txt
+mkdir -p d && echo x > d//f.txt && echo y > d/./g.txt && echo z > d/../h.txt && ls d && cat h.txt
+echo x > nodir/f.txt; echo "rc=$?"
+echo x >> nodir/f.txt; echo "rc=$?"
+cp words.txt nodir/; echo "rc=$?"
+cp words.txt nodir/x.txt; echo "rc=$?"
+mv words.txt nodir/x.txt; echo "rc=$?"
+touch nodir/x; echo "rc=$?"
+tee nodir/x < words.txt > /dev/null; echo "rc=$?"
+mkdir d && cp words.txt d/ && cp nums.txt d && ls d
+mkdir d && mv words.txt d/ && mv nums.txt d && ls d
+cp words.txt w2.txt && cp -r src src2 && find src2 | sort
+cd src && echo x > ../out.txt && cd .. && cat out.txt
+cd src && echo x > here.txt; cd ..; ls src
+cd src && basename "$PWD"
+cd src/lib && head -1 ../../words.txt
+cd src/lib/ && cd ../.. && head -1 words.txt
+ls ./src/../src//lib/
+head -1 "$PWD/words.txt"
+head -1 "$PWD/../$(basename "$PWD")/words.txt"
+find ./src -name '*.js' | sort
+find src/ -name '*.js' | sort
+mkdir -p a/b/c && touch a/b/c/f && find a | sort
+mkdir -p a/b && cd a/b && touch f && cd ../.. && ls a/b
+mkdir e && ls -d e && rmdir e && ls -d e; echo "rc=$?"
+[ "$(python3 -c 'import os; print(os.getcwd())')" = "$PWD" ] && echo same
+cd src && [ "$(python3 -c 'import os; print(os.getcwd())')" = "$PWD" ] && echo same
+printf 'import os\nprint(os.path.dirname(os.path.abspath(__file__)) == os.getcwd())\n' > s.py && python3 s.py
+python3 -c 'import os; open(os.path.join(os.getcwd(), "abs.txt"), "w").write("a\n")' && cat abs.txt
+python3 -c 'open("nodir/x", "w")' 2>/dev/null; echo "rc=$?"
+cd src && python3 -c 'open("../py-up.txt", "w").write("u\n")' && cd .. && cat py-up.txt
+cd src && python3 -c 'import os; print(sorted(os.listdir(".")))'
+mkdir -p sub && cd sub && python3 -c 'import os; os.makedirs("deep/er"); open("deep/er/f", "w").write("x")'; cd ..; find sub | sort
+python3 -c 'import os; os.makedirs("emptydir")' && ls -d emptydir
+cd src && python3 ../s.py 2>/dev/null; echo "rc=$?"
+printf 'print("ran")\n' > src/t.py && python3 src/t.py && cd src && python3 t.py
+[ "$(node -e 'console.log(process.cwd())')" = "$PWD" ] && echo same
+cd src && [ "$(node -e 'console.log(process.cwd())')" = "$PWD" ] && echo same
+node -e 'require("fs").writeFileSync("nodir/x", "a")' 2>/dev/null; echo "rc=$?"
+cd src && node -e 'require("fs").writeFileSync("../n-up.txt", "u\n")' && cd .. && cat n-up.txt
+cd src && node -e 'console.log(require("fs").readdirSync("."))'
+node -e 'const p = require("path"); console.log(p.resolve("a/../b") === p.join(process.cwd(), "b"))'
+node -e 'const fs = require("fs"); fs.mkdirSync("nd/x", { recursive: true }); fs.writeFileSync("nd/x/f.txt", "f\n")' && find nd | sort
+
+# ── built-ins follow redirections ─────────────────────────────────────────────────────────────
+type cat > /dev/null && echo found
+command -v cat >/dev/null && echo found
+type nosuchcmd > /dev/null 2>&1 || echo missing
+type -t cat > t.txt; cat t.txt
+f() { echo hi; }; type -t f > t.txt; type -t f >> t.txt; cat t.txt
+alias ll='ls -l'; alias ll > a.txt; cat a.txt
+x=5; declare -p x > d.txt; cat d.txt
+trap 'echo bye' EXIT; trap -p EXIT > /dev/null; echo quiet
+shopt -s nullglob; shopt nullglob > s.txt; cat s.txt
+set -o | grep -E "^(errexit|nounset) "
+type -t cat ls | sort
+alias a1='echo 1'; alias a2='echo 2'; alias | sort | head -1
+x=1; declare -p x | sed 's/x/y/'
+echo in | type cat | cat
+
+# ── found by replaying model-written commands (scripts/log-replay) ────────────────────────────
+cat /dev/null; echo "rc=$?"
+wc -c < /dev/null
+echo "" | xargs md5sum
+echo "" | xargs -r md5sum; echo "rc=$?"
+declare -p nosuch 2>/dev/null; echo "rc=$?"
+x=1; declare -p x; echo "rc=$?"
+cat < nofile 2>/dev/null; echo "rc=$?"
+cat < nofile 2>/dev/null | wc -l; echo "rc=${PIPESTATUS[*]}"
+sleep 0.1 & echo after
+echo "Zm9vYmFy" | base64 -d; echo " rc=$?"
+echo "Zm9vYmE" | base64 -d 2>/dev/null; echo " rc=$?"
+echo "Zm9v_mFy" | base64 -d 2>/dev/null | od -An -c
+touch a.sh b.sh; chmod +x a.sh; find . -maxdepth 1 -name "*.sh" -executable; find . -maxdepth 1 -name "*.sh" ! -executable
+ls -R dir
+echo a 2>&1 | cat; echo b &> /dev/null; echo c
+if [[ $nosuchvar =~ ^-?[0-9]+$ ]]; then echo yes; else echo no; fi
+x="a b"; if [[ $x == "a b" ]]; then echo eq; fi; i=0; while [[ $i -lt 3 ]]; do i=$((i+1)); done; echo $i
+[[ $(echo hi there) == "hi there" ]] && echo a; [[ `echo x y` == "x y" ]] && echo b; v=; [[ ${v:-d e} == "d e" ]] && echo c
+ls -R | head -24
+ls -R dir
+wc -c nofile1 nofile2 2>/dev/null; echo "rc=$?"
+echo hi | wc - words.txt

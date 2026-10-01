@@ -1,14 +1,15 @@
 import type { Command, CommandContext } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 // hexdump (util-linux): default is 16-bit little-endian words, 8 per line; -C canonical
 // ("%08x  " 8 bytes, 8 bytes, " |ascii|"); -x/-d/-o/-c variants of the word format. Repeated
 // lines are shown as "*" unless -v. -n LENGTH, -s OFFSET.
 async function readBytes(ctx: CommandContext, files: string[]): Promise<Uint8Array> {
-  if (!files.length) return new TextEncoder().encode(ctx.stdin);
+  if (!files.length) return textToBytes(ctx.stdin);
   const parts: Uint8Array[] = [];
   for (const f of files) {
     const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-    parts.push(typeof c === 'string' ? new TextEncoder().encode(c) : c);
+    parts.push(typeof c === 'string' ? textToBytes(c) : c);
   }
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }

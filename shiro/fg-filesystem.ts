@@ -16,6 +16,7 @@
 
 import { FileSystem, globPatternToRegex } from './filesystem';
 import type { StatResult } from './filesystem';
+import { bytesToText, isTextBytes, textToBytes } from './utils/bytes';
 import {
     agentWriteFile,
     agentDeleteFile,
@@ -26,16 +27,11 @@ import {
 // ── constants ────────────────────────────────────────────────────────────────
 
 export const WORKSPACE_MOUNT = '/workspace';
+/** Reads as empty, swallows writes — for commands that open it as a file (cat /dev/null, cmd < /dev/null). */
+const DEV_NULL = '/dev/null';
 
-const enc = new TextEncoder();
-const dec = new TextDecoder();
-
-/** True when a Uint8Array contains null bytes — definitive sign of binary content.
- *  UTF-8 text never contains 0x00; binary formats (ZIP/XLSX/PDF/PNG…) always do. */
-function _hasBinaryBytes(data: Uint8Array): boolean {
-    const probe = data.subarray(0, 8192);
-    return probe.includes(0);
-}
+// Text records hold UTF-8 text exactly (a BOM, CRLF and lone CRs included).
+const dec = new TextDecoder('utf-8', { ignoreBOM: true });
 
 /**
  * Encode a Uint8Array to base64 without chunking.
@@ -71,11 +67,16 @@ function _base64ToBytes(b64: string): Uint8Array {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function makeStat(type: 'file' | 'dir', size = 0, mtime = Date.now()): StatResult {
+/** A workspace record's bytes: base64 decoded, or the text as UTF-8. */
+function _recordBytes(rec: { content?: string; encoding?: string | null }): Uint8Array {
+    return rec.encoding === 'base64' ? _base64ToBytes(rec.content ?? '') : textToBytes(rec.content ?? '');
+}
+
+function makeStat(type: 'file' | 'dir', size = 0, mtime = Date.now(), executable = false): StatResult {
     const mt = new Date(mtime);
     return {
         type,
-        mode: type === 'dir' ? 0o755 : 0o644,
+        mode: type === 'dir' || executable ? 0o755 : 0o644,
         size,
         mtime: mt,
         ctime: mt,
@@ -117,6 +118,8 @@ export class FWFileSystem extends FileSystem {
      * directory otherwise exists only while it has files in it; these last for the session.
      */
     private dirs = new Set<string>();
+    /** Files chmod made executable, for this session (the workspace keeps no permissions). */
+    private executable = new Set<string>();
 
     /** Skip Shiro's IDB init — FreeGent workspace is already ready. */
     override async init(): Promise<void> {
@@ -125,6 +128,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async stat(path: string): Promise<StatResult> {
+        if (path === DEV_NULL) return makeStat('file', 0);
         const wsPath = toWsPath(path);
         if (wsPath !== null) {
             if (wsPath === '') return makeStat('dir'); // workspace root
@@ -132,11 +136,7 @@ export class FWFileSystem extends FileSystem {
             // files, returning the wrong size and potentially throwing for non-doc binaries).
             const rec = await readWorkspaceFile(wsPath).catch(() => null);
             if (rec !== null && rec !== undefined) {
-                // Binary files stored as base64: approximate decoded byte count (0.75 × base64 chars)
-                const size = rec.encoding === 'base64'
-                    ? Math.round((rec.content as string).length * 0.75)
-                    : (rec.content as string ?? '').length;
-                return makeStat('file', size);
+                return makeStat('file', _recordBytes(rec).byteLength, Date.now(), this.executable.has(path));
             }
             // Not a file — check if it is an implicit directory (has child entries)
             const prefix = wsPath + '/';
@@ -148,7 +148,7 @@ export class FWFileSystem extends FileSystem {
         }
         // In-memory
         if (this.mem.has(path)) {
-            return makeStat('file', this.mem.get(path)!.byteLength);
+            return makeStat('file', this.mem.get(path)!.byteLength, Date.now(), this.executable.has(path));
         }
         // Virtual dirs: /, /tmp, /home, /home/user, /workspace
         if (this._isVirtualDir(path) || this.dirs.has(path)) return makeStat('dir');
@@ -167,71 +167,47 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async readFile(path: string, encoding?: 'utf8'): Promise<Uint8Array | string> {
+        if (path === DEV_NULL) return encoding === 'utf8' ? '' : new Uint8Array(0);
         const wsPath = toWsPath(path);
         if (wsPath !== null && wsPath !== '') {
             // Read the raw record so binary files (encoding='base64') return actual bytes,
             // not a text-extraction of their content.
             const rec = await readWorkspaceFile(wsPath);
             if (!rec) throw makeError('ENOENT', `no such file or directory: ${path}`);
-            if (rec.encoding === 'base64') {
-                // Decode base64 → Uint8Array for binary workspace files.
-                // Use _base64ToBytes (robust against interior '=' from legacy chunked encoding).
-                return encoding === 'utf8' ? rec.content as string : _base64ToBytes(rec.content as string);
-            }
-            // Normalize CRLF → LF so musl sed/awk/grep work correctly on files that
-            // were stored with Windows line endings (e.g. written by a browser agent or
-            // copy-pasted from Windows).  Binary files already exit above via 'base64'.
-            const content = (rec.content as string ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            if (encoding === 'utf8') return content;
-            return enc.encode(content);
+            // As text, binary records decode with their non-UTF-8 bytes escaped (utils/bytes.ts).
+            if (encoding === 'utf8') return rec.encoding === 'base64' ? bytesToText(_recordBytes(rec)) : rec.content ?? '';
+            return _recordBytes(rec);
         }
         if (this.mem.has(path)) {
             const data = this.mem.get(path)!;
-            return encoding === 'utf8' ? dec.decode(data) : data;
+            return encoding === 'utf8' ? bytesToText(data) : data;
         }
         throw makeError('ENOENT', `no such file or directory: ${path}`);
     }
 
     override async writeFile(path: string, data: Uint8Array | string, _opts?: { mode?: number }): Promise<void> {
+        if (path === DEV_NULL) return;
         const wsPath = toWsPath(path);
+        const bytes = typeof data === 'string' ? textToBytes(data) : data;
         if (wsPath !== null && wsPath !== '') {
-            if (typeof data === 'string') {
-                await agentWriteFile(wsPath, data);
-            } else if (_hasBinaryBytes(data)) {
-                // Binary content (null bytes → not valid UTF-8 text) — persist as base64.
-                // Use _bytesToBase64 (no chunking → no interior '=' → atob round-trips correctly).
-                await agentWriteFile(wsPath, _bytesToBase64(data), 'base64');
-            } else {
-                // Safe UTF-8 text delivered as Uint8Array (e.g. from shell echo)
-                await agentWriteFile(wsPath, dec.decode(data));
-            }
+            // UTF-8 text without NULs is stored as text; anything else (binary, Latin-1 …) as
+            // base64, so the bytes come back unchanged.
+            if (isTextBytes(bytes)) await agentWriteFile(wsPath, dec.decode(bytes));
+            else await agentWriteFile(wsPath, _bytesToBase64(bytes), 'base64');
             return;
         }
-        this.mem.set(path, typeof data === 'string' ? enc.encode(data) : data);
+        this.mem.set(path, bytes);
     }
 
     override async appendFile(path: string, data: Uint8Array | string): Promise<void> {
-        const wsPath = toWsPath(path);
-        if (wsPath !== null && wsPath !== '') {
-            // Read the raw record so appending to a text workspace file doesn't corrupt it.
-            // Appending to a binary workspace file is not meaningful (binary formats require
-            // proper serialization) so binary files are left untouched.
-            const rec = await readWorkspaceFile(wsPath).catch(() => null);
-            if (rec?.encoding === 'base64') {
-                // Don't corrupt a binary file with a text append — no-op for binary workspace files.
-                return;
-            }
-            const existing = (rec?.content as string ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            const addition = typeof data === 'string' ? data : dec.decode(data);
-            await agentWriteFile(wsPath, existing + addition);
-            return;
-        }
-        const existing = this.mem.get(path) ?? new Uint8Array(0);
-        const toAdd = typeof data === 'string' ? enc.encode(data) : data;
+        if (path === DEV_NULL) return;
+        // Byte-level, for text and binary files alike.
+        const existing = await this.readFile(path).catch(() => new Uint8Array(0)) as Uint8Array;
+        const toAdd = typeof data === 'string' ? textToBytes(data) : data;
         const merged = new Uint8Array(existing.byteLength + toAdd.byteLength);
         merged.set(existing);
         merged.set(toAdd, existing.byteLength);
-        this.mem.set(path, merged);
+        await this.writeFile(path, merged);
     }
 
     override async mkdir(path: string, opts?: { recursive?: boolean }): Promise<void> {
@@ -291,6 +267,10 @@ export class FWFileSystem extends FileSystem {
 
     override async unlink(path: string): Promise<void> {
         const wsPath = toWsPath(path);
+        // The folder stays when its last file goes, as in bash (the workspace keeps only files,
+        // so the shell remembers it like one made with mkdir).
+        const parent = path.slice(0, path.lastIndexOf('/'));
+        if (parent && parent !== WORKSPACE_MOUNT && parent !== '/tmp' && !this._isVirtualDir(parent)) this.dirs.add(parent);
         if (wsPath !== null && wsPath !== '') {
             await agentDeleteFile(wsPath);
             return;
@@ -342,8 +322,9 @@ export class FWFileSystem extends FileSystem {
         await this.unlink(oldPath);
     }
 
-    override async chmod(_path: string, _mode: number): Promise<void> {
-        // FreeGent workspace has no Unix permissions — no-op.
+    override async chmod(path: string, mode: number): Promise<void> {
+        if (mode & 0o111) this.executable.add(path); else this.executable.delete(path);
+        // The workspace keeps no permissions: the execute bit lasts for the session (find -executable).
     }
 
     // The workspace has no links: a link is created as a copy of its target (reads work; later

@@ -1,4 +1,5 @@
 import type { Command } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 async function compress(data: Uint8Array): Promise<Uint8Array> {
   const cs = new CompressionStream('gzip');
@@ -79,18 +80,15 @@ export const gzipCmd: Command = {
         ctx.stderr = 'gzip: compressed data not written to terminal\n';
         return 1;
       }
-      // Binary data in a pipe arrives as one character per byte (see the -c output below).
-      const input = decompressMode && !/[^\x00-\xff]/.test(ctx.stdin)
-        ? Uint8Array.from(ctx.stdin, c => c.charCodeAt(0))
-        : new TextEncoder().encode(ctx.stdin);
+      // Binary data in a pipe arrives with its non-UTF-8 bytes escaped (utils/bytes.ts).
+      const input = textToBytes(ctx.stdin);
       let result: Uint8Array;
       try { result = decompressMode ? await decompress(input) : await compress(input); }
       catch { ctx.stderr += 'gzip: stdin: not in gzip format\n'; return 1; }
       if (decompressMode) {
-        ctx.stdout = new TextDecoder().decode(result);
+        ctx.stdout = bytesToText(result);
       } else {
-        // Binary output to stdout — encode as latin1 so it survives pipe
-        ctx.stdout = Array.from(result).map(b => String.fromCharCode(b)).join('');
+        ctx.stdout = bytesToText(result);
       }
       return 0;
     }
@@ -99,13 +97,13 @@ export const gzipCmd: Command = {
       const resolved = ctx.fs.resolvePath(file, ctx.cwd);
       try {
         const data = await ctx.fs.readFile(resolved);
-        const input = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+        const input = typeof data === 'string' ? textToBytes(data) : data;
 
         if (decompressMode) {
           const result = await decompress(input);
           const outPath = resolved.replace(/\.gz$/, '');
           if (toStdout) {
-            ctx.stdout += new TextDecoder().decode(result);
+            ctx.stdout += bytesToText(result);
           } else {
             await ctx.fs.writeFile(outPath, result);
             if (!keep) await ctx.fs.unlink(resolved);
@@ -114,7 +112,7 @@ export const gzipCmd: Command = {
           const result = await compress(input);
           const outPath = resolved + '.gz';
           if (toStdout) {
-            ctx.stdout += Array.from(result).map(b => String.fromCharCode(b)).join('');
+            ctx.stdout += bytesToText(result);
           } else {
             await ctx.fs.writeFile(outPath, result);
             if (!keep) await ctx.fs.unlink(resolved);
