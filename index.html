@@ -433,30 +433,33 @@
 
                     <!-- API credentials -->
                     <div class="settings-section">
-                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
-                            <span class="settings-label" style="margin-bottom:0">API Credentials</span>
-                            <button class="ws-action-btn" onclick="document.getElementById('env-file-input').click()" title="Parse API keys from a .env file — processed entirely in the browser, never uploaded">&#8679; Import from .env</button>
-                            <input id="env-file-input" type="file" accept=".env,.txt" style="display:none" onchange="importEnvFile(this)">
+                        <span class="settings-label" style="margin-bottom:0">API Credentials</span>
+                        <textarea class="settings-input" id="key-paste" rows="2" autocomplete="off" spellcheck="false" style="margin-top:6px;margin-bottom:4px;resize:vertical;font-family:var(--mono,monospace)" placeholder="Paste keys here — one or many, bare or as .env lines. Each is matched to its provider by prefix (AIza, gsk_, sk-or-, nvapi-, hf_, tvly-, ghp_ …)." oninput="onKeyPasteInput(this)"></textarea>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                            <button class="ws-action-btn" onclick="pasteKeysFromClipboard()" title="Read the clipboard and fill every recognised key">&#128203; Paste from clipboard</button>
+                            <button class="ws-action-btn" onclick="document.getElementById('env-file-input').click()" title="Extract keys from any text file (.env, notes, JSON …) by prefix — processed entirely in the browser, never uploaded">&#8679; Extract from file</button>
+                            <input id="env-file-input" type="file" style="display:none" onchange="importEnvFile(this)">
+                            <span id="key-paste-status" class="settings-hint" style="margin:0"></span>
                         </div>
                         <table class="settings-table" style="width:100%;margin-top:6px"><tbody>
                             <tr><td class="settings-table-label">Gemini Key</td>
-                                <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" title="Get a Gemini key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Groq Key</td>
-                                <td><input class="settings-input" id="groq-key" type="password" placeholder="gsk_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="groq-key" type="password" placeholder="gsk_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://console.groq.com/keys" target="_blank" rel="noopener" title="Get a Groq key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">OpenRouter Key</td>
-                                <td><input class="settings-input" id="openrouter-key" type="password" placeholder="sk-or-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="openrouter-key" type="password" placeholder="sk-or-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://openrouter.ai/keys" target="_blank" rel="noopener" title="Get a OpenRouter key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">NVIDIA Key</td>
-                                <td><input class="settings-input" id="nvidia-key" type="password" placeholder="nvapi-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="nvidia-key" type="password" placeholder="nvapi-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://build.nvidia.com/" target="_blank" rel="noopener" title="Get a NVIDIA key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">TokenHarbor Key</td>
-                                <td><input class="settings-input" id="tokenharbor-key" type="password" placeholder="thk_live_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="tokenharbor-key" type="password" placeholder="thk_live_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://tokenharbor.ai" target="_blank" rel="noopener" title="Get a TokenHarbor key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Kilo Key</td>
-                                <td><input class="settings-input" id="kilo-key" type="password" placeholder="sk-kilo-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="kilo-key" type="password" placeholder="sk-kilo-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://kilo.ai" target="_blank" rel="noopener" title="Get a Kilo key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Vercel AI Gateway Key</td>
-                                <td><input class="settings-input" id="vercel-key" type="password" placeholder="aig_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="vercel-key" type="password" placeholder="aig_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://vercel.com/ai-gateway" target="_blank" rel="noopener" title="Get a Vercel AI Gateway key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Nous Portal Key</td>
-                                <td><input class="settings-input" id="nous-key" type="password" placeholder="nsk-..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="nous-key" type="password" placeholder="nsk-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://portal.nousresearch.com/" target="_blank" rel="noopener" title="Get a Nous Portal key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">HuggingFace Key</td>
-                                <td><input class="settings-input" id="hf-key" type="password" placeholder="hf_..." style="width:100%" onchange="saveSettings()"></td></tr>
+                                <td><input class="settings-input" id="hf-key" type="password" placeholder="hf_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener" title="Get a HuggingFace key">Get key &#8599;</a></td></tr>
                         </tbody></table>
                         <p class="settings-hint" style="margin-top:6px">HuggingFace key enables FLUX / SDXL via HF Inference as a fallback for <code>generate_image</code> (Pollinations works without a key). Env var: <code>HF_API_KEY</code>.</p>
                     </div>
@@ -504,19 +507,19 @@
                             <option value="brave">Brave (via proxy)</option>
                             <option value="wikipedia">Wikipedia only</option>
                         </select>
-                        <label class="settings-input-label">Tavily API Key</label>
+                        <label class="settings-input-label">Tavily API Key <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener" title="Get a Tavily key">Get key &#8599;</a></label>
                         <input class="settings-input" id="tavily-key" type="password" placeholder="tvly-...">
                         <p class="settings-hint">Direct browser call &#8212; no proxy needed.</p>
                         <label class="settings-input-label">CORS Proxy / CF Worker URL</label>
                         <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
                         <p class="settings-hint">Required on GitHub Pages for providers that block direct browser calls (Kilo, NVIDIA NIM, TokenHarbor, Vercel). Also used for Brave search. Deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL — see <code>cf-worker/README.md</code> for instructions.</p>
-                        <label class="settings-input-label">Brave API Key (optional)</label>
+                        <label class="settings-input-label">Brave API Key (optional) <a class="key-link" href="https://api-dashboard.search.brave.com/app/keys" target="_blank" rel="noopener" title="Get a Brave Search key">Get key &#8599;</a></label>
                         <input class="settings-input" id="brave-key" type="password" placeholder="BSA...">
                         <p class="settings-hint" style="margin-bottom:0">Sent as <code>X-Brave-Key</code> header.</p>
-                        <label class="settings-input-label">GitHub Token (optional)</label>
+                        <label class="settings-input-label">GitHub Token (optional) <a class="key-link" href="https://github.com/settings/tokens" target="_blank" rel="noopener" title="Get a GitHub key">Get key &#8599;</a></label>
                         <input class="settings-input" id="github-token" type="password" placeholder="ghp_...">
                         <p class="settings-hint">Upgrades GitHub search from 60/hr to 5,000/hr.</p>
-                        <label class="settings-input-label">Stack Exchange Key (optional)</label>
+                        <label class="settings-input-label">Stack Exchange Key (optional) <a class="key-link" href="https://stackapps.com/apps/oauth/register" target="_blank" rel="noopener" title="Get a Stack Exchange key">Get key &#8599;</a></label>
                         <input class="settings-input" id="stackexchange-key" type="password" placeholder="key=...">
                         <p class="settings-hint">Upgrades Stack Overflow search from 300/day to 10,000/day.</p>
                     </div>
