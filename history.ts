@@ -45,9 +45,10 @@ export function _invalidateReadDedup(path: string): void {
     // Evict list-file dedup for any ancestor directory of the changed file so a
     // subsequent list_files sees the new/deleted file rather than the stale cached note.
     const dir = norm.replace(/[^/]+$/, ''); // 'foo/bar.py' → 'foo/'
-    for (const k of [..._seenListFiles]) {
+    for (const key of [..._seenListFiles]) {
+        const k = String(key).split('\u0000')[0];   // "<path>\0<listing hash>"
         const kDir = k.endsWith('/') ? k : k ? k + '/' : '';
-        if (!k || dir === kDir || dir.startsWith(kDir)) _seenListFiles.delete(k);
+        if (!k || dir === kDir || dir.startsWith(kDir)) _seenListFiles.delete(key);
     }
 }
 
@@ -176,11 +177,16 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // Deduplicate list_files: if we already listed this exact path this turn, suppress the result.
         // Use the original requested path (result.path) as key — don't normalise, since "" and "local"
         // can return different data (IDB vs FSA) even though they share the same normalised prefix.
+        // Only while the listing is unchanged: files made or removed since (bash, Python, another
+        // worker) must show — answering "already listed" sent the model back to a stale list.
+        // The key holds a hash of the names and sizes; a different listing replaces it.
         const prefix = result.path ?? '';
-        if (_lf.has(prefix)) {
-            return { note: `Already listed "${prefix}" this session — results are in your prior tool results.` };
+        const key = `${prefix}\u0000${_contentHash(JSON.stringify((result.files ?? []).map((f: any) => [f?.name ?? f, f?.size ?? null])))}`;
+        if (_lf.has(key)) {
+            return { note: `Already listed "${prefix}" this session, and nothing has changed since — results are in your prior tool results.` };
         }
-        _lf.add(prefix);
+        for (const k of [..._lf]) if (k === prefix || k.startsWith(prefix + '\u0000')) _lf.delete(k);
+        _lf.add(key);
         // Director: cap list results to first 20 entries + count note to avoid ledger-sized dumps
         if (isDirector && Array.isArray(result.files) && result.files.length > 20) {
             const kept = result.files.slice(0, 20);

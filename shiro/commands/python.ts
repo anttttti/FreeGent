@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 /**
  * python/python3: Python interpreter via Pyodide (WebAssembly CPython)
@@ -47,129 +48,117 @@ async function ensurePyodide(ctx: CommandContext): Promise<any> {
   }
 }
 
-/** Mount Shiro FS files into Pyodide's virtual FS under /shiro */
+/**
+ * Where a shell path lives in Pyodide's FS: the workspace at /workspace itself — so os.getcwd(),
+ * __file__ and tracebacks name the paths the shell and the other tools use — and anything else
+ * (the shell's /tmp, /home/user …) under /shiro.
+ */
+function toPy(shellPath: string): string {
+  return shellPath === '/workspace' || shellPath.startsWith('/workspace/') ? shellPath : '/shiro' + shellPath;
+}
+function fromPy(pyPath: string): string {
+  return pyPath.startsWith('/shiro/') ? pyPath.slice('/shiro'.length) : pyPath;
+}
+
+/** Copy the Shiro FS tree at dir (the workspace) into Pyodide's FS. */
 async function syncToNative(py: any, ctx: CommandContext, dir: string) {
   try {
-    try { py.FS.mkdir('/shiro'); } catch { /* exists */ }
+    try { py.FS.mkdirTree(toPy(dir)); } catch { /* exists */ }
     const entries = await ctx.fs.readdir(dir);
     for (const entry of entries) {
       if (entry === '.git') continue;
       const fullPath = dir === '/' ? '/' + entry : dir + '/' + entry;
-      const pyPath = '/shiro' + fullPath;
+      const pyPath = toPy(fullPath);
       try {
         const stat = await ctx.fs.stat(fullPath);
         if (stat.isDirectory()) {
-          try { py.FS.mkdir(pyPath); } catch { /* exists */ }
+          try { py.FS.mkdirTree(pyPath); } catch { /* exists */ }
           await syncToNative(py, ctx, fullPath);
         } else {
           const content = await ctx.fs.readFile(fullPath);
-          const pyParentDir = pyPath.slice(0, pyPath.lastIndexOf('/'));
-          try { py.FS.mkdirTree(pyParentDir); } catch { /* exists */ }
-          if (content instanceof Uint8Array) {
-            py.FS.writeFile(pyPath, content);
-          } else {
-            py.FS.writeFile(pyPath, content as string);
-          }
+          try { py.FS.mkdirTree(pyPath.slice(0, pyPath.lastIndexOf('/'))); } catch { /* exists */ }
+          py.FS.writeFile(pyPath, content);
         }
       } catch { /* skip unreadable files */ }
     }
   } catch { /* non-fatal */ }
 }
 
-/** Snapshot mtime (ms) of every file under a Pyodide FS directory tree. */
-function snapshotMtimes(py: any, dir: string, out = new Map<string, number>()): Map<string, number> {
+/** Contents of every file under a Pyodide FS directory tree, by path. */
+function snapshotFiles(py: any, dir: string, out = new Map<string, Uint8Array>()): Map<string, Uint8Array> {
   let entries: string[];
   try { entries = py.FS.readdir(dir); } catch { return out; }
   for (const entry of entries) {
     if (entry === '.' || entry === '..') continue;
     const pyPath = `${dir}/${entry}`;
     try {
-      const st = py.FS.stat(pyPath);
-      if (py.FS.isDir(st.mode)) {
-        snapshotMtimes(py, pyPath, out);
-      } else {
-        // Emscripten mtime may be a Date object or a number
-        const ms = st.mtime instanceof Date ? st.mtime.getTime() : (st.mtime ?? 0);
-        out.set(pyPath, ms);
-      }
+      const st = py.FS.lstat(pyPath);
+      if (py.FS.isDir(st.mode)) snapshotFiles(py, pyPath, out);
+      else if (py.FS.isFile(st.mode)) out.set(pyPath, py.FS.readFile(pyPath));
     } catch {}
   }
   return out;
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 /**
  * Sync files written by Python back to Shiro FS (→ IDB for /workspace paths).
  *
- * `beforeMtimes` is a snapshot taken just after syncToNative ran (the initial
- * seeding of Pyodide's FS from the workspace).  Only files whose mtime changed —
- * i.e. Python modified or created them — are written back, avoiding a flood of
- * unnecessary IDB writes (each of which triggers renderFileList()).
+ * `before` holds the contents seeded into Pyodide's FS from the workspace. Only files whose
+ * bytes differ — Python created or changed them — are written back, which avoids a flood of
+ * IDB writes (each of which triggers renderFileList()). Contents, not mtimes: a write within
+ * the same millisecond as the seeding left the mtime unchanged and was lost. Directories Python
+ * made are made in the shell too (the workspace keeps no empty ones, the shell session does).
  *
- * Two trees are checked:
- *   /shiro/<shellpath>   — relative-path writes when CWD was /shiro/workspace
- *   /workspace/<name>    — absolute /workspace/… writes
+ * Two trees are checked: /workspace (the workspace) and /shiro (other shell paths, e.g. /tmp).
  */
-async function syncFromNative(py: any, ctx: CommandContext, beforeMtimes: Map<string, number>) {
+async function syncFromNative(py: any, ctx: CommandContext, before: Map<string, Uint8Array>) {
   const visited = new Set<string>();
 
-  const walkAndSync = async (pyDir: string, shellDir: string) => {
+  const walkAndSync = async (pyDir: string) => {
     let entries: string[];
     try { entries = py.FS.readdir(pyDir); } catch { return; }
     for (const entry of entries) {
       if (entry === '.' || entry === '..') continue;
       const pyPath = `${pyDir}/${entry}`;
-      const shellPath = `${shellDir}/${entry}`;
+      const shellPath = fromPy(pyPath);
       try {
-        const st = py.FS.stat(pyPath);
+        const st = py.FS.lstat(pyPath);
         if (py.FS.isDir(st.mode)) {
-          await walkAndSync(pyPath, shellPath);
-        } else {
+          if (!(await ctx.fs.exists(shellPath))) await ctx.fs.mkdir(shellPath, { recursive: true });
+          await walkAndSync(pyPath);
+        } else if (py.FS.isFile(st.mode)) {
           visited.add(pyPath);
-          // Skip files that Python did not touch (mtime unchanged since seeding)
-          const prevMs = beforeMtimes.get(pyPath);
-          const curMs  = st.mtime instanceof Date ? st.mtime.getTime() : (st.mtime ?? 0);
-          if (prevMs !== undefined && prevMs === curMs) continue;
-          // readFile returns Uint8Array; FWFileSystem.writeFile handles binary vs text
           const bytes: Uint8Array = py.FS.readFile(pyPath);
+          const was = before.get(pyPath);
+          if (was && sameBytes(was, bytes)) continue;
           await ctx.fs.writeFile(shellPath, bytes);
         }
       } catch { /* skip unreadable or vanished entries */ }
     }
   };
+  await walkAndSync('/workspace').catch(() => {});
+  await walkAndSync('/shiro').catch(() => {});
 
-  // Case 1: relative-path writes (most common) — CWD was /shiro/workspace
-  //   /shiro/workspace/foo.xlsx → /workspace/foo.xlsx in Shiro shell → IDB
-  // Use '' (not '/') so paths don't get a leading double-slash ('//workspace').
-  await walkAndSync('/shiro', '').catch(() => {});
-  // Case 2: absolute-path writes — Python used open('/workspace/foo', ...)
-  //   Pyodide /workspace/foo → Shiro shell /workspace/foo → IDB
-  //
-  // Skip when /workspace is a symlink to /shiro/workspace (the preamble creates one
-  // so that agent code using hardcoded /workspace/... paths works). Case 1 already
-  // covers all those files; running Case 2 on a symlink would bypass the mtime guard
-  // (beforeMtimes only has /shiro/... keys) and re-write every file on every run.
-  let _wsIsSymlink = false;
-  try { py.FS.readlink('/workspace'); _wsIsSymlink = true; } catch { /* not a symlink or absent */ }
-  if (!_wsIsSymlink) {
-    await walkAndSync('/workspace', '/workspace').catch(() => {});
-  }
-
-  // Sync deletions: files seeded into /shiro but gone after the run were deleted by Python.
-  for (const pyPath of beforeMtimes.keys()) {
-    if (!visited.has(pyPath) && pyPath.startsWith('/shiro/')) {
-      // /shiro/workspace/foo.txt → /workspace/foo.txt in Shiro shell
-      const shellPath = pyPath.slice('/shiro'.length);
-      try { await ctx.fs.unlink(shellPath); } catch { /* already gone */ }
+  // Sync deletions: files seeded from the shell but gone after the run were deleted by Python.
+  for (const pyPath of before.keys()) {
+    if (!visited.has(pyPath)) {
+      try { await ctx.fs.unlink(fromPy(pyPath)); } catch { /* already gone */ }
     }
   }
 }
 
 /**
- * Empties Pyodide's copy of the workspace (/shiro/workspace) after a run, once its changes are
+ * Empties Pyodide's copy of the workspace (/workspace) after a run, once its changes are
  * synced back: the workspace is the only lasting copy, and a kept one would still show files
  * deleted from the workspace since. The next run copies the workspace in again.
  */
-function clearNative(py: any, dir = '/shiro/workspace') {
+function clearNative(py: any, dir = '/workspace') {
   let entries: string[];
   try { entries = py.FS.readdir(dir); } catch { return; }
   for (const entry of entries) {
@@ -183,83 +172,144 @@ function clearNative(py: any, dir = '/shiro/workspace') {
 }
 
 /**
- * Python preamble injected before every script/one-liner.
- * Sets sys.argv, cwd, sys.path, and redirects stdout/stderr into StringIO buffers.
- * Exported for testing.
+ * Python preamble run before every script/one-liner: cwd, sys.path, reloads of workspace
+ * modules, and the /workspace alias. Exported for testing.
  */
-export function _preamble(cwd: string, argv: string[]): string {
-  const pyDir = `/shiro${cwd}`;
+export function _preamble(cwd: string): string {
+  const pyDir = toPy(cwd);
   return `
-import sys, io, os
-sys.argv = ${JSON.stringify(argv)}
+import sys, os
+# The environment and sys.path as they were before the first run, as in a new process.
+if '_fg_base' not in globals():
+    _fg_base = (dict(os.environ), list(sys.path))
+os.environ.clear()
+os.environ.update(_fg_base[0])
+sys.path[:] = [''] + [_p for _p in _fg_base[1] if _p not in ('', '/workspace')]
+if 'matplotlib.pyplot' in sys.modules:
+    sys.modules['matplotlib.pyplot'].close('all')
+os.makedirs(${JSON.stringify(pyDir)}, exist_ok=True)
 os.chdir(${JSON.stringify(pyDir)})
-for _p in [${JSON.stringify(pyDir)}, '/shiro/workspace']:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 # Workspace modules imported by an earlier run are reloaded, so edits since take effect.
+# (packages too: one kept its old submodule as an attribute for \`from pkg import mod\`)
 for _k, _m in list(sys.modules.items()):
-    if str(getattr(_m, '__file__', '') or '').startswith(('/shiro/workspace/', '/workspace/')):
+    _where = [str(getattr(_m, '__file__', '') or '')] + [str(p) for p in (getattr(_m, '__path__', None) or [])]
+    if any(w == '/workspace' or w.startswith('/workspace/') for w in _where):
         del sys.modules[_k]
-# Make /workspace an alias for /shiro/workspace so scripts using hardcoded
-# /workspace/... paths (common in agent-generated code) work without changes.
-try:
-    if not os.path.exists('/workspace'):
-        os.symlink('/shiro/workspace', '/workspace')
-except OSError:
-    pass  # already exists or symlink not supported — open('/workspace/...') may still fail
-_shiro_out = io.StringIO()
-_shiro_err = io.StringIO()
-sys.stdout = _shiro_out
-sys.stderr = _shiro_err
 `.trim();
 }
 
-/** Drain the StringIO stdout/stderr buffers and restore real streams. Returns exit code 0. */
-function _collectOutput(py: any, ctx: CommandContext): number {
-  const stdout = py.runPython('_shiro_out.getvalue()');
-  const stderr = py.runPython('_shiro_err.getvalue()');
-  py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-  if (stdout) ctx.stdout += stdout;
-  if (stderr) ctx.stderr += stderr;
-  return 0; // stderr output (warnings, logging) is not a failure
-}
-
 /**
- * Best-effort drain of the StringIO buffers on the exception path.
- * Preserves any output printed before the error; safe to call even if
- * the preamble never ran (the inner try/catch swallows the NameError).
+ * Runs a program as CPython's command line would: sys.argv as given, a fresh __main__
+ * namespace, and the exit status CPython would return — SystemExit's code (None → 0, an int
+ * modulo 256, anything else printed to stderr → 1), 1 with a traceback for an uncaught error.
+ * kind: 'code' (source, as -c or a script read from stdin), 'path' (a script file), 'module' (-m).
  */
-function _tryDrainBuffers(py: any, ctx: CommandContext): void {
-  try {
-    const o = py.runPython('_shiro_out.getvalue()');
-    const e = py.runPython('_shiro_err.getvalue()');
-    py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-    if (o) ctx.stdout += o;
-    if (e) ctx.stderr += e;
-  } catch { /* buffers not initialised — ignore */ }
-}
+const RUNNER = `
+def _fg_run(kind, target, argv, filename='<string>'):
+    import sys, os, io, traceback, runpy
+    # Fresh standard streams on fds 0-2 for every run, as a new process would have: the
+    # interpreter outlives programs, and one that closed or replaced sys.stdout (json.tool closes
+    # it) would otherwise break every later run. UTF-8 with surrogateescape, as in a C.UTF-8 locale.
+    def stream(fd, mode, errors):
+        raw = io.FileIO(fd, mode, closefd=False)
+        buf = io.BufferedWriter(raw) if 'w' in mode else io.BufferedReader(raw)
+        return io.TextIOWrapper(buf, encoding='utf-8', errors=errors, newline='\\n', line_buffering=False, write_through='w' in mode and fd == 2)
+    sys.stdin = sys.__stdin__ = stream(0, 'rb', 'surrogateescape')
+    sys.stdout = sys.__stdout__ = stream(1, 'wb', 'surrogateescape')
+    sys.stderr = sys.__stderr__ = stream(2, 'wb', 'backslashreplace')
+    sys.argv = list(argv)
+    # sys.path[0] as CPython sets it: the script's folder, the cwd for -m, '' for -c and stdin.
+    if kind == 'path':
+        sys.path[0] = os.path.dirname(os.path.abspath(target))
+    elif kind == 'module':
+        sys.path[0] = os.getcwd()
+    # No __pycache__ (it was synced into the workspace, and a .pyc of a module edited within the
+    # same second was imported instead of the edit).
+    sys.dont_write_bytecode = True
+    import importlib
+    importlib.invalidate_caches()
+    rc = 0
+    try:
+        if kind == 'module':
+            runpy.run_module(target, run_name='__main__', alter_sys=True)
+        elif kind == 'path':
+            runpy.run_path(target, run_name='__main__')
+        else:
+            g = {'__name__': '__main__', '__builtins__': __builtins__, '__doc__': None}
+            exec(compile(target, filename, 'exec'), g)
+    except SystemExit as e:
+        c = e.code
+        if c is None:
+            rc = 0
+        elif isinstance(c, int):
+            rc = c & 0xFF
+        else:
+            print(c, file=sys.stderr)
+            rc = 1
+    except BaseException as e:
+        tb = e.__traceback__
+        # Leave out this runner's frame and runpy's, as CPython's own traceback would.
+        while tb is not None and (tb.tb_frame.f_code.co_filename == '<exec>' or 'runpy' in tb.tb_frame.f_code.co_filename):
+            tb = tb.tb_next
+        traceback.print_exception(type(e), e, tb)
+        rc = 1
+    finally:
+        for f in (sys.stdout, sys.stderr):
+            try:
+                f.flush()
+            except Exception:
+                pass
+    return rc
+`;
 
 /**
- * Extract an exit code from a Pyodide exception.
- * sys.exit(N) raises SystemExit — return N instead of treating it as an error.
- * Any other exception is a real error: write the message to stderr and return 1.
+ * Exit status for an error Pyodide raised outside the program (the runner itself failed).
  * Exported for testing.
  */
 export function _extractExitCode(err: any, ctx: CommandContext): number {
   const msg: string = err?.message ?? String(err);
-  // Pyodide wraps SystemExit; the message is typically "SystemExit: N" or just "N"
   if (err?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
     const match = msg.match(/SystemExit:\s*(-?\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
+    return match ? parseInt(match[1], 10) & 0xff : 0;
   }
   ctx.stderr += msg + '\n';
   return 1;
+}
+
+/**
+ * Python's command line: [options] (-c code | -m module | script | - | nothing) [args…].
+ * Options end at the first of those; everything after is the program's own arguments.
+ */
+function parseCommandLine(args: string[]): { kind: 'code' | 'module' | 'path' | 'stdin' | 'none'; target: string; argv: string[] } {
+  const withValue = new Set(['-W', '-X', '--check-hash-based-pycs']);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-c') return { kind: 'code', target: args[i + 1] ?? '', argv: ['-c', ...args.slice(i + 2)] };
+    if (a.startsWith('-c') && a.length > 2 && !a.startsWith('--')) return { kind: 'code', target: a.slice(2), argv: ['-c', ...args.slice(i + 1)] };
+    if (a === '-m') return { kind: 'module', target: args[i + 1] ?? '', argv: ['-m', ...args.slice(i + 2)] };
+    if (a.startsWith('-m') && a.length > 2 && !a.startsWith('--')) return { kind: 'module', target: a.slice(2), argv: ['-m', ...args.slice(i + 1)] };
+    if (a === '-') return { kind: 'stdin', target: '', argv: ['-', ...args.slice(i + 1)] };
+    if (a === '--') { const rest = args.slice(i + 1); return rest.length ? { kind: 'path', target: rest[0], argv: rest } : { kind: 'stdin', target: '', argv: [''] }; }
+    if (withValue.has(a)) { i++; continue; }
+    if (a.startsWith('-')) continue;   // -u, -B, -E, -I, -O, -q, -s, -S, -v, -Wx …: no effect here
+    return { kind: 'path', target: a, argv: args.slice(i) };
+  }
+  return { kind: 'none', target: '', argv: [''] };
 }
 
 export const pythonCmd: Command = {
   name: 'python',
   description: 'Python interpreter (Pyodide)',
   async exec(ctx: CommandContext) {
+    const cmd = parseCommandLine(ctx.args);
+    // No program on the command line: the program is stdin when something is piped in.
+    if (cmd.kind === 'none' && ctx.stdin) cmd.kind = 'stdin';
+    if (cmd.kind === 'none' && !ctx.terminal) {
+      ctx.stderr = 'python: interactive mode requires a terminal\n';
+      return 1;
+    }
+    if (cmd.kind === 'module' && !cmd.target) { ctx.stderr += 'Argument expected for the -m option\n'; return 2; }
+
     let py: any;
     try {
       py = await ensurePyodide(ctx);
@@ -267,182 +317,165 @@ export const pythonCmd: Command = {
       ctx.stderr = `error: failed to load Pyodide: ${err.message}\n`;
       return 1;
     }
+    if (cmd.kind === 'none') return repl(py, ctx);
 
-    const args = ctx.args;
-
-    // python3 -m module  (e.g. python -m pytest, python -m unittest)
-    const mIdx = args.indexOf('-m');
-    if (mIdx !== -1 && args[mIdx + 1]) {
-      const mod = args[mIdx + 1];
-      // Always sync from workspace root so imports from any directory work
-      await syncToNative(py, ctx, '/workspace');
-      const beforeMtimes = snapshotMtimes(py, '/shiro');
-      let exitCode = 0;
+    let target = cmd.target;
+    let filename = '<string>';
+    let stdinData = ctx.stdin;
+    if (cmd.kind === 'stdin') { target = ctx.stdin; filename = '<stdin>'; stdinData = ''; }
+    if (cmd.kind === 'path') {
+      const scriptPath = ctx.fs.resolvePath(cmd.target, ctx.cwd);
       try {
-        py.runPython(_preamble(ctx.cwd, ['python', '-m', mod, ...args.slice(mIdx + 2)]));
-        py.runPython(`import runpy; runpy.run_module(${JSON.stringify(mod)}, run_name='__main__', alter_sys=True)`);
-        exitCode = _collectOutput(py, ctx);
-      } catch (err: any) {
-        _tryDrainBuffers(py, ctx);
-        exitCode = _extractExitCode(err, ctx);
-      } finally {
-        await syncFromNative(py, ctx, beforeMtimes);
-        clearNative(py);
-      }
-      return exitCode;
-    }
-
-    // python3 -c "code"
-    const cIdx = args.indexOf('-c');
-    if (cIdx !== -1 && args[cIdx + 1]) {
-      const code = args[cIdx + 1];
-      // Always sync from workspace root so imports from any directory work
-      await syncToNative(py, ctx, '/workspace');
-      const beforeMtimes = snapshotMtimes(py, '/shiro');
-      let exitCode = 0;
-      try {
-        py.runPython(_preamble(ctx.cwd, ['python', '-c']));
-        py.runPython(code);
-        exitCode = _collectOutput(py, ctx);
-      } catch (err: any) {
-        _tryDrainBuffers(py, ctx);
-        exitCode = _extractExitCode(err, ctx);
-      } finally {
-        await syncFromNative(py, ctx, beforeMtimes);
-        clearNative(py);
-      }
-      return exitCode;
-    }
-
-    // python3 script.py [args...]
-    const scriptArg = args.find(a => !a.startsWith('-'));
-    if (scriptArg) {
-      const scriptPath = ctx.fs.resolvePath(scriptArg, ctx.cwd);
-      let content: string;
-      try {
-        content = await ctx.fs.readFile(scriptPath, 'utf8') as string;
+        const st = await ctx.fs.stat(scriptPath);
+        if (st.isDirectory()) throw new Error('directory');
       } catch {
-        ctx.stderr = `python: can't open file '${scriptArg}': [Errno 2] No such file or directory\n`;
+        ctx.stderr = `python: can't open file '${cmd.target}': [Errno 2] No such file or directory\n`;
         return 2;
       }
+    }
 
-      // Always sync from workspace root so sibling-directory imports work
-      await syncToNative(py, ctx, '/workspace');
-      const beforeMtimes = snapshotMtimes(py, '/shiro');
+    // Always sync from workspace root so imports from any directory work
+    await syncToNative(py, ctx, '/workspace');
+    const before = snapshotFiles(py, '/workspace', snapshotFiles(py, '/shiro'));
 
-      let exitCode = 0;
+    // The program's stdout/stderr are taken as bytes and its stdin given as bytes, so
+    // sys.stdout.buffer works and non-UTF-8 output keeps its bytes (utils/bytes.ts).
+    const out: Uint8Array[] = [], err: Uint8Array[] = [];
+    const capture = (to: Uint8Array[]) => ({ write: (b: Uint8Array) => { to.push(b.slice()); return b.length; }, isatty: false });
+    const input = textToBytes(stdinData);
+    let inPos = 0;
+    py.setStdout(capture(out));
+    py.setStderr(capture(err));
+    py.setStdin({
+      read: (buf: Uint8Array) => { const n = Math.min(buf.length, input.length - inPos); buf.set(input.subarray(inPos, inPos + n)); inPos += n; return n; },
+      isatty: false,
+    });
+    let exitCode = 0;
+    try {
+      py.runPython(_preamble(ctx.cwd));
+      py.runPython(RUNNER);
+      const run = py.globals.get('_fg_run');
+      const argv = py.toPy(cmd.argv);
       try {
-        py.runPython(_preamble(ctx.cwd, ['python', scriptArg, ...args.slice(args.indexOf(scriptArg) + 1)]));
-        py.runPython(content);
-        exitCode = _collectOutput(py, ctx);
-      } catch (err: any) {
-        _tryDrainBuffers(py, ctx);
-        exitCode = _extractExitCode(err, ctx);
+        exitCode = run(cmd.kind === 'stdin' ? 'code' : cmd.kind, target, argv, filename);
       } finally {
-        await syncFromNative(py, ctx, beforeMtimes);
-        clearNative(py);
+        argv.destroy?.();
+        run.destroy?.();
       }
-      return exitCode;
+    } catch (e: any) {
+      exitCode = _extractExitCode(e, ctx);
+    } finally {
+      // Python's text streams buffer: flush whatever the program left there.
+      try { py.runPython('import sys\nfor _f in (sys.stdout, sys.stderr):\n    try: _f.flush()\n    except Exception: pass'); } catch {}
+      py.setStdout(); py.setStderr(); py.setStdin();
+      ctx.stdout += bytesToText(concat(out));
+      ctx.stderr += bytesToText(concat(err));
+      await syncFromNative(py, ctx, before);
+      clearNative(py);
     }
+    return exitCode;
+  },
+};
 
-    // Interactive REPL
-    if (!ctx.terminal) {
-      ctx.stderr = 'python: interactive mode requires a terminal\n';
-      return 1;
-    }
+function concat(parts: Uint8Array[]): Uint8Array {
+  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let k = 0;
+  for (const p of parts) { all.set(p, k); k += p.length; }
+  return all;
+}
 
-    const term = ctx.terminal;
-    const version = py.runPython('import sys; sys.version');
-    term.writeOutput(`Python ${version} (Pyodide)\r\nType "exit()" to quit.\r\n`);
+function repl(py: any, ctx: CommandContext): Promise<number> {
+  const term = ctx.terminal!;
+  const version = py.runPython('import sys; sys.version');
+  term.writeOutput(`Python ${version} (Pyodide)\r\nType "exit()" to quit.\r\n`);
 
-    return new Promise<number>((resolve) => {
-      let line = '';
-      const prompt = '>>> ';
-      term.writeOutput(prompt);
+  return new Promise<number>((resolve) => {
+    let line = '';
+    const prompt = '>>> ';
+    term.writeOutput(prompt);
 
-      term.enterRawMode((key: string) => {
-        if (key === '\r' || key === '\n') {
-          term.writeOutput('\r\n');
-          const input = line.trim();
-          line = '';
+    term.enterRawMode((key: string) => {
+      if (key === '\r' || key === '\n') {
+        term.writeOutput('\r\n');
+        const input = line.trim();
+        line = '';
 
-          if (input === 'exit()' || input === 'quit()') {
-            term.exitRawMode();
-            resolve(0);
-            return;
-          }
+        if (input === 'exit()' || input === 'quit()') {
+          term.exitRawMode();
+          resolve(0);
+          return;
+        }
 
-          if (input) {
-            try {
-              py.runPython(`
+        if (input) {
+          try {
+            py.runPython(`
 import sys, io
 _shiro_out = io.StringIO()
 _shiro_err = io.StringIO()
 sys.stdout = _shiro_out
 sys.stderr = _shiro_err
 `);
-              // Use exec for statements, eval for expressions.
-              // Capture any runtime exception in evalError so the traceback can
-              // be shown after the normal stdout/stderr buffer drain below.
-              let evalError: string | null = null;
-              try {
-                py.runPython(`
+            // Use exec for statements, eval for expressions.
+            // Capture any runtime exception in evalError so the traceback can
+            // be shown after the normal stdout/stderr buffer drain below.
+            let evalError: string | null = null;
+            try {
+              py.runPython(`
 try:
-    _r = eval(${JSON.stringify(input)})
-    if _r is not None:
-        print(repr(_r))
+  _r = eval(${JSON.stringify(input)})
+  if _r is not None:
+      print(repr(_r))
 except SyntaxError:
-    exec(${JSON.stringify(input)})
+  exec(${JSON.stringify(input)})
 `);
-              } catch (evalErr: any) {
-                // Pyodide raises Python exceptions as JS errors; the traceback is
-                // in .message.  We handle SystemExit specially.
-                const msg: string = evalErr?.message ?? String(evalErr);
-                if (evalErr?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
-                  const m = msg.match(/SystemExit:\s*(-?\d+)/);
-                  const code = m ? parseInt(m[1], 10) : 0;
-                  py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-                  term.exitRawMode();
-                  resolve(code);
-                  return;
-                }
-                evalError = msg;
+            } catch (evalErr: any) {
+              // Pyodide raises Python exceptions as JS errors; the traceback is
+              // in .message.  We handle SystemExit specially.
+              const msg: string = evalErr?.message ?? String(evalErr);
+              if (evalErr?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
+                const m = msg.match(/SystemExit:\s*(-?\d+)/);
+                const code = m ? parseInt(m[1], 10) : 0;
+                py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
+                term.exitRawMode();
+                resolve(code);
+                return;
               }
-              const stdout = py.runPython('_shiro_out.getvalue()');
-              const stderr = py.runPython('_shiro_err.getvalue()');
-              py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-              if (stdout) term.writeOutput(stdout.replace(/\n/g, '\r\n'));
-              if (stderr) term.writeOutput(stderr.replace(/\n/g, '\r\n'));
-              if (evalError) term.writeOutput(evalError.replace(/\n/g, '\r\n') + '\r\n');
-            } catch (err: any) {
-              term.writeOutput((err?.message ?? String(err)).replace(/\n/g, '\r\n') + '\r\n');
+              evalError = msg;
             }
+            const stdout = py.runPython('_shiro_out.getvalue()');
+            const stderr = py.runPython('_shiro_err.getvalue()');
+            py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
+            if (stdout) term.writeOutput(stdout.replace(/\n/g, '\r\n'));
+            if (stderr) term.writeOutput(stderr.replace(/\n/g, '\r\n'));
+            if (evalError) term.writeOutput(evalError.replace(/\n/g, '\r\n') + '\r\n');
+          } catch (err: any) {
+            term.writeOutput((err?.message ?? String(err)).replace(/\n/g, '\r\n') + '\r\n');
           }
-
-          term.writeOutput(prompt);
-        } else if (key === '\x7f' || key === '\b') {
-          if (line.length > 0) {
-            line = line.slice(0, -1);
-            term.writeOutput('\b \b');
-          }
-        } else if (key === '\x03') {
-          // Ctrl+C
-          term.writeOutput('^C\r\n');
-          line = '';
-          term.writeOutput(prompt);
-        } else if (key === '\x04') {
-          // Ctrl+D
-          term.writeOutput('\r\n');
-          term.exitRawMode();
-          resolve(0);
-        } else if (key.charCodeAt(0) >= 32) {
-          line += key;
-          term.writeOutput(key);
         }
-      });
+
+        term.writeOutput(prompt);
+      } else if (key === '\x7f' || key === '\b') {
+        if (line.length > 0) {
+          line = line.slice(0, -1);
+          term.writeOutput('\b \b');
+        }
+      } else if (key === '\x03') {
+        // Ctrl+C
+        term.writeOutput('^C\r\n');
+        line = '';
+        term.writeOutput(prompt);
+      } else if (key === '\x04') {
+        // Ctrl+D
+        term.writeOutput('\r\n');
+        term.exitRawMode();
+        resolve(0);
+      } else if (key.charCodeAt(0) >= 32) {
+        line += key;
+        term.writeOutput(key);
+      }
     });
-  },
-};
+  });
+}
 
 export const python3Cmd: Command = {
   ...pythonCmd,

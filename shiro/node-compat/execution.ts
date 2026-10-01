@@ -7,7 +7,8 @@
 import type { CommandContext } from '../commands/index';
 import { iframeServer } from '../iframe-server';
 import { sha256sync, sha1sync, fnvHash } from '../commands/jseval/crypto';
-import { ProcessExitError, formatArg } from '../commands/jseval/utils';
+import { ProcessExitError } from '../commands/jseval/utils';
+import { inspect } from 'node-inspect-extracted';
 import { transformESModules, transformTS, transformJSX } from '../commands/jseval/module-transform';
 import type { SharedState } from './types';
 import { createFakeBuffer } from './buffer';
@@ -59,8 +60,14 @@ export async function executeNodeScript(
     }
   };
 
-  // Save originals for CORS proxy interception
-  const _origFetch = globalThis.fetch;
+  // Save originals for CORS proxy interception. Requests in flight are counted: the script
+  // isn't done while one is (see the deferred exit wait).
+  const _rawFetch = globalThis.fetch;
+  let _fetchesInFlight = 0;
+  const _origFetch = ((...a: Parameters<typeof fetch>) => {
+    _fetchesInFlight++;
+    return _rawFetch(...a).finally(() => { _fetchesInFlight--; });
+  }) as typeof fetch;
   const _origXHR = typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : undefined;
   const _prevST = globalThis.setTimeout;
   const _prevCT = globalThis.clearTimeout;
@@ -251,6 +258,7 @@ export async function executeNodeScript(
     ];
     const isBlocked = (u: string) => blockedUrls.some(b => u.includes(b));
 
+    globalThis.fetch = _origFetch;
     if (corsProxyOrigin) {
       globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
         let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -439,10 +447,10 @@ export async function executeNodeScript(
       if (e instanceof ProcessExitError) {
         _st.exitCode = e.code;
       } else if (e.message?.includes('extends value') || e.message?.includes('is not a constructor') || e.message?.includes('prototype')) {
-        stderrBuf.push(e.message);
+        stderrBuf.push(e.message + '\n');
         _st.exitCode = 1;
       } else if (e.name === 'ReferenceError' || e.name === 'TypeError' || e.name === 'SyntaxError') {
-        stderrBuf.push(e.message || String(e));
+        stderrBuf.push((e.message || String(e)) + '\n');
         console.error('[node] Runtime error:', e);
         _st.exitCode = 1;
       } else {
@@ -486,8 +494,19 @@ export async function executeNodeScript(
         });
         _st.exitCalled = false;
       }
+      // A script with nothing left to run is done, as Node exits once its event loop is empty: no
+      // requests in flight, timers or pending writes. (Waiting the full timeout made every silent
+      // script take 10 s and exit with 124.)
+      const idle = _st.isInteractiveMode ? new Promise<never>(() => {}) : (async () => {
+        for (let quiet = 0; quiet < 3;) {
+          await new Promise(r => _prevST(r, 20));
+          if (pendingPromises.length) await Promise.all(pendingPromises.splice(0));
+          quiet = _fetchesInFlight === 0 && _activeTimers <= 0 ? quiet + 1 : 0;
+        }
+        return _st.exitCalled ? _st.exitCode : 0;
+      })();
       try {
-        const waitCode = await Promise.race([freshExitPromise, deferredTimeout]);
+        const waitCode = await Promise.race([freshExitPromise, deferredTimeout, idle]);
         _st.exitCode = waitCode;
       } catch (e: any) {
         if (e instanceof ProcessExitError) {
@@ -497,15 +516,17 @@ export async function executeNodeScript(
     }
 
     // Flush output
+    // The buffers hold raw chunks (console lines end in their newline; process.stdout.write
+    // chunks are as written).
     if (stdoutBuf.length > 0 && !_st.streamedToTerminal) {
-      ctx.stdout += stdoutBuf.join('\n') + '\n';
+      ctx.stdout += stdoutBuf.join('');
     }
     if (stderrBuf.length > 0 && !_st.streamedToTerminal) {
-      ctx.stderr += stderrBuf.join('\n') + '\n';
+      ctx.stderr += stderrBuf.join('');
     }
 
     if (printResult && !_st.exitCalled) {
-      ctx.stdout += formatArg(result) + '\n';
+      ctx.stdout += (typeof result === 'string' ? result : inspect(result)) + '\n';
     }
 
     // Clean up
@@ -513,7 +534,7 @@ export async function executeNodeScript(
     if (typeof window !== 'undefined') {
       setTimeout(() => window.removeEventListener('unhandledrejection', suppressRejection), 1000);
     }
-    globalThis.fetch = _origFetch;
+    globalThis.fetch = _rawFetch;
     if (code.length <= 500000) { globalThis.setTimeout = _prevST; globalThis.clearTimeout = _prevCT; }
     if (_origSetImmediate) (globalThis as any).setImmediate = _origSetImmediate; else delete (globalThis as any).setImmediate;
     if (_origClearImmediate) (globalThis as any).clearImmediate = _origClearImmediate; else delete (globalThis as any).clearImmediate;
@@ -525,7 +546,7 @@ export async function executeNodeScript(
     if (typeof window !== 'undefined') {
       setTimeout(() => window.removeEventListener('unhandledrejection', suppressRejection), 1000);
     }
-    globalThis.fetch = _origFetch;
+    globalThis.fetch = _rawFetch;
     if (code.length <= 500000) { globalThis.setTimeout = _prevST; globalThis.clearTimeout = _prevCT; }
     delete (globalThis as any).setImmediate;
     delete (globalThis as any).clearImmediate;

@@ -13,7 +13,7 @@ type Node =
   | { k: 'test'; fn: (e: Entry) => boolean | Promise<boolean> }
   | { k: 'action'; fn: (e: Entry) => boolean | Promise<boolean> };
 
-interface Entry { path: string; abs: string; name: string; depth: number; isDir: boolean; size: number; mtime: number }
+interface Entry { path: string; abs: string; name: string; depth: number; isDir: boolean; size: number; mtime: number; mode: number }
 
 /** fnmatch(3) glob → RegExp: * ? [...] (with ! or ^), backslash escapes. `*` crosses "/" (find -path). */
 function globRe(glob: string, icase: boolean): RegExp {
@@ -103,7 +103,9 @@ export const findCmd: Command = {
         }
         case '-newer': case '-anewer': case '-cnewer': { next(a); return { k: 'test', fn: () => true }; }
         case '-perm': case '-user': case '-group': case '-uid': case '-gid': case '-links': case '-inum': next(a); return { k: 'test', fn: () => true };
-        case '-readable': case '-writable': case '-executable': case '-nouser': case '-nogroup': return { k: 'test', fn: () => !['-nouser', '-nogroup'].includes(a) };
+        case '-readable': case '-writable': case '-nouser': case '-nogroup': return { k: 'test', fn: () => !['-nouser', '-nogroup'].includes(a) };
+        // Folders are searchable; files only once chmod +x made them executable.
+        case '-executable': return { k: 'test', fn: e => e.isDir || (e.mode & 0o111) !== 0 };
         case '-true': return { k: 'test', fn: () => true };
         case '-false': return { k: 'test', fn: () => false };
         case '-print': hasAction = true; return { k: 'action', fn: e => { ctx.stdout += e.path + '\n'; return true; } };
@@ -193,7 +195,7 @@ export const findCmd: Command = {
           const st = await ctx.fs.stat(abs).catch(() => null);
           if (!st) continue;
           const path = e.path.endsWith('/') ? e.path + name : `${e.path}/${name}`;
-          await walk({ path, abs, name, depth: e.depth + 1, isDir: st.isDirectory(), size: st.size ?? 0, mtime: +(st.mtime ?? Date.now()) });
+          await walk({ path, abs, name, depth: e.depth + 1, isDir: st.isDirectory(), size: st.size ?? 0, mtime: +(st.mtime ?? Date.now()), mode: st.mode ?? 0o644 });
         }
       }
       if (depthFirst && !quit) await visit(e);
@@ -203,7 +205,7 @@ export const findCmd: Command = {
       const st = await ctx.fs.stat(abs).catch(() => null);
       if (!st) { ctx.stderr += `find: '${p}': No such file or directory\n`; status = 1; continue; }
       const base = p.replace(/\/+$/, '').split('/').pop() || p;
-      await walk({ path: p, abs, name: base, depth: 0, isDir: st.isDirectory(), size: st.size ?? 0, mtime: +(st.mtime ?? Date.now()) });
+      await walk({ path: p, abs, name: base, depth: 0, isDir: st.isDirectory(), size: st.size ?? 0, mtime: +(st.mtime ?? Date.now()), mode: st.mode ?? 0o644 });
       if (quit) break;
     }
     for (const b of batches) {

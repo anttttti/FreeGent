@@ -4,6 +4,7 @@
 
 import type { Command } from './index';
 import { parseArgs, readInput } from './flags';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 export const revCmd: Command = {
   name: 'rev',
@@ -14,7 +15,7 @@ export const revCmd: Command = {
       const { content } = await readInput(positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath);
       if (!content) return 0;
       const lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n');
-      const reversed = lines.map(l => l.split('').reverse().join(''));
+      const reversed = lines.map(l => Array.from(l).reverse().join(''));
       ctx.stdout += reversed.join('\n') + '\n';
       return 0;
     } catch (e: unknown) {
@@ -112,9 +113,9 @@ export const cmpCmd: Command = {
     }
     if (files.length < 2) files.push('-');
     const read = async (f: string): Promise<Uint8Array> => {
-      if (f === '-') return new TextEncoder().encode(ctx.stdin);
+      if (f === '-') return textToBytes(ctx.stdin);
       const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-      return typeof c === 'string' ? new TextEncoder().encode(c) : c;
+      return typeof c === 'string' ? textToBytes(c) : c;
     };
     let d1: Uint8Array, d2: Uint8Array;
     try { d1 = await read(files[0]); } catch { ctx.stderr += `cmp: ${files[0]}: No such file or directory\n`; return 2; }
@@ -133,7 +134,7 @@ export const cmpCmd: Command = {
         if (list) { ctx.stdout += `${String(i + 1).padStart(width)} ${d1[i].toString(8).padStart(3)} ${d2[i].toString(8).padStart(3)}\n`; continue; }
         ctx.stdout += printBytes
           ? `${files[0]} ${files[1]} differ: byte ${i + 1}, line ${line} is ${d1[i].toString(8).padStart(3)} ${show(d1[i])} ${d2[i].toString(8).padStart(3)} ${show(d2[i])}\n`
-          : `${files[0]} ${files[1]} differ: char ${i + 1}, line ${line}\n`;
+          : `${files[0]} ${files[1]} differ: byte ${i + 1}, line ${line}\n`;
         return 1;
       }
       if (d1[i] === 10) line++;

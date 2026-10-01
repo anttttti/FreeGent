@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU base64: encode bytes, wrapped at 76 columns (-w N, 0 = no wrapping); -d decodes (-i ignores
 // non-alphabet characters). Binary-safe: works on bytes, not JavaScript strings.
@@ -13,23 +14,34 @@ export function b64encode(bytes: Uint8Array): string {
   return out;
 }
 export function b64decode(text: string): Uint8Array | null {
-  const clean = text.replace(/=+$/, '');
-  if (/[^A-Za-z0-9+/]/.test(clean) || clean.length % 4 === 1) return null;
+  const r = b64decodeStream(text);
+  return r.ok ? r.bytes : null;
+}
+
+/**
+ * Decodes as GNU base64 -d does: as a stream, every whole byte up to the first character outside
+ * the alphabet (or a missing end of padding) comes out, then the input is "invalid" (ok = false).
+ * Padding ends the data; whitespace (newlines) is skipped.
+ */
+export function b64decodeStream(text: string): { bytes: Uint8Array; ok: boolean } {
   const out: number[] = [];
-  for (let i = 0; i < clean.length; i += 4) {
-    const v = [0, 1, 2, 3].map(k => ALPHA.indexOf(clean[i + k] ?? 'A'));
-    const n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
-    out.push((n >> 16) & 255);
-    if (i + 2 < clean.length) out.push((n >> 8) & 255);
-    if (i + 3 < clean.length) out.push(n & 255);
+  let acc = 0, bits = 0, chars = 0, ok = true, padded = false;
+  for (const ch of text) {
+    if (ch === '\n' || ch === '\r') continue;
+    if (ch === '=') { padded = true; chars++; continue; }
+    const v = ALPHA.indexOf(ch);
+    if (v < 0 || padded) { ok = false; break; }
+    acc = ((acc << 6) | v) & 0xffffff; bits += 6; chars++;
+    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
   }
-  return Uint8Array.from(out);
+  if (ok && chars % 4 !== 0) ok = false;   // unpadded or truncated: what decoded is kept
+  return { bytes: Uint8Array.from(out), ok };
 }
 
 async function readBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
-  if (f === '-') return new TextEncoder().encode(ctx.stdin);
+  if (f === '-') return textToBytes(ctx.stdin);
   const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-  return typeof c === 'string' ? new TextEncoder().encode(c) : c;
+  return typeof c === 'string' ? textToBytes(c) : c;
 }
 
 export const base64: Command = {
@@ -55,9 +67,9 @@ export const base64: Command = {
     if (decode) {
       let text = new TextDecoder('latin1').decode(bytes);
       text = ignoreGarbage ? text.replace(/[^A-Za-z0-9+/=]/g, '') : text.replace(/\n/g, '');
-      const out = b64decode(text);
-      if (!out) { ctx.stderr += 'base64: invalid input\n'; return 1; }
-      ctx.stdout += new TextDecoder().decode(out);
+      const { bytes: out, ok } = b64decodeStream(text);
+      ctx.stdout += bytesToText(out);
+      if (!ok) { ctx.stderr += 'base64: invalid input\n'; return 1; }
       return 0;
     }
     const enc = b64encode(bytes);

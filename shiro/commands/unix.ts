@@ -118,6 +118,7 @@ import { whoami } from './whoami';
 import { xargs } from './xargs';
 import { xxdCmd } from './xxd';
 import { yes } from './yes';
+import { iconvCmd } from './iconv';
 
 export const unixCommands: Command[] = [
     alias, arrayHelper, awk, base32Cmd, base64, basename, bc, breakCmd,
@@ -134,7 +135,7 @@ export const unixCommands: Command[] = [
     seq, set, sum, sha1sum, sha256sum, sha512sum, shift, sleep, sort, splitCmd, stat, strings,
     tail, tar, tee, test, time, timeout, touch, tr, kill, trap,
     trueCmd, tsort, type, ulimit, umask, unalias, unexpand, uniq,
-    uptime, watch, wc, which, whoami, xargs, xxdCmd, yes,
+    uptime, watch, wc, which, whoami, xargs, xxdCmd, yes, iconvCmd,
 ];
 
 export { arithmeticExpansion };

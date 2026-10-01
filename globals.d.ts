@@ -662,6 +662,8 @@ declare global {
     var _uint8ToBase64: any;
     var agentDeleteFile: any;
     var agentListFiles: any;
+    var workspaceName: (path: string) => string;
+    var workspaceRootDir: () => string;
     var agentListFilesInDir: (dir: string) => Promise<Array<{name: string}>>;
     var agentListFilesNoStat: () => Promise<Array<{name: string}>>;
     var agentReadFile: any;

@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readFileText, readdirEntries, statEntry } from './flags';
+import { cannotCreate, parseArgs, readFileText, readdirEntries, statEntry } from './flags';
 export const cp: Command = {
   name: "cp",
   description: "Copy files and directories",
@@ -27,8 +27,15 @@ export const cp: Command = {
       ctx.stderr += "cp: target is not a directory\n";
       return 1;
     }
+    const destArg = positional[positional.length - 1];
+    if (destArg.endsWith('/') && !destIsDir) {
+      ctx.stderr += `cp: cannot create regular file '${destArg}': Not a directory\n`;
+      return 1;
+    }
 
     async function copyFile(src: string, dst: string): Promise<void> {
+      const why = await cannotCreate(ctx.fs, dst);
+      if (why) throw new Error(`cannot create regular file '${dst === dest ? destArg : dst}': ${why}`);
       const content = await readFileText(ctx.fs, src);
       await ctx.fs.writeFile(dst, content);
     }

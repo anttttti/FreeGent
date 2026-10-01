@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readFileText, statEntry } from './flags';
+import { cannotCreate, parseArgs, readFileText, statEntry } from './flags';
 export const touch: Command = {
   name: "touch",
   description: "Change file timestamps or create empty files",
@@ -33,6 +33,8 @@ export const touch: Command = {
             continue;
           }
           // Create empty file
+          const why = await cannotCreate(ctx.fs, resolved);
+          if (why) throw new Error(`cannot touch '${p}': ${why}`);
           await ctx.fs.writeFile(resolved, "");
         } else {
           // File exists — update timestamp by rewriting content

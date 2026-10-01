@@ -1,11 +1,12 @@
 import type { Command, CommandContext } from './index';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU sum: BSD checksum (default, -r: "%05d %5d" with 1K blocks, the name only when there are
 // several files) or System V (-s: "%d %d NAME" with 512-byte blocks).
 async function bytesOf(ctx: CommandContext, f: string): Promise<Uint8Array> {
-  if (f === '-') return new TextEncoder().encode(ctx.stdin);
+  if (f === '-') return textToBytes(ctx.stdin);
   const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-  return typeof c === 'string' ? new TextEncoder().encode(c) : c;
+  return typeof c === 'string' ? textToBytes(c) : c;
 }
 
 export const sum: Command = {

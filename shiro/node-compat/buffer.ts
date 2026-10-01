@@ -110,8 +110,11 @@ export function createFakeBuffer(): any {
       } else {
         bytes = new TextEncoder().encode(input);
       }
-    } else if (input instanceof Uint8Array) {
-      bytes = new Uint8Array(input);
+    } else if (ArrayBuffer.isView(input)) {
+      // Any typed array or DataView, from any realm (instanceof fails across realms): a copy of its bytes.
+      bytes = new Uint8Array(input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength));
+    } else if (input instanceof ArrayBuffer || Object.prototype.toString.call(input) === '[object ArrayBuffer]') {
+      bytes = new Uint8Array(input.slice(0));
     } else if (Array.isArray(input)) {
       bytes = new Uint8Array(input);
     } else {

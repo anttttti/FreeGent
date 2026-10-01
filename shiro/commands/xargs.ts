@@ -31,10 +31,14 @@ export const xargs: Command = {
     }
 
     if (inputItems.length === 0) {
-      if (noRunIfEmpty) {
-        return 0;
-      }
-      return 0;
+      // GNU xargs runs the command once without arguments (an empty `xargs md5sum` hashes empty
+      // input); -r and -I don't.
+      if (noRunIfEmpty || replaceStr || !ctx.shell) return 0;
+      let out = "", err = "";
+      const exitCode = await ctx.shell.execute(`${command} < /dev/null`, (t: string) => { out += t; }, (t: string) => { err += t; });
+      ctx.stdout += out.replace(/\r\n/g, "\n");
+      ctx.stderr += err.replace(/\r\n/g, "\n");
+      return exitCode === 0 ? 0 : 123;
     }
 
     // Runs one command line; shell.execute writes terminal output (\r\n), turned back into \n.

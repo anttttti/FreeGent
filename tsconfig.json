@@ -28,6 +28,7 @@
     "tui-app.tsx",
     "tui-placeholder.ts",
     "headless-runner.ts",
+    "native-exec.ts",
     "bootstrap-jsdom.ts",
     "node-fs-adapter.ts",
     "node-sqlite-adapter.ts",

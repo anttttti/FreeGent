@@ -25,6 +25,7 @@ export async function preloadDir(
         const st = await ctx.fs.stat(fp);
         if (st.isDirectory()) {
           fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());
+          fileCache.set(fp + '/.', '');   // the directory exists, even when empty
           await preloadDir(ctx, fileCache, fileMtimes, fp, depth + 1, maxDepth);
         } else if (st.size < 16777216) { // 16MB limit
           const content = await ctx.fs.readFile(fp, 'utf8');

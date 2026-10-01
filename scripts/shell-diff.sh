@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs each line of a cases file through real bash and through FreeGent's browser shell (shiro),
-# and diffs stdout + exit status. Each case starts from a fresh copy of the fixtures. Reference
-# output comes from the system's GNU tools (awk is whatever /usr/bin/awk is — mawk on Ubuntu).
+# and diffs stdout, exit status and the files each case leaves behind. Each case starts from a
+# fresh copy of the fixtures. Reference output comes from the system's GNU tools (awk is whatever
+# /usr/bin/awk is — mawk on Ubuntu), python3 from /usr/bin and the node running this script.
 #
 #   scripts/shell-diff.sh [cases-file] [fixtures-dir]
 #
@@ -13,6 +14,27 @@ cases=$(realpath "${1:-scripts/shell-diff/cases.txt}")
 fixtures=$(realpath "${2:-scripts/shell-diff/fixtures}")
 out=$(mktemp -d)
 
+# The node running this script, not /usr/bin/node (often far older than the Node the browser
+# shell's console.log follows).
+refbin="$out/bin"; mkdir -p "$refbin"
+ln -s "$(realpath "$(command -v node)")" "$refbin/node"
+
+# "file:<path>\t<sha256>" for every file, by path in byte order. A symlink counts as a file with
+# its target's contents (the browser workspace has no links: ln -s makes a copy).
+file_hashes() {
+    ( cd "$1" && find . \( -type f -o -type l \) -print0 | LC_ALL=C sort -z | xargs -0r sha256sum ) |
+        awk '{ printf "file:%s\t%s\n", substr($0, 67), substr($0, 1, 64) }'
+}
+# The workspace changes a case made: a hash line for each new or changed file, "deleted" for
+# each removed one (tests/shell-diff.harness.test.ts prints the same).
+file_changes() {
+    file_hashes "$1" | awk -F'\t' -v base="$out/base.hashes" '
+        BEGIN { while ((getline l < base) > 0) { split(l, f, "\t"); was[f[1]] = f[2] } }
+        { seen[$1] = 1; if (was[$1] != $2) print }
+        END { for (p in was) if (!(p in seen)) printf "%s\tdeleted\n", p }' | LC_ALL=C sort
+}
+file_hashes "$fixtures" > "$out/base.hashes"
+
 # Real bash. Same filtering as the harness: skip blank lines and # comments.
 n=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -21,7 +43,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     work=$(mktemp -d)
     cp -r "$fixtures"/. "$work"/
     # A clean environment: system GNU tools only (no aliases, no ~/.local or conda shadowing).
-    ( cd "$work" && env -i PATH=/usr/bin:/bin HOME="$work" LC_ALL=C timeout 10 bash -c "$line" > "$out/bash.$n" 2>/dev/null; echo "exit=$?" >> "$out/bash.$n" )
+    ( cd "$work" && env -i PATH="$refbin:/usr/bin:/bin" HOME="$work" LC_ALL=C.UTF-8 timeout 10 bash -c "$line" > "$out/bash.$n" 2>/dev/null < /dev/null; echo "exit=$?" >> "$out/bash.$n" )
+    file_changes "$work" >> "$out/bash.$n"
     rm -rf "$work"
 done < "$cases"
 

@@ -1,6 +1,7 @@
 
 import type { Command } from './index';
 import { parseArgs, readInput } from './flags';
+import { toByteString } from '../utils/bytes';
 export const od: Command = {
   name: "od",
   description: "Dump files in octal and other formats",
@@ -25,7 +26,8 @@ export const od: Command = {
         ctx.fs.resolvePath
       );
 
-      let data = content.substring(skip, maxBytes ? skip + maxBytes : undefined);
+      // One char per byte (utils/bytes.ts): od dumps bytes, not UTF-16 code units.
+      let data = toByteString(content).substring(skip, maxBytes ? skip + maxBytes : undefined);
       const output: string[] = [];
 
       // Parse type specification

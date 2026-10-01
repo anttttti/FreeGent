@@ -1,0 +1,15 @@
+console.assert(1 === 1, 'never');
+console.assert(false, 'shown on stderr');
+console.count(); console.count(); console.count('x'); console.countReset(); console.count();
+console.group('Group A');
+console.log('inside');
+console.group();
+console.log('deeper\nmulti-line');
+console.groupEnd();
+console.groupEnd();
+console.log('outside');
+console.table([{ a: 1, b: 'x' }, { a: 2, c: true }]);
+console.table(['p', 'q']);
+console.table({ r1: { col: 1 }, r2: { col: 22 } });
+console.table([{ a: 1, b: 2 }], ['a']);
+console.dir({ nested: { deep: { deeper: { deepest: 1 } } } });
