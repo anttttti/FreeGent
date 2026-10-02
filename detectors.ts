@@ -197,7 +197,11 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
 // 5/5), and SWE runs were stopped on missing pytest / blocked pip before editing anything
 // (pytest-8365: 14 steps, empty patch). Missing-environment failures get the env_failure nudge
 // instead; they don't mean the task is hopeless, only that the tool can't be installed.
-export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$/m;
+// The bench-log corpus (bench/dev-tests/error-taxonomy) found the gaps: a package the installed
+// version doesn't carry ("cannot import name 'X' from astropy.utils.state", "module 'x' has no
+// attribute") and a file the run can't read ("Permission denied") are all the environment, and
+// all were counting as real failures that eventually stop the run.
+export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$|type: \w+: not found|cannot import name|ImportError|module '[\w.]+' has no attribute|Permission denied|EACCES|mkdir: cannot create directory|Read-only file system|not in the sudoers file/m;
 
 export function failStreakKind(name: string, result: any, readOnly: Set<string>): 'progress' | 'fail' | 'neutral' {
     if (readOnly.has(name)) return 'neutral';
@@ -217,13 +221,42 @@ export function updateFailStreak(prev: number, calls: Array<{ name: string; resu
     return prev + kinds.filter(k => k === 'fail').length;
 }
 
-// The error a failed call ended on: the last non-empty line of stderr (or the tool error). For a
-// Python traceback that is "TypeError: …", where the first line is always "Traceback (most recent
-// call last):", which made every Python error look like the same one.
+// Output that names nothing: a test runner's or runtime's closing banner. It comes after the
+// cause, so taking the last line verbatim fingerprinted "FAILED (failures=1)", "Node.js v22.23.1"
+// or "3 failed" as the error — the same-error-streak nudge then quoted the footer instead of
+// the reason, and two different failures behind one footer looked identical.
+const _SIG_NOISE_RE = /^(?:[-=_*#~]{3,}.*[-=_*#~]{0,3}|[-=_*#~]{3,}|\d+ (?:passed|failed|error|warning|deselected)s?\b.*|FAILED\b.*|OK\b.*|PASSED\b.*|!+ stopping after \d+ failures.*|Archives with Errors:.*|Sub items Errors:.*|-- Docs: https?:\/\/.*|Testing against .* with up to \d+ processes.*|Ran \d+ tests?\b.*|no tests (?:collected|ran).*|Rebuilding extension modules.*|Destroying test database.*|System check identified no issues.*|FAIL\b.*|Defaulting to user installation.*|Could not import cythonised.*|Node\.js v[\d.]+|Python [\d.]+$|PyPy [\d.]+ v[\d.]+.*|Your platform.*|at [\w./-]*(?:node|python|_pytest)[\w./:-]*:\d+:\d+)$/i;
+
+// pytest prints its warnings summary after the failures, so the last line of a failed run was the
+// source line of an unrelated DeprecationWarning: 517 failures in the bench logs were signed
+// "import cgi" (bad -k, AttributeError, failed asserts alike). The section runs from its banner to
+// the next one and never holds the cause.
+function _dropWarningsSummary(lines: string[]): string[] {
+    const out: string[] = [];
+    let inSummary = false;
+    for (const l of lines) {
+        if (/^=+ warnings summary\b.*=+$/.test(l)) { inSummary = true; continue; }
+        if (inSummary && /^(?:-- Docs: |[=!_]{3,})/.test(l)) inSummary = false;
+        if (!inSummary) out.push(l);
+    }
+    return out;
+}
+const _PYTEST_COLLECTED_RE = /^collected \d+ items?$/;
+const _PYTEST_ERROR_RE = /^(?:collecting \.\.\. )?ERROR: /;
+
+// The error a failed call ended on: the last line of stderr (or the tool error) that isn't a
+// closing banner. For a Python traceback that is "TypeError: …", where the first line is always
+// "Traceback (most recent call last):", which made every Python error look like the same one.
 export function failureSignature(result: any): string {
     const text = String(result?.error || result?.stderr || result?.stdout || '');
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    return (lines[lines.length - 1] ?? '').slice(0, 160);
+    const meaningful = _dropWarningsSummary(lines).filter(l => !_SIG_NOISE_RE.test(l));
+    // All-noise output (a bare "---"): the last line is all there is, so use it rather than nothing.
+    let sig = meaningful[meaningful.length - 1] ?? lines[lines.length - 1] ?? '';
+    // pytest's "collected 0 items" is the count, not the reason; the reason is the "ERROR: file or
+    // directory not found: …" it printed while collecting.
+    if (_PYTEST_COLLECTED_RE.test(sig)) sig = meaningful.findLast(l => _PYTEST_ERROR_RE.test(l))?.replace(/^collecting \.\.\. /, '') ?? sig;
+    return sig.slice(0, 160);
 }
 
 // Failure streak about to reach the stop, and its last `n` failures all ended on the same error:
