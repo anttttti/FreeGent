@@ -84,7 +84,7 @@ describe('cleanResponse', () => {
 describe('isTransient', () => {
     it.each([
         'HTTP 500', 'HTTP 503', 'HTTP 529',
-        'Internal error', 'Failed to fetch', 'NetworkError', 'Load failed',
+        'Internal error', 'Failed to fetch', 'NetworkError', 'network error', 'Load failed',
     ])('matches %s', (msg) => {
         expect(W.isTransient(new Error(msg))).toBe(true);
     });
