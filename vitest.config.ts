@@ -5,7 +5,7 @@ export default defineConfig({
         globals:     true,
         environment: 'jsdom',
         setupFiles:  ['./tests/setup.js'],
-        include:     ['tests/**/*.{test,spec}.{js,ts}'],
+        include:     ['tests/**/*.{test,spec}.{js,ts}', 'bench/dev-tests/**/*.{test,spec}.{js,ts}'],
         exclude:     ['.claude/**', 'node_modules/**', 'tmp/**', 'FreeGent_refactored/**'],
     },
 });
