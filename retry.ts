@@ -15,20 +15,58 @@ export function _isTimeoutError(e) {
     return e.name === 'TimeoutError' || /signal timed out/i.test(e.message || '');
 }
 
+// Transport failures are classified by where they were thrown, not by what the browser chose to
+// call them. fetch() rejects only when the request never completed, and reader.read() only when
+// the body stream broke, so anything but an abort from those two calls is a dropped connection —
+// whether Chrome words it "network error", Safari "Load failed", Firefox "Error in input stream"
+// or undici "terminated". Call sites tag the error once; isTransient() trusts the tag, and the
+// message list below stays as the fallback for errors that arrive untagged (wrapped, re-thrown
+// as a string, or from a call site that doesn't tag yet).
+export function asTransportError<E>(e: E): E {
+    if (e && typeof e === 'object' && (e as any).name !== 'AbortError') (e as any).transport = true;
+    return e;
+}
+
+// Node and undici put the errno on e.code, usually on e.cause for fetch's "fetch failed".
+const _NET_CODE_RE = /^(?:ECONN\w+|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|ENETUNREACH|ENETDOWN|EHOSTUNREACH|UND_ERR_\w+|ERR_HTTP2_\w+|ERR_STREAM_PREMATURE_CLOSE)$/;
+
+// Message fallback. Grouped by who says it; each group is a family of the same failure.
+const _TRANSIENT_MSG_RE = new RegExp([
+    // provider/HTTP: server errors, throttling, overload, and the proxies' bare-status forms
+    'HTTP 5\\d\\d|HTTP 429|HTTP 402|HTTP 408|HTTP 425|HTTP 499|Internal error|rate.?limit|too many requests',
+    'request too large|quota exceeded|insufficient balance|maximum context length|not found|file not found',
+    'service unavailable|bad gateway|gateway time-?out|idle timeout|high traffic|high demand|spikes in demand',
+    'overloaded|temporarily unavailable|try again later|upstream connect error|no healthy upstream',
+    'connection error|request timed out|error code: (?:1015|5\\d\\d)',
+    // Chrome/Edge/Electron: "network error" is the TypeError from a body that died mid-read
+    'Failed to fetch|network error|net::ERR_',
+    // Firefox
+    'NetworkError|error in input stream|connection was reset',
+    // Safari/iOS, which also kills fetch when the tab is backgrounded or the screen locks
+    'Load failed|^cancelled$|network connection was lost|the operation couldn\'t be completed',
+    'internet connection appears to be offline|could not connect to the server|hostname could not be found',
+    'software caused connection abort',
+    // Node/undici (fg-run, headless runner, bench): fetch failed, terminated, errnos, socket drops
+    'fetch failed|^terminated$|^aborted$|other side closed|premature close|socket hang up',
+    '\\bE(?:CONN\\w+|TIMEDOUT|NOTFOUND|AI_AGAIN|PIPE|NETUNREACH|HOSTUNREACH)\\b',
+    '(?:body|headers|connect) timeout error',
+    // React Native / generic
+    'network request failed',
+    // streams and timeouts of our own
+    'signal timed out|bodystreambuffer|stream.*aborted',
+].join('|'), 'i');
+
 export function isTransient(e) {
     const msg = e.message || '';
     // Permanent configuration errors — model ID or endpoint wrong, retrying won't help
     if (/does not exist|you do not have access|model not found|no such model/i.test(msg)) return false;
+    if (e.transport === true) return true;
+    if (_NET_CODE_RE.test(e.code ?? '') || _NET_CODE_RE.test(e.cause?.code ?? '')) return true;
     if (_isTimeoutError(e)) return true;
-    // "cancelled" — iOS Safari kills fetch when the tab is backgrounded or the screen locks.
-    // "network connection was lost" — iOS Safari network-level disconnect mid-stream.
-    // "The operation couldn't be completed" — iOS/macOS generic network failure variant.
-    // "network error" — Chrome/Android's TypeError when a streamed body dies mid-read (flaky mobile
-    // data, screen lock, wifi↔cellular handoff). With a space, so "NetworkError" alone never matched it.
     // HTTP 429/402 by status: some providers return a bare status with no body ("[nvidia|…] HTTP 429"),
     // which the text patterns below miss — workers then gave up on the first rate limit instead of
     // letting the retry handler rotate or wait for a cooldown.
-    return /HTTP 5\d\d|HTTP 429|HTTP 402|Internal error|Failed to fetch|fetch failed|NetworkError|network error|Load failed|rate.?limit|too many requests|request too large|quota exceeded|insufficient balance|maximum context length|not found|file not found|service unavailable|bad gateway|idle timeout|high traffic|high demand|spikes in demand|signal timed out|bodystreambuffer|stream.*aborted|^cancelled$|network connection was lost|the operation couldn't be completed/i.test(msg);
+    return _TRANSIENT_MSG_RE.test(msg);
 }
 
 export function parseContextOverflow(e) {

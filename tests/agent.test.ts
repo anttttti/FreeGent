@@ -3,6 +3,7 @@
  * settings, checkpoints, retry logic.
  */
 import { IDBFactory } from 'fake-indexeddb';
+import { asTransportError } from '../retry.ts';
 
 const W = window;
 
@@ -87,6 +88,42 @@ describe('isTransient', () => {
         'Internal error', 'Failed to fetch', 'NetworkError', 'network error', 'Load failed',
     ])('matches %s', (msg) => {
         expect(W.isTransient(new Error(msg))).toBe(true);
+    });
+
+    // One per failure family; the browser/runtime that words it this way is in the group name.
+    it.each([
+        'network error', 'net::ERR_CONNECTION_RESET', 'net::ERR_NETWORK_CHANGED',                  // Chrome/Electron
+        'Error in input stream', 'The connection was reset',                                       // Firefox
+        'The Internet connection appears to be offline.', 'The request timed out.',                // Safari/iOS
+        'Could not connect to the server.', 'A server with the specified hostname could not be found.',
+        'Software caused connection abort',
+        'terminated', 'other side closed', 'read ECONNRESET', 'connect ETIMEDOUT 1.2.3.4:443',     // Node/undici
+        'connect ECONNREFUSED 127.0.0.1:1', 'getaddrinfo EAI_AGAIN api.x.com', 'getaddrinfo ENOTFOUND api.x.com',
+        'socket hang up', 'Premature close', 'Body Timeout Error', 'Headers Timeout Error', 'write EPIPE', 'aborted',
+        'Network request failed',                                                                  // React Native
+        'HTTP 408', 'HTTP 425', 'HTTP 499', 'error code: 1015', 'Overloaded', 'overloaded_error',  // providers
+        'Connection error.', 'temporarily unavailable', 'Please try again later', 'Gateway Time-out',
+        'upstream connect error', 'no healthy upstream',
+    ])('matches the network failure %s', (msg) => {
+        expect(W.isTransient(new Error(msg))).toBe(true);
+    });
+
+    it('trusts a transport tag whatever the message says', () => {
+        expect(W.isTransient(asTransportError(new TypeError('Something nobody has seen')))).toBe(true);
+    });
+
+    it('never tags an AbortError, so a user stop is not retried as a dropped connection', () => {
+        const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+        expect((asTransportError(abort) as any).transport).toBeUndefined();
+    });
+
+    it('reads the errno from e.cause, where undici puts it behind "fetch failed"', () => {
+        const e = Object.assign(new TypeError('boom'), { cause: { code: 'UND_ERR_SOCKET' } });
+        expect(W.isTransient(e)).toBe(true);
+    });
+
+    it('does not retry an ordinary bug', () => {
+        expect(W.isTransient(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe(false);
     });
 
     it.each([

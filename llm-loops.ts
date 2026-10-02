@@ -3,7 +3,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneOAIHistory, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -2390,15 +2390,19 @@ async function callLLM(
         : (_userSig ?? _connCtrl.signal);
 
     let resp: Response;
+    // Serialise before the try: a TypeError from JSON.stringify is a bug, not a dropped connection.
+    const _reqBody = JSON.stringify(payload);
     try {
         resp = _effectiveProxy
             ? await fetch(_effectiveProxy, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 signal: _connSig,
-                body: JSON.stringify({ url, method: 'POST', headers, body: JSON.stringify(payload) }),
+                body: JSON.stringify({ url, method: 'POST', headers, body: _reqBody }),
             })
-            : await fetch(url, { method: 'POST', headers, signal: _connSig, body: JSON.stringify(payload) });
+            : await fetch(url, { method: 'POST', headers, signal: _connSig, body: _reqBody });
+    } catch (e) {
+        throw asTransportError(e); // fetch only rejects when the request never completed
     } finally {
         clearTimeout(_connTimer); // release timer — cannot abort the body reader after headers received
     }
