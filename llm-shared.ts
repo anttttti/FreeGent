@@ -1,6 +1,6 @@
 import { workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
-import { withRetry, _isTimeoutError, parseContextOverflow, fmtDelay } from './retry.js';
+import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay } from './retry.js';
 import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName,
          firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
@@ -243,9 +243,10 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             if ('tool_choice' in payload) payload.tool_choice = 'none';
             const body = JSON.stringify(payload);
             const proxyUrl = ep.proxy ? getLocalApiProxy() : '';
-            const resp = proxyUrl
-                ? await fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
-                : await fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep), body });
+            const resp = await (proxyUrl
+                ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
+                : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep), body })
+            ).catch(e => { throw asTransportError(e); });
             if (!resp.ok) {
                 const text = await resp.text().catch(() => '');
                 let msg = `Compaction HTTP ${resp.status}`;

@@ -18,6 +18,7 @@
 // Follows the step-validator/…/model-router pattern: ES module, exports, window bridge.
 
 import { softStopPending } from './state.js';
+import { asTransportError } from './retry.js';
 
 // 90 s between any SSE bytes — safe for even the slowest streaming models (chunks arrive
 // every few seconds at most). Short enough that a browser-killed connection (tab hidden,
@@ -53,7 +54,7 @@ export async function* readSSE(resp: any) {
         while (true) {
             let timerId: number;
             const { done, value } = await Promise.race([
-                reader.read(),
+                reader.read().catch(e => { throw asTransportError(e); }), // a broken stream, not a bug
                 new Promise((_, reject) => {
                     timerId = setTimeout(() => {
                         reader.cancel().catch(() => {}); // close connection so server isn't left processing
