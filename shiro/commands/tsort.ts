@@ -1,105 +1,75 @@
-
 import type { Command } from './index';
 import { readFileText } from './flags';
+
+/**
+ * tsort — topological sort (GNU algorithm: items that nothing precedes go first, in sorted order;
+ * the successors of each output item are visited newest-first; a loop is reported on stderr, one
+ * edge of it is dropped and sorting goes on, with exit status 1).
+ */
+interface Item { name: string; count: number; succ: Item[]; done: boolean }
+
 export const tsort: Command = {
   name: "tsort",
   description: "Perform topological sort",
   async exec(ctx) {
-    const args = ctx.args;
-    const files = args.length > 0 ? args : ["-"];
-
+    const files = ctx.args.filter(a => a !== '--');
+    if (files.length > 1) { ctx.stderr += `tsort: extra operand '${files[1]}'\n`; return 1; }
+    const label = files[0] ?? '-';
     let content: string;
     try {
-      if (files[0] === "-" || files.length === 0) {
-        content = ctx.stdin;
-      } else {
-        const path = ctx.fs.resolvePath(files[0], ctx.cwd);
-        content = await readFileText(ctx.fs, path);
-      }
-    } catch (err) {
-      ctx.stderr += `tsort: ${files[0]}: ${err instanceof Error ? err.message : String(err)}\n`;
+      content = label === '-' ? ctx.stdin : await readFileText(ctx.fs, ctx.fs.resolvePath(label, ctx.cwd));
+    } catch {
+      ctx.stderr += `tsort: ${label}: No such file or directory\n`;
       return 1;
     }
+    const tokens = content.split(/\s+/).filter(Boolean);
+    if (tokens.length % 2 !== 0) { ctx.stderr += `tsort: ${label}: input contains an odd number of tokens\n`; return 1; }
 
-    // Parse pairs from input
-    const tokens = content.trim().split(/\s+/).filter(Boolean);
-
-    if (tokens.length % 2 !== 0) {
-      ctx.stderr += "tsort: odd number of tokens\n";
-      return 1;
-    }
-
-    // Build adjacency list and track all nodes
-    const graph = new Map<string, Set<string>>();
-    const inDegree = new Map<string, number>();
-    const allNodes = new Set<string>();
-
+    const items = new Map<string, Item>();
+    const get = (name: string) => { let it = items.get(name); if (!it) items.set(name, it = { name, count: 0, succ: [], done: false }); return it; };
     for (let i = 0; i < tokens.length; i += 2) {
-      const from = tokens[i];
-      const to = tokens[i + 1];
-
-      allNodes.add(from);
-      allNodes.add(to);
-
-      if (!graph.has(from)) {
-        graph.set(from, new Set());
-      }
-      graph.get(from)!.add(to);
+      const from = get(tokens[i]), to = get(tokens[i + 1]);
+      if (from !== to) { to.count++; from.succ.unshift(to); }       // newest successor first
     }
-
-    // Initialize in-degrees
-    for (const node of allNodes) {
-      if (!inDegree.has(node)) {
-        inDegree.set(node, 0);
+    const sorted = [...items.values()].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    let remaining = sorted.length;
+    const queue: Item[] = sorted.filter(i => i.count === 0);
+    let out = '';
+    let status = 0;
+    while (remaining > 0) {
+      while (queue.length) {
+        const p = queue.shift()!;
+        p.done = true;
+        out += p.name + '\n';
+        remaining--;
+        for (const k of p.succ) if (--k.count === 0) queue.push(k);
       }
-    }
-
-    // Calculate in-degrees
-    for (const [_, neighbors] of graph) {
-      for (const neighbor of neighbors) {
-        inDegree.set(neighbor, (inDegree.get(neighbor) || 0) + 1);
-      }
-    }
-
-    // Kahn's algorithm for topological sorting
-    const queue: string[] = [];
-    const result: string[] = [];
-
-    // Start with nodes that have no incoming edges
-    for (const [node, degree] of inDegree) {
-      if (degree === 0) {
-        queue.push(node);
-      }
-    }
-
-    // Sort the initial queue for deterministic output
-    queue.sort();
-
-    while (queue.length > 0) {
-      // Sort queue to ensure deterministic output
-      queue.sort();
-      const node = queue.shift()!;
-      result.push(node);
-
-      const neighbors = graph.get(node);
-      if (neighbors) {
-        for (const neighbor of neighbors) {
-          const newDegree = inDegree.get(neighbor)! - 1;
-          inDegree.set(neighbor, newDegree);
-          if (newDegree === 0) {
-            queue.push(neighbor);
-          }
+      if (remaining === 0) break;
+      // everything left is on or behind a loop: find one, report it, drop one of its edges
+      status = 1;
+      let cycle: Item[] | null = null;
+      for (const start of sorted) {
+        if (start.done) continue;
+        const path: Item[] = [start];
+        let cur = start;
+        for (;;) {
+          const next = cur.succ.find(s => !s.done);
+          if (!next) break;
+          const at = path.indexOf(next);
+          if (at >= 0) { cycle = path.slice(at); break; }
+          path.push(next);
+          cur = next;
         }
+        if (cycle) break;
       }
+      if (!cycle) cycle = [sorted.find(i => !i.done)!];
+      ctx.stderr += `tsort: ${label}: input contains a loop:\n` + cycle.map(c => `tsort: ${c.name}\n`).join('');
+      const first = cycle[0], last = cycle[cycle.length - 1];
+      const edge = last.succ.indexOf(first);
+      if (edge >= 0) last.succ.splice(edge, 1);
+      if (--first.count === 0) queue.push(first);
     }
-
-    // Check for cycles
-    if (result.length !== allNodes.size) {
-      ctx.stderr += "tsort: cycle detected\n";
-      return 1;
-    }
-
-    ctx.stdout += result.join("\n") + "\n";
-    return 0;
+    ctx.stdout += out;
+    return status;
   },
 };

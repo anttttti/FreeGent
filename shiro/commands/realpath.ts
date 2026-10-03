@@ -1,88 +1,56 @@
-
 import type { Command } from './index';
-import { parseArgs } from './flags';
+import { canonicalize, relativeTo, type CanonMode } from './canonical';
+
+/** realpath [-e|-m] [-s] [-q] [-z] [--relative-to=DIR] [--relative-base=DIR] FILE... */
 export const realpath: Command = {
   name: "realpath",
   description: "Print the resolved absolute path",
   async exec(ctx) {
-    const args = ctx.args;
-    const { flags, positional } = parseArgs(args);
-
-    if (positional.length === 0) {
-      ctx.stderr += "realpath: missing operand\n";
-      return 1;
+    let mode: CanonMode = 'missing-last', symlinks = true, quiet = false, zero = false;
+    let relTo: string | null = null, relBase: string | null = null;
+    const files: string[] = [];
+    const a = ctx.args;
+    const fail = (m: string) => { ctx.stderr += `realpath: ${m}\n`; return 1; };
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '--') { files.push(...a.slice(i + 1)); break; }
+      if (x === '-e' || x === '--canonicalize-existing') mode = 'existing';
+      else if (x === '-E') mode = 'missing-last';
+      else if (x === '-m' || x === '--canonicalize-missing') mode = 'missing-ok';
+      else if (x === '-s' || x === '--strip' || x === '--no-symlinks') symlinks = false;
+      else if (x === '-L' || x === '-P' || x === '--logical' || x === '--physical') { /* accepted */ }
+      else if (x === '-q' || x === '--quiet') quiet = true;
+      else if (x === '-z' || x === '--zero') zero = true;
+      else if (x === '--relative-to') relTo = a[++i] ?? null;
+      else if (x.startsWith('--relative-to=')) relTo = x.slice(14);
+      else if (x === '--relative-base') relBase = a[++i] ?? null;
+      else if (x.startsWith('--relative-base=')) relBase = x.slice(16);
+      else if (/^-[eEmsLPqz]+$/.test(x)) {
+        for (const c of x.slice(1)) {
+          if (c === 'e') mode = 'existing'; else if (c === 'E') mode = 'missing-last'; else if (c === 'm') mode = 'missing-ok';
+          else if (c === 's') symlinks = false; else if (c === 'q') quiet = true; else if (c === 'z') zero = true;
+        }
+      } else if (x.startsWith('-') && x.length > 1) return fail(`invalid option -- '${x.replace(/^-+/, '')}'`);
+      else files.push(x);
     }
-
-    const quiet = flags.q || flags.quiet;
-    const canonicalize = !flags.s; // -s means don't canonicalize (default is to canonicalize)
-    const noSymlinks = flags.s;
-
-    const results: string[] = [];
-    const errors: string[] = [];
-
-    for (const path of positional) {
-      try {
-        // Resolve the path
-        let resolved = ctx.fs.resolvePath(path, ctx.cwd);
-
-        // Normalize the path and resolve symlinks
-        if (canonicalize) {
-          // Remove redundant separators and resolve . and ..
-          const parts = resolved.split("/").filter(p => p !== "" && p !== ".");
-          const canonical: string[] = [];
-
-          for (const part of parts) {
-            if (part === "..") {
-              if (canonical.length > 0) {
-                canonical.pop();
-              }
-            } else {
-              canonical.push(part);
-            }
-          }
-
-          resolved = "/" + canonical.join("/");
-
-          // Follow symlinks to final target
-          if (ctx.fs.readlink) {
-            const maxFollows = 20;
-            for (let follow = 0; follow < maxFollows; follow++) {
-              try {
-                const target = await ctx.fs.readlink(resolved);
-                // If target is relative, resolve against parent dir
-                if (target.startsWith('/')) {
-                  resolved = target;
-                } else {
-                  const parent = resolved.substring(0, resolved.lastIndexOf('/')) || '/';
-                  resolved = ctx.fs.resolvePath(target, parent);
-                }
-              } catch {
-                break; // Not a symlink
-              }
-            }
-          }
-        }
-
-        // Verify the path exists
-        if (await ctx.fs.exists(resolved)) {
-          results.push(resolved);
-        } else {
-          if (!quiet) {
-            errors.push(`realpath: ${path}: No such file or directory`);
-          }
-        }
-      } catch (e: unknown) {
-        if (!quiet) {
-          errors.push(`realpath: ${path}: ${e instanceof Error ? e.message : e}`);
-        }
+    if (files.length === 0) return fail('missing operand');
+    const toAbs = async (p: string) => canonicalize(ctx.fs, ctx.cwd, p, mode === 'existing' ? 'existing' : 'missing-ok', symlinks);
+    const base = relTo !== null ? await toAbs(relTo) : null;
+    const rbase = relBase !== null ? await toAbs(relBase) : null;
+    let status = 0;
+    for (const f of files) {
+      const abs = await canonicalize(ctx.fs, ctx.cwd, f, mode, symlinks);
+      if (abs === null) {
+        if (!quiet) ctx.stderr += `realpath: ${f}: ${mode === 'existing' ? 'No such file or directory' : 'No such file or directory'}\n`;
+        status = 1;
+        continue;
       }
+      let shown = abs;
+      const under = (root: string) => abs === root || abs.startsWith(root === '/' ? '/' : root + '/');
+      if (base !== null && (rbase === null || under(rbase))) shown = relativeTo(abs, base);
+      else if (rbase !== null && under(rbase)) shown = relativeTo(abs, rbase);
+      ctx.stdout += shown + (zero ? '\0' : '\n');
     }
-
-    const stderr = errors.length > 0 ? errors.join("\n") + "\n" : "";
-    const exitCode = errors.length > 0 ? 1 : 0;
-
-    ctx.stdout += results.join("\n") + (results.length > 0 ? "\n" : "");
-    ctx.stderr += stderr;
-    return exitCode;
+    return status;
   },
 };

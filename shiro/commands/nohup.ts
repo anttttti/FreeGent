@@ -1,68 +1,45 @@
-
 /**
- * nohup - Run a command immune to hangups
+ * nohup - run a command immune to hangups.
  *
- * In Unix, nohup runs a command that continues running after the shell exits,
- * ignoring the HUP (hangup) signal. Output is redirected to nohup.out.
- *
- * In browser environment, this is a stub that acknowledges the command
- * but doesn't actually implement signal immunity (no real processes).
- *
- * Syntax:
- *   nohup COMMAND [ARG...]
- *
- * Example:
- *   nohup long-running-task &
+ * There are no real processes or SIGHUP here, so the part that matters is the I/O contract:
+ * when stdout is a terminal it is appended to nohup.out (with the usual notice); otherwise
+ * output passes through untouched, exactly as GNU nohup does for a pipe or file.
  */
 import type { Command } from './index';
-import { readFileText } from './flags';
+import { runSubcommand } from './run-subcommand';
+
 export const nohup: Command = {
-  name: "nohup",
-  description: "Run a command immune to hangups",
+  name: 'nohup',
+  description: 'Run a command immune to hangups',
   async exec(ctx) {
-    const args = ctx.args;
+    let args = ctx.args;
+    if (args[0] === '--') args = args.slice(1);
+    if (args[0] === '--help') { ctx.stdout += 'Usage: nohup COMMAND [ARG]...\n'; return 0; }
     if (args.length === 0) {
       ctx.stderr += "nohup: missing operand\nTry 'nohup --help' for more information.\n";
       return 125;
     }
 
-    const command = args[0];
-    const cmdArgs = args.slice(1);
+    const toFile = !!ctx.terminal;
+    let out = '', err = '';
+    const code = await runSubcommand(ctx, args, s => { out += s; }, s => { err += s; })
+      .catch((e: any) => { err += `nohup: ${e?.message ?? e}\n`; return 126; });
 
-    // In a real shell, this would:
-    // 1. Fork a new process
-    // 2. Set the process to ignore SIGHUP
-    // 3. Redirect stdout/stderr to nohup.out
-    // 4. Execute the command
-
-    // In browser environment, we acknowledge the command
-    // and could potentially write to nohup.out file
-
-    const nohupOutput = `nohup: ignoring input and appending output to 'nohup.out'\n`;
-
-    // Create/append to nohup.out
-    try {
-      const nohupPath = ctx.fs.resolvePath("nohup.out", ctx.cwd);
-      const timestamp = new Date().toISOString();
-      const logEntry = `[${timestamp}] Command: ${command} ${cmdArgs.join(" ")}\n`;
-
-      // Try to read existing content
-      let existingContent = "";
+    if (toFile) {
+      const path = ctx.fs.resolvePath('nohup.out', ctx.cwd);
       try {
-        existingContent = await readFileText(ctx.fs, nohupPath);
-      } catch {
-        // File doesn't exist yet
+        let existing = '';
+        try { existing = await ctx.fs.readFile(path) as any; if (typeof existing !== 'string') existing = new TextDecoder().decode(existing as any); } catch { /* new file */ }
+        await ctx.fs.writeFile(path, existing + out);
+        ctx.stderr += "nohup: ignoring input and appending output to 'nohup.out'\n";
+        out = '';
+      } catch (e: any) {
+        ctx.stderr += `nohup: cannot create nohup.out: ${e.message}\n`;
+        return 125;
       }
-
-      await ctx.fs.writeFile(nohupPath, existingContent + logEntry);
-    } catch (err: any) {
-      ctx.stderr += `nohup: cannot create nohup.out: ${err.message}\n`;
-      return 125;
     }
-
-    // In a real implementation, we would execute the command
-    // For now, just indicate that nohup would run it
-    ctx.stderr += nohupOutput;
-    return 0;
+    ctx.stdout += out;
+    ctx.stderr += err;
+    return code;
   },
 };

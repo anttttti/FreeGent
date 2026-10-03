@@ -14,7 +14,7 @@
  * /workspace or switch CWD to /workspace.
  */
 
-import { FileSystem, globPatternToRegex } from './filesystem';
+import { devProvider, FileSystem, globPatternToRegex } from './filesystem';
 import type { StatResult } from './filesystem';
 import { bytesToText, isTextBytes, textToBytes } from './utils/bytes';
 import {
@@ -28,7 +28,6 @@ import {
 
 export const WORKSPACE_MOUNT = '/workspace';
 /** Reads as empty, swallows writes — for commands that open it as a file (cat /dev/null, cmd < /dev/null). */
-const DEV_NULL = '/dev/null';
 
 // Text records hold UTF-8 text exactly (a BOM, CRLF and lone CRs included).
 const dec = new TextDecoder('utf-8', { ignoreBOM: true });
@@ -128,7 +127,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async stat(path: string): Promise<StatResult> {
-        if (path === DEV_NULL) return makeStat('file', 0);
+        if (devProvider.handles(path)) { const st = devProvider.stat(path); if (st) return st; }
         const wsPath = toWsPath(path);
         if (wsPath !== null) {
             if (wsPath === '') return makeStat('dir'); // workspace root
@@ -167,7 +166,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async readFile(path: string, encoding?: 'utf8'): Promise<Uint8Array | string> {
-        if (path === DEV_NULL) return encoding === 'utf8' ? '' : new Uint8Array(0);
+        if (devProvider.handles(path)) { const d = devProvider.readFile(path, encoding); if (d !== null) return encoding === 'utf8' && typeof d !== 'string' ? bytesToText(d) : d; throw makeError('EISDIR', `illegal operation on a directory: ${path}`); }
         const wsPath = toWsPath(path);
         if (wsPath !== null && wsPath !== '') {
             // Read the raw record so binary files (encoding='base64') return actual bytes,
@@ -186,7 +185,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async writeFile(path: string, data: Uint8Array | string, _opts?: { mode?: number }): Promise<void> {
-        if (path === DEV_NULL) return;
+        if (devProvider.handles(path)) return;        // /dev/null and friends swallow writes
         const wsPath = toWsPath(path);
         const bytes = typeof data === 'string' ? textToBytes(data) : data;
         if (wsPath !== null && wsPath !== '') {
@@ -200,7 +199,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async appendFile(path: string, data: Uint8Array | string): Promise<void> {
-        if (path === DEV_NULL) return;
+        if (devProvider.handles(path)) return;        // /dev/null and friends swallow writes
         // Byte-level, for text and binary files alike.
         const existing = await this.readFile(path).catch(() => new Uint8Array(0)) as Uint8Array;
         const toAdd = typeof data === 'string' ? textToBytes(data) : data;
@@ -225,6 +224,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async readdir(path: string): Promise<string[]> {
+        if (path === '/dev') return devProvider.readdir(path) ?? [];
         const children = new Set<string>();
         const wsPath = toWsPath(path);
 

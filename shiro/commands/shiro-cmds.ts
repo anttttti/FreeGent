@@ -171,12 +171,46 @@ export const rmdirCmd: Command = {
   name: 'rmdir',
   description: 'Remove empty directories',
   async exec(ctx) {
-    for (const arg of ctx.args) {
-      const resolved = ctx.fs.resolvePath(arg, ctx.cwd);
-      try { await ctx.fs.rmdir(resolved); }
-      catch (e: any) { ctx.stderr += `rmdir: ${e.message}\n`; return 1; }
+    let parents = false, verbose = false, ignoreNonEmpty = false;
+    const dirs: string[] = [];
+    for (let i = 0; i < ctx.args.length; i++) {
+      const a = ctx.args[i];
+      if (a === '--') { dirs.push(...ctx.args.slice(i + 1)); break; }
+      if (a === '-p' || a === '--parents') parents = true;
+      else if (a === '-v' || a === '--verbose') verbose = true;
+      else if (a === '--ignore-fail-on-non-empty') ignoreNonEmpty = true;
+      else if (/^-[pv]+$/.test(a)) { if (a.includes('p')) parents = true; if (a.includes('v')) verbose = true; }
+      else if (a.startsWith('-') && a.length > 1) { ctx.stderr += `rmdir: invalid option -- '${a.replace(/^-+/, '')}'\n`; return 1; }
+      else dirs.push(a);
     }
-    return 0;
+    if (dirs.length === 0) { ctx.stderr += 'rmdir: missing operand\n'; return 1; }
+    let status = 0;
+    const remove = async (path: string): Promise<boolean> => {
+      const full = ctx.fs.resolvePath(path, ctx.cwd);
+      let st;
+      try { st = await ctx.fs.stat(full); }
+      catch { ctx.stderr += `rmdir: failed to remove '${path}': No such file or directory\n`; return false; }
+      if (st.type !== 'dir') { ctx.stderr += `rmdir: failed to remove '${path}': Not a directory\n`; return false; }
+      if ((await ctx.fs.readdir(full)).length > 0) {
+        if (!ignoreNonEmpty) ctx.stderr += `rmdir: failed to remove '${path}': Directory not empty\n`;
+        return ignoreNonEmpty;
+      }
+      try { await ctx.fs.rmdir(full); }
+      catch (e: any) { ctx.stderr += `rmdir: failed to remove '${path}': ${e.message}\n`; return false; }
+      if (verbose) ctx.stdout += `rmdir: removing directory, '${path}'\n`;
+      return true;
+    };
+    for (const d of dirs) {
+      let path = d.replace(/\/+$/, '') || d;
+      if (!(await remove(path))) { status = 1; continue; }
+      while (parents) {                              // rmdir -p a/b/c removes c, then b, then a
+        const slash = path.lastIndexOf('/');
+        if (slash <= 0) break;
+        path = path.slice(0, slash);
+        if (!(await remove(path))) { status = 1; break; }
+      }
+    }
+    return status;
   },
 };
 
