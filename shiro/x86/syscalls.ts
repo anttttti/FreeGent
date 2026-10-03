@@ -98,6 +98,9 @@ export class LinuxSyscalls {
     this.fdTable.set(2, { path: '/dev/stderr', offset: 0, content: null, flags: 1 });
   }
 
+  /** Debug: one line per syscall (set globalThis.__fgX86Trace = line => …) */
+  private trace: ((line: string) => void) | undefined = (globalThis as any).__fgX86Trace;
+
   /** Handle a SYSCALL instruction. Reads args from registers, writes result to RAX. */
   async handleSyscall(): Promise<void> {
     const nr = Number(this.cpu.getReg64(RAX));
@@ -130,6 +133,7 @@ export class LinuxSyscalls {
       case 39:  result = 1000n; break; // getpid
       case 60:  throw new X86Exit(Number(arg0 & 0xFFn)); // exit
       case 63:  result = this.sysUname(arg0); break;
+      case 105: case 106: case 113: case 114: case 116: case 117: case 119: result = 0n; break;   // setuid, setgid, setreuid, setregid, setgroups, setresuid, setresgid: there is only one user
       case 79:  result = this.sysGetcwd(arg0, arg1); break;
       case 80:  result = await this.sysChdir(arg0); break;
       case 102: result = 1000n; break; // getuid
@@ -194,6 +198,7 @@ export class LinuxSyscalls {
         result = -BigInt(ENOSYS);
     }
 
+    this.trace?.(`${nr}(${[arg0, arg1, arg2, arg3, arg4, arg5].map(x => '0x' + x.toString(16)).join(', ')}) = ${result}`);
     this.cpu.setReg64(RAX, result & 0xFFFFFFFFFFFFFFFFn);
   }
 

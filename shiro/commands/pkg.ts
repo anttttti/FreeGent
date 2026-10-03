@@ -39,10 +39,11 @@ async function writePathStubs(ctx: CommandContext, pkgName: string): Promise<voi
   const pkg = findPackage(pkgName);
   if (!pkg) return;
   await ensureBinDir(ctx.fs);
-  const stubContent = `#!wasi-pkg ${pkg.name}\n`;
-  const names = [pkg.name, ...(pkg.aliases || [])];
-  for (const cmdName of names) {
-    await ctx.fs.writeFile(`${PKG_BIN_DIR}/${cmdName}`, stubContent);
+  // "#!wasi-pkg <package> [leading args...]": a multi-call alias such as gcat runs `coreutils cat`
+  await ctx.fs.writeFile(`${PKG_BIN_DIR}/${pkg.name}`, `#!wasi-pkg ${pkg.name}\n`);
+  for (const alias of pkg.aliases || []) {
+    const applet = pkg.multicall ? alias.replace(/^g/, '') : '';
+    await ctx.fs.writeFile(`${PKG_BIN_DIR}/${alias}`, `#!wasi-pkg ${pkg.name}${applet ? ' ' + applet : ''}\n`);
   }
 }
 

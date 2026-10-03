@@ -760,3 +760,436 @@ ls -R | head -24
 ls -R dir
 wc -c nofile1 nofile2 2>/dev/null; echo "rc=$?"
 echo hi | wc - words.txt
+
+# ════ audit batch (added 2026-10): commands that had no or thin coverage ════
+
+# ── dc ───────────────────────────────────────────────────────────────────────
+echo '2 3 + p' | dc
+echo '10 k 2 3 / p' | dc
+echo '16 o 255 p' | dc
+echo '5 d * p' | dc
+echo '3 4 + 5 * p' | dc
+echo '[hello]p' | dc
+echo '2 3 ^ p' | dc
+echo '17 5 % p' | dc
+echo '10 3 / p' | dc
+echo '9 v p' | dc
+echo '1 2 r p p' | dc
+echo '5 sa la la * p' | dc
+echo '3 [2 *] x p' | dc
+echo '[1+d5>a]sa 0 la x p' | dc
+echo '1 2 3 f' | dc
+echo '2 3 + p 4 p' | dc
+dc -e '2 3 + p'
+dc -e '2 3 + p' -e '4 p'
+echo '5 k 2 v p' | dc
+echo '_5 p' | dc
+echo '3 2 - p' | dc
+echo '20 2 / 3 * p' | dc
+echo '1 0 / p' | dc 2>&1 | head -1
+echo '5 d d * * p' | dc
+echo '10 2 ^ 3 + p c' | dc
+echo '4 sx 7 lx + p' | dc
+
+# ── dd ───────────────────────────────────────────────────────────────────────
+dd if=words.txt of=out.bin bs=4 count=2 2>/dev/null; cat out.bin
+dd if=words.txt bs=1 skip=2 count=5 2>/dev/null
+dd if=words.txt bs=2 count=3 conv=ucase 2>/dev/null
+dd if=/dev/zero bs=16 count=2 2>/dev/null | od -An -tx1
+dd if=nums.txt of=copy.txt 2>/dev/null; cmp nums.txt copy.txt; echo $?
+dd if=words.txt bs=3 skip=1 2>/dev/null | head -c 6
+dd if=words.txt of=out.bin bs=2 seek=2 count=2 2>/dev/null; od -c out.bin | head -2
+cat words.txt | dd bs=5 count=2 2>/dev/null; echo
+dd if=words.txt of=out.bin count=1 bs=100 conv=notrunc 2>/dev/null; cat out.bin | wc -c
+
+# ── env / printenv ───────────────────────────────────────────────────────────
+env -i A=1 B=2 env | sort
+env -i FOO=1 printenv FOO
+FOO=bar printenv FOO
+env FOO=bar printenv FOO
+env -u HOME printenv HOME; echo rc=$?
+printenv NOPE_NOT_SET; echo rc=$?
+env -i A=1 printenv A B; echo rc=$?
+env -i X=a Y=b printenv | sort
+X=1 env -i printenv; echo rc=$?
+
+# ── install ──────────────────────────────────────────────────────────────────
+install words.txt installed.txt; wc -l installed.txt
+install -d newdir/sub; ls newdir
+install -D words.txt deep/er/words.txt; wc -l deep/er/words.txt
+install words.txt nums.txt dir; ls dir
+install -t dir words.txt; ls dir
+
+# ── patch ────────────────────────────────────────────────────────────────────
+cp words.txt w2.txt; echo extra >> w2.txt; diff -u words.txt w2.txt > p.diff; patch words.txt < p.diff; tail -1 words.txt; rm p.diff; rm -f *.rej
+cp words.txt w2.txt; echo extra >> w2.txt; diff -u words.txt w2.txt > p.diff; patch -R w2.txt < p.diff; cmp words.txt w2.txt; echo $?; rm p.diff; rm -f *.rej
+cp words.txt w2.txt; sed -i s/apple/APPLE/ w2.txt; diff -u words.txt w2.txt > p.diff; patch --dry-run words.txt < p.diff; head -1 words.txt; rm p.diff; rm -f *.rej
+cp words.txt w2.txt; sed -i 2d w2.txt; diff -u words.txt w2.txt > p.diff; patch -p0 < p.diff; wc -l words.txt; rm p.diff; rm -f *.rej
+cp nums.txt n2.txt; echo 99 >> n2.txt; diff -c nums.txt n2.txt > p.diff; patch nums.txt < p.diff; tail -1 nums.txt; rm p.diff; rm -f *.rej
+cp words.txt w2.txt; echo extra >> w2.txt; diff -u words.txt w2.txt > p.diff; patch -o patched.txt words.txt < p.diff; tail -1 patched.txt; rm p.diff; rm -f *.rej
+
+# ── pr ───────────────────────────────────────────────────────────────────────
+pr -t words.txt | head -3
+pr -t -2 words.txt
+pr -t -n words.txt | head -3
+pr -t -l 3 words.txt | wc -l
+pr -t -w 30 -3 nums.txt
+pr -t -o 4 nums.txt | head -2
+pr -t -s, -2 nums.txt
+pr -t -a -2 nums.txt
+
+# ── tsort ────────────────────────────────────────────────────────────────────
+printf 'a b\nb c\nc d\n' | tsort
+printf 'x y\nx z\ny z\n' | tsort
+printf 'a b\nb a\n' | tsort 2>/dev/null; echo rc=$?
+printf 'a a\n' | tsort
+printf '1 2 3 4\n' | tsort
+
+# ── readlink / realpath ──────────────────────────────────────────────────────
+realpath -s dir/../words.txt | sed "s|^$PWD/||"
+realpath -m nonexist/../x | sed "s|^$PWD/||"
+realpath --relative-to=dir words.txt
+readlink -f words.txt | sed "s|^$PWD/||"
+readlink -m a/b/../c | sed "s|^$PWD/||"
+realpath dir/sub | sed "s|^$PWD/||"
+realpath -e nonexistent 2>/dev/null; echo rc=$?
+realpath words.txt nums.txt | sed "s|^$PWD/||"
+
+# ── hashes ───────────────────────────────────────────────────────────────────
+sha1sum words.txt
+sha512sum words.txt
+sha1sum < words.txt
+cat words.txt | sha512sum
+sha1sum words.txt > s.sum; sha1sum -c s.sum; echo rc=$?; rm s.sum
+sha256sum words.txt nums.txt > s.sum; sha256sum -c s.sum; echo rc=$?; rm s.sum
+md5sum words.txt > s.sum; echo x >> words.txt; md5sum -c s.sum; echo rc=$?; rm s.sum
+shasum words.txt
+shasum -a 256 words.txt
+sha256sum empty.txt
+md5sum empty.txt
+printf 'abc' | sha1sum
+printf 'abc' | sha512sum
+sha1sum words.txt nums.txt | cut -c1-8
+sha256sum --tag words.txt
+md5sum -b words.txt
+
+# ── which / mktemp / sleep / timeout ─────────────────────────────────────────
+which nonexistent_cmd_xyz; echo rc=$?
+f=$(mktemp); [ -f "$f" ] && echo made; rm "$f"
+d=$(mktemp -d); [ -d "$d" ] && echo dir; rmdir "$d"
+f=$(mktemp XXXXXX.txt); case $f in *.txt) echo ok;; esac; rm "$f"
+f=$(mktemp -u); [ ! -e "$f" ] && echo absent
+sleep 0.01; echo done
+timeout 1 echo hi; echo rc=$?
+timeout 0.1 sleep 2; echo rc=$?
+timeout -s KILL 0.1 sleep 2; echo rc=$?
+timeout --preserve-status 0.1 sleep 2; echo rc=$?
+timeout 1 false; echo rc=$?
+timeout abc echo hi 2>/dev/null; echo rc=$?
+
+# ── base32 / column / csplit / cksum / sum ───────────────────────────────────
+echo hello | base32
+echo NBSWY3DPEBLW64TMMQQQ==== | base32 -d
+base32 -w 8 words.txt | head -2
+printf 'a' | base32
+printf 'abc' | base32 | base32 -d
+printf 'a b c\nddd e f\n' | column -t
+column -s, -t data.csv | head -3
+printf 'x\ny\n' | column -t
+csplit words.txt 3 >/dev/null; cat xx00; echo --; cat xx01
+csplit -f part -n 1 words.txt '/cherry/' >/dev/null; ls part*
+csplit -s words.txt 2 4; wc -l xx0*
+csplit -k words.txt '/apple/' '{*}' >/dev/null 2>&1; ls xx* | wc -l
+cksum words.txt
+cksum < words.txt
+printf abc | cksum
+cksum words.txt nums.txt
+sum words.txt
+sum -s words.txt
+printf abc | sum
+
+# ── expand / unexpand / fold / factor ────────────────────────────────────────
+printf 'a\tb\tc\n' | expand
+printf 'a\tb\n' | expand -t 4
+printf 'a\tb\n' | expand -i
+printf 'a       b\n' | unexpand -a
+printf 'a   b\n' | unexpand --first-only
+printf '        x\n' | unexpand
+echo abcdefghijklmnop | fold -w 5
+fold -s -w 10 text.txt | head -4
+printf 'a b c d e f\n' | fold -sw 5
+printf 'abcdef\n' | fold -b -w 4
+factor 12
+factor 97 100
+echo 360 | factor
+factor 1
+factor 600851475143
+factor 0
+factor 9999999967
+factor 2 3 4 5 6 7 8 9 10
+factor -h 2>/dev/null | head -1; echo rc=$?
+
+# ── hexdump / strings / od ───────────────────────────────────────────────────
+hexdump -C words.txt | head -2
+printf 'abc' | hexdump
+hexdump -n 4 -C words.txt
+printf '\001\002' | hexdump -v -e '/1 "%02x "'; echo
+printf 'abc' | hexdump -C
+hexdump -s 2 -n 4 -C words.txt
+strings -n 3 enc/blob.bin | head -3
+printf 'ab\000hello\001world\000' | strings
+strings -n 6 words.txt | head -2
+printf 'abcd\000efghij\000' | strings -n 5
+od -An -c words.txt | head -2
+od -An -tx1 -N 8 words.txt
+od -An -td1 -N 4 nums.txt
+od -c enc/utf8.txt | head -2
+printf 'abc' | od -An -to1
+
+# ── split / tac / yes ────────────────────────────────────────────────────────
+split -l 2 words.txt p_; cat p_aa; ls p_*
+split -b 8 words.txt q_; ls q_* | head -3
+split -d -l 3 nums.txt n_; ls n_*
+split -l 2 -a 3 words.txt s_; ls s_* | head -2
+split -n 2 words.txt r_; ls r_*
+split -l 100 words.txt t_; ls t_*
+split --additional-suffix=.txt -l 3 words.txt u_; ls u_*
+tac words.txt
+tac -s, data.csv
+printf 'a\nb' | tac | od -c
+tac empty.txt
+tac nums.txt words.txt | head -3
+printf 'a--b--c' | tac -s '--'; echo
+yes | head -3
+yes abc | head -2
+yes a b | head -1
+
+# ── tar ──────────────────────────────────────────────────────────────────────
+tar cf a.tar words.txt nums.txt; tar tf a.tar; rm a.tar
+tar cf - words.txt | tar xOf - words.txt | head -2
+tar czf a.tgz src; tar tzf a.tgz | sort; rm a.tgz
+tar cf a.tar words.txt; mkdir x; tar xf a.tar -C x; ls x; rm a.tar
+tar --exclude='*.py' -cf a.tar src; tar tf a.tar | sort; rm a.tar
+tar cvf a.tar words.txt nums.txt; rm a.tar
+tar cf a.tar words.txt; tar rf a.tar nums.txt; tar tf a.tar; rm a.tar
+tar cf a.tar src; tar tvf a.tar | awk '{print $NF}' | sort; rm a.tar
+tar cf a.tar words.txt; tar xOf a.tar | head -1; rm a.tar
+tar cf a.tar dir; tar tf a.tar | sort; rm a.tar
+tar cf a.tar words.txt; rm words.txt; tar xf a.tar; wc -l words.txt; rm a.tar
+tar xf nonexistent.tar 2>/dev/null; echo rc=$?
+tar cf a.tar words.txt; tar --strip-components=0 -tf a.tar; rm a.tar
+
+# ── stat / du / ln / pwd / dirname / chmod / rmdir ───────────────────────────
+stat -c %s words.txt
+stat -c '%n %s' words.txt nums.txt
+stat -c %F dir
+stat -c %F words.txt
+stat --format=%s empty.txt
+du -b words.txt
+du -ab src/app.js
+ln words.txt hard.txt; wc -l hard.txt
+ln -s words.txt sym.txt; head -1 sym.txt
+ln -f words.txt nums2.txt; head -1 nums2.txt
+cd dir; pwd | sed "s|^$OLDPWD|.|"
+pwd -P | sed "s|^$PWD|.|"
+dirname a/b/c
+dirname /a
+dirname a
+dirname a/b/
+dirname a b/c
+dirname /
+dirname ""
+dirname -z a/b | od -c | head -1
+mkdir -p a/b; rmdir a/b a; ls
+mkdir x; touch x/f; rmdir x 2>/dev/null; echo rc=$?
+mkdir -p a/b/c; rmdir -p a/b/c; ls
+rmdir nonexistent 2>/dev/null; echo rc=$?
+mkdir x; rmdir -v x
+
+# ── shuf / iconv ─────────────────────────────────────────────────────────────
+shuf -n 0 words.txt
+shuf -e a | head
+shuf -i 1-1
+shuf words.txt | sort | head -2
+shuf -n 3 words.txt | wc -l
+shuf -e x y z | sort
+shuf -i 5-8 | sort -n
+shuf -r -n 3 -e q | head
+iconv -f latin1 -t utf8 enc/latin1.txt
+iconv -f utf8 -t latin1 enc/utf8.txt | od -An -tx1 | head -2
+iconv -f utf8 -t utf16le enc/utf8.txt | od -An -tx1 | head -2
+iconv -f utf8 -t utf8 enc/utf8.txt | cmp - enc/utf8.txt; echo $?
+iconv -f utf8 -t ascii enc/utf8.txt 2>/dev/null; echo rc=$?
+iconv -l | head -0; echo rc=$?
+
+# ── compression round trips (compressed bytes differ by implementation, so decode them) ──
+xz -c words.txt | xz -dc | md5sum
+zstd -c words.txt | zstd -dc | md5sum
+xz -k words.txt; xz -dc words.txt.xz | head -2; rm words.txt.xz
+zstd -k words.txt; zstd -dc words.txt.zst | head -2; rm words.txt.zst
+echo hi | xz -c | xz -dc
+echo hi | zstd -c | zstd -dc
+xz -k words.txt; rm words.txt; xz -d words.txt.xz; wc -l words.txt
+zstd -k words.txt; rm words.txt; zstd -d words.txt.zst; wc -l words.txt; rm words.txt.zst
+gzip -c words.txt | gzip -dc | md5sum
+xz -c data.json | xz -dc | cmp - data.json; echo $?
+xz -t nonexistent.xz 2>/dev/null; echo rc=$?
+echo notxz | xz -dc 2>/dev/null; echo rc=$?
+echo notzst | zstd -dc 2>/dev/null; echo rc=$?
+seq 1 5000 | xz -c | xz -dc | tail -1
+seq 1 5000 | zstd -c | zstd -dc | tail -1
+xz -c enc/blob.bin | xz -dc | cmp - enc/blob.bin; echo $?
+zstd -c enc/blob.bin | zstd -dc | cmp - enc/blob.bin; echo $?
+
+# ── tar, more ────────────────────────────────────────────────────────────────
+tar cf a.tar enc/blob.bin; mkdir x; tar xf a.tar -C x; cmp x/enc/blob.bin enc/blob.bin; echo $?; rm a.tar
+tar czf a.tgz enc; mkdir x; tar xzf a.tgz -C x; cmp x/enc/blob.bin enc/blob.bin; echo $?; rm a.tgz
+tar cJf a.txz words.txt; mkdir x; tar xf a.txz -C x; cmp x/words.txt words.txt; echo $?; rm a.txz
+tar --zstd -cf a.tzst words.txt; mkdir x; tar xf a.tzst -C x; cmp x/words.txt words.txt; echo $?; rm a.tzst
+tar caf a.tar.gz words.txt; tar tf a.tar.gz; rm a.tar.gz
+tar cf a.tar words.txt nums.txt dir; tar tf a.tar words.txt; rm a.tar
+tar cf a.tar words.txt nums.txt dir; tar tf a.tar dir | sort; rm a.tar
+tar cf a.tar words.txt nums.txt; mkdir x; tar xf a.tar -C x nums.txt; ls x; rm a.tar
+tar cf a.tar src; mkdir x; tar xf a.tar --strip-components=1 -C x; ls x; rm a.tar
+tar cf a.tar src; tar xOf a.tar src/app.js | head -2; rm a.tar
+tar cf a.tar words.txt; tar tf a.tar nonexistent 2>/dev/null; echo rc=$?; rm a.tar
+tar cf a.tar nonexistent words.txt 2>/dev/null; echo rc=$?; tar tf a.tar; rm -f a.tar
+tar cf a.tar -C dir sub; tar tf a.tar | sort; rm a.tar
+tar cf a.tar -C src .; tar tf a.tar | sort; rm a.tar
+tar cf - words.txt nums.txt | tar tf -
+tar czf - words.txt | tar xzOf - | head -1
+tar cf a.tar words.txt; echo garbage > bad.tar; tar tf bad.tar 2>/dev/null; echo rc=$?; rm a.tar
+tar cf a.tar words.txt --exclude=words.txt nums.txt; tar tf a.tar; rm a.tar
+tar cf a.tar --exclude='src/lib' src; tar tf a.tar | sort; rm a.tar
+tar cf a.tar --exclude='*.js' src; tar tf a.tar | sort; rm a.tar
+tar cf a.tar words.txt; tar -rf a.tar nums.txt dir/a.md; tar -tf a.tar; rm a.tar
+tar -cf a.tar words.txt; tar --list --file=a.tar; rm a.tar
+tar --create --file=a.tar words.txt; tar --extract --to-stdout --file=a.tar | head -1; rm a.tar
+tar cf a.tar words.txt; mkdir x; echo mine > x/words.txt; tar xkf a.tar -C x 2>/dev/null; cat x/words.txt; rm a.tar
+mkdir -p long/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccc; echo hi > long/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccc/file.txt; tar cf a.tar long; tar tf a.tar | awk '{print length($0)}' | sort -n | tail -1; rm a.tar
+tar cf a.tar my\ file.txt; tar tf a.tar; rm a.tar
+tar cf a.tar enc/päivä.txt; tar tf a.tar; rm a.tar
+tar tf nonexistent.tar 2>/dev/null; echo rc=$?
+tar 2>/dev/null; echo rc=$?
+tar cf a.tar words.txt; tar xf a.tar -C nonexistent_dir 2>/dev/null; echo rc=$?; rm a.tar
+
+# ── od, hexdump (formats) ────────────────────────────────────────────────────
+printf '\000\000\200\077\000\000\000\300\333\017\111\100' | od -An -f
+printf '\030\055\104\124\373\041\011\100' | od -An -tfD
+printf 'hello world 123' | od -An -tdS -tu2 -to4
+printf 'AB' | od -a -c -o -x -d -b
+printf '\001\002\003\004\005\006\007\010' | od -An -tx4 -w4 --endian=big
+printf 'ab' | od -An -tx1 -tu1 -v
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' | od -An -c
+printf '\377\376' | od -An -td2 -tu2 -to2 -tx2
+printf '12345678' | od -tu8 -td8 -tx8 -to8
+printf 'x' | od -w -An -tx1
+printf '0123456789abcdefghij' | od -j 4 -N 10 -c
+printf '0123456789abcdefghij' | od -Ad -tx1
+printf '0123456789' | od -Ax -tx1 -w4
+printf 'abc' | od -tx1
+od -x words.txt | head -2
+od -b -N 6 words.txt
+od -An -tx1 -N 3 -j 2 words.txt
+printf 'abcdefghij\001\002\003\004' | hexdump -e '8/1 "%02x " "\n"'
+printf 'abcdefghij\001\002\003\004' | hexdump -e '2/2 "%04x " "\n"'
+printf 'abc' | hexdump -e '"%_ad: " 3/1 "%c" "\n"'
+printf 'abcdefghij\001\002' | hexdump -e '"%08.8_ax  " 8/1 "%02x " "\n"'
+printf '\001\002\003' | hexdump -e '/1 "%02x "'; echo
+printf 'abcd' | hexdump -e '1/4 "%d\n"'
+printf 'abcdefgh' | hexdump -n 3 -C
+
+# ── tac / shuf / env (more) ──────────────────────────────────────────────────
+printf 'a,b,c' | tac -s,; echo
+printf 'a\nb\n' | tac -b | od -c
+printf '1x2x3x' | tac -r -s 'x' | od -c
+shuf -z -n 1 -e only | od -c
+shuf -n 2 -i 1-1
+env -i A=1 sh -c 'echo $A'
+env A=1 B=2 printenv A B
+env -u NOPE printenv HOME | head -c 0
+env -i; echo rc=$?
+env NOPE_CMD_XYZ 2>/dev/null; echo rc=$?
+
+# ── csplit, split, du (more) ─────────────────────────────────────────────────
+csplit -s words.txt '/cherry/' '/date/'; wc -l xx0*
+csplit -s words.txt 2 '{2}'; wc -l xx0*
+csplit -s words.txt '/b/+1'; cat xx00
+csplit -s words.txt '%cherry%'; cat xx00
+csplit -s --suppress-matched words.txt '/cherry/'; cat xx01
+csplit -z -s words.txt '/apple/' '{*}'; ls xx*
+csplit -b '%03d.txt' -s words.txt 3; ls xx*
+csplit words.txt 99 2>/dev/null; ls xx* 2>/dev/null | wc -l
+du -s empty.txt
+du -h words.txt
+du -a src | sort -k2
+du -d 1 src | sort -k2
+du -c words.txt nums.txt | tail -1
+du --apparent-size -b nums.txt
+du -b nonexistent 2>&1 | head -1
+
+# ── stat (formats) ───────────────────────────────────────────────────────────
+stat -c '%n %s %F' words.txt dir
+stat -c '%10s|%-10s|' words.txt words.txt
+stat -c %% words.txt
+stat --printf='%s\n%n\n' words.txt
+stat -c '%b %B' words.txt
+stat nonexistent 2>/dev/null; echo rc=$?
+stat -c '%F' empty.txt
+
+# ── tsort, mktemp, realpath (more) ───────────────────────────────────────────
+printf 'a b c d e f\n' | tsort
+printf 'b a\nc a\nd b\n' | tsort
+printf 'a b\nb c\nc a\nc d\n' | tsort 2>/dev/null
+printf 'a b\nb c\nc a\n' | tsort 2>&1 >/dev/null | head -1
+printf 'x\n' | tsort 2>&1; echo rc=$?
+f=$(mktemp -t foo.XXXXXX); case $f in */foo.*) echo tmp;; esac; rm "$f"
+d=$(mktemp -d foo.XXXXXX); [ -d "$d" ] && echo dir; rmdir "$d"
+mktemp -u XXXXXXXX | wc -c
+mktemp bad 2>/dev/null; echo rc=$?
+f=$(mktemp --suffix=.txt XXXXXX); case $f in *.txt) echo ok;; esac; rm "$f"
+f=$(mktemp -p dir XXXXXX); case $f in dir/*) echo indir;; esac; rm "$f"
+realpath -e words.txt nonexistent 2>/dev/null | sed "s|^$PWD/||"; echo rc=$?
+realpath -q nonexistent | sed "s|^$PWD/||"; echo rc=$?
+realpath dir/sub/../../words.txt | sed "s|^$PWD/||"
+realpath / 
+realpath -m /a/b/../c//d/./e
+readlink -f src/../words.txt | sed "s|^$PWD/||"
+readlink words.txt; echo rc=$?
+
+# ── misc commands ────────────────────────────────────────────────────────────
+printf 'a\nb\n' | egrep 'a|b' | wc -l
+printf 'a.b\naxb\n' | fgrep 'a.b'
+gzip -c words.txt | zcat | head -2
+truncate -s 5 words.txt; cat words.txt; echo; wc -c words.txt
+truncate -s +10 nums.txt; wc -c nums.txt
+truncate -s 0 words.txt; wc -c words.txt
+truncate -c -s 5 nonexistent; ls nonexistent 2>/dev/null; echo rc=$?
+truncate -s 3 newfile; wc -c newfile
+sha384sum words.txt
+echo; uuidgen | grep -cE '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+sync; echo rc=$?
+nproc | grep -cE '^[0-9]+$'
+getconf PAGE_SIZE
+zip -q a.zip words.txt nums.txt; unzip -l a.zip | tail -1 | awk '{print $2}'; rm a.zip
+zip -q a.zip words.txt; mkdir x; unzip -q a.zip -d x; cmp x/words.txt words.txt; echo $?; rm a.zip
+zip -qr a.zip src; unzip -Z1 a.zip | sort; rm a.zip
+zip -q a.zip enc/blob.bin; mkdir x; unzip -q a.zip -d x; cmp x/enc/blob.bin enc/blob.bin; echo $?; rm a.zip
+
+# ── bzip2 / tar -j ──
+bzip2 -k words.txt; bzip2 -dc words.txt.bz2 | head -2; rm words.txt.bz2
+bzip2 -c words.txt | bzip2 -dc | md5sum
+bzip2 -k words.txt; rm words.txt; bzip2 -d words.txt.bz2; wc -l words.txt
+echo hi | bzip2 -c | bzip2 -dc
+bzip2 -c enc/blob.bin | bzip2 -dc | cmp - enc/blob.bin; echo $?
+bzip2 -c enc/blob.bin | bzcat | cmp - enc/blob.bin; echo $?
+echo notbz | bzip2 -dc 2>/dev/null; echo rc=$?
+bzip2 -t nonexistent.bz2 2>/dev/null; echo rc=$?
+seq 1 20000 | bzip2 -1 -c | bzip2 -dc | tail -1
+seq 1 100000 | bzip2 -1 -c | bzip2 -dc | md5sum
+tar cjf a.tar.bz2 words.txt nums.txt; tar tjf a.tar.bz2; rm a.tar.bz2
+tar cjf a.tbz2 src; mkdir x; tar xf a.tbz2 -C x; ls x/src; rm a.tbz2
+tar caf a.tar.bz2 words.txt; tar tf a.tar.bz2; rm a.tar.bz2
+bzip2 -c nums.txt | bzip2 -tv; echo rc=$?
+bzip2 -k words.txt; bzip2 -k words.txt 2>/dev/null; echo rc=$?; rm -f words.txt.bz2
+bzip2 -kf words.txt; bzip2 -kf words.txt; echo rc=$?; rm words.txt.bz2

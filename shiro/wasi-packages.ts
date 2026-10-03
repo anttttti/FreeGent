@@ -7,6 +7,8 @@
  * Uses the same IndexedDB caching pattern as build.ts (esbuild-wasm).
  */
 
+import { compileWasm } from './wasm-module';
+
 // ── Package manifest types ───────────────────────────────────────────
 
 export interface WasmPackage {
@@ -26,6 +28,9 @@ export interface WasmPackage {
   aliases?: string[];
   /** Format of the download: 'wasm' (raw binary) or 'webc' (wasmer container) */
   format?: 'wasm' | 'webc';
+  /** Multi-call binary (uutils coreutils): the first argument selects the applet. Aliases are
+   *  `g<applet>` names, and their PATH stubs pre-select that applet. */
+  multicall?: boolean;
 }
 
 // ── Package manifest ─────────────────────────────────────────────────
@@ -80,6 +85,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     category: 'coreutil',
     aliases: ['gls', 'gcat', 'ghead', 'gtail', 'gwc', 'gsort', 'guniq', 'gbase64', 'ghashsum'],
     format: 'webc',
+    multicall: true,
   },
   {
     name: 'grep',
@@ -375,24 +381,42 @@ export function extractWasmFromWebc(webc: ArrayBuffer): ArrayBuffer | null {
   return candidates.reduce((a, b) => a.byteLength > b.byteLength ? a : b);
 }
 
+/** Canonical position of each non-custom section id; sections must appear in increasing order. */
+// type, import, function, table, memory, tag, global, export, start, element, datacount, code, data
+const SECTION_ORDER: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 13: 6, 6: 7, 7: 8, 8: 9, 9: 10, 12: 11, 10: 12, 11: 13 };
+
 /**
  * Walk WASM sections from `offset` to find where the module ends.
  * Each section: 1-byte id + LEB128 size + `size` bytes of payload.
+ *
+ * Bytes after the module (in a WebC: the rest of the atoms volume) can still look like
+ * well-formed sections, so the walk enforces section order and then picks the last section
+ * boundary at which the slice is a valid module.
  */
 function findWasmModuleEnd(bytes: Uint8Array, offset: number): number {
+  const boundaries: number[] = [];
   let pos = offset + 8; // skip magic + version
+  let lastOrder = 0;
   while (pos < bytes.length) {
-    if (pos >= bytes.length) break;
-    const sectionId = bytes[pos++];
-    if (sectionId > 12) break; // invalid section ID — we've passed the end
-    // Read LEB128 size
-    const { value: sectionSize, bytesRead } = readLEB128(bytes, pos);
+    const sectionId = bytes[pos];
+    if (sectionId !== 0) {
+      const order = SECTION_ORDER[sectionId];
+      if (order === undefined || order <= lastOrder) break;
+      lastOrder = order;
+    }
+    const { value: sectionSize, bytesRead } = readLEB128(bytes, pos + 1);
     if (bytesRead === 0 || sectionSize < 0) break;
-    pos += bytesRead;
-    pos += sectionSize;
-    if (pos > bytes.length) break; // section extends beyond buffer
+    const end = pos + 1 + bytesRead + sectionSize;
+    if (end > bytes.length) break;
+    pos = end;
+    boundaries.push(pos);
   }
-  return pos;
+  if (boundaries.length === 0) return offset + 8;
+  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.validate !== 'function') return boundaries[boundaries.length - 1];
+  for (let i = boundaries.length - 1, tries = 0; i >= 0 && tries < 12; i--, tries++) {
+    if (WebAssembly.validate(bytes.subarray(offset, boundaries[i]) as unknown as BufferSource)) return boundaries[i];
+  }
+  return boundaries[boundaries.length - 1];
 }
 
 function readLEB128(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
@@ -545,7 +569,7 @@ export async function getCompiledModule(
   if (cached) return cached;
 
   const binary = await getPackage(name, onProgress);
-  const mod = await WebAssembly.compile(binary);
+  const mod = await compileWasm(binary);
   moduleCache.set(name, mod);
   return mod;
 }

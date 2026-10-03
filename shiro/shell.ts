@@ -470,7 +470,7 @@ export class Shell {
         writeStdout = baseWriteStdout;
         if (builtinPiped !== null) { lastOutput = builtinPiped.replace(/\r\n/g, '\n'); builtinPiped = null; }
         // Check for SIGINT (abort)
-        if (this.abortController?.signal.aborted) {
+        if (this.isAborted()) {
           exitCode = 130; // 128 + SIGINT(2)
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
@@ -2441,7 +2441,7 @@ export class Shell {
                 const wasmModule = await getCompiledModule(wasmPkg.name, (msg) => {
                   stderrWriter(`  ${msg}\r\n`);
                 });
-                const { WasiRT, WasiExit } = await loadWasiRuntime();
+                const { WasiExit } = await loadWasiRuntime();
                 const config = {
                   fs: this.fs,
                   cwd: this.cwd,
@@ -2452,9 +2452,7 @@ export class Shell {
                   onStderr: (text: string) => { ctx.stderr += text; },
                   preopens: { '/': '/', '.': this.cwd },
                 };
-                const wasi = new WasiRT(config);
-                await wasi.preloadTree(this.cwd, 3, 100);
-                exitCode = await wasi.run(wasmModule);
+                exitCode = await this.execWasmModule(wasmModule, config);
                 // Write PATH stubs so future runs skip auto-install
                 await this.writeWasiPkgStubs(wasmPkg.name, wasmPkg.aliases);
               } catch (e: any) {
@@ -2510,9 +2508,15 @@ export class Shell {
         // Handle stdout redirects
         let output = ctx.stdout;
 
-        // If 2>&1, merge stderr into stdout BEFORE processing stdout redirects
+        // 2>&1 merges stderr into stdout. Order matters, as in bash: `cmd >file 2>&1` sends both to
+        // the file, but `cmd 2>&1 >file` sends stderr to where stdout pointed *before* the file
+        // redirect (the pipe or terminal) and only stdout to the file.
+        let stderrAsOriginalStdout = '';
         if (redirectStderrToStdout && stderrOutput) {
-          output += stderrOutput;
+          const at2 = redirects.findIndex(r => r.type === '2>&1');
+          const atOut = redirects.findIndex(r => (r.type === '>' || r.type === '>>') && r.target !== '/dev/stdout');
+          if (atOut >= 0 && at2 < atOut) stderrAsOriginalStdout = stderrOutput;
+          else output += stderrOutput;
           stderrOutput = '';
         }
 
@@ -2548,6 +2552,8 @@ export class Shell {
             output = '';
           }
         }
+
+        if (stderrAsOriginalStdout) output = stderrAsOriginalStdout + output;
 
         if (i === pipeline.length - 1 && output) {
           writeStdout(output.replace(/\n/g, '\r\n'));
@@ -4357,7 +4363,13 @@ export class Shell {
   private expandArithmetic(input: string): string {
     let result = '';
     let i = 0;
+    let inSingle = false, inDouble = false;   // as in bash: literal inside '…', expanded inside "…"
     while (i < input.length) {
+      const c = input[i];
+      if (c === "'" && !inDouble) { inSingle = !inSingle; result += c; i++; continue; }
+      if (c === '"' && !inSingle) { inDouble = !inDouble; result += c; i++; continue; }
+      if (inSingle) { result += c; i++; continue; }
+      if (c === '\\' && i + 1 < input.length) { result += c + input[i + 1]; i += 2; continue; }
       if (input[i] === '$' && input[i + 1] === '(' && input[i + 2] === '(') {
         let depth = 2;
         let j = i + 3;
@@ -5568,25 +5580,23 @@ export class Shell {
 
     // Check for #!wasi-pkg stub — load from package cache
     if (content.startsWith('#!wasi-pkg ')) {
-      const pkgName = content.split('\n')[0].substring('#!wasi-pkg '.length).trim();
+      const [pkgName, ...stubArgs] = content.split('\n')[0].substring('#!wasi-pkg '.length).trim().split(/\s+/);
       try {
-        const { WasiRT } = await loadWasiRuntime();
         const wasmModule = await getCompiledModule(pkgName, (msg) => {
           writeStderr(`  ${msg}\r\n`);
         });
         const config = {
           fs: this.fs,
           cwd: this.cwd,
-          args: [pkgName, ...args],
+          args: [pkgName, ...stubArgs, ...args],
           env: { ...this.env },
           stdin: ctx.stdin || '',
           onStdout: (text: string) => { ctx.stdout += text; },
           onStderr: (text: string) => { ctx.stderr += text; },
+          trace: (globalThis as any).__fgWasiTrace,   // debugging hook: set to (line) => void
           preopens: { '/': '/', '.': this.cwd },
         };
-        const wasi = new WasiRT(config);
-        await wasi.preloadTree(this.cwd, 3, 100);
-        return await wasi.run(wasmModule);
+        return await this.execWasmModule(wasmModule, config);
       } catch (e: any) {
         const { WasiExit } = await loadWasiRuntime();
         if (e instanceof WasiExit) return e.code;
@@ -5609,7 +5619,8 @@ export class Shell {
         const argv0 = appletName || pkgName;
         return executeElfFromBytes(elfData, argv0, args, {
           fs: this.fs, cwd: this.cwd, args, env: this.env,
-          stdin: ctx.stdin || '', writeStdout: writeStdout, writeStderr: writeStderr,
+          // into ctx like every other command, so that pipes and redirects see the output
+          stdin: ctx.stdin || '', writeStdout: t => { ctx.stdout += t; }, writeStderr: t => { ctx.stderr += t; },
         });
       } catch (e: any) {
         writeStderr(`shiro: ${pkgName}: ${e.message}\r\n`);
@@ -5623,7 +5634,7 @@ export class Shell {
       const { executeElf } = await import('./x86/runtime');
       return executeElf(resolvedPath, args, {
         fs: this.fs, cwd: this.cwd, args, env: this.env,
-        stdin: '', writeStdout: writeStdout, writeStderr: writeStderr,
+        stdin: ctx.stdin || '', writeStdout: t => { ctx.stdout += t; }, writeStderr: t => { ctx.stderr += t; },
       });
     }
 
@@ -5707,6 +5718,72 @@ export class Shell {
   }
 
   /**
+   * Abort scopes: `timeout` runs its command inside one and aborts it when the time is up, which
+   * stops the command's remaining statements and wakes a pending `sleep`, without touching the
+   * enclosing script (the top-level abortController is Ctrl+C for the whole line).
+   */
+  private abortScopes: AbortController[] = [];
+  pushAbortScope(): AbortController { const c = new AbortController(); this.abortScopes.push(c); return c; }
+  popAbortScope(c: AbortController): void { const i = this.abortScopes.indexOf(c); if (i >= 0) this.abortScopes.splice(i, 1); }
+  /** True when Ctrl+C was pressed or an enclosing `timeout` expired. */
+  isAborted(): boolean {
+    return !!this.abortController?.signal.aborted || this.abortScopes.some(c => c.signal.aborted);
+  }
+  /** One signal that fires on either of those, for commands that wait (sleep, watch). */
+  abortSignal(): AbortSignal | undefined {
+    const sigs = [this.abortController?.signal, ...this.abortScopes.map(c => c.signal)].filter((x): x is AbortSignal => !!x);
+    if (sigs.length === 0) return undefined;
+    if (sigs.length === 1) return sigs[0];
+    const any = (AbortSignal as any).any as ((s: AbortSignal[]) => AbortSignal) | undefined;
+    if (any) return any(sigs);
+    const merged = new AbortController();
+    for (const sg of sigs) sg.addEventListener('abort', () => merged.abort(), { once: true });
+    return merged.signal;
+  }
+
+  /**
+   * Absolute deadlines (Date.now() values) of the enclosing `timeout` commands. A program started
+   * under one is killed when the earliest passes (see wasi-host.ts).
+   */
+  private deadlines: number[] = [];
+  pushDeadline(at: number): void { this.deadlines.push(at); }
+  popDeadline(): void { this.deadlines.pop(); }
+  /** Milliseconds until the earliest enclosing deadline, or undefined when there is none. */
+  remainingDeadlineMs(): number | undefined {
+    if (this.deadlines.length === 0) return undefined;
+    return Math.max(1, Math.min(...this.deadlines) - Date.now());
+  }
+
+  /** Run a compiled WASM module (in a Worker with a deadline when one is available). */
+  private async execWasmModule(wasmModule: WebAssembly.Module, config: import('./wasi-runtime').WasiConfig): Promise<number> {
+    const { execWasi } = await import('./wasi-host');
+    // the program may fork and exec: it can run any command of this shell (see execForWasm)
+    const withProcs = { ...config, exec: (req: import('./wasi-runtime').ExecRequest) => this.execForWasm(req), commands: this.commands.list().map(c => c.name) };
+    return execWasi(withProcs, wasmModule, { deadlineMs: this.remainingDeadlineMs() });
+  }
+
+  /** exec() from a WASM program: run argv as a command of this shell, under the program's environment. */
+  private async execForWasm(req: import('./wasi-runtime').ExecRequest): Promise<import('./wasi-runtime').ExecResult> {
+    const { runSubcommand } = await import('./commands/run-subcommand');
+    const savedEnv = { ...this.env };
+    const savedCwd = this.cwd;
+    for (const k of Object.keys(this.env)) delete this.env[k];
+    Object.assign(this.env, req.env);
+    this.cwd = req.cwd;
+    let out = '', err = '';
+    let code: number;
+    try {
+      const ctx: CommandContext = { args: [], fs: this.fs, cwd: req.cwd, env: this.env, stdin: req.stdin, stdout: '', stderr: '', shell: this };
+      code = await runSubcommand(ctx, req.argv, s => { out += s; }, s => { err += s; });
+    } finally {
+      for (const k of Object.keys(this.env)) delete this.env[k];
+      Object.assign(this.env, savedEnv);
+      this.cwd = savedCwd;
+    }
+    return { stdout: out, stderr: err, code };
+  }
+
+  /**
    * Execute a WASM+WASI binary through the WasiRT.
    */
   private async executeWasmBinary(
@@ -5717,10 +5794,10 @@ export class Shell {
     writeStderr: (s: string) => void,
   ): Promise<number> {
     try {
-      const { WasiRT } = await loadWasiRuntime();
       const data = await this.fs.readFile(filePath) as Uint8Array;
       const wasmBytes = new Uint8Array(data).buffer;
-      const wasmModule = await WebAssembly.compile(wasmBytes);
+      const { compileWasm } = await import('./wasm-module');
+      const wasmModule = await compileWasm(wasmBytes);
 
       const programName = filePath.split('/').pop() || filePath;
       const config = {
@@ -5734,9 +5811,7 @@ export class Shell {
         preopens: { '/': '/', '.': this.cwd },
       };
 
-      const wasi = new WasiRT(config);
-      await wasi.preloadTree(this.cwd, 3, 100);
-      return await wasi.run(wasmModule);
+      return await this.execWasmModule(wasmModule, config);
     } catch (e: any) {
       const { WasiExit } = await loadWasiRuntime();
       if (e instanceof WasiExit) {

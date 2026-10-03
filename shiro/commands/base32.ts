@@ -4,14 +4,14 @@
 
 import type { Command } from './index';
 import { parseArgs, readInput } from './flags';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const PAD = '=';
 
 function base32Encode(input: string): string {
   if (!input) return '';
-  const bytes = new Uint8Array(input.length);
-  for (let i = 0; i < input.length; i++) bytes[i] = input.charCodeAt(i);
+  const bytes = textToBytes(input);
 
   let result = '';
   let bits = 0;
@@ -50,7 +50,7 @@ function base32Decode(input: string): string {
       bytes.push((value >>> bits) & 0xff);
     }
   }
-  return String.fromCharCode(...bytes);
+  return bytesToText(Uint8Array.from(bytes));
 }
 
 export const base32Cmd: Command = {
@@ -85,7 +85,8 @@ export const base32Cmd: Command = {
         }
       }
 
-      ctx.stdout += result + (result ? '\n' : '');
+      // decoded data is written exactly; encoded text ends with a newline
+      ctx.stdout += decode ? result : result + (result ? '\n' : '');
       return 0;
     } catch (e: unknown) {
       ctx.stderr += `base32: ${e instanceof Error ? e.message : e}\n`;

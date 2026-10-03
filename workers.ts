@@ -10,7 +10,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
-import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec } from './model-router.js';
+import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
 import { parseArgs, isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
@@ -771,7 +771,7 @@ function _userRequestMsgs(messages: any[], roleName: string | null = null): { ro
         `Background only: the overall request the lead agent is working on. Your job is ONLY the subtask in the next message — do not take on the whole request. ${scope}` }];
 }
 
-async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
+async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null, rotateEndpoints = false, explicitModel = false): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
     const wSpec = resolveWorkerModelSpec(workerModelSpec, role);
     let endpoint = wSpec ? specToEndpoint(wSpec) : null;
     taskHandle.setModel(modelFriendlyName(wSpec || `${getProvider()}|${getActiveModel()}`));
@@ -822,6 +822,10 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     if (context) context.parentRequest = () => _ownRequest;
 
     const maxSteps = _WORKER_MAX_STEPS;
+    // Match the main loop: keep a per-worker rotation counter and advance through the
+    // active model list after the configured number of steps. The initial endpoint may
+    // have been reserved for this parallel worker by executeWorkers().
+    const _workerRotState = { step: 0 };
     let wResultHashes: string[] = [];
     const _wSeen = { rf: localSeenRF, lf: localSeenLF };
     const _workerRepeatCache = new Map();
@@ -841,6 +845,15 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 
     for (let step = 0; step < maxSteps; step++) {
         if (softStopPending) { _wSessionClose({ kind: 'soft-stop' }); return { output: '*(break)*', toolCalls: _wToolCalls }; }
+
+        if (rotateEndpoints && !explicitModel && endpoint) {
+            const currentKey = `${endpoint.provider ?? getProvider()}|${endpoint.model}`;
+            const nextSpec = _nextRotationSpec(currentKey, _workerRotState);
+            if (nextSpec) {
+                endpoint = specToEndpoint(nextSpec);
+                taskHandle.setModel(modelFriendlyName(nextSpec));
+            }
+        }
 
             let message: any;
             let workerMaxTokens: number | null = null;
@@ -864,6 +877,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     _capWorkerRetryWait(_makeOAIRetryHandler({
                         getEp: () => endpoint ?? oaiEndpoint(),
                         setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
+                        forWorker: explicitModel,
                         onNote: msg => { console.error(`[worker:${_wRole}:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
                         onContextOverflow: max => { workerMaxTokens = max; taskHandle.append(`\n[context overflow: reducing max_tokens to ${max}]\n`, 'thinking'); },
                         onContextTruncate: () => {
@@ -1019,10 +1033,28 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     let _report = '';
     try {
         const _capOH = [...localOH, { role: 'user', content: `<nudge>You have reached the ${maxSteps}-step limit and cannot call more tools. Report now, in plain text: what you found (with file paths and line numbers), what you changed, and what is left to do. Do not call tools.</nudge>` }];
-        const _m = await callOAI(() => {}, () => {}, {
-            localHistory: _capOH, forWorker: true, endpointOverride: endpoint, roleOverride: localRole,
-            toolFilterOverride: localToolFilter, forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null,
-        });
+        if (rotateEndpoints && !explicitModel && endpoint) {
+            const currentKey = `${endpoint.provider ?? getProvider()}|${endpoint.model}`;
+            const nextSpec = _nextRotationSpec(currentKey, _workerRotState);
+            if (nextSpec) {
+                endpoint = specToEndpoint(nextSpec);
+                taskHandle.setModel(modelFriendlyName(nextSpec));
+            }
+        }
+        const _m = await withRetry(
+            () => callOAI(() => {}, () => {}, {
+                localHistory: _capOH, forWorker: true, endpointOverride: endpoint, roleOverride: localRole,
+                toolFilterOverride: localToolFilter, forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null,
+            }),
+            _capWorkerRetryWait(_makeOAIRetryHandler({
+                getEp: () => endpoint ?? oaiEndpoint(),
+                setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
+                forWorker: explicitModel,
+                onNote: msg => { console.error(`[worker:${localRole?.name ?? 'anon'}:step-cap:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
+            }), msg => { console.error(`[worker:step-cap:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
+            100,
+            () => (endpoint ?? oaiEndpoint()).provider === 'custom'
+        );
         _report = typeof _m?.content === 'string' ? _m.content.trim() : '';
     } catch (e) { console.error(`[worker:step-cap report] ${e.message}`); }
     if (!_report) {
@@ -1419,7 +1451,7 @@ async function executeWorkers(args: any): Promise<any> {
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 const role = agent.role ? ((isRoleEnabled(agent.role) ? rolesRegistry.get(agent.role) : null) || null) : null;
-                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase);
+                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase, getEndpointRotation(), !!agent.model);
                 let output = _rawOut;
                 let { status, note, footer } = parseWorkerStatus(output || '');
                 if (footer) {

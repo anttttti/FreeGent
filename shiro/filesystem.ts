@@ -177,6 +177,9 @@ class DevProvider implements VirtualFSProvider {
   }
 }
 
+/** The /dev devices (null, zero, random, urandom, stdin, stdout, stderr), for filesystems that do not use virtualProviders. */
+export const devProvider: VirtualFSProvider = new DevProvider();
+
 /** /proc virtual provider — dynamic system info from Shiro */
 class ProcProvider implements VirtualFSProvider {
   private startTime = Date.now();

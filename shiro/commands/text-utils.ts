@@ -25,21 +25,61 @@ export const revCmd: Command = {
   },
 };
 
+// GNU tac: the file is cut into records that each end with the separator (default newline; -b: begin
+// with it; -r: the separator is a regex); the last record may lack it. Records are written in reverse
+// order, unchanged, and each file is reversed on its own.
+function tacRecords(text: string, sep: string, before: boolean, regex: boolean): string[] {
+  const re = regex ? new RegExp(sep, 'g') : null;
+  const seps: { start: number; end: number }[] = [];
+  if (re) {
+    for (const m of text.matchAll(re)) { if (m[0].length) seps.push({ start: m.index!, end: m.index! + m[0].length }); }
+  } else if (sep.length) {
+    for (let i = text.indexOf(sep); i >= 0; i = text.indexOf(sep, i + sep.length)) seps.push({ start: i, end: i + sep.length });
+  }
+  const records: string[] = [];
+  if (before) {
+    let start = 0;
+    for (const m of seps) { if (m.start > start) records.push(text.slice(start, m.start)); start = m.start; }
+    if (start < text.length) records.push(text.slice(start));
+  } else {
+    let start = 0;
+    for (const m of seps) { records.push(text.slice(start, m.end)); start = m.end; }
+    if (start < text.length) records.push(text.slice(start));
+  }
+  return records;
+}
+
 export const tacCmd: Command = {
   name: 'tac',
   description: 'Print file in reverse line order',
   async exec(ctx) {
-    try {
-      const { positional } = parseArgs(ctx.args, []);
-      const { content } = await readInput(positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath);
-      if (!content) return 0;
-      const lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n');
-      ctx.stdout += lines.reverse().join('\n') + '\n';
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `tac: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+    let sep = '\n', before = false, regex = false;
+    const files: string[] = [];
+    const a = ctx.args;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '--') { files.push(...a.slice(i + 1)); break; }
+      if (x === '-b' || x === '--before') before = true;
+      else if (x === '-r' || x === '--regex') regex = true;
+      else if (x === '-s' || x === '--separator') sep = a[++i] ?? '';
+      else if (x.startsWith('--separator=')) sep = x.slice(12);
+      else if (x.startsWith('-s') && x.length > 2) sep = x.slice(2);
+      else if (/^-[br]+$/.test(x)) { if (x.includes('b')) before = true; if (x.includes('r')) regex = true; }
+      else if (x.startsWith('-') && x.length > 1) { ctx.stderr += `tac: invalid option -- '${x.replace(/^-+/, '')}'\n`; return 1; }
+      else files.push(x);
     }
+    let status = 0;
+    const emit = (text: string) => {
+      const records = tacRecords(text, sep, before, regex);
+      for (let i = records.length - 1; i >= 0; i--) ctx.stdout += records[i];
+    };
+    if (files.length === 0) { emit(ctx.stdin); return 0; }
+    for (const f of files) {
+      if (f === '-') { emit(ctx.stdin); continue; }
+      try { emit(await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string); }
+      catch { ctx.stderr += `tac: failed to open '${f}' for reading: No such file or directory\n`; status = 1; }
+    }
+    return status;
   },
 };
 
@@ -47,45 +87,66 @@ export const shufCmd: Command = {
   name: 'shuf',
   description: 'Shuffle lines of input',
   async exec(ctx) {
-    try {
-      const { values, positional, flags } = parseArgs(ctx.args, ['n', 'i']);
-
-      let lines: string[];
-
-      if (flags.e) {
-        // -e: treat remaining args as input lines
-        const eIdx = ctx.args.indexOf('-e');
-        lines = ctx.args.slice(eIdx + 1);
-      } else if (values.i) {
-        // -i LO-HI: generate range
-        const match = values.i.match(/^(\d+)-(\d+)$/);
-        if (!match) {
-          ctx.stderr += 'shuf: invalid input range\n';
-          return 1;
-        }
-        const lo = parseInt(match[1], 10);
-        const hi = parseInt(match[2], 10);
-        lines = [];
-        for (let n = lo; n <= hi; n++) lines.push(String(n));
-      } else {
-        const { content } = await readInput(positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath);
-        if (!content) return 0;
-        lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n');
+    let echo = false, repeat = false, zero = false;
+    let range: [number, number] | null = null;
+    let count = Infinity;
+    let output: string | null = null;
+    const operands: string[] = [];
+    const a = ctx.args;
+    const bad = (m: string) => { ctx.stderr += `shuf: ${m}\n`; return 1; };
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '--') { operands.push(...a.slice(i + 1)); break; }
+      if (x === '-e' || x === '--echo') echo = true;
+      else if (x === '-r' || x === '--repeat') repeat = true;
+      else if (x === '-z' || x === '--zero-terminated') zero = true;
+      else if (x === '-n' || x === '--head-count' || x.startsWith('--head-count=') || (x.startsWith('-n') && x.length > 2)) {
+        const v = x.startsWith('--head-count=') ? x.slice(13) : x.length > 2 && !x.startsWith('--') ? x.slice(2) : a[++i];
+        if (!/^\d+$/.test(v ?? '')) return bad(`invalid line count: '${v}'`);
+        count = Math.min(count, parseInt(v, 10));
+      } else if (x === '-i' || x === '--input-range' || x.startsWith('--input-range=') || (x.startsWith('-i') && x.length > 2)) {
+        const v = x.startsWith('--input-range=') ? x.slice(14) : x.length > 2 && !x.startsWith('--') ? x.slice(2) : a[++i];
+        const m = /^(\d+)-(\d+)$/.exec(v ?? '');
+        if (!m) return bad(`invalid input range: '${v}'`);
+        range = [parseInt(m[1], 10), parseInt(m[2], 10)];
+        if (range[0] > range[1] + 1) return bad(`invalid input range: '${v}'`);
+      } else if (x === '-o' || x === '--output' || x.startsWith('--output=') || (x.startsWith('-o') && x.length > 2)) {
+        output = x.startsWith('--output=') ? x.slice(9) : x.length > 2 && !x.startsWith('--') ? x.slice(2) : a[++i];
+      } else if (x.startsWith('-') && x.length > 1) return bad(`invalid option -- '${x.replace(/^-+/, '')}'`);
+      else operands.push(x);
+    }
+    const sep = zero ? '\0' : '\n';
+    let lines: string[];
+    if (echo) lines = operands;
+    else if (range) {
+      if (operands.length) return bad(`extra operand '${operands[0]}'`);
+      lines = [];
+      for (let n = range[0]; n <= range[1]; n++) lines.push(String(n));
+    } else {
+      let content: string;
+      if (operands.length === 0 || operands[0] === '-') content = ctx.stdin;
+      else {
+        try { content = await ctx.fs.readFile(ctx.fs.resolvePath(operands[0], ctx.cwd), 'utf8') as string; }
+        catch { return bad(`${operands[0]}: No such file or directory`); }
       }
-
-      // Fisher-Yates shuffle
-      for (let i = lines.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+      lines = content === '' ? [] : (content.endsWith(sep) ? content.slice(0, -1) : content).split(sep);
+    }
+    const pick = (n: number) => Math.floor(Math.random() * n);
+    const out: string[] = [];
+    if (repeat) {
+      if (lines.length === 0) { if (count !== Infinity) return bad('no lines to repeat'); }
+      else for (let n = 0; n < Math.min(count, 100000); n++) out.push(lines[pick(lines.length)]);
+    } else {
+      for (let i = lines.length - 1; i > 0; i--) {   // Fisher-Yates
+        const j = pick(i + 1);
         [lines[i], lines[j]] = [lines[j], lines[i]];
       }
-
-      const count = values.n ? Math.min(parseInt(values.n, 10), lines.length) : lines.length;
-      ctx.stdout += lines.slice(0, count).join('\n') + '\n';
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `shuf: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
+      out.push(...lines.slice(0, count));
     }
+    const text = out.map(l => l + sep).join('');
+    if (output !== null) await ctx.fs.writeFile(ctx.fs.resolvePath(output, ctx.cwd), text);
+    else ctx.stdout += text;
+    return 0;
   },
 };
 

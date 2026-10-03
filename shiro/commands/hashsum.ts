@@ -49,42 +49,70 @@ async function readBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
   return typeof c === 'string' ? textToBytes(c) : c;
 }
 
+const TAGS: Record<string, string> = { MD5: 'MD5', 'SHA-1': 'SHA1', 'SHA-256': 'SHA256', 'SHA-384': 'SHA384', 'SHA-512': 'SHA512' };
+
 function hashCommand(name: string, algo: string): Command {
   return {
     name,
     description: `Compute ${algo} message digests`,
     async exec(ctx) {
-      let check = false, quiet = false, status = false;
+      let check = false, quiet = false, status = false, star = false, tag = false, zero = false, ignoreMissing = false, strict = false;
       const files: string[] = [];
       for (const a of ctx.args) {
         if (a === '-c' || a === '--check') check = true;
         else if (a === '--quiet') quiet = true;
         else if (a === '--status') status = true;
-        else if (a === '-b' || a === '-t' || a === '--binary' || a === '--text' || a === '--tag' || a === '-z') { /* same output */ }
+        else if (a === '-b' || a === '--binary') star = true;
+        else if (a === '-t' || a === '--text') star = false;
+        else if (a === '--tag') tag = true;
+        else if (a === '-z' || a === '--zero') zero = true;
+        else if (a === '--ignore-missing') ignoreMissing = true;
+        else if (a === '--strict') strict = true;
+        else if (a === '-w' || a === '--warn') { /* accepted */ }
+        else if (a.startsWith('-') && a.length > 1 && a !== '-') { ctx.stderr += `${name}: invalid option -- '${a.replace(/^-+/, '')}'\n`; return 1; }
         else files.push(a);
       }
       if (!files.length) files.push('-');
       let rc = 0;
       if (check) {
-        let failed = 0;
+        let failed = 0, unreadable = 0, bad = 0, checked = 0;
         for (const list of files) {
           let text: string;
           try { text = bytesToText(await readBytes(ctx, list)); }
           catch { ctx.stderr += `${name}: ${list}: No such file or directory\n`; rc = 1; continue; }
+          let found = 0;
           for (const line of text.split('\n').filter(Boolean)) {
-            const m = /^([0-9a-fA-F]+) [ *](.+)$/.exec(line);
-            if (!m) continue;
-            let ok = false;
-            try { ok = (await digest(algo, await readBytes(ctx, m[2]))) === m[1].toLowerCase(); } catch { ok = false; }
+            const m = /^([0-9a-fA-F]+) [ *](.+)$/.exec(line) ?? (() => { const t = /^[A-Za-z0-9-]+ \((.+)\) = ([0-9a-fA-F]+)$/.exec(line); return t ? [line, t[2], t[1]] as unknown as RegExpExecArray : null; })();
+            if (!m) { bad++; continue; }
+            found++;
+            let data: Uint8Array;
+            try { data = await readBytes(ctx, m[2]); }
+            catch {
+              if (ignoreMissing) continue;
+              unreadable++; failed++;
+              if (!status) ctx.stdout += `${m[2]}: FAILED open or read\n`;
+              ctx.stderr += `${name}: ${m[2]}: No such file or directory\n`;
+              continue;
+            }
+            checked++;
+            const ok = (await digest(algo, data)) === m[1].toLowerCase();
             if (!ok) failed++;
             if (!status && (!ok || !quiet)) ctx.stdout += `${m[2]}: ${ok ? 'OK' : 'FAILED'}\n`;
           }
+          if (found === 0) { ctx.stderr += `${name}: ${list}: no properly formatted checksum lines found\n`; rc = 1; }
         }
-        if (failed && !status) ctx.stderr += `${name}: WARNING: ${failed} computed checksum${failed > 1 ? 's' : ''} did NOT match\n`;
-        return failed || rc ? 1 : 0;
+        if (bad && !status) ctx.stderr += `${name}: WARNING: ${bad} line${bad > 1 ? 's are' : ' is'} improperly formatted\n`;
+        if (unreadable && !status) ctx.stderr += `${name}: WARNING: ${unreadable} listed file${unreadable > 1 ? 's' : ''} could not be read\n`;
+        const mismatched = failed - unreadable;
+        if (mismatched && !status) ctx.stderr += `${name}: WARNING: ${mismatched} computed checksum${mismatched > 1 ? 's' : ''} did NOT match\n`;
+        void checked;
+        return failed || rc || (strict && bad) ? 1 : 0;
       }
       for (const f of files) {
-        try { ctx.stdout += `${await digest(algo, await readBytes(ctx, f))}  ${f}\n`; }
+        try {
+          const h = await digest(algo, await readBytes(ctx, f));
+          ctx.stdout += (tag ? `${TAGS[algo]} (${f}) = ${h}` : `${h} ${star ? '*' : ' '}${f}`) + (zero ? '\0' : '\n');
+        }
         catch { ctx.stderr += `${name}: ${f}: No such file or directory\n`; rc = 1; }
       }
       return rc;
@@ -96,3 +124,4 @@ export const md5sum = hashCommand('md5sum', 'MD5');
 export const sha1sum = hashCommand('sha1sum', 'SHA-1');
 export const sha256sum = hashCommand('sha256sum', 'SHA-256');
 export const sha512sum = hashCommand('sha512sum', 'SHA-512');
+export const sha384sum = hashCommand('sha384sum', 'SHA-384');

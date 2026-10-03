@@ -44,8 +44,15 @@ export const sleep: Command = {
 
     // In browser environment, we simulate sleep with a promise
     // Note: This is non-blocking in async context
-    await new Promise(resolve => (globalThis as any).setTimeout(resolve, seconds * 1000));
+    // Wakes early (status 130) when Ctrl+C is pressed or an enclosing `timeout` expires
+    const signal = ctx.shell?.abortSignal?.();
+    if (signal?.aborted) return 130;
+    let aborted = false;
+    await new Promise<void>(resolve => {
+      const timer = (globalThis as any).setTimeout(() => resolve(), seconds * 1000);
+      signal?.addEventListener('abort', () => { aborted = true; (globalThis as any).clearTimeout(timer); resolve(); }, { once: true });
+    });
 
-    return 0;
+    return aborted ? 130 : 0;
   },
 };

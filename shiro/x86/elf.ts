@@ -212,6 +212,12 @@ export function loadElf(
     [0,  0n],                           // AT_NULL (terminator)
   ];
 
+  // The System V ABI wants RSP 16-byte aligned at the entry point, and RSP points at argc. Pad *before*
+  // writing argc, argv, envp and auxv (rounding RSP down afterwards would move it off argc).
+  const stackWords = 1 + (argv.length + 1) + (envp.length + 1) + auxv.length * 2;
+  const stackBytes = BigInt(stackWords * 8);
+  sp = ((sp - stackBytes) & ~0xFn) + stackBytes;
+
   // Write auxv in reverse so they appear in order on the stack
   for (let i = auxv.length - 1; i >= 0; i--) {
     sp -= 16n;
@@ -238,9 +244,6 @@ export function loadElf(
   // Write argc
   sp -= 8n;
   mem.write64(sp, BigInt(argv.length));
-
-  // Align RSP to 16 bytes (Linux ABI requirement before _start)
-  sp &= ~0xFn;
 
   // Set CPU state
   cpu.rip = info.entryPoint;

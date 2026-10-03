@@ -931,7 +931,7 @@ export function lanUrls(port: number, https: boolean): string[] {
 //   - shiro/fg-filesystem's ../workspace import → exec-sandbox/workspace-rpc.ts (the page's workspace)
 //   - localStorage/sessionStorage → in-memory objects, indexedDB → a stand-in that fails softly
 //     (opaque origins can't use either)
-//   - the Pyodide worker source is inlined; the frame starts it from a blob URL
+//   - the Pyodide and WASI worker sources are inlined; the frame starts them from blob URLs
 export async function buildExecSandbox(root: string): Promise<string> {
     const esbuild = await import('esbuild');
     const workerBuild = await esbuild.build({
@@ -939,6 +939,11 @@ export async function buildExecSandbox(root: string): Promise<string> {
         bundle: true, format: 'iife', platform: 'browser', target: 'es2020', write: false, logLevel: 'silent',
     });
     const worker = { code: workerBuild.outputFiles[0].text };
+    // WASM programs run in their own Worker so a runaway one can be killed (shiro/wasi-host.ts)
+    const wasiWorkerBuild = await esbuild.build({
+        entryPoints: [join(root, 'shiro', 'wasi-worker.ts')],
+        bundle: true, format: 'iife', platform: 'browser', target: 'es2020', write: false, logLevel: 'silent',
+    });
     const workspaceShim = join(root, 'exec-sandbox', 'workspace-rpc.ts');
     const result = await esbuild.build({
         entryPoints: [join(root, 'exec-sandbox', 'entry.ts')],
@@ -950,6 +955,7 @@ export async function buildExecSandbox(root: string): Promise<string> {
         logLevel: 'silent',
         define: {
             __PYODIDE_WORKER_SRC__: JSON.stringify(worker.code),
+            __WASI_WORKER_SRC__: JSON.stringify(wasiWorkerBuild.outputFiles[0].text),
             'localStorage': 'globalThis.__fgMemStorage',
             'window.localStorage': 'globalThis.__fgMemStorage',
             'globalThis.localStorage': 'globalThis.__fgMemStorage',

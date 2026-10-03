@@ -30,14 +30,15 @@ export interface X86Package {
 }
 
 // ── Package manifest ─────────────────────────────────────────────────
-// URLs point to musl-static x86-64 ELF binaries hosted on our CDN.
-// All binaries are statically linked with musl libc for portability.
+// EXPERIMENTAL: the x86-64 emulator mis-executes busybox applets (option parsing
+// fails, e.g. `echo a b` -> "unknown operand"), so xpkg is not registered in the
+// shell. Only upstream-verified URLs are listed; shiro.computer/bins/* served HTML.
 
 const PACKAGE_MANIFEST: X86Package[] = [
   {
     name: 'busybox',
     description: 'Swiss-army knife of embedded Linux — 300+ utilities in one binary',
-    version: '1.36.1',
+    version: '1.35.0',
     url: 'https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox',
     size: 1_100_000,
     category: 'coreutil',
@@ -53,54 +54,6 @@ const PACKAGE_MANIFEST: X86Package[] = [
       'uname', 'uniq', 'vi', 'wc', 'wget', 'which', 'whoami', 'xargs',
       'yes', 'zcat',
     ],
-  },
-  {
-    name: 'dash',
-    description: 'Debian Almquist Shell — POSIX-compliant lightweight shell',
-    version: '0.5.12',
-    url: 'https://shiro.computer/bins/dash-x86_64-musl',
-    size: 120_000,
-    category: 'shell',
-  },
-  {
-    name: 'tree',
-    description: 'Display directory tree structure',
-    version: '2.1.1',
-    url: 'https://shiro.computer/bins/tree-x86_64-musl',
-    size: 85_000,
-    category: 'utility',
-  },
-  {
-    name: 'file',
-    description: 'Determine file type using magic numbers',
-    version: '5.45',
-    url: 'https://shiro.computer/bins/file-x86_64-musl',
-    size: 580_000,
-    category: 'utility',
-  },
-  {
-    name: 'bc',
-    description: 'Arbitrary precision calculator language',
-    version: '6.7.5',
-    url: 'https://shiro.computer/bins/bc-x86_64-musl',
-    size: 210_000,
-    category: 'utility',
-  },
-  {
-    name: 'bash',
-    description: 'GNU Bourne Again SHell',
-    version: '5.2.21',
-    url: 'https://shiro.computer/bins/bash-x86_64-musl',
-    size: 1_200_000,
-    category: 'shell',
-  },
-  {
-    name: 'python3',
-    description: 'CPython interpreter (minimal stdlib)',
-    version: '3.12.3',
-    url: 'https://shiro.computer/bins/python3-x86_64-musl',
-    size: 5_800_000,
-    category: 'language',
   },
 ];
 

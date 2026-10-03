@@ -4,8 +4,6 @@
  * (Shiro-specific UI command).
  */
 import type { Command } from './index';
-import { alias } from './alias';
-import { arrayHelper } from './array';
 import { awk } from './awk';
 import { base32Cmd } from './base32';
 import { base64 } from './base64';
@@ -50,16 +48,13 @@ import { fold } from './fold';
 import { forCmd, inCmd } from './for';
 import { free } from './free';
 import { functionCmd } from './function';
-import { getopts } from './getopts';
 import { hash } from './hash';
 import { head } from './head';
-import { heredoc } from './heredoc';
 import { hexdump } from './hexdump';
 import { id } from './id';
 import { install } from './install';
 import { join } from './join';
 import { less } from './less';
-import { letCmd, arithmeticExpansion } from './let';
 import { ls } from './ls';
 import { make } from './make';
 import { md5sum } from './md5sum';
@@ -75,9 +70,7 @@ import { pkgConfig } from './pkg-config';
 import { pr } from './pr';
 import { printenv } from './printenv';
 import { printf } from './printf';
-import { processSubstitution } from './process-substitution';
 import { pwd } from './pwd';
-import { read } from './read';
 import { readlink } from './readlink';
 import { realpath } from './realpath';
 import { returnCmd } from './return';
@@ -85,7 +78,11 @@ import { revCmd, tacCmd, shufCmd, cmpCmd } from './text-utils';
 import { seq } from './seq';
 import { set } from './set';
 import { sha256sum } from './sha256sum';
-import { sha1sum, sha512sum } from './hashsum';
+import { sha1sum, sha512sum, sha384sum } from './hashsum';
+import { egrepCmd, fgrepCmd, zcatCmd, truncateCmd, uuidgenCmd, syncCmd } from './extras';
+import { zipCmd, unzipCmd } from './zip';
+import { nprocCmd } from './nproc';
+import { getconfCmd } from './getconf';
 import { sum } from './sum';
 import { shift } from './shift';
 import { sleep } from './sleep';
@@ -97,11 +94,10 @@ import { tail } from './tail';
 import { tar } from './tar';
 import { tee } from './tee';
 import { test } from './posix-test';
-import { time } from './time';
 import { timeout } from './timeout';
 import { touch } from './touch';
 import { tr } from './tr';
-import { kill, trap } from './trap';
+import { kill } from './trap';
 import { true as trueCmd } from './true';
 import { tsort } from './tsort';
 import { type } from './type';
@@ -121,21 +117,21 @@ import { yes } from './yes';
 import { iconvCmd } from './iconv';
 
 export const unixCommands: Command[] = [
-    alias, arrayHelper, awk, base32Cmd, base64, basename, bc, breakCmd,
+    awk, base32Cmd, base64, basename, bc, breakCmd,
     caseCmd, esac, cat, chmod, chown, clear, cksumCmd, column, comm,
     continueCmd, cp, csplitCmd, cut, date, dcCmd, declare, local, readonly,
     unset, ddCmd, df, dirname, doCmd, done, until, whileCmd,
     dos2unixCmd, unix2dosCmd, du, echo, elif, elseCmd, fi, ifCmd, then,
     env, evalCmd, exit, expand, expr, exportCmd, factorCmd, falseCmd,
     file, findCmd, fmt, fold, forCmd, inCmd, free, functionCmd,
-    getopts, hash, head, heredoc, hexdump, id, install, join, less,
-    letCmd, ls, make, md5sum, mkdir, mv, nl, nohup, numfmtCmd, od,
-    paste, patch, pkgConfig, pr, printenv, printf, processSubstitution,
-    pwd, read, readlink, realpath, returnCmd, revCmd, tacCmd, shufCmd, cmpCmd,
-    seq, set, sum, sha1sum, sha256sum, sha512sum, shift, sleep, sort, splitCmd, stat, strings,
-    tail, tar, tee, test, time, timeout, touch, tr, kill, trap,
+    hash, head, hexdump, id, install, join, less,
+    ls, make, md5sum, mkdir, mv, nl, nohup, numfmtCmd, od,
+    paste, patch, pkgConfig, pr, printenv, printf, 
+    pwd, readlink, realpath, returnCmd, revCmd, tacCmd, shufCmd, cmpCmd,
+    seq, set, sum, sha1sum, sha256sum, sha384sum, sha512sum, shift, sleep, sort, splitCmd, stat, strings,
+    tail, tar, tee, test, timeout, touch, tr, kill, 
     trueCmd, tsort, type, ulimit, umask, unalias, unexpand, uniq,
     uptime, watch, wc, which, whoami, xargs, xxdCmd, yes, iconvCmd,
+    egrepCmd, fgrepCmd, zcatCmd, truncateCmd, uuidgenCmd, syncCmd, zipCmd, unzipCmd, nprocCmd, getconfCmd,
 ];
 
-export { arithmeticExpansion };

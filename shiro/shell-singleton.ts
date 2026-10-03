@@ -28,7 +28,11 @@ import { diffCmd } from './commands/diff';
 import { jqCmd } from './commands/jq';
 import { rgCmd } from './commands/rg';
 import { gzipCmd, gunzipCmd } from './commands/gzip';
+import { xzCmd, unxzCmd, xzcatCmd } from './commands/xz';
+import { zstdCmd, unzstdCmd, zstdcatCmd } from './commands/zstd';
+import { bzip2Cmd, bunzip2Cmd, bzcatCmd } from './commands/bzip2';
 import { mkTempCmd } from './commands/mktemp';
+import { pkgCmd } from './commands/pkg';
 import { sevenZipCmd } from './commands/sevenzip';
 import { FWFileSystem, WORKSPACE_MOUNT } from './fg-filesystem';
 
@@ -45,7 +49,9 @@ async function createShell(): Promise<Shell> {
     commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd, curlCmd, wgetCmd]);
     // Shiro commands the agent expects on a shell. Not registered: vi, tput, stty (interactive
     // terminal only) and pgrep/pkill (shiro's process table isn't used here).
-    commands.registerAll([npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd, sevenZipCmd]);
+    commands.registerAll([npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd,
+        pkgCmd, sevenZipCmd,
+        xzCmd, unxzCmd, xzcatCmd, zstdCmd, unzstdCmd, zstdcatCmd, bzip2Cmd, bunzip2Cmd, bzcatCmd]);
 
     // Create FreeGent-backed filesystem
     const fs = new FWFileSystem();

@@ -242,7 +242,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // 401 / 404 from a cloud provider = auth rejected or model ID invalid/discontinued.
         // Pause the model (not remove) so it stays visible in the table for user review.
         const isGone = /HTTP 40[14]/.test(e.message || '');
-        if (isGone && ep.provider !== 'custom') {
+        if (isGone && ep.provider !== 'custom' && !forWorker) {
             const goneKey = `${ep.provider}|${ep.model}`;
             if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {
                 const _paused = getPausedMainModels();
