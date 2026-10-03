@@ -10,6 +10,7 @@ import {
   python3Cmd,
   pipCmd,
   pip3Cmd,
+  pytestCmd,
   _preamble,
   _extractExitCode,
   __setPyodideForTest,
@@ -189,6 +190,29 @@ describe('pythonCmd workspace files', () => {
     expect(await python3Cmd.exec(ctx)).toBe(0);
     expect(ctx.stdout).toBe('1\n');
   });
+});
+
+describe('pytestCmd (real Pyodide integration)', () => {
+  it('loads pytest on demand, runs workspace tests, and returns pytest exit status', async () => {
+    const mockedFetch = globalThis.fetch;
+    globalThis.fetch = (globalThis as any).__nativeFetchForTests;
+    try {
+      const passing = makeCtx(['-q', 'test_example.py'], {
+        '/workspace/test_example.py': 'def test_arithmetic():\n    assert 6 * 7 == 42\n',
+      });
+      expect(await pytestCmd.exec(passing)).toBe(0);
+      expect(passing.stdout).toMatch(/1 passed/);
+      expect(passing.stderr).toContain('Loading pytest');
+
+      const failing = makeCtx(['-q', 'test_failure.py'], {
+        '/workspace/test_failure.py': 'def test_failure():\n    assert False\n',
+      });
+      expect(await pytestCmd.exec(failing)).toBe(1);
+      expect(failing.stdout).toMatch(/1 failed/);
+    } finally {
+      globalThis.fetch = mockedFetch;
+    }
+  }, 60_000);
 });
 
 // ── pip (mock micropip) ───────────────────────────────────────────────────────

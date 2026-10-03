@@ -30,7 +30,7 @@ beforeAll(async () => {
 describe('browser shell commands', () => {
     it('registers every command the guidance lists', async () => {
         for (const c of ['curl', 'wget', 'npm', 'npx', 'diff', 'jq', 'rg', 'gzip', 'gunzip', 'mktemp',
-                         'grep', 'sed', 'awk', 'find', 'sort', 'tar', 'xargs', 'python3', 'node'])
+                         'grep', 'sed', 'awk', 'find', 'sort', 'tar', 'xargs', 'python3', 'pytest', '7z', 'node'])
             expect((await run(`type ${c}`)).code, c).toBe(0);
     });
 

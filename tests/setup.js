@@ -12,6 +12,7 @@ const read = f => readFileSync(join(ROOT, f), 'utf-8');
 
 // Stub fetch as a vitest mock so agent.test.ts can call window.fetch.mockReset() and
 // control return values per-test without hitting the network.
+globalThis.__nativeFetchForTests = globalThis.fetch;
 vi.stubGlobal('fetch', vi.fn());
 
 // All source files are ES modules now (ESM migration complete) — vitest transforms
