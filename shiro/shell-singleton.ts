@@ -20,7 +20,7 @@ import { sedCmd } from './commands/sed';
 import { globCmd } from './commands/glob';
 import { jsEvalCmd } from './commands/jseval';
 import { nodeCmd } from './commands/jseval/node-cmd';
-import { pythonCmd, python3Cmd, pipCmd, pip3Cmd } from './commands/python';
+import { pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd } from './commands/python';
 import { curlCmd, wgetCmd } from './commands/curl';
 import { npmCmd } from './commands/npm';
 import { npxCmd } from './commands/npx';
@@ -29,6 +29,7 @@ import { jqCmd } from './commands/jq';
 import { rgCmd } from './commands/rg';
 import { gzipCmd, gunzipCmd } from './commands/gzip';
 import { mkTempCmd } from './commands/mktemp';
+import { sevenZipCmd } from './commands/sevenzip';
 import { FWFileSystem, WORKSPACE_MOUNT } from './fg-filesystem';
 
 let _shell: Shell | null = null;
@@ -41,10 +42,10 @@ async function createShell(): Promise<Shell> {
     commands.registerAll(shellBuiltins);
     commands.registerAll(shiroCmds);
     // Individual commands registered with priority (override builtins)
-    commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd, pip3Cmd, curlCmd, wgetCmd]);
+    commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd, curlCmd, wgetCmd]);
     // Shiro commands the agent expects on a shell. Not registered: vi, tput, stty (interactive
     // terminal only) and pgrep/pkill (shiro's process table isn't used here).
-    commands.registerAll([npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd]);
+    commands.registerAll([npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd, sevenZipCmd]);
 
     // Create FreeGent-backed filesystem
     const fs = new FWFileSystem();

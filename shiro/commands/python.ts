@@ -18,6 +18,7 @@ const PYODIDE_CDN = 'https://cdn.jsdelivr.net/pyodide/v0.27.2/full';
 
 let pyodide: any = null;
 let loadPromise: Promise<any> | null = null;
+let pytestLoadPromise: Promise<void> | null = null;
 
 async function ensurePyodide(ctx: CommandContext): Promise<any> {
   if (pyodide) return pyodide;
@@ -491,6 +492,7 @@ export const python3Cmd: Command = {
 export function __setPyodideForTest(mock: any): void {
   pyodide = mock;
   loadPromise = null;
+  pytestLoadPromise = null;
 }
 
 export const pipCmd: Command = {
@@ -532,4 +534,46 @@ export const pip3Cmd: Command = {
   ...pipCmd,
   name: 'pip3',
   description: 'Python 3 package manager',
+};
+
+/** Load the Pyodide-built pytest package once, reusing the existing Python runtime. */
+async function ensurePytest(ctx: CommandContext): Promise<void> {
+  if (!pytestLoadPromise) {
+    pytestLoadPromise = (async () => {
+      const py = await ensurePyodide(ctx);
+      const installed = py.runPython('import importlib.util; importlib.util.find_spec("pytest") is not None');
+      if (installed) return;
+      ctx.stderr += 'Loading pytest (Pyodide package)...\n';
+      await py.loadPackage('pytest');
+    })().catch((err) => {
+      pytestLoadPromise = null;
+      throw err;
+    });
+  }
+  await pytestLoadPromise;
+}
+
+export const pytestCmd: Command = {
+  name: 'pytest',
+  description: 'Python test runner (Pyodide pytest)',
+  async exec(ctx: CommandContext): Promise<number> {
+    try {
+      await ensurePytest(ctx);
+    } catch (err: any) {
+      ctx.stderr += `pytest: failed to load: ${err?.message || err}\n`;
+      return 1;
+    }
+
+    // Delegate argument handling, workspace sync, output capture, and exit codes to Python.
+    const pythonCtx: CommandContext = {
+      ...ctx,
+      args: ['-m', 'pytest', ...ctx.args],
+      stdout: '',
+      stderr: '',
+    };
+    const exitCode = await pythonCmd.exec(pythonCtx);
+    ctx.stdout += pythonCtx.stdout;
+    ctx.stderr += pythonCtx.stderr;
+    return exitCode;
+  },
 };
