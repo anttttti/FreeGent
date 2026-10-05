@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "coverageSha256": "a127db601e2b4d7e5ccd45c0fbe2568c6c9b1cdae43cc8767948b4f4c1a6114e",
-  "generatorSha256": "dcda73c830853adf24b23555cadc7aeb8289741579de929e34b64813fdaede9a",
+  "generatorSha256": "cfd7e4bcbd8d5d4f1ff409116cee502ebcbbc480d87c61962f50c7390469f889",
   "source": "live COMMAND_CATALOG, parser branches, package manifest, integrity pins and static imports",
   "commands": [
     {
