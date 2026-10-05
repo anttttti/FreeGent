@@ -1,14 +1,15 @@
 /**
  * xz / unxz / xzcat — .xz container with LZMA2, pure TypeScript.
  *
- * Decoder: concatenated streams, multiple blocks, LZMA2 (all chunk types), CRC32 / CRC64 checks.
- * Not supported: BCJ/Delta filters and SHA-256 check verification (the data is still decoded).
+ * Decoder: concatenated streams, multiple blocks, LZMA2 (all chunk types), CRC32 / CRC64 / SHA-256 checks
+ * (no check, or any other check type, is refused rather than skipped), and the Delta and x86 / PowerPC /
+ * ARM / ARM Thumb / SPARC BCJ filters. Not supported: IA-64, ARM64 and RISC-V filters (refused by name).
  * Encoder: LZMA with a hash-chain match finder (literal / match / rep0 / short-rep), single block,
  * CRC64 check. Output is standard .xz that any decoder reads.
  */
 import type { Command } from './index';
 import { makeCodecCommands, concatBytes } from './codec-cli';
-import { crc32, crc64 } from './checksums';
+import { crc32, crc64, sha256 } from './checksums';
 
 const XZ_MAGIC = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00];
 const FOOTER_MAGIC = [0x59, 0x5a];
@@ -264,6 +265,127 @@ function readVarint(d: Uint8Array, p: number): { v: number; p: number } {
 
 const u32le = (d: Uint8Array, p: number) => (d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24)) >>> 0;
 
+// ── Block filters (decoder side) ──────────────────────────────────────────────
+// A block's filter chain is stored in encoding order, LZMA2 last. Decoding runs LZMA2 first and then
+// undoes the others from the last to the first; each inverse works in place on the block's bytes.
+// The BCJ filters turn the absolute branch targets a compressor sees back into the relative ones in
+// the program (liblzma simple/*.c); the whole block is in memory, so there is no state to carry.
+
+const u32be = (b: Uint8Array, i: number) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+const put32be = (b: Uint8Array, i: number, v: number) => { b[i] = v >>> 24; b[i + 1] = v >>> 16; b[i + 2] = v >>> 8; b[i + 3] = v; };
+
+/** Start offset a BCJ filter was told to assume: no property bytes means 0, else a 4-byte value aligned to the instruction size. */
+function bcjStart(id: number, props: Uint8Array): number {
+  if (props.length === 0) return 0;
+  if (props.length !== 4) throw new Error('corrupt xz data (bad BCJ filter properties)');
+  const start = (props[0] | (props[1] << 8) | (props[2] << 16) | (props[3] << 24)) >>> 0;
+  const align = id === 0x04 ? 1 : id === 0x08 ? 2 : 4;
+  if (start % align) throw new Error('corrupt xz data (unaligned BCJ start offset)');
+  return start;
+}
+
+function x86Inverse(buf: Uint8Array, start: number): void {
+  const ALLOWED = [true, true, true, false, true, false, false, false];
+  const BIT = [0, 1, 2, 2, 3, 3, 3, 3];
+  const ms = (b: number) => b === 0 || b === 0xff;
+  let prevMask = 0, prevPos = (start - 5) >>> 0;
+  if (buf.length < 5) return;
+  const limit = buf.length - 5;
+  let i = 0;
+  while (i <= limit) {
+    let b = buf[i];
+    if (b !== 0xe8 && b !== 0xe9) { i++; continue; }
+    const offset = (start + i - prevPos) >>> 0;
+    prevPos = (start + i) >>> 0;
+    if (offset > 5) prevMask = 0;
+    else for (let k = 0; k < offset; k++) { prevMask &= 0x77; prevMask <<= 1; }
+    b = buf[i + 4];
+    if (ms(b) && ALLOWED[(prevMask >>> 1) & 7] && (prevMask >>> 1) < 0x10) {
+      let src = (((b << 24) | (buf[i + 3] << 16) | (buf[i + 2] << 8) | buf[i + 1]) >>> 0);
+      let dest: number;
+      for (;;) {
+        dest = (src - (start + i + 5)) >>> 0;
+        if (prevMask === 0) break;
+        const k = BIT[prevMask >>> 1];
+        b = (dest >>> (24 - k * 8)) & 0xff;
+        if (!ms(b)) break;
+        src = (dest ^ ((1 << (32 - k * 8)) - 1)) >>> 0;
+      }
+      buf[i + 4] = ~(((dest >>> 24) & 1) - 1) & 0xff;
+      buf[i + 3] = dest >>> 16; buf[i + 2] = dest >>> 8; buf[i + 1] = dest;
+      i += 5;
+      prevMask = 0;
+    } else {
+      i++;
+      prevMask |= 1;
+      if (ms(buf[i + 3])) prevMask |= 0x10;
+    }
+  }
+}
+
+function filterInverse(id: number, props: Uint8Array): (buf: Uint8Array) => void {
+  switch (id) {
+    case 0x03: {                                         // Delta: out[i] = in[i] + out[i - distance]
+      if (props.length !== 1) throw new Error('corrupt xz data (bad Delta filter properties)');
+      const dist = props[0] + 1;
+      return buf => { for (let i = dist; i < buf.length; i++) buf[i] = (buf[i] + buf[i - dist]) & 0xff; };
+    }
+    case 0x04: { const s = bcjStart(id, props); return buf => x86Inverse(buf, s); }
+    case 0x05: {                                         // PowerPC (big-endian `bl`)
+      const s = bcjStart(id, props);
+      return buf => {
+        for (let i = 0; i + 4 <= buf.length; i += 4) {
+          if ((buf[i] >>> 2) !== 0x12 || (buf[i + 3] & 3) !== 1) continue;
+          const src = (((buf[i] & 3) << 24) | (buf[i + 1] << 16) | (buf[i + 2] << 8) | (buf[i + 3] & ~3)) >>> 0;
+          const dest = (src - (s + i)) >>> 0;
+          buf[i] = 0x48 | ((dest >>> 24) & 3); buf[i + 1] = dest >>> 16; buf[i + 2] = dest >>> 8;
+          buf[i + 3] = (buf[i + 3] & 3) | (dest & 0xfc);
+        }
+      };
+    }
+    case 0x07: {                                         // ARM (`bl`, condition always)
+      const s = bcjStart(id, props);
+      return buf => {
+        for (let i = 0; i + 4 <= buf.length; i += 4) {
+          if (buf[i + 3] !== 0xeb) continue;
+          const src = ((buf[i + 2] << 16) | (buf[i + 1] << 8) | buf[i]) << 2;
+          const dest = ((src - (s + i + 8)) >>> 2) >>> 0;
+          buf[i + 2] = dest >>> 16; buf[i + 1] = dest >>> 8; buf[i] = dest;
+        }
+      };
+    }
+    case 0x08: {                                         // ARM Thumb (`bl` pair)
+      const s = bcjStart(id, props);
+      return buf => {
+        for (let i = 0; i + 4 <= buf.length; i += 2) {
+          if ((buf[i + 1] & 0xf8) !== 0xf0 || (buf[i + 3] & 0xf8) !== 0xf8) continue;
+          const src = ((((buf[i + 1] & 7) << 19) | (buf[i] << 11) | ((buf[i + 3] & 7) << 8) | buf[i + 2]) << 1) >>> 0;
+          const dest = ((src - (s + i + 4)) >>> 1) >>> 0;
+          buf[i + 1] = 0xf0 | ((dest >>> 19) & 7); buf[i] = dest >>> 11;
+          buf[i + 3] = 0xf8 | ((dest >>> 8) & 7); buf[i + 2] = dest;
+          i += 2;
+        }
+      };
+    }
+    case 0x09: {                                         // SPARC (`call`)
+      const s = bcjStart(id, props);
+      return buf => {
+        for (let i = 0; i + 4 <= buf.length; i += 4) {
+          if (!((buf[i] === 0x40 && (buf[i + 1] & 0xc0) === 0) || (buf[i] === 0x7f && (buf[i + 1] & 0xc0) === 0xc0))) continue;
+          const src = (u32be(buf, i) << 2) >>> 0;
+          let dest = ((src - (s + i)) >>> 2) >>> 0;
+          dest = ((((0 - ((dest >>> 22) & 1)) << 22) & 0x3fffffff) | (dest & 0x3fffff) | 0x40000000) >>> 0;
+          put32be(buf, i, dest);
+        }
+      };
+    }
+    case 0x06: throw new Error('unsupported xz filter IA-64 (BCJ)');
+    case 0x0a: throw new Error('unsupported xz filter ARM64 (BCJ)');
+    case 0x0b: throw new Error('unsupported xz filter RISC-V (BCJ)');
+    default: throw new Error(`unsupported xz filter 0x${id.toString(16)}`);
+  }
+}
+
 export function xzDecompress(data: Uint8Array): Uint8Array {
   const n = data.length;
   const out = new OutBuf(n * 4);
@@ -282,6 +404,10 @@ export function xzDecompress(data: Uint8Array): Uint8Array {
     if (flagsHi !== 0 || (flagsLo & 0xf0)) throw new Error('unsupported xz stream flags');
     if (crc32(data, p + 6, p + 8) !== u32le(data, p + 8)) throw new Error('corrupt xz data (stream header CRC mismatch)');
     const checkType = flagsLo & 0x0f;
+    // Type 0 is "no check", by the encoder's choice. Any other type that is not verified here would be
+    // accepted as if it had been, so it is refused: 1 CRC32, 4 CRC64 and 10 SHA-256 are the ones in use.
+    if (checkType !== 0 && checkType !== 1 && checkType !== 4 && checkType !== 10)
+      throw new Error(`unsupported xz integrity check type ${checkType}`);
     const checkSize = CHECK_SIZES[checkType];
     p += 12;
     let blocks = 0;
@@ -298,14 +424,16 @@ export function xzDecompress(data: Uint8Array): Uint8Array {
       if (bflags & 0x40) hp = readVarint(data, hp).p;
       if (bflags & 0x80) hp = readVarint(data, hp).p;
       const nFilters = (bflags & 3) + 1;
-      let sawLzma2 = false;
+      const chain: Array<{ id: number; props: Uint8Array }> = [];
       for (let f = 0; f < nFilters; f++) {
         const id = readVarint(data, hp); hp = id.p;
-        const ps = readVarint(data, hp); hp = ps.p + ps.v;
-        if (id.v === 0x21 && f === nFilters - 1) sawLzma2 = true;
-        else throw new Error(`unsupported xz filter 0x${id.v.toString(16)}`);
+        const ps = readVarint(data, hp); hp = ps.p;
+        if (hp + ps.v > p + hsize - 4) throw new Error('corrupt xz data (filter properties overrun the block header)');
+        chain.push({ id: id.v, props: data.subarray(hp, hp + ps.v) }); hp += ps.v;
       }
-      if (!sawLzma2) throw new Error('corrupt xz data (no LZMA2 filter)');
+      if (chain[nFilters - 1].id !== 0x21) throw new Error('corrupt xz data (no LZMA2 filter)');
+      // LZMA2 ends the chain; every filter before it is a transform undone after decoding, last first.
+      const transforms = chain.slice(0, -1).map(f => filterInverse(f.id, f.props));
       p += hsize;
       const dataStart = p;
       const outStart = out.len;
@@ -313,11 +441,15 @@ export function xzDecompress(data: Uint8Array): Uint8Array {
       p += (4 - ((p - dataStart) & 3)) & 3;              // block padding
       if (p + checkSize > n) throw new Error('unexpected end of input');
       const block = out.buf.subarray(outStart, out.len);
+      for (let t = transforms.length - 1; t >= 0; t--) transforms[t](block);
       if (checkType === 1) {
         if (crc32(block) !== u32le(data, p)) throw new Error('checksum mismatch (CRC32)');
       } else if (checkType === 4) {
         const [lo, hi] = crc64(block);
         if (lo !== u32le(data, p) || hi !== u32le(data, p + 4)) throw new Error('checksum mismatch (CRC64)');
+      } else if (checkType === 10) {
+        const digest = sha256(block);
+        for (let i = 0; i < 32; i++) if (digest[i] !== data[p + i]) throw new Error('checksum mismatch (SHA-256)');
       }
       p += checkSize;
       blocks++;

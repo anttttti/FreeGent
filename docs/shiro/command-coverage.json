@@ -1,6 +1,6 @@
 {
   "source": "bench/dev-tests/log-replay/cases/coverage-index.json",
-  "sha256": "a127db601e2b4d7e5ccd45c0fbe2568c6c9b1cdae43cc8767948b4f4c1a6114e",
+  "sha256": "cb5b9906bf41c035fe40b4a8f773a093a25d81773c4343a853d6cebd6da163b6",
   "commands": [
     {
       "name": "!",

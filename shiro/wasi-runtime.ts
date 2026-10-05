@@ -1314,11 +1314,7 @@ export class WasiRT {
   private clock_time_get(clockId: number, _precision: bigint, timePtr: number): number {
     const view = this.getView();
     let ns: bigint;
-    if (clockId === WASI_CLOCK_REALTIME) {
-      ns = BigInt(Date.now()) * 1_000_000n;
-    } else {
-      ns = BigInt(Math.round(performance.now() * 1e6));
-    }
+    ns = this.clockNs(clockId);
     view.setBigUint64(timePtr, ns, true);
     return WASI_ESUCCESS;
   }
@@ -1968,32 +1964,110 @@ export class WasiRT {
 
   // ── poll ───────────────────────────────────────────────────────────
 
+  // poll_oneoff (preview1 layout). A subscription is 48 bytes: userdata u64 @0, tag u8 @8 (0 clock, 1 fd_read,
+  // 2 fd_write); clock: id u32 @16, timeout u64 @24, precision u64 @32, flags u16 @40 (bit 0 = absolute);
+  // fd_*: fd u32 @16. An event is 32 bytes: userdata u64 @0, error u16 @8, type u8 @10, nbytes u64 @16,
+  // flags u16 @24 (bit 0 = hangup). Only the preview1 layout is implemented: the snapshot-0 layout is not
+  // verified against a pinned guest, and a guessed adapter would be worse than none.
+  //
+  // Readiness comes from the descriptor: a pipe is readable when it holds bytes or its writers are gone (EOF,
+  // reported with hangup), a file or stdin when read() would return (nbytes = what is left, 0 at EOF), a bad
+  // descriptor is an EBADF event. A clock subscription is ready when its deadline has passed. When nothing is
+  // ready the call waits for the earliest clock: with no clock, nothing can ever make a descriptor ready in
+  // a single-threaded guest, so it fails with EAGAIN as fd_read does, instead of reporting readiness that
+  // is not there.
   private poll_oneoff(inPtr: number, outPtr: number, nsubscriptions: number, neventsPtr: number): number {
-    // Minimal poll implementation: just report all subscriptions as ready
+    if (nsubscriptions === 0) return WASI_EINVAL;
+    const memLen = this.getU8().length;
+    if (inPtr + nsubscriptions * 48 > memLen || outPtr + nsubscriptions * 32 > memLen || neventsPtr + 4 > memLen) return WASI_EFAULT;
     const view = this.getView();
-    const mem = this.getU8();
-
+    type Sub = { userdata: bigint; tag: number; fd: number; clock: number; deadline: bigint };
+    const subs: Sub[] = [];
     for (let i = 0; i < nsubscriptions; i++) {
-      const subBase = inPtr + i * 48;
-      const eventBase = outPtr + i * 32;
-
-      // Copy userdata from subscription to event
-      const userdata = view.getBigUint64(subBase, true);
-      view.setBigUint64(eventBase, userdata, true);
-      // errno = success
-      view.setUint16(eventBase + 8, WASI_ESUCCESS, true);
-      // type = same as subscription type
-      const subType = view.getUint8(subBase + 8);
-      view.setUint8(eventBase + 10, subType);
-      // For FD events, report available bytes
-      if (subType === 1 || subType === 2) {
-        view.setBigUint64(eventBase + 16, 65536n, true); // nbytes
-        view.setUint16(eventBase + 24, 0, true); // flags
-      }
+      const base = inPtr + i * 48;
+      const tag = view.getUint8(base + 8);
+      if (tag > 2) return WASI_EINVAL;
+      const sub: Sub = { userdata: view.getBigUint64(base, true), tag, fd: 0, clock: 0, deadline: 0n };
+      if (tag === 0) {
+        sub.clock = view.getUint32(base + 16, true);
+        const timeout = view.getBigUint64(base + 24, true);
+        const absolute = (view.getUint16(base + 40, true) & 1) !== 0;
+        sub.deadline = absolute || !this.validClock(sub.clock) ? timeout : this.clockNs(sub.clock) + timeout;
+      } else sub.fd = view.getUint32(base + 16, true);
+      subs.push(sub);
     }
-
-    view.setUint32(neventsPtr, nsubscriptions, true);
+    const events: Array<{ sub: Sub; error: number; nbytes: bigint; flags: number }> = [];
+    for (;;) {
+      events.length = 0;
+      let nextWake: bigint | null = null;
+      for (const sub of subs) {
+        if (sub.tag === 0) {
+          if (!this.validClock(sub.clock)) { events.push({ sub, error: WASI_EINVAL, nbytes: 0n, flags: 0 }); continue; }
+          const now = this.clockNs(sub.clock);
+          if (sub.deadline <= now) events.push({ sub, error: WASI_ESUCCESS, nbytes: 0n, flags: 0 });
+          else {
+            const wait = sub.deadline - now;
+            if (nextWake === null || wait < nextWake) nextWake = wait;
+          }
+        } else {
+          const r = this.fdReadiness(sub.fd, sub.tag === 1);
+          if (r) events.push({ sub, ...r });
+        }
+      }
+      if (events.length) break;
+      if (nextWake === null) return WASI_EAGAIN;
+      this.sleepNs(nextWake);
+    }
+    for (let i = 0; i < events.length; i++) {
+      const base = outPtr + i * 32, e = events[i];
+      view.setBigUint64(base, e.sub.userdata, true);
+      view.setUint16(base + 8, e.error, true);
+      view.setUint8(base + 10, e.sub.tag);
+      view.setBigUint64(base + 16, e.nbytes, true);
+      view.setUint16(base + 24, e.flags, true);
+    }
+    view.setUint32(neventsPtr, events.length, true);
     return WASI_ESUCCESS;
+  }
+
+  /** What poll reports for `fd`, or null when it is not ready yet. */
+  private fdReadiness(fd: number, forRead: boolean): { error: number; nbytes: bigint; flags: number } | null {
+    const f = this.fds.get(fd);
+    if (!f) return { error: WASI_EBADF, nbytes: 0n, flags: 0 };
+    if (!forRead) {
+      // A write is ready wherever fd_write would be accepted: stdout/stderr, a writable file or the write end of a pipe.
+      const ok = f.pipe ? f.pipe.end === 'w' : (f.writable || f === this.stdoutFd || f === this.stderrFd || f.device !== null);
+      return ok ? { error: WASI_ESUCCESS, nbytes: 65536n, flags: 0 } : { error: WASI_EBADF, nbytes: 0n, flags: 0 };
+    }
+    if (f.device) return { error: WASI_ESUCCESS, nbytes: f.device === 'null' ? 0n : 65536n, flags: 0 };
+    if (f.pipe) {
+      if (f.pipe.end !== 'r') return { error: WASI_EBADF, nbytes: 0n, flags: 0 };
+      const st = f.pipe.state, avail = st.len - st.readPos;
+      if (avail > 0) return { error: WASI_ESUCCESS, nbytes: BigInt(avail), flags: 0 };
+      return st.writers === 0 ? { error: WASI_ESUCCESS, nbytes: 0n, flags: 1 } : null;   // EOF, else nothing will arrive
+    }
+    return { error: WASI_ESUCCESS, nbytes: BigInt(Math.max(0, f.data.length - f.offset)), flags: 0 };
+  }
+
+  private validClock(id: number): boolean { return id >= 0 && id <= 3; }
+  /** Clock `id` in nanoseconds: wall time for realtime, a monotonic reading for the rest, plus any time slept virtually. */
+  private clockNs(id: number): bigint {
+    const base = id === WASI_CLOCK_REALTIME ? BigInt(Date.now()) * 1_000_000n : BigInt(Math.round(performance.now() * 1e6));
+    return base + this.clockSkewNs;
+  }
+  private clockSkewNs = 0n;
+  /** Wait `ns`. In a Worker (or Node) the thread blocks, so a deadline can still kill it; on a page's main thread
+   *  Atomics.wait is forbidden and a busy wait would freeze the page, so the clock is advanced instead and the
+   *  guest sees the time pass without the wall-clock cost. */
+  private sleepNs(ns: bigint): void {
+    const canBlock = typeof SharedArrayBuffer !== 'undefined' && typeof Atomics !== 'undefined'
+      && (typeof window === 'undefined' || typeof (globalThis as any).WorkerGlobalScope !== 'undefined');
+    if (canBlock) {
+      const ms = Number((ns + 999_999n) / 1_000_000n);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(ms, 2_147_483_647));
+    } else {
+      this.clockSkewNs += ns;
+    }
   }
 
   // ── sockets (stubs) ────────────────────────────────────────────────
