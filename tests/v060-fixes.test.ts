@@ -114,6 +114,33 @@ describe('repeating output', () => {
     });
 });
 
+describe('repetitive file payloads (R10)', () => {
+    const stream = async (name: string, rows: number) => {
+        const enc = new TextEncoder();
+        const row = 'id,name,value\\n1,sample,42\\n';
+        const events = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c', function: { name, arguments: '{"path":"data.csv","content":"' } }] } }] },
+            ...Array.from({ length: rows }, () => ({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: row } }] } }] })),
+            { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"}' } }] }, finish_reason: 'tool_calls' }] }];
+        const lines = events.map(e => `data: ${JSON.stringify(e)}\n`).concat('data: [DONE]\n');
+        let i = 0;
+        const resp = { body: {
+            getReader: () => ({ read: async () => i < lines.length ? { value: enc.encode(lines[i++]), done: false } : { value: undefined, done: true },
+                cancel: async () => {}, releaseLock: () => {} }),
+            cancel: async () => {},
+        } };
+        return streamOAICompat(resp, () => {}) as Promise<any>;
+    };
+    it('does not cut off a valid repetitive write_file', async () => {
+        const msg = await stream('write_file', 400);   // ~11K chars of identical rows
+        expect(msg.finish_reason).not.toBe('repetition');
+        expect(msg.degenerate).toBeFalsy();
+    });
+    it('still cuts off the same runaway in a non-content tool', async () => {
+        const msg = await stream('execute_code', 400);
+        expect(msg.finish_reason).toBe('repetition');
+    });
+});
+
 describe('environment check: stub packages', () => {
     afterEach(() => { delete (globalThis as any).fgChangedFiles; delete (globalThis as any).fgNewFiles; });
 

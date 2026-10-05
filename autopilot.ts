@@ -186,7 +186,7 @@ async function _runPlanThenExecute(task, chatId) {
     const input    = document.getElementById('agent-input');
 
     // Ensure we are in this task's chat
-    if (activeChatId !== chatId) await switchToChat(chatId);
+    if (activeChatId !== chatId) await switchToChat(chatId, { internal: true });
     activateTab('chat');
 
     // ── Ledger setup ──
@@ -394,7 +394,7 @@ async function _runDirectExecution(task, chatId) {
             ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\nWhen the task is fully done, update the frontmatter status to "done" and append a log entry. If the task is impossible, set status to "failed" and explain why in the log.`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Please complete it now and update the status to "done", or set it to "failed" if it cannot be done.`;
 
-        if (activeChatId !== chatId) await switchToChat(chatId);
+        if (activeChatId !== chatId) await switchToChat(chatId, { internal: true });
         activateTab('chat');
 
         if (input) { _setInputText(input, prompt); autoResizeTextarea(input); }
@@ -430,7 +430,7 @@ function _createTaskTab(task, chatId) {
     tab.dataset.chatId   = chatId;
     tab.dataset.taskPath = task.path;
     tab.title = rawName;
-    tab.onclick = () => { switchToChat(chatId); activateTab('chat'); };
+    tab.onclick = () => { switchToChat(chatId, { internal: true }); activateTab('chat'); };
 
     const icon    = document.createElement('span');
     icon.className = 'task-auto-icon';

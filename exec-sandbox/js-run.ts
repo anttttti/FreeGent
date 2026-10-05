@@ -28,10 +28,14 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
     };
     // One streaming decoder per stream: Node writes the bytes through untouched, so a multibyte
     // character split across two writes must come out whole, not as two U+FFFD.
+    // Strings (and console output) go through the same decoder as bytes, in order: otherwise a
+    // pending partial character is emitted after the text written later.
     const decoders = { out: new TextDecoder(), err: new TextDecoder() };
+    const encoder = new TextEncoder();
     const text = (d: TextDecoder, c: any) =>
-        typeof c === 'string' ? c : ArrayBuffer.isView(c) ? d.decode(c, { stream: true }) : String(c);
-    const con = nodeConsole(t => { stdout.push(t); }, t => { stderr.push(t); });
+        ArrayBuffer.isView(c) ? d.decode(c, { stream: true })
+            : d.decode(encoder.encode(typeof c === 'string' ? c : String(c)), { stream: true });
+    const con = nodeConsole(t => { stdout.push(text(decoders.out, t)); }, t => { stderr.push(text(decoders.err, t)); });
     const process = {
         env: {}, argv: ['node'], platform: 'linux', exitCode: undefined as number | undefined,
         cwd: () => WORKSPACE,

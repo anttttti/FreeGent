@@ -71,7 +71,16 @@ export function sessionSetChatRole(id, role) { _safeCall('setChatRole', id, role
 // ── Messages ────────────────────────────────────────────────────────────────
 
 // Whole-blob replace semantics, matching chat-state.js's saveHistory() (one JSON blob per chat).
-function sessionSaveHistory(chatId, history) { _safeCall('replaceMessages', chatId, history); }
+// Resolves true once the store accepted the write, false if there is no adapter or it failed —
+// chat-state only drops a chat's localStorage copy after a true.
+function sessionSaveHistory(chatId, history): Promise<boolean> {
+    if (!_store || typeof _store.replaceMessages !== 'function') return Promise.resolve(false);
+    try {
+        return Promise.resolve(_store.replaceMessages(chatId, history)).then(() => true, e => {
+            console.warn('[session-store] replaceMessages failed:', e?.message); return false;
+        });
+    } catch (e) { console.warn('[session-store] replaceMessages failed:', (e as any)?.message); return Promise.resolve(false); }
+}
 
 // Compaction lineage (net-new — no legacy behavior to preserve, adapter-only like worker runs).
 // Seals the chat's current generation with the FULL pre-compaction history and opens a new

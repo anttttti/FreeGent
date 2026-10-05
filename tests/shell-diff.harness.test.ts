@@ -18,6 +18,8 @@ vi.mock('../workspace', () => ({
 import { getShell, resetShell } from '../shiro/shell-singleton';
 import { __setPyodideForTest } from '../shiro/commands/python';
 import { textToBytes } from '../shiro/utils/bytes';
+import { setWasiWorkerFactory } from '../shiro/wasi-host';
+import { nodeWorkerFactory } from './helpers/node-wasi-worker';
 
 const { SHELL_DIFF_CASES: casesPath, SHELL_DIFF_OUT: outDir, SHELL_DIFF_FIXTURES: fixturesDir } = process.env;
 
@@ -30,6 +32,10 @@ describe.skipIf(!casesPath)('shell diff (browser shell side)', () => {
         if (cases.some(c => /\bpython3?\b|\bpip3?\b/.test(c))) {
             __setPyodideForTest(await loadNodePyodide());
         }
+        // Migrated commands (bc, dc, jq, rev, hexdump, zstd, …) run in a WASI Worker, which the host
+        // requires so it can enforce cancellation and deadlines; Node/JSDOM has none of its own.
+        setWasiWorkerFactory(await nodeWorkerFactory());
+        try {
         let n = 0;
         for (const c of cases) {
             n++;
@@ -51,5 +57,6 @@ describe.skipIf(!casesPath)('shell diff (browser shell side)', () => {
             // The bytes the output stands for (non-UTF-8 bytes are escaped in shell strings).
             writeFileSync(join(outDir!, `shiro.${n}`), textToBytes(out));
         }
+        } finally { setWasiWorkerFactory(null); }
     }, 1_200_000);
 });

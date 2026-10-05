@@ -141,19 +141,43 @@ const _HTML_CACHE_MAX = 1_000_000;
 // Older versions' per-chat logs (convo-log / session-store); dropped along with a chat's cache.
 const _chatCacheKeys = (id: string) => [chatKey.oh(id), chatKey.msgs(id), chatKey.log(id), chatKey.raw(id)];
 
-// Drop the cache of every chat except the active one and the _CACHED_CHATS - 1 most recent others.
-function _pruneChatCaches() {
+// Chats whose full history is known to be in the session store (a save resolved, or a prune
+// found the stored copy at least as long as the cache). A chat's localStorage copy is only ever
+// dropped once it is in here: without a durable copy the cache may be the only one, and a missing
+// or failing adapter (init.ts continues without one) must not turn eviction into data loss.
+const _durableHistory = new Set<string>();
+function _noteDurable(id: string, saved: Promise<boolean> | undefined) {
+    saved?.then?.(ok => { if (ok) _durableHistory.add(id); else _durableHistory.delete(id); });
+}
+
+// Drop the cache of every chat except the active one and the _CACHED_CHATS - 1 most recent others,
+// provided the session store holds that chat's history.
+async function _pruneChatCaches() {
     const others = getChatList().filter((c: any) => c.id !== activeChatId)
         .sort((a: any, b: any) => (b.lastAt || 0) - (a.lastAt || 0));
-    for (const old of others.slice(_CACHED_CHATS - 1))
+    for (const old of others.slice(_CACHED_CHATS - 1)) {
+        if (!(await _hasDurableHistory(old.id))) continue;
         for (const k of [chatKey.oh(old.id), chatKey.msgs(old.id)]) localStorage.removeItem(k);
+    }
+}
+async function _hasDurableHistory(id: string): Promise<boolean> {
+    if (_durableHistory.has(id)) return true;
+    if (typeof sessionLoadHistory !== 'function') return false;
+    let cached = 0;
+    try { cached = JSON.parse(localStorage.getItem(chatKey.oh(id)) || '[]').length; } catch { return false; }
+    try {
+        const stored = await sessionLoadHistory(id);
+        if (stored && stored.length >= cached) { _durableHistory.add(id); return true; }
+    } catch {}
+    return false;
 }
 
 // Free localStorage when a write hit the quota: drop the cached history/HTML of other chats,
-// oldest first, calling `retry` after each until it returns true. The dropped chats are still
-// in the session store / IDB, which loadChatHistory falls back to. Returns retry's last result.
+// oldest first, calling `retry` after each until it returns true. Only chats with a durable copy
+// are touched (see _durableHistory); they load from the session store (loadChatHistory).
+// Returns retry's last result.
 function evictOldChatCaches(retry: () => boolean): boolean {
-    const others = getChatList().filter((c: any) => c.id !== activeChatId)
+    const others = getChatList().filter((c: any) => c.id !== activeChatId && _durableHistory.has(c.id))
         .sort((a: any, b: any) => (a.lastAt || 0) - (b.lastAt || 0));
     for (const old of others) {
         const keys = _chatCacheKeys(old.id).filter(k => localStorage.getItem(k) !== null);
@@ -173,7 +197,7 @@ function saveHistory() {
     // browser) are readable when the user opens the chat tab. Only the DOM HTML snapshot
     // is skipped in workflowMode — rendering goes to runner-process, not the messages div.
     if (_wfMode) {
-        try { sessionSaveHistory?.(activeChatId, openaiHistory); } catch {}
+        try { _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, openaiHistory)); } catch {}
         // fall through to save openaiHistory to localStorage
     }
     // Browser UI path: write localStorage for fast reload access.
@@ -190,7 +214,7 @@ function saveHistory() {
             oh = JSON.stringify([...head, ...tail]);
             console.warn(`[saveHistory] history exceeds the localStorage cache cap — cached a trimmed snapshot (${head.length + tail.length}/${openaiHistory.length} msgs); the full history goes to IndexedDB`);
         }
-        _pruneChatCaches();
+        _pruneChatCaches().catch(() => {});
         // Try to write; if quota exceeded, evict the oldest OTHER chat's history and retry once.
         const _lsSet = (key: string, val: string) => {
             try { localStorage.setItem(key, val); return true; } catch { return false; }
@@ -205,7 +229,7 @@ function saveHistory() {
         }
         // Additive: also persist the full (untrimmed) history to the session-store adapter
         // (skipped when _wfMode since it was already called above).
-        if (!_wfMode) sessionSaveHistory?.(activeChatId, openaiHistory);
+        if (!_wfMode) _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, openaiHistory));
     } catch (e) { console.warn('[saveHistory] LLM history persist failed:', (e as any)?.message); }
     // Messages HTML — browser only (requires a real DOM element).
     // In workflowMode, save it only when something was rendered: headless runs use the NULL
@@ -718,8 +742,13 @@ function closeChatsDropdown() {
     document.getElementById('rail-sidebar')?.classList.remove('open');
 }
 
-async function switchToChat(id) {
+// `internal` is for the job that owns the active chat (autopilot reselecting its task's chat, or
+// the user opening one of its task tabs): any other switch while autopilot holds the job is
+// refused, because between plan steps nothing is streaming and the next step would be sent into
+// whichever chat was selected, after clearing its in-memory history.
+async function switchToChat(id, opts: { internal?: boolean } = {}) {
     if (id === activeChatId || agentStreaming) return;
+    if (!opts.internal && typeof aiJob !== 'undefined' && aiJob === 'autopilot') return;
     // The task runner drives the active chat's global history; leaving its chat mid-run would
     // put the runner's next turn (or the tail of a stopped one) into the chat switched to.
     if (typeof isRunnerRunning === 'function' && isRunnerRunning()
