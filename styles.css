@@ -1068,7 +1068,15 @@ html, body {
 .kanban-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
 .kanban-card:hover { border-color: var(--accent); box-shadow: 0 1px 5px rgba(0,0,0,0.08); }
 
-.kanban-card-title { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.35; }
+.kanban-add-btn { flex-shrink: 0; margin: 0 8px 8px; padding: 4px 0; background: none; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.kanban-add-btn:hover { color: var(--accent); border-color: var(--accent); }
+.kanban-card.dragging { opacity: 0.4; }
+.kanban-col.drag-over { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.kanban-card { position: relative; }
+.kanban-card-trash { position: absolute; top: 4px; right: 4px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; }
+.kanban-card:hover .kanban-card-trash { opacity: 0.6; }
+.kanban-card-trash:hover { opacity: 1 !important; }
+.kanban-card-title { padding-right: 16px; font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.35; }
 .kanban-card-log { font-size: 11px; color: var(--muted); margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kanban-card-meta { font-size: 10px; color: var(--muted); margin-top: 4px; }
 

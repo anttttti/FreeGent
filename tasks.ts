@@ -59,8 +59,34 @@ async function previewTask(path) {
 function makeKanbanCard(task) {
     const card = document.createElement('div');
     card.className = 'kanban-card';
+    card.draggable = true;
+    card.addEventListener('dragstart', e => {
+        e.dataTransfer?.setData('text/plain', task.path);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
     card.onclick = () => previewTask(task.path);
     card.ondblclick = () => openFileTab(task.path);
+
+    const trash = document.createElement('button');
+    trash.className = 'kanban-card-trash';
+    trash.title = 'Delete task';
+    trash.textContent = '🗑';
+    trash.draggable = false;
+    trash.onclick = async e => {
+        e.stopPropagation();
+        const name = task.fm.title || task.path;
+        if (!confirm(`Delete task "${name}"? This removes ${task.path}.`)) return;
+        try {
+            await agentDeleteFile(task.path);
+            document.getElementById('task-preview')?.classList.remove('active');
+            await syncLedgerWithTaskFiles();
+        } catch (err: any) {
+            alert('Failed to delete task: ' + (err?.message || err));
+        }
+    };
+    card.appendChild(trash);
 
     const title = document.createElement('div');
     title.className = 'kanban-card-title';
@@ -96,6 +122,95 @@ function makeKanbanCard(task) {
 
     return card;
 }
+
+function openAddTaskDialog(status: string) {
+    document.getElementById('fg-add-task-dialog')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'fg-add-task-dialog';
+    overlay.className = 'fg-modal-overlay';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    const lbl = 'padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:80px;vertical-align:top';
+    const inp = 'margin:0;width:100%';
+    const statuses = [['open', 'To Do'], ['in-progress', 'In Progress'], ['review', 'Review'], ['done', 'Done']];
+    const cur = status === 'todo' ? 'open' : status;
+    overlay.innerHTML = `<div class="fg-modal" style="max-width:520px;width:95%">
+  <div class="fg-modal-header">
+    <span class="fg-modal-title">Add task</span>
+    <button class="fg-modal-close" id="atd-close">✕</button>
+  </div>
+  <div class="fg-modal-body">
+    <table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>
+      <tr><td style="${lbl}">Title</td><td><input class="settings-input" id="atd-title" type="text" style="${inp}" placeholder="Short imperative title"></td></tr>
+      <tr><td style="${lbl}">Status</td><td><select class="settings-input" id="atd-status" style="${inp}">${statuses.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>
+      <tr><td style="${lbl}">Priority</td><td><select class="settings-input" id="atd-priority" style="${inp}"><option>High</option><option selected>Medium</option><option>Low</option></select></td></tr>
+      <tr><td style="${lbl}">Description</td><td><textarea class="settings-input" id="atd-desc" rows="4" style="${inp};resize:vertical" placeholder="What to do and what done looks like"></textarea></td></tr>
+      <tr><td style="${lbl}">Criteria</td><td><textarea class="settings-input" id="atd-criteria" rows="3" style="${inp};resize:vertical" placeholder="Acceptance criteria, one per line"></textarea></td></tr>
+    </tbody></table>
+    <div id="atd-err" style="color:#c62828;font-size:11px;min-height:14px"></div>
+  </div>
+  <div class="fg-modal-btns">
+    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel">Cancel</button>
+    <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok">Add task</button>
+  </div>
+</div>`;
+    document.body.appendChild(overlay);
+    const $ = (id: string) => overlay.querySelector('#' + id) as any;
+    $('atd-close').onclick = $('atd-cancel').onclick = () => overlay.remove();
+    $('atd-title').focus();
+    $('atd-ok').onclick = async () => {
+        const title = $('atd-title').value.trim().replace(/\s+/g, ' ');
+        if (!title) { $('atd-err').textContent = 'Title is required.'; return; }
+        $('atd-ok').disabled = true;
+        try {
+            const existing = await loadTaskFiles();
+            const nextId = Math.max(0, ...existing.map(t => Number(t.fm.id) || 0),
+                ...existing.map(t => Number((t.path.match(/\/(\d+)-/) || [])[1]) || 0)) + 1;
+            const id = String(nextId).padStart(3, '0');
+            const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
+            const criteria = $('atd-criteria').value.split('\n').map((l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '')).filter(Boolean);
+            const today = new Date().toISOString().slice(0, 10);
+            const content = `---\nid: ${id}\ntitle: ${title.replace(/:/g, ' -')}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n## Log\n`;
+            await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
+            overlay.remove();
+            await refreshTasks();
+        } catch (e: any) {
+            $('atd-err').textContent = 'Failed to add task: ' + (e?.message || e);
+            $('atd-ok').disabled = false;
+        }
+    };
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
+}
+
+// Column drop targets. Wired once; the column elements persist across refreshes.
+async function moveTaskToColumn(path: string, colStatus: string) {
+    const newStatus = colStatus === 'todo' ? 'open' : colStatus;
+    const task = (await loadTaskFiles()).find(t => t.path === path);
+    if (!task) return;
+    const cur = (task.fm.status || 'todo').toLowerCase();
+    const curCol = { open: 'todo', blocked: 'todo', 'in-review': 'review', completed: 'done' }[cur] || cur;
+    if (curCol === colStatus) return;
+    try {
+        const r = await transitionTask(path, newStatus);
+        if (!r.transitioned) { alert('Move blocked: ' + (r.reason || 'QA gate blocked transition')); return; }
+        await _updateLedgerRow?.(path, newStatus);
+    } catch (e: any) {
+        alert('Failed to move task: ' + (e?.message || e));
+    }
+    await refreshTasks();
+}
+function initKanbanDnD() {
+    document.querySelectorAll('.kanban-col').forEach((col: any) => {
+        col.addEventListener('dragover', (e: DragEvent) => { e.preventDefault(); col.classList.add('drag-over'); });
+        col.addEventListener('dragleave', (e: DragEvent) => { if (!col.contains(e.relatedTarget as Node)) col.classList.remove('drag-over'); });
+        col.addEventListener('drop', (e: DragEvent) => {
+            e.preventDefault();
+            col.classList.remove('drag-over');
+            const path = e.dataTransfer?.getData('text/plain');
+            if (path) moveTaskToColumn(path, col.dataset.status);
+        });
+    });
+}
+initKanbanDnD();
 
 let _refreshInFlight: Promise<void> | null = null;
 async function refreshTasks(): Promise<void> {
@@ -133,4 +248,4 @@ async function syncLedgerWithTaskFiles() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });
+Object.assign(window, { openAddTaskDialog, loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });
