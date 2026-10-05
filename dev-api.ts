@@ -325,8 +325,8 @@ export async function publicGet(
         if ([301, 302, 303, 307, 308].includes(status) && loc) {
             res.resume();
             const next = new URL(loc, cur);
-            if (keyUsed && next.host !== cur.host)
-                throw new ProxyRefusal('redirect to another host refused: the request carries a server key');
+            if (keyUsed && next.origin !== cur.origin)
+                throw new ProxyRefusal('redirect to another origin refused: the request carries a server key');
             cur = next;
             continue;
         }
@@ -353,7 +353,8 @@ async function _refuseLinkLocal(rawUrl: string): Promise<void> {
 }
 
 // fetch that follows redirects itself, checking every hop. With a server key in the request it
-// refuses to follow a redirect to a different host (the key would travel with the headers).
+// refuses to follow a redirect to a different origin — host, port or scheme, so an HTTPS-to-HTTP
+// downgrade is refused too (the key would travel with the headers).
 export async function guardedFetch(
     url: string, init: RequestInit & { method: string }, serverPort: number,
     keyUsed: boolean, fetchImpl: typeof fetch = fetch,
@@ -368,8 +369,8 @@ export async function guardedFetch(
         if (!loc) return resp;
         const next = new URL(loc, cur).toString();
         try { await resp.body?.cancel(); } catch { /* ignore */ }
-        if (keyUsed && new URL(next).host !== new URL(cur).host)
-            throw new ProxyRefusal('redirect to another host refused: the request carries a server key');
+        if (keyUsed && new URL(next).origin !== new URL(cur).origin)
+            throw new ProxyRefusal('redirect to another origin refused: the request carries a server key');
         if (resp.status === 303 || ((resp.status === 301 || resp.status === 302) && req.method !== 'GET' && req.method !== 'HEAD'))
             req = { ...req, method: 'GET', body: undefined };
         cur = next;

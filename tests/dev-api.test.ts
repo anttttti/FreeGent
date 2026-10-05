@@ -69,7 +69,14 @@ describe('guardedFetch', () => {
 
     it('does not follow a cross-host redirect when a server key is in the request', async () => {
         const f = vi.fn().mockResolvedValueOnce(redirect('https://attacker.example/'));
-        await expect(guardedFetch('https://api.groq.com/x', { method: 'POST' }, 5000, true, f)).rejects.toThrow(/another host/);
+        await expect(guardedFetch('https://api.groq.com/x', { method: 'POST' }, 5000, true, f)).rejects.toThrow(/another origin/);
+    });
+
+    it('refuses an HTTPS-to-HTTP redirect on the same host when a server key is in the request', async () => {
+        const f = vi.fn().mockResolvedValueOnce(redirect('http://api.groq.com/x', 307));
+        await expect(guardedFetch('https://api.groq.com/x', { method: 'POST', headers: { authorization: 'Bearer k' } }, 5000, true, f))
+            .rejects.toThrow(/another origin/);
+        expect(f).toHaveBeenCalledTimes(1);   // the plaintext hop was never requested
     });
 
     it('follows ordinary redirects, turning POST into GET on 303', async () => {

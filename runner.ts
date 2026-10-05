@@ -33,6 +33,7 @@ let _runnerChatId: string | null         = null;
 // concurrently interleaves status transitions and corrupts task state.
 function isRunnerRunning(): boolean { return _runnerRunning; }
 function getRunnerChatId(): string | null { return _runnerChatId; }
+export function _setRunnerChatIdForTest(id: string | null): void { _runnerChatId = id; }
 
 // One agent turn in the runner's chat, rendered into the chat view so opening the task's
 // chat tab shows the prompt and the live steps. runAgentTurn alone would pick the NULL
@@ -446,22 +447,29 @@ function _updateRunnerUI() {
     if (_runnerRunning) toggleRunnerZone(true);
 }
 
-function _updateRunnerCurrentTask(task: Task | null): void {
+export function _updateRunnerCurrentTask(task: Task | null): void {
     const el = document.getElementById('runner-current-task');
     if (!el) return;
-    if (!task) { el.innerHTML = '—'; return; }
+    if (!task) { el.textContent = '—'; return; }
     const id = task.fm.id ? `#${task.fm.id} ` : '';
     const label = `${id}${task.fm.title || task.path}`;
     const chatId = _runnerChatId;
     if (chatId) {
         // Clickable link that switches to the runner's chat; stopPropagation
         // prevents the runner-header onclick (toggleRunnerZone) from firing too.
-        el.innerHTML = `<a class="runner-chat-link" href="#" title="Open chat">${label}</a>`;
-        (el.querySelector('a') as HTMLAnchorElement).onclick = (e) => {
+        // Built with DOM methods: the label comes from task files, which agents write and
+        // projects import, so it must never be parsed as HTML.
+        const a = document.createElement('a');
+        a.className = 'runner-chat-link';
+        a.href = '#';
+        a.title = 'Open chat';
+        a.textContent = label;
+        a.onclick = (e) => {
             e.preventDefault(); e.stopPropagation();
             if (typeof switchToChat === 'function') switchToChat(chatId).catch(() => {});
             if (typeof activateTab  === 'function') activateTab('chat');
         };
+        el.replaceChildren(a);
     } else {
         el.textContent = label;
     }

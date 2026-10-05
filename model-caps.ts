@@ -48,7 +48,9 @@ export function recordToolFormat(provider: any, model: any, fmt: 'openai' | 'fn-
     const key = `${provider}/${model}`;
     if (key in _TOOL_FORMATS) return;
     const all = _readLearned();
-    if (all[key]?.fmt === fmt) return;
+    const prev = all[key];
+    // An expired 'none' must be rewritten: getModelToolFormat ignores it until `at` is renewed.
+    if (prev?.fmt === fmt && !(fmt === 'none' && Date.now() - prev.at > _NONE_TTL_MS)) return;
     all[key] = { fmt, at: Date.now() };
     try { localStorage.setItem(KEYS.TOOL_FORMATS_LEARNED, JSON.stringify(all)); } catch {}
 }
