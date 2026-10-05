@@ -1,5 +1,7 @@
 {
-  "schema": 1,
+  "schema": 2,
+  "coverageSha256": "a127db601e2b4d7e5ccd45c0fbe2568c6c9b1cdae43cc8767948b4f4c1a6114e",
+  "generatorSha256": "dcda73c830853adf24b23555cadc7aeb8289741579de929e34b64813fdaede9a",
   "source": "live COMMAND_CATALOG, parser branches, package manifest, integrity pins and static imports",
   "commands": [
     {
@@ -10077,7 +10079,7 @@
     "shiro/commands/function.ts": "26d6bbf6d611f86b664c57776321599ec62c790c2f54ceb75bdc634a9d4aafb7",
     "shiro/commands/getconf.ts": "96dc93fc7ec6cee8ad7412b81e26a6c53aa37ea71a36fe706484af377fbae140",
     "shiro/commands/glob.ts": "c24e3b313625efbb33a2a43428d8c36e1e885c82cc918ae5c2f74d21bccb2346",
-    "shiro/commands/grep.ts": "5edb72345aa7b5951b07039e656ed9600ac1c69f70068af8d74466e4b5c00857",
+    "shiro/commands/grep.ts": "1bc48ab60e5faecb6b4c052eeffe88cadadb3de1fefd349f82b9b681a5bbd1db",
     "shiro/commands/gzip.ts": "b62e26ad02635ea84189724336e2d9b44564403673e1e749830cedcc88b7403d",
     "shiro/commands/hash.ts": "5f8038c734a63c3fb06972bc64b17ba57fb7396b854d52959e47deb29ad2c201",
     "shiro/commands/hashsum.ts": "e8fa21191e091a093d2253510bc8049c738d4d03870f1fe99963dec6ceae4eb2",
@@ -10208,10 +10210,10 @@
     "shiro/server-window.ts": "572aa9eb0b5404fbc45e5f7a83fe14acf2a3596472da51d8c6e537cd13e8148c",
     "shiro/service-manager.ts": "cb6fc38599081f730ef6aec77bece2a7ef2187700fdc41c4efa45f46679994b8",
     "shiro/shell-singleton.ts": "9c486bff6b96797899bac18976f8f813a439d0ee68ee299b42a6605b637848ad",
-    "shiro/shell.ts": "c8767235818bc88bcde04e5d11a908912312acf1e89f3413a324cb941e10366a",
+    "shiro/shell.ts": "5e058e595b1637282376fe1502c564b17ce80629178feed79451bdd9bad7a416",
     "shiro/split-view.ts": "46af9ec157e3560a4af57f096610c19d5f91252b6e6be07e6db0677b5fef021c",
     "shiro/terminal.ts": "104b70ca7d01d1672d6440e1c9b88b78a8930f2dc7a04cc925b95fb89a6babaf",
-    "shiro/utils/bytes.ts": "9be476e62c01ef5ecba7b73e46514feba308566178d1259960adba26c204592b",
+    "shiro/utils/bytes.ts": "b816c7f86b26356cd5945438e3ba9b3c6eccc50a7b9aede0d1a9548ea3f9933b",
     "shiro/utils/copy-utils.ts": "c47dadf5c33c99e289d6898eb7262b34bc5c5a7f8610a952231fa568f5e77190",
     "shiro/utils/lazy-command.ts": "b29334782703172ec3020cfb89f613beab704cce9dfe695dde3303a7fac6b530",
     "shiro/utils/permissions.ts": "9b0fa1ff5a6e0c504a8881df846020cb93443ba7cbdcdf4f2dc8c2a74e461fc0",

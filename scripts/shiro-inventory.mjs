@@ -136,8 +136,19 @@ for (const name of [...parserNames,'!','((...))']) {
   if (parserNames.has(name) || name === '!' || name === '((...))') row.route = 'shell parser';
   commands.set(name,row);
 }
-const coverage = JSON.parse(await readFile(resolve(root,'bench/dev-tests/log-replay/cases/coverage-index.json'),'utf8'));
-const caseCommands = new Map((coverage?.commands ?? []).map((c)=>[c.name,c.cases]));
+// bench/ is a separate optional repository. Retain a generated coverage snapshot
+// so fresh FreeGent checkouts can check routing documents without that checkout.
+let coverageSnapshot;
+try {
+  const raw = await readFile(resolve(root,'bench/dev-tests/log-replay/cases/coverage-index.json'),'utf8');
+  const coverage = JSON.parse(raw);
+  coverageSnapshot = {source:'bench/dev-tests/log-replay/cases/coverage-index.json',sha256:createHash('sha256').update(raw).digest('hex'),commands:coverage.commands.map(({name,cases})=>({name,cases}))};
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+  coverageSnapshot = JSON.parse(await readFile(resolve(root,'docs/shiro/command-coverage.json'),'utf8'));
+}
+generated.set(resolve(output,'command-coverage.json'),JSON.stringify(coverageSnapshot,null,2)+'\n');
+const caseCommands = new Map(coverageSnapshot.commands.map((c)=>[c.name,c.cases]));
 for (const row of commands.values()) {
   row.parityScope ??= 'bash';
   row.declarations = [...(declarations.get(row.name) ?? [])].sort();
@@ -152,7 +163,7 @@ for (const row of commands.values()) {
   row.migrationAccepted = false; // acceptance is an independent comparison, never inferred from registration
 }
 const data = {
-  schema:1, source:'live COMMAND_CATALOG, parser branches, package manifest, integrity pins and static imports',
+  schema:2, coverageSha256:coverageSnapshot.sha256, generatorSha256:createHash('sha256').update(await readFile(resolve(root,'scripts/shiro-inventory.mjs'))).digest('hex'), source:'live COMMAND_CATALOG, parser branches, package manifest, integrity pins and static imports',
   commands:[...commands.values()].sort((a,b)=>a.name.localeCompare(b.name)),
   precedence:['grammar','alias expansion','function','enabled builtin','remembered command location','user PATH executable','catalog command','lazy package'],
   managedPackageStubs:'Do not override catalog defaults; explicit absolute stub paths select upstream alternatives.',
@@ -163,7 +174,7 @@ const data = {
 };
 const escape = (text) => String(text ?? '').replaceAll('|','\\|').replaceAll('\n',' ');
 const lines = ['# Generated Shiro implementation matrix','','Regenerate: `npx tsx scripts/shiro-inventory.mjs --update-note`. Check: `npx tsx scripts/shiro-inventory.mjs --check`. Do not hand edit.','',
-  'Registration describes availability. Acceptance requires independent byte comparisons. Static reachability alone does not authorize deleting a file.','',
+  'The matrix includes the generator hash and separately versioned coverage snapshot hash. Registration describes availability. Acceptance requires independent byte comparisons. Static reachability alone does not authorize deleting a file.','',
   '| Command | Default owner / route | Parity scope | Explicit package alternative | Native inputs |', '|---|---|---|---|---:|'];
 for (const row of data.commands) {
   const pkg = row.packageRoute ?? row.explicitPackageAlternative;
@@ -179,7 +190,7 @@ generated.set(resolve(output,'command-matrix.md'),lines.join('\n') + '\n');
 const commonCandidates = 'chgrp chroot mkfifo mknod syncfs install-info ldconfig ldd readelf objdump strip ar as ld systemctl service journalctl dmesg modprobe lsmod mount umount swapon swapoff sudo su passwd useradd userdel groupadd groups who w last login ssh scp sftp rsync telnet ftp ping traceroute ip ifconfig ss netstat lsof nc netcat tcpdump git svn hg docker podman kubectl crontab at watchdog ps man vi nano ed top pgrep pkill tput stty cc gcc ffmpeg magick psql'.split(' ');
 const absent = commonCandidates.filter(name=>!commands.has(name));
 const inventory = ['# Current Shiro command inventory','',
-  'Generated from the working tree by `npx tsx scripts/shiro-inventory.mjs --update-note`. Regenerate after routing changes. The machine-readable command matrix retains source hashes and candidate declarations.','',
+  'Generated from the working tree by `npx tsx scripts/shiro-inventory.mjs --update-note`. Regenerate after routing changes. The machine-readable command matrix retains source hashes and candidate declarations. `command-coverage.json` retains a generated snapshot from the separately versioned benchmark repository; when that checkout is present, `--check` also detects coverage drift.','',
   `${data.commands.length} command names; ${data.modules.length} command modules; ${data.artifacts.length} WASI artifact identities. Availability does not establish complete flag compatibility or migration acceptance.`,
   '', '## Registration and lookup','',
   '`shell-singleton.ts` registers `COMMAND_CATALOG` once. The catalog declares one owner per name; `CommandRegistry` rejects duplicates. Registration order does not replace previous owners.',
@@ -224,8 +235,8 @@ const removals = JSON.parse(await readFile(resolve(root,'docs/shiro/removals.jso
 for (const row of removals.removed_command_modules) inventory.push(`- \`${row.path}\``);
 generated.set(resolve(output,'command-inventory.md'),inventory.join('\n')+'\n');
 {
-  const notePath = resolve(root,'notes/2026_10_03_v0.61_codex_shirocommands.md');
-  const historicalPath = resolve(root,'notes/2026_10_03_v0.61_codex_shirocommands-historical.md');
+  const notePath = resolve(root,'docs/shiro-commands-v0.61.md');
+  const historicalPath = resolve(root,'docs/shiro-commands-v0.61-historical.md');
   // The immutable archive is the only source for historical measurements.
   const previous = await readFile(historicalPath,'utf8');
   const marker = '## v0.61 benchmark command usage';
@@ -246,7 +257,7 @@ generated.set(resolve(output,'command-inventory.md'),inventory.join('\n')+'\n');
   current.push('', `${missing.length} of those names remain absent (${missing.reduce((sum,row)=>sum+row.count,0)} historical invocations). The original 22-name/1,071-invocation baseline remains unchanged in the historical section.`);
   const footer = previous.indexOf('## Current availability of historically unavailable names',start);
   if (footer >= 0) historical = historical.slice(0,historical.indexOf('## Current availability of historically unavailable names')).trimEnd()+'\n';
-  generated.set(notePath,inventory.join('\n').replaceAll('../../tests/','../tests/')+'\n\nComplete per-command routes and source hashes: [generated matrix](../docs/shiro/command-matrix.md), [JSON](../docs/shiro/command-matrix.json). Original routing claims are retained in the [historical note](2026_10_03_v0.61_codex_shirocommands-historical.md).\n\n'+historical+'\n'+current.join('\n')+'\n');
+  generated.set(notePath,inventory.join('\n').replaceAll('../../tests/','../tests/')+'\n\nComplete per-command routes and source hashes: [generated matrix](../docs/shiro/command-matrix.md), [JSON](../docs/shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).\n\n'+historical+'\n'+current.join('\n')+'\n');
 }
 if (options.check) {
   const stale = [];

@@ -12,7 +12,7 @@ Lookup precedence: grammar → alias expansion → function → enabled builtin 
 
 `hash` remembers external command locations and participates in lookup. PATH assignments invalidate remembered locations; discovery does not download lazy packages.
 
-Lookup regression evidence: [shell precedence and hash tests](../../tests/shiro-shell-commands.test.ts) and [lazy packages and managed-stub tests](../../tests/shiro-wasm-packages.test.ts).
+Lookup regression evidence: [shell precedence and hash tests](../tests/shiro-shell-commands.test.ts) and [lazy packages and managed-stub tests](../tests/shiro-wasm-packages.test.ts).
 
 ## Names grouped by current default route
 
@@ -142,3 +142,84 @@ The removal record contains hashes and import/caller evidence. Removed files are
 - `shiro/commands/which.ts`
 - `shiro/commands/x86.ts`
 - `shiro/commands/xpkg.ts`
+
+Complete per-command routes and source hashes: [generated matrix](../docs/shiro/command-matrix.md), [JSON](../docs/shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).
+
+## v0.61 benchmark command usage — historical measurements
+
+I inspected the v0.61 benchmark event logs and extracted `execute_code(language="bash")` calls from all 853 event-log files. These calls ran in the benchmarks’ native shell environments; the support classification below is against the original v0.61 command surface. It indicates command names unavailable in Shiro, even if the native benchmark container had them.
+
+There were 6,627 Bash tool calls and approximately 11,429 parsed command invocations. Compound commands and pipelines count each simple command position separately. The extraction is lexical rather than a full Bash AST parse: it skips comments and here-doc bodies, but can miss commands nested in substitutions or embedded in another language. Final commands returned for grading are not included.
+
+Most frequent parsed commands:
+
+| Command | Invocations |
+|---|---:|
+| `python3` | 2,378 |
+| `curl` | 1,707 |
+| `grep` | 1,154 |
+| `cat` | 964 |
+| `ls` | 900 |
+| `find` | 852 |
+| `mysql` | 406 |
+| `export` | 380 |
+| `sed` | 372 |
+| `echo` | 321 |
+| `pytest` | 257 |
+| `head` | 245 |
+| `pip3` | 216 |
+| `git` | 174 |
+| `cd` | 143 |
+
+Observed command names unavailable in the original v0.61 Shiro surface, with invocation counts:
+
+| Command | Invocations | Command | Invocations |
+|---|---:|---|---:|
+| `mysql` | 406 | `pytest` | 257 |
+| `git` | 174 | `cmake` | 67 |
+| `apt-get` | 35 | `gcc` | 27 |
+| `7z` | 23 | `pdflatex` | 22 |
+| `ps` | 18 | `sudo` | 13 |
+| `nc` | 7 | `service` | 3 |
+| `psql` | 3 | `ffmpeg` | 3 |
+| `docker` | 2 | `netstat` | 2 |
+| `ss` | 2 | `perl` | 2 |
+| `yt-dlp` | 2 | `whereis` | 1 |
+| `vim` | 1 | `john` | 1 |
+
+That is 22 distinct unsupported names and approximately 1,071 invocations. The dedicated InterCode Bash logs contained 195 parsed command invocations; `whereis` was the only unsupported name found in that subset. Most unsupported usage came from other benchmark suites, including `mysql` in InterCode SQL and `git`, `cmake`, and `7z` in TerminalBench.
+
+Since this v0.61 inventory was recorded, Shiro added `7z` as an on-demand WebAssembly command and `pytest` through its Pyodide runtime. The 23 `7z` and 257 `pytest` attempts remain classified as unsupported for the historical benchmark baseline above.
+
+Source logs: [v0.61 benchmark run summary](../bench/run_all_output_v0.61_seed102.log), [InterCode SQL `mysql` attempt](../bench/logs/gemma-intercode-sql-v0.61/events/c52ddf65534b7b460muq82y3veb7fb4-1790900775212.jsonl), [TerminalBench `cmake` attempt](../bench/logs/gemma-terminalbench-v0.61/events/c52ddf65534b7b460muqne8rs4c3e55-1790926496488.jsonl), and [InterCode Bash `whereis` attempt](../bench/logs/gemma-intercode-bash-v0.61/events/51375c6b4f21672c0muq75wd3e63b14-1790899233304.jsonl).
+
+## Current availability of historically unavailable names
+
+Invocation counts retain the historical lexical extraction. Availability below is regenerated from the current catalog/parser/manifest.
+
+| Name | Historical invocations | Current route |
+|---|---:|---|
+| `mysql` | 406 | absent |
+| `pytest` | 257 | typescript |
+| `git` | 174 | absent |
+| `cmake` | 67 | absent |
+| `apt-get` | 35 | absent |
+| `gcc` | 27 | absent |
+| `7z` | 23 | typescript |
+| `pdflatex` | 22 | absent |
+| `ps` | 18 | absent |
+| `sudo` | 13 | absent |
+| `nc` | 7 | absent |
+| `service` | 3 | absent |
+| `psql` | 3 | absent |
+| `ffmpeg` | 3 | absent |
+| `docker` | 2 | absent |
+| `netstat` | 2 | absent |
+| `ss` | 2 | absent |
+| `perl` | 2 | absent |
+| `yt-dlp` | 2 | absent |
+| `whereis` | 1 | absent |
+| `vim` | 1 | absent |
+| `john` | 1 | absent |
+
+20 of those names remain absent (791 historical invocations). The original 22-name/1,071-invocation baseline remains unchanged in the historical section.

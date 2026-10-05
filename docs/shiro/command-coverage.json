@@ -1,0 +1,2032 @@
+{
+  "source": "bench/dev-tests/log-replay/cases/coverage-index.json",
+  "sha256": "a127db601e2b4d7e5ccd45c0fbe2568c6c9b1cdae43cc8767948b4f4c1a6114e",
+  "commands": [
+    {
+      "name": "!",
+      "cases": [
+        "coverage-not-01.sh",
+        "coverage-not-02.sh"
+      ]
+    },
+    {
+      "name": ".",
+      "cases": [
+        "coverage-dot-01.sh",
+        "coverage-dot-02.sh"
+      ]
+    },
+    {
+      "name": "((...))",
+      "cases": [
+        "coverage-((dotdotdot))-01.sh",
+        "coverage-((dotdotdot))-02.sh"
+      ]
+    },
+    {
+      "name": "[",
+      "cases": [
+        "coverage-bracket-01.sh",
+        "coverage-bracket-02.sh",
+        "coverage-bracket-03.sh"
+      ]
+    },
+    {
+      "name": "[[",
+      "cases": [
+        "coverage-bracketbracket-01.sh",
+        "coverage-bracketbracket-02.sh"
+      ]
+    },
+    {
+      "name": "7z",
+      "cases": [
+        "coverage-7z-01.sh",
+        "coverage-7z-02.sh",
+        "coverage-7z-03.sh",
+        "coverage-7z-04.sh"
+      ]
+    },
+    {
+      "name": "alias",
+      "cases": [
+        "coverage-alias-01.sh",
+        "coverage-alias-02.sh"
+      ]
+    },
+    {
+      "name": "awk",
+      "cases": [
+        "coverage-awk-01.sh",
+        "coverage-awk-02.sh",
+        "coverage-awk-03.sh",
+        "coverage-awk-04.sh",
+        "coverage-awk-05.sh",
+        "coverage-awk-06.sh"
+      ]
+    },
+    {
+      "name": "base32",
+      "cases": [
+        "coverage-base32-01.sh",
+        "coverage-base32-02.sh",
+        "coverage-base32-03.sh",
+        "coverage-base32-04.sh"
+      ]
+    },
+    {
+      "name": "base64",
+      "cases": [
+        "coverage-base64-01.sh",
+        "coverage-base64-02.sh",
+        "coverage-base64-03.sh",
+        "coverage-base64-04.sh"
+      ]
+    },
+    {
+      "name": "basename",
+      "cases": [
+        "coverage-basename-01.sh",
+        "coverage-basename-02.sh",
+        "coverage-basename-03.sh",
+        "coverage-basename-04.sh"
+      ]
+    },
+    {
+      "name": "bash",
+      "cases": [
+        "coverage-bash-01.sh",
+        "coverage-bash-02.sh"
+      ]
+    },
+    {
+      "name": "bc",
+      "cases": [
+        "coverage-bc-01.sh",
+        "coverage-bc-02.sh",
+        "coverage-bc-03.sh"
+      ]
+    },
+    {
+      "name": "break",
+      "cases": [
+        "coverage-break-01.sh"
+      ]
+    },
+    {
+      "name": "brotli",
+      "cases": [
+        "coverage-brotli-01.sh"
+      ]
+    },
+    {
+      "name": "builtin",
+      "cases": [
+        "coverage-builtin-01.sh",
+        "coverage-builtin-02.sh"
+      ]
+    },
+    {
+      "name": "bunzip2",
+      "cases": [
+        "coverage-bunzip2-01.sh",
+        "coverage-bunzip2-02.sh"
+      ]
+    },
+    {
+      "name": "bzcat",
+      "cases": [
+        "coverage-bzcat-01.sh",
+        "coverage-bzcat-02.sh"
+      ]
+    },
+    {
+      "name": "bzip2",
+      "cases": [
+        "coverage-bzip2-01.sh",
+        "coverage-bzip2-02.sh",
+        "coverage-bzip2-03.sh",
+        "coverage-bzip2-04.sh"
+      ]
+    },
+    {
+      "name": "cal",
+      "cases": [
+        "coverage-cal-01.sh"
+      ]
+    },
+    {
+      "name": "caller",
+      "cases": [
+        "coverage-caller-01.sh"
+      ]
+    },
+    {
+      "name": "case",
+      "cases": [
+        "coverage-case-01.sh"
+      ]
+    },
+    {
+      "name": "cat",
+      "cases": [
+        "coverage-cat-01.sh",
+        "coverage-cat-02.sh",
+        "coverage-cat-03.sh",
+        "coverage-cat-04.sh",
+        "coverage-cat-05.sh",
+        "coverage-cat-06.sh",
+        "coverage-cat-07.sh",
+        "coverage-cat-08.sh"
+      ]
+    },
+    {
+      "name": "cd",
+      "cases": [
+        "coverage-cd-01.sh",
+        "coverage-cd-02.sh"
+      ]
+    },
+    {
+      "name": "chmod",
+      "cases": [
+        "coverage-chmod-01.sh",
+        "coverage-chmod-02.sh",
+        "coverage-chmod-03.sh",
+        "coverage-chmod-04.sh"
+      ]
+    },
+    {
+      "name": "chown",
+      "cases": [
+        "coverage-chown-01.sh",
+        "coverage-chown-02.sh"
+      ]
+    },
+    {
+      "name": "cksum",
+      "cases": [
+        "coverage-cksum-01.sh",
+        "coverage-cksum-02.sh"
+      ]
+    },
+    {
+      "name": "clear",
+      "cases": [
+        "coverage-clear-01.sh",
+        "coverage-clear-02.sh",
+        "coverage-clear-03.sh",
+        "coverage-clear-04.sh",
+        "coverage-clear-05.sh",
+        "coverage-clear-06.sh",
+        "coverage-clear-07.sh",
+        "coverage-clear-08.sh",
+        "coverage-clear-09.sh",
+        "coverage-clear-10.sh",
+        "coverage-clear-11.sh"
+      ]
+    },
+    {
+      "name": "cmp",
+      "cases": [
+        "coverage-cmp-01.sh",
+        "coverage-cmp-02.sh",
+        "coverage-cmp-03.sh"
+      ]
+    },
+    {
+      "name": "col",
+      "cases": [
+        "coverage-col-01.sh"
+      ]
+    },
+    {
+      "name": "column",
+      "cases": [
+        "coverage-column-01.sh",
+        "coverage-column-02.sh"
+      ]
+    },
+    {
+      "name": "comm",
+      "cases": [
+        "coverage-comm-01.sh",
+        "coverage-comm-02.sh"
+      ]
+    },
+    {
+      "name": "command",
+      "cases": [
+        "coverage-command-01.sh",
+        "coverage-command-02.sh",
+        "coverage-hash-07.sh",
+        "coverage-hash-08.sh",
+        "coverage-hash-09.sh",
+        "coverage-hash-11.sh",
+        "coverage-command-03.sh",
+        "coverage-command-04.sh",
+        "coverage-command-05.sh",
+        "coverage-command-06.sh",
+        "coverage-command-07.sh",
+        "coverage-command-08.sh",
+        "coverage-command-09.sh",
+        "coverage-command-10.sh",
+        "coverage-type-03.sh",
+        "coverage-type-04.sh",
+        "coverage-type-05.sh",
+        "coverage-type-06.sh",
+        "coverage-type-07.sh",
+        "coverage-type-08.sh",
+        "coverage-type-09.sh",
+        "coverage-type-10.sh",
+        "coverage-type-11.sh",
+        "coverage-type-12.sh"
+      ]
+    },
+    {
+      "name": "compgen",
+      "cases": [
+        "coverage-compgen-01.sh",
+        "coverage-compgen-02.sh"
+      ]
+    },
+    {
+      "name": "complete",
+      "cases": [
+        "coverage-complete-01.sh",
+        "coverage-complete-02.sh"
+      ]
+    },
+    {
+      "name": "compopt",
+      "cases": [
+        "coverage-compopt-01.sh"
+      ]
+    },
+    {
+      "name": "continue",
+      "cases": [
+        "coverage-continue-01.sh"
+      ]
+    },
+    {
+      "name": "coproc",
+      "cases": [
+        "coverage-coproc-01.sh"
+      ]
+    },
+    {
+      "name": "coreutils",
+      "cases": [
+        "coverage-coreutils-01.sh"
+      ]
+    },
+    {
+      "name": "cowsay",
+      "cases": [
+        "coverage-cowsay-01.sh"
+      ]
+    },
+    {
+      "name": "cp",
+      "cases": [
+        "coverage-cp-01.sh",
+        "coverage-cp-02.sh",
+        "coverage-cp-03.sh",
+        "coverage-cp-04.sh"
+      ]
+    },
+    {
+      "name": "csplit",
+      "cases": [
+        "coverage-csplit-01.sh",
+        "coverage-csplit-02.sh",
+        "coverage-csplit-03.sh"
+      ]
+    },
+    {
+      "name": "curl",
+      "cases": [
+        "coverage-curl-01.sh",
+        "coverage-curl-02.sh",
+        "coverage-curl-03.sh",
+        "coverage-curl-04.sh",
+        "coverage-curl-05.sh",
+        "coverage-curl-06.sh",
+        "coverage-curl-07.sh",
+        "coverage-curl-08.sh",
+        "coverage-curl-09.sh",
+        "coverage-curl-10.sh",
+        "coverage-curl-11.sh",
+        "coverage-curl-12.sh"
+      ]
+    },
+    {
+      "name": "cut",
+      "cases": [
+        "coverage-cut-01.sh",
+        "coverage-cut-02.sh",
+        "coverage-cut-03.sh",
+        "coverage-cut-04.sh"
+      ]
+    },
+    {
+      "name": "dash",
+      "cases": [
+        "coverage-dash-01.sh"
+      ]
+    },
+    {
+      "name": "date",
+      "cases": [
+        "coverage-date-01.sh",
+        "coverage-date-02.sh",
+        "coverage-date-03.sh",
+        "coverage-date-04.sh"
+      ]
+    },
+    {
+      "name": "dc",
+      "cases": [
+        "coverage-dc-01.sh",
+        "coverage-dc-02.sh",
+        "coverage-dc-03.sh"
+      ]
+    },
+    {
+      "name": "dd",
+      "cases": [
+        "coverage-dd-01.sh",
+        "coverage-dd-02.sh",
+        "coverage-dd-03.sh",
+        "coverage-dd-04.sh"
+      ]
+    },
+    {
+      "name": "declare",
+      "cases": [
+        "coverage-declare-01.sh",
+        "coverage-declare-02.sh"
+      ]
+    },
+    {
+      "name": "df",
+      "cases": [
+        "coverage-df-01.sh",
+        "coverage-df-02.sh"
+      ]
+    },
+    {
+      "name": "diff",
+      "cases": [
+        "coverage-diff-01.sh",
+        "coverage-diff-02.sh",
+        "coverage-diff-03.sh"
+      ]
+    },
+    {
+      "name": "dirname",
+      "cases": [
+        "coverage-dirname-01.sh",
+        "coverage-dirname-02.sh",
+        "coverage-dirname-03.sh",
+        "coverage-dirname-04.sh"
+      ]
+    },
+    {
+      "name": "dirs",
+      "cases": [
+        "coverage-dirs-01.sh"
+      ]
+    },
+    {
+      "name": "disown",
+      "cases": [
+        "coverage-disown-01.sh"
+      ]
+    },
+    {
+      "name": "do",
+      "cases": [
+        "coverage-do-01.sh"
+      ]
+    },
+    {
+      "name": "done",
+      "cases": [
+        "coverage-done-01.sh"
+      ]
+    },
+    {
+      "name": "dos2unix",
+      "cases": [
+        "coverage-dos2unix-01.sh",
+        "coverage-dos2unix-02.sh"
+      ]
+    },
+    {
+      "name": "du",
+      "cases": [
+        "coverage-du-01.sh",
+        "coverage-du-02.sh",
+        "coverage-du-03.sh",
+        "coverage-du-04.sh"
+      ]
+    },
+    {
+      "name": "echo",
+      "cases": [
+        "coverage-echo-01.sh",
+        "coverage-echo-02.sh",
+        "coverage-echo-03.sh",
+        "coverage-echo-04.sh"
+      ]
+    },
+    {
+      "name": "egrep",
+      "cases": [
+        "coverage-egrep-01.sh",
+        "coverage-egrep-02.sh"
+      ]
+    },
+    {
+      "name": "elif",
+      "cases": [
+        "coverage-elif-01.sh"
+      ]
+    },
+    {
+      "name": "else",
+      "cases": [
+        "coverage-else-01.sh"
+      ]
+    },
+    {
+      "name": "enable",
+      "cases": [
+        "coverage-enable-01.sh"
+      ]
+    },
+    {
+      "name": "env",
+      "cases": [
+        "coverage-env-01.sh",
+        "coverage-env-02.sh",
+        "coverage-env-03.sh"
+      ]
+    },
+    {
+      "name": "esac",
+      "cases": [
+        "coverage-esac-01.sh"
+      ]
+    },
+    {
+      "name": "eval",
+      "cases": [
+        "coverage-eval-01.sh",
+        "coverage-eval-02.sh"
+      ]
+    },
+    {
+      "name": "exec",
+      "cases": [
+        "coverage-exec-01.sh",
+        "coverage-exec-02.sh"
+      ]
+    },
+    {
+      "name": "exit",
+      "cases": [
+        "coverage-exit-01.sh",
+        "coverage-exit-02.sh"
+      ]
+    },
+    {
+      "name": "expand",
+      "cases": [
+        "coverage-expand-01.sh",
+        "coverage-expand-02.sh"
+      ]
+    },
+    {
+      "name": "export",
+      "cases": [
+        "coverage-export-01.sh",
+        "coverage-export-02.sh"
+      ]
+    },
+    {
+      "name": "expr",
+      "cases": [
+        "coverage-expr-01.sh",
+        "coverage-expr-02.sh",
+        "coverage-expr-03.sh",
+        "coverage-expr-04.sh"
+      ]
+    },
+    {
+      "name": "factor",
+      "cases": [
+        "coverage-factor-01.sh",
+        "coverage-factor-02.sh",
+        "coverage-factor-03.sh"
+      ]
+    },
+    {
+      "name": "false",
+      "cases": [
+        "coverage-false-01.sh"
+      ]
+    },
+    {
+      "name": "fc",
+      "cases": [
+        "coverage-fc-01.sh"
+      ]
+    },
+    {
+      "name": "fgrep",
+      "cases": [
+        "coverage-fgrep-01.sh",
+        "coverage-fgrep-02.sh"
+      ]
+    },
+    {
+      "name": "fi",
+      "cases": [
+        "coverage-fi-01.sh"
+      ]
+    },
+    {
+      "name": "figlet",
+      "cases": [
+        "coverage-figlet-01.sh"
+      ]
+    },
+    {
+      "name": "file",
+      "cases": [
+        "coverage-file-01.sh",
+        "coverage-file-02.sh",
+        "coverage-file-03.sh"
+      ]
+    },
+    {
+      "name": "find",
+      "cases": [
+        "coverage-find-01.sh",
+        "coverage-find-02.sh",
+        "coverage-find-03.sh",
+        "coverage-find-04.sh",
+        "coverage-find-05.sh"
+      ]
+    },
+    {
+      "name": "fmt",
+      "cases": [
+        "coverage-fmt-01.sh",
+        "coverage-fmt-02.sh"
+      ]
+    },
+    {
+      "name": "fold",
+      "cases": [
+        "coverage-fold-01.sh",
+        "coverage-fold-02.sh"
+      ]
+    },
+    {
+      "name": "for",
+      "cases": [
+        "coverage-for-01.sh"
+      ]
+    },
+    {
+      "name": "fortune",
+      "cases": [
+        "coverage-fortune-01.sh"
+      ]
+    },
+    {
+      "name": "free",
+      "cases": [
+        "coverage-free-01.sh",
+        "coverage-free-02.sh"
+      ]
+    },
+    {
+      "name": "function",
+      "cases": [
+        "coverage-function-01.sh"
+      ]
+    },
+    {
+      "name": "gbase64",
+      "cases": [
+        "coverage-gbase64-01.sh",
+        "coverage-gbase64-02.sh"
+      ]
+    },
+    {
+      "name": "gcat",
+      "cases": [
+        "coverage-gcat-01.sh",
+        "coverage-gcat-02.sh"
+      ]
+    },
+    {
+      "name": "getconf",
+      "cases": [
+        "coverage-getconf-01.sh",
+        "coverage-getconf-02.sh"
+      ]
+    },
+    {
+      "name": "getopts",
+      "cases": [
+        "coverage-getopts-01.sh",
+        "coverage-getopts-02.sh"
+      ]
+    },
+    {
+      "name": "ghashsum",
+      "cases": [
+        "coverage-ghashsum-01.sh",
+        "coverage-ghashsum-02.sh"
+      ]
+    },
+    {
+      "name": "ghead",
+      "cases": [
+        "coverage-ghead-01.sh",
+        "coverage-ghead-02.sh"
+      ]
+    },
+    {
+      "name": "glob",
+      "cases": [
+        "coverage-glob-01.sh",
+        "coverage-glob-02.sh"
+      ]
+    },
+    {
+      "name": "gls",
+      "cases": [
+        "coverage-gls-01.sh",
+        "coverage-gls-02.sh"
+      ]
+    },
+    {
+      "name": "grep",
+      "cases": [
+        "coverage-grep-01.sh",
+        "coverage-grep-02.sh",
+        "coverage-grep-03.sh",
+        "coverage-grep-04.sh",
+        "coverage-grep-05.sh",
+        "coverage-grep-06.sh",
+        "coverage-grep-07.sh",
+        "coverage-grep-08.sh",
+        "coverage-grep-09.sh",
+        "coverage-grep-10.sh",
+        "coverage-grep-11.sh",
+        "coverage-grep-12.sh"
+      ]
+    },
+    {
+      "name": "gsort",
+      "cases": [
+        "coverage-gsort-01.sh",
+        "coverage-gsort-02.sh"
+      ]
+    },
+    {
+      "name": "gtail",
+      "cases": [
+        "coverage-gtail-01.sh",
+        "coverage-gtail-02.sh"
+      ]
+    },
+    {
+      "name": "guniq",
+      "cases": [
+        "coverage-guniq-01.sh",
+        "coverage-guniq-02.sh"
+      ]
+    },
+    {
+      "name": "gunzip",
+      "cases": [
+        "coverage-gunzip-01.sh",
+        "coverage-gunzip-02.sh"
+      ]
+    },
+    {
+      "name": "gwc",
+      "cases": [
+        "coverage-gwc-01.sh",
+        "coverage-gwc-02.sh"
+      ]
+    },
+    {
+      "name": "gzip",
+      "cases": [
+        "coverage-gzip-01.sh",
+        "coverage-gzip-02.sh",
+        "coverage-gzip-03.sh",
+        "coverage-gzip-04.sh"
+      ]
+    },
+    {
+      "name": "hash",
+      "cases": [
+        "coverage-hash-01.sh",
+        "coverage-hash-02.sh",
+        "coverage-hash-03.sh",
+        "coverage-hash-04.sh",
+        "coverage-hash-05.sh",
+        "coverage-hash-06.sh",
+        "coverage-hash-07.sh",
+        "coverage-hash-08.sh",
+        "coverage-hash-09.sh",
+        "coverage-hash-10.sh",
+        "coverage-hash-11.sh",
+        "coverage-hash-12.sh",
+        "coverage-hash-13.sh",
+        "coverage-hash-14.sh",
+        "coverage-hash-15.sh",
+        "coverage-hash-16.sh",
+        "coverage-hash-17.sh",
+        "coverage-hash-18.sh",
+        "coverage-hash-19.sh",
+        "coverage-command-10.sh",
+        "coverage-type-08.sh",
+        "coverage-type-12.sh"
+      ]
+    },
+    {
+      "name": "head",
+      "cases": [
+        "coverage-head-01.sh",
+        "coverage-head-02.sh",
+        "coverage-head-03.sh",
+        "coverage-head-04.sh"
+      ]
+    },
+    {
+      "name": "help",
+      "cases": [
+        "coverage-help-01.sh"
+      ]
+    },
+    {
+      "name": "hexdump",
+      "cases": [
+        "coverage-hexdump-01.sh",
+        "coverage-hexdump-02.sh",
+        "coverage-hexdump-03.sh",
+        "coverage-hexdump-04.sh",
+        "coverage-hexdump-05.sh",
+        "coverage-hexdump-06.sh",
+        "coverage-hexdump-07.sh",
+        "coverage-hexdump-08.sh",
+        "coverage-hexdump-09.sh",
+        "coverage-hexdump-10.sh",
+        "coverage-hexdump-11.sh",
+        "coverage-hexdump-12.sh",
+        "coverage-hexdump-13.sh",
+        "coverage-hexdump-14.sh",
+        "coverage-hexdump-15.sh",
+        "coverage-hexdump-16.sh",
+        "coverage-hexdump-17.sh",
+        "coverage-hexdump-18.sh",
+        "coverage-hexdump-19.sh",
+        "coverage-hexdump-20.sh",
+        "coverage-hexdump-21.sh",
+        "coverage-hexdump-22.sh",
+        "coverage-hexdump-23.sh",
+        "coverage-hexdump-24.sh",
+        "coverage-hexdump-25.sh",
+        "coverage-util-linux-04.sh",
+        "coverage-util-linux-05.sh"
+      ]
+    },
+    {
+      "name": "hostname",
+      "cases": [
+        "coverage-hostname-01.sh"
+      ]
+    },
+    {
+      "name": "iconv",
+      "cases": [
+        "coverage-iconv-01.sh",
+        "coverage-iconv-02.sh",
+        "coverage-iconv-03.sh"
+      ]
+    },
+    {
+      "name": "id",
+      "cases": [
+        "coverage-id-01.sh",
+        "coverage-id-02.sh",
+        "coverage-id-03.sh"
+      ]
+    },
+    {
+      "name": "if",
+      "cases": [
+        "coverage-if-01.sh"
+      ]
+    },
+    {
+      "name": "in",
+      "cases": [
+        "coverage-in-01.sh"
+      ]
+    },
+    {
+      "name": "install",
+      "cases": [
+        "coverage-install-01.sh",
+        "coverage-install-02.sh",
+        "coverage-install-03.sh"
+      ]
+    },
+    {
+      "name": "irb",
+      "cases": [
+        "coverage-irb-01.sh"
+      ]
+    },
+    {
+      "name": "join",
+      "cases": [
+        "coverage-join-01.sh",
+        "coverage-join-02.sh",
+        "coverage-join-03.sh"
+      ]
+    },
+    {
+      "name": "jq",
+      "cases": [
+        "coverage-jq-01.sh",
+        "coverage-jq-02.sh",
+        "coverage-jq-03.sh",
+        "coverage-jq-04.sh",
+        "coverage-jq-05.sh",
+        "coverage-jq-06.sh",
+        "coverage-jq-07.sh",
+        "coverage-jq-08.sh",
+        "coverage-jq-09.sh",
+        "coverage-jq-10.sh",
+        "coverage-jq-11.sh",
+        "coverage-jq-12.sh",
+        "coverage-jq-13.sh",
+        "coverage-jq-14.sh",
+        "coverage-jq-15.sh",
+        "coverage-jq-16.sh",
+        "coverage-jq-17.sh",
+        "coverage-jq-18.sh",
+        "coverage-jq-19.sh",
+        "coverage-jq-20.sh",
+        "coverage-jq-21.sh",
+        "coverage-jq-22.sh",
+        "coverage-jq-23.sh",
+        "coverage-jq-24.sh",
+        "coverage-jq-25.sh",
+        "coverage-jq-26.sh",
+        "coverage-jq-27.sh"
+      ]
+    },
+    {
+      "name": "js-eval",
+      "cases": [
+        "coverage-js-eval-01.sh",
+        "coverage-js-eval-02.sh"
+      ]
+    },
+    {
+      "name": "kill",
+      "cases": [
+        "coverage-kill-01.sh",
+        "coverage-kill-02.sh",
+        "coverage-kill-03.sh"
+      ]
+    },
+    {
+      "name": "less",
+      "cases": [
+        "coverage-less-01.sh",
+        "coverage-less-02.sh",
+        "coverage-less-03.sh",
+        "coverage-less-04.sh",
+        "coverage-less-05.sh",
+        "coverage-less-06.sh",
+        "coverage-less-07.sh",
+        "coverage-less-08.sh",
+        "coverage-less-09.sh"
+      ]
+    },
+    {
+      "name": "let",
+      "cases": [
+        "coverage-let-01.sh",
+        "coverage-let-02.sh"
+      ]
+    },
+    {
+      "name": "ln",
+      "cases": [
+        "coverage-ln-01.sh",
+        "coverage-ln-02.sh",
+        "coverage-ln-03.sh"
+      ]
+    },
+    {
+      "name": "local",
+      "cases": [
+        "coverage-local-01.sh",
+        "coverage-local-02.sh"
+      ]
+    },
+    {
+      "name": "lolcat",
+      "cases": [
+        "coverage-lolcat-01.sh"
+      ]
+    },
+    {
+      "name": "ls",
+      "cases": [
+        "coverage-ls-01.sh",
+        "coverage-ls-02.sh",
+        "coverage-ls-03.sh",
+        "coverage-ls-04.sh",
+        "coverage-ls-05.sh",
+        "coverage-ls-06.sh",
+        "coverage-ls-07.sh",
+        "coverage-ls-08.sh"
+      ]
+    },
+    {
+      "name": "lua",
+      "cases": [
+        "coverage-lua-01.sh",
+        "coverage-lua-02.sh",
+        "coverage-lua-03.sh",
+        "coverage-lua-04.sh",
+        "coverage-lua-05.sh",
+        "coverage-lua-06.sh",
+        "coverage-lua-07.sh",
+        "coverage-lua-08.sh",
+        "coverage-lua-09.sh",
+        "coverage-lua-10.sh",
+        "coverage-lua-11.sh",
+        "coverage-lua-12.sh"
+      ]
+    },
+    {
+      "name": "make",
+      "cases": [
+        "coverage-make-01.sh",
+        "coverage-make-02.sh",
+        "coverage-make-03.sh"
+      ]
+    },
+    {
+      "name": "mapfile",
+      "cases": [
+        "coverage-mapfile-01.sh",
+        "coverage-mapfile-02.sh"
+      ]
+    },
+    {
+      "name": "md5sum",
+      "cases": [
+        "coverage-md5sum-01.sh",
+        "coverage-md5sum-02.sh",
+        "coverage-md5sum-03.sh"
+      ]
+    },
+    {
+      "name": "mkdir",
+      "cases": [
+        "coverage-mkdir-01.sh",
+        "coverage-mkdir-02.sh",
+        "coverage-mkdir-03.sh",
+        "coverage-umask-06.sh"
+      ]
+    },
+    {
+      "name": "mktemp",
+      "cases": [
+        "coverage-mktemp-01.sh",
+        "coverage-mktemp-02.sh",
+        "coverage-mktemp-03.sh",
+        "coverage-mktemp-04.sh"
+      ]
+    },
+    {
+      "name": "mv",
+      "cases": [
+        "coverage-mv-01.sh",
+        "coverage-mv-02.sh",
+        "coverage-mv-03.sh"
+      ]
+    },
+    {
+      "name": "nl",
+      "cases": [
+        "coverage-nl-01.sh",
+        "coverage-nl-02.sh",
+        "coverage-nl-03.sh"
+      ]
+    },
+    {
+      "name": "node",
+      "cases": [
+        "coverage-node-01.sh",
+        "coverage-node-02.sh",
+        "coverage-node-03.sh"
+      ]
+    },
+    {
+      "name": "nohup",
+      "cases": [
+        "coverage-nohup-01.sh",
+        "coverage-nohup-02.sh"
+      ]
+    },
+    {
+      "name": "npm",
+      "cases": [
+        "coverage-npm-01.sh"
+      ]
+    },
+    {
+      "name": "nproc",
+      "cases": [
+        "coverage-nproc-01.sh"
+      ]
+    },
+    {
+      "name": "npx",
+      "cases": [
+        "coverage-npx-01.sh"
+      ]
+    },
+    {
+      "name": "numfmt",
+      "cases": [
+        "coverage-numfmt-01.sh",
+        "coverage-numfmt-02.sh",
+        "coverage-numfmt-03.sh"
+      ]
+    },
+    {
+      "name": "od",
+      "cases": [
+        "coverage-od-01.sh",
+        "coverage-od-02.sh",
+        "coverage-od-03.sh"
+      ]
+    },
+    {
+      "name": "open",
+      "cases": [
+        "coverage-open-01.sh",
+        "coverage-open-02.sh"
+      ]
+    },
+    {
+      "name": "openssl",
+      "cases": [
+        "coverage-openssl-01.sh",
+        "coverage-openssl-02.sh",
+        "coverage-openssl-03.sh",
+        "coverage-openssl-04.sh",
+        "coverage-openssl-05.sh"
+      ]
+    },
+    {
+      "name": "optipng",
+      "cases": [
+        "coverage-optipng-01.sh"
+      ]
+    },
+    {
+      "name": "paste",
+      "cases": [
+        "coverage-paste-01.sh",
+        "coverage-paste-02.sh",
+        "coverage-paste-03.sh"
+      ]
+    },
+    {
+      "name": "patch",
+      "cases": [
+        "coverage-patch-01.sh",
+        "coverage-patch-02.sh"
+      ]
+    },
+    {
+      "name": "php",
+      "cases": [
+        "coverage-php-01.sh",
+        "coverage-php-02.sh"
+      ]
+    },
+    {
+      "name": "pip",
+      "cases": [
+        "coverage-pip-01.sh"
+      ]
+    },
+    {
+      "name": "pip3",
+      "cases": [
+        "coverage-pip3-01.sh"
+      ]
+    },
+    {
+      "name": "pkg",
+      "cases": [
+        "coverage-pkg-01.sh",
+        "coverage-pkg-02.sh",
+        "coverage-pkg-03.sh"
+      ]
+    },
+    {
+      "name": "pkg-config",
+      "cases": [
+        "coverage-pkg-config-01.sh",
+        "coverage-pkg-config-02.sh",
+        "coverage-pkg-config-03.sh"
+      ]
+    },
+    {
+      "name": "popd",
+      "cases": [
+        "coverage-popd-01.sh"
+      ]
+    },
+    {
+      "name": "pr",
+      "cases": [
+        "coverage-pr-01.sh",
+        "coverage-pr-02.sh",
+        "coverage-pr-03.sh"
+      ]
+    },
+    {
+      "name": "printenv",
+      "cases": [
+        "coverage-printenv-01.sh",
+        "coverage-printenv-02.sh"
+      ]
+    },
+    {
+      "name": "printf",
+      "cases": [
+        "coverage-printf-01.sh",
+        "coverage-printf-02.sh",
+        "coverage-printf-03.sh",
+        "coverage-printf-04.sh",
+        "coverage-printf-05.sh",
+        "coverage-printf-06.sh"
+      ]
+    },
+    {
+      "name": "pushd",
+      "cases": [
+        "coverage-pushd-01.sh"
+      ]
+    },
+    {
+      "name": "pwd",
+      "cases": [
+        "coverage-pwd-01.sh",
+        "coverage-pwd-02.sh"
+      ]
+    },
+    {
+      "name": "pytest",
+      "cases": [
+        "coverage-pytest-01.sh"
+      ]
+    },
+    {
+      "name": "python",
+      "cases": [
+        "coverage-python-01.sh",
+        "coverage-python-02.sh",
+        "coverage-python-03.sh",
+        "coverage-python-04.sh"
+      ]
+    },
+    {
+      "name": "python3",
+      "cases": [
+        "coverage-python3-01.sh",
+        "coverage-python3-02.sh",
+        "coverage-python3-03.sh",
+        "coverage-python3-04.sh",
+        "coverage-python3-05.sh"
+      ]
+    },
+    {
+      "name": "qjs",
+      "cases": [
+        "coverage-qjs-01.sh",
+        "coverage-qjs-02.sh"
+      ]
+    },
+    {
+      "name": "qr2text",
+      "cases": [
+        "coverage-qr2text-01.sh"
+      ]
+    },
+    {
+      "name": "quickjs",
+      "cases": [
+        "coverage-quickjs-01.sh",
+        "coverage-quickjs-02.sh"
+      ]
+    },
+    {
+      "name": "read",
+      "cases": [
+        "coverage-read-01.sh",
+        "coverage-read-02.sh"
+      ]
+    },
+    {
+      "name": "readarray",
+      "cases": [
+        "coverage-readarray-01.sh",
+        "coverage-readarray-02.sh"
+      ]
+    },
+    {
+      "name": "readlink",
+      "cases": [
+        "coverage-readlink-01.sh",
+        "coverage-readlink-02.sh",
+        "coverage-readlink-03.sh",
+        "coverage-readlink-04.sh"
+      ]
+    },
+    {
+      "name": "readonly",
+      "cases": [
+        "coverage-readonly-01.sh",
+        "coverage-readonly-02.sh",
+        "coverage-readonly-03.sh"
+      ]
+    },
+    {
+      "name": "realpath",
+      "cases": [
+        "coverage-realpath-01.sh",
+        "coverage-realpath-02.sh",
+        "coverage-realpath-03.sh",
+        "coverage-realpath-04.sh"
+      ]
+    },
+    {
+      "name": "return",
+      "cases": [
+        "coverage-return-01.sh",
+        "coverage-return-02.sh"
+      ]
+    },
+    {
+      "name": "rev",
+      "cases": [
+        "coverage-rev-01.sh",
+        "coverage-rev-02.sh",
+        "coverage-rev-03.sh",
+        "coverage-rev-04.sh",
+        "coverage-rev-05.sh",
+        "coverage-rev-06.sh",
+        "coverage-rev-07.sh",
+        "coverage-rev-08.sh",
+        "coverage-rev-09.sh",
+        "coverage-rev-10.sh",
+        "coverage-rev-11.sh",
+        "coverage-rev-12.sh",
+        "coverage-rev-13.sh",
+        "coverage-rev-14.sh",
+        "coverage-rev-15.sh",
+        "coverage-rev-16.sh",
+        "coverage-util-linux-02.sh",
+        "coverage-util-linux-03.sh"
+      ]
+    },
+    {
+      "name": "rg",
+      "cases": [
+        "coverage-rg-01.sh",
+        "coverage-rg-02.sh",
+        "coverage-rg-03.sh",
+        "coverage-rg-04.sh",
+        "coverage-rg-05.sh",
+        "coverage-rg-06.sh"
+      ]
+    },
+    {
+      "name": "rm",
+      "cases": [
+        "coverage-rm-01.sh",
+        "coverage-rm-02.sh",
+        "coverage-rm-03.sh",
+        "coverage-rm-04.sh"
+      ]
+    },
+    {
+      "name": "rmdir",
+      "cases": [
+        "coverage-rmdir-01.sh",
+        "coverage-rmdir-02.sh",
+        "coverage-rmdir-03.sh"
+      ]
+    },
+    {
+      "name": "ruby",
+      "cases": [
+        "coverage-ruby-01.sh",
+        "coverage-ruby-02.sh"
+      ]
+    },
+    {
+      "name": "sed",
+      "cases": [
+        "coverage-sed-01.sh",
+        "coverage-sed-02.sh",
+        "coverage-sed-03.sh",
+        "coverage-sed-04.sh",
+        "coverage-sed-05.sh",
+        "coverage-sed-06.sh",
+        "coverage-sed-07.sh",
+        "coverage-sed-08.sh"
+      ]
+    },
+    {
+      "name": "seq",
+      "cases": [
+        "coverage-seq-01.sh",
+        "coverage-seq-02.sh",
+        "coverage-seq-03.sh",
+        "coverage-seq-04.sh"
+      ]
+    },
+    {
+      "name": "set",
+      "cases": [
+        "coverage-set-01.sh",
+        "coverage-set-02.sh"
+      ]
+    },
+    {
+      "name": "setopt",
+      "cases": [
+        "coverage-setopt-01.sh"
+      ]
+    },
+    {
+      "name": "sh",
+      "cases": [
+        "coverage-sh-01.sh",
+        "coverage-sh-02.sh"
+      ]
+    },
+    {
+      "name": "sha1sum",
+      "cases": [
+        "coverage-sha1sum-01.sh",
+        "coverage-sha1sum-02.sh",
+        "coverage-sha1sum-03.sh"
+      ]
+    },
+    {
+      "name": "sha256sum",
+      "cases": [
+        "coverage-sha256sum-01.sh",
+        "coverage-sha256sum-02.sh",
+        "coverage-sha256sum-03.sh"
+      ]
+    },
+    {
+      "name": "sha384sum",
+      "cases": [
+        "coverage-sha384sum-01.sh",
+        "coverage-sha384sum-02.sh",
+        "coverage-sha384sum-03.sh"
+      ]
+    },
+    {
+      "name": "sha512sum",
+      "cases": [
+        "coverage-sha512sum-01.sh",
+        "coverage-sha512sum-02.sh",
+        "coverage-sha512sum-03.sh"
+      ]
+    },
+    {
+      "name": "shasum",
+      "cases": [
+        "coverage-shasum-01.sh",
+        "coverage-shasum-02.sh",
+        "coverage-shasum-03.sh",
+        "coverage-shasum-04.sh",
+        "coverage-shasum-05.sh"
+      ]
+    },
+    {
+      "name": "shift",
+      "cases": [
+        "coverage-shift-01.sh",
+        "coverage-shift-02.sh"
+      ]
+    },
+    {
+      "name": "shopt",
+      "cases": [
+        "coverage-shopt-01.sh",
+        "coverage-shopt-02.sh"
+      ]
+    },
+    {
+      "name": "shuf",
+      "cases": [
+        "coverage-shuf-01.sh",
+        "coverage-shuf-02.sh",
+        "coverage-shuf-03.sh",
+        "coverage-shuf-04.sh"
+      ]
+    },
+    {
+      "name": "sleep",
+      "cases": [
+        "coverage-sleep-01.sh",
+        "coverage-sleep-02.sh",
+        "coverage-sleep-03.sh"
+      ]
+    },
+    {
+      "name": "sort",
+      "cases": [
+        "coverage-sort-01.sh",
+        "coverage-sort-02.sh",
+        "coverage-sort-03.sh",
+        "coverage-sort-04.sh",
+        "coverage-sort-05.sh",
+        "coverage-sort-06.sh",
+        "coverage-sort-07.sh"
+      ]
+    },
+    {
+      "name": "source",
+      "cases": [
+        "coverage-source-01.sh",
+        "coverage-source-02.sh"
+      ]
+    },
+    {
+      "name": "split",
+      "cases": [
+        "coverage-split-01.sh",
+        "coverage-split-02.sh",
+        "coverage-split-03.sh"
+      ]
+    },
+    {
+      "name": "sqlite",
+      "cases": [
+        "coverage-sqlite-01.sh",
+        "coverage-sqlite-02.sh",
+        "coverage-sqlite-03.sh"
+      ]
+    },
+    {
+      "name": "sqlite3",
+      "cases": [
+        "coverage-sqlite3-01.sh",
+        "coverage-sqlite3-02.sh",
+        "coverage-sqlite3-03.sh"
+      ]
+    },
+    {
+      "name": "stat",
+      "cases": [
+        "coverage-stat-01.sh",
+        "coverage-stat-02.sh",
+        "coverage-stat-03.sh",
+        "coverage-stat-04.sh"
+      ]
+    },
+    {
+      "name": "strings",
+      "cases": [
+        "coverage-strings-01.sh",
+        "coverage-strings-02.sh"
+      ]
+    },
+    {
+      "name": "sum",
+      "cases": [
+        "coverage-sum-01.sh",
+        "coverage-sum-02.sh",
+        "coverage-sum-03.sh"
+      ]
+    },
+    {
+      "name": "sync",
+      "cases": [
+        "coverage-sync-01.sh",
+        "coverage-sync-02.sh"
+      ]
+    },
+    {
+      "name": "tac",
+      "cases": [
+        "coverage-tac-01.sh",
+        "coverage-tac-02.sh",
+        "coverage-tac-03.sh"
+      ]
+    },
+    {
+      "name": "tail",
+      "cases": [
+        "coverage-tail-01.sh",
+        "coverage-tail-02.sh",
+        "coverage-tail-03.sh",
+        "coverage-tail-04.sh"
+      ]
+    },
+    {
+      "name": "tar",
+      "cases": [
+        "coverage-tar-01.sh",
+        "coverage-tar-02.sh",
+        "coverage-tar-03.sh",
+        "coverage-tar-04.sh",
+        "coverage-tar-05.sh"
+      ]
+    },
+    {
+      "name": "tee",
+      "cases": [
+        "coverage-tee-01.sh",
+        "coverage-tee-02.sh"
+      ]
+    },
+    {
+      "name": "test",
+      "cases": [
+        "coverage-test-01.sh",
+        "coverage-test-02.sh"
+      ]
+    },
+    {
+      "name": "then",
+      "cases": [
+        "coverage-then-01.sh"
+      ]
+    },
+    {
+      "name": "time",
+      "cases": [
+        "coverage-time-01.sh"
+      ]
+    },
+    {
+      "name": "timeout",
+      "cases": [
+        "coverage-timeout-01.sh",
+        "coverage-timeout-02.sh"
+      ]
+    },
+    {
+      "name": "touch",
+      "cases": [
+        "coverage-touch-01.sh",
+        "coverage-touch-02.sh",
+        "coverage-touch-03.sh"
+      ]
+    },
+    {
+      "name": "tr",
+      "cases": [
+        "coverage-tr-01.sh",
+        "coverage-tr-02.sh",
+        "coverage-tr-03.sh",
+        "coverage-tr-04.sh"
+      ]
+    },
+    {
+      "name": "trap",
+      "cases": [
+        "coverage-trap-01.sh",
+        "coverage-trap-02.sh"
+      ]
+    },
+    {
+      "name": "true",
+      "cases": [
+        "coverage-true-01.sh"
+      ]
+    },
+    {
+      "name": "truncate",
+      "cases": [
+        "coverage-truncate-01.sh",
+        "coverage-truncate-02.sh",
+        "coverage-truncate-03.sh"
+      ]
+    },
+    {
+      "name": "tsort",
+      "cases": [
+        "coverage-tsort-01.sh",
+        "coverage-tsort-02.sh",
+        "coverage-tsort-03.sh"
+      ]
+    },
+    {
+      "name": "type",
+      "cases": [
+        "coverage-type-01.sh",
+        "coverage-type-02.sh",
+        "coverage-hash-07.sh",
+        "coverage-hash-08.sh",
+        "coverage-hash-09.sh",
+        "coverage-hash-11.sh",
+        "coverage-command-03.sh",
+        "coverage-command-04.sh",
+        "coverage-command-05.sh",
+        "coverage-command-06.sh",
+        "coverage-command-07.sh",
+        "coverage-command-08.sh",
+        "coverage-command-09.sh",
+        "coverage-command-10.sh",
+        "coverage-type-03.sh",
+        "coverage-type-04.sh",
+        "coverage-type-05.sh",
+        "coverage-type-06.sh",
+        "coverage-type-07.sh",
+        "coverage-type-08.sh",
+        "coverage-type-09.sh",
+        "coverage-type-10.sh",
+        "coverage-type-11.sh",
+        "coverage-type-12.sh"
+      ]
+    },
+    {
+      "name": "typeset",
+      "cases": [
+        "coverage-typeset-01.sh",
+        "coverage-typeset-02.sh"
+      ]
+    },
+    {
+      "name": "ulimit",
+      "cases": [
+        "coverage-ulimit-01.sh",
+        "coverage-ulimit-02.sh"
+      ]
+    },
+    {
+      "name": "umask",
+      "cases": [
+        "coverage-umask-01.sh",
+        "coverage-umask-02.sh",
+        "coverage-umask-03.sh",
+        "coverage-umask-04.sh",
+        "coverage-umask-05.sh",
+        "coverage-umask-06.sh",
+        "coverage-umask-07.sh"
+      ]
+    },
+    {
+      "name": "unalias",
+      "cases": [
+        "coverage-unalias-01.sh"
+      ]
+    },
+    {
+      "name": "uname",
+      "cases": [
+        "coverage-uname-01.sh",
+        "coverage-uname-02.sh"
+      ]
+    },
+    {
+      "name": "unexpand",
+      "cases": [
+        "coverage-unexpand-01.sh",
+        "coverage-unexpand-02.sh"
+      ]
+    },
+    {
+      "name": "uniq",
+      "cases": [
+        "coverage-uniq-01.sh",
+        "coverage-uniq-02.sh",
+        "coverage-uniq-03.sh",
+        "coverage-uniq-04.sh"
+      ]
+    },
+    {
+      "name": "unix2dos",
+      "cases": [
+        "coverage-unix2dos-01.sh"
+      ]
+    },
+    {
+      "name": "unset",
+      "cases": [
+        "coverage-unset-01.sh",
+        "coverage-unset-02.sh"
+      ]
+    },
+    {
+      "name": "until",
+      "cases": [
+        "coverage-until-01.sh"
+      ]
+    },
+    {
+      "name": "unxz",
+      "cases": [
+        "coverage-unxz-01.sh",
+        "coverage-unxz-02.sh"
+      ]
+    },
+    {
+      "name": "unzip",
+      "cases": [
+        "coverage-unzip-01.sh",
+        "coverage-unzip-02.sh",
+        "coverage-unzip-03.sh"
+      ]
+    },
+    {
+      "name": "unzstd",
+      "cases": [
+        "coverage-unzstd-01.sh",
+        "coverage-unzstd-02.sh"
+      ]
+    },
+    {
+      "name": "uptime",
+      "cases": [
+        "coverage-uptime-01.sh"
+      ]
+    },
+    {
+      "name": "util-linux",
+      "cases": [
+        "coverage-util-linux-01.sh",
+        "coverage-util-linux-02.sh",
+        "coverage-util-linux-03.sh",
+        "coverage-util-linux-04.sh",
+        "coverage-util-linux-05.sh"
+      ]
+    },
+    {
+      "name": "uuid",
+      "cases": [
+        "coverage-uuid-01.sh"
+      ]
+    },
+    {
+      "name": "uuidgen",
+      "cases": [
+        "coverage-uuidgen-01.sh",
+        "coverage-uuidgen-02.sh"
+      ]
+    },
+    {
+      "name": "viu",
+      "cases": [
+        "coverage-viu-01.sh"
+      ]
+    },
+    {
+      "name": "wabt",
+      "cases": [
+        "coverage-wabt-01.sh"
+      ]
+    },
+    {
+      "name": "wasm-grep",
+      "cases": [
+        "coverage-wasm-grep-01.sh",
+        "coverage-wasm-grep-02.sh"
+      ]
+    },
+    {
+      "name": "wasm-sed",
+      "cases": [
+        "coverage-wasm-sed-01.sh",
+        "coverage-wasm-sed-02.sh"
+      ]
+    },
+    {
+      "name": "wasm-strip",
+      "cases": [
+        "coverage-wasm-strip-01.sh"
+      ]
+    },
+    {
+      "name": "wasm-validate",
+      "cases": [
+        "coverage-wasm-validate-01.sh"
+      ]
+    },
+    {
+      "name": "wasm2wat",
+      "cases": [
+        "coverage-wasm2wat-01.sh"
+      ]
+    },
+    {
+      "name": "wat2wasm",
+      "cases": [
+        "coverage-wat2wasm-01.sh"
+      ]
+    },
+    {
+      "name": "watch",
+      "cases": [
+        "coverage-watch-01.sh"
+      ]
+    },
+    {
+      "name": "wc",
+      "cases": [
+        "coverage-wc-01.sh",
+        "coverage-wc-02.sh",
+        "coverage-wc-03.sh",
+        "coverage-wc-04.sh",
+        "coverage-wc-05.sh"
+      ]
+    },
+    {
+      "name": "wget",
+      "cases": [
+        "coverage-wget-01.sh",
+        "coverage-wget-02.sh",
+        "coverage-wget-03.sh",
+        "coverage-wget-04.sh",
+        "coverage-wget-05.sh"
+      ]
+    },
+    {
+      "name": "which",
+      "cases": [
+        "coverage-which-01.sh",
+        "coverage-which-02.sh"
+      ]
+    },
+    {
+      "name": "while",
+      "cases": [
+        "coverage-while-01.sh"
+      ]
+    },
+    {
+      "name": "whoami",
+      "cases": [
+        "coverage-whoami-01.sh"
+      ]
+    },
+    {
+      "name": "xargs",
+      "cases": [
+        "coverage-xargs-01.sh",
+        "coverage-xargs-02.sh",
+        "coverage-xargs-03.sh",
+        "coverage-xargs-04.sh"
+      ]
+    },
+    {
+      "name": "xdg-open",
+      "cases": [
+        "coverage-xdg-open-01.sh",
+        "coverage-xdg-open-02.sh"
+      ]
+    },
+    {
+      "name": "xxd",
+      "cases": [
+        "coverage-xxd-01.sh",
+        "coverage-xxd-02.sh",
+        "coverage-xxd-03.sh"
+      ]
+    },
+    {
+      "name": "xz",
+      "cases": [
+        "coverage-xz-01.sh",
+        "coverage-xz-02.sh",
+        "coverage-xz-03.sh",
+        "coverage-xz-04.sh"
+      ]
+    },
+    {
+      "name": "xzcat",
+      "cases": [
+        "coverage-xzcat-01.sh",
+        "coverage-xzcat-02.sh"
+      ]
+    },
+    {
+      "name": "yes",
+      "cases": [
+        "coverage-yes-01.sh",
+        "coverage-yes-02.sh"
+      ]
+    },
+    {
+      "name": "zcat",
+      "cases": [
+        "coverage-zcat-01.sh",
+        "coverage-zcat-02.sh"
+      ]
+    },
+    {
+      "name": "zip",
+      "cases": [
+        "coverage-zip-01.sh",
+        "coverage-zip-02.sh"
+      ]
+    },
+    {
+      "name": "zstd",
+      "cases": [
+        "coverage-zstd-01.sh",
+        "coverage-zstd-02.sh",
+        "coverage-zstd-03.sh",
+        "coverage-zstd-04.sh",
+        "coverage-zstd-05.sh",
+        "coverage-zstd-06.sh",
+        "coverage-zstd-07.sh",
+        "coverage-zstd-08.sh",
+        "coverage-zstd-09.sh",
+        "coverage-zstd-10.sh"
+      ]
+    },
+    {
+      "name": "zstdcat",
+      "cases": [
+        "coverage-zstdcat-01.sh",
+        "coverage-zstdcat-02.sh"
+      ]
+    }
+  ]
+}
