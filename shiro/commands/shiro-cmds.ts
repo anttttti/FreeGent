@@ -85,31 +85,25 @@ export const hostnameCmd: Command = {
   },
 };
 
+// Reports the userland the shell presents — Linux on x86-64, the ABI its static-binary emulator runs —
+// not the host it happens to run in. Scripts branch on `uname -s` (Linux vs Darwin) and `uname -m`;
+// "Shiro"/"wasm" matched none of their cases, and real bash prints Linux/x86_64 (coverage-uname-*).
 export const unameCmd: Command = {
   name: 'uname',
   description: 'Print system information',
   async exec(ctx) {
-    const flags = ctx.args.filter(a => a.startsWith('-')).join('');
-    const hasAll = flags.includes('a');
-    const hasS = flags.includes('s') || (!flags && ctx.args.length === 0);
-    const hasM = flags.includes('m');
-    const hasN = flags.includes('n');
-    const hasR = flags.includes('r');
-    const hasV = flags.includes('v');
-
-    if (hasAll) {
-      ctx.stdout = 'Shiro shiro 0.1.0 Shiro/WASM browser wasm\n';
-      return 0;
-    }
-
+    const flags = ctx.args.filter(a => a.startsWith('-') && !a.startsWith('--')).join('');
+    const long = new Set(ctx.args.filter(a => a.startsWith('--')));
+    const has = (short: string, name: string) => flags.includes(short) || long.has('--' + name);
+    const all = has('a', 'all');
     const parts: string[] = [];
-    if (hasS) parts.push('Shiro');
-    if (hasN) parts.push('shiro');
-    if (hasR) parts.push('0.1.0');
-    if (hasV) parts.push('Shiro/WASM');
-    if (hasM) parts.push('wasm');
-
-    ctx.stdout = (parts.length > 0 ? parts.join(' ') : 'Shiro') + '\n';
+    if (all || has('s', 'kernel-name')) parts.push('Linux');
+    if (all || has('n', 'nodename')) parts.push('shiro');
+    if (all || has('r', 'kernel-release')) parts.push('0.1.0');
+    if (all || has('v', 'kernel-version')) parts.push('Shiro/WASM');
+    if (all || has('m', 'machine')) parts.push('x86_64');
+    if (all || has('o', 'operating-system')) parts.push('GNU/Linux');
+    ctx.stdout = (parts.length ? parts.join(' ') : 'Linux') + '\n';
     return 0;
   },
 };

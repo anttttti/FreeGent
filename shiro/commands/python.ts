@@ -449,6 +449,14 @@ export function __setPyodideForTest(mock: any): void {
   pytestLoadPromise = null;
 }
 
+// pip's own wording for "no such distribution", which scripts and people grep for.
+function pipNotFound(pkg: string): string {
+  return `ERROR: Could not find a version that satisfies the requirement ${pkg} (from versions: none)\n`
+       + `ERROR: No matching distribution found for ${pkg}\n`;
+}
+// A requirement that is a file or URL rather than a name an index could resolve.
+const isPathOrUrl = (p: string): boolean => /[\\/]|^[a-z][a-z0-9+.-]*:/i.test(p) || /\.(whl|tar\.gz|zip)$/i.test(p);
+
 export const pipCmd: Command = {
   name: 'pip',
   description: 'Python package manager',
@@ -457,6 +465,18 @@ export const pipCmd: Command = {
     if (args[0] !== 'install' || !args[1]) {
       ctx.stderr = 'usage: pip install <package> [<package>...]\n';
       return 1;
+    }
+    const options = new Set(args.slice(1).filter(a => a.startsWith('-')));
+    const packages = args.slice(1).filter(a => !a.startsWith('-'));
+    if (!packages.length) {
+      ctx.stderr = 'ERROR: You must give at least one requirement to install (see "pip help install")\n';
+      return 1;
+    }
+    // --no-index: only local files may satisfy a requirement, so a bare name can never resolve. Say so
+    // without loading an interpreter or touching the network (coverage-pip-01/pip3-01).
+    if (options.has('--no-index')) {
+      const unresolved = packages.find(p => !isPathOrUrl(p));
+      if (unresolved) { ctx.stderr = pipNotFound(unresolved); return 1; }
     }
 
     let py: any;
@@ -468,18 +488,20 @@ export const pipCmd: Command = {
     }
 
     return withRuntimeLock(py,async () => {
-    const packages = args.slice(1).filter(a => !a.startsWith('-'));
     try {
       await py.loadPackage('micropip');
       const micropip = py.pyimport('micropip');
       for (const pkg of packages) {
         ctx.stdout += `Installing ${pkg}...\n`;
-        await micropip.install(pkg);
+        if (options.has('--no-deps')) await micropip.install(pkg, { deps: false });
+        else await micropip.install(pkg);
         ctx.stdout += `Successfully installed ${pkg}\n`;
       }
       return 0;
     } catch (err: any) {
-      ctx.stderr = `pip: error installing packages: ${err.message}\n`;
+      // micropip's "can't find a wheel" is pip's "no matching distribution".
+      const missing = /Can't find a pure Python 3 wheel for: '([^']+)'/.exec(String(err.message));
+      ctx.stderr = missing ? pipNotFound(missing[1]) : `pip: error installing packages: ${err.message}\n`;
       return 1;
     }
     });

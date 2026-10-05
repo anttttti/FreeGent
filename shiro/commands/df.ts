@@ -10,6 +10,7 @@ export const df: Command = {
 
     const humanReadable = flags.h;
     const inodes = flags.i;
+    const posix = flags.P;   // POSIX format: 1024-byte blocks, "Capacity" (coverage-df-01)
 
     // In browser environment, we show mock values for script compatibility
     const output: string[] = [];
@@ -21,6 +22,9 @@ export const df: Command = {
       if (humanReadable) {
         output.push("Filesystem      Size  Used Avail Use% Mounted on");
         output.push("virtual         100G   10G   90G  10% /");
+      } else if (posix) {
+        output.push("Filesystem     1024-blocks      Used Available Capacity Mounted on");
+        output.push("virtual           104857600  10485760  94371840      10% /");
       } else {
         output.push("Filesystem     1K-blocks    Used Available Use% Mounted on");
         output.push("virtual        104857600 10485760  94371840  10% /");

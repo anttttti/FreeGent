@@ -59,7 +59,7 @@ for (const current of candidate.cases) {
 for (const row of baseline.cases) if (!candidate.cases.some(current=>current.id===row.id)) throw new Error('Baseline case was removed: '+row.id);
 const trackedPaths = ['command-inputs.json','cases/coverage-index.json','cases/coverage-expectations.json','cases/known-differences.txt','cases/case-fixtures.json','native-tools.json','native-tools.py','extract.py','command-cases.py','jq-1.6-historical-oracles.json'];
 const corpusHashes = Object.fromEntries(await Promise.all(trackedPaths.map(async path => [path,hash(await readFile(resolve(corpus,path)))])));
-const harnessPaths = ['scripts/exec-diff.sh','tests/exec-diff.harness.test.ts','scripts/record-shiro-comparison.mjs'];
+const harnessPaths = ['scripts/exec-diff.sh','scripts/exec-diff/contract.py','tests/exec-diff.harness.test.ts','scripts/record-shiro-comparison.mjs'];
 const harnessHashes = Object.fromEntries(await Promise.all(harnessPaths.map(async path => [path,hash(await readFile(resolve(root,path)))])));
 const report = {
   schema:1,recorded_at:new Date().toISOString(),acceptance:'FAILED',
@@ -83,10 +83,10 @@ const report = {
 };
 await writeFile(resolve(corpus,'comparison-implementation.json'),JSON.stringify(report,null,2)+'\n');
 const lines = ['# Shiro implementation comparison','','Acceptance: **FAILED**. This is an execution record, not migration approval.','',
-  '| Sweep | Bash-identical | Bash mismatches | Non-Bash known differences | Capability-only | Integration-only | Unresolved references |',
-  '|---|---:|---:|---:|---:|---:|---:|'];
+  '| Sweep | Bash-identical | Bash mismatches | Non-Bash known differences | Capability-only | Integration-only | Contract met | Contract failed | Unresolved references |',
+  '|---|---:|---:|---:|---:|---:|---:|---:|---:|'];
 for (const [name,counts] of [['Full baseline',baseline.counts],['Current candidate',candidate.counts]]) {
-  lines.push(`| ${name} | ${counts.identical ?? 0} | ${counts.mismatch ?? 0} | ${counts['known-difference'] ?? 0} | ${counts['capability-only'] ?? 0} | ${counts['integration-only'] ?? 0} | ${counts.blocked ?? 0} |`);
+  lines.push(`| ${name} | ${counts.identical ?? 0} | ${counts.mismatch ?? 0} | ${counts['known-difference'] ?? 0} | ${counts['capability-only'] ?? 0} | ${counts['integration-only'] ?? 0} | ${counts['contract-met'] ?? 0} | ${counts['contract-failed'] ?? 0} | ${counts.blocked ?? 0} |`);
 }
 lines.push('',`Transitions: ${Object.entries(transitions).map(([key,value])=>`${key}: ${value}`).join('; ')}.`,
   '', 'The [machine-readable record](comparison-implementation.json) preserves raw native expected bytes when available, browser output bytes for every case, baseline browser bytes, input/source/oracle hashes, selected permanent-case routes/artifacts, native provenance, and each transition. Integration-only cases have no Bash expected output. The earlier permanent-only [baseline](COMPARISON-BASELINE.md) is retained.',
@@ -101,6 +101,13 @@ lines.push('','## Capability-only cases','','These commands report a clear Shiro
 for (const row of cases.filter(row=>row.status==='capability-only')) lines.push(`- \`${row.id}\``);
 lines.push('','## Integration-only cases','','These browser commands have no native Bash behavior contract. Their inputs stay in the case corpus; Shiro output is recorded here and their browser behavior is verified in integration tests.');
 for (const row of cases.filter(row=>row.status==='integration-only')) lines.push(`- \`${row.id}\`: ${row.reason?.trim() ?? ''}`);
+lines.push('','## Contract cases','',
+  'Output that cannot be byte-identical to a native run (it reports the host, or draws on entropy, the clock or a terminal) is held to a recorded rule instead (scripts/exec-diff/contract.py). The rule is also checked against the real tool where it is installed; `unchecked` says it was not, and why. A contract is weaker than a byte oracle: it fixes the shape, not the values.',
+  '','| Case | Commands | Result | Native | Rule or failure |','|---|---|---|---|---|');
+for (const row of cases.filter(row=>row.status==='contract-met' || row.status==='contract-failed')) {
+  const rule = row.status==='contract-failed' ? (row.reason ?? '') : JSON.stringify(row.contract);
+  lines.push(`| ${row.id} | ${(row.commands??[]).join(', ')} | ${row.status} | ${row.native ?? ''} | ${rule.replace(/\|/g,'\\|')} |`);
+}
 lines.push('','## Remaining mismatches','');
 for (const row of cases.filter(row=>row.status==='mismatch')) {
   lines.push(`### ${row.id}`,'',`Baseline: ${row.baseline.status}; transition: ${row.transition}.`, '');
