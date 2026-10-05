@@ -302,18 +302,22 @@
             <div class="kanban-col" data-status="todo">
                 <div class="kanban-col-header">To Do <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-todo"></div>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('todo')" title="Add task">+</button>
             </div>
             <div class="kanban-col" data-status="in-progress">
                 <div class="kanban-col-header">In Progress <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-in-progress"></div>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('in-progress')" title="Add task">+</button>
             </div>
             <div class="kanban-col" data-status="review">
                 <div class="kanban-col-header">Review <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-review"></div>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('review')" title="Add task">+</button>
             </div>
             <div class="kanban-col" data-status="done">
                 <div class="kanban-col-header">Done <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-done"></div>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('done')" title="Add task">+</button>
             </div>
         </div>
         <div id="task-preview" class="task-preview"></div>
