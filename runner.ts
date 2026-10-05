@@ -17,6 +17,8 @@ interface EpisodeResult {
 }
 
 let _runnerRunning: boolean  = false;
+// true = Autopilot (keep taking the next task until none are left); false = Run (one task).
+let _runnerAll: boolean      = false;
 let _runnerPaused: boolean   = false;
 let _runnerAbort: boolean    = false;
 let _runnerPauseReason: string    = '';
@@ -28,9 +30,6 @@ let _runnerChatId: string | null         = null;
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-// Exposed so autopilot can refuse to start while this runner owns the task files.
-// Both loops mutate the same fg-tasks/*.md frontmatter and ledger; running them
-// concurrently interleaves status transitions and corrupts task state.
 function isRunnerRunning(): boolean { return _runnerRunning; }
 function getRunnerChatId(): string | null { return _runnerChatId; }
 export function _setRunnerChatIdForTest(id: string | null): void { _runnerChatId = id; }
@@ -44,15 +43,20 @@ async function _runnerTurn(prompt: string): Promise<any> {
     return runAgentTurn(prompt, null, undefined, { placeholder: createResponsePlaceholder() });
 }
 
-function runnerStart() {
+// Run: try to complete the next task, then stop.
+function runnerStart() { _startRunner(false); }
+
+// Autopilot: keep completing tasks, one chat each, until none are left (or you stop it).
+function runnerAutopilot() { _startRunner(true); }
+
+function _startRunner(all: boolean) {
     if (_runnerRunning || agentStreaming) return;
     if (aiBusy()) {
         const statusEl = document.getElementById('runner-status');
-        if (statusEl) statusEl.textContent = aiJob === 'autopilot'
-            ? 'Autopilot is running — stop it first (Tasks tab)'
-            : 'Another AI task is running — wait for it to finish';
+        if (statusEl) statusEl.textContent = 'Another AI task is running — wait for it to finish';
         return;
     }
+    _runnerAll         = all;
     _runnerPriorChatId = activeChatId;
     _runnerSessionLog  = [];
     _renderRunnerLog();
@@ -104,13 +108,14 @@ function runnerToggle() {
 }
 
 function runnerRestart() {
+    const all = _runnerAll;
     if (_runnerRunning) {
         runnerStop();
         const poll = setInterval(() => {
-            if (!_runnerRunning) { clearInterval(poll); runnerStart(); }
+            if (!_runnerRunning) { clearInterval(poll); _startRunner(all); }
         }, 100);
     } else {
-        runnerStart();
+        _startRunner(all);
     }
 }
 
@@ -160,6 +165,9 @@ async function _runLoop() {
                 _runnerConsecutiveFails = 0;
                 continue;
             }
+
+            // Run: one task attempted (done or failed) is the whole job.
+            if (!_runnerAll) break;
 
             if (result.success) {
                 _runnerConsecutiveFails = 0;
@@ -407,6 +415,7 @@ async function runnerInterrupt() {
 
 function _updateRunnerUI() {
     const runBtn      = document.getElementById('runner-run-btn');
+    const autoBtn     = document.getElementById('autopilot-btn') as HTMLButtonElement | null;
     const pauseBtn    = document.getElementById('runner-pause-btn');
     const resumeBtn   = document.getElementById('runner-resume-btn');
     const restartBtn  = document.getElementById('runner-restart-btn');
@@ -421,6 +430,8 @@ function _updateRunnerUI() {
     const paused  = _runnerRunning && _runnerPaused;
 
     if (runBtn)      runBtn.style.display      = idle    ? 'inline-block' : 'none';
+    // Hidden while anything runs, like Run; the runner's Stop button stops either mode.
+    if (autoBtn)     autoBtn.style.display     = idle    ? 'inline-block' : 'none';
     if (pauseBtn)    pauseBtn.style.display    = running  ? 'inline-block' : 'none';
     if (resumeBtn)   resumeBtn.style.display   = paused   ? 'inline-block' : 'none';
     if (restartBtn)  restartBtn.style.display  = _runnerRunning ? 'inline-block' : 'none';
@@ -519,4 +530,4 @@ function initRunner() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { runnerStart, runnerPause, runnerResume, runnerStop, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStop, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

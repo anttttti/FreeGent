@@ -1,5 +1,5 @@
 // Regression tests for the codex v0.61 commit-review findings R02, R05 and R06.
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,26 +47,5 @@ describe('R06: history secret scan under pipefail', () => {
         expect(m).not.toBeNull();
         const out = sh(`set -euo pipefail; SECRET_RE='ghp_[A-Za-z0-9]{36,}'; _hash=$(git rev-parse HEAD); ${m![0]}; then echo FOUND; else echo MISSED; fi`);
         expect(out.trim()).toBe('FOUND');
-    });
-});
-
-describe('R07: chat switching while autopilot holds the job', () => {
-    const W: any = globalThis;
-    beforeAll(async () => { await import('../chat-state.ts'); });
-    afterEach(() => { W.setAiJob(''); });
-    it('refuses a user switch to another chat, allows the owning loop', async () => {
-        W.agentStreaming = false;
-        W.activeChatId = 'task-chat';
-        W.setAiJob('autopilot');
-        await W.switchToChat('other-chat');
-        expect(W.activeChatId).toBe('task-chat');
-        await W.switchToChat('task-chat-2', { internal: true }).catch(() => {});
-        expect(W.activeChatId).toBe('task-chat-2');
-    });
-    it('switches normally when no job is running', async () => {
-        W.agentStreaming = false;
-        W.activeChatId = 'a';
-        await W.switchToChat('b').catch(() => {});
-        expect(W.activeChatId).toBe('b');
     });
 });

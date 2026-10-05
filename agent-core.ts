@@ -1245,11 +1245,11 @@ function handleSendButton(): void {
 }
 
 // Send from the composer (Enter / send button). While a background AI job owns the chat
-// (task runner, autopilot, init agent), a user turn — or a queued message dequeued after the
+// (task runner, init agent), a user turn — or a queued message dequeued after the
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
     if (aiJob) {
-        const what = { runner: 'The task runner', autopilot: 'Autopilot', init: 'The project-init agent' }[aiJob] || 'An AI task';
+        const what = { runner: 'The task runner', init: 'The project-init agent' }[aiJob] || 'An AI task';
         appendMessage?.('model', `<em style="color:var(--muted)">${what} is running — stop it or wait for it to finish before sending.</em>`);
         return;
     }

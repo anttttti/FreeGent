@@ -88,7 +88,7 @@ export let _currentUserIntent: string    = ''; // set at turn start (agent-core)
 export let _lastTurnDoneToken: boolean    = false; // set when a turn declares COMPLETED; read by the Director continuation loop
 export let _lastTurnBlockedToken: boolean = false; // set when a turn accepts a BLOCKED declaration; read by the Director continuation loop
 export let _sessionToolFilter: Set<string> | null = null; // classifier output; null = use full active tool set
-// Background AI job that owns the chat between its turns: 'runner' | 'autopilot' | 'init' | ''.
+// Background AI job that owns the chat between its turns: 'runner' | 'init' | ''.
 // One AI job at a time — aiBusy() gates every entry point that would start another.
 export let aiJob: string = '';
 

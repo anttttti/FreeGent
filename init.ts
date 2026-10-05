@@ -755,7 +755,7 @@ Object.assign(window, {
     refreshTasks,
     loadSkills, toggleSkill, installSkillFromFiles, renderSkillsChecklist, renderToolsChecklist,
     switchSkillSubtab, createSkillFromForm, createRuleFromForm,
-    toggleAutopilot, stopAutopilot,
+    runnerAutopilot,
     saveAgentSetting,
     renderProfilesTab, profileSaveCurrent, profileDelete, profileDownload, profileUpload, profilePreview,
     addFileAttachment, _onAttachFiles,

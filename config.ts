@@ -386,7 +386,6 @@ export function getAgentProactiveCompact() { return ls('fg_agent_proactive_compa
 export function getAgentCompactAt()        { return parseFloat(ls('fg_agent_compact_at', '0.75')); }
 export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '80000'), 10); }
 
-function getAgentPlanMode()         { return ls('fg_agent_plan_mode', 'false') !== 'false'; }
 // Steps per turn: default 100, settable 1–MAX_STEPS. A cleared or invalid field falls back to
 // the default rather than NaN (which ended every turn after its first step).
 export function getAgentMaxSteps() {
@@ -405,7 +404,6 @@ function getAgentMaxDelegationDepth() { return parseInt(ls('fg_agent_max_delegat
 function getAgentLedger()             { return ls('fg_agent_ledger', 'true') !== 'false'; }
 function getAgentReviewLogs()         { return ls('fg_agent_review_logs', 'false') !== 'false'; }
 // (entity memory removed)
-function getAgentMaxReplans()         { return parseInt(ls('fg_agent_max_replans', '2'), 10); }
 function getIntentValidation() { return ls(KEYS.INTENT_VALIDATION, 'heuristic'); } // 'off' | 'heuristic'
 function setIntentValidation(value) { localStorage.setItem(KEYS.INTENT_VALIDATION, value); }
 // 'off' | 'high' | 'all'. Unset, it follows the sandbox: code that runs on the host unisolated
@@ -1124,12 +1122,12 @@ Object.assign(window, {
     getSandboxProvider, getGeoCache, prefetchGeoCache,
     getAgentToolTruncation, getAgentMaxToolResult, getDirectorMaxToolResult,
     getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens,
-    getAgentPlanMode, getAgentMaxSteps, getAgentLeanWorkers,
+    getAgentMaxSteps, getAgentLeanWorkers,
     getAgentWorkerHistory, getAgentPromptTemplate, getAgentConcisePrompts,
     getAgentWorkerReduce, getAgentRoleModelRouting,
     getEndpointRotation, getRotationStepN, getAgentMaxDelegationDepth,
     getAgentLedger, getAgentReviewLogs,
-    getAgentMaxReplans, getIntentValidation, setIntentValidation, getToolApproval,
+    getIntentValidation, setIntentValidation, getToolApproval,
     getRunnerMaxConsecutiveFails, getRateLimitCooldownMs,
     getRunnerQa, getGitEnabled, getAstEnabled,
     getQaEnabled, getQaTestRunner, getQaAcceptanceReview, getQaRegressionGuard, getQaReworkLimit,

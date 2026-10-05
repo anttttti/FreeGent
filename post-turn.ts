@@ -131,7 +131,15 @@ export async function rebuildLedger(): Promise<void> {
         .filter(n => /^(?:fg-|local\/)?tasks\/\d+-.+\.md$/i.test(n))
         .sort();
 
-    if (!taskPaths.length) return;
+    if (!taskPaths.length) {
+        // Last task deleted: clear the stale rows, but never create a ledger for a project that has none.
+        let existing: string;
+        try { existing = await agentReadFile(LEDGER); } catch { return; }
+        if (typeof existing !== 'string') return;
+        const archiveIdx = existing.indexOf('\n## Archive');
+        await agentWriteFile(LEDGER, LEDGER_HEADER + (archiveIdx >= 0 ? existing.slice(archiveIdx) : ''));
+        return;
+    }
 
     const entries = await Promise.all(taskPaths.map(async path => {
         try {

@@ -51,6 +51,7 @@ declare global {
     var runnerResume: () => void;
     var runnerSendUnblock: () => void;
     var runnerStart: () => void;
+    var runnerAutopilot: () => void;
     var runnerStop: () => void;
     var runnerToggle: () => void;
     var initRunner: () => void;
@@ -59,10 +60,6 @@ declare global {
     // ── bridged by ast.ts ──
     var _astFormatResults: any;
     var _astQueryContent: any;
-    // ── bridged by autopilot.ts ──
-    var isAutopilotRunning: any;
-    var stopAutopilot: any;
-    var toggleAutopilot: any;
     // ── bridged by bootstrap-jsdom.ts ──
     var AbortController: any;
     var AbortSignal: any;
@@ -146,10 +143,8 @@ declare global {
     var getRunnerMaxConsecutiveFails: any;
     var getRunnerQa: any;
     var getAgentMaxDelegationDepth: any;
-    var getAgentMaxReplans: any;
     var getAgentMaxSteps: any;
     var getAgentMaxToolResult: any;
-    var getAgentPlanMode: any;
     var getAgentProactiveCompact: any;
 
     var getAgentPromptTemplate: any;

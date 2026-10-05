@@ -54,17 +54,28 @@ async function setTaskStatus(taskPath, newStatus) {
             const date  = new Date().toISOString().slice(0, 10);
             content = `---\nstatus: todo\ntitle: ${title}\ncreated: ${date}\n---\n\n# ${title}\n`;
         }
-        const before = content;
-        // Match "status: value" or bare "status:" (no value) so partial frontmatter is handled.
-        content = content.replace(/^status:[ \t]*\S*/m, `status: ${newStatus}`);
-        if (content === before) {
-            // No status: line at all — insert one into the frontmatter block.
-            if (/^---[ \t]*\r?\n/m.test(content)) {
-                content = content.replace(/^(---[ \t]*\r?\n)/m, `$1status: ${newStatus}\n`);
-            } else {
-                // No frontmatter — prepend a minimal block so the file is now valid.
-                content = `---\nstatus: ${newStatus}\n---\n\n${content}`;
+        // Edit the frontmatter block only. Detecting "no status line" by comparing the text before
+        // and after the replace is wrong when the status is already `newStatus` (the replace
+        // changes nothing): that inserted another `status:` line on every same-status write —
+        // the runner re-marks an in-progress task in-progress on each retry/resume.
+        const fmRe = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/;
+        const fmMatch = content.match(fmRe);
+        if (fmMatch) {
+            // One status line: the first is rewritten, any duplicates (from that bug) are dropped.
+            const lines: string[] = [];
+            let seen = false;
+            for (const l of fmMatch[1].split(/\r?\n/)) {
+                if (/^status:/.test(l)) { if (!seen) { lines.push(`status: ${newStatus}`); seen = true; } }
+                else lines.push(l);
             }
+            if (!seen) {
+                lines.unshift(`status: ${newStatus}`);
+                console.warn(`[QA] setTaskStatus: inserted missing status field into "${taskPath}"`);
+            }
+            content = `---\n${lines.join('\n')}\n---${fmMatch[2] ? '\n' : ''}` + content.slice(fmMatch[0].length);
+        } else {
+            // No frontmatter — prepend a minimal block so the file is now valid.
+            content = `---\nstatus: ${newStatus}\n---\n\n${content}`;
             console.warn(`[QA] setTaskStatus: inserted missing status field into "${taskPath}"`);
         }
         const date = new Date().toISOString().slice(0, 10);

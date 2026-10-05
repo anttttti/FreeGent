@@ -75,7 +75,6 @@ export const KEYS = {
     AGENT_PROACTIVE_COMPACT:            'fg_agent_proactive_compact',
     AGENT_COMPACT_AT:                   'fg_agent_compact_at',
     AGENT_COMPACT_TOKENS:               'fg_agent_compact_tokens',
-    AGENT_PLAN_MODE:                    'fg_agent_plan_mode',
     AGENT_MAX_ROUNDS:                   'fg_agent_max_rounds',
     AGENT_LEAN_WORKERS:                 'fg_agent_lean_workers',
     AGENT_WORKER_HISTORY:               'fg_agent_worker_history',
