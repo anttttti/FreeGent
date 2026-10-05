@@ -118,8 +118,12 @@ while IFS= read -r _loc; do
 done < <(git grep -nIE -e "$SECRET_RE" HEAD 2>/dev/null | cut -d: -f1-3 || true)
 if [ -n "$_PUSH_RANGE" ]; then
     while IFS= read -r _hash; do
-        if git show --format= --no-color "$_hash" 2>/dev/null \
-                | grep -E '^\+' | grep -qE -e "$SECRET_RE"; then
+        # grep -c (not -q): -q exits at the first match, the upstream commands then die of SIGPIPE,
+        # and under pipefail the pipeline reports failure — so a secret early in a large commit
+        # was treated as "no match".
+        _hits=$(git show --format= --no-color "$_hash" 2>/dev/null \
+                | grep -E '^\+' | grep -cE -e "$SECRET_RE" || true)
+        if [ "${_hits:-0}" -gt 0 ]; then
             LEAKS+=("$(git log -1 --oneline "$_hash") (added in pending commit)")
         fi
     done < <(git rev-list "$_PUSH_RANGE" 2>/dev/null || true)
