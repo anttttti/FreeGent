@@ -1,5 +1,5 @@
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, STUCK_SAME_OUTPUT_MSG, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -521,7 +521,7 @@ export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     ledger.set(path, e);
 }
 
-async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => void) | null }): Promise<Array<{name: string; args: any; result: any}>> {
+async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => number) | null }): Promise<Array<{name: string; args: any; result: any}>> {
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
@@ -574,8 +574,8 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                     // Stubbed enough: serve the lines once more (below) and take read_file away
                     // for the next steps.
                     _e.stubs = 0;
-                    onPause('read_file');
-                    _rereadNote = `You have asked for these lines of "${args.path}" ${_e.redundant + 1} times without changing the file. Here they are once more. read_file is paused for the next ${TOOL_PAUSE_STEPS} steps: use these lines now — edit the file, run code, or give your answer.`;
+                    const _n = onPause('read_file');
+                    _rereadNote = `You have asked for these lines of "${args.path}" ${_e.redundant + 1} times without changing the file. Here they are once more. read_file is paused ${pauseText(_n)}: use these lines now — edit the file, run code, or give your answer.`;
                     repeatCache?.delete(`${name}|${JSON.stringify(args)}`);
                 } else if (_stubbable) {
                     if (_e) _e.stubs = (_e.stubs ?? 0) + 1;
@@ -732,6 +732,20 @@ let _turnExcludedTools: Set<string> | null = null;
 // ended the run. Taking the tool away for a couple of steps forces a different action.
 let _stepPausedTools: Set<string> | null = null;
 export const TOOL_PAUSE_STEPS = 2;
+// A pause that expires after TOOL_PAUSE_STEPS changes nothing when the model's loop is longer than
+// that: v0.61 sympy-15875 re-asked for the same lines the step the pause ended, 33 pauses and 92
+// reads over 99 steps (3.0M tokens; v0.60 ended it at step 28 with 0.7M). So each further pause of
+// a tool is longer: 2 steps, then 4, then the rest of the turn.
+export function pauseSteps(timesPausedBefore: number): number {
+    return timesPausedBefore === 0 ? TOOL_PAUSE_STEPS : timesPausedBefore === 1 ? TOOL_PAUSE_STEPS * 2 : Infinity;
+}
+export const pauseText = (n: number): string => Number.isFinite(n) ? `for the next ${n} steps` : 'for the rest of this turn';
+// Below this share of the step budget a refused read still only pauses (there is room to recover);
+// past it the refusal counts toward the turn stop, which ends the turn with what the run has.
+export const READ_REFUSAL_FREE_SHARE = 0.6;
+export function readRefusalIsFree(step: number, loopMax: number, timesPaused: number[]): boolean {
+    return step < loopMax * READ_REFUSAL_FREE_SHARE && !timesPaused.some(n => n >= 3);
+}
 export function getTurnStopInfo(): { reason: string | null; edited: boolean } { return { ..._turnStop }; }
 
 // What the stop summary needs to recover an answer: the task and the last few successful tool
@@ -1110,6 +1124,16 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     _turnExcludedTools = excludeTools?.length ? new Set(excludeTools) : null;
     _stepPausedTools = null;
     const _toolPauses = new Map<string, number>();   // tool → last step it is paused for
+    const _pauseCount = new Map<string, number>();   // tool → how many times it has been paused this turn
+    // Pause `t` from `step`, longer each time; a tool already paused isn't paused again. Returns the length.
+    const _pauseTool = (t: string, at: number): number => {
+        const until = _toolPauses.get(t);
+        if (until != null && at <= until) return Number.isFinite(until) ? until - at : Infinity;
+        const n = pauseSteps(_pauseCount.get(t) ?? 0);
+        _pauseCount.set(t, (_pauseCount.get(t) ?? 0) + 1);
+        _toolPauses.set(t, at + n);
+        return n;
+    };
     _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
     _stopRecent = [];
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
@@ -2054,17 +2078,23 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Repeat guard: a call that recently returned the same result REPEAT_LIMIT times is refused
         // (error result, not executed); after a few refusals the turn ends as BLOCKED below.
         const _thisCallSig = _callSig(_normCalls);
-        const _refused = _repeatRefused(_repeatGuard, _thisCallSig);
+        const _thisPathSig = _pathSig(_normCalls);
+        const _pathRefused = _pathRepeatRefused(_repeatGuard, _thisPathSig);
+        const _refused = _repeatRefused(_repeatGuard, _thisCallSig) || _pathRefused;
         // A refused call made only of workspace reads pauses those tools for the next steps instead
         // of counting toward the turn stop: v0.60 SWE runs ended on read-only repeat stops with
         // 20–75 steps unused, 5 of 8 Verified ones with an empty patch. fetch_url is not paused — in
         // AutomationBench it is often the only tool that can act.
         const _readOnlyRefusal = _refused && _normCalls.every(c => _PAUSABLE_READ_TOOLS.has(c.name));
+        // Pause now, so the refusal can say for how long.
+        const _refusalPause = _readOnlyRefusal ? Math.max(...[...new Set(_normCalls.map(c => c.name))].map(t => _pauseTool(t, step))) : 0;
         const _exec = _refused
             ? _normCalls.map(({ name, args }, i) => {
-                const _r = _repeatRefusalResult(_repeatCount(_repeatGuard, _thisCallSig));
+                const _r = _pathRefused
+                    ? _pathRepeatRefusalResult(_pathRepeatCount(_repeatGuard, _thisPathSig), _thisPathSig!)
+                    : _repeatRefusalResult(_repeatCount(_repeatGuard, _thisCallSig));
                 const result = _readOnlyRefusal
-                    ? { error: `${_r.error} ${[...new Set(_normCalls.map(c => c.name))].join(' and ')} ${_normCalls.length > 1 ? 'are' : 'is'} paused for the next ${TOOL_PAUSE_STEPS} steps.` }
+                    ? { error: `${_r.error} ${[...new Set(_normCalls.map(c => c.name))].join(' and ')} ${_normCalls.length > 1 ? 'are' : 'is'} paused ${pauseText(_refusalPause)}.` }
                     : _r;
                 toolTasks?.[i]?.setOutput(JSON.stringify(result, null, 2));
                 toolTasks?.[i]?.complete();
@@ -2074,17 +2104,20 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 forWorker: false,
                 blockedTools: _turnExcludedTools,
                 pausedTools: _stepPausedTools,
-                onPause: (t) => _toolPauses.set(t, step + TOOL_PAUSE_STEPS),
+                onPause: (t) => _pauseTool(t, step),
                 repeatCache: _repeatCache,
                 onTaskDone: () => { _taskDoneCalledThisStep = true; },
                 onRepeat: (name) => _repeatedNames.push(name),
                 replFails: _s._replaceFailures,
                 replNudge: _s._replaceNudgeSent,
             });
-        if (_readOnlyRefusal) for (const c of _normCalls) _toolPauses.set(c.name, step + TOOL_PAUSE_STEPS);
+        // A read-only refusal is free only while there is budget left and the tool hasn't already been
+        // taken away for the rest of the turn; after that it counts, so the turn ends cleanly instead
+        // of cycling pause → re-ask → pause to the step cap (sympy-15875, scikit-learn-12471, django-15957).
+        const _freeRefusal = _readOnlyRefusal && readRefusalIsFree(step, _loopMax, _normCalls.map(c => _pauseCount.get(c.name) ?? 0));
         _repeatGuard = _refused
-            ? { ..._repeatGuard, refused: _repeatGuard.refused + (_readOnlyRefusal ? 0 : 1) }
-            : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec));
+            ? { ..._repeatGuard, refused: _repeatGuard.refused + (_freeRefusal ? 0 : 1) }
+            : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec), _thisPathSig);
         const _execOk = _exec.filter(r => !r.result?.error).length;
         // Failure streak (detectors.ts updateFailStreak): real progress resets it, real failures
         // add to it; read-only tools, silent exit-0 runs and missing-environment errors are neutral.
@@ -2145,7 +2178,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         ({ resultHashes, stuckMsg: stuckNudge } = _updateStuckDetector(resSig, stalledPaths, resultHashes));
         _stuckCallSigs = [..._stuckCallSigs, _thisCallSig].slice(-3);
         if (stuckNudge && results.every(r => r.name === 'execute_code') && new Set(_stuckCallSigs).size > 1)
-            stuckNudge = STUCK_SAME_OUTPUT_MSG;
+            stuckNudge = sameOutputMsg(results.map(r => r.result?.stdout ?? r.result?.content ?? ''));
         let envFailNudge: string | null;
         ({ envFailSig: _envFailSig, envFailCount: _envFailCount, envFailTotal: _envFailTotal, envFailMsg: envFailNudge } = _updateEnvFailureDetector(results, _envFailSig, _envFailCount, _envFailTotal));
 
@@ -2183,7 +2216,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // already have" made v0.60 AutomationBench runs, whose task is to act through an API, give
             // up ~5 steps sooner (−0.14 partial credit where it fired; −0.03 for the same runs
             // without it in v0.59). Most of those loops re-sent a request the server had rejected.
-            ? (_cycleNudged = true, `Your last ${_stubStreak} steps only repeated earlier calls exactly, with the same results — you are cycling through the same few commands, and they will not show anything new. Read the last error or result literally: it usually says what is wrong (a missing field, a wrong name, the wrong place for a value). Change the request itself — arguments, body, endpoint or command — rather than re-sending it. If the information you need does not exist, say so in your answer.`)
+            ? (_cycleNudged = true, `Your last ${_stubStreak} steps only repeated earlier calls exactly, with the same results — you are cycling through the same few commands, and they will not show anything new. Read the last error or result literally: it usually says what is wrong (a missing field, a wrong name, the wrong place for a value). Change the request itself — arguments, body, endpoint or command — rather than re-sending it.`)
             : null;
 
         const _errPrefix = (r: any): string => {

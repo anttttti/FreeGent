@@ -1573,6 +1573,9 @@ async function _handleFetchUrl(args) {
             }
         }
 
+        if ((method === 'GET' || method === 'HEAD') && body !== undefined && body !== '' && body !== '{}')
+            return { error: `fetch_url: a ${method} request cannot carry a body. To send data, set method to "POST" (or PUT/PATCH) and keep it in body; to ask for something, put the values in the URL's query string and drop body.` };
+
         // Use proxy only for plain GET page fetches — not for authenticated or non-GET requests.
         const proxy   = getEffectiveProxy();
         const isPlain = method === 'GET' && !hasAuth && body === undefined

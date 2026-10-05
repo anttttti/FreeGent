@@ -395,6 +395,10 @@ const _emptyBody = (b: any) => b == null || b === '' || (typeof b === 'object' &
 export function _repairFetchBody(normCalls: any[]): void {
     for (const nc of normCalls) {
         const a = nc.args;
+        // A body with no method can only mean a POST — fetch() rejects a body on a GET (v0.61
+        // AutomationBench: 39 "Request with GET/HEAD method has a body"; v0.60: 5). An explicit
+        // GET/HEAD is left for fetch_url to explain.
+        if (nc.name === 'fetch_url' && a && typeof a === 'object' && a.method == null && !_emptyBody(a.body)) a.method = 'POST';
         if (nc.name !== 'fetch_url' || !a || typeof a !== 'object' || !_emptyBody(a.body)) continue;
         if (/^(GET|HEAD)$/i.test(String(a.method ?? 'GET'))) continue;
         const k = _BODY_ALIASES.find(k => a[k] != null && (typeof a[k] === 'object' || typeof a[k] === 'string'));

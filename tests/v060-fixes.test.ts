@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { _repairFetchBody, repairAllToolCalls } from '../tool-call-repair.ts';
 import { streamOAICompat, _degenerateTail, DEGENERATE_MIN_CHARS } from '../stream-decode.ts';
-import { STUCK_SAME_OUTPUT_MSG } from '../detectors.ts';
+import { STUCK_SAME_OUTPUT_MSG, STUCK_SAME_HTML_MSG, sameOutputMsg } from '../detectors.ts';
 import { envConfigEdits } from '../llm-loops.ts';
 
 const W = window as any;
@@ -43,6 +43,24 @@ describe('fetch_url body', () => {
         expect((calls[0].args as any).body).toEqual({ a: 1 });
         expect((calls[1].args as any).body).toBe('{"b":2}');
         expect((calls[2].args as any).body).toEqual({ keep: 1 });
+    });
+
+    // v0.61 AutomationBench: 39 calls died on "Request with GET/HEAD method has a body".
+    it('makes a body with no method a POST, and leaves an explicit GET alone', () => {
+        const calls = [
+            { name: 'fetch_url', args: { url: 'http://gw/execute', body: { tool: 't' } } },
+            { name: 'fetch_url', args: { url: 'http://gw/x', method: 'GET', body: { a: 1 } } },
+            { name: 'fetch_url', args: { url: 'http://gw/search?q=a' } },
+        ];
+        _repairFetchBody(calls);
+        expect((calls[0].args as any).method).toBe('POST');
+        expect((calls[1].args as any).method).toBe('GET');
+        expect((calls[2].args as any).method).toBeUndefined();
+    });
+
+    it('explains a GET with a body instead of surfacing the browser error', async () => {
+        const r = await W.executeToolAsync('fetch_url', { url: 'http://gw.example/x', method: 'GET', body: { a: 1 } });
+        expect(r.error).toMatch(/cannot carry a body.*"POST"/);
     });
 
     it('runs as part of repairAllToolCalls', () => {
@@ -111,5 +129,22 @@ describe('environment check: stub packages', () => {
 describe('stuck nudge wording', () => {
     it('says the probes differed when they did', () => {
         expect(STUCK_SAME_OUTPUT_MSG).toMatch(/were different but all printed the same output/);
+    });
+
+    // v0.61 TAC / AutomationBench: API tasks were told to "make the change in the code itself".
+    it('gives advice that holds for API work as well as code edits', () => {
+        expect(STUCK_SAME_OUTPUT_MSG).not.toMatch(/make the change in the code|give your answer/i);
+        expect(STUCK_SAME_OUTPUT_MSG).toMatch(/URL, method, headers or payload/);
+        expect(STUCK_SAME_OUTPUT_MSG).toMatch(/the code itself/);
+    });
+
+    it('says an HTML page is a web page, not data, when that is what repeated', () => {
+        const page = '<!DOCTYPE html><html><head><title>Rocket.Chat</title></head>';
+        expect(sameOutputMsg([page, page, page])).toBe(STUCK_SAME_HTML_MSG);
+        expect(sameOutputMsg(['  <html lang="en">…'])).toBe(STUCK_SAME_HTML_MSG);
+        expect(STUCK_SAME_HTML_MSG).toMatch(/\/api\/ prefix/);
+        expect(sameOutputMsg(['[]'])).toBe(STUCK_SAME_OUTPUT_MSG);
+        expect(sameOutputMsg([page, '{"ok":true}'])).toBe(STUCK_SAME_OUTPUT_MSG);
+        expect(sameOutputMsg([])).toBe(STUCK_SAME_OUTPUT_MSG);
     });
 });
