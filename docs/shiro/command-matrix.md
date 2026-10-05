@@ -116,7 +116,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `if` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `in` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `install` | typescript; shiro/commands/install.ts | bash |  | 3 |
-| `irb` | wasm package; shiro/wasi-packages.ts | bash | ruby@0.1.2: ruby; argv ["ruby","-rirb","-e","IRB.start","--"] | 1 |
+| `irb` | wasm package; shiro/wasi-packages.ts | bash | ruby@0.1.2: ruby; argv ["ruby","-e","module Kernel; alias_method :__fg_require, :require; private; def require(n); %w[io/console io/wait].include?(n.to_s) ? (IO.singleton_class.send(:define_method, :console) { \|*\| nil } unless IO.respond_to?(:console); IO.send(:define_method, :wait_readable) { \|*\| true } unless IO.method_defined?(:wait_readable); true) : __fg_require(n); end; end; require \"irb\"; IRB.start","--"] | 1 |
 | `join` | typescript; shiro/commands/join.ts | bash |  | 3 |
 | `jq` | wasm; shiro/commands/jq.ts | bash | jq@1.8.2: jq; argv ["jq"] | 27 |
 | `js-eval` | typescript; shiro/commands/jseval/js-eval-cmd.ts | bash |  | 2 |
