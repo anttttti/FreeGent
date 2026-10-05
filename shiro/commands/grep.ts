@@ -13,6 +13,11 @@ export function splitLines(text: string): string[] {
   return lines;
 }
 
+// grep -w: the match must not follow a word character. Lookbehind is a RegExp SyntaxError before
+// Safari 16.4 (it is built from a string here, so only `grep -w` would fail); there, \b is the
+// same test for a pattern that starts with a word character, which is what -w is used with.
+const WORD_START = (() => { try { new RegExp('(?<![a-z])b'); return '(?<![A-Za-z0-9_])'; } catch { return '\\b'; } })();
+
 const LONG_FLAGS: Record<string, string> = {
   '--ignore-case': 'i', '--invert-match': 'v', '--line-number': 'n', '--count': 'c',
   '--files-with-matches': 'l', '--files-without-match': 'L', '--recursive': 'r',
@@ -101,7 +106,7 @@ export const grepCmd: Command = {
       : f.has('E') ? ereToJs(p) : f.has('P') ? p : breToJs(p);
     const parts = patterns.flatMap(p => p.split('\n')).map(p => {
       let src = toJs(p);
-      if (f.has('w')) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
+      if (f.has('w')) src = `${WORD_START}(?:${src})(?![A-Za-z0-9_])`;
       if (f.has('x')) src = `^(?:${src})$`;
       return src;
     });

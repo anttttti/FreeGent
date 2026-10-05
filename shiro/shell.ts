@@ -3141,7 +3141,7 @@ export class Shell {
 
       // Check if this line starts a heredoc
       // `<<` starts a heredoc; `<<<` is a here-string on this line only.
-      const heredocMatch = line.match(/(?<!<)<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+      const heredocMatch = line.match(/(?:^|[^<])<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
       if (heredocMatch) {
         const delimiter = heredocMatch[1] || heredocMatch[2] || heredocMatch[3];
         let block = line;
@@ -3271,7 +3271,7 @@ export class Shell {
    */
   private heredocToHereString(stmt: string): string | null {
     const lines = stmt.split('\n');
-    const m = lines[0].match(/(?<!<)<<(?!<)(-?)\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+    const m = lines[0].match(/(?:^|[^<])<<(?!<)(-?)\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
     if (!m) return null;
     const delim = m[2] ?? m[3] ?? m[4];
     const stripTabs = m[1] === '-';
@@ -3431,17 +3431,17 @@ export class Shell {
     if (lines.length < 2) return null;
 
     // Find <<DELIM on the first line (could be anywhere in the command)
-    const heredocMatch = lines[0].match(/(?<!<)<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+    const heredocMatch = lines[0].match(/(?:^|[^<])<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
     if (!heredocMatch) return null;
     // A heredoc inside $( … ) belongs to the command in there, not to this one.
-    if (Shell.openConstruct(lines[0].slice(0, heredocMatch.index), false)) return null;
+    if (Shell.openConstruct(lines[0].slice(0, heredocMatch.index! + (heredocMatch[0].startsWith('<<') ? 0 : 1)), false)) return null;
 
     const delimiter = heredocMatch[1] || heredocMatch[2] || heredocMatch[3];
     const quoted = !!(heredocMatch[1] || heredocMatch[2]);
     const stripTabs = lines[0].match(/<<-/) !== null;
 
     // Remove the <<DELIM token from the command line
-    const command = lines[0].replace(/(?<!<)<<(?!<)-?\s*(?:'[^']+'|"[^"]+"|(\S+))/, '').trim();
+    const command = lines[0].replace(/(^|[^<])<<(?!<)-?\s*(?:'[^']+'|"[^"]+"|\S+)/, '$1').trim();
 
     // Collect body lines until we find the delimiter on its own line
     const bodyLines: string[] = [];
