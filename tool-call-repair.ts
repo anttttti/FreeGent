@@ -389,10 +389,13 @@ export function _repairPathArg(normCalls: any[]): void {
 // `params` or `parameters` — each answered "Missing field tool" and retried. Only for methods that
 // send a body; a GET's `params` may mean a query string.
 const _BODY_ALIASES = ['params', 'parameters', 'json', 'data', 'payload', 'post_data', 'request_body'];
+// An empty body (`{}` or "") is what a model emits when it filled the schema's slot but put the
+// payload under another key, so it doesn't block the repair; a body with content does.
+const _emptyBody = (b: any) => b == null || b === '' || (typeof b === 'object' && !Array.isArray(b) && Object.keys(b).length === 0);
 export function _repairFetchBody(normCalls: any[]): void {
     for (const nc of normCalls) {
         const a = nc.args;
-        if (nc.name !== 'fetch_url' || !a || typeof a !== 'object' || a.body != null) continue;
+        if (nc.name !== 'fetch_url' || !a || typeof a !== 'object' || !_emptyBody(a.body)) continue;
         if (/^(GET|HEAD)$/i.test(String(a.method ?? 'GET'))) continue;
         const k = _BODY_ALIASES.find(k => a[k] != null && (typeof a[k] === 'object' || typeof a[k] === 'string'));
         if (k) { a.body = a[k]; delete a[k]; }

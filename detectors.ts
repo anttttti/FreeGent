@@ -102,9 +102,14 @@ export function _resultSig(results: Array<{ name: string; result: any }>): strin
     };
     return JSON.stringify(results.map(r => ({ n: r.name, res: r.result })), digitless);
 }
+// Array.prototype.findLast needs Safari 15.4; older iPads throw on it, so search from the end by hand.
+function _findLast<T>(a: T[], pred: (x: T) => boolean): T | undefined {
+    for (let i = a.length - 1; i >= 0; i--) if (pred(a[i])) return a[i];
+    return undefined;
+}
 // How many recent steps ran this call and got the same result as its latest run.
 export function _repeatCount(g: RepeatGuard, callSig: string): number {
-    const last = g.recent.findLast(([c]) => c === callSig);
+    const last = _findLast(g.recent, ([c]) => c === callSig);
     return last ? g.recent.filter(([c, r]) => c === callSig && r === last[1]).length : 0;
 }
 export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
@@ -201,7 +206,11 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
 // version doesn't carry ("cannot import name 'X' from astropy.utils.state", "module 'x' has no
 // attribute") and a file the run can't read ("Permission denied") are all the environment, and
 // all were counting as real failures that eventually stop the run.
-export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$|type: \w+: not found|cannot import name|ImportError|module '[\w.]+' has no attribute|Permission denied|EACCES|mkdir: cannot create directory|Read-only file system|not in the sudoers file/m;
+// A bare `ImportError` is deliberately not matched: an import typo or circular import in the
+// agent's own code raises it too ("ImportError while loading conftest"), and that is a bug to
+// fix, not an environment to give up on. "cannot import name" counts only when the source is an
+// installed package (site-/dist-packages), i.e. a version that doesn't carry the name.
+export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$|type: \w+: not found|cannot import name '[^']+' from '[^']+' \([^)]*(?:site|dist)-packages|module '[\w.]+' has no attribute|Permission denied|EACCES|mkdir: cannot create directory|Read-only file system|not in the sudoers file/m;
 
 export function failStreakKind(name: string, result: any, readOnly: Set<string>): 'progress' | 'fail' | 'neutral' {
     if (readOnly.has(name)) return 'neutral';
@@ -255,7 +264,7 @@ export function failureSignature(result: any): string {
     let sig = meaningful[meaningful.length - 1] ?? lines[lines.length - 1] ?? '';
     // pytest's "collected 0 items" is the count, not the reason; the reason is the "ERROR: file or
     // directory not found: …" it printed while collecting.
-    if (_PYTEST_COLLECTED_RE.test(sig)) sig = meaningful.findLast(l => _PYTEST_ERROR_RE.test(l))?.replace(/^collecting \.\.\. /, '') ?? sig;
+    if (_PYTEST_COLLECTED_RE.test(sig)) sig = _findLast(meaningful, l => _PYTEST_ERROR_RE.test(l))?.replace(/^collecting \.\.\. /, '') ?? sig;
     return sig.slice(0, 160);
 }
 

@@ -73,6 +73,9 @@ function writeInputFiles(py: any, files: Record<string, string>) {
         const dir = path.slice(0, path.lastIndexOf('/'));
         if (dir && dir !== '/workspace') py.FS.mkdirTree(dir);
         try { py.FS.unlink(path); } catch {}
+        // Every other entry point goes through workspaceName(); this one must not let a name step
+        // out of /workspace in the interpreter's filesystem.
+        if (name.startsWith('/') || name.split('/').includes('..')) throw new Error(`Invalid workspace file name: ${name}`);
         if (typeof content === 'string' && content.startsWith('\x00BIN\x00')) py.FS.writeFile(path, fromBase64(content.slice(5)));
         else py.FS.writeFile(path, content ?? '');   // a string is written as UTF-8
     }

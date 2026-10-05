@@ -383,3 +383,62 @@ describe('text-format tool calls with MCP names', () => {
         expect(names('<mcp__docs__nope><q>x</q></mcp__docs__nope>')).toEqual([]);
     });
 });
+
+describe('MCP session handling', () => {
+    beforeEach(() => { localStorage.clear(); });
+
+    it('does not replay a tools/call whose error merely mentions a session', async () => {
+        let calls = 0;
+        const reqs = mockServer((msg) => {
+            if (msg.method === 'tools/call') { calls++; return { error: { code: -32000, message: 'no active session for user 7' } }; }
+            return standardHandler(msg);
+        });
+        const s = await W.addMcpServer({ name: 'maps', url: 'https://x.example.com/mcp' });
+        W.setMcpToolEnabled(s.id, 'search_places', true);
+        const r = await W.executeToolAsync('mcp__maps__search_places', { query: 'q' });
+        expect(r.error).toMatch(/no active session/);
+        expect(calls).toBe(1);
+        expect(reqs.filter(c => c.body.method === 'initialize')).toHaveLength(1);
+    });
+
+    it('sends one initialize for concurrent first calls', async () => {
+        const reqs = mockServer(standardHandler);
+        // Registered without a handshake, so the three calls below race to open the session.
+        localStorage.setItem('fg_mcp_servers', JSON.stringify([{ id: 'racy', name: 'racy', url: 'https://racy.example.com/mcp',
+            enabled: true, enabledTools: ['search_places'], tools: [{ name: 'search_places' }] }]));
+        const rs = await Promise.all([1, 2, 3].map(i => W.executeToolAsync('mcp__racy__search_places', { query: `q${i}` })));
+        expect(rs.map(r => r.content)).toEqual([expect.stringMatching(/q1/), expect.stringMatching(/q2/), expect.stringMatching(/q3/)]);
+        expect(reqs.filter(c => c.body.method === 'initialize')).toHaveLength(1);
+    });
+
+    it('caps server instructions in aggregate, keeping short notes whole', () => {
+        const mk = (id: string, text: string) => ({ id, name: id, url: `https://${id}.example.com`, enabled: true, enabledTools: ['t'],
+            tools: [{ name: 't' }], instructions: text });
+        localStorage.setItem('fg_mcp_servers', JSON.stringify([mk('a', 'short note'), mk('b', 'x'.repeat(20_000)), mk('c', 'y'.repeat(20_000))]));
+        const block = W.mcpServerInstructionsBlock();
+        expect(block).toContain('short note');
+        expect(block.length).toBeLessThan(13_500);
+        expect(block).toContain('…');
+    });
+});
+
+describe('MCP approval for workers', () => {
+    afterEach(() => { document.getElementById('tool-approval-toast')?.remove(); localStorage.removeItem('fg_tool_approval'); });
+
+    it('asks before a worker runs a destructive MCP tool', async () => {
+        const reqs = mockServer(standardHandler);
+        const s = await W.addMcpServer({ name: 'maps', url: 'https://x.example.com/mcp' });
+        W.setMcpToolEnabled(s.id, 'delete.everything', true);
+        localStorage.setItem('fg_tool_approval', 'high');
+        const toast = document.createElement('div');
+        toast.id = 'tool-approval-toast';
+        toast.innerHTML = '<span id="tool-approval-label"></span><span id="tool-approval-detail"></span><input type="checkbox" id="tool-approval-session"><span id="tool-approval-session-name"></span>';
+        document.body.appendChild(toast);
+        const before = reqs.filter(c => c.body.method === 'tools/call').length;
+        const p = W.executeToolAsync('mcp__maps__delete_everything', {}, { snapshot: new Map(), staging: new Map() });
+        await vi.waitFor(() => expect(toast.style.display).not.toBe('none'));
+        W.resolveToolApproval(false);
+        expect((await p).error).toMatch(/denied/i);
+        expect(reqs.filter(c => c.body.method === 'tools/call').length).toBe(before);
+    });
+});

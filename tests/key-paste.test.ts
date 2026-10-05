@@ -38,3 +38,30 @@ describe('findKeysInText', () => {
         expect(M.findKeysInText(`${pad('nvapi-')} ${pad('nvapi-')}Z`).NVIDIA_API_KEY).toBe(pad('nvapi-'));
     });
 });
+
+describe('pasting over a saved key', () => {
+    const KEY = 'fg_groq_key';
+    const setup = () => {
+        document.body.innerHTML = '<textarea id="key-paste"></textarea><div id="key-paste-status"></div>';
+        localStorage.setItem(KEY, 'old-saved-key');
+    };
+    afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(KEY); });
+
+    it('keeps the saved key when the user declines', () => {
+        setup();
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        W.onKeyPasteInput(Object.assign(document.getElementById('key-paste') as HTMLTextAreaElement, { value: pad('gsk_') }));
+        expect(localStorage.getItem(KEY)).toBe('old-saved-key');
+        expect(document.getElementById('key-paste-status')!.textContent).toMatch(/Cancelled/);
+    });
+
+    it('replaces it on confirm, and does not ask for an empty slot or the same key', () => {
+        setup();
+        const ask = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        W.onKeyPasteInput(Object.assign(document.getElementById('key-paste') as HTMLTextAreaElement, { value: pad('gsk_') }));
+        expect(localStorage.getItem(KEY)).toBe(pad('gsk_'));
+        expect(ask).toHaveBeenCalledTimes(1);
+        W.onKeyPasteInput(Object.assign(document.getElementById('key-paste') as HTMLTextAreaElement, { value: pad('gsk_') }));
+        expect(ask).toHaveBeenCalledTimes(1);
+    });
+});

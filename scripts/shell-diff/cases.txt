@@ -1193,3 +1193,9 @@ tar caf a.tar.bz2 words.txt; tar tf a.tar.bz2; rm a.tar.bz2
 bzip2 -c nums.txt | bzip2 -tv; echo rc=$?
 bzip2 -k words.txt; bzip2 -k words.txt 2>/dev/null; echo rc=$?; rm -f words.txt.bz2
 bzip2 -kf words.txt; bzip2 -kf words.txt; echo rc=$?; rm words.txt.bz2
+
+# ── redirect truncates before the command runs ────────────────────────────────────────────────
+printf 'keep\n' > t.txt; : > t.txt; cat t.txt | wc -c
+printf 'keep\n' > t.txt; true > t.txt; cat t.txt | wc -c
+printf 'keep\n' > t.txt; echo -n > t.txt; wc -c < t.txt
+printf 'keep\n' > t.txt; grep nomatch words.txt > t.txt; wc -c < t.txt
