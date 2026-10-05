@@ -60,12 +60,19 @@ function utf8SeqLen(b: Uint8Array, i: number): number {
   return 0;
 }
 
-// A low surrogate U+DC80..U+DCFF not preceded by a high one: an escaped byte.
-const ESCAPED_BYTE = /(?<![\ud800-\udbff])[\udc80-\udcff]/;
+// A low surrogate U+DC80..U+DCFF not preceded by a high one: an escaped byte. Matched as "a
+// surrogate pair, else a lone escaped byte" rather than with a lookbehind: a lookbehind literal
+// is a SyntaxError before Safari 16.4 and would stop every module that imports this one.
+const ESCAPED_BYTE = /[\ud800-\udbff][\udc00-\udfff]|[\udc80-\udcff]/g;
+const hasEscapedByte = (s: string): boolean => {
+  ESCAPED_BYTE.lastIndex = 0;
+  for (let m; (m = ESCAPED_BYTE.exec(s));) if (m[0].length === 1) return true;
+  return false;
+};
 
 /** String → bytes: UTF-8, with each escaped byte (U+DC80..U+DCFF) as that byte. */
 export function textToBytes(s: string): Uint8Array {
-  if (!ESCAPED_BYTE.test(s)) return encoder.encode(s);
+  if (!hasEscapedByte(s)) return encoder.encode(s);
   const parts: number[] = [];
   let run = '';
   const flush = () => { if (run) { for (const x of encoder.encode(run)) parts.push(x); run = ''; } };
@@ -88,7 +95,7 @@ export function byteChar(b: number): string {
  * so those become the characters they encode, as they would in a real shell.
  */
 export function normalizeBytes(s: string): string {
-  return ESCAPED_BYTE.test(s) ? bytesToText(textToBytes(s)) : s;
+  return hasEscapedByte(s) ? bytesToText(textToBytes(s)) : s;
 }
 
 /** Number of bytes the string stands for. */
@@ -117,5 +124,5 @@ export function fromByteString(s: string): string {
 
 /** A data string as UTF-8 text: each escaped byte shown as U+FFFD, as a UTF-8 decoder would. */
 export function toDisplayText(s: string): string {
-  return ESCAPED_BYTE.test(s) ? s.replace(new RegExp(ESCAPED_BYTE.source, 'g'), '�') : s;
+  return hasEscapedByte(s) ? s.replace(ESCAPED_BYTE, m => m.length === 2 ? m : '�') : s;
 }

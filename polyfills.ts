@@ -1,6 +1,8 @@
-// polyfills.ts — FreeGent: ES2022/2023 array and string methods that Safari lacks before 15.4
-// (older iPads stop receiving iPadOS updates there). A missing method throws mid-turn ("e.recent.findLast
-// is not a function"), so they are defined here, first, before any other module runs.
+// polyfills.ts — FreeGent: library methods that older iPads' Safari lacks (iPads stop getting
+// updates at iPadOS 12/15/16 depending on model). A missing method throws mid-turn ("e.recent.findLast
+// is not a function"), so they are defined here, first, before any other module runs. Syntax is
+// handled by the build (esbuild target safari12) — except regex lookbehind and BigInt literals,
+// which it cannot lower: tests/polyfills.test.ts fails if a lookbehind literal reaches the page.
 
 const def = (proto: any, name: string, fn: Function) => {
     if (typeof proto[name] !== 'function') Object.defineProperty(proto, name, { value: fn, writable: true, configurable: true });
@@ -32,5 +34,49 @@ def(String.prototype, 'replaceAll', function (this: string, pat: any, rep: any) 
     // A string pattern becomes an escaped global RegExp; `rep` keeps its $-patterns, as natively.
     return this.replace(new RegExp(String(pat).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), rep);
 });
+
+// Safari < 13: Object.fromEntries 12.1, matchAll/allSettled 13, Blob.arrayBuffer/text 14.
+def(Object, 'fromEntries', (it: Iterable<[PropertyKey, any]>) => { const o: any = {}; for (const [k, v] of it) o[k] = v; return o; });
+def(Promise, 'allSettled', (ps: Iterable<any>) => Promise.all([...ps].map(p => Promise.resolve(p).then(
+    value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason })))));
+def(String.prototype, 'matchAll', function* (this: string, re: RegExp | string) {
+    const g = re instanceof RegExp ? new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g') : new RegExp(String(re), 'g');
+    for (let m; (m = g.exec(this));) { yield m; if (m[0] === '') g.lastIndex++; }
+});
+if (typeof Blob !== 'undefined') {
+    const read = (b: Blob, how: 'readAsArrayBuffer' | 'readAsText') => new Promise<any>((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); (r as any)[how](b);
+    });
+    def(Blob.prototype, 'arrayBuffer', function (this: Blob) { return read(this, 'readAsArrayBuffer'); });
+    def(Blob.prototype, 'text', function (this: Blob) { return read(this, 'readAsText'); });
+}
+
+// Safari < 16 has no AbortSignal.timeout, < 17.4 no AbortSignal.any; the request path uses both.
+if (typeof AbortSignal !== 'undefined') {
+    def(AbortSignal, 'timeout', (ms: number) => {
+        const c = new AbortController();
+        setTimeout(() => c.abort(new DOMException('signal timed out', 'TimeoutError')), ms);
+        return c.signal;
+    });
+    def(AbortSignal, 'any', (signals: AbortSignal[]) => {
+        const c = new AbortController();
+        for (const s of signals) {
+            if (s.aborted) { c.abort((s as any).reason); break; }
+            s.addEventListener('abort', () => c.abort((s as any).reason), { once: true });
+        }
+        return c.signal;
+    });
+}
+
+// Safari < 15.4: no crypto.randomUUID (and no structuredClone — callers already fall back to JSON).
+if (typeof crypto !== 'undefined' && typeof (crypto as any).randomUUID !== 'function' && crypto.getRandomValues) {
+    (crypto as any).randomUUID = () => {
+        const b = crypto.getRandomValues(new Uint8Array(16));
+        b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+        const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+        return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    };
+}
+if (typeof globalThis === 'undefined') (self as any).globalThis = self;
 
 export {};
