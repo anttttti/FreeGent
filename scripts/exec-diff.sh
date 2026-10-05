@@ -80,11 +80,16 @@ if index_path.exists():
         if case.get('parity_scope') == 'integration-only':
             (out / ('integration-only.' + name)).write_text('This browser command is checked by integration tests, not Bash parity.\\n')
             continue
-        if row['status'] != 'verified':
+        if row['status'] not in ('verified', 'contract'):
             (out / ('blocked.' + name)).write_text(row['status'] + ': ' + row.get('reason', '') + '\n')
             continue
         if any(c in package_names for c in case['commands']) and not os.environ.get('FG_NET_TESTS'):
             (out / ('blocked.' + name)).write_text('runtime-unavailable: package execution needs FG_NET_TESTS=1 and the pinned WASM artifact\n')
+            continue
+        if row['status'] == 'contract':
+            # No byte oracle: the browser is checked against the recorded rule (scripts/exec-diff/contract.py).
+            (out / ('contract.' + name)).write_text(json.dumps(row['contract']))
+            (out / ('contract-native.' + name)).write_text(row.get('native', 'unchecked') + '\n')
             continue
         expected = row['expected']; after = dict(expected['files'])
         changes = [f'file:./{p}\t{h}\n' for p,h in after.items() if before.get(p) != h]
@@ -124,6 +129,7 @@ for name in "${names[@]}"; do
     [ -f "$out/blocked.$name" ] && continue
     [ -f "$out/integration-only.$name" ] && continue # Browser integration case; no Bash oracle contract.
     [ -f "$out/real.$name" ] && continue # verified frozen native oracle
+    [ -f "$out/contract.$name" ] && continue # contract case: no byte oracle to run
     work=$(mktemp -d)
     cp -r "$fixtures"/. "$work"/
     python3 - "$cases" "$name" "$work" <<'PY'
@@ -138,6 +144,11 @@ if manifest.exists():
         path.relative_to(root)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode())
+    for filename, b64 in profile.get('files_base64', {}).items():
+        path = (root / filename).resolve()
+        path.relative_to(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(__import__('base64').b64decode(b64))
 PY
     [ "$?" -eq 0 ] || exit 2
     file_hashes "$work" > "$out/base.$name.hashes"
@@ -171,7 +182,7 @@ EXEC_DIFF_CASES="$cases" EXEC_DIFF_OUT="$out" EXEC_DIFF_FIXTURES="$fixtures" EXE
 # (e.g. CPython vs Pyodide versions). Bash mismatches always fail.
 known=""
 [ -f "$cases/known-differences.txt" ] && known=$(grep -v '^\s*#' "$cases/known-differences.txt" | awk '{print $1}')
-failed=0; knownfail=0; blocked=0; capabilityonly=0; integrationonly=0
+failed=0; knownfail=0; blocked=0; capabilityonly=0; integrationonly=0; contractmet=0
 : > "$out/real.txt"; : > "$out/browser.txt"
 for name in "${names[@]}"; do
     if [ -f "$out/blocked.$name" ]; then
@@ -182,6 +193,13 @@ for name in "${names[@]}"; do
     fi
     if [ -f "$out/integration-only.$name" ]; then
         integrationonly=$((integrationonly + 1)); continue
+    fi
+    if [ -f "$out/contract.$name" ]; then
+        problems=$(python3 "$(dirname "$0")/exec-diff/contract.py" check "$out/contract.$name" "$out/browser.stdout.$name" \
+            "$out/browser.stderr.$name" "$out/browser.exit.$name" "$out/browser.files.$name" 2>&1) \
+            && { contractmet=$((contractmet + 1)); continue; }
+        failed=$((failed + 1)); printf '%s\n' "$problems" > "$out/contract-failed.$name"
+        echo "CONTRACT $name: $problems" | tee -a "$out/contract-failures.txt"; continue
     fi
     if cmp -s "$out/real.$name" "$out/browser.$name" &&
         cmp -s "$out/real.stdout.$name" "$out/browser.stdout.$name" &&
@@ -210,7 +228,7 @@ PY
 [ "$?" -eq 0 ] || exit 2
 diff -u --label real --label browser "$out/real.diff.txt" "$out/browser.diff.txt"
 echo
-msg="$((${#names[@]} - failed - knownfail - blocked - capabilityonly - integrationonly)) of $((${#names[@]} - capabilityonly - integrationonly)) in-scope parity cases identical"; [ "$knownfail" -gt 0 ] && msg="$msg, $knownfail known differences"
+msg="$((${#names[@]} - failed - knownfail - blocked - capabilityonly - integrationonly - contractmet)) of $((${#names[@]} - capabilityonly - integrationonly - contractmet)) in-scope parity cases identical"; [ "$contractmet" -gt 0 ] && msg="$msg, $contractmet contract cases met"; [ "$knownfail" -gt 0 ] && msg="$msg, $knownfail known differences"
 [ "$blocked" -gt 0 ] && msg="$msg, $blocked unresolved reference requirements"
 [ "$capabilityonly" -gt 0 ] && msg="$msg, $capabilityonly capability-only cases outside Bash parity"
 [ "$integrationonly" -gt 0 ] && msg="$msg, $integrationonly integration-only cases outside Bash parity"
@@ -235,6 +253,13 @@ for name in sorted(set(selected)):
         row.update(status='integration-only', reason=integration.read_text().strip())
     elif blocked.exists():
         row.update(status='blocked', reason=blocked.read_text().strip())
+    elif (out / ('contract.' + name)).exists():
+        failure = out / ('contract-failed.' + name)
+        row.update(status='contract-failed' if failure.exists() else 'contract-met',
+                   contract=json.loads((out / ('contract.' + name)).read_text()),
+                   native=(out / ('contract-native.' + name)).read_text().strip())
+        if failure.exists(): row['reason'] = failure.read_text().strip()
+        row['actual_exit'] = (out / ('browser.exit.' + name)).read_text().strip() if (out / ('browser.exit.' + name)).exists() else 'missing'
     else:
         comparisons = {}
         for part in ('stdout.', 'stderr.', 'exit.', 'files.'):

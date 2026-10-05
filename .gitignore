@@ -42,3 +42,4 @@ cf-worker/.wrangler/
 
 CONTRIBUTING.md
 docs/adr/
+__pycache__/

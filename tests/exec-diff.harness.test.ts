@@ -5,7 +5,7 @@
 // changed, per case. Skipped unless the script sets EXEC_DIFF_CASES / EXEC_DIFF_OUT /
 // EXEC_DIFF_FIXTURES.
 import { describe, it, vi } from 'vitest';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { fileChanges, loadNodePyodide, readTree, recordBytes, toRecord, type WsRecord } from './parity-utils';
@@ -49,7 +49,12 @@ describe.skipIf(!casesDir)('exec diff (browser side)', () => {
         const nativeFetch: typeof fetch = (globalThis as any).__nativeFetchForTests;
         const packages = new Set(listAvailable().map(p => p.url));
         if (process.env.FG_NET_TESTS) {
-            if (process.env.FG_WASI_TRACE) (globalThis as any).__fgWasiTrace = (line:string) => console.warn(line);
+            // FG_WASI_TRACE=1 prints the guest's WASI calls; FG_WASI_TRACE=/path appends them to that file
+            // (the test setup swallows console output, so a file is the way to read a long trace).
+            if (process.env.FG_WASI_TRACE) {
+                const target = process.env.FG_WASI_TRACE;
+                (globalThis as any).__fgWasiTrace = target === '1' ? (line:string) => console.warn(line) : (line:string) => appendFileSync(target, line + '\n');
+            }
             setWasiWorkerFactory(await nodeWorkerFactory());
             if (names.some(name=>name.startsWith('coverage-7z-'))) {
                 const {factory,wasmBinary} = await loadNodeSevenZip(nativeFetch);
@@ -99,6 +104,10 @@ describe.skipIf(!casesDir)('exec diff (browser side)', () => {
                 for (const [path, text] of Object.entries(caseFixtures[name]?.files ?? {})) {
                     if (path.startsWith('/') || path.split('/').includes('..')) throw new Error('Invalid case fixture path');
                     initialFiles.set(path, Buffer.from(text as string));
+                }
+                for (const [path, b64] of Object.entries(caseFixtures[name]?.files_base64 ?? {})) {
+                    if (path.startsWith('/') || path.split('/').includes('..')) throw new Error('Invalid case fixture path');
+                    initialFiles.set(path, Buffer.from(b64 as string, 'base64'));
                 }
                 const code = readFileSync(join(casesDir!, name), 'utf8');
                 const store = new Map<string, WsRecord>([...initialFiles].map(([n, b]) => [n, toRecord(b)]));

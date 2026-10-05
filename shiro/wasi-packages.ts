@@ -46,6 +46,32 @@ export interface WasmPackage {
   commandArgs?: Record<string, string[]>;
   /** Exact upstream command when a compatibility alias has a different name. */
   commandTargets?: Record<string,string>;
+  /** Translate the command line a script wrote for the native tool into the packaged tool's own.
+   *  Throw an Error to refuse an option the packaged tool cannot honor (printed as `name: message`, exit 2). */
+  adaptArgs?: (args: string[]) => string[];
+}
+
+/** The packaged `uuid` is uuid-v4-cli (v4 only; hex without hyphens; -H hyphenates; -V prints its version).
+ *  Scripts write the OSSP/Debian `uuid`: `uuid -v 4`, `uuid -n 3`, `uuid -F STR`, with hyphens. Its own
+ *  options pass through untouched; anything else is read as OSSP and mapped onto them. */
+export function adaptUuidArgs(args: string[]): string[] {
+  const own = new Set(['-H', '--hyphenated', '--urn', '-u', '--uppercase', '-h', '--help', '-V', '--version']);
+  if (args.some(a => own.has(a))) return args;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const v = /^-v(\d*)$/.exec(a);
+    if (v) {
+      const version = v[1] || args[++i];
+      if (version !== '4') throw new Error(`UUID version ${version ?? ''} is not available in this build (only 4: -v 4)`);
+    } else if (a === '-F') {
+      const format = args[++i];
+      if (format !== 'STR') throw new Error(`output format ${format ?? ''} is not available in this build (only STR)`);
+    } else if (a === '-1') { /* one UUID per run: the only mode */ }
+    else if (a === '-n') {
+      if (args[++i] !== '1') throw new Error('-n: only a count of 1 is available in this build');
+    } else throw new Error(`unrecognized option ${a}`);
+  }
+  return ['-H'];   // OSSP prints the canonical hyphenated form
 }
 
 // ── Package manifest ─────────────────────────────────────────────────
@@ -226,7 +252,10 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     category: 'language',
     aliases: ['irb'],
     commandTargets: { irb:'ruby' },
-    commandArgs: { irb:['-rirb', '-e', 'IRB.start', '--'] },
+    // Ruby's io/console and io/wait are C extensions this WASI build lacks, and reline (loaded by irb) requires
+    // them. Piped input never uses them, so a feature stub lets irb start; the terminal queries return nil. One -e,
+    // because ruby runs every -r before any -e: the stub has to be in place before `require "irb"`.
+    commandArgs: { irb:['-e', 'module Kernel; alias_method :__fg_require, :require; private; def require(n); %w[io/console io/wait].include?(n.to_s) ? (IO.singleton_class.send(:define_method, :console) { |*| nil } unless IO.respond_to?(:console); IO.send(:define_method, :wait_readable) { |*| true } unless IO.method_defined?(:wait_readable); true) : __fg_require(n); end; end; require "irb"; IRB.start', '--'] },
     format: 'webc',
   },
   {
@@ -276,6 +305,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 2_400_000,
     category: 'utility',
     format: 'webc',
+    adaptArgs: adaptUuidArgs,
   },
   {
     name: 'qr2text',
@@ -715,6 +745,10 @@ export async function runPackageCommand(ctx:CommandContext, name:string, args=ct
   }
   const mapping = resolvePackageCommand(name);
   if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
+  if (mapping.package.adaptArgs) {
+    try { args = mapping.package.adaptArgs(args); }
+    catch (e: any) { ctx.stderr += `${name}: ${e.message}\n`; return 2; }
+  }
   const module = await getCompiledModule(name, ctx.shell.onProgress);
   await writePackageStubs(ctx.fs, mapping.package.name);
   const resourceFiles = await packageResources(mapping.package.name);
