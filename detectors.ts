@@ -49,8 +49,19 @@ const _STUCK_MSGS: Record<string, string> = {
 };
 // Three *different* execute_code calls with the same output: the probes aren't telling the cases
 // apart. The same-command wording was wrong there — v0.60 pylint-7993 got it 16 times while varying
-// a regex whose every version printed `[]`, and never edited the file.
-export const STUCK_SAME_OUTPUT_MSG = 'Your last 3 execute_code calls were different but all printed the same output — these variations are not distinguishing anything. Stop probing this way: make the change in the code itself and check it, or give your answer.' + _BLOCKED_TAIL;
+// a regex whose every version printed `[]`, and never edited the file. But the code-edit advice that
+// fixed that was wrong for API tasks: in v0.61 17 of 29 TAC transcripts (and 10 AutomationBench
+// runs) got "make the change in the code itself, or give your answer" while their requests kept
+// returning the same page, and the tasks that got it most lost points. Same trigger, wording that
+// holds for both kinds of work.
+export const STUCK_SAME_OUTPUT_MSG = 'Your last 3 execute_code calls were different but all printed the same output — these variations are not distinguishing anything. Read that output literally and change what you are asking for: for a request, the URL, method, headers or payload; for code, the code itself or the file you are editing. Do not send another variation of the same probe.' + _BLOCKED_TAIL;
+// The repeated output is a web page, not data: the request is reaching the wrong thing (a UI
+// route, a login page, a proxy error), and no rewording of the body or query will change that.
+export const STUCK_SAME_HTML_MSG = 'Your last 3 execute_code calls were different but all printed the same HTML web page, not data. The address you are requesting is serving a web page (a UI route, login page or error page), so changing the body or query will not help. Check the exact URL: host, port, path (is there an /api/ prefix or a different endpoint for this operation?), method and Accept/content-type headers — and print the status code and Content-Type before parsing. Do not re-parse this page.' + _BLOCKED_TAIL;
+const _HTML_PAGE_RE = /^\s*(?:<!doctype html|<html[\s>])/i;
+export function sameOutputMsg(outputs: string[]): string {
+    return outputs.length && outputs.every(o => _HTML_PAGE_RE.test(String(o ?? ''))) ? STUCK_SAME_HTML_MSG : STUCK_SAME_OUTPUT_MSG;
+}
 // Maintains a rolling window of the last 3 result fingerprints; when all 3 match,
 // evicts read caches (targeted by path when possible) and returns a stuck nudge.
 // Returns {resultHashes, stuckMsg} — caller must reassign resultHashes.
@@ -88,7 +99,8 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
 // which reset a streak each time. Refusals accumulate over the turn for the same reason.
 export const REPEAT_LIMIT = 8;
 export const REPEAT_WINDOW = 12;
-export type RepeatGuard = { recent: Array<[callSig: string, resSig: string]>; refused: number };
+// recentPaths: the same steps keyed by endpoint instead of exact call (see _pathSig).
+export type RepeatGuard = { recent: Array<[callSig: string, resSig: string]>; refused: number; recentPaths?: Array<[pathSig: string, resSig: string]> };
 export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });
 
 export function _callSig(calls: Array<{ name: string; args: any }>): string {
@@ -116,8 +128,36 @@ export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
     return _repeatCount(g, callSig) >= REPEAT_LIMIT;
 }
 // After executing (not after a refusal).
-export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: string): RepeatGuard {
-    return { ...g, recent: [...g.recent, [callSig, resSig] as [string, string]].slice(-REPEAT_WINDOW) };
+export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: string, pathSig: string | null = null): RepeatGuard {
+    const next: RepeatGuard = { ...g, recent: [...g.recent, [callSig, resSig] as [string, string]].slice(-REPEAT_WINDOW) };
+    if (pathSig) next.recentPaths = [...(g.recentPaths ?? []), [pathSig, resSig] as [string, string]].slice(-REPEAT_WINDOW);
+    return next;
+}
+
+// ── Endpoint repeat guard ────────────────────────────────────────────────────
+// The exact-call guard above hashes the whole URL, so a model that rewords a query string every time
+// (`/search?query=name:checklist` → `name:return` → `get+lead` → …) is never "repeating" — even when
+// every reply is byte-identical. v0.61 AutomationBench hr-5075: 97 `/search` calls, 0 `/execute`, 38
+// tool_repeat + 12 stuck nudges ignored, 2.6M tokens; 77 tasks that searched over 20 times resolved
+// none (the 98 that didn't resolved 15). So GET fetch_url calls are also keyed by method + endpoint
+// without the query, and refused once one endpoint has returned the same result PATH_REPEAT_LIMIT
+// times in the window. Only GETs: POSTs to one endpoint (/execute) legitimately return alike.
+export const PATH_REPEAT_LIMIT = 5;
+export function _pathSig(calls: Array<{ name: string; args: any }>): string | null {
+    if (calls.length !== 1 || calls[0].name !== 'fetch_url') return null;
+    const a = calls[0].args ?? {};
+    if (!/^(GET|HEAD)$/i.test(String(a.method ?? 'GET'))) return null;
+    try { const u = new URL(String(a.url)); return `GET|${u.origin}${u.pathname}`; } catch { return null; }
+}
+export function _pathRepeatCount(g: RepeatGuard, pathSig: string | null): number {
+    if (!pathSig) return 0;
+    const rp = g.recentPaths ?? [];
+    const last = _findLast(rp, ([p]) => p === pathSig);
+    return last ? rp.filter(([p, r]) => p === pathSig && r === last[1]).length : 0;
+}
+export const _pathRepeatRefused = (g: RepeatGuard, pathSig: string | null): boolean => _pathRepeatCount(g, pathSig) >= PATH_REPEAT_LIMIT;
+export function _pathRepeatRefusalResult(n: number, pathSig: string): { error: string } {
+    return { error: `Not executed: ${n} requests to ${pathSig.slice(4)} in your last ${REPEAT_WINDOW} steps returned the same result, whatever the query. Another search will not show anything new: use what it returned. If it listed a tool or endpoint for your task, call it now with the arguments its schema describes; if it has nothing for this task, declare BLOCKED: <exact reason>.` };
 }
 export function _repeatRefusalResult(n: number): { error: string } {
     return { error: `Not executed: this exact call already ran ${n} times in your last ${REPEAT_WINDOW} steps with the same result. Running it again will not change the result. If the output you already have answers the task, give that answer now; otherwise change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };

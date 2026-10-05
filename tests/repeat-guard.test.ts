@@ -125,3 +125,57 @@ describe('runTurn with a looping call', () => {
         expect(exec).toHaveBeenCalledTimes(12);
     });
 });
+
+// v0.61 AutomationBench hr-5075: 97 /search calls whose queries differed and whose replies didn't.
+describe('endpoint repeat guard', () => {
+    const search = (q: string) => [{ name: 'fetch_url', args: { url: `http://gw:8080/search?query=${q}` } }];
+    const post = (b: any) => [{ name: 'fetch_url', args: { method: 'POST', url: 'http://gw:8080/execute', body: b } }];
+    const run = (calls: any[], res: string, g: any) => _updateRepeatGuard(g, _callSig(calls), res, _pathSig(calls));
+
+    it('keys a GET by endpoint without its query, and leaves POSTs and other tools alone', async () => {
+        const { _pathSig } = await import('../detectors.ts');
+        expect(_pathSig(search('a'))).toBe(_pathSig(search('totally different'))!);
+        expect(_pathSig(search('a'))).toBe('GET|http://gw:8080/search');
+        expect(_pathSig(post({ tool: 't' }))).toBeNull();
+        expect(_pathSig([{ name: 'execute_code', args: { code: 'ls' } }])).toBeNull();
+        expect(_pathSig([{ name: 'fetch_url', args: { url: 'not a url' } }])).toBeNull();
+    });
+
+    it('refuses the endpoint once rephrased queries keep returning the same result', async () => {
+        const { _pathSig, _pathRepeatRefused, PATH_REPEAT_LIMIT } = await import('../detectors.ts');
+        let g = newRepeatGuard();
+        const sig = _pathSig(search('x'));
+        for (let i = 0; i < PATH_REPEAT_LIMIT; i++) {
+            expect(_pathRepeatRefused(g, sig)).toBe(false);
+            g = _updateRepeatGuard(g, _callSig(search(`q${i}`)), 'same tool list', sig);   // every exact call differs
+            expect(_repeatRefused(g, _callSig(search(`q${i + 1}`)))).toBe(false);          // the exact-call guard never fires
+        }
+        expect(_pathRepeatRefused(g, sig)).toBe(true);
+    });
+
+    it('does not refuse an endpoint whose results change', async () => {
+        const { _pathSig, _pathRepeatRefused } = await import('../detectors.ts');
+        let g = newRepeatGuard();
+        for (let i = 0; i < 12; i++) g = _updateRepeatGuard(g, _callSig(search(`q${i}`)), `result ${'x'.repeat(i)}`, _pathSig(search('q')));
+        expect(_pathRepeatRefused(g, _pathSig(search('q')))).toBe(false);
+    });
+
+    it('a turn of reworded searches is refused and then ends instead of running to the step cap', async () => {
+        W._sessionToolFilter = new Set(['fetch_url']);
+        let served = 0;
+        const llm = makeReplayFetch([
+            ...Array.from({ length: 14 }, (_, i) => ({
+                tool_calls: [{ id: `s${i}`, type: 'function', function: { name: 'fetch_url', arguments: JSON.stringify({ url: `http://gw.example:8080/search?query=word${i}` }) } }],
+            })),
+            { content: 'Done.\nCOMPLETED' },
+        ]);
+        W.fetch = vi.fn(async (url: any, init: any) => {
+            if (String(url).includes('gw.example')) { served++; return new Response('{"tools":["salesforce_lead_update"]}', { status: 200, headers: { 'content-type': 'application/json' } }); }
+            return (llm as any)(url, init);
+        });
+        const out = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        console.log('SERVED', served, String(out).slice(0, 120).replace(/\n/g, ' '));
+        expect(served).toBeGreaterThanOrEqual(5);
+        expect(served).toBeLessThan(14);
+    });
+});

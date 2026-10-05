@@ -78,4 +78,40 @@ describe('tool pause', () => {
         expect(String(out)).toContain('Done.');
         expect(bodies.length).toBe(16);
     });
+
+    // v0.61 sympy-15875: a 2-step pause ended just as the model re-asked, 33 pauses over 99 steps.
+    it('each further pause of read_file is longer: 2 steps, then 4, then the rest of the turn', async () => {
+        const bodies: any[] = [];
+        const q = (id: string, p: string) => call(id, 'search_workspace', { pattern: p });
+        W.fetch = makeReplayFetch([
+            read('r0', 1, 100),
+            read('r1', 10, 20), read('r2', 11, 21), read('r3', 12, 22), read('r4', 13, 23),
+            read('r5', 14, 24), read('r6', 15, 25), read('r7', 16, 26),        // pause 1 (2 steps)
+            q('a8', 'a'), q('a9', 'b'),
+            read('r10', 17, 27), read('r11', 18, 28), read('r12', 19, 29),     // pause 2 (4 steps)
+            q('b13', 'c'), q('b14', 'd'), q('b15', 'e'), q('b16', 'f'),
+            read('r17', 20, 30), read('r18', 21, 31), read('r19', 22, 32),     // pause 3 (rest of turn)
+            q('c20', 'g'), q('c21', 'h'), q('c22', 'i'), q('c23', 'j'),
+            { content: 'Done.\nCOMPLETED' },
+        ], { onRequest: b => bodies.push(b) });
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        const note = (start: number) => String(results().find((t: any) => t.args?.start_line === start)?.result?.note);
+        expect(note(16)).toMatch(/read_file is paused for the next 2 steps/);
+        expect(note(19)).toMatch(/read_file is paused for the next 4 steps/);
+        expect(note(22)).toMatch(/read_file is paused for the rest of this turn/);
+        expect(toolNames(bodies[10])).toContain('read_file');          // first pause over
+        expect(toolNames(bodies[13])).not.toContain('read_file');      // second pause: 4 steps
+        expect(toolNames(bodies[16])).not.toContain('read_file');
+        expect(toolNames(bodies[17])).toContain('read_file');          // second pause over
+        for (let i = 20; i < 24; i++) expect(toolNames(bodies[i])).not.toContain('read_file');   // third: never back
+    });
+
+    it('a refused read is free only early in the budget and before the tool is paused for good', async () => {
+        const { readRefusalIsFree, pauseSteps } = await import('../llm-loops.ts');
+        expect(readRefusalIsFree(10, 100, [1])).toBe(true);
+        expect(readRefusalIsFree(59, 100, [2])).toBe(true);
+        expect(readRefusalIsFree(60, 100, [0])).toBe(false);     // past 60% of the budget: counts
+        expect(readRefusalIsFree(10, 100, [3])).toBe(false);     // already out for the rest of the turn
+        expect([0, 1, 2, 3].map(pauseSteps)).toEqual([2, 4, Infinity, Infinity]);
+    });
 });
