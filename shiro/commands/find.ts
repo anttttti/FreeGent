@@ -203,7 +203,7 @@ export const findCmd: Command = {
     for (const p of paths) {
       const abs = ctx.fs.resolvePath(p, ctx.cwd);
       const st = await ctx.fs.stat(abs).catch(() => null);
-      if (!st) { ctx.stderr += `find: '${p}': No such file or directory\n`; status = 1; continue; }
+      if (!st) { ctx.stderr += `find: ‘${p}’: No such file or directory\n`; status = 1; continue; }
       const base = p.replace(/\/+$/, '').split('/').pop() || p;
       await walk({ path: p, abs, name: base, depth: 0, isDir: st.isDirectory(), size: st.size ?? 0, mtime: +(st.mtime ?? Date.now()), mode: st.mode ?? 0o644 });
       if (quit) break;

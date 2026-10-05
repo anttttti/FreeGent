@@ -79,6 +79,7 @@ function makeStat(type: 'file' | 'dir', size = 0, mtime = Date.now(), executable
         size,
         mtime: mt,
         ctime: mt,
+        atime: mt,
         isFile: () => type === 'file',
         isDirectory: () => type === 'dir',
         isSymbolicLink: () => false,
@@ -117,8 +118,28 @@ export class FWFileSystem extends FileSystem {
      * directory otherwise exists only while it has files in it; these last for the session.
      */
     private dirs = new Set<string>();
-    /** Files chmod made executable, for this session (the workspace keeps no permissions). */
-    private executable = new Set<string>();
+
+    readonly capabilities = { links:false, ownership:false, permissions:'session', timestamps:'session' } as const;
+    private metadata = new Map<string,{mode:number; atime:number; mtime:number; ctime:number; source?:string|Uint8Array}>();
+
+    private fileStat(path:string, type:'file'|'dir', size=0, source?:string|Uint8Array): StatResult {
+        let meta = this.metadata.get(path);
+        if (!meta) {
+            const now = Date.now();
+            meta = {mode:type === 'dir' ? 0o755 : 0o644, atime:now, mtime:now, ctime:now, source};
+            this.metadata.set(path,meta);
+        } else if (source !== undefined && source !== meta.source) {
+            meta.source = source; meta.mtime = Date.now(); meta.ctime = meta.mtime;
+        }
+        return {...makeStat(type,size,meta.mtime), mode:meta.mode, atime:new Date(meta.atime), ctime:new Date(meta.ctime)};
+    }
+
+    private changed(path:string, mode?:number): void {
+        let meta = this.metadata.get(path);
+        if (!meta) { this.fileStat(path,'file'); meta = this.metadata.get(path)!; }
+        meta.mtime = Date.now(); meta.ctime = meta.mtime;
+        if (mode !== undefined) meta.mode = mode;
+    }
 
     /** Skip Shiro's IDB init — FreeGent workspace is already ready. */
     override async init(): Promise<void> {
@@ -130,30 +151,30 @@ export class FWFileSystem extends FileSystem {
         if (devProvider.handles(path)) { const st = devProvider.stat(path); if (st) return st; }
         const wsPath = toWsPath(path);
         if (wsPath !== null) {
-            if (wsPath === '') return makeStat('dir'); // workspace root
+            if (wsPath === '') return this.fileStat(path,'dir'); // workspace root
             // Use readWorkspaceFile directly (agentReadFile runs text extraction on binary
             // files, returning the wrong size and potentially throwing for non-doc binaries).
-            const rec = await readWorkspaceFile(wsPath).catch(() => null);
+            const rec = await readWorkspaceFile(wsPath);
             if (rec !== null && rec !== undefined) {
-                return makeStat('file', _recordBytes(rec).byteLength, Date.now(), this.executable.has(path));
+                return this.fileStat(path,'file',_recordBytes(rec).byteLength,(rec.encoding ?? '') + ':' + (rec.content ?? ''));
             }
             // Not a file — check if it is an implicit directory (has child entries)
             const prefix = wsPath + '/';
             const all = await agentListFiles();
             if (all.some(f => f.name.startsWith(prefix)) || this.dirs.has(path)) {
-                return makeStat('dir');
+                return this.fileStat(path,'dir');
             }
             throw makeError('ENOENT', `no such file or directory: ${path}`);
         }
         // In-memory
         if (this.mem.has(path)) {
-            return makeStat('file', this.mem.get(path)!.byteLength, Date.now(), this.executable.has(path));
+            return this.fileStat(path,'file',this.mem.get(path)!.byteLength,this.mem.get(path));
         }
         // Virtual dirs: /, /tmp, /home, /home/user, /workspace
-        if (this._isVirtualDir(path) || this.dirs.has(path)) return makeStat('dir');
+        if (this._isVirtualDir(path) || this.dirs.has(path)) return this.fileStat(path,'dir');
         // Check if any mem file lives under this path as a dir
         const prefix = path.endsWith('/') ? path : path + '/';
-        if ([...this.mem.keys()].some(k => k.startsWith(prefix))) return makeStat('dir');
+        if ([...this.mem.keys()].some(k => k.startsWith(prefix))) return this.fileStat(path,'dir');
         throw makeError('ENOENT', `no such file or directory: ${path}`);
     }
 
@@ -162,11 +183,15 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async exists(path: string): Promise<boolean> {
-        try { await this.stat(path); return true; } catch { return false; }
+        try { await this.stat(path); return true; } catch (error: any) {
+            if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+            throw error;
+        }
     }
 
     override async readFile(path: string, encoding?: 'utf8'): Promise<Uint8Array | string> {
         if (devProvider.handles(path)) { const d = devProvider.readFile(path, encoding); if (d !== null) return encoding === 'utf8' && typeof d !== 'string' ? bytesToText(d) : d; throw makeError('EISDIR', `illegal operation on a directory: ${path}`); }
+        if ((await this.stat(path)).isDirectory()) throw makeError('EISDIR', `is a directory: ${path}`);
         const wsPath = toWsPath(path);
         if (wsPath !== null && wsPath !== '') {
             // Read the raw record so binary files (encoding='base64') return actual bytes,
@@ -184,8 +209,11 @@ export class FWFileSystem extends FileSystem {
         throw makeError('ENOENT', `no such file or directory: ${path}`);
     }
 
-    override async writeFile(path: string, data: Uint8Array | string, _opts?: { mode?: number }): Promise<void> {
+    override async writeFile(path: string, data: Uint8Array | string, opts?: { mode?: number }): Promise<void> {
         if (devProvider.handles(path)) return;        // /dev/null and friends swallow writes
+        const parent = path.slice(0, path.lastIndexOf('/')) || '/';
+        if (!(await this.stat(parent)).isDirectory()) throw makeError('ENOTDIR', `not a directory: ${parent}`);
+        if (await this.exists(path) && (await this.stat(path)).isDirectory()) throw makeError('EISDIR', `is a directory: ${path}`);
         const wsPath = toWsPath(path);
         const bytes = typeof data === 'string' ? textToBytes(data) : data;
         if (wsPath !== null && wsPath !== '') {
@@ -193,15 +221,20 @@ export class FWFileSystem extends FileSystem {
             // base64, so the bytes come back unchanged.
             if (isTextBytes(bytes)) await agentWriteFile(wsPath, dec.decode(bytes));
             else await agentWriteFile(wsPath, _bytesToBase64(bytes), 'base64');
+            this.changed(path,opts?.mode);
             return;
         }
         this.mem.set(path, bytes);
+        this.changed(path,opts?.mode);
     }
 
     override async appendFile(path: string, data: Uint8Array | string): Promise<void> {
         if (devProvider.handles(path)) return;        // /dev/null and friends swallow writes
         // Byte-level, for text and binary files alike.
-        const existing = await this.readFile(path).catch(() => new Uint8Array(0)) as Uint8Array;
+        const existing = await this.readFile(path).catch((error: any) => {
+            if (error.code === 'ENOENT') return new Uint8Array(0);
+            throw error;
+        }) as Uint8Array;
         const toAdd = typeof data === 'string' ? textToBytes(data) : data;
         const merged = new Uint8Array(existing.byteLength + toAdd.byteLength);
         merged.set(existing);
@@ -209,22 +242,23 @@ export class FWFileSystem extends FileSystem {
         await this.writeFile(path, merged);
     }
 
-    override async mkdir(path: string, opts?: { recursive?: boolean }): Promise<void> {
+    override async mkdir(path: string, opts?: { recursive?: boolean; mode?:number; parentMode?:number }): Promise<void> {
         const dir = path.replace(/\/+$/, '') || '/';
-        if (await this.exists(dir)) return;
+        if (await this.exists(dir)) {
+            if (opts?.recursive && (await this.stat(dir)).isDirectory()) return;
+            throw makeError('EEXIST', `file exists: ${dir}`);
+        }
         const parent = dir.slice(0, dir.lastIndexOf('/')) || '/';
-        if (!opts?.recursive && !(await this.exists(parent))) {
-            throw makeError('ENOENT', `no such file or directory: ${parent}`);
-        }
-        // Record the directory and, for -p, the parents it creates.
-        for (let d = dir; d && d !== '/' && !(await this.exists(d)); d = d.slice(0, d.lastIndexOf('/'))) {
-            this.dirs.add(d);
-            if (!opts?.recursive) break;
-        }
+        if (opts?.recursive) await this.mkdir(parent, {...opts,mode:opts.parentMode ?? opts.mode});
+        if (!(await this.stat(parent)).isDirectory()) throw makeError('ENOTDIR', `not a directory: ${parent}`);
+        this.dirs.add(dir);
+        this.fileStat(dir, 'dir');
+        if (opts?.mode !== undefined) this.metadata.get(dir)!.mode = opts.mode;
     }
 
     override async readdir(path: string): Promise<string[]> {
         if (path === '/dev') return devProvider.readdir(path) ?? [];
+        if (!(await this.stat(path)).isDirectory()) throw makeError('ENOTDIR', `not a directory: ${path}`);
         const children = new Set<string>();
         const wsPath = toWsPath(path);
 
@@ -266,6 +300,7 @@ export class FWFileSystem extends FileSystem {
     }
 
     override async unlink(path: string): Promise<void> {
+        if ((await this.stat(path)).isDirectory()) throw makeError('EISDIR', `is a directory: ${path}`);
         const wsPath = toWsPath(path);
         // The folder stays when its last file goes, as in bash (the workspace keeps only files,
         // so the shell remembers it like one made with mkdir).
@@ -273,27 +308,32 @@ export class FWFileSystem extends FileSystem {
         if (parent && parent !== WORKSPACE_MOUNT && parent !== '/tmp' && !this._isVirtualDir(parent)) this.dirs.add(parent);
         if (wsPath !== null && wsPath !== '') {
             await agentDeleteFile(wsPath);
+            this.metadata.delete(path);
             return;
         }
         if (!this.mem.has(path)) throw makeError('ENOENT', `no such file: ${path}`);
         this.mem.delete(path);
+        this.metadata.delete(path);
     }
 
     override async rmdir(path: string): Promise<void> {
+        if (this._isVirtualDir(path)) throw makeError('EBUSY', `mount directory is busy: ${path}`);
         const entries = await this.readdir(path);
         if (entries.length > 0) throw makeError('ENOTEMPTY', `directory not empty: ${path}`);
         // Implicit dirs vanish when empty; ones made with mkdir are forgotten.
         this.dirs.delete(path);
+        this.metadata.delete(path);
     }
 
-    override async rm(path: string, opts?: { recursive?: boolean }): Promise<void> {
+    override async rm(path: string, opts?: { recursive?: boolean; mode?:number; parentMode?:number }): Promise<void> {
         let st: StatResult;
-        try { st = await this.stat(path); } catch { return; } // already gone
+        st = await this.stat(path);
         if (st.isDirectory()) {
             if (!opts?.recursive) throw makeError('EISDIR', `is a directory: ${path}`);
             const entries = await this.readdir(path);
             await Promise.all(entries.map(e => this.rm(path + '/' + e, opts)));
             this.dirs.delete(path);
+            this.metadata.delete(path);
         } else {
             await this.unlink(path);
         }
@@ -301,38 +341,67 @@ export class FWFileSystem extends FileSystem {
 
     override async rename(oldPath: string, newPath: string): Promise<void> {
         const st = await this.stat(oldPath);
+        if (oldPath === newPath) return;
+        if (this._isVirtualDir(oldPath) || this._isVirtualDir(newPath)) throw makeError('EBUSY', 'cannot rename a mount directory');
+        if (st.isDirectory() && newPath.startsWith(oldPath + '/')) throw makeError('EINVAL', 'cannot move a directory into itself');
+        const parent = newPath.slice(0, newPath.lastIndexOf('/')) || '/';
+        if (!(await this.stat(parent)).isDirectory()) throw makeError('ENOTDIR', `not a directory: ${parent}`);
+        const dest = await this.exists(newPath) ? await this.stat(newPath) : null;
+        if (dest && st.isDirectory() !== dest.isDirectory()) throw makeError(st.isDirectory() ? 'ENOTDIR' : 'EISDIR', 'incompatible rename target');
+        if (dest?.isDirectory() && (await this.readdir(newPath)).length) throw makeError('ENOTEMPTY', `directory not empty: ${newPath}`);
+        const moveFile = async (from: string, to: string) => {
+            await this.stat(from);
+            const old = {...this.metadata.get(from)!};
+            await this.writeFile(to, await this.readFile(from));
+            await this.stat(to);
+            this.metadata.set(to, {...old, source:this.metadata.get(to)!.source, ctime:Date.now()});
+            await this.unlink(from);
+        };
         if (st.isDirectory()) {
             // Move every file under the directory, and the empty directories made with mkdir.
             const prefix = oldPath.replace(/\/+$/, '') + '/';
-            for (const p of await this._allPaths()) {
+            const paths = await this._allPaths();
+            const movedDirs = paths.filter(p => p === oldPath || p.startsWith(prefix)).filter(p => !this.mem.has(p));
+            this.dirs.add(newPath);
+            for (const p of movedDirs) {
+                if (!(await this.stat(p)).isDirectory()) continue;
+                const target = newPath + p.slice(oldPath.length);
+                this.dirs.add(target);
+                this.metadata.set(target, {...this.metadata.get(p)!, ctime:Date.now()});
+            }
+            for (const p of paths) {
                 if (!p.startsWith(prefix) || this.dirs.has(p)) continue;
-                const s2 = await this.stat(p).catch(() => null);
+                const s2 = await this.stat(p);
                 if (!s2 || s2.isDirectory()) continue;
-                await this.writeFile(newPath + '/' + p.slice(prefix.length), await this.readFile(p));
-                await this.unlink(p);
+                await moveFile(p, newPath + '/' + p.slice(prefix.length));
             }
             for (const d of [...this.dirs]) {
-                if (d === oldPath || d.startsWith(prefix)) { this.dirs.delete(d); this.dirs.add(newPath + d.slice(oldPath.length)); }
+                if (d === oldPath || d.startsWith(prefix)) { this.dirs.delete(d); this.metadata.delete(d); }
             }
             this.dirs.add(newPath);
             return;
         }
-        const content = await this.readFile(oldPath);
-        await this.writeFile(newPath, content);
-        await this.unlink(oldPath);
+        await moveFile(oldPath, newPath);
     }
 
-    override async chmod(path: string, mode: number): Promise<void> {
-        if (mode & 0o111) this.executable.add(path); else this.executable.delete(path);
-        // The workspace keeps no permissions: the execute bit lasts for the session (find -executable).
+    override async chmod(path:string, mode:number): Promise<void> {
+        await this.stat(path);
+        const meta = this.metadata.get(path);
+        if (!meta) throw makeError('ENOTSUP','device permissions are unsupported');
+        meta.mode = mode & 0o7777;
+        meta.ctime = Date.now();
     }
 
-    // The workspace has no links: a link is created as a copy of its target (reads work; later
-    // changes to one don't show in the other).
-    override async symlink(target: string, path: string): Promise<void> {
-        const dir = path.slice(0, path.lastIndexOf('/')) || '/';
-        const resolved = target.startsWith('/') ? target : dir + '/' + target;
-        await this.writeFile(path, await this.readFile(resolved));
+    override async utimes(path:string, atime:Date, mtime:Date): Promise<void> {
+        await this.stat(path);
+        const meta = this.metadata.get(path);
+        if (!meta) throw makeError('ENOTSUP','device timestamps are unsupported');
+        meta.atime = atime.getTime(); meta.mtime = mtime.getTime(); meta.ctime = Date.now();
+    }
+
+    /** Workspace records cannot preserve links. Fail before changing either path. */
+    override async symlink(_target: string, _path: string): Promise<void> {
+        throw makeError('ENOTSUP', 'workspace symbolic links are unsupported; select native execution');
     }
 
     override async readlink(_path: string): Promise<string> {

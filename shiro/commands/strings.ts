@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readInput, readFileText } from './flags';
+import { parseArgs, readFileText, filesystemError } from './flags';
 export const strings: Command = {
   name: "strings",
   description: "Find printable strings in files",
@@ -15,6 +15,7 @@ export const strings: Command = {
     try {
       const files = positional.length > 0 ? positional : ["-"];
       const output: string[] = [];
+      let status = 0;
 
       for (const file of files) {
         let content: string;
@@ -25,7 +26,12 @@ export const strings: Command = {
           filename = "(standard input)";
         } else {
           const resolved = ctx.fs.resolvePath(file, ctx.cwd);
-          content = await readFileText(ctx.fs, resolved);
+          try { content = await readFileText(ctx.fs, resolved); }
+          catch (error) {
+            ctx.stderr += `strings: '${file}': ${(error as {code?:string}).code === 'ENOENT' ? 'No such file' : filesystemError(error)}\n`;
+            status = 1;
+            continue;
+          }
         }
 
         const strings = extractStrings(content, minLength);
@@ -40,7 +46,7 @@ export const strings: Command = {
       }
 
       ctx.stdout += output.join("\n") + (output.length > 0 ? "\n" : "");
-      return 0;
+      return status;
     } catch (e: unknown) {
       ctx.stderr += `strings: ${e instanceof Error ? e.message : e}\n`;
       return 1;

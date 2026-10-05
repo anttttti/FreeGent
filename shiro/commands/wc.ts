@@ -1,7 +1,7 @@
 
 import type { Command } from './index';
 import { bytesToText, textToBytes } from '../utils/bytes';
-import { parseArgs } from './flags';
+import { parseArgs, filesystemError, quoteOperand } from './flags';
 
 // GNU wc output: one line per file and a "total" line for several files. Numbers are padded to
 // the digit count of the files' total size (7 for stdin with several columns, whose size isn't
@@ -38,7 +38,7 @@ export const wc: Command = {
           rows.push({ nums: count(content), name: p });
           totalBytes += textToBytes(content).length;
         } catch (e: unknown) {
-          ctx.stderr += `wc: ${p}: ${e instanceof Error ? e.message : e}\n`;
+          ctx.stderr += `wc: ${quoteOperand(p)}: ${filesystemError(e)}\n`;
           status = 1;
         }
       }

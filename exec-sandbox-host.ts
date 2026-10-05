@@ -9,7 +9,8 @@
 // The frame loads fg-exec-sandbox.js (exec-sandbox/entry.ts, bundled by dev-api.ts
 // buildExecSandbox and served next to the app). The only things it can ask the page for are the
 // workspace operations in WS_OPS — the same file access the agent's own tools have — and a
-// proxied plain GET (_answerNet), the same network access fetch_url has.
+// proxied plain GET (_answerNet), the same network access fetch_url has, and a fixed public
+// package cache whose keys and artifact hashes are validated before access.
 //
 // Not used headless: there execute_code runs through nativeExec.
 
@@ -24,7 +25,7 @@ export const EXEC_FILE_MAX_CHARS = 10_000_000;
 let frame: HTMLIFrameElement | null = null;
 let ready: Promise<void> | null = null;
 let seq = 0;
-const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>();
+const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; onProgress?: (message: string) => void }>();
 const eventListeners = new Map<string, Set<(data: any) => void>>();
 
 // Workspace operations the frame may request (the page's bridged workspace functions).
@@ -34,23 +35,27 @@ function _onMessage(e: MessageEvent): void {
     if (!frame || e.source !== frame.contentWindow) return;
     const d = e.data;
     if (!d || typeof d !== 'object') return;
-    if (d.fg === 'reply') {
+    if (d.fg === 'progress') {
+        if (typeof d.message === 'string') pending.get(d.id)?.onProgress?.(d.message);
+    } else if (d.fg === 'reply') {
         const p = pending.get(d.id);
         if (!p) return;
         pending.delete(d.id);
         clearTimeout(p.timer);
         if (d.error !== undefined) p.reject(new Error(d.error)); else p.resolve(d.value);
     } else if (d.fg === 'ws') {
-        void _answerWorkspace(d);
+        void _answerWorkspace(d,frame.contentWindow!);
     } else if (d.fg === 'net') {
-        void _answerNet(d);
+        void _answerNet(d,frame.contentWindow!);
+    } else if (d.fg === 'package-cache') {
+        void _answerPackageCache(d,frame.contentWindow!);
     } else if (d.fg === 'event') {
         for (const l of eventListeners.get(d.name) ?? []) l(d.data);
     }
 }
 
-async function _answerWorkspace(d: any): Promise<void> {
-    const reply = (msg: any) => frame?.contentWindow?.postMessage({ fg: 'ws-reply', id: d.id, ...msg }, '*');
+async function _answerWorkspace(d: any, target:Window): Promise<void> {
+    const reply = (msg: any) => target.postMessage({ fg: 'ws-reply', id: d.id, ...msg }, '*');
     try {
         if (!WS_OPS.has(d.op) || !Array.isArray(d.args)) throw new Error(`workspace op not allowed: ${d.op}`);
         const fn = (globalThis as any)[d.op];
@@ -58,6 +63,16 @@ async function _answerWorkspace(d: any): Promise<void> {
         reply({ value: await fn(...d.args) });
     } catch (err: any) {
         reply({ error: String(err?.message ?? err) });
+    }
+}
+
+async function _answerPackageCache(d:any, target:Window): Promise<void> {
+    try {
+        const {handlePackageCacheRequest} = await import('./shiro/wasi-packages.js');
+        const value = await handlePackageCacheRequest(d.request);
+        target.postMessage({fg:'package-cache-reply',id:d.id,value},'*',value instanceof ArrayBuffer ? [value] : []);
+    } catch(error:any) {
+        target.postMessage({fg:'package-cache-reply',id:d.id,error:String(error?.message ?? error)},'*');
     }
 }
 
@@ -71,9 +86,9 @@ async function _answerWorkspace(d: any): Promise<void> {
 const NET_TIMEOUT_MS = 30_000;
 const NET_MAX_BYTES  = 25 * 1024 * 1024;
 
-async function _answerNet(d: any): Promise<void> {
+async function _answerNet(d: any, target:Window): Promise<void> {
     const reply = (msg: any, transfer: Transferable[] = []) =>
-        frame?.contentWindow?.postMessage({ fg: 'net-reply', id: d.id, ...msg }, '*', transfer);
+        target.postMessage({ fg: 'net-reply', id: d.id, ...msg }, '*', transfer);
     try {
         const url = String(d.url ?? '');
         if (!/^https?:\/\//i.test(url)) throw new Error('only http(s) URLs can be fetched');
@@ -134,14 +149,14 @@ export function resetSandbox(reason = 'the code sandbox was reset'): void {
     window.removeEventListener('message', _onMessage);
 }
 
-export async function sandboxCall(kind: string, payload: Record<string, any> = {}, timeoutMs = 0): Promise<any> {
+export async function sandboxCall(kind: string, payload: Record<string, any> = {}, timeoutMs = 0, onProgress?: (message: string) => void): Promise<any> {
     await _ensureFrame();
     const id = ++seq;
     return new Promise((resolve, reject) => {
         const timer = timeoutMs > 0
             ? setTimeout(() => resetSandbox(`timed out after ${Math.round(timeoutMs / 1000)} s — the code sandbox was restarted`), timeoutMs)
             : null;
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { resolve, reject, timer, onProgress });
         frame!.contentWindow!.postMessage({ fg: 'call', id, kind, ...payload }, '*');
     });
 }

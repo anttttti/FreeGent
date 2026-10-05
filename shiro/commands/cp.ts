@@ -34,9 +34,10 @@ export const cp: Command = {
     }
 
     async function copyFile(src: string, dst: string): Promise<void> {
+      if ((flags.n || flags['no-clobber']) && await ctx.fs.exists(dst)) return;
       const why = await cannotCreate(ctx.fs, dst);
       if (why) throw new Error(`cannot create regular file '${dst === dest ? destArg : dst}': ${why}`);
-      const content = await readFileText(ctx.fs, src);
+      const content = await ctx.fs.readFile(src);
       await ctx.fs.writeFile(dst, content);
     }
 
@@ -54,8 +55,10 @@ export const cp: Command = {
       }
     }
 
+    let source = '';
     try {
       for (const src of sources) {
+        source = src;
         const srcResolved = ctx.fs.resolvePath(src, ctx.cwd);
         const stat = await statEntry(ctx.fs, srcResolved);
         const name = src.split("/").pop()!;
@@ -73,7 +76,7 @@ export const cp: Command = {
       }
       return 0;
     } catch (e: unknown) {
-      ctx.stderr += `cp: ${e instanceof Error ? e.message : e}\n`;
+      ctx.stderr += (e as any)?.code === 'ENOENT' ? `cp: cannot stat '${source}': No such file or directory\n` : `cp: ${e instanceof Error ? e.message : e}\n`;
       return 1;
     }
   },

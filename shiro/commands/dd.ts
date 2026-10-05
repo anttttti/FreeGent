@@ -3,6 +3,7 @@
  */
 
 import type { Command } from './index';
+import { fromByteString, toByteString } from '../utils/bytes';
 
 function parseSize(s: string): number {
   const m = s.match(/^(\d+)([bkKMG]?)$/);
@@ -29,6 +30,7 @@ export const ddCmd: Command = {
       let skip = 0;
       let seek = 0;
       let conv = '';
+      let status = '';
 
       for (const arg of ctx.args) {
         const [key, ...rest] = arg.split('=');
@@ -41,6 +43,7 @@ export const ddCmd: Command = {
           case 'skip': skip = parseInt(val, 10); break;
           case 'seek': seek = parseInt(val, 10); break;
           case 'conv': conv = val; break;
+          case 'status': status = val; break;
         }
       }
 
@@ -57,10 +60,11 @@ export const ddCmd: Command = {
           data = String.fromCharCode(...bytes);
         } else {
           const resolved = ctx.fs.resolvePath(ifPath, ctx.cwd);
-          data = await ctx.fs.readFile(resolved, 'utf8') as string;
+          try {data = toByteString(await ctx.fs.readFile(resolved,'utf8') as string);}
+          catch (error:any) {if (error.code === 'ENOENT') throw new Error(`failed to open '${ifPath}': No such file or directory`); throw error;}
         }
       } else {
-        data = ctx.stdin;
+        data = toByteString(ctx.stdin);
       }
 
       // Apply skip (in blocks)
@@ -101,14 +105,14 @@ export const ddCmd: Command = {
           const padded = existing.padEnd(seek * bs, '\0');
           data = padded + data;
         }
-        await ctx.fs.writeFile(resolved, data);
+        await ctx.fs.writeFile(resolved, fromByteString(data));
       } else {
-        ctx.stdout += data;
+        ctx.stdout += fromByteString(data);
       }
 
       // Status line to stderr
       const blocks = count >= 0 ? count : Math.ceil(data.length / bs);
-      ctx.stderr += `${blocks}+0 records in\n${blocks}+0 records out\n${data.length} bytes copied\n`;
+      if (status !== 'none') ctx.stderr += `${blocks}+0 records in\n${blocks}+0 records out\n${data.length} bytes copied\n`;
       return 0;
     } catch (e: unknown) {
       ctx.stderr += `dd: ${e instanceof Error ? e.message : e}\n`;

@@ -48,7 +48,7 @@ export const mkTempCmd: Command = {
     if (template === null) useTmp = true;
     if (suffix.includes('/')) return fail(`invalid suffix '${suffix}', contains directory separator`);
     const m = /X{3,}(?!.*X{3,})/.exec(tpl.slice(tpl.lastIndexOf('/') + 1));
-    if (!m) return fail(`too few X's in template '${tpl}'`);
+    if (!m) return fail(`too few X's in template ‘${tpl}’`);
     if (template !== null && template.includes('/') && useTmp && tmpdir !== null) return fail(`invalid template, '${tpl}', contains directory separator`);
     // where it goes: a template with a slash stands on its own; otherwise -p/-t use the temp dir, else the cwd
     const dir = tpl.includes('/') ? '' : useTmp ? base : '';

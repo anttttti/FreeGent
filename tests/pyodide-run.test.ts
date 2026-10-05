@@ -9,6 +9,13 @@ beforeAll(async () => { py = await loadNodePyodide(); }, 60_000);
 const run = (code: string, files: Record<string, string> = {}) => runInPyodide(py, { code, files });
 
 describe('pyodide-run', () => {
+    it('serializes staging, execution, output capture and cleanup on a shared interpreter', async () => {
+        const results = await Promise.all([
+            run('import asyncio\nawait asyncio.sleep(0.02)\nprint(open("input.txt").read())',{'input.txt':'first'}),
+            run('print(open("input.txt").read())',{'input.txt':'second'}),
+        ]);
+        expect(results.map(result => [result.stdout,result.stderr,result.exit_code])).toEqual([['first\n','',0],['second\n','',0]]);
+    });
     it('keeps whitespace-only lines inside string literals (Pyodide\'s eval_code emptied them)', async () => {
         const r = await run('code = """def f():\n    x = 1\n    \n    return x\n"""\nprint(repr(code))');
         expect(r.stdout).toBe("'def f():\\n    x = 1\\n    \\n    return x\\n'\n");

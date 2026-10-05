@@ -27,8 +27,10 @@ export const mv: Command = {
       return 1;
     }
 
+    let currentSource = '';
     try {
       for (const src of sources) {
+        currentSource = src;
         const srcResolved = ctx.fs.resolvePath(src, ctx.cwd);
         const name = src.split("/").pop()!;
         const target = destIsDir ? dest + "/" + name : dest;
@@ -38,7 +40,7 @@ export const mv: Command = {
       }
       return 0;
     } catch (e: unknown) {
-      ctx.stderr += `mv: ${e instanceof Error ? e.message : e}\n`;
+      ctx.stderr += (e as any)?.code === 'ENOENT' ? `mv: cannot stat '${currentSource}': No such file or directory\n` : `mv: ${e instanceof Error ? e.message : e}\n`;
       return 1;
     }
   },

@@ -1,16 +1,16 @@
 
 import type { Command } from './index';
-import { parseArgs } from './flags';
 export const echo: Command = {
   name: "echo",
   description: "Display text",
   async exec(ctx) {
     const args = ctx.args;
-    const { flags } = parseArgs(args);
-    const noNewline = flags.n;
-    // Filter out the -n flag from output, reconstruct text
-    const text = args.filter((a) => a !== "-n" && a !== "-e").join(" ");
-    let output = flags.e
+    let offset = 0, noNewline = false, escapes = false;
+    while (/^-[neE]+$/.test(args[offset] ?? '')) {
+      for (const flag of args[offset++].slice(1)) {if (flag === 'n') noNewline = true; else escapes = flag === 'e';}
+    }
+    const text = args.slice(offset).join(' ');
+    let output = escapes
       ? text
           .replace(/\\\\/g, "\x00ESCAPED_BACKSLASH\x00")
           .replace(/\\n/g, "\n")

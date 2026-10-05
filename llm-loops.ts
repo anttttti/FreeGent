@@ -613,7 +613,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             ? new Map(await Promise.all([...replFails.keys()].map(
                 async fp => [fp, await agentFileMtime(fp)] as [string, number | null])))
             : null;
-        try { result = await executeToolAsync(name, args, context); }
+        try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
         catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
         if (_rereadNote && result && !result.error) {
             result = { ...result, note: _rereadNote };

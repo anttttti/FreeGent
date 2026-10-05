@@ -1,0 +1,235 @@
+{
+  "recorded_at": "2026-10-05",
+  "removed_command_modules": [
+    {
+      "path": "shiro/commands/cc.ts",
+      "sha256": "ef1ee4662d4dc52890eb24c34a39eb978f6e64b0c038bf733a547330fd3bbdf1",
+      "lines": 741,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/ed.ts",
+      "sha256": "8bce3649a730a347ef5a41e2b12b519a9dbcfb7b6960c3bb0918160255dc1f41",
+      "lines": 244,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/export.ts",
+      "sha256": "91039759449412367fe83b76861e21c133938391525288f504c55183eae696e7",
+      "lines": 71,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/ffmpeg.ts",
+      "sha256": "3b8c62f23b5d328b5b35fb73dd98f04bdc760fecdddda27919cb0a05201ba501",
+      "lines": 228,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/history.ts",
+      "sha256": "b92846fa9bed59e09280120b6a04e908d12748ee1277dc7b23c2fb94d922018a",
+      "lines": 101,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/jobs.ts",
+      "sha256": "456157281ba9f9a920208a3771cba7f5853b2c7429ffc1e10a35a879c47871b8",
+      "lines": 136,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/jseval/index.ts",
+      "sha256": "aaca897d65d7ac4b28b5f8ebeaec05644cb4f4f22236b453d8084fa5c0a4eecc",
+      "lines": 2,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/listen.ts",
+      "sha256": "02ab9ab09d3b5fab924060632afc583b82399a144bc646ad214ba52fb9d258e4",
+      "lines": 101,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/lua.ts",
+      "sha256": "ab094d6754ab5700f84661707e808caff04e30803059492807aaf864f7f736e2",
+      "lines": 202,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/magick.ts",
+      "sha256": "3fcabfefa41ac2cb153adb15165ac71c6d977143b7d5e101fb53cf01ea4e625a",
+      "lines": 318,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/man.ts",
+      "sha256": "ca7745a6aca70a65557c3b3151354fd51577eb03b077bd92ef35494a348ae8b0",
+      "lines": 968,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/nano.ts",
+      "sha256": "e32f0109c9954ac10c9d6e83adcc3619e1a8947887ffa9b7a6a86c3f1b8b7fb8",
+      "lines": 388,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/notify.ts",
+      "sha256": "a53a34f9f2bc547d90d106c4aa1dde4dbd902ca9bd22e8246745d1d052c24d3d",
+      "lines": 42,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/pgrep.ts",
+      "sha256": "30179c08bf60eab0da5b76b2a83926bc8c054ab53b3f2534bc113f775ea1c332",
+      "lines": 69,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/postgres.ts",
+      "sha256": "1a4b71d1251b171ca3f811087bd96457574470fddf244fa6e5fe6b2d6125184e",
+      "lines": 206,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/ps.ts",
+      "sha256": "553cdec7432308f45bc0504cf77fa953649c30f898dafb222f68036081cb3e0b",
+      "lines": 71,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/source.ts",
+      "sha256": "0c780bb20b424a57b2053eab85bc53ec783fc02b3a4a887bdd8fa50b56a23514",
+      "lines": 105,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/sqlite.ts",
+      "sha256": "9e6a65c31fc725036f86c73e5d78900ca68265883eb6da25ab526f60e7e185f7",
+      "lines": 290,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/stty.ts",
+      "sha256": "285264b7c67833ce87c3242893e8540b90cccfb33053bd28df590b2c0305e235",
+      "lines": 27,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/test.ts",
+      "sha256": "b8e70367f472e9d3567ff0a0bd1b95733724398c20e948fed8a1793053f866ca",
+      "lines": 369,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/top.ts",
+      "sha256": "dfd68d84ba49a4666d7c01a77e1faf9beceb282513fca2ed855c5544779b6275",
+      "lines": 219,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/tput.ts",
+      "sha256": "8733e71290ff5941fba838bd25eeba6e08283356156e3ed28a8b4d27e50eb4ed",
+      "lines": 98,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/type.ts",
+      "sha256": "32bb3e7bc892c2bc9427f0cd88c19d802f54922706e9f73ed24896ae2b17bbc3",
+      "lines": 62,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/vi.ts",
+      "sha256": "76bb16a960d3ab9b4ed1cb200292a871c4ee7b25bdafa0949d72730079ff2c3b",
+      "lines": 548,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/wasi.ts",
+      "sha256": "825ec150ef717e3f14403734c9e2401dc0072b81c5e4d9baf9813dd382f938d9",
+      "lines": 166,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/which.ts",
+      "sha256": "751ce4986c5a034f350b3c424eee7aadc47a8fe423d043f36f4789fa9b994682",
+      "lines": 49,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/x86.ts",
+      "sha256": "73bde0461eb2d7b46e92bf30db4a67b34d1cf76e9842b720e6627068c9534f55",
+      "lines": 118,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    },
+    {
+      "path": "shiro/commands/xpkg.ts",
+      "sha256": "e134ed834c7af55f33da11ecfe8314ef3039a2b83278d6cb7b57da079e8c4490",
+      "lines": 281,
+      "reason": "No catalog registration or static import; repository command-symbol and import searches found no external callers."
+    }
+  ],
+  "preserved_shared_code": [
+    "shiro/commands/jseval/* referenced by Node compatibility",
+    "shiro/wasi-runtime.ts",
+    "shiro/wasm-module.ts",
+    "explicit WASI package routes"
+  ],
+  "engine_migrations": [
+    {
+      "path": "shiro/commands/zstd.ts",
+      "backend": "Pinned facebook/zstd 1.4.8 WASI CLI",
+      "remaining_adapter_lines": 20,
+      "native_gate": "14 permanent zstd/unzstd/zstdcat inputs, raw compressed stdout and retained file hashes; full 2026-10-05 sweep reports no Bash mismatches."
+    },
+    {
+      "path": "shiro/commands/jq.ts",
+      "removed_source_sha256": "8de65bebf8f6583af0869b8163b9d4f5ef8edf664962251f8c23510f093798df",
+      "old_lines": 2165,
+      "remaining_adapter_lines": 3,
+      "backend": "Upstream jq 1.8.2 WASI CLI; security upgrade from 1.6, with historical native measurements preserved",
+      "native_gate": "Focused native byte comparison and full 2026-10-05 corpus passed; expanded frequent-input and source-security gates remain open."
+    },
+    {
+      "path": "shiro/commands/bc.ts",
+      "removed_source_sha256": "22af64d3b217255d9c0c064da67ad3b929e8c6a3f8fce83d355fa339b34e222c",
+      "old_lines": 462,
+      "remaining_adapter_lines": 2,
+      "backend": "GNU bc 1.07.1 WASI CLI",
+      "native_gate": "Focused native byte comparison and full 2026-10-05 corpus passed; expanded frequent-input and source-security gates remain open."
+    },
+    {
+      "path": "shiro/commands/dc.ts",
+      "removed_source_sha256": "ea4a029a5e625fb74bcc988d5f360135e26781d68b61df5aee58c1e46e8a4405",
+      "old_lines": 330,
+      "remaining_adapter_lines": 2,
+      "backend": "GNU dc 1.07.1 WASI CLI",
+      "native_gate": "Focused native byte comparison and full 2026-10-05 corpus passed; expanded frequent-input and source-security gates remain open."
+    },
+    {
+      "path": "shiro/commands/hexdump.ts",
+      "removed_source_sha256": "87360002298d7c151e6acac952de4e5101d5468e62986e64f593dd51c64bee7a",
+      "old_lines": 229,
+      "remaining_adapter_lines": 0,
+      "backend": "util-linux 2.37.2-fg1; shared packageCommand catalog adapter",
+      "native_gate": "42/42 focused raw native comparisons; two independent pinned build reproductions; source and license records supplied. Broader acceptance remains open."
+    },
+    {
+      "path": "shiro/commands/text-utils.ts#revCmd",
+      "removed_source_sha256": "f95e22050c4882a007d254847f6fefe6a367ace970899cba4490adf8be30a1e6",
+      "old_lines": 18,
+      "remaining_adapter_lines": 0,
+      "backend": "util-linux 2.37.2-fg1; shared packageCommand catalog adapter",
+      "native_gate": "16 permanent rev inputs; 42/42 family comparison batch; Unicode, missing final newline, malformed byte input, multi-file and diagnostic coverage."
+    },
+    {
+      "path": "shiro/commands/shiro-cmds.ts#revCmd",
+      "removed_source_sha256": "9bb036afa5de8b20619f9c4c15bb10a7910e153d5785b4a940b32b47c47179b1",
+      "old_lines": 10,
+      "remaining_adapter_lines": 0,
+      "backend": "util-linux 2.37.2-fg1; shared packageCommand catalog adapter",
+      "native_gate": "16 permanent rev inputs; 42/42 family comparison batch; Unicode, missing final newline, malformed byte input, multi-file and diagnostic coverage."
+    }
+  ]
+}

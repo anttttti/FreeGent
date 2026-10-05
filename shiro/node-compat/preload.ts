@@ -112,26 +112,29 @@ export async function preloadEnvironment(
     } catch {}
   }
 
-  // Create essential directories
-  try { await ctx.fs.mkdir(homeDir + '/.claude', { recursive: true }); } catch {}
-  try { await ctx.fs.mkdir(homeDir + '/.claude/projects', { recursive: true }); } catch {}
-  try { await ctx.fs.mkdir(homeDir + '/.claude/statsig', { recursive: true }); } catch {}
-  try { await ctx.fs.mkdir(homeDir + '/.config', { recursive: true }); } catch {}
-
   const isClaudeCodeScript = scriptPath?.includes('claude-code');
-  try {
-    await ensureClaudeBootstrap(ctx.fs, {
-      homeDir,
-      projectPath: ctx.cwd,
-      theme: isClaudeCodeScript ? DEFAULT_CLAUDE_THEME : undefined,
-      completeOnboarding: Boolean(isClaudeCodeScript),
-      trustProject: Boolean(isClaudeCodeScript),
-      completeProjectOnboarding: Boolean(isClaudeCodeScript),
-      acceptBypassPermissions: Boolean(isClaudeCodeScript),
-    });
-  } catch {}
-  try { await ctx.fs.stat(homeDir + '/.claude/statsig/cache.json'); } catch {
-    try { await ctx.fs.writeFile(homeDir + '/.claude/statsig/cache.json', '{}'); } catch {}
+  if (isClaudeCodeScript) {
+    // Create essential directories
+    try { await ctx.fs.mkdir(homeDir + '/.claude', { recursive: true }); } catch {}
+    try { await ctx.fs.mkdir(homeDir + '/.claude/projects', { recursive: true }); } catch {}
+    try { await ctx.fs.mkdir(homeDir + '/.claude/statsig', { recursive: true }); } catch {}
+    try { await ctx.fs.mkdir(homeDir + '/.config', { recursive: true }); } catch {}
+
+    try {
+      await ensureClaudeBootstrap(ctx.fs, {
+        homeDir,
+        projectPath: ctx.cwd,
+        theme: isClaudeCodeScript ? DEFAULT_CLAUDE_THEME : undefined,
+        completeOnboarding: Boolean(isClaudeCodeScript),
+        trustProject: Boolean(isClaudeCodeScript),
+        completeProjectOnboarding: Boolean(isClaudeCodeScript),
+        acceptBypassPermissions: Boolean(isClaudeCodeScript),
+      });
+    } catch {}
+    try { await ctx.fs.stat(homeDir + '/.claude/statsig/cache.json'); } catch {
+      try { await ctx.fs.writeFile(homeDir + '/.claude/statsig/cache.json', '{}'); } catch {}
+    }
+
   }
 
   // Pre-load files from common locations

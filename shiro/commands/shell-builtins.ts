@@ -2,13 +2,9 @@
  * Shell builtins — commands that need direct access to ctx.shell.
  *
  * cd, export, help, command, sh, bash, and the POSIX [ bracket alias.
- * Also re-exports grep/sed/diff so they override the unix.ts versions.
  */
 import type { Command } from './index';
 import { bracket } from './posix-test';
-import { grepCmd } from './grep';
-import { sedCmd } from './sed';
-import { diffCmd } from './diff';
 
 export const cdCmd: Command = {
   name: 'cd',
@@ -20,8 +16,8 @@ export const cdCmd: Command = {
     const target = dash ? ctx.env['OLDPWD'] : args[0] || ctx.env['HOME'] || '/';
     const resolved = ctx.fs.resolvePath(target === '~' ? (ctx.env['HOME'] || '/') : target, ctx.cwd);
     const stat = await ctx.fs.stat(resolved).catch(() => null);
-    if (!stat) { ctx.stderr = `cd: no such file or directory: ${target}\n`; return 1; }
-    if (!stat.isDirectory()) { ctx.stderr = `cd: not a directory: ${target}\n`; return 1; }
+    if (!stat) { ctx.stderr = `bash: line ${ctx.shell.currentLine}: cd: ${target}: No such file or directory\n`; return 1; }
+    if (!stat.isDirectory()) { ctx.stderr = `bash: line ${ctx.shell.currentLine}: cd: ${target}: Not a directory\n`; return 1; }
     ctx.shell.env['OLDPWD'] = ctx.shell.cwd;
     ctx.shell.cwd = resolved;
     ctx.shell.env['PWD'] = resolved;
@@ -60,6 +56,10 @@ export const helpCmd: Command = {
   name: 'help',
   description: 'Show available commands',
   async exec(ctx) {
+    if (ctx.args[0] === '-s' && ctx.args[1] === 'cd') {
+      ctx.stdout = 'cd: cd [-L|[-P [-e]] [-@]] [dir]\n';
+      return 0;
+    }
     ctx.stdout = 'shiro - available commands:\n\n';
     const cmds = ctx.shell.commands.list();
     const nameCol = 10;
@@ -78,43 +78,12 @@ export const helpCmd: Command = {
 
 export const commandCmd: Command = {
   name: 'command',
-  description: 'Run command or check if command exists',
+  description: 'Run a command or describe its resolution',
   async exec(ctx) {
-    if (ctx.args[0] === '-v' && ctx.args[1]) {
-      const cmdName = ctx.args[1];
-      const cmd = ctx.shell.commands.get(cmdName);
-      if (cmd) {
-        ctx.stdout = cmdName + '\n';
-        return 0;
-      }
-      const executable = await ctx.shell.findExecutableInPath?.(cmdName);
-      if (executable) {
-        ctx.stdout = executable + '\n';
-        return 0;
-      }
-      return 1;
-    }
-    if (ctx.args[0] === '-V' && ctx.args[1]) {
-      const cmdName = ctx.args[1];
-      const cmd = ctx.shell.commands.get(cmdName);
-      if (cmd) {
-        ctx.stdout = `${cmdName} is a shell builtin\n`;
-        return 0;
-      }
-      ctx.stderr = `command: ${cmdName}: not found\n`;
-      return 1;
-    }
-    if (ctx.args.length > 0) {
-      const cmdName = ctx.args[0];
-      const cmd = ctx.shell.commands.get(cmdName);
-      if (cmd) {
-        const newCtx = { ...ctx, args: ctx.args.slice(1) };
-        return await cmd.exec(newCtx);
-      }
-      ctx.stderr = `command: ${cmdName}: not found\n`;
-      return 127;
-    }
-    return 0;
+    const result = await ctx.shell.processCommand(ctx.args, ctx.stdin);
+    ctx.stdout += result.stdout;
+    ctx.stderr += result.stderr;
+    return result.exitCode;
   },
 };
 
@@ -183,14 +152,11 @@ export const bashCmd: Command = {
 };
 
 /**
- * Shell builtins that need ctx.shell access, plus re-exports that
- * override unix.ts versions. Registered AFTER unix commands.
+ * Commands that need shell state. Parser-owned builtins take precedence.
  */
 export const shellBuiltins: Command[] = [
   cdCmd, exportCmd, helpCmd, commandCmd,
   shCmd, bashCmd,
-  // Re-exports that override unix.ts versions:
-  grepCmd, sedCmd, diffCmd,
   // [ … ] (posix-test.ts: requires the closing ])
   bracket,
 ];

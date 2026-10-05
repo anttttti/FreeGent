@@ -26,7 +26,7 @@ export function post(msg: any, transfer: Transferable[] = []): void {
 
 export function onCall(h: Handler): void { handler = h; }
 
-function request(msg: any): Promise<any> {
+function requestToPage(msg: any): Promise<any> {
     const id = ++seq;
     return new Promise((resolve, reject) => {
         waiting.set(id, { resolve, reject });
@@ -36,21 +36,25 @@ function request(msg: any): Promise<any> {
 
 // Ask the page to run a workspace operation (see exec-sandbox-host.ts for the allowed ops).
 export function workspaceCall(op: string, args: any[]): Promise<any> {
-    return request({ fg: 'ws', op, args });
+    return requestToPage({ fg: 'ws', op, args });
+}
+
+export function packageCacheCall(request:import('../shiro/wasi-packages').PackageCacheRequest): Promise<any> {
+    return requestToPage({fg:'package-cache',request});
 }
 
 export interface PageFetchResult { status: number; contentType: string; body: ArrayBuffer; }
 
 // Ask the page for a plain GET through the fetch proxy (exec-sandbox-host.ts _answerNet).
 export function pageFetch(url: string): Promise<PageFetchResult> {
-    return request({ fg: 'net', url });
+    return requestToPage({ fg: 'net', url });
 }
 
 window.addEventListener('message', async (e: MessageEvent) => {
     if (e.source !== parentWin) return;
     const d = e.data;
     if (!d || typeof d !== 'object') return;
-    if (d.fg === 'ws-reply' || d.fg === 'net-reply') {
+    if (d.fg === 'ws-reply' || d.fg === 'net-reply' || d.fg === 'package-cache-reply') {
         const w = waiting.get(d.id);
         if (!w) return;
         waiting.delete(d.id);

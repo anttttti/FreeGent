@@ -1,6 +1,7 @@
 
 import type { Command } from './index';
-import { parseArgs, readFileText, statEntry } from './flags';
+import { parseArgs, statEntry } from './flags';
+import { bytesToText } from '../utils/bytes';
 export const file: Command = {
   name: "file",
   description: "Determine file type",
@@ -33,9 +34,10 @@ export const file: Command = {
             continue;
           }
 
-          // Read file content to detect type
-          const content = await readFileText(ctx.fs, resolved);
-          const fileType = detectFileType(content, path);
+          // Keep the original bytes available for binary signatures before decoding text.
+          const data = await ctx.fs.readFile(resolved);
+          const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+          const fileType = detectFileType(bytesToText(bytes), path, bytes);
 
           let result: string;
           if (mimeType) {
@@ -71,7 +73,7 @@ interface FileTypeInfo {
   description: string;
 }
 
-function detectFileType(content: string, filename: string): FileTypeInfo {
+function detectFileType(content: string, filename: string, bytes?: Uint8Array): FileTypeInfo {
   // Default
   let mimeType = "text/plain";
   let encoding = "us-ascii";
@@ -89,6 +91,9 @@ function detectFileType(content: string, filename: string): FileTypeInfo {
     description = "empty";
     return { mimeType, encoding, description };
   }
+
+  const targa = detectTarga(bytes);
+  if (targa) return { mimeType: 'image/x-targa', encoding: 'binary', description: targa };
 
   // Check by extension
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -167,4 +172,22 @@ function detectFileType(content: string, filename: string): FileTypeInfo {
   }
 
   return { mimeType, encoding, description };
+}
+
+/** Recognize the compact, header-only information used by `file` for Targa images. */
+function detectTarga(b?: Uint8Array): string | null {
+  if (!b || b.length < 18) return null;
+  const cmap = b[1], imageType = b[2], depth = b[16];
+  if (![0, 1].includes(cmap) || ![1, 2, 3, 9, 10, 11].includes(imageType) || ![8, 15, 16, 24, 32].includes(depth)) return null;
+  const u16 = (i: number) => b[i] | (b[i + 1] << 8);
+  const kind = imageType === 3 || imageType === 11 ? 'greyscale' : (depth === 32 || (depth === 16 && (b[17] & 15) > 0) ? 'RGBA' : 'RGB');
+  const rle = imageType >= 9 ? ' (RLE)' : '';
+  let description = `Targa image data${rle} - ${kind}`;
+  if (cmap) description += ` (${u16(3)}-${u16(5)})`;
+  description += ` ${u16(12)} x ${u16(14)} x ${depth} +${u16(8)} +${u16(10)}`;
+  const alphaBits = b[17] & 15;
+  if (alphaBits) description += ` - ${alphaBits}-bit alpha`;
+  if (b[17] & 0x10) description += ' - right';
+  if (b[17] & 0x20) description += ' - top';
+  return description;
 }

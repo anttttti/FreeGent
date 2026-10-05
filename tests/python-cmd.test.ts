@@ -24,7 +24,7 @@ function makeCtx(args: string[], files: Record<string, string | Uint8Array> = {}
   const ws = new Map<string, Uint8Array>(Object.entries(files).map(([p, c]) =>
     [p, typeof c === 'string' ? new TextEncoder().encode(c) : c]));
   const isDir = (p: string) => p === '/workspace' || [...ws.keys()].some(k => k.startsWith(p + '/'));
-  return {
+  const ctx = {
     args, cwd: '/workspace', env: {}, stdin, stdout: '', stderr: '', shell: {} as any, terminal: undefined,
     ws,
     fs: {
@@ -38,13 +38,15 @@ function makeCtx(args: string[], files: Record<string, string | Uint8Array> = {}
       exists: async (p: string) => ws.has(p) || isDir(p),
       mkdir: async () => {},
       readdir: async (dir: string) => [...new Set([...ws.keys()].filter(k => k.startsWith(dir + '/')).map(k => k.slice(dir.length + 1).split('/')[0]))],
+      lstat: async (p:string) => ctx.fs.stat(p),
       stat: async (p: string) => {
-        if (ws.has(p)) return { isDirectory: () => false };
-        if (isDir(p)) return { isDirectory: () => true };
+        if (ws.has(p)) return { isDirectory: () => false, isSymbolicLink:() => false, size:ws.get(p)!.length };
+        if (p === '/workspace' || isDir(p)) return { isDirectory: () => true, isSymbolicLink:() => false, size:0 };
         throw new Error(`ENOENT: ${p}`);
       },
     },
   };
+  return ctx;
 }
 
 async function run(args: string[], files: Record<string, string | Uint8Array> = {}, stdin = '') {
@@ -200,9 +202,12 @@ describe('pytestCmd (real Pyodide integration)', () => {
       const passing = makeCtx(['-q', 'test_example.py'], {
         '/workspace/test_example.py': 'def test_arithmetic():\n    assert 6 * 7 == 42\n',
       });
+      const progress:string[] = [];
+      passing.shell.onProgress = (message:string) => progress.push(message);
       expect(await pytestCmd.exec(passing)).toBe(0);
       expect(passing.stdout).toMatch(/1 passed/);
-      expect(passing.stderr).toContain('Loading pytest');
+      expect(passing.stderr).toBe('');
+      expect(progress.some(message => message.includes('Loading pytest'))).toBe(true);
 
       const failing = makeCtx(['-q', 'test_failure.py'], {
         '/workspace/test_failure.py': 'def test_failure():\n    assert False\n',

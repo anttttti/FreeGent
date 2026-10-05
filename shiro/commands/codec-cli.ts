@@ -2,14 +2,7 @@
 import type { Command, CommandContext } from './index';
 import { bytesToText, textToBytes } from '../utils/bytes';
 
-export function concatBytes(parts: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const res = new Uint8Array(total);
-  let o = 0;
-  for (const p of parts) { res.set(p, o); o += p.length; }
-  return res;
-}
+export { concatBytes } from '../utils/bytes';
 
 export interface CodecSpec {
   name: string;                 // command name, e.g. 'xz'
@@ -95,7 +88,16 @@ async function run(spec: CodecSpec, ctx: CommandContext, out: CommandContext = c
   };
   const convert = (bytes: Uint8Array, label: string): Uint8Array | null => {
     try { return decompress || test ? spec.decompress(bytes) : spec.compress(bytes, level); }
-    catch (e: any) { err(`${label}: ${e.message}`); return null; }
+    catch (e: any) {
+      if (spec.name === 'bzip2' && /bad magic/.test(String(e?.message))) {
+        out.stderr += `${prog}: ${label} is not a bzip2 file.\n`;
+      } else if (spec.name === 'zstd' && label === '(stdin)' && /not in zstd format/.test(String(e?.message))) {
+        out.stderr += 'zstd: /*stdin*\\: unsupported format \n';
+      } else {
+        err(`${label}: ${e.message}`);
+      }
+      return null;
+    }
   };
 
   if (files.length === 0 || (files.length === 1 && files[0] === '-')) {

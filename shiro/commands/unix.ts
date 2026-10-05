@@ -38,7 +38,6 @@ import { evalCmd } from './eval';
 import { exit } from './exit';
 import { expand } from './expand';
 import { expr } from './expr';
-import { exportCmd } from './export';
 import { factorCmd } from './factor';
 import { false as falseCmd } from './false';
 import { file } from './file';
@@ -50,7 +49,7 @@ import { free } from './free';
 import { functionCmd } from './function';
 import { hash } from './hash';
 import { head } from './head';
-import { hexdump } from './hexdump';
+import { packageCommand } from '../wasi-packages';
 import { id } from './id';
 import { install } from './install';
 import { join } from './join';
@@ -74,7 +73,7 @@ import { pwd } from './pwd';
 import { readlink } from './readlink';
 import { realpath } from './realpath';
 import { returnCmd } from './return';
-import { revCmd, tacCmd, shufCmd, cmpCmd } from './text-utils';
+import { tacCmd, shufCmd, cmpCmd } from './text-utils';
 import { seq } from './seq';
 import { set } from './set';
 import { sha256sum } from './sha256sum';
@@ -100,7 +99,6 @@ import { tr } from './tr';
 import { kill } from './trap';
 import { true as trueCmd } from './true';
 import { tsort } from './tsort';
-import { type } from './type';
 import { ulimit } from './ulimit';
 import { umask } from './umask';
 import { unalias } from './unalias';
@@ -109,7 +107,6 @@ import { uniq } from './uniq';
 import { uptime } from './uptime';
 import { watch } from './watch';
 import { wc } from './wc';
-import { which } from './which';
 import { whoami } from './whoami';
 import { xargs } from './xargs';
 import { xxdCmd } from './xxd';
@@ -122,16 +119,16 @@ export const unixCommands: Command[] = [
     continueCmd, cp, csplitCmd, cut, date, dcCmd, declare, local, readonly,
     unset, ddCmd, df, dirname, doCmd, done, until, whileCmd,
     dos2unixCmd, unix2dosCmd, du, echo, elif, elseCmd, fi, ifCmd, then,
-    env, evalCmd, exit, expand, expr, exportCmd, factorCmd, falseCmd,
+    env, evalCmd, exit, expand, expr, factorCmd, falseCmd,
     file, findCmd, fmt, fold, forCmd, inCmd, free, functionCmd,
-    hash, head, hexdump, id, install, join, less,
+    hash, head, packageCommand('hexdump'), id, install, join, less,
     ls, make, md5sum, mkdir, mv, nl, nohup, numfmtCmd, od,
     paste, patch, pkgConfig, pr, printenv, printf, 
-    pwd, readlink, realpath, returnCmd, revCmd, tacCmd, shufCmd, cmpCmd,
+    pwd, readlink, realpath, returnCmd, packageCommand('rev'), tacCmd, shufCmd, cmpCmd,
     seq, set, sum, sha1sum, sha256sum, sha384sum, sha512sum, shift, sleep, sort, splitCmd, stat, strings,
     tail, tar, tee, test, timeout, touch, tr, kill, 
-    trueCmd, tsort, type, ulimit, umask, unalias, unexpand, uniq,
-    uptime, watch, wc, which, whoami, xargs, xxdCmd, yes, iconvCmd,
+    trueCmd, tsort, ulimit, umask, unalias, unexpand, uniq,
+    uptime, watch, wc, whoami, xargs, xxdCmd, yes, iconvCmd,
     egrepCmd, fgrepCmd, zcatCmd, truncateCmd, uuidgenCmd, syncCmd, zipCmd, unzipCmd, nprocCmd, getconfCmd,
 ];
 

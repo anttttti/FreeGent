@@ -83,7 +83,7 @@ describe('bash idioms in the browser shell', () => {
 describe('state across calls', () => {
     it('keeps functions, variables, aliases and the working directory', async () => {
         const sh = await getShell();
-        await sh.exec('greet() { echo "hi $1"; }\nexport FOO=bar\nBAZ=qux\nalias ll="echo aliased"\nmkdir -p sub && cd sub');
+        await sh.exec('shopt -s expand_aliases\ngreet() { echo "hi $1"; }\nexport FOO=bar\nBAZ=qux\nalias ll="echo aliased"\nmkdir -p sub && cd sub');
         expect(lf((await sh.exec('greet you')).stdout)).toBe('hi you\n');
         expect(lf((await sh.exec('echo "$FOO $BAZ"')).stdout)).toBe('bar qux\n');
         expect(lf((await sh.exec('ll')).stdout)).toBe('aliased\n');

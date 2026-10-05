@@ -1,9 +1,10 @@
 // WASM packages (pkg install) run through the WASI runtime in the agent shell.
 //  - extraction of the module from a .webc container (offline)
 //  - end to end installs and runs against the real CDN (opt in: FG_NET_TESTS=1)
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const files = vi.hoisted(() => new Map<string, { content: string; encoding: string | null }>());
 vi.mock('../workspace', () => ({
@@ -13,7 +14,10 @@ vi.mock('../workspace', () => ({
     readWorkspaceFile: async (name: string) => files.has(name) ? { name, ...files.get(name)! } : null,
 }));
 
-import { extractWasmFromWebc } from '../shiro/wasi-packages';
+import { extractWasmFromWebc, getCompiledModule, getPackage, getCachedPackage, removePackage, writePackageStubs, removePackageStubs, handlePackageCacheRequest, runPackageCommand, resolvePackageCommand } from '../shiro/wasi-packages';
+import { ARTIFACT_PINS } from '../shiro/wasi-artifact-pins';
+import { hello } from './helpers/wasm-assemble';
+import { createHash } from 'node:crypto';
 import { compileWasm, memoryImports } from '../shiro/wasm-module';
 import { setWasiWorkerFactory } from '../shiro/wasi-host';
 import { nodeWorkerFactory } from './helpers/node-wasi-worker';
@@ -27,7 +31,7 @@ describe('extractWasmFromWebc', () => {
         // a Table section after the Data section violates section order: it is not part of the module
         const trailing = [0x04, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00, 0x07, 0xff, 0xee];
         const webc = new Uint8Array([...Buffer.from('\0webc002'), 9, 9, 9, ...module, ...trailing]);
-        const out = new Uint8Array(extractWasmFromWebc(webc.buffer)!);
+        const out = new Uint8Array(extractWasmFromWebc(webc.buffer,{offset:11,length:module.length})!);
         expect([...out]).toEqual(module);
         expect(WebAssembly.validate(out)).toBe(true);
     });
@@ -35,12 +39,142 @@ describe('extractWasmFromWebc', () => {
     it('keeps trailing custom sections (name section etc.)', () => {
         const custom = [0x00, 0x05, 0x04, 0x6e, 0x61, 0x6d, 0x65];
         const webc = new Uint8Array([1, 2, 3, ...module, ...custom, 0xff, 0xff]);
-        const out = new Uint8Array(extractWasmFromWebc(webc.buffer)!);
+        const out = new Uint8Array(extractWasmFromWebc(webc.buffer,{offset:3,length:module.length + custom.length})!);
         expect([...out]).toEqual([...module, ...custom]);
     });
 
+    it('selects the declared smaller atom from a container with multiple modules', () => {
+        const other = hello();
+        const raw = Uint8Array.from([...other,9,9,...module]);
+        expect(new Uint8Array(extractWasmFromWebc(raw.buffer,{offset:other.length+2,length:module.length})!)).toEqual(Uint8Array.from(module));
+        expect(extractWasmFromWebc(raw.buffer,{offset:-1,length:module.length})).toBeNull();
+    });
+
     it('returns null when there is no module', () => {
-        expect(extractWasmFromWebc(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]).buffer)).toBeNull();
+        expect(extractWasmFromWebc(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]).buffer,{offset:0,length:9})).toBeNull();
+    });
+});
+
+describe('reviewed local artifacts', () => {
+    it('loads the pinned local zstd CLI without a network fetch', async () => {
+        await removePackage('zstd');
+        vi.mocked(fetch).mockClear();
+        const bytes = await getPackage('zstd');
+        expect(bytes).not.toBeNull();
+        expect(createHash('sha256').update(new Uint8Array(bytes!)).digest('hex')).toBe(ARTIFACT_PINS.zstd.sha256);
+        expect(fetch).not.toHaveBeenCalled();
+        const module = await getCompiledModule('zstd');
+        expect(WebAssembly.Module.imports(module).every(entry=>entry.module==='wasi_snapshot_preview1')).toBe(true);
+    });
+    it('loads util-linux commands through the shared pinned CLI adapter', async () => {
+        for (const name of ['rev','hexdump']) {
+            expect(resolvePackageCommand(name)?.package.name).toBe(name);
+            const module = await getCompiledModule(name);
+            const imports = WebAssembly.Module.imports(module);
+            expect(imports.some(entry=>entry.module==='wasix_32v1' && entry.name==='fd_dup')).toBe(true);
+            expect(imports.every(entry=>entry.module==='wasi_snapshot_preview1' || (entry.module==='wasix_32v1' && entry.name==='fd_dup'))).toBe(true);
+            const source = ARTIFACT_PINS[name].upstream;
+            const archive = readFileSync('public'+String(source.corresponding_source));
+            expect(createHash('sha256').update(archive).digest('hex')).toBe(source.corresponding_source_sha256);
+            for (const [file,sha] of Object.entries(source.port_files_sha256 as Record<string,string>)) {
+                expect(createHash('sha256').update(readFileSync('scripts/wasi-artifacts/'+file)).digest('hex')).toBe(sha);
+            }
+        }
+        const sh = await getShell();
+        expect(sh.commands.get('rev')?.route).toBe('wasm');
+        expect(sh.commands.get('hexdump')?.route).toBe('wasm');
+        setWasiWorkerFactory(await nodeWorkerFactory());
+        try {
+            const result = await sh.exec("printf no-newline | rev; util-linux rev --version");
+            expect({...result,stdout:result.stdout.replace(/\r\n/g,'\n')}).toEqual({stdout:'enilwen-onrev from util-linux 2.37.2\n',stderr:'',exitCode:0});
+        } finally { setWasiWorkerFactory(null); }
+    });
+    it('restricts asset RPC to reviewed local package identities', async () => {
+        await expect(handlePackageCacheRequest({op:'load',store:'packages',key:'arbitrary-path'})).rejects.toThrow('key not allowed');
+        const coreKey = `wasm:coreutils@${ARTIFACT_PINS.coreutils.upstream.source_commit ?? 'a6d1eb3835c0f808fa9678e4551df7377bcab8d3'}:${ARTIFACT_PINS.coreutils.sha256}`;
+        await expect(handlePackageCacheRequest({op:'load',store:'packages',key:coreKey})).rejects.toThrow('Only reviewed local');
+    });
+});
+
+describe('artifact cache and installation contracts', () => {
+    const original = ARTIFACT_PINS.coreutils;
+    const bytes = Uint8Array.from([9,9,...hello(),9,9]);
+    const digest = (data:Uint8Array) => createHash('sha256').update(data).digest('hex');
+    beforeEach(async () => {
+        await removePackage('coreutils');
+        ARTIFACT_PINS.coreutils = {
+            length:bytes.length, sha256:digest(bytes),
+            atoms:{coreutils:{offset:2,length:hello().length,sha256:digest(hello())}},
+            commands:{coreutils:'coreutils'}, resources:{}, upstream:{},
+        };
+        await removePackage('coreutils');
+        vi.mocked(fetch).mockImplementation(async () => new Response(bytes.slice()));
+    });
+    afterEach(async () => {
+        await removePackage('coreutils');
+        ARTIFACT_PINS.coreutils = original;
+        vi.mocked(fetch).mockReset();
+    });
+    it('deduplicates download and compilation across aliases', async () => {
+        const [cat,base64,main] = await Promise.all([getCompiledModule('gcat'),getCompiledModule('gbase64'),getCompiledModule('coreutils')]);
+        expect(cat).toBe(base64); expect(cat).toBe(main);
+        expect(fetch).toHaveBeenCalledOnce();
+        await removePackage('gcat');
+        expect(await getCompiledModule('gbase64')).not.toBe(main);
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    it('resets failed download/compilation promises so retries work', async () => {
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
+        await expect(getCompiledModule('gcat')).rejects.toThrow('offline');
+        await expect(getCompiledModule('gcat')).resolves.toBeInstanceOf(WebAssembly.Module);
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    it('detects corrupt cache data and permits a clean retry', async () => {
+        await getPackage('gcat');
+        const cached = await getCachedPackage('coreutils');
+        new Uint8Array(cached!)[0] ^= 1;
+        await expect(getPackage('gcat')).rejects.toThrow('SHA-256 mismatch');
+        await expect(getPackage('gcat')).resolves.toBeDefined();
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    it('shares stub mapping and preserves a user executable on removal', async () => {
+        const sh = await getShell();
+        await writePackageStubs(sh.fs,'gcat');
+        expect(await sh.fs.readFile('/usr/local/bin/gcat','utf8')).toBe('#!wasi-pkg gcat\n');
+        await sh.fs.writeFile('/usr/local/bin/gcat','#!/bin/sh\necho user\n');
+        await removePackageStubs(sh.fs,'gbase64');
+        expect(await sh.fs.exists('/usr/local/bin/gbase64')).toBe(false);
+        expect(await sh.fs.readFile('/usr/local/bin/gcat','utf8')).toContain('echo user');
+        await expect(writePackageStubs(sh.fs,'coreutils')).rejects.toThrow('conflicts');
+        await sh.fs.unlink('/usr/local/bin/gcat');
+    });
+});
+
+describe('separate-atom package families', () => {
+    it('rejects missing or undeclared entrypoints before loading an artifact', async () => {
+        const sh = await getShell();
+        for (const name of ['wabt', 'util-linux']) {
+            expect(resolvePackageCommand(name)).toBeUndefined();
+            for (const args of [[], ['../../arbitrary']]) {
+                const ctx:any = {args, shell:sh, fs:sh.fs, stdout:'', stderr:''};
+                expect(await runPackageCommand(ctx,name)).toBe(2);
+                expect(ctx.stderr).toContain(`${name}: expected an entrypoint:`);
+                expect(ctx.stdout).toBe('');
+            }
+        }
+    });
+    it('installs a family launcher and only declared program stubs', async () => {
+        const sh = await getShell();
+        await writePackageStubs(sh.fs,'wabt');
+        expect(await sh.fs.readFile('/usr/local/bin/wabt','utf8')).toBe('#!wasi-pkg wabt\n');
+        expect(await sh.fs.readFile('/usr/local/bin/wat2wasm','utf8')).toBe('#!wasi-pkg wat2wasm\n');
+        expect((await sh.fs.stat('/usr/local/bin/wabt')).mode).toBe(0o755);
+        expect((await sh.fs.stat('/usr/local/bin/wat2wasm')).mode).toBe(0o755);
+        const r = await sh.exec('/usr/local/bin/wabt invalid-entrypoint');
+        expect(r.exitCode).toBe(2);
+        expect(r.stderr).toContain('wabt: expected an entrypoint:');
+        await removePackageStubs(sh.fs,'wabt');
+        expect(await sh.fs.exists('/usr/local/bin/wabt')).toBe(false);
     });
 });
 
@@ -72,6 +206,7 @@ describe.skipIf(!process.env.FG_NET_TESTS)('pkg install: real packages (network)
     const run = async (cmd: string) => {
         const r = await sh.exec(cmd);
         const lf = (s: string) => s.replace(/\r\n/g, '\n');
+        if (process.env.FG_ARTIFACT_DEBUG && r.stderr) console.warn(cmd, r.stderr);
         return { out: lf(r.stdout), err: lf(r.stderr), code: r.exitCode ?? 0 };
     };
 
@@ -89,7 +224,7 @@ describe.skipIf(!process.env.FG_NET_TESTS)('pkg install: real packages (network)
     });
     afterAll(() => setWasiWorkerFactory(null));
 
-    const install = async (name: string) => expect((await run(`pkg install ${name}`)).code, `pkg install ${name}`).toBe(0);
+    const install = async (name:string) => { const result = await run(`pkg install ${name}`); expect(result.code,`pkg install ${name}: ${result.err}`).toBe(0); };
 
     it('cowsay (wasi_snapshot_preview1)', async () => {
         await install('cowsay');

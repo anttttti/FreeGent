@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { parseArgs, readInput, filesystemError } from './flags';
 
 export const less: Command = {
   name: "less",
@@ -9,6 +9,18 @@ export const less: Command = {
     const { flags, positional } = parseArgs(ctx.args);
 
     try {
+      // Native less copies bytes when stdout is not a terminal; display flags
+      // do not number/reformat them, and read errors appear in that stream.
+      if (!ctx.terminal) {
+        for (const path of positional.length ? positional : ['-']) {
+          if (path === '-') ctx.stdout += ctx.stdin;
+          else {
+            try { ctx.stdout += await ctx.fs.readFile(ctx.fs.resolvePath(path,ctx.cwd),'utf8') as string; }
+            catch (error) { ctx.stdout += `${path}: ${filesystemError(error)}\n`; }
+          }
+        }
+        return 0;
+      }
       const { content, files } = await readInput(
         positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath
       );
@@ -17,18 +29,6 @@ export const less: Command = {
       const passAnsi = !!flags.R;
       const chopLong = !!flags.S;
       const quitIfFit = !!flags.F;
-
-      // Non-interactive fallback: no terminal, or piped output
-      if (!ctx.terminal) {
-        const lines = content.split('\n');
-        if (showNumbers) {
-          ctx.stdout += lines.map((l, i) => `${String(i + 1).padStart(6)}  ${l}`).join('\n');
-        } else {
-          ctx.stdout += content;
-        }
-        if (ctx.stdout && !ctx.stdout.endsWith('\n')) ctx.stdout += '\n';
-        return 0;
-      }
 
       const allLines = content.split('\n');
       // Remove trailing empty line from final newline

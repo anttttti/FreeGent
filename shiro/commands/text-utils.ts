@@ -6,24 +6,6 @@ import type { Command } from './index';
 import { parseArgs, readInput } from './flags';
 import { bytesToText, textToBytes } from '../utils/bytes';
 
-export const revCmd: Command = {
-  name: 'rev',
-  description: 'Reverse each line of input',
-  async exec(ctx) {
-    try {
-      const { positional } = parseArgs(ctx.args, []);
-      const { content } = await readInput(positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath);
-      if (!content) return 0;
-      const lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n');
-      const reversed = lines.map(l => Array.from(l).reverse().join(''));
-      ctx.stdout += reversed.join('\n') + '\n';
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `rev: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
-    }
-  },
-};
 
 // GNU tac: the file is cut into records that each end with the separator (default newline; -b: begin
 // with it; -r: the separator is a regex); the last record may lack it. Records are written in reverse
@@ -203,7 +185,7 @@ export const cmpCmd: Command = {
     if (d1.length !== d2.length && n < limit) {
       if (!silent) {
         const shorter = d1.length < d2.length ? files[0] : files[1];
-        ctx.stderr += n === 0 ? `cmp: EOF on ${shorter} which is empty\n` : `cmp: EOF on ${shorter} after byte ${n}, line ${line - (d1[n - 1] === 10 ? 1 : 0)}\n`;
+        ctx.stderr += n === 0 ? `cmp: EOF on ${shorter} which is empty\n` : `cmp: EOF on ${shorter} after byte ${n}${list ? '' : ', line ' + (line - (d1[n - 1] === 10 ? 1 : 0))}\n`;
       }
       return 1;
     }

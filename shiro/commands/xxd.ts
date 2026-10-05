@@ -3,7 +3,7 @@
  */
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { parseArgs, readOperands } from './flags';
 import { fromByteString, toByteString } from '../utils/bytes';
 
 export const xxdCmd: Command = {
@@ -11,15 +11,18 @@ export const xxdCmd: Command = {
   description: 'Make a hex dump or reverse it',
   async exec(ctx) {
     try {
-      const { values, positional, flags } = parseArgs(ctx.args, ['l', 'c', 's']);
+      const { values, positional, flags } = parseArgs(ctx.args, ['l', 'c', 's','g']);
 
       const reverse = flags.r;
       const plain = flags.p;
       const limit = values.l ? parseInt(values.l, 10) : -1;
       const cols = values.c ? parseInt(values.c, 10) : (plain ? 30 : 16);
       const seekOffset = values.s ? parseInt(values.s, 10) : 0;
+      const group = Math.max(1,Math.min(cols,values.g ? parseInt(values.g,10) : 2));
 
-      const { content } = await readInput(positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath);
+      const inputs = await readOperands(ctx, 'xxd', positional);
+      if (inputs.failed) return 2;
+      const content = inputs.map(input => input.text).join('');
 
       if (reverse) {
         // Reverse hex dump → binary
@@ -80,14 +83,8 @@ export const xxdCmd: Command = {
 
           // Hex groups (2-byte pairs separated by spaces)
           const hexParts: string[] = [];
-          for (let j = 0; j < cols; j += 2) {
-            let pair = '';
-            if (j < chunk.length) pair += chunk.charCodeAt(j).toString(16).padStart(2, '0');
-            else pair += '  ';
-            if (j + 1 < chunk.length) pair += chunk.charCodeAt(j + 1).toString(16).padStart(2, '0');
-            else if (j < chunk.length) pair += '  ';
-            else pair += '  ';
-            if (j < chunk.length || j + 1 < chunk.length) hexParts.push(pair);
+          for (let j = 0; j < chunk.length; j += group) {
+            hexParts.push(Array.from(chunk.slice(j,j+group),byte=>byte.charCodeAt(0).toString(16).padStart(2,'0')).join(''));
           }
 
           // ASCII representation
@@ -97,7 +94,7 @@ export const xxdCmd: Command = {
             ascii += (code >= 32 && code < 127) ? chunk[j] : '.';
           }
 
-          output.push(`${offset}: ${hexParts.join(' ').padEnd(Math.ceil(cols / 2) * 5 - 1)}  ${ascii}`);
+          output.push(`${offset}: ${hexParts.join(' ').padEnd(cols * 2 + Math.ceil(cols / group) - 1)}  ${ascii}`);
         }
         ctx.stdout += output.join('\n') + '\n';
       }

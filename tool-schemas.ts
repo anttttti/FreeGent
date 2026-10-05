@@ -239,13 +239,13 @@ function execToolSpec() {
         const hasWasm    = p === 'wasm';
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
-                `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. ${_noReadBash}` +
+                `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ${_noReadBash}` +
                 'Python: workspace files pre-loaded, writes sync back. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'python', 'javascript'];
         } else if (hasWasm) {
             description = 'Execute Bash or JavaScript (browser sandbox) in-page. ' +
-                'Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. ' +
+                'Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ' +
                 'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
             languages = ['bash', 'javascript'];
         } else if (hasPyodide) {

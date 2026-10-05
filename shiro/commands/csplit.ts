@@ -135,11 +135,11 @@ export const csplitCmd: Command = {
         if (step.kind === 'line') {
           // {N} repeats at the same interval: 3 {2} splits before lines 3, 6 and 9
           const n = rep === 0 ? step.n : lastLine + step.n;
-          if (n - 1 < cur) return fail(`'${n}': line number out of range`);
+          if (n - 1 < cur) return fail(`‘${n}’: line number out of range`);
           if (n - 1 > lines.length) {
             if (forever) break;
             await piece(cur, lines.length, true);     // GNU writes what there is, then reports the error
-            return fail(`'${n}': line number out of range`);
+            return fail(`‘${n}’: line number out of range`);
           }
           await piece(cur, n - 1, false);
           cur = n - 1;
@@ -153,7 +153,7 @@ export const csplitCmd: Command = {
         for (let i = from; i < lines.length; i++) { if (step.re.test(lines[i].replace(/\n$/, ''))) { found = i; break; } }
         if (found < 0) { if (forever) break; return fail(`'${step.src}': match not found`); }
         let at = found + step.offset;
-        if (at < cur) return fail(`'${step.src}': line number out of range`);
+        if (at < cur) return fail(`‘${step.src}’: line number out of range`);
         if (at > lines.length) at = lines.length;
         if (step.kind === 'skip') { cur = at; continue; }      // %re%: discard up to the match
         await piece(cur, at, false);

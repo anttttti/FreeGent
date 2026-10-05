@@ -5,6 +5,10 @@
 // Files cross the worker boundary as strings: text as is, binary as "\x00BIN\x00<base64>", and
 // images Python wrote as "\x00IMG\x00<mime>\x00<base64>" (shown inline in the chat).
 
+import { concatBytes, sameBytes } from './shiro/utils/bytes.js';
+import { withRuntimeLock } from './shiro/runtime-lock.js';
+import { snapshotRuntimeFiles, clearRuntimeDir } from './shiro/runtime-filesystem.js';
+
 export type RunResult = {
     stdout: string;
     stderr: string;
@@ -69,13 +73,13 @@ export function decodeOutputFile(content: string): { data: string; encoding: 'ba
 
 function writeInputFiles(py: any, files: Record<string, string>) {
     for (const [name, content] of Object.entries(files || {})) {
+        // Every other entry point goes through workspaceName(); this one must not let a name step
+        // out of /workspace in the interpreter's filesystem.
+        if (name.startsWith('/') || name.split('/').includes('..')) throw new Error(`Invalid workspace file name: ${name}`);
         const path = `/workspace/${name}`;
         const dir = path.slice(0, path.lastIndexOf('/'));
         if (dir && dir !== '/workspace') py.FS.mkdirTree(dir);
         try { py.FS.unlink(path); } catch {}
-        // Every other entry point goes through workspaceName(); this one must not let a name step
-        // out of /workspace in the interpreter's filesystem.
-        if (name.startsWith('/') || name.split('/').includes('..')) throw new Error(`Invalid workspace file name: ${name}`);
         if (typeof content === 'string' && content.startsWith('\x00BIN\x00')) py.FS.writeFile(path, fromBase64(content.slice(5)));
         else py.FS.writeFile(path, content ?? '');   // a string is written as UTF-8
     }
@@ -83,39 +87,14 @@ function writeInputFiles(py: any, files: Record<string, string>) {
 
 /** Every file under a directory: relative path → bytes. */
 function snapshotDir(py: any, dir: string, prefix = '', out = new Map<string, Uint8Array>()): Map<string, Uint8Array> {
-    let entries: string[];
-    try { entries = py.FS.readdir(dir); } catch { return out; }
-    for (const entry of entries) {
-        if (entry === '.' || entry === '..') continue;
-        const fullPath = `${dir}/${entry}`;
-        const relPath = prefix ? `${prefix}/${entry}` : entry;
-        try {
-            const st = py.FS.lstat(fullPath);
-            if (py.FS.isDir(st.mode)) snapshotDir(py, fullPath, relPath, out);
-            else if (py.FS.isFile(st.mode)) out.set(relPath, py.FS.readFile(fullPath));
-        } catch {}
-    }
+    for (const [path,bytes] of snapshotRuntimeFiles(py.FS,dir,new Map(),true)) out.set((prefix ? prefix + '/' : '') + path.slice(dir.length+1),bytes);
     return out;
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
-}
 
 /** Empties a directory tree in Pyodide's in-memory FS (the directory itself stays). */
 export function clearDir(py: any, dir: string) {
-    let entries: string[];
-    try { entries = py.FS.readdir(dir); } catch { return; }
-    for (const entry of entries) {
-        if (entry === '.' || entry === '..') continue;
-        const fullPath = `${dir}/${entry}`;
-        let isDir = false;
-        try { isDir = py.FS.isDir(py.FS.lstat(fullPath).mode); } catch {}
-        if (isDir) { clearDir(py, fullPath); try { py.FS.rmdir(fullPath); } catch {} }
-        else { try { py.FS.unlink(fullPath); } catch {} }
-    }
+    clearRuntimeDir(py.FS,dir);
 }
 
 /**
@@ -182,19 +161,17 @@ async def _fg_exec(src):
     return rc
 `;
 
-function concat(parts: Uint8Array[]): Uint8Array {
-    const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-    let k = 0;
-    for (const p of parts) { all.set(p, k); k += p.length; }
-    return all;
-}
 
 /**
  * Runs `code` with /workspace holding `files`, and returns its output and the files it changed.
  * /workspace is emptied afterwards: the page's workspace is the only lasting copy. Callers run
  * one at a time (runs share /workspace).
  */
-export async function runInPyodide(py: any, { code, files, filepath }: { code: string; files: Record<string, string>; filepath?: string }): Promise<RunResult> {
+export function runInPyodide(py:any, input:{code:string; files:Record<string,string>; filepath?:string}): Promise<RunResult> {
+    return withRuntimeLock(py,() => runIsolatedInPyodide(py,input));
+}
+
+async function runIsolatedInPyodide(py: any, { code, files, filepath }: { code: string; files: Record<string, string>; filepath?: string }): Promise<RunResult> {
     if (_DISPLAY_LIBS.test(code)) {
         const lib = code.match(_DISPLAY_LIBS)?.[1] ?? 'a display library';
         return { stdout: '',
@@ -315,7 +292,7 @@ def _is_local(name):
         for (const name of before.keys()) if (!after.has(name)) changedFiles[name] = null;
 
         const dec = new TextDecoder();   // output for the model: invalid UTF-8 shows as U+FFFD
-        return { stdout: dec.decode(concat(out)), stderr: notes + dec.decode(concat(err)), exit_code, changedFiles };
+        return { stdout: dec.decode(concatBytes(out)), stderr: notes + dec.decode(concatBytes(err)), exit_code, changedFiles };
     } catch (e: any) {
         return { stdout: '', stderr: e.message, exit_code: 1, changedFiles: {} };
     } finally {

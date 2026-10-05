@@ -1,0 +1,618 @@
+include/all-io.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ *            Petr Uzel <petr.uzel@suse.cz>
+ */
+
+include/bitops.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ */
+
+include/blkdev.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ */
+
+include/c.h
+/*
+ * Fundamental C definitions.
+ *
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ */
+
+include/canonicalize.h
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Library Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Library Public License for more details.
+ */
+
+include/caputils.h
+/*
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2, or (at your option) any
+ * later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+include/cctype.h
+/**
+ * Character handling in C locale.
+ *
+ * This file is based on gnulib c-ctype.h-dd7a871 with the
+ * other gnulib dependencies removed for use in util-linux.
+ *
+ * These functions work like the corresponding functions in <ctype.h>,
+ * except that they have the C (POSIX) locale hardwired, whereas the
+ * <ctype.h> functions' behaviour depends on the current locale set via
+ * setlocale.
+ *
+ * Copyright (C) 2000-2003, 2006, 2008-2017 Free Software Foundation, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ */
+
+include/color-names.h
+/*
+ * Copyright (C) 2012-2015 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be distributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+include/colors.h
+/*
+ * Copyright (C) 2012 Ondrej Oprala <ooprala@redhat.com>
+ * Copyright (C) 2012-2014 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be distributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+include/cpuset.h
+/*
+ * This file may be redistributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+include/debug.h
+/*
+ * Copyright (C) 2014 Ondrej Oprala <ooprala@redhat.com>
+ * Copyright (C) 2014 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be distributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+include/list.h
+/*
+ * Copyright (C) 2008 Karel Zak <kzak@redhat.com>
+ * Copyright (C) 1999-2008 by Theodore Ts'o
+ *
+ * This file may be redistributed under the terms of the
+ * GNU Lesser General Public License.
+ *
+ * (based on list.h from e2fsprogs)
+ * Merge sort based on kernel's implementation.
+ */
+
+include/match.h
+/*
+ * Copyright (C) 2011 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be redistributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+include/mbsalign.h
+/* Align/Truncate a string in a given screen width
+   Copyright (C) 2009-2010 Free Software Foundation, Inc.
+   Copyright (C) 2010-2013 Karel Zak <kzak@redhat.com>
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU Lesser General Public License as published by
+   the Free Software Foundation, either version 2.1 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+include/monotonic.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ */
+
+include/namespace.h
+
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Compat code so unshare and setns can be used with older libcs
+ */
+
+include/pathnames.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ */
+
+include/plymouth-ctrl.h
+/*
+ * plymouth-ctrl.h	Header file for communications with plymouthd
+ *
+ * Copyright (c) 2016 SUSE Linux GmbH, All rights reserved.
+ * Copyright (c) 2016 Werner Fink <werner@suse.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program (see the file COPYING); if not, write to the
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ *
+ * Author: Werner Fink <werner@suse.de>
+ */
+
+include/pt-gpt-partnames.h
+
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ *
+ * Probably the most complete list of the GUIDs are at:
+ *	 https://wikipedia.org/wiki/GUID_Partition_Table
+ *
+ * The macro DEF_GUID() has to be defined in your code according to array where
+ * you want to include this file.
+ */
+
+include/pty-session.h
+/*
+ * This code is in the public domain; do with it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com> in Jul 2019
+ */
+
+include/sysfs.h
+/*
+ * Copyright (C) 2011 Karel Zak <kzak@redhat.com>
+ */
+
+include/timeutils.h
+/***
+  First set of functions in this file are part of systemd, and were
+  copied to util-linux at August 2013.
+
+  Copyright 2010 Lennart Poettering
+  Copyright (C) 2014 Karel Zak <kzak@redhat.com>
+
+  systemd is free software; you can redistribute it and/or modify it
+  under the terms of the GNU Lesser General Public License as published by
+  the Free Software Foundation; either version 2.1 of the License, or
+  (at your option) any later version.
+
+  systemd is distributed in the hope that it will be useful, but
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public License
+  along with systemd; If not, see <http://www.gnu.org/licenses/>.
+***/
+
+include/ttyutils.h
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ */
+
+include/widechar.h
+/* Declarations for wide characters */
+
+include/xalloc.h
+/*
+ * Copyright (C) 2010 Davidlohr Bueso <dave@gnu.org>
+ *
+ * This file may be redistributed under the terms of the
+ * GNU Lesser General Public License.
+ *
+ * General memory allocation wrappers for malloc, realloc, calloc and strdup
+ */
+
+text-utils/hexdump-conv.c
+/*
+ * Copyright (c) 1989 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+text-utils/hexdump-display.c
+/*
+ * Copyright (c) 1989 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+text-utils/hexdump-parse.c
+/*
+ * Copyright (c) 1989 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+text-utils/hexdump.c
+/*
+ * Copyright (c) 1989 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+text-utils/hexdump.h
+/*
+ * Copyright (c) 1989 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)hexdump.h	5.4 (Berkeley) 6/1/90
+ */
+
+text-utils/rev.c
+/*-
+ * Copyright (c) 1987, 1992 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * Modified for Linux by Charles Hannum (mycroft@gnu.ai.mit.edu)
+ *                   and Brian Koehmstedt (bpk@gnu.ai.mit.edu)
+ *
+ * Wed Sep 14 22:26:00 1994: Patch from bjdouma <bjdouma@xs4all.nl> to handle
+ *                           last line that has no newline correctly.
+ * 3-Jun-1998: Patched by Nicolai Langfeldt to work better on Linux:
+ *	Handle any-length-lines.  Code copied from util-linux' setpwnam.c
+ * 1999-02-22 Arkadiusz Miśkiewicz <misiek@pld.ORG.PL>
+ *	added Native Language Support
+ * 1999-09-19 Bruno Haible <haible@clisp.cons.org>
+ *	modified to work correctly in multi-byte locales
+ * July 2010 - Davidlohr Bueso <dave@gnu.org>
+ *      Fixed memory leaks (including Linux signal handling)
+ *      Added some memory allocation error handling
+ *      Lowered the default buffer size to 256, instead of 512 bytes
+ *      Changed tab indentation to 8 chars for better reading the code
+ */
+
+lib/strutils.c
+/*
+ * Copyright (C) 2010 Karel Zak <kzak@redhat.com>
+ * Copyright (C) 2010 Davidlohr Bueso <dave@gnu.org>
+ *
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ */
+
+lib/colors.c
+/*
+ * Copyright (C) 2012 Ondrej Oprala <ooprala@redhat.com>
+ * Copyright (C) 2012-2014 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be distributed under the terms of the
+ * GNU Lesser General Public License.
+ */
+
+lib/color-names.c
+/*
+ * No copyright is claimed.  This code is in the public domain; do with
+ * it what you wish.
+ *
+ * Written by Karel Zak <kzak@redhat.com>
+ */
+
+lib/strv.c
+/*
+ *
+ * Copyright 2010 Lennart Poettering
+ *
+ * This is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
+ *
+ *
+ * Copyright (C) 2015 Karel Zak <kzak@redhat.com>
+ *    Modified the original version from systemd project for util-linux.
+ */
+
+gnu-getopt/getopt.c
+/* Getopt for GNU.
+   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   This file is part of the GNU C Library and is also part of gnulib.
+   Patches to this file should be submitted to both projects.
+
+   The GNU C Library is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
+
+   The GNU C Library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public
+   License along with the GNU C Library; if not, see
+   <https://www.gnu.org/licenses/>.  */
+
+gnu-getopt/getopt1.c
+/* getopt_long and getopt_long_only entry points for GNU getopt.
+   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   This file is part of the GNU C Library and is also part of gnulib.
+   Patches to this file should be submitted to both projects.
+
+   The GNU C Library is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
+
+   The GNU C Library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public
+   License along with the GNU C Library; if not, see
+   <https://www.gnu.org/licenses/>.  */
+
+gnu-getopt/getopt_int.h
+/* Internal declarations for getopt.
+   Copyright (C) 1989-2020 Free Software Foundation, Inc.
+   This file is part of the GNU C Library and is also part of gnulib.
+   Patches to this file should be submitted to both projects.
+
+   The GNU C Library is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
+
+   The GNU C Library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public
+   License along with the GNU C Library; if not, see
+   <https://www.gnu.org/licenses/>.  */
+
+gnu-getopt/gettext.h
+/* Convenience header for conditional use of GNU <libintl.h>.
+   Copyright (C) 1995-1998, 2000-2002, 2004-2006, 2009-2020 Free Software
+   Foundation, Inc.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 3, or (at your option)
+   any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License along
+   with this program; if not, see <https://www.gnu.org/licenses/>.  */

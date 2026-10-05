@@ -9,8 +9,9 @@
 import { newShell } from '../shiro/shell-singleton';
 import { toDisplayText } from '../shiro/utils/bytes';
 
-export async function runBash(code: string): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+export async function runBash(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     const shell = await newShell();
+    shell.onProgress = onProgress;
     // shell.exec already returns plain text (\n, not the terminal's \r\n): a \r left in it is the
     // data's own (CRLF files). Bytes that aren't UTF-8 show as U+FFFD.
     const { stdout, stderr, exitCode } = await shell.exec(code);

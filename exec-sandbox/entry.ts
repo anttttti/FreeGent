@@ -10,7 +10,8 @@
 // Bundled into one classic script by dev-api.ts buildExecSandbox().
 
 import './storage-shim';
-import { onCall, post, pageFetch } from './channel';
+import { onCall, post, pageFetch, packageCacheCall } from './channel';
+import { setPackageCacheTransport } from '../shiro/wasi-packages';
 import { sandboxFetch } from './net';
 import { runJs } from './js-run';
 import { runBash } from './bash-run';
@@ -18,6 +19,7 @@ import { runBash } from './bash-run';
 // Everything in the frame fetches through sandboxFetch: direct, with a proxied fallback for
 // plain GETs the browser refuses (net.ts).
 globalThis.fetch = sandboxFetch as typeof fetch;
+setPackageCacheTransport(packageCacheCall);
 
 declare const __PYODIDE_WORKER_SRC__: string;
 
@@ -51,7 +53,7 @@ onCall(async (d: any) => {
         case 'js':
             return runJs(String(d.code ?? ''), d.files ?? {});
         case 'bash':
-            return runBash(String(d.code ?? ''));
+            return runBash(String(d.code ?? ''), message => post({ fg: 'progress', id: d.id, message }));
         case 'py-start':
             startPython();
             return true;

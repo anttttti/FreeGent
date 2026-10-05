@@ -1074,8 +1074,8 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
 // commands execute agent code, which must not run with the page's privileges. /workspace writes
 // reach the FreeGent workspace as they happen, through the frame's workspace channel.
 const WASM_TIMEOUT_MS = 10 * 60_000;
-async function runWithWasm(code: string): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS);
+async function runWithWasm(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress);
 }
 
 // ── Shared utilities ──────────────────────────────────────────────────────
