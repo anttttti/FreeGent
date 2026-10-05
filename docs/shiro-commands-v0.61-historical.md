@@ -1,6 +1,6 @@
 # Archived v0.61 inventory
 
-The text below records the original snapshot. Its registry, routes and file-presence claims are historical; consult the generated current inventory for the working tree.
+The text below records the original snapshot. Its registry, routes and file-presence claims are historical; consult the [generated current inventory](shiro-commands-v0.61.md) for the working tree. Historical line citations are retained for provenance.
 
 # Shiro v0.61 command inventory
 

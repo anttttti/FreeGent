@@ -257,8 +257,12 @@ generated.set(resolve(output,'command-inventory.md'),inventory.join('\n')+'\n');
   current.push('', `${missing.length} of those names remain absent (${missing.reduce((sum,row)=>sum+row.count,0)} historical invocations). The original 22-name/1,071-invocation baseline remains unchanged in the historical section.`);
   const footer = previous.indexOf('## Current availability of historically unavailable names',start);
   if (footer >= 0) historical = historical.slice(0,historical.indexOf('## Current availability of historically unavailable names')).trimEnd()+'\n';
-  generated.set(notePath,inventory.join('\n').replaceAll('../../tests/','../tests/')+'\n\nComplete per-command routes and source hashes: [generated matrix](../docs/shiro/command-matrix.md), [JSON](../docs/shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).\n\n'+historical+'\n'+current.join('\n')+'\n');
+  generated.set(notePath,inventory.join('\n').replaceAll('../../tests/','../tests/')+'\n\nComplete per-command routes and source hashes: [generated matrix](shiro/command-matrix.md), [JSON](shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).\n\n'+historical+'\n'+current.join('\n')+'\n');
 }
+// Preserve the user-facing note paths as small pointers to the tracked owners.
+// These are checked too; the inventory and historical body each have one owner.
+generated.set(resolve(root,'notes/2026_10_03_v0.61_codex_shirocommands.md'),'# Shiro v0.61 command inventory\n\nThe current generated inventory is maintained in [docs/shiro-commands-v0.61.md](../docs/shiro-commands-v0.61.md). Regenerate with `npx tsx scripts/shiro-inventory.mjs --update-note`; validate without writing with `--check`.\n');
+generated.set(resolve(root,'notes/2026_10_03_v0.61_codex_shirocommands-historical.md'),'# Historical Shiro v0.61 command inventory\n\nThe original measurements and historical routing claims are retained in [docs/shiro-commands-v0.61-historical.md](../docs/shiro-commands-v0.61-historical.md).\n');
 if (options.check) {
   const stale = [];
   for (const [path,expected] of generated) {

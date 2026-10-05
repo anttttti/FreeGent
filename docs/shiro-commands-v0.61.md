@@ -143,7 +143,7 @@ The removal record contains hashes and import/caller evidence. Removed files are
 - `shiro/commands/x86.ts`
 - `shiro/commands/xpkg.ts`
 
-Complete per-command routes and source hashes: [generated matrix](../docs/shiro/command-matrix.md), [JSON](../docs/shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).
+Complete per-command routes and source hashes: [generated matrix](shiro/command-matrix.md), [JSON](shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).
 
 ## v0.61 benchmark command usage — historical measurements
 
