@@ -580,7 +580,7 @@ async function runAwk(ctx: CommandContext, src: string, operands: string[], assi
         const asg = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(a);
         if (asg) { setVar(asg[1], input(unescapeStr(asg[2]))); continue; }
         const text = await readText(a);
-        if (text === null) { ctx.stderr += `awk: cannot open "${a}" (No such file or directory)\n`; status = 2; continue; }
+        if (text === null) { ctx.stderr += `awk: cannot open ${a} (No such file or directory)\n`; status = 2; continue; }
         setVar('FILENAME', a);
         vars.set('FNR', 0);
         mainStream = { lines: splitRecords(text), pos: 0 };

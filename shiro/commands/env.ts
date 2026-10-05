@@ -1,5 +1,4 @@
 import type { Command } from './index';
-import { runSubcommand } from './run-subcommand';
 
 // Patterns that indicate a sensitive env var (case-insensitive match on key)
 /** Shell bookkeeping that lives in the same table as the environment but is not part of it. */
@@ -54,19 +53,9 @@ export const env: Command = {
       return 0;
     }
 
-    // Run the command with the modified environment, then put the shell's own back
-    const shellEnv = ctx.shell.env;
-    const saved = { ...shellEnv };
-    for (const k of Object.keys(shellEnv)) delete shellEnv[k];
-    Object.assign(shellEnv, next);
-    let out = '', err = '';
-    let code: number;
-    try {
-      code = await runSubcommand(ctx, command, s => { out += s; }, s => { err += s; });
-    } finally {
-      for (const k of Object.keys(shellEnv)) delete shellEnv[k];
-      Object.assign(shellEnv, saved);
-    }
+    const child = ctx.shell.fork();
+    child.env = next;
+    const { stdout:out, stderr:err, exitCode:code } = await child.execArgv(command, ctx.stdin);
     ctx.stdout += out;
     ctx.stderr += err;
     return code === 127 ? 127 : code;

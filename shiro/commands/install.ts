@@ -1,6 +1,7 @@
 
 import type { Command } from './index';
 import { parseArgs, readFileText, statEntry } from './flags';
+import { chmod } from './chmod';
 export const install: Command = {
   name: "install",
   description: "Copy files and set attributes",
@@ -12,6 +13,7 @@ export const install: Command = {
     const targetDirectory = values.t || values["target-directory"];
     const createDirs = flags.d || flags.directory;
     const verbose = flags.v || flags.verbose;
+    const createParents = flags.D;
 
     if (positional.length === 0) {
       ctx.stderr += "install: missing operand\n";
@@ -19,6 +21,10 @@ export const install: Command = {
     }
 
     const output: string[] = [];
+    const applyMode = async(path:string) => {
+      const args = ctx.args; ctx.args = [mode ?? '755',path];
+      try {if (await chmod.exec(ctx)) throw new Error(`cannot set mode for '${path}'`);} finally {ctx.args = args;}
+    };
 
     try {
       if (createDirs) {
@@ -26,6 +32,7 @@ export const install: Command = {
         for (const dir of positional) {
           const resolved = ctx.fs.resolvePath(dir, ctx.cwd);
           await ctx.fs.mkdir(resolved, { recursive: true });
+          await applyMode(resolved);
           if (verbose) {
             output.push(`install: creating directory '${dir}'`);
           }
@@ -39,8 +46,9 @@ export const install: Command = {
           const fileName = file.split("/").pop() || file;
           const dstPath = targetDir + "/" + fileName;
 
-          const content = await readFileText(ctx.fs, srcPath);
+          const content = await ctx.fs.readFile(srcPath);
           await ctx.fs.writeFile(dstPath, content);
+          await applyMode(dstPath);
 
           if (verbose) {
             output.push(`'${file}' -> '${targetDirectory}/${fileName}'`);
@@ -74,8 +82,9 @@ export const install: Command = {
             const fileName = src.split("/").pop() || src;
             const dstPath = destPath + "/" + fileName;
 
-            const content = await readFileText(ctx.fs, srcPath);
+            const content = await ctx.fs.readFile(srcPath);
             await ctx.fs.writeFile(dstPath, content);
+            await applyMode(dstPath);
 
             if (verbose) {
               output.push(`'${src}' -> '${dest}/${fileName}'`);
@@ -84,8 +93,10 @@ export const install: Command = {
         } else {
           // Single source to dest
           const srcPath = ctx.fs.resolvePath(sources[0], ctx.cwd);
-          const content = await readFileText(ctx.fs, srcPath);
+          const content = await ctx.fs.readFile(srcPath);
+          if (createParents) await ctx.fs.mkdir(destPath.slice(0, destPath.lastIndexOf('/')) || '/', { recursive:true });
           await ctx.fs.writeFile(destPath, content);
+          await applyMode(destPath);
 
           if (verbose) {
             output.push(`'${sources[0]}' -> '${dest}'`);

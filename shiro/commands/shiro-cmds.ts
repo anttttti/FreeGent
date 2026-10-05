@@ -6,6 +6,7 @@
  */
 import type { Command } from './index';
 import { getAssociation } from '../file-associations';
+import { sha1sum, sha256sum, sha384sum, sha512sum } from './hashsum';
 
 export const rmCmd: Command = {
   name: 'rm',
@@ -24,6 +25,10 @@ export const rmCmd: Command = {
     }
     for (const f of files) {
       const resolved = ctx.fs.resolvePath(f, ctx.cwd);
+      if (!(await ctx.fs.exists(resolved))) {
+        if (force) continue;
+        ctx.stderr += `rm: cannot remove '${f}': No such file or directory\n`; return 1;
+      }
       try { await ctx.fs.rm(resolved, { recursive }); }
       catch (e: any) {
         if (!force) { ctx.stderr += `rm: ${e.message}\n`; return 1; }
@@ -35,7 +40,8 @@ export const rmCmd: Command = {
 
 export const lnCmd: Command = {
   name: 'ln',
-  description: 'Create links between files',
+  description: 'Create links between files (requires native execution)',
+  route:'native-only', parityScope:'capability-only', requirements:['filesystem links'],
   async exec(ctx) {
     let symbolic = false;
     let force = false;
@@ -54,22 +60,19 @@ export const lnCmd: Command = {
       ctx.stderr = 'ln: missing file operand\n';
       return 1;
     }
-    // The workspace has no links: hard and symbolic links are both created as copies.
-    void symbolic;
-    const target = args[0];
-    let linkPath = ctx.fs.resolvePath(args[1], ctx.cwd);
-    if (await ctx.fs.stat(linkPath).then(st => st.isDirectory(), () => false)) linkPath += '/' + target.replace(/\/+$/, '').split('/').pop();
-    const targetForFs = symbolic ? target : ctx.fs.resolvePath(target, ctx.cwd);
-    try {
-      if (force) {
-        try { await ctx.fs.unlink(linkPath); } catch {}
-      }
-      await ctx.fs.symlink(targetForFs, linkPath);
-      return 0;
-    } catch (e: any) {
-      ctx.stderr = `ln: ${e.message}\n`;
-      return 1;
-    }
+    // No copy can satisfy link identity or later write semantics.
+    ctx.stderr = 'ln: workspace links are unavailable in the browser; select native execution\n';
+    return 1;
+
+  },
+};
+
+export const colCmd:Command = {
+  name:'col', description:'Filter reverse line feeds (requires a validated native-compatible utility)',
+  route:'native-only', parityScope:'capability-only', requirements:['validated terminal filter'],
+  async exec(ctx) {
+    ctx.stderr += 'col: validated terminal filtering is unavailable in the browser; select native execution\n';
+    return 2;
   },
 };
 
@@ -119,23 +122,13 @@ export const whichCmd: Command = {
       ctx.stderr = 'which: missing argument\n';
       return 1;
     }
-    const name = ctx.args[0];
-    const execPath = await ctx.shell.findExecutableInPath(name);
-    if (execPath) {
-      ctx.stdout = `${execPath}\n`;
-      return 0;
+    let status = 0;
+    for (const name of ctx.args) {
+      const resolution = await ctx.shell.resolveCommand(name, true, true,{ignoreHash:true,pathOnly:true});
+      if (resolution?.kind === 'file') ctx.stdout += `${resolution.path ?? '/usr/bin/' + name}\n`;
+      else status = 1;
     }
-    const cmd = ctx.shell.commands.get(name);
-    if (cmd) {
-      ctx.stdout = `${name}\n`;
-      return 0;
-    }
-    if (ctx.shell.functions?.[name]) {
-      ctx.stdout = `${name}: shell function\n`;
-      return 0;
-    }
-    ctx.stderr = `${name} not found\n`;
-    return 1;
+    return status;
   },
 };
 
@@ -143,27 +136,10 @@ export const typeCmd: Command = {
   name: 'type',
   description: 'Describe a command',
   async exec(ctx) {
-    if (ctx.args.length === 0) {
-      ctx.stderr = 'type: missing argument\n';
-      return 1;
-    }
-    const name = ctx.args[0];
-    const cmd = ctx.shell.commands.get(name);
-    if (cmd) {
-      ctx.stdout = `${name} is a shell builtin\n`;
-      return 0;
-    }
-    if (ctx.shell.functions?.[name]) {
-      ctx.stdout = `${name} is a shell function\n`;
-      return 0;
-    }
-    const execPath = await ctx.shell.findExecutableInPath(name);
-    if (execPath) {
-      ctx.stdout = `${name} is ${execPath}\n`;
-      return 0;
-    }
-    ctx.stderr = `type: ${name}: not found\n`;
-    return 1;
+    const result = await ctx.shell.processType(ctx.args);
+    ctx.stdout += result.stdout;
+    ctx.stderr += result.stderr;
+    return result.exitCode;
   },
 };
 
@@ -214,80 +190,38 @@ export const rmdirCmd: Command = {
   },
 };
 
-export const revCmd: Command = {
-  name: 'rev',
-  description: 'Reverse lines character-wise',
-  async exec(ctx) {
-    const input = ctx.stdin || (ctx.args.length ? await ctx.fs.readFile(
-      ctx.fs.resolvePath(ctx.args[0], ctx.cwd), 'utf8') as string : '');
-    ctx.stdout = input.split('\n').map(l => Array.from(l).reverse().join('')).join('\n');
-    return 0;
-  },
-};
 
 export const shasumCmd: Command = {
   name: 'shasum',
   description: 'Compute SHA checksums',
   async exec(ctx) {
     let algorithm = '1';
-    const files: string[] = [];
+    const forwarded: string[] = [];
 
     for (let i = 0; i < ctx.args.length; i++) {
       const arg = ctx.args[i];
-      if (arg === '-a' && ctx.args[i + 1]) {
+      if ((arg === '-a' || arg === '--algorithm') && ctx.args[i + 1]) {
         algorithm = ctx.args[++i];
-      } else if (!arg.startsWith('-')) {
-        files.push(arg);
-      }
+      } else if (arg.startsWith('--algorithm=')) algorithm = arg.slice(12);
+      else forwarded.push(arg);
     }
 
-    const algoMap: Record<string, string> = {
-      '1': 'SHA-1',
-      '256': 'SHA-256',
-      '384': 'SHA-384',
-      '512': 'SHA-512',
-    };
-
-    const cryptoAlgo = algoMap[algorithm];
-    if (!cryptoAlgo) {
+    const command = {'1':sha1sum,'256':sha256sum,'384':sha384sum,'512':sha512sum}[algorithm];
+    if (!command) {
       ctx.stderr = `shasum: unrecognized algorithm: ${algorithm}\n`;
       return 1;
     }
 
-    const processData = async (data: Uint8Array, name: string) => {
-      const hashBuffer = await crypto.subtle.digest(cryptoAlgo, data as BufferSource);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-      ctx.stdout += `${hashHex}  ${name}\n`;
-    };
-
-    if (files.length === 0 || files.includes('-')) {
-      const data = new TextEncoder().encode(ctx.stdin);
-      await processData(data, '-');
-    }
-
-    for (const file of files) {
-      if (file === '-') continue;
-      const resolved = ctx.fs.resolvePath(file, ctx.cwd);
-      try {
-        const content = await ctx.fs.readFile(resolved);
-        const data = typeof content === 'string'
-          ? new TextEncoder().encode(content)
-          : (content instanceof Uint8Array ? content : new Uint8Array(content));
-        await processData(data, file);
-      } catch (e: any) {
-        ctx.stderr += `shasum: ${file}: ${e.message}\n`;
-        return 1;
-      }
-    }
-
-    return 0;
+    const previous = ctx.args;
+    ctx.args = forwarded;
+    try {return await command.exec(ctx);} finally {ctx.args = previous;}
   },
 };
 
 export const openCmd: Command = {
   name: 'open',
   description: 'Open files, directories, or URLs',
+  parityScope:'integration-only',
   async exec(ctx) {
     let app: string | null = null;
     const targets: string[] = [];
@@ -329,28 +263,29 @@ export const openCmd: Command = {
         return 1;
       }
 
-      const cmd = app || (stat.type === 'dir' ? 'code' : getAssociation(target)) || 'code';
-      const escaped = resolved.replace(/"/g, '\\"');
-      await ctx.shell.execute(
-        `${cmd} "${escaped}"`,
-        (d: string) => { ctx.stdout += d; },
-        (d: string) => { ctx.stderr += d; },
-      );
+      const cmd = app || getAssociation(target);
+      if (!cmd) {
+        ctx.stderr += `open: no browser handler for '${target}'; select native execution\n`;
+        return 2;
+      }
+      const result = await ctx.shell.execArgv([cmd,resolved]);
+      ctx.stdout += result.stdout;
+      ctx.stderr += result.stderr;
+      if (result.exitCode !== 0) return result.exitCode;
     }
     return 0;
   },
 };
 
 /**
- * Shiro-specific commands. Registered AFTER unix commands so they
- * take precedence where needed (rm, find, ln, etc.).
+ * Shiro-specific command owners included once in COMMAND_CATALOG.
  */
 export const shiroCmds: Command[] = [
-  rmCmd, lnCmd,
+  rmCmd, lnCmd, colCmd,
   hostnameCmd, unameCmd,
   whichCmd, typeCmd,
-  rmdirCmd, revCmd,
+  rmdirCmd,
   // cut and sha256sum come from cut.ts and hashsum.ts (GNU-compatible)
   shasumCmd,
-  openCmd, { name: 'xdg-open', description: 'Open a URL in the browser', exec: (ctx) => openCmd.exec(ctx) },
+  openCmd, { name: 'xdg-open', description: 'Open a URL in the browser', parityScope:'integration-only', exec: (ctx) => openCmd.exec(ctx) },
 ];

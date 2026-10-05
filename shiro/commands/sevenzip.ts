@@ -1,10 +1,8 @@
 import type { Command, CommandContext } from './index';
-
-// Emscripten build of 7-Zip's Alone2 CLI. Keep JS and WASM versions pinned together.
-const SEVENZIP_VERSION = '1.2.0';
-const SEVENZIP_CDN = `https://cdn.jsdelivr.net/npm/7z-wasm@${SEVENZIP_VERSION}`;
-const SEVENZIP_MODULE_URL = `${SEVENZIP_CDN}/7zz.es6.js`;
-const SEVENZIP_WASM_URL = `${SEVENZIP_CDN}/7zz.wasm`;
+import { ensureRuntimeDir, runtimeIsDirectory, runtimeIsLink, stageRuntimePath } from '../runtime-filesystem';
+import { sameBytes, bytesToText, textToBytes } from '../utils/bytes';
+import { verifyArtifact } from '../wasi-packages';
+import { SEVENZIP_ASSET_PINS } from '../wasi-artifact-pins';
 
 type SevenZipModule = {
   FS: any;
@@ -15,25 +13,34 @@ type SevenZipFactory = (options: Record<string, unknown>) => Promise<SevenZipMod
 let factoryPromise: Promise<{ factory: SevenZipFactory; wasmBinary: Uint8Array }> | null = null;
 
 /** Test hook for exercising the command without downloading the browser WASM bundle. */
-export function __setSevenZipForTest(factory: SevenZipFactory | null): void {
+export function __setSevenZipForTest(factory: SevenZipFactory | null, wasmBinary = new Uint8Array()): void {
   factoryPromise = factory
-    ? Promise.resolve({ factory, wasmBinary: new Uint8Array() })
+    ? Promise.resolve({ factory, wasmBinary })
     : null;
 }
 
 async function loadSevenZip(ctx: CommandContext): Promise<{ factory: SevenZipFactory; wasmBinary: Uint8Array }> {
   if (!factoryPromise) {
     factoryPromise = (async () => {
-      ctx.stdout += 'Loading 7-Zip WebAssembly (~1.7 MB, first use)...\n';
-      const [mod, response] = await Promise.all([
-        import(/* @vite-ignore */ SEVENZIP_MODULE_URL),
-        fetch(SEVENZIP_WASM_URL),
-      ]);
-      if (!response.ok) throw new Error(`failed to download 7zz.wasm: ${response.status} ${response.statusText}`);
+      ctx.shell.onProgress?.('Loading 7-Zip WebAssembly (~1.7 MB, first use)...');
+      const assets = [SEVENZIP_ASSET_PINS['7zz.es6.js'], SEVENZIP_ASSET_PINS['7zz.wasm']];
+      const [loader, wasm] = await Promise.all(assets.map(async pin => {
+        const response = await fetch(pin.url);
+        if (!response.ok) throw new Error(`failed to download 7-Zip asset: ${response.status} ${response.statusText}`);
+        const bytes = await response.arrayBuffer();
+        await verifyArtifact(bytes, pin);
+        return bytes;
+      }));
+      // Import only the verified loader, inside the opaque execution sandbox.
+      // Importing the CDN URL first would execute code before checking its hash.
+      const url = URL.createObjectURL(new Blob([loader], {type:'text/javascript'}));
+      let mod;
+      try { mod = await import(/* @vite-ignore */ url); }
+      finally { URL.revokeObjectURL(url); }
       const factory = (mod.default || mod.SevenZip) as SevenZipFactory | undefined;
       if (typeof factory !== 'function') throw new Error('7-Zip module did not export its Emscripten factory');
-      const wasmBinary = new Uint8Array(await response.arrayBuffer());
-      ctx.stdout += '7-Zip loaded.\n';
+      const wasmBinary = new Uint8Array(wasm);
+      ctx.shell.onProgress?.('7-Zip loaded.');
       return { factory, wasmBinary };
     })().catch((err) => {
       factoryPromise = null;
@@ -43,24 +50,6 @@ async function loadSevenZip(ctx: CommandContext): Promise<{ factory: SevenZipFac
   return factoryPromise;
 }
 
-function ensureWasmDir(FS: any, path: string): void {
-  let current = '';
-  for (const part of path.split('/').filter(Boolean)) {
-    current += `/${part}`;
-    try { FS.mkdir(current); } catch { /* already exists */ }
-  }
-}
-
-function fingerprint(bytes: Uint8Array): string {
-  // Fast change detection so unchanged staged files aren't written back to the workspace.
-  let hashA = 2166136261;
-  let hashB = 0x9747b28c;
-  for (const byte of bytes) {
-    hashA = Math.imul(hashA ^ byte, 16777619);
-    hashB = Math.imul(hashB ^ byte, 0x5bd1e995);
-  }
-  return `${bytes.byteLength}:${hashA >>> 0}:${hashB >>> 0}`;
-}
 
 function parentPath(path: string): string {
   return path.slice(0, path.lastIndexOf('/')) || '/';
@@ -103,33 +92,13 @@ async function stagePath(
   ctx: CommandContext,
   FS: any,
   path: string,
-  beforeFiles: Map<string, string>,
+  beforeFiles: Map<string, Uint8Array>,
   beforeDirs: Set<string>,
   visited: Set<string>,
 ): Promise<boolean> {
-  const resolved = ctx.fs.resolvePath(path, ctx.cwd);
-  if (visited.has(resolved)) return true;
-
-  let stat: any;
-  try { stat = await ctx.fs.lstat(resolved); } catch { return false; }
-  if (stat.isSymbolicLink?.()) return false;
-  visited.add(resolved);
-
-  if (stat.isDirectory()) {
-    ensureWasmDir(FS, resolved);
-    beforeDirs.add(resolved);
-    for (const name of await ctx.fs.readdir(resolved)) {
-      await stagePath(ctx, FS, `${resolved}/${name}`, beforeFiles, beforeDirs, visited);
-    }
-    return true;
-  }
-
-  const raw = await ctx.fs.readFile(resolved);
-  const bytes = typeof raw === 'string' ? new TextEncoder().encode(raw) : raw;
-  ensureWasmDir(FS, parentPath(resolved));
-  FS.writeFile(resolved, bytes);
-  beforeFiles.set(resolved, fingerprint(bytes));
-  return true;
+  return stageRuntimePath(FS,ctx.fs,ctx.fs.resolvePath(path,ctx.cwd), {
+    files:beforeFiles, dirs:beforeDirs, visited, allowMissing:true,
+  });
 }
 
 async function syncPath(
@@ -139,15 +108,18 @@ async function syncPath(
   currentFiles: Set<string>,
   currentDirs: Set<string>,
   visited: Set<string>,
-  beforeFiles: Map<string, string>,
+  beforeFiles: Map<string, Uint8Array>,
 ): Promise<void> {
   if (visited.has(path)) return;
   visited.add(path);
 
   let stat: any;
-  try { stat = FS.lstat ? FS.lstat(path) : FS.stat(path); } catch { return; }
-  if (stat.isSymbolicLink?.()) return;
-  if (stat.isDirectory()) {
+  try { stat = FS.lstat ? FS.lstat(path) : FS.stat(path); } catch(error:any) {
+    if (error.errno === 44 || /^ENOENT:/.test(error.message ?? '')) return;
+    throw error;
+  }
+  if (runtimeIsLink(FS,stat)) throw new Error(`Cannot synchronize symbolic link: ${path}`);
+  if (runtimeIsDirectory(FS,stat)) {
     currentDirs.add(path);
     await ctx.fs.mkdir(path, { recursive: true });
     for (const name of FS.readdir(path)) {
@@ -159,14 +131,15 @@ async function syncPath(
 
   const bytes = FS.readFile(path) as Uint8Array;
   currentFiles.add(path);
-  if (beforeFiles.get(path) !== fingerprint(bytes)) await ctx.fs.writeFile(path, bytes);
+  const before = beforeFiles.get(path);
+  if (!before || !sameBytes(before,bytes)) await ctx.fs.writeFile(path, bytes);
 }
 
 async function syncChanges(
   ctx: CommandContext,
   FS: any,
   roots: string[],
-  beforeFiles: Map<string, string>,
+  beforeFiles: Map<string, Uint8Array>,
   beforeDirs: Set<string>,
 ): Promise<void> {
   const uniqueRoots = [...new Set(roots)].sort((a, b) => a.length - b.length)
@@ -181,22 +154,18 @@ async function syncChanges(
 
   for (const path of beforeFiles.keys()) {
     if (!currentFiles.has(path) && uniqueRoots.some(root => path === root || path.startsWith(root.replace(/\/$/, '') + '/'))) {
-      try { await ctx.fs.unlink(path); } catch { /* already absent */ }
+      if (await ctx.fs.exists(path)) await ctx.fs.unlink(path);
     }
   }
   for (const path of [...beforeDirs].sort((a, b) => b.length - a.length)) {
     if (!currentDirs.has(path) && uniqueRoots.some(root => path === root || path.startsWith(root.replace(/\/$/, '') + '/'))) {
-      try { await ctx.fs.rmdir(path); } catch { /* still contains files or already absent */ }
+      if (await ctx.fs.exists(path)) await ctx.fs.rmdir(path);
     }
   }
 }
 
 async function runSevenZip(ctx: CommandContext): Promise<number> {
   const args = ctx.args;
-  if (args.length === 0) {
-    ctx.stdout = '7-Zip (Shiro WebAssembly)\nUsage: 7z <command> [switches...] archive [files...]\nCommands: a add, x extract with paths, e extract flat, l list, t test\n';
-    return 0;
-  }
 
   let loaded: { factory: SevenZipFactory; wasmBinary: Uint8Array };
   try {
@@ -206,30 +175,49 @@ async function runSevenZip(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const stdout: string[] = [];
-  const stderr: string[] = [];
+  const stdout: number[] = [];
+  const stderr: number[] = [];
+  const input = textToBytes(ctx.stdin);
+  let inputOffset = 0;
+  // Emscripten's line-oriented print callbacks decode UTF-8 and lose arbitrary
+  // extracted bytes. Its standard stream devices accept raw byte callbacks.
+  const printLine = (stream:number[], line:string) => {
+    for (const byte of textToBytes(line + '\n')) stream.push(byte);
+  };
+  const flushOutput = () => {
+    ctx.stdout += bytesToText(Uint8Array.from(stdout));
+    ctx.stderr += bytesToText(Uint8Array.from(stderr));
+    stdout.length = stderr.length = 0;
+  };
   let sevenZip: SevenZipModule;
   try {
     sevenZip = await loaded.factory({
       wasmBinary: loaded.wasmBinary,
-      locateFile: (path: string) => path.endsWith('.wasm') ? SEVENZIP_WASM_URL : `${SEVENZIP_CDN}/${path}`,
-      print: (line: string) => stdout.push(line),
-      printErr: (line: string) => stderr.push(line),
+      locateFile: (path:string) => {
+        if (path === '7zz.wasm') return SEVENZIP_ASSET_PINS['7zz.wasm'].url;
+        throw new Error(`7-Zip requested an undeclared runtime asset: ${path}`);
+      },
+      stdin: () => inputOffset < input.length ? input[inputOffset++] : null,
+      stdout: (byte:number) => { if (byte != null) stdout.push(byte); },
+      stderr: (byte:number) => { if (byte != null) stderr.push(byte); },
+      print: (line:string) => printLine(stdout,line),
+      printErr: (line:string) => printLine(stderr,line),
     });
   } catch (err: any) {
+    flushOutput();
     ctx.stderr += `7z: failed to initialize: ${err?.message || err}\n`;
     return 1;
   }
 
   const { command, operands, outputDir } = parseArgs(args);
   const FS = sevenZip.FS;
-  const beforeFiles = new Map<string, string>();
+  const beforeFiles = new Map<string, Uint8Array>();
   const beforeDirs = new Set<string>();
   const visited = new Set<string>();
   const syncRoots: string[] = [];
 
   try {
-    ensureWasmDir(FS, ctx.cwd);
+    ensureRuntimeDir(FS, ctx.cwd);
     FS.chdir(ctx.cwd);
 
     // Stage explicit archive/source paths. Directory inputs are copied recursively.
@@ -250,7 +238,7 @@ async function runSevenZip(ctx: CommandContext): Promise<number> {
       ? ctx.fs.resolvePath(operands[0], ctx.cwd)
       : null;
     if (archivePath) {
-      ensureWasmDir(FS, parentPath(archivePath));
+      ensureRuntimeDir(FS, parentPath(archivePath));
       syncRoots.push(archivePath);
     }
 
@@ -258,7 +246,7 @@ async function runSevenZip(ctx: CommandContext): Promise<number> {
     if (['x', 'e'].includes(command)) {
       const destination = outputDir ? ctx.fs.resolvePath(outputDir, ctx.cwd) : ctx.cwd;
       await stagePath(ctx, FS, destination, beforeFiles, beforeDirs, visited);
-      ensureWasmDir(FS, destination);
+      ensureRuntimeDir(FS, destination);
       syncRoots.push(destination);
     }
 
@@ -273,12 +261,10 @@ async function runSevenZip(ctx: CommandContext): Promise<number> {
     }
 
     await syncChanges(ctx, FS, syncRoots, beforeFiles, beforeDirs);
-    if (stdout.length) ctx.stdout += stdout.join('\n') + '\n';
-    if (stderr.length) ctx.stderr += stderr.join('\n') + '\n';
+    flushOutput();
     return exitCode;
   } catch (err: any) {
-    if (stdout.length) ctx.stdout += stdout.join('\n') + '\n';
-    if (stderr.length) ctx.stderr += stderr.join('\n') + '\n';
+    flushOutput();
     ctx.stderr += `7z: ${err?.message || err}\n`;
     try { await syncChanges(ctx, FS, syncRoots, beforeFiles, beforeDirs); } catch { /* retain original failure */ }
     return 1;

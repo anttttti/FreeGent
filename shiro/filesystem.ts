@@ -61,6 +61,7 @@ export interface FSNode {
   ctime: number;
   size: number;
   symlinkTarget?: string;
+  atime?: number;
 }
 
 export interface StatResult {
@@ -69,6 +70,7 @@ export interface StatResult {
   size: number;
   mtime: Date;
   ctime: Date;
+  atime: Date;
   isFile(): boolean;
   isDirectory(): boolean;
   isSymbolicLink(): boolean;
@@ -83,7 +85,7 @@ function makeStat(node: FSNode): StatResult {
     size: node.size,
     mtime,
     ctime,
-    atime: mtime,
+    atime: new Date(node.atime ?? node.mtime),
     birthtime: ctime,
     mtimeMs: mtime.getTime(),
     ctimeMs: ctime.getTime(),
@@ -624,7 +626,7 @@ export class FileSystem {
     await this.writeFile(path, combined);
   }
 
-  async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+  async mkdir(path: string, options?: { recursive?: boolean; mode?:number; parentMode?:number }): Promise<void> {
     if (options?.recursive) {
       const parts = path.split('/').filter(Boolean);
       let current = '';
@@ -632,7 +634,9 @@ export class FileSystem {
         current += '/' + part;
         const existing = await this._get(current);
         if (!existing) {
-          await this._put(this._makeNode(current, 'dir'));
+          const node = this._makeNode(current, 'dir');
+          node.mode = current === path.replace(/\/+$/,'') ? options.mode ?? 0o755 : options.parentMode ?? options.mode ?? 0o755;
+          await this._put(node);
           this._emitChange('mkdir', current);
         } else if (existing.type !== 'dir') {
           throw fsError('ENOTDIR', `ENOTDIR: not a directory '${current}'`);
@@ -649,7 +653,9 @@ export class FileSystem {
     if (!parent) throw fsError('ENOENT', `ENOENT: no such file or directory, mkdir '${path}'`);
     if (parent.type !== 'dir') throw fsError('ENOTDIR', `ENOTDIR: not a directory '${parentPath}'`);
 
-    await this._put(this._makeNode(path, 'dir'));
+    const node = this._makeNode(path, 'dir');
+    node.mode = options?.mode ?? 0o755;
+    await this._put(node);
     this._emitChange('mkdir', path);
   }
 
@@ -765,6 +771,12 @@ export class FileSystem {
     this._emitChange('rename', oldPath, newPath);
   }
 
+  async utimes(path:string, atime:Date, mtime:Date): Promise<void> {
+    const node = await this._get(path);
+    if (!node) throw Object.assign(new Error(`no such file: ${path}`), {code:'ENOENT'});
+    await this._put({...node, atime:atime.getTime(), mtime:mtime.getTime(), ctime:Date.now()});
+  }
+
   async chmod(path: string, mode: number): Promise<void> {
     const node = await this._get(path);
     if (!node) throw fsError('ENOENT', `ENOENT: no such file or directory, chmod '${path}'`);
@@ -868,4 +880,28 @@ export class FileSystem {
       },
     };
   }
+}
+
+const creationViews = new WeakMap<FileSystem,FileSystem>();
+/** Per-shell creation policy over the same storage; forks never mutate another shell's mask. */
+export function withCreationMask(source:FileSystem, mask:()=>number):FileSystem {
+  const fs = creationViews.get(source) ?? source;
+  const view = new Proxy(fs, {
+    get(target,key) {
+      if (key === 'writeFile') return async (path:string,data:Uint8Array|string,options?:{mode?:number}) => {
+        const existing = await target.exists(path);
+        return target.writeFile(path,data,existing ? undefined : {mode:(options?.mode ?? 0o666) & ~mask()});
+      };
+      if (key === 'appendFile') return async (path:string,data:Uint8Array|string) => {
+        if (!(await target.exists(path))) await target.writeFile(path,'',{mode:0o666 & ~mask()});
+        return target.appendFile(path,data);
+      };
+      if (key === 'mkdir') return (path:string,options?:{recursive?:boolean;mode?:number;parentMode?:number}) =>
+        target.mkdir(path,{...options,mode:(options?.mode ?? 0o777) & ~mask(),parentMode:(0o777 & ~mask()) | 0o300});
+      const value = Reflect.get(target,key,target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  creationViews.set(view,fs);
+  return view;
 }

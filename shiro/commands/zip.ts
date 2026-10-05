@@ -1,3 +1,4 @@
+import { transformBytes } from '../utils/streams';
 /**
  * zip / unzip — Info-ZIP compatible archives: stored and deflated entries, central directory,
  * CRC-32 checks, Unix modes, binary-safe contents. No encryption and no ZIP64 (4 GiB limits).
@@ -13,20 +14,8 @@ import { readdirEntries, statEntry } from './flags';
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-async function pump(stream: { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> }, data: Uint8Array): Promise<Uint8Array> {
-  const writer = stream.writable.getWriter();
-  const reader = stream.readable.getReader();
-  const chunks: Uint8Array[] = [];
-  const writing = writer.write(data).then(() => writer.close());
-  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-  await writing;
-  let n = 0; for (const c of chunks) n += c.length;
-  const out = new Uint8Array(n);
-  let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
-  return out;
-}
-const deflateRaw = (d: Uint8Array) => pump(new CompressionStream('deflate-raw') as any, d);
-const inflateRaw = (d: Uint8Array) => pump(new DecompressionStream('deflate-raw') as any, d);
+const deflateRaw = (d: Uint8Array) => transformBytes(new CompressionStream('deflate-raw') as any, d);
+const inflateRaw = (d: Uint8Array) => transformBytes(new DecompressionStream('deflate-raw') as any, d);
 
 interface Entry {
   name: string;

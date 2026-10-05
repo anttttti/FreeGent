@@ -65,6 +65,7 @@ function expandSet(s: string): string {
   // Handle escape sequences first: \n, \t, \\, \r, \a, \b, \f, \v
   let result = s
     .replace(/\\\\/g, "\x00ESC_BS\x00")
+    .replace(/\\([0-7]{1,3})/g, (_m, oct) => String.fromCharCode(parseInt(oct,8)))
     .replace(/\\n/g, "\n")
     .replace(/\\t/g, "\t")
     .replace(/\\r/g, "\r")

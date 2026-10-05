@@ -11,47 +11,16 @@
  */
 
 import { Shell } from './shell';
-import { CommandRegistry } from './commands/index';
-import { unixCommands } from './commands/unix';
-import { shellBuiltins } from './commands/shell-builtins';
-import { shiroCmds } from './commands/shiro-cmds';
-import { grepCmd } from './commands/grep';
-import { sedCmd } from './commands/sed';
-import { globCmd } from './commands/glob';
-import { jsEvalCmd } from './commands/jseval';
-import { nodeCmd } from './commands/jseval/node-cmd';
-import { pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd } from './commands/python';
-import { curlCmd, wgetCmd } from './commands/curl';
-import { npmCmd } from './commands/npm';
-import { npxCmd } from './commands/npx';
-import { diffCmd } from './commands/diff';
-import { jqCmd } from './commands/jq';
-import { rgCmd } from './commands/rg';
-import { gzipCmd, gunzipCmd } from './commands/gzip';
-import { xzCmd, unxzCmd, xzcatCmd } from './commands/xz';
-import { zstdCmd, unzstdCmd, zstdcatCmd } from './commands/zstd';
-import { bzip2Cmd, bunzip2Cmd, bzcatCmd } from './commands/bzip2';
-import { mkTempCmd } from './commands/mktemp';
-import { pkgCmd } from './commands/pkg';
-import { sevenZipCmd } from './commands/sevenzip';
+import { CommandRegistry, COMMAND_CATALOG } from './commands/index';
 import { FWFileSystem, WORKSPACE_MOUNT } from './fg-filesystem';
 
 let _shell: Shell | null = null;
 let _initPromise: Promise<Shell> | null = null;
+let _generation = 0;
 
 async function createShell(): Promise<Shell> {
-    // Build command registry
     const commands = new CommandRegistry();
-    commands.registerAll(unixCommands);
-    commands.registerAll(shellBuiltins);
-    commands.registerAll(shiroCmds);
-    // Individual commands registered with priority (override builtins)
-    commands.registerAll([grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd, curlCmd, wgetCmd]);
-    // Shiro commands the agent expects on a shell. Not registered: vi, tput, stty (interactive
-    // terminal only) and pgrep/pkill (shiro's process table isn't used here).
-    commands.registerAll([npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd,
-        pkgCmd, sevenZipCmd,
-        xzCmd, unxzCmd, xzcatCmd, zstdCmd, unzstdCmd, zstdcatCmd, bzip2Cmd, bunzip2Cmd, bzcatCmd]);
+    commands.registerAll(COMMAND_CATALOG);
 
     // Create FreeGent-backed filesystem
     const fs = new FWFileSystem();
@@ -75,11 +44,12 @@ export async function getShell(): Promise<Shell> {
     if (_shell) return _shell;
     if (_initPromise) return _initPromise;
 
-    _initPromise = createShell().then(s => {
-        _shell = s;
-        _initPromise = null;
+    const generation = _generation;
+    const pending = createShell().then(s => {
+        if (_generation === generation) _shell = s;
         return s;
-    });
+    }).finally(() => { if (_initPromise === pending) _initPromise = null; });
+    _initPromise = pending;
     return _initPromise;
 }
 
@@ -101,6 +71,7 @@ export async function newShell(): Promise<Shell> {
  * The next call to getShell() creates a fresh instance.
  */
 export function resetShell(): void {
+    _generation++;
     _shell = null;
     _initPromise = null;
 }

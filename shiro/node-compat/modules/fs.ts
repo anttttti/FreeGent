@@ -1,5 +1,13 @@
+import { withRuntimeLock } from '../../runtime-lock';
 import type { CommandContext } from '../../commands/index';
 import { bytesToText, textToBytes, toDisplayText } from '../../utils/bytes';
+
+/** Keep synchronous API effects in call order when persisting to the async workspace. */
+function queueFsOperation(pending: Promise<any>[], operation: () => Promise<any>): Promise<any> {
+  const result = withRuntimeLock(pending, operation);
+  result.catch(() => {}); // observed again by the command's pending-operation flush
+  return result;
+}
 
 export interface FsDeps {
   ctx: CommandContext;
@@ -107,10 +115,10 @@ export function createFsModule(deps: FsDeps): any {
   const materializeOpenFile = (resolved: string) => {
     const content = fileCache.get(resolved) || '';
     const parentDir = resolved.substring(0, resolved.lastIndexOf('/')) || '/';
-    pendingPromises.push((async () => {
-      await ctx.fs.mkdir(parentDir, { recursive: true }).catch(() => {});
+    pendingPromises.push(queueFsOperation(pendingPromises, () => (async () => {
+      await ctx.fs.mkdir(parentDir, { recursive: true });
       await ctx.fs.writeFile(resolved, content);
-    })().catch(() => {}));
+    })()));
   };
 
   // Synchronous shims that use cached data or throw
@@ -149,7 +157,7 @@ export function createFsModule(deps: FsDeps): any {
       // Skip IDB write for .tmp files — they're transient atomic-write intermediaries.
       // The data reaches IDB via renameSync which writes to the final path.
       if (!resolved.includes('.tmp.')) {
-        pendingPromises.push(ctx.fs.writeFile(resolved, strData).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(resolved, strData)));
       }
       // localStorage WAL for critical config files (survives page close before IndexedDB flushes)
       // Skip .tmp files — they'll be WAL'd when renamed to their final name
@@ -302,13 +310,13 @@ export function createFsModule(deps: FsDeps): any {
       } else {
         fileCache.set(resolved + '/.', '');
       }
-      pendingPromises.push(ctx.fs.mkdir(resolved, opts).catch(() => {}));
+      pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.mkdir(resolved, opts)));
     },
     unlinkSync: (p: string) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
       fileCache.delete(resolved);
       fileMtimes.delete(resolved);
-      pendingPromises.push(ctx.fs.unlink(resolved).catch(() => {}));
+      pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.unlink(resolved)));
     },
     copyFileSync: (src: string, dst: string) => {
       const srcRes = ctx.fs.resolvePath(src, ctx.cwd);
@@ -317,9 +325,9 @@ export function createFsModule(deps: FsDeps): any {
       const cached = fileCache.get(srcRes);
       if (cached !== undefined) {
         fileCache.set(dstRes, cached);
-        pendingPromises.push(ctx.fs.writeFile(dstRes, cached).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(dstRes, cached)));
       } else {
-        pendingPromises.push(ctx.fs.readFile(srcRes, 'utf8').then((data: any) => ctx.fs.writeFile(dstRes, data)).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.readFile(srcRes, 'utf8').then((data: any) => ctx.fs.writeFile(dstRes, data))));
       }
     },
     renameSync: (oldP: string, newP: string) => {
@@ -334,11 +342,11 @@ export function createFsModule(deps: FsDeps): any {
         fileMtimes.delete(oldRes);
         // Write directly to new path — avoids race where IDB write for
         // the source hasn't completed yet (atomic write pattern: write .tmp → rename)
-        pendingPromises.push(
+        pendingPromises.push(queueFsOperation(pendingPromises, () =>
           ctx.fs.writeFile(newRes, content)
-            .then(() => ctx.fs.unlink(oldRes).catch(() => {}))
-            .catch(() => {})
-        );
+            .then(async () => { if (await ctx.fs.exists(oldRes)) await ctx.fs.unlink(oldRes); })
+
+        ));
         // Update WAL: remove .tmp entry, add final file
         if (newRes.startsWith(homeDir + '/.claude') || newRes === homeDir + '/.claude.json') {
           try {
@@ -353,7 +361,7 @@ export function createFsModule(deps: FsDeps): any {
           fileCache.set(newRes, fsCached);
           fileMtimes.set(newRes, Date.now());
         }
-        pendingPromises.push(ctx.fs.rename(oldRes, newRes).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.rename(oldRes, newRes)));
       }
     },
     realpathSync: (p: string) => {
@@ -432,7 +440,7 @@ export function createFsModule(deps: FsDeps): any {
         const parentDir = resolved.substring(0, resolved.lastIndexOf('/'));
         if (parentDir && !fileCache.has(parentDir + '/.')) {
           fileCache.set(parentDir + '/.', '');
-          pendingPromises.push(ctx.fs.mkdir(parentDir, { recursive: true }).catch(() => {}));
+          pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.mkdir(parentDir, { recursive: true })));
         }
         materializeOpenFile(resolved);
       }
@@ -446,7 +454,7 @@ export function createFsModule(deps: FsDeps): any {
         const newContent = existing + str;
         fileCache.set(fdInfo.path, newContent);
         fileMtimes.set(fdInfo.path, Date.now());
-        pendingPromises.push(ctx.fs.writeFile(fdInfo.path, newContent).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(fdInfo.path, newContent)));
       }
       return typeof data === 'string' ? data.length : data.length;
     },
@@ -491,7 +499,7 @@ export function createFsModule(deps: FsDeps): any {
       const existing = fileCache.get(resolved) || '';
       const str = typeof data === 'string' ? data : bytesToText(data);
       fileCache.set(resolved, existing + str);
-      pendingPromises.push(ctx.fs.writeFile(resolved, existing + str).catch(() => {}));
+      pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(resolved, existing + str)));
     },
     symlinkSync: (target: string, path: string) => {
       const resolved = ctx.fs.resolvePath(path, ctx.cwd);
@@ -537,11 +545,11 @@ export function createFsModule(deps: FsDeps): any {
         const content = chunks.join('');
         fileCache.set(resolved, content);
         fileMtimes.set(resolved, Date.now());
-        pendingPromises.push(ctx.fs.writeFile(resolved, content).then(() => {
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(resolved, content).then(() => {
           ws.emit('finish');
           ws.emit('close');
           if (callback) callback();
-        }).catch((e: any) => ws.emit('error', e)));
+        }).catch((e: any) => ws.emit('error', e))));
       };
       return ws;
     },
@@ -575,7 +583,7 @@ export function createFsModule(deps: FsDeps): any {
       // Update fileCache so subsequent sync reads see the new data
       fileCache.set(resolved, strData);
       fileMtimes.set(resolved, Date.now());
-      pendingPromises.push(ctx.fs.writeFile(resolved, strData).catch(() => {}));
+      pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(resolved, strData)));
       queueMicrotask(() => callback?.(null));
     },
     stat: (p: string, optsOrCb?: any, cb?: any) => {
@@ -804,7 +812,7 @@ export function createFsModule(deps: FsDeps): any {
         const newContent = existing + str;
         fileCache.set(fdInfo.path, newContent);
         fileMtimes.set(fdInfo.path, Date.now());
-        pendingPromises.push(ctx.fs.writeFile(fdInfo.path, newContent).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(fdInfo.path, newContent)));
       }
       cb?.(null, len, buf);
     },
@@ -844,7 +852,7 @@ export function createFsModule(deps: FsDeps): any {
         const existing = fileCache.get(fdInfo.path) || '';
         const truncated = existing.slice(0, len);
         fileCache.set(fdInfo.path, truncated);
-        pendingPromises.push(ctx.fs.writeFile(fdInfo.path, truncated).catch(() => {}));
+        pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.writeFile(fdInfo.path, truncated)));
       }
       callback?.(null);
     },

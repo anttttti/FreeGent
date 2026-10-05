@@ -20,6 +20,18 @@ export const kill: Command = {
         "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU",
         "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"
       ];
+      if (flags.l && positional.length) {
+        let status = 0;
+        for (const input of positional) {
+          const normalized = input.toUpperCase().replace(/^SIG/,'');
+          const numeric = /^\d+$/.test(input);
+          const number = numeric ? Number(input) % 128 : signals.indexOf(normalized) + 1;
+          const name = signals[number - 1];
+          if (!name) {ctx.stderr += `bash: line ${ctx.shell.currentLine}: kill: ${input}: invalid signal specification\n`; status = 1;}
+          else ctx.stdout += `${numeric ? name : number}\n`;
+        }
+        return status;
+      }
 
       if (flags.L) {
         ctx.stdout += signals.map((sig, i) => `${i + 1}) SIG${sig}`).join("\n") + "\n";

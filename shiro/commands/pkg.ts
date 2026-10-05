@@ -6,7 +6,8 @@ import {
   downloadPackage,
   removePackage,
   findPackage,
-  clearModuleCache,
+  writePackageStubs,
+  removePackageStubs,
 } from '../wasi-packages';
 
 /**
@@ -21,44 +22,6 @@ import {
  *   pkg info <name>       Show package details
  */
 
-const PKG_BIN_DIR = '/usr/local/bin';
-
-/** Ensure /usr/local/bin exists in the virtual FS */
-async function ensureBinDir(fs: any): Promise<void> {
-  for (const dir of ['/usr', '/usr/local', PKG_BIN_DIR]) {
-    try {
-      await fs.stat(dir);
-    } catch {
-      await fs.mkdir(dir);
-    }
-  }
-}
-
-/** Write #!wasi-pkg stubs to /usr/local/bin for a package + its aliases */
-async function writePathStubs(ctx: CommandContext, pkgName: string): Promise<void> {
-  const pkg = findPackage(pkgName);
-  if (!pkg) return;
-  await ensureBinDir(ctx.fs);
-  // "#!wasi-pkg <package> [leading args...]": a multi-call alias such as gcat runs `coreutils cat`
-  await ctx.fs.writeFile(`${PKG_BIN_DIR}/${pkg.name}`, `#!wasi-pkg ${pkg.name}\n`);
-  for (const alias of pkg.aliases || []) {
-    const applet = pkg.multicall ? alias.replace(/^g/, '') : '';
-    await ctx.fs.writeFile(`${PKG_BIN_DIR}/${alias}`, `#!wasi-pkg ${pkg.name}${applet ? ' ' + applet : ''}\n`);
-  }
-}
-
-/** Remove #!wasi-pkg stubs from /usr/local/bin for a package + its aliases */
-async function removePathStubs(ctx: CommandContext, pkgName: string): Promise<void> {
-  const pkg = findPackage(pkgName);
-  if (!pkg) return;
-  const names = [pkg.name, ...(pkg.aliases || [])];
-  for (const cmdName of names) {
-    try {
-      await ctx.fs.unlink(`${PKG_BIN_DIR}/${cmdName}`);
-    } catch { /* ignore if not found */ }
-  }
-}
-
 async function pkgInstall(ctx: CommandContext): Promise<number> {
   const name = ctx.args[1];
   if (!name) {
@@ -71,7 +34,7 @@ async function pkgInstall(ctx: CommandContext): Promise<number> {
       ctx.stdout += msg + '\n';
     });
     // Write PATH stubs so the command is found via PATH lookup
-    await writePathStubs(ctx, name);
+    await writePackageStubs(ctx.fs, name);
     return 0;
   } catch (e: any) {
     ctx.stderr += `pkg install: ${e.message}\n`;
@@ -145,9 +108,8 @@ async function pkgRemove(ctx: CommandContext): Promise<number> {
   }
 
   try {
-    await removePathStubs(ctx, name);
     await removePackage(name);
-    clearModuleCache(name);
+    await removePackageStubs(ctx.fs, name);
     ctx.stdout += `Removed ${name}\n`;
     return 0;
   } catch (e: any) {
@@ -188,6 +150,7 @@ async function pkgInfo(ctx: CommandContext): Promise<number> {
 export const pkgCmd: Command = {
   name: 'pkg',
   description: 'WASM package manager',
+  parityScope:'integration-only',
 
   async exec(ctx: CommandContext): Promise<number> {
     const subcmd = ctx.args[0];

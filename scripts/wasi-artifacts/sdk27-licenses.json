@@ -1,0 +1,33 @@
+{
+  "wasi_libc_commit": "3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f",
+  "licenses": {
+    "public/shiro/wasm/WASI-LIBC-LICENSE": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/LICENSE",
+      "sha256": "2711a8b5a5cdfef0e639f96c1aca12ae23d7d64a02d0507f1bdf14d2b27bbc3a"
+    },
+    "public/shiro/wasm/WASI-LIBC-LICENSE-APACHE-LLVM": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/LICENSE-APACHE-LLVM",
+      "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5"
+    },
+    "public/shiro/wasm/WASI-LIBC-LICENSE-APACHE": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    "public/shiro/wasm/WASI-LIBC-LICENSE-MIT": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    "public/shiro/wasm/WASI-LIBC-libc-bottom-half-cloudlibc-LICENSE": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/libc-bottom-half/cloudlibc/LICENSE",
+      "sha256": "c8b789cf5a746611e6300a0cc7750dbf92b61912a709d04e639245f7290656d0"
+    },
+    "public/shiro/wasm/WASI-LIBC-libc-top-half-musl-COPYRIGHT": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/libc-top-half/musl/COPYRIGHT",
+      "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af"
+    },
+    "public/shiro/wasm/WASI-LIBC-fts-musl-fts-COPYING": {
+      "url": "https://raw.githubusercontent.com/WebAssembly/wasi-libc/3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f/fts/musl-fts/COPYING",
+      "sha256": "55af87e4017668f54467a3380e7ebbac5e672d8c763bfe95e6fc882a6fdc4046"
+    }
+  }
+}

@@ -8,6 +8,9 @@
  */
 
 import { compileWasm } from './wasm-module';
+import { ARTIFACT_PINS } from './wasi-artifact-pins';
+import type { FileSystem } from './filesystem';
+import type { Command, CommandContext } from './commands/index';
 
 // ── Package manifest types ───────────────────────────────────────────
 
@@ -31,6 +34,18 @@ export interface WasmPackage {
   /** Multi-call binary (uutils coreutils): the first argument selects the applet. Aliases are
    *  `g<applet>` names, and their PATH stubs pre-select that applet. */
   multicall?: boolean;
+  /** Separate atoms selected by a declared first-argument entrypoint. */
+  family?: boolean;
+  /** Family launchers may delegate declared commands to separately pinned packages. */
+  entrypoints?: string[];
+  /** Audited WASI SDK build initializes libc cwd from the authoritative PWD. */
+  initializesCwd?: boolean;
+  /** Defaults needed to locate immutable package resources; users may override them. */
+  resourceEnvironment?: Record<string,string>;
+  /** Explicit applet prefixes; aliases never infer argv by string manipulation. */
+  commandArgs?: Record<string, string[]>;
+  /** Exact upstream command when a compatibility alias has a different name. */
+  commandTargets?: Record<string,string>;
 }
 
 // ── Package manifest ─────────────────────────────────────────────────
@@ -38,15 +53,21 @@ export interface WasmPackage {
 // Verified working as of 2025-06.
 
 const PACKAGE_MANIFEST: WasmPackage[] = [
+  {name:'hexdump',description:'util-linux hexdump (upstream WASI CLI)',version:'2.37.2-fg1',url:'/shiro/wasm/hexdump-2.37.2.wasm',size:426420,category:'utility',format:'wasm',initializesCwd:true},
+  {name:'rev',description:'util-linux rev (upstream WASI CLI)',version:'2.37.2-fg1',url:'/shiro/wasm/rev-2.37.2.wasm',size:303780,category:'utility',format:'wasm',initializesCwd:true},
+  {name:'cal',description:'BSD calendar (upstream WASI CLI)',version:'12.1.7-fg1',url:'/shiro/wasm/cal-12.1.7.wasm',size:389040,category:'utility',format:'wasm',initializesCwd:true},
+  {name:'bc',description:'GNU bc (upstream WASI CLI)',version:'1.07.1',url:'/shiro/wasm/bc-1.07.1.wasm',size:360751,category:'tool',format:'wasm',initializesCwd:true},
+  {name:'dc',description:'GNU dc (upstream WASI CLI)',version:'1.07.1',url:'/shiro/wasm/dc-1.07.1.wasm',size:334804,category:'tool',format:'wasm',initializesCwd:true},
+
   // ── Fun / Demo ───────────────────────────────────────────────────
   {
     name: 'cowsay',
     description: 'Generate ASCII pictures of a cow with a message',
-    version: '0.3.0',
-    url: 'https://cdn.wasmer.io/webcimages/c7e7487ac3a41c18862f0bc76e8af0def0f12c4167d6fce5c1cc1b5d061f6bb7.webc',
-    size: 776_000,
+    version: '0.3.0-fg1',
+    url: '/shiro/wasm/cowsay-0.3.0-fg1.wasm',
+    size: 432352,
     category: 'utility',
-    format: 'webc',
+    format: 'wasm',
   },
   {
     name: 'fortune',
@@ -68,6 +89,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
   },
   {
     name: 'figlet',
+    resourceEnvironment: {FIGLET_FONTDIR:'/fonts'},
     description: 'Create large ASCII text banners',
     version: '0.0.1',
     url: 'https://cdn.wasmer.io/webcimages/9fc959de4ce58c6c2bc11b8cbaa0a1a471bcde84a0fe341cffc25a42251d91c9.webc',
@@ -78,14 +100,15 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
   // ── Core Utilities ───────────────────────────────────────────────
   {
     name: 'coreutils',
-    description: '90+ GNU coreutils: ls, cat, head, tail, wc, sort, base64, hashsum, etc.',
-    version: '1.0.16',
-    url: 'https://cdn.wasmer.io/webcimages/59b01ca057218b8ab51cab83546d22b729e015d6cf519b2383cc68bce67ef750.webc',
-    size: 4_796_000,
+    description: 'Upstream uutils coreutils multicall (WASI)',
+    version: 'a6d1eb3835c0f808fa9678e4551df7377bcab8d3',
+    url: 'https://uutils.org/wasm/uutils.wasm',
+    size: 12_964_555,
     category: 'coreutil',
     aliases: ['gls', 'gcat', 'ghead', 'gtail', 'gwc', 'gsort', 'guniq', 'gbase64', 'ghashsum'],
-    format: 'webc',
+    format: 'wasm',
     multicall: true,
+    commandArgs: { gls:['ls'], gcat:['cat'], ghead:['head'], gtail:['tail'], gwc:['wc'], gsort:['sort'], guniq:['uniq'], gbase64:['base64'], ghashsum:['sha256sum'] },
   },
   {
     name: 'grep',
@@ -95,6 +118,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 365_000,
     category: 'coreutil',
     aliases: ['wasm-grep'],
+    commandTargets: { 'wasm-grep':'grep' },
     format: 'webc',
   },
   {
@@ -105,7 +129,18 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 263_000,
     category: 'coreutil',
     aliases: ['wasm-sed'],
+    commandTargets: { 'wasm-sed':'sed' },
     format: 'webc',
+  },
+  {
+    name:'jq', description:'jq JSON processor (upstream WASI CLI)', version:'1.8.2', initializesCwd:true,
+    url:'/shiro/wasm/jq-1.8.2.wasm',size: 1535250,category:'tool',format:'wasm',
+  },
+  {
+    name:'zstd', description:'Zstandard reference CLI (WASI, single thread)', version:'1.4.8', initializesCwd:true,
+    url:'/shiro/wasm/zstd-1.4.8.wasm', size: 950591, category:'utility', format:'wasm',
+    aliases:['unzstd','zstdcat'], commandTargets:{unzstd:'zstd',zstdcat:'zstd'},
+    commandArgs:{unzstd:['-d'],zstdcat:['-dc']},
   },
   // ── Languages ────────────────────────────────────────────────────
   {
@@ -116,16 +151,18 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 2_565_000,
     category: 'language',
     aliases: ['qjs'],
+    commandTargets: { qjs:'quickjs' },
     format: 'webc',
   },
   {
     name: 'lua',
-    description: 'Lua scripting language interpreter',
-    version: '0.1.4',
-    url: 'https://cdn.wasmer.io/webcimages/44324fc895e8be1cbe46368f78053c982052d82a9dbbbc1feac8c0a75bec1176.webc',
-    size: 522_000,
+    initializesCwd: true,
+    description: 'Lua scripting language interpreter (upstream WASI CLI)',
+    version: '5.3.6',
+    url: '/shiro/wasm/lua-5.3.6.wasm',
+    size: 646508,
     category: 'language',
-    format: 'webc',
+    format: 'wasm',
   },
   // ── Tools ────────────────────────────────────────────────────────
   {
@@ -136,6 +173,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 3_576_000,
     category: 'tool',
     aliases: ['sqlite3'],
+    commandTargets: { sqlite3:'sqlite' },
     format: 'webc',
   },
   {
@@ -149,12 +187,14 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
   },
   {
     name: 'util-linux',
+    family: true,
     description: 'Linux utilities: hexdump, cal, rev, col',
     version: '0.0.1',
     url: 'https://cdn.wasmer.io/webcimages/3af9902aebda64554afa9b05c8726d3d183ba5c1ac57d902637e3894f3187c98.webc',
     size: 543_000,
     category: 'utility',
-    aliases: ['hexdump', 'cal', 'rev'],
+    aliases: ['hexdump', 'rev'],
+    entrypoints: ['hexdump', 'cal', 'rev'],
     format: 'webc',
   },
   // ── Shells ──────────────────────────────────────────────────────────
@@ -185,6 +225,8 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
     size: 34_300_000,
     category: 'language',
     aliases: ['irb'],
+    commandTargets: { irb:'ruby' },
+    commandArgs: { irb:['-rirb', '-e', 'IRB.start', '--'] },
     format: 'webc',
   },
   {
@@ -208,6 +250,7 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
   },
   {
     name: 'wabt',
+    family: true,
     description: 'WebAssembly Binary Toolkit: wat2wasm, wasm2wat, wasm-validate',
     version: '1.0.37',
     url: 'https://cdn.wasmer.io/webcimages/28b90a71338d161324ec4187d7afeb08df0eb98181e7e51c83f3f3f9a4cd1522.webc',
@@ -261,6 +304,45 @@ const PKG_CACHE_STORE = 'packages';
 const PKG_META_STORE = 'metadata';
 const PKG_DB_VERSION = 1;
 
+export interface PackageCacheRequest {
+  op:'get'|'put'|'delete'|'keys'|'load'; store:'packages'|'metadata'; key?:string; value?:unknown;
+}
+let cacheTransport: ((request:PackageCacheRequest)=>Promise<any>) | null = null;
+/** The opaque frame delegates only this public-artifact cache to the page. */
+export function setPackageCacheTransport(transport:typeof cacheTransport): void { cacheTransport = transport; }
+
+/** Page-side boundary: fixed database/stores, reviewed artifact identities, verified bytes. */
+export async function handlePackageCacheRequest(request:PackageCacheRequest): Promise<unknown> {
+  if (!request || !['get','put','delete','keys','load'].includes(request.op) || !['packages','metadata'].includes(request.store)) throw new Error('Package cache operation not allowed');
+  const allowedKeys = new Map(PACKAGE_MANIFEST.flatMap(pkg => [[pkg.name,pkg],[artifactKey(pkg),pkg]] as const));
+  if (request.op === 'keys') return (await idbGetAllKeys(request.store)).filter(key=>allowedKeys.has(key));
+  if (typeof request.key !== 'string' || !allowedKeys.has(request.key)) throw new Error('Package cache key not allowed');
+  const pkg = allowedKeys.get(request.key)!;
+  if (request.store === 'metadata' && request.key !== pkg.name) throw new Error('Package metadata key not allowed');
+  switch (request.op) {
+    case 'load': {
+      if (request.store !== 'packages' || request.key !== artifactKey(pkg) || !pkg.url.startsWith('/shiro/wasm/')) throw new Error('Only reviewed local package assets can be loaded');
+      const bytes = await loadLocalArtifact(pkg);
+      await verifyArtifact(bytes,ARTIFACT_PINS[pkg.name]);
+      return bytes;
+    }
+    case 'get': return idbGet(request.store,request.key);
+    case 'delete': await idbDelete(request.store,request.key); return true;
+    case 'put': {
+      if (request.store === 'packages') {
+        if (request.key !== artifactKey(pkg) || !(request.value instanceof ArrayBuffer)) throw new Error('Package cache requires complete pinned artifact bytes');
+        await verifyArtifact(request.value,ARTIFACT_PINS[pkg.name]);
+        await idbPut(request.store,request.key,request.value);
+      } else {
+        const value = request.value as any;
+        if (!value || value.name !== pkg.name || value.version !== pkg.version || value.artifact !== artifactKey(pkg) || value.size !== ARTIFACT_PINS[pkg.name].length || !Number.isFinite(value.installedAt)) throw new Error('Invalid package metadata');
+        await idbPut(request.store,request.key,{name:pkg.name,version:pkg.version,artifact:artifactKey(pkg),size:value.size,installedAt:value.installedAt});
+      }
+      return true;
+    }
+  }
+}
+
 function openPkgDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(PKG_CACHE_DB, PKG_DB_VERSION);
@@ -279,6 +361,7 @@ function openPkgDB(): Promise<IDBDatabase> {
 }
 
 async function idbGet<T>(store: string, key: string): Promise<T | null> {
+  if (cacheTransport) return cacheTransport({op:'get',store:store as PackageCacheRequest['store'],key});
   try {
     const db = await openPkgDB();
     return new Promise((resolve) => {
@@ -295,15 +378,16 @@ async function idbGet<T>(store: string, key: string): Promise<T | null> {
 }
 
 async function idbPut(store: string, key: string, value: any): Promise<void> {
+  if (cacheTransport) {await cacheTransport({op:'put',store:store as PackageCacheRequest['store'],key,value}); return;}
   try {
     const db = await openPkgDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
       const s = tx.objectStore(store);
       const req = s.put(value, key);
-      req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
+      tx.oncomplete = () => {db.close(); resolve();};
+      tx.onabort = () => {db.close(); reject(tx.error);};
     });
   } catch {
     // Non-fatal — cache miss next time
@@ -311,15 +395,16 @@ async function idbPut(store: string, key: string, value: any): Promise<void> {
 }
 
 async function idbDelete(store: string, key: string): Promise<void> {
+  if (cacheTransport) {await cacheTransport({op:'delete',store:store as PackageCacheRequest['store'],key}); return;}
   try {
     const db = await openPkgDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
       const s = tx.objectStore(store);
       const req = s.delete(key);
-      req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
+      tx.oncomplete = () => {db.close(); resolve();};
+      tx.onabort = () => {db.close(); reject(tx.error);};
     });
   } catch {
     // Non-fatal
@@ -327,6 +412,7 @@ async function idbDelete(store: string, key: string): Promise<void> {
 }
 
 async function idbGetAllKeys(store: string): Promise<string[]> {
+  if (cacheTransport) return cacheTransport({op:'keys',store:store as PackageCacheRequest['store']});
   try {
     const db = await openPkgDB();
     return new Promise((resolve) => {
@@ -344,94 +430,11 @@ async function idbGetAllKeys(store: string): Promise<string[]> {
 
 // ── WebC extraction ─────────────────────────────────────────────────
 
-/** WASM magic bytes: \0asm */
-const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
-
-/**
- * Extract a WASM binary from a Wasmer WebC container.
- * Scans for the WASM magic bytes (\0asm) and returns the largest
- * contiguous WASM module found. If none found, returns null.
- */
-export function extractWasmFromWebc(webc: ArrayBuffer): ArrayBuffer | null {
-  const bytes = new Uint8Array(webc);
-  const candidates: ArrayBuffer[] = [];
-
-  for (let i = 0; i <= bytes.length - 8; i++) {
-    if (
-      bytes[i] === WASM_MAGIC[0] &&
-      bytes[i + 1] === WASM_MAGIC[1] &&
-      bytes[i + 2] === WASM_MAGIC[2] &&
-      bytes[i + 3] === WASM_MAGIC[3] &&
-      // WASM version 1
-      bytes[i + 4] === 0x01 &&
-      bytes[i + 5] === 0x00 &&
-      bytes[i + 6] === 0x00 &&
-      bytes[i + 7] === 0x00
-    ) {
-      // Walk WASM sections to find exact end of module
-      const moduleEnd = findWasmModuleEnd(bytes, i);
-      if (moduleEnd > i + 8) {
-        candidates.push(webc.slice(i, moduleEnd));
-      }
-    }
-  }
-
-  if (candidates.length === 0) return null;
-  // Return the largest WASM module (the main binary, not embedded metadata)
-  return candidates.reduce((a, b) => a.byteLength > b.byteLength ? a : b);
-}
-
-/** Canonical position of each non-custom section id; sections must appear in increasing order. */
-// type, import, function, table, memory, tag, global, export, start, element, datacount, code, data
-const SECTION_ORDER: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 13: 6, 6: 7, 7: 8, 8: 9, 9: 10, 12: 11, 10: 12, 11: 13 };
-
-/**
- * Walk WASM sections from `offset` to find where the module ends.
- * Each section: 1-byte id + LEB128 size + `size` bytes of payload.
- *
- * Bytes after the module (in a WebC: the rest of the atoms volume) can still look like
- * well-formed sections, so the walk enforces section order and then picks the last section
- * boundary at which the slice is a valid module.
- */
-function findWasmModuleEnd(bytes: Uint8Array, offset: number): number {
-  const boundaries: number[] = [];
-  let pos = offset + 8; // skip magic + version
-  let lastOrder = 0;
-  while (pos < bytes.length) {
-    const sectionId = bytes[pos];
-    if (sectionId !== 0) {
-      const order = SECTION_ORDER[sectionId];
-      if (order === undefined || order <= lastOrder) break;
-      lastOrder = order;
-    }
-    const { value: sectionSize, bytesRead } = readLEB128(bytes, pos + 1);
-    if (bytesRead === 0 || sectionSize < 0) break;
-    const end = pos + 1 + bytesRead + sectionSize;
-    if (end > bytes.length) break;
-    pos = end;
-    boundaries.push(pos);
-  }
-  if (boundaries.length === 0) return offset + 8;
-  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.validate !== 'function') return boundaries[boundaries.length - 1];
-  for (let i = boundaries.length - 1, tries = 0; i >= 0 && tries < 12; i--, tries++) {
-    if (WebAssembly.validate(bytes.subarray(offset, boundaries[i]) as unknown as BufferSource)) return boundaries[i];
-  }
-  return boundaries[boundaries.length - 1];
-}
-
-function readLEB128(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
-  let result = 0;
-  let shift = 0;
-  let bytesRead = 0;
-  while (offset + bytesRead < bytes.length) {
-    const byte = bytes[offset + bytesRead];
-    result |= (byte & 0x7f) << shift;
-    bytesRead++;
-    if ((byte & 0x80) === 0) break;
-    shift += 7;
-    if (shift > 35) return { value: -1, bytesRead: 0 }; // overflow
-  }
-  return { value: result, bytesRead };
+/** Extract only a declared atom after the caller verified the complete container hash. */
+export function extractWasmFromWebc(webc:ArrayBuffer, atom:{offset:number; length:number}): ArrayBuffer | null {
+  if (!Number.isSafeInteger(atom.offset) || !Number.isSafeInteger(atom.length) || atom.offset < 0 || atom.length < 8 || atom.offset + atom.length > webc.byteLength) return null;
+  const binary = webc.slice(atom.offset,atom.offset + atom.length);
+  return WebAssembly.validate(binary) ? binary : null;
 }
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -442,6 +445,60 @@ export function findPackage(name: string): WasmPackage | undefined {
     p => p.name === name || p.aliases?.includes(name)
   );
 }
+
+/** One package command mapping, shared by discovery, installation and execution. */
+export function resolvePackageCommand(name: string): { package: WasmPackage; atom:string; argv0: string; leadingArgs: string[] } | undefined {
+  const pkg = findPackage(name);
+  if (!pkg) return undefined;
+  if (pkg.family && name === pkg.name) return undefined;
+  const pin = ARTIFACT_PINS[pkg.name];
+  const target = pkg.commandTargets?.[name] ?? (pkg.commandArgs?.[name] && pkg.multicall ? pkg.name : name);
+  const atom = pin.commands[target] ?? (target === pkg.name && pin.atoms[target] ? target : undefined);
+  return atom ? { package:pkg, atom, argv0:target, leadingArgs:[...(pkg.commandArgs?.[name] ?? [])] } : undefined;
+}
+
+export async function writePackageStubs(fs: FileSystem, name: string): Promise<void> {
+  const pkg = findPackage(name);
+  if (!pkg) throw new Error(`Unknown package: ${name}`);
+  await fs.mkdir('/usr/local/bin', { recursive:true });
+  for (const command of [pkg.name, ...(pkg.aliases ?? [])]) {
+    if (!resolvePackageCommand(command) && !(pkg.family && command === pkg.name)) continue;
+    const path = `/usr/local/bin/${command}`;
+    if (await fs.exists(path)) {
+      const current = await fs.readFile(path,'utf8');
+      if (typeof current !== 'string' || !current.startsWith('#!wasi-pkg ') || findPackage(current.split('\n')[0].slice(11).split(/\s+/)[0])?.name !== pkg.name) throw new Error(`Package stub conflicts with existing executable: ${path}`);
+    }
+    await fs.writeFile(path, `#!wasi-pkg ${command}\n`,{mode:0o755});
+    await fs.chmod(path,0o755);
+  }
+}
+
+export async function removePackageStubs(fs: FileSystem, name: string): Promise<void> {
+  const pkg = findPackage(name);
+  if (!pkg) throw new Error(`Unknown package: ${name}`);
+  for (const command of [pkg.name, ...(pkg.aliases ?? [])]) {
+    const path = `/usr/local/bin/${command}`;
+    try {
+      // Never delete a user's executable just because its filename matches an alias.
+      const content = await fs.readFile(path, 'utf8');
+      if (typeof content === 'string' && content.startsWith('#!wasi-pkg ') && findPackage(content.split('\n')[0].slice(11).split(/\s+/)[0])?.name === pkg.name) await fs.unlink(path);
+    } catch (e: any) { if (e.code !== 'ENOENT') throw e; }
+  }
+}
+
+/** Integrity is checked before any offsets are trusted, including cached artifacts. */
+export async function verifyArtifact(raw:ArrayBuffer, pin:{length:number; sha256:string}): Promise<void> {
+  if (raw.byteLength !== pin.length) throw new Error(`Artifact length mismatch: expected ${pin.length}, received ${raw.byteLength}`);
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256',raw));
+  const hex = Array.from(hash,b => b.toString(16).padStart(2,'0')).join('');
+  if (hex !== pin.sha256) throw new Error('Artifact SHA-256 mismatch');
+}
+
+function artifactKey(pkg: WasmPackage): string { return `${pkg.format ?? 'wasm'}:${pkg.name}@${pkg.version}:${ARTIFACT_PINS[pkg.name].sha256}`; }
+const binaries = new Map<string, ArrayBuffer>();
+const downloads = new Map<string, Promise<ArrayBuffer>>();
+const compiling = new Map<string, Promise<WebAssembly.Module>>();
+const resources = new Map<string,[string,Uint8Array][]>();
 
 /** Search packages by query string (matches name and description) */
 export function searchPackages(query: string): WasmPackage[] {
@@ -457,12 +514,15 @@ export function listAvailable(): WasmPackage[] {
   return [...PACKAGE_MANIFEST];
 }
 
-/** Get cached WASM binary. Returns null if not cached. */
+/** Get the cached complete pinned artifact. Returns null if not cached. */
 export async function getCachedPackage(name: string): Promise<ArrayBuffer | null> {
-  return idbGet<ArrayBuffer>(PKG_CACHE_STORE, name);
+  const pkg = findPackage(name);
+  if (!pkg) return null;
+  const key = artifactKey(pkg);
+  return binaries.get(key) ?? await idbGet<ArrayBuffer>(PKG_CACHE_STORE, key);
 }
 
-/** Download a package, cache it, and return the binary */
+/** Download and cache the complete pinned artifact, including all atoms/resources. */
 export async function downloadPackage(
   name: string,
   onProgress?: (msg: string) => void,
@@ -472,51 +532,70 @@ export async function downloadPackage(
     throw new Error(`Package '${name}' not found in registry`);
   }
 
+  const key = artifactKey(pkg);
+  let pending = downloads.get(key);
+  if (!pending) {
+    pending = downloadArtifact(pkg, onProgress).finally(() => downloads.delete(key));
+    downloads.set(key, pending);
+  }
+  return pending;
+}
+
+/** Trusted manifest paths only; the opaque frame requests bytes through the existing cache RPC. */
+async function loadLocalArtifact(pkg:WasmPackage):Promise<ArrayBuffer> {
+  if (cacheTransport) return cacheTransport({op:'load',store:'packages',key:artifactKey(pkg)});
+  if ((globalThis as any).process?.versions?.node) {
+    const fsModule = 'node:fs/promises';
+    const {readFile} = await import(/* @vite-ignore */ fsModule);
+    const data = await readFile(new URL('../public'+pkg.url,import.meta.url));
+    return data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength);
+  }
+  const response = await fetch(new URL(pkg.url,document.baseURI));
+  if (!response.ok) throw new Error(`${pkg.name}: local artifact HTTP ${response.status}`);
+  return response.arrayBuffer();
+}
+
+async function downloadArtifact(pkg: WasmPackage, onProgress?: (msg:string) => void): Promise<ArrayBuffer> {
   // Check cache first
   const cached = await getCachedPackage(pkg.name);
   if (cached) {
+    try { await verifyArtifact(cached, ARTIFACT_PINS[pkg.name]); }
+    catch (e) {
+      binaries.delete(artifactKey(pkg));
+      await idbDelete(PKG_CACHE_STORE,artifactKey(pkg));
+      await idbDelete(PKG_META_STORE,pkg.name);
+      throw e;
+    }
+    binaries.set(artifactKey(pkg), cached);
     onProgress?.(`${pkg.name} (cached)`);
     return cached;
   }
 
   // Download
-  const sizeStr = pkg.size > 1_000_000
-    ? `${(pkg.size / 1_000_000).toFixed(1)}MB`
-    : `${(pkg.size / 1_000).toFixed(0)}KB`;
+  const size = ARTIFACT_PINS[pkg.name].length;
+  const sizeStr = size > 1_000_000 ? `${(size / 1_000_000).toFixed(1)}MB` : `${(size / 1_000).toFixed(0)}KB`;
   onProgress?.(`Downloading ${pkg.name} v${pkg.version} (${sizeStr})...`);
 
-  const resp = await fetch(pkg.url);
-  if (!resp.ok) {
-    throw new Error(`Failed to download ${pkg.name}: ${resp.status} ${resp.statusText}`);
-  }
-  const raw = await resp.arrayBuffer();
-
-  // Extract WASM from WebC container if needed
-  let binary: ArrayBuffer;
-  if (pkg.format === 'webc') {
-    onProgress?.(`Extracting WASM from WebC container...`);
-    const extracted = extractWasmFromWebc(raw);
-    if (!extracted) {
-      throw new Error(`Failed to extract WASM binary from ${pkg.name} WebC container`);
-    }
-    binary = extracted;
-  } else {
-    binary = raw;
+  let raw:ArrayBuffer;
+  if (pkg.url.startsWith('/shiro/wasm/')) raw = await loadLocalArtifact(pkg);
+  else {
+    const resp = await fetch(pkg.url);
+    if (!resp.ok) throw new Error(`Failed to download ${pkg.name}: ${resp.status} ${resp.statusText}`);
+    raw = await resp.arrayBuffer();
   }
 
-  // Validate WASM magic
-  const magic = new Uint8Array(binary, 0, 4);
-  if (magic[0] !== 0x00 || magic[1] !== 0x61 || magic[2] !== 0x73 || magic[3] !== 0x6d) {
-    throw new Error(`Downloaded file for ${pkg.name} is not a valid WASM binary`);
-  }
+  await verifyArtifact(raw, ARTIFACT_PINS[pkg.name]);
+  const binary = raw;
 
   // Cache for next time
-  await idbPut(PKG_CACHE_STORE, pkg.name, binary);
+  binaries.set(artifactKey(pkg), binary);
+  await idbPut(PKG_CACHE_STORE, artifactKey(pkg), binary);
   await idbPut(PKG_META_STORE, pkg.name, {
     name: pkg.name,
     version: pkg.version,
     installedAt: Date.now(),
     size: binary.byteLength,
+    artifact: artifactKey(pkg),
   });
 
   onProgress?.(`Installed ${pkg.name} v${pkg.version}`);
@@ -528,7 +607,14 @@ export async function getPackage(
   name: string,
   onProgress?: (msg: string) => void,
 ): Promise<ArrayBuffer> {
-  return downloadPackage(name, onProgress);
+  const mapping = resolvePackageCommand(name);
+  if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
+  const raw = await downloadPackage(mapping.package.name, onProgress);
+  const atom = ARTIFACT_PINS[mapping.package.name].atoms[mapping.atom];
+  const binary = extractWasmFromWebc(raw,atom);
+  if (!binary) throw new Error(`Invalid or unsupported WASM atom: ${mapping.atom}`);
+  await verifyArtifact(binary,atom);
+  return binary;
 }
 
 /** List installed (cached) packages with metadata */
@@ -537,15 +623,22 @@ export async function listInstalled(): Promise<Array<{ name: string; version: st
   const results: Array<{ name: string; version: string; installedAt: number; size: number }> = [];
   for (const key of keys) {
     const meta = await idbGet<{ name: string; version: string; installedAt: number; size: number }>(PKG_META_STORE, key);
-    if (meta) results.push(meta);
+    if (meta && (meta as any).artifact === (findPackage(meta.name) ? artifactKey(findPackage(meta.name)!) : null)) results.push(meta);
   }
   return results;
 }
 
 /** Remove a package from cache */
 export async function removePackage(name: string): Promise<void> {
-  await idbDelete(PKG_CACHE_STORE, name);
-  await idbDelete(PKG_META_STORE, name);
+  const pkg = findPackage(name);
+  if (!pkg) throw new Error(`Unknown package: ${name}`);
+  if (downloads.has(artifactKey(pkg)) || [...compiling.keys()].some(k => k.startsWith(artifactKey(pkg) + ':'))) throw new Error(`Package ${pkg.name} is currently loading`);
+  clearModuleCache(pkg.name);
+  binaries.delete(artifactKey(pkg));
+  resources.delete(artifactKey(pkg));
+  await idbDelete(PKG_CACHE_STORE, artifactKey(pkg));
+  await idbDelete(PKG_CACHE_STORE, pkg.name); // discard legacy name-only records
+  await idbDelete(PKG_META_STORE, pkg.name);
 }
 
 /** Check if a command name matches an available package */
@@ -565,20 +658,97 @@ export async function getCompiledModule(
   name: string,
   onProgress?: (msg: string) => void,
 ): Promise<WebAssembly.Module> {
-  const cached = moduleCache.get(name);
+  const pkg = findPackage(name);
+  if (!pkg) throw new Error(`Unknown package: ${name}`);
+  const mapping = resolvePackageCommand(name);
+  if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
+  const key = artifactKey(pkg) + ':' + mapping.atom;
+  const cached = moduleCache.get(key);
   if (cached) return cached;
-
-  const binary = await getPackage(name, onProgress);
-  const mod = await compileWasm(binary);
-  moduleCache.set(name, mod);
-  return mod;
+  let pending = compiling.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const binary = await getPackage(name, onProgress);
+      const module = await compileWasm(binary);
+      moduleCache.set(key, module);
+      return module;
+    })().finally(() => compiling.delete(key));
+    compiling.set(key, pending);
+  }
+  return pending;
 }
 
 /** Clear the compiled module cache (e.g., after package removal) */
 export function clearModuleCache(name?: string): void {
   if (name) {
-    moduleCache.delete(name);
+    const pkg = findPackage(name);
+    if (pkg) for (const key of moduleCache.keys()) if (key.startsWith(artifactKey(pkg) + ':')) moduleCache.delete(key);
   } else {
     moduleCache.clear();
   }
+}
+
+async function packageResources(name:string): Promise<[string,Uint8Array][]> {
+  const pkg = findPackage(name)!;
+  const key = artifactKey(pkg);
+  let files = resources.get(key);
+  if (!files) {
+    const raw = await downloadPackage(pkg.name);
+    files = Object.entries(ARTIFACT_PINS[pkg.name].resources).map(([path,slice]) => [path,new Uint8Array(raw.slice(slice.offset,slice.offset + slice.length))]);
+    resources.set(key,files);
+  }
+  return files;
+}
+
+/** One execution adapter for catalog commands, lazy packages, and installed PATH stubs. */
+export async function runPackageCommand(ctx:CommandContext, name:string, args=ctx.args): Promise<number> {
+  const pkg = findPackage(name);
+  if (pkg?.family && name === pkg.name) {
+    const entrypoints = pkg.entrypoints ?? pkg.aliases ?? [];
+    const [entry,...rest] = args;
+    if (!entry || !entrypoints.includes(entry) || !resolvePackageCommand(entry)) {
+      ctx.stderr += `${name}: expected an entrypoint: ${entrypoints.join(', ')}\n`;
+      return 2;
+    }
+    name = entry;
+    args = rest;
+  }
+  const mapping = resolvePackageCommand(name);
+  if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
+  const module = await getCompiledModule(name, ctx.shell.onProgress);
+  await writePackageStubs(ctx.fs, mapping.package.name);
+  const resourceFiles = await packageResources(mapping.package.name);
+  const preopens:Record<string,string> = {'/':'/'};
+  if (!mapping.package.initializesCwd) {
+    preopens['.'] = ctx.cwd;
+    // Older libc versions treat "." as a logical root. Explicit directory
+    // preopens keep absolute workspace/runtime/resource paths unambiguous.
+    for (const name of await ctx.fs.readdir('/')) {
+      const path = '/' + name;
+      if ((await ctx.fs.stat(path)).isDirectory()) preopens[path] = path;
+    }
+    for (const [path] of resourceFiles) {
+      const root = '/' + path.split('/')[1];
+      preopens[root] = root;
+    }
+  }
+  return ctx.shell.execWasmModule(module, {
+    fs:ctx.fs, cwd:ctx.cwd, env:{...mapping.package.resourceEnvironment,...ctx.env,PWD:ctx.cwd}, resources:resourceFiles,
+    args:[mapping.argv0, ...mapping.leadingArgs, ...args], stdin:ctx.stdin,
+    onStdout:s => {ctx.stdout += s;}, onStderr:s => {ctx.stderr += s;},
+    preopens, trace:(globalThis as any).__fgWasiTrace,
+  });
+}
+
+export function packageCommand(name:string, target=name): Command {
+  const pkg = findPackage(target);
+  if (!pkg) throw new Error(`Unknown package command: ${target}`);
+  return {name, description:pkg.description, route:'wasm', requirements:['Worker','complete filesystem snapshot'], exec:ctx => runPackageCommand(ctx,target)};
+}
+
+/** A package containing separate programs requires a declared subcommand, not an arbitrary atom. */
+export function packageFamilyCommand(name:string):Command {
+  const pkg = findPackage(name);
+  if (!pkg?.family) throw new Error(`Unknown package family: ${name}`);
+  return {...packageCommand(name),route:'adapter'};
 }

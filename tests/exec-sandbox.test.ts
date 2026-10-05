@@ -35,6 +35,21 @@ describe('exec sandbox host', () => {
         expect(frame.srcdoc).toContain('fg-exec-sandbox.js');
     });
 
+    it('delivers progress only for its own frame and pending call, outside result streams', async () => {
+        const onProgress = vi.fn();
+        const call = sandboxCall('bash', {code:'echo hi'}, 1000, onProgress);
+        await vi.waitFor(() => expect(posted.some(m => m.fg === 'call')).toBe(true));
+        const id = posted.find(m => m.fg === 'call').id;
+        fromFrame({fg:'progress',id,message:'ignored'},window);
+        fromFrame({fg:'progress',id:id+1,message:'ignored'});
+        fromFrame({fg:'progress',id,message:'Downloading grep'});
+        expect(onProgress).toHaveBeenCalledExactlyOnceWith('Downloading grep');
+        fromFrame({fg:'reply',id,value:{stdout:'hi\n',stderr:'',exit_code:0}});
+        expect(await call).toEqual({stdout:'hi\n',stderr:'',exit_code:0});
+        fromFrame({fg:'progress',id,message:'late'});
+        expect(onProgress).toHaveBeenCalledOnce();
+    });
+
     it('answers allowed workspace operations from its frame', async () => {
         W.agentListFiles = vi.fn(async () => [{ name: 'a.txt' }]);
         fromFrame({ fg: 'ws', id: 7, op: 'agentListFiles', args: [] });
@@ -46,6 +61,16 @@ describe('exec sandbox host', () => {
         for (const op of ['eval', 'loadServerKeys', 'executeToolAsync', 'localStorage'])
             fromFrame({ fg: 'ws', id: 8, op, args: [] });
         await vi.waitFor(() => expect(posted.filter(m => m.error?.startsWith('workspace op not allowed'))).toHaveLength(4));
+    });
+
+    it('limits the artifact cache to its own frame and reviewed public artifacts', async () => {
+        fromFrame({fg:'package-cache',id:101,request:{op:'get',store:'chats',key:'secret'}});
+        fromFrame({fg:'package-cache',id:102,request:{op:'get',store:'packages',key:'secret'}});
+        fromFrame({fg:'package-cache',id:103,request:{op:'put',store:'packages',key:'grep',value:new ArrayBuffer(0)}});
+        fromFrame({fg:'package-cache',id:104,request:{op:'keys',store:'packages'}},window);
+        await vi.waitFor(() => expect(posted.filter(m=>m.fg === 'package-cache-reply')).toHaveLength(3));
+        expect(posted.filter(m=>m.fg === 'package-cache-reply').every(m=>typeof m.error === 'string')).toBe(true);
+        expect(posted.some(m=>m.id === 104)).toBe(false);
     });
 
     describe('network fallback', () => {

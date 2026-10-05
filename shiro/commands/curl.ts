@@ -1,10 +1,10 @@
 // curl / wget for the browser shell. Requests go through sandboxFetch (exec-sandbox/net.ts):
 // direct first, and a plain GET the browser refuses (CORS) is retried through FreeGent's fetch
-// proxy. Only the common options are supported. Output to stdout is decoded as UTF-8 text — shell
-// stdout is a string — so binary downloads need -o / -O.
+// proxy. Shell byte strings preserve binary data in requests, stdout and file downloads.
 
 import type { Command, CommandContext } from './index';
 import { sandboxFetch, VIA_PROXY_HEADER } from '../../exec-sandbox/net';
+import { bytesToText, textToBytes } from '../utils/bytes';
 
 interface Req {
   url: string;
@@ -51,7 +51,7 @@ async function run(ctx: CommandContext, name: string, req: Req): Promise<number>
     resp = await sandboxFetch(req.url, {
       method: req.method,
       headers: req.headers,
-      ...(req.body !== undefined && { body: req.body }),
+      ...(req.body !== undefined && { body: textToBytes(req.body) as BodyInit }),
     });
   } catch (e: any) {
     const proxied = (req.method === 'GET' || req.method === 'HEAD') && req.body === undefined;
@@ -71,7 +71,7 @@ async function run(ctx: CommandContext, name: string, req: Req): Promise<number>
     return h + '\n';
   };
   if (req.fail && resp.status >= 400) {
-    err(`(22) The requested URL returned error: ${resp.status}`);
+    if (name !== 'wget') err(`(22) The requested URL returned error: ${resp.status}`);
     return 22;
   }
   const bytes = req.method === 'HEAD' ? new Uint8Array() : new Uint8Array(await resp.arrayBuffer());
@@ -81,7 +81,7 @@ async function run(ctx: CommandContext, name: string, req: Req): Promise<number>
     await ctx.fs.writeFile(ctx.fs.resolvePath(out, ctx.cwd), bytes);
     if (name === 'wget' && !req.silent) ctx.stderr += `'${out}' saved [${bytes.length}]\n`;
   } else {
-    ctx.stdout += new TextDecoder().decode(bytes);
+    ctx.stdout += bytesToText(bytes);
   }
   if (req.writeOut) {
     ctx.stdout += req.writeOut
@@ -161,7 +161,7 @@ export const wgetCmd: Command = {
       else if (arg.startsWith('-O') && arg.length > 2) { req.output = arg.slice(2); req.remoteName = false; }
       else if (arg === '-qO-' || arg === '-qO') { req.silent = true; req.output = arg === '-qO-' ? '-' : (a[++i] ?? '-'); req.remoteName = false; }
       else if (arg === '-q' || arg === '--quiet') req.silent = true;
-      else if (arg === '--header') { const h = a[++i] ?? ''; const c = h.indexOf(':'); if (c > 0) req.headers[h.slice(0, c).trim()] = h.slice(c + 1).trim(); }
+      else if (arg === '--header' || arg.startsWith('--header=')) { const h = arg === '--header' ? a[++i] ?? '' : arg.slice(9); const c = h.indexOf(':'); if (c > 0) req.headers[h.slice(0, c).trim()] = h.slice(c + 1).trim(); }
       else if (arg === '--help' || arg === '-h') { ctx.stdout = 'Usage: wget [-q] [-O FILE|-] [--header "K: V"] URL\n'; return 0; }
       else if (arg.startsWith('-')) { /* ignore other flags (-c, --no-check-certificate, …) */ }
       else req.url = arg;

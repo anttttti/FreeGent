@@ -20,7 +20,7 @@ export const sleep: Command = {
     const match = input.match(/^(\d+(?:\.\d+)?)(s|m|h|d)?$/);
 
     if (!match) {
-      ctx.stderr += `sleep: invalid time interval '${input}'\n`;
+      ctx.stderr += `sleep: invalid time interval ‘${input}’\nTry 'sleep --help' for more information.\n`;
       return 1;
     }
 

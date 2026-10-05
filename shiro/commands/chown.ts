@@ -1,45 +1,22 @@
-
 import type { Command } from './index';
-import { parseArgs } from './flags';
+
 export const chown: Command = {
-  name: "chown",
-  description: "Change file owner and group",
+  name:'chown', description:'Change ownership (requires native filesystem execution)',
+  route:'native-only', parityScope:'capability-only', requirements:['filesystem ownership'],
   async exec(ctx) {
-    const args = ctx.args;
-    const { flags, positional } = parseArgs(args);
-
-    if (positional.length < 2) {
-      ctx.stderr += "chown: missing operand\n";
+    const operands = ctx.args.filter(arg => arg !== '--' && !arg.startsWith('-'));
+    const files = operands.slice(1);
+    if (operands.length < 2) {
+      ctx.stderr += 'chown: missing operand\n';
       return 1;
     }
-
-    const ownerGroup = positional[0];
-    const targets = positional.slice(1);
-    const recursive = flags.R;
-    const verbose = flags.v;
-
-    // Parse owner:group
-    const parts = ownerGroup.split(":");
-    const owner = parts[0] || null;
-    const group = parts[1] || null;
-
-    const output: string[] = [];
-
-    try {
-      // In browser environment, chown is a no-op (no actual file ownership)
-      // We just acknowledge the command for script compatibility
-
-      for (const target of targets) {
-        if (verbose) {
-          output.push(`ownership of '${target}' retained as ${ownerGroup}`);
-        }
+    for (const file of files) {
+      if (!(await ctx.fs.exists(ctx.fs.resolvePath(file, ctx.cwd)))) {
+        ctx.stderr += `chown: cannot access '${file}': No such file or directory\n`;
+        return 1;
       }
-
-      ctx.stdout += output.join("\n") + (output.length > 0 ? "\n" : "");
-      return 0;
-    } catch (e: unknown) {
-      ctx.stderr += `chown: ${e instanceof Error ? e.message : e}\n`;
-      return 1;
     }
+    ctx.stderr += 'chown: workspace ownership changes are unavailable in the browser; select native execution\n';
+    return 1;
   },
 };

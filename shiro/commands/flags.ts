@@ -4,6 +4,19 @@
 
 import type { FileSystem } from '../filesystem';
 
+/** Stable CLI wording for filesystem errors; unknown storage failures retain their message. */
+export function filesystemError(error: unknown): string {
+  const code = (error as {code?:string})?.code;
+  const messages: Record<string,string> = {ENOENT:'No such file or directory', ENOTDIR:'Not a directory',
+    EISDIR:'Is a directory', EACCES:'Permission denied', EPERM:'Operation not permitted', EEXIST:'File exists'};
+  return messages[code ?? ''] ?? (error instanceof Error ? error.message : String(error));
+}
+
+/** GNU's default shell quoting leaves ordinary path operands bare. */
+export function quoteOperand(path: string): string {
+  return /[^\w./:+,-]/.test(path) ? "'" + path.replace(/'/g, "'\\''") + "'" : path;
+}
+
 export interface ParsedArgs {
   flags: Record<string, boolean>;
   values: Record<string, string>;
@@ -31,7 +44,10 @@ export function parseArgs(args: string[], valueFlags: string[] = []): ParsedArgs
 
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (valueFlagSet.has(name) && i + 1 < args.length) {
+      const eq = name.indexOf('=');
+      if (eq > 0 && valueFlagSet.has(name.slice(0,eq))) {
+        values[name.slice(0,eq)] = name.slice(eq+1);
+      } else if (valueFlagSet.has(name) && i + 1 < args.length) {
         values[name] = args[++i];
       } else {
         flags[name] = true;
@@ -191,7 +207,7 @@ export async function readOperands(
   for (const f of files.length ? files : ['-']) {
     if (f === '-') { out.push({ name: '-', text: ctx.stdin }); continue; }
     try { out.push({ name: f, text: await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string }); }
-    catch { ctx.stderr += `${cmd}: ${f}: No such file or directory\n`; out.failed = true; }
+    catch (error) { ctx.stderr += cmd === 'head' || cmd === 'tail' ? `${cmd}: cannot open '${f}' for reading: ${filesystemError(error)}\n` : `${cmd}: ${quoteOperand(f)}: ${filesystemError(error)}\n`; out.failed = true; }
   }
   return out;
 }

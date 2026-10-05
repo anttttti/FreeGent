@@ -757,7 +757,7 @@ async function npmList(ctx: CommandContext): Promise<number> {
 }
 
 async function npmRun(ctx: CommandContext): Promise<number> {
-  const scriptName = ctx.args[1];
+  const scriptName = ctx.args.slice(1).find(arg => !arg.startsWith('-'));
 
   if (!scriptName) {
     // List available scripts
@@ -767,7 +767,7 @@ async function npmRun(ctx: CommandContext): Promise<number> {
       const content = await ctx.fs.readFile(pkgPath, 'utf8') as string;
       pkg = JSON.parse(content);
     } catch {
-      ctx.stderr += 'npm: package.json not found.\n';
+      if (!ctx.args.includes('--silent') && !ctx.args.includes('-s')) ctx.stderr += 'npm: package.json not found.\n';
       return 1;
     }
 
@@ -792,7 +792,7 @@ async function npmRun(ctx: CommandContext): Promise<number> {
     const content = await ctx.fs.readFile(pkgPath, 'utf8') as string;
     pkg = JSON.parse(content);
   } catch {
-    ctx.stderr += 'npm: package.json not found.\n';
+    if (!ctx.args.includes('--silent') && !ctx.args.includes('-s')) ctx.stderr += 'npm: package.json not found.\n';
     return 1;
   }
 
@@ -806,8 +806,10 @@ async function npmRun(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  ctx.stdout += `> ${pkg.name}@${pkg.version} ${scriptName}\n`;
-  ctx.stdout += `> ${script}\n\n`;
+  if (!ctx.args.includes('--silent') && !ctx.args.includes('-s')) {
+    ctx.stdout += `> ${pkg.name}@${pkg.version} ${scriptName}\n`;
+    ctx.stdout += `> ${script}\n\n`;
+  }
 
   // Execute the script via the shell
   const exitCode = await ctx.shell.execute(script,

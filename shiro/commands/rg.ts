@@ -12,7 +12,7 @@ export const rgCmd: Command = {
   async exec(ctx: CommandContext) {
     let ignoreCase = false;
     let invertMatch = false;
-    let lineNumbers = true; // rg shows line numbers by default
+    let lineNumbers = !!ctx.terminal;
     let countOnly = false;
     let filesOnly = false;
     let listFiles = false; // --files mode (Glob tool)
@@ -285,7 +285,7 @@ export const rgCmd: Command = {
 
     let found = false;
     const searchPaths = paths.length > 0 ? paths : [ctx.cwd];
-    const multiFile = true; // rg always shows filenames by default
+    const multiFile = searchPaths.length > 1 || (await ctx.fs.stat(ctx.fs.resolvePath(searchPaths[0],ctx.cwd)).catch(()=>null))?.isDirectory();
     const showFilename = !noFilename && (forceFilename || multiFile);
 
     const searchFile = async (filePath: string, displayPath: string) => {
@@ -332,7 +332,7 @@ export const rgCmd: Command = {
       const sorted = [...allLineNums].sort((a, b) => a - b);
       let lastLn = -2;
       for (const ln of sorted) {
-        if (lastLn >= 0 && ln > lastLn + 1) ctx.stdout += '--\n'; // separator
+        if ((afterCtx || beforeCtx) && lastLn >= 0 && ln > lastLn + 1) ctx.stdout += '--\n';
         const prefix = showFilename ? displayPath + ':' : '';
         const lineNum = lineNumbers ? (ln + 1) + ':' : '';
         const sep = matchedLineNums.has(ln) ? '' : '';

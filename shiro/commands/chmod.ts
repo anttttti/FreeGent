@@ -5,46 +5,7 @@
  */
 import type { Command } from './index';
 import { parseArgs, readdirEntries, statEntry } from './flags';
-function applySymbolicMode(modeStr: string, currentMode: number): number | null {
-  const clauses = modeStr.split(',');
-  let mode = currentMode;
-
-  for (const clause of clauses) {
-    const m = clause.match(/^([ugoa]*)([+\-=])([rwxXst]*)$/);
-    if (!m) return null;
-    const [, who, op, perms] = m;
-
-    // Default: no who specified = 'a' (all)
-    const targets = who || 'ugo';
-
-    // Build permission bits
-    let bits = 0;
-    if (perms.includes('r')) bits |= 4;
-    if (perms.includes('w')) bits |= 2;
-    if (perms.includes('x')) bits |= 1;
-    if (perms.includes('X')) {
-      // X = execute only if directory or already has execute
-      if ((currentMode & 0o111) !== 0) bits |= 1;
-    }
-
-    // Apply to each target
-    for (const t of targets) {
-      let shift = 0;
-      if (t === 'u') shift = 6;
-      else if (t === 'g') shift = 3;
-      else if (t === 'o') shift = 0;
-
-      const shifted = bits << shift;
-      switch (op) {
-        case '+': mode |= shifted; break;
-        case '-': mode &= ~shifted; break;
-        case '=': mode = (mode & ~(7 << shift)) | shifted; break;
-      }
-    }
-  }
-
-  return mode;
-}
+import { applySymbolicMode } from '../utils/permissions';
 
 export const chmod: Command = {
   name: "chmod",
@@ -77,7 +38,8 @@ export const chmod: Command = {
 
     async function chmodPath(path: string, mode: number): Promise<void> {
       const resolved = ctx.fs.resolvePath(path, ctx.cwd);
-      await ctx.fs.chmod(resolved, mode);
+      try { await ctx.fs.chmod(resolved, mode); }
+      catch(error:any) { if (error.code === 'ENOENT') throw new Error(`cannot access '${path}': No such file or directory`); throw error; }
       if (recursive) {
         try {
           const stat = await statEntry(ctx.fs, resolved);
@@ -109,7 +71,7 @@ export const chmod: Command = {
           const stat = await statEntry(ctx.fs, resolved);
           currentMode = stat.mode;
         } catch { /* use default */ }
-        const newMode = applySymbolicMode(modeStr, currentMode);
+        const newMode = applySymbolicMode(modeStr, currentMode,{directory:(await ctx.fs.stat(resolved)).isDirectory(),umask:ctx.shell.umask});
         if (newMode === null) {
           ctx.stderr += `chmod: invalid mode: '${modeStr}'\n`;
           return 1;

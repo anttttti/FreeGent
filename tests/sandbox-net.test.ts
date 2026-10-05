@@ -90,7 +90,7 @@ describe('curl', () => {
         const c = ctx(['-X', 'PUT', '-H', 'Authorization: Bearer t', '-d', 'a=1', 'https://api.example.com/x']);
         expect(await curlCmd.exec(c)).toBe(0);
         expect(directFetch).toHaveBeenCalledWith('https://api.example.com/x',
-            { method: 'PUT', headers: { Authorization: 'Bearer t' }, body: 'a=1' });
+            { method: 'PUT', headers: { Authorization: 'Bearer t' }, body: new TextEncoder().encode('a=1') });
     });
 
     it('-f fails on HTTP errors, -w prints the status', async () => {

@@ -1,3 +1,4 @@
+import { transformBytes } from '../utils/streams';
 /**
  * tar — create, append, list and extract archives (POSIX ustar, GNU long names, pax paths).
  *
@@ -29,24 +30,6 @@ interface Entry {
 
 // ── compression ──────────────────────────────────────────────────────
 
-async function pump(stream: { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> }, data: Uint8Array): Promise<Uint8Array> {
-  const writer = stream.writable.getWriter();
-  const reader = stream.readable.getReader();
-  const chunks: Uint8Array[] = [];
-  const writing = writer.write(data).then(() => writer.close());
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  await writing;
-  let total = 0;
-  for (const c of chunks) total += c.length;
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const c of chunks) { out.set(c, o); o += c.length; }
-  return out;
-}
 
 function detectCodec(b: Uint8Array): Codec {
   if (b[0] === 0x1f && b[1] === 0x8b) return 'gzip';
@@ -56,22 +39,22 @@ function detectCodec(b: Uint8Array): Codec {
   return 'none';
 }
 
-async function decompress(codec: Codec, data: Uint8Array): Promise<Uint8Array> {
+async function decompress(codec: Codec, data: Uint8Array,ctx:CommandContext): Promise<Uint8Array> {
   switch (codec) {
-    case 'gzip': return pump(new DecompressionStream('gzip') as any, data);
+    case 'gzip': return transformBytes(new DecompressionStream('gzip') as any, data);
     case 'bzip2': return (await import('./bzip2')).bzip2Decompress(data);
     case 'xz': return (await import('./xz')).xzDecompress(data);
-    case 'zstd': return (await import('./zstd')).zstdDecompress(data);
+    case 'zstd': return (await import('./zstd')).zstdDecompress(data,ctx);
     default: return data;
   }
 }
 
-async function compress(codec: Codec, data: Uint8Array): Promise<Uint8Array> {
+async function compress(codec: Codec, data: Uint8Array,ctx:CommandContext): Promise<Uint8Array> {
   switch (codec) {
-    case 'gzip': return pump(new CompressionStream('gzip') as any, data);
+    case 'gzip': return transformBytes(new CompressionStream('gzip') as any, data);
     case 'bzip2': return (await import('./bzip2')).bzip2Compress(data);
     case 'xz': return (await import('./xz')).xzCompress(data);
-    case 'zstd': return (await import('./zstd')).zstdCompress(data);
+    case 'zstd': return (await import('./zstd')).zstdCompress(data,ctx);
     default: return data;
   }
 }
@@ -446,7 +429,7 @@ export const tar: Command = {
         if (o.mode === 'r') {
           let existing: Uint8Array;
           try { const raw = await ctx.fs.readFile(archivePath); existing = typeof raw === 'string' ? textToBytes(raw) : raw; }
-          catch { return fail(`${o.file}: Cannot open: No such file or directory`); }
+          catch { return fail(`${o.file}: Cannot open: No such file or directory\ntar: Error is not recoverable: exiting now`); }
           if (detectCodec(existing) !== 'none') return fail('Cannot update compressed archives');
           let end = existing.length;
           while (end >= BLOCK && existing.subarray(end - BLOCK, end).every(x => x === 0)) end -= BLOCK;
@@ -457,7 +440,7 @@ export const tar: Command = {
         let off = 0;
         for (const b of body) { archive.set(b, off); off += b.length; }
         archive.set(TRAILER(), off);
-        archive = await compress(codec, archive);
+        archive = await compress(codec, archive,ctx);
         if (stdio) ctx.stdout += bytesToText(archive);
         else await ctx.fs.writeFile(archivePath, archive);
         return hadError ? (ctx.stderr += 'tar: Exiting with failure status due to previous errors\n', 2) : 0;
@@ -468,12 +451,12 @@ export const tar: Command = {
       if (stdio) raw = textToBytes(ctx.stdin);
       else {
         try { const r = await ctx.fs.readFile(ctx.fs.resolvePath(o.file!, ctx.cwd)); raw = typeof r === 'string' ? textToBytes(r) : r; }
-        catch { return fail(`${o.file}: Cannot open: No such file or directory`); }
+        catch { return fail(`${o.file}: Cannot open: No such file or directory\ntar: Error is not recoverable: exiting now`); }
       }
       if (typeof raw !== 'object') return fail('invalid archive');
       if (raw.length === 0) return 0;
       let data: Uint8Array;
-      try { data = await decompress(detectCodec(raw), raw); }
+      try { data = await decompress(detectCodec(raw), raw,ctx); }
       catch (e: any) { return fail(`${e?.message ?? e}`); }
       const head = dec.decode(data.subarray(0, 13));
       if (head === 'FLUFFY-TAR-V1') {

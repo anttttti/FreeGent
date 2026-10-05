@@ -1,11 +1,21 @@
-import { FileSystem } from './filesystem';
+import { FileSystem, withCreationMask } from './filesystem';
 import type { CommandRegistry, CommandContext } from './commands/index';
 import type { ShiroTerminal } from './terminal';
 import { recordCommand } from './favicon';
-import { isAvailableAsPackage, getCompiledModule } from './wasi-packages';
+import { isAvailableAsPackage, getCompiledModule, resolvePackageCommand, writePackageStubs, runPackageCommand } from './wasi-packages';
 import { ereToJs } from './utils/posix-regex';
-import { sprintf as cSprintf } from './commands/awk';
-import { bytesToText, byteChar, normalizeBytes } from './utils/bytes';
+import { bytesToText, byteChar, normalizeBytes, textToBytes } from './utils/bytes';
+import { filesystemError } from './commands/flags';
+import { ULIMIT_UNAVAILABLE } from './commands/ulimit';
+import { processUmask } from './commands/umask';
+
+export const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'fi', 'case', 'esac', 'for', 'select', 'while', 'until', 'do', 'done',
+      'in', 'function', 'time', '{', '}', '!', '[[', ']]', 'coproc'];
+export const SHELL_BUILTINS = ['alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'cd', 'command', 'compgen', 'complete', 'compopt',
+      'continue', 'declare', 'dirs', 'disown', 'echo', 'enable', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg',
+      'getopts', 'hash', 'help', 'history', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd',
+      'pwd', 'read', 'readarray', 'readonly', 'return', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'times', 'trap',
+      'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'wait', '.', ':', '['];
 
 // Lazy-load the WASI runtime (~960 lines) only when WASM execution is needed
 let _wasiRuntime: typeof import('./wasi-runtime') | null = null;
@@ -36,6 +46,7 @@ const SECRET_ENV_KEYS = [
 ];
 
 interface CompletionSpec {
+  options?: string[];
   words?: string[];
   funcName?: string;
   action?: string;
@@ -51,9 +62,28 @@ class ContinueSignal { constructor(public levels: number = 1) {} }
 class ReturnSignal { constructor(public code: number = 0) {} }
 
 export class Shell {
+  private static processSubstitutionSequence = 0;
+  /** Loading status is UI information, never part of a program's byte streams. */
+  onProgress?: (message: string) => void;
   fs: FileSystem;
   cwd: string = '/home/user';
-  env: Record<string, string> = {};
+  private envValues: Record<string,string> = {};
+  private temporaryPath = false;
+  get env(): Record<string,string> { return this.envValues; }
+  set env(value:Record<string,string>) {
+    this.commandHashes?.clear();
+    this.envValues = new Proxy(value, {
+      set:(target,key,value) => {
+        if (key === 'PATH') this.commandHashes.clear();
+        return Reflect.set(target,key,value);
+      },
+      deleteProperty:(target,key) => {
+        if (key === 'PATH') this.commandHashes.clear();
+        return Reflect.deleteProperty(target,key);
+      },
+    });
+  }
+  umask: number = 0o022;
   history: string[] = [];
   commands: CommandRegistry;
   lastExitCode: number = 0;
@@ -65,7 +95,7 @@ export class Shell {
   private heredocBodies = new Map<string, string>();
   backgroundJobs: Map<number, BackgroundJob> = new Map();
   /** Shell options: errexit (-e), xtrace (-x), nounset (-u), verbose (-v) */
-  options: Set<string> = new Set();
+  options: Set<string> = new Set(['hashall']);
   /** Bash-style indexed arrays */
   arrays: Map<string, string[]> = new Map();
   /** Bash-style associative arrays (declare -A) */
@@ -93,20 +123,23 @@ export class Shell {
   /** File descriptors for `read -u FD` and `exec N< file` */
   fileDescriptors: Map<number, { content: string; offset: number }> = new Map();
   /** Coproc state: { name, pid, output } */
-  coproc: { name: string; pid: number; output: string } | null = null;
   /** Abort controller for the currently running command (SIGINT) */
   abortController: AbortController | null = null;
   /** Current line number for LINENO tracking */
   currentLine: number = 1;
   /** Depth of execute() recursion — only top-level resets LINENO */
   private executeDepth: number = 0;
+  private requestedExit: number | null = null;
+  private stdoutFile: string | null = null;
+  /** Terminate the current script, including enclosing functions and loops. */
+  requestExit(status: number): void { this.requestedExit = status; }
   /** File writes of built-in output under > / >> (see execute), in order. */
   private redirectWrites: Promise<void> = Promise.resolve();
   private nextJobId = 1;
   private terminal?: ShiroTerminal;
 
   constructor(fs: FileSystem, commands: CommandRegistry) {
-    this.fs = fs;
+    this.fs = withCreationMask(fs,() => this.umask);
     this.commands = commands;
     this.env = {
       HOME: '/home/user',
@@ -159,6 +192,7 @@ export class Shell {
    */
   setTerminal(terminal: ShiroTerminal): void {
     this.terminal = terminal;
+    this.shoptopts.add('expand_aliases');
   }
 
   /**
@@ -186,7 +220,14 @@ export class Shell {
   fork(): Shell {
     const child = new Shell(this.fs, this.commands);
     child.cwd = this.cwd;
+    child.stdoutFile = this.stdoutFile;
+    child.onProgress = this.onProgress;
+    child.inheritedSignals = [...this.inheritedSignals];
+    child.abortScopes = [...this.abortScopes];
+    if (this.abortController) child.abortScopes.push(this.abortController);
+    child.deadlines = [...this.deadlines];
     child.env = { ...this.env };
+    child.umask = this.umask;
     child.functions = { ...this.functions };
     child.options = new Set(this.options);
     child.arrays = new Map(Array.from(this.arrays.entries()).map(([k, v]) => [k, [...v]]));
@@ -197,6 +238,7 @@ export class Shell {
     child.dirStack = [...this.dirStack];
     child.history = this.history; // share history array reference
     child.completionSpecs = new Map(this.completionSpecs);
+    child.commandHashes = new Map([...this.commandHashes].map(([name,entry]) => [name,{...entry}]));
     return child;
   }
 
@@ -265,6 +307,20 @@ export class Shell {
     return 0;
   }
 
+  /** Dispatch already-expanded arguments through the same builtin/PATH/package engine. */
+  async execArgv(argv: string[], stdin = '', skipFunctions = false, pathOverride?:string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    if (!argv.length) return { stdout:'', stderr:'', exitCode:0 };
+    let stdout = '', stderr = '';
+    const saved = this.env['__PIPE_STDIN'];
+    this.env['__PIPE_STDIN'] = stdin;
+    try {
+      const exitCode = await this.execute('', s => { stdout += s; }, s => { stderr += s; }, false, undefined, true, { argv, skipFunctions, pathOverride });
+      return { stdout:stdout.replace(/\r\n/g, '\n'), stderr:stderr.replace(/\r\n/g, '\n'), exitCode };
+    } finally {
+      if (saved === undefined) delete this.env['__PIPE_STDIN']; else this.env['__PIPE_STDIN'] = saved;
+    }
+  }
+
   async execute(
     line: string,
     writeStdout: (s: string) => void,
@@ -272,12 +328,13 @@ export class Shell {
     remote: boolean = false,
     terminalOverride?: any,
     skipHistory: boolean = false,
+    invocation?: { argv: string[]; skipFunctions: boolean; pathOverride?:string },
   ): Promise<number> {
     // Built-ins print through writeStdout; under > / >> it is swapped per command (below).
     const baseWriteStdout = writeStdout;
     // Handle backslash line continuations: \<newline> joins lines; comments go, as in bash
     // (a script starting with "# …" used to run nothing, and "cmd # note" passed "# note" on).
-    const joined = stripComments(line.replace(/\\\n/g, ''));
+    const joined = invocation ? '[argv]' : stripComments(line.replace(/\\\n/g, ''));
     const trimmed = joined.trim();
     if (!trimmed) return 0;
 
@@ -285,6 +342,7 @@ export class Shell {
     this.executeDepth++;
     const isTopLevel = this.executeDepth === 1;
     if (isTopLevel) {
+      this.requestedExit = null;
       this.currentLine = 1;
       // Set up abort controller for SIGINT (Ctrl+C)
       this.abortController = new AbortController();
@@ -304,12 +362,13 @@ export class Shell {
     }
 
     // Split multi-line input into individual statements (respecting heredoc blocks)
-    const statements = this.splitStatements(trimmed);
+    const statements = invocation ? [trimmed] : this.splitStatements(trimmed);
     // One statement that differs from the input is a multi-line block joined onto one line.
     if (statements.length > 1 || statements[0] !== trimmed) {
       let lastExit = 0;
       let lineOffset = isTopLevel ? 0 : this.currentLine - 1;
       for (let si = 0; si < statements.length; si++) {
+        if (this.requestedExit !== null) break;
         const stmt = statements[si];
         if (!stmt.trim()) { if (isTopLevel) this.currentLine = lineOffset + si + 1; continue; }
         this.currentLine = lineOffset + si + 1;
@@ -332,7 +391,7 @@ export class Shell {
     }
 
     // Handle heredocs before anything else
-    const heredoc = this.parseHeredoc(trimmed);
+    const heredoc = invocation ? null : this.parseHeredoc(trimmed);
     const effectiveLine = heredoc ? heredoc.command : trimmed;
     const heredocStdin = heredoc ? heredoc.body : '';
 
@@ -346,10 +405,11 @@ export class Shell {
       }
     }
 
-    const stderrWriter = writeStderr || writeStdout;
+    const baseStderrWriter = writeStderr || writeStdout;
+    let stderrWriter = baseStderrWriter;
 
     // Check for function definition: name() { ... } or function name { ... }
-    const funcDef = this.parseFunctionDef(effectiveLine);
+    const funcDef = invocation ? null : this.parseFunctionDef(effectiveLine);
     if (funcDef) {
       this.functions[funcDef.name] = { body: funcDef.body };
       this.executeDepth--;
@@ -366,10 +426,11 @@ export class Shell {
     // e.g., "if [ $x -eq 1 ]; then break; fi; echo $x" → two compounds.
 
     // Split into compound commands: &&, ||, ;
-    const compounds = this.parseCompound(effectiveLine);
+    const compounds = invocation ? [{operator: '' as const, command:''}] : this.parseCompound(effectiveLine);
     let exitCode = 0;
 
     for (const compound of compounds) {
+      if (this.requestedExit !== null) { exitCode = this.requestedExit; break; }
       // Check conditional
       if (compound.operator === '&&' && exitCode !== 0) continue;
       if (compound.operator === '||' && exitCode === 0) continue;
@@ -436,14 +497,16 @@ export class Shell {
 
       // Expand braces, arithmetic, command substitution, and environment variables. Heredoc
       // bodies go back in first — not into a control structure, whose parser would split them.
-      let expanded = this.expandBraces(this.inlineHeredocs(compound.command));
+      let expanded = invocation ? '' : this.inlineHeredocs(compound.command);
+      expanded = await this.expandProcessSubstitutionText(expanded, baseStderrWriter);
+      expanded = this.expandBraces(expanded);
       // Command substitution before arithmetic, as in bash: $(( $(cmd) * 2 )).
       expanded = await this.expandCommandSubstitution(expanded, stderrWriter);
       expanded = this.expandArithmetic(expanded);
       expanded = this.expandVars(expanded);
 
       // Parse pipeline
-      const pipeline = this.parsePipeline(expanded);
+      const pipeline = invocation ? [''] : this.parsePipeline(expanded);
 
       // Check for ! negation prefix
       let negateExit = false;
@@ -459,15 +522,33 @@ export class Shell {
       let lastOutput = '';
       exitCode = 0;
       const pipeExitCodes: number[] = [];
+      // Pipeline stages have child shell state, as do command substitutions and subshells.
+      // This also keeps exit, exec, cd and variable assignments from terminating/changing
+      // the enclosing shell. Each child uses the ordinary dispatcher and redirections.
+      if (pipeline.length > 1) {
+        for (const [stage, segment] of pipeline.entries()) {
+          const child = this.fork();
+          if (stage < pipeline.length - 1) child.stdoutFile = null;
+          child.env['__PIPE_STDIN'] = lastOutput;
+          const result = await child.exec(segment);
+          lastOutput = result.stdout;
+          if (result.stderr) stderrWriter(result.stderr.replace(/\n/g, '\r\n'));
+          pipeExitCodes.push(result.exitCode);
+        }
+        if (lastOutput) writeStdout(lastOutput.replace(/\n/g, '\r\n'));
+        exitCode = pipeExitCodes[pipeExitCodes.length - 1];
+      }
       // Undoes `VAR=value cmd` prefix assignments once cmd has run (next segment or loop end).
       let restorePrefix: (() => void) | null = null;
 
       // Output a built-in printed directly while piped (see below), for the next command's input.
       let builtinPiped: string | null = null;
-      for (let i = 0; i < pipeline.length; i++) {
+      for (let i = 0; pipeline.length === 1 && i < pipeline.length; i++) {
+        if (this.requestedExit !== null) { exitCode = this.requestedExit; break; }
         if (restorePrefix) { restorePrefix(); restorePrefix = null; }
         await this.redirectWrites;
         writeStdout = baseWriteStdout;
+        stderrWriter = baseStderrWriter;
         if (builtinPiped !== null) { lastOutput = builtinPiped.replace(/\r\n/g, '\n'); builtinPiped = null; }
         // Check for SIGINT (abort)
         if (this.isAborted()) {
@@ -489,12 +570,15 @@ export class Shell {
           continue;
         }
 
-        const { args, redirects, hereString } = this.parseSegment(segment);
+        const { args, redirects, hereString } = invocation ? {args:[...invocation.argv], redirects:[], hereString:''} : this.parseSegment(segment);
+        if (this.stdoutFile && !redirects.some(r => ['>', '>>', '>&2'].includes(r.type))) {
+          redirects.unshift({ type: '>>', target: this.stdoutFile });
+        }
 
         if (args.length === 0) continue;
 
         // Expand glob patterns in args (but not quoted ones marked with \x01)
-        const globResult = await this.expandGlobs(args, stderrWriter);
+        const globResult = invocation ? args : await this.expandGlobs(args, stderrWriter);
         if (globResult === null) {
           // failglob: unmatched glob pattern — abort this command
           exitCode = 1;
@@ -505,59 +589,53 @@ export class Shell {
         }
         let expandedArgs = globResult;
 
-        // Output redirections are opened before the command runs, as bash does: a target in a
-        // directory that doesn't exist (or that is a directory) fails the command, which doesn't
-        // run. (Writing anyway made the directory appear: "> workspace/x" from /workspace made
-        // /workspace/workspace.)
-        {
-          let bad = '';
-          for (const r of redirects) {
-            if (!['>', '>>', '2>', '2>>'].includes(r.type) || !r.target || r.target.startsWith('/dev/') || /^>\(/.test(r.target)) continue;
-            const abs = this.fs.resolvePath(r.target, this.cwd);
-            const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
-            if (!(await this.fs.exists(parent))) { bad = `shiro: ${r.target}: No such file or directory`; break; }
-            const st = await this.fs.stat(abs).catch(() => null);
-            if (st?.isDirectory()) { bad = `shiro: ${r.target}: Is a directory`; break; }
-          }
-          if (bad) {
-            stderrWriter(bad + '\r\n');
-            exitCode = 1; this.lastExitCode = 1; this.env['?'] = '1'; lastOutput = '';
-            continue;
-          }
-          // Built-ins that print directly (type, command -v, alias, declare -p, trap, shopt …)
-          // follow the redirection too: `type x >/dev/null` printed anyway. The last > / >>
-          // wins, as in bash; other commands' output goes through the redirect handling below.
-          const out = [...redirects].reverse().find(r => (r.type === '>' || r.type === '>>') && r.target);
-          if (!out && i < pipeline.length - 1) {
-            // In a pipe, it is the next command's input (`set -o | grep errexit` grepped nothing).
-            writeStdout = (t: string) => { builtinPiped = (builtinPiped ?? '') + t; };
-          } else if (out && out.target !== '/dev/stdout') {
-            if (out.target === '/dev/null') writeStdout = () => {};
-            else if (out.target === '/dev/stderr') writeStdout = (t: string) => stderrWriter(t);
-            else {
-              const target = this.fs.resolvePath(out.target, this.cwd);
-              let truncate = out.type === '>';
-              writeStdout = (t: string) => {
-                const data = t.replace(/\r\n/g, '\n');
-                const first = truncate;
-                truncate = false;
-                this.redirectWrites = this.redirectWrites.then(() => first ? this.fs.writeFile(target, data) : this.fs.appendFile(target, data)).catch(() => {});
-              };
+        // Open redirections in lexical order and bind the two output descriptors once.
+        // Builtins and registered programs use these same sinks; duplicated descriptors
+        // retain the destination that existed when the duplication was encountered.
+        let outputOpenFailed = false;
+        for (const redir of redirects) {
+          if (redir.type === '2>&1') { stderrWriter = writeStdout; continue; }
+          if (redir.type === '>&2') { writeStdout = stderrWriter; continue; }
+          if (!['>', '>>', '2>', '2>>'].includes(redir.type)) continue;
+          let sink: (text: string) => void;
+          if (redir.target === '/dev/null') sink = () => {};
+          else if (redir.target === '/dev/stdout') sink = writeStdout;
+          else if (redir.target === '/dev/stderr') sink = stderrWriter;
+          else {
+            const target = this.fs.resolvePath(redir.target, this.cwd);
+            try {
+              if (redir.type === '>' || redir.type === '2>') await this.fs.writeFile(target, '');
+              else await this.fs.appendFile(target, '');
+            } catch (error) {
+              stderrWriter(`bash: line ${this.currentLine}: ${redir.target}: ${filesystemError(error)}\r\n`);
+              outputOpenFailed = true;
+              break;
             }
+            sink = text => {
+              this.redirectWrites = this.redirectWrites.then(() => this.fs.appendFile(target, text.replace(/\r\n/g, '\n')));
+            };
           }
+          if (redir.type === '2>' || redir.type === '2>>') stderrWriter = sink;
+          else writeStdout = sink;
+        }
+        if (outputOpenFailed) {
+          exitCode = 1; this.lastExitCode = 1; this.env['?'] = '1'; lastOutput = '';
+          continue;
         }
 
         // Expand process substitution: <(cmd) and >(cmd)
-        expandedArgs = await this.expandProcessSubstitution(expandedArgs, stderrWriter);
+        if (!invocation) expandedArgs = await this.expandProcessSubstitution(expandedArgs, baseStderrWriter);
 
         // `VAR=value cmd args`: VAR is set only while cmd runs. `a=1 b=2` (no command) sets all.
-        {
+        if (!invocation) {
           const isAssign = (a: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(a) && !/^[A-Za-z_][A-Za-z0-9_]*=\(/.test(a);
           let k = 0;
           while (k < expandedArgs.length && isAssign(expandedArgs[k])) k++;
           const assign = (a: string) => { const eq = a.indexOf('='); return [a.slice(0, eq), a.slice(eq + 1).replace(/\x01/g, '')]; };
           if (k > 0 && k < expandedArgs.length) {
             const saved = new Map<string, string | undefined>();
+            const previousTemporaryPath = this.temporaryPath;
+            if (expandedArgs.slice(0,k).some(a => a.startsWith('PATH='))) this.temporaryPath = true;
             for (const a of expandedArgs.slice(0, k)) {
               const [name, value] = assign(a);
               if (!saved.has(name)) saved.set(name, name in this.env ? this.env[name] : undefined);
@@ -565,6 +643,7 @@ export class Shell {
             }
             restorePrefix = () => {
               for (const [name, value] of saved) { if (value === undefined) delete this.env[name]; else this.env[name] = value; }
+              this.temporaryPath = previousTemporaryPath;
             };
             expandedArgs = expandedArgs.slice(k);
           } else if (k > 1) {
@@ -590,53 +669,19 @@ export class Shell {
           continue;
         }
 
-        // Handle /bin/sh, /bin/bash, /bin/zsh — dispatch to shell
-        if (/^\/bin\/(sh|bash|zsh)$/.test(cmdName)) {
-          const cIdx = cmdArgs.findIndex(a => /^-\w*c$/.test(a));
-          if (cIdx >= 0 && cIdx + 1 < cmdArgs.length) {
-            // /bin/sh -c "command" → execute command
-            const shellCmd = cmdArgs.slice(cIdx + 1).join(' ');
-            exitCode = await this.execute(shellCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
-          } else {
-            // /bin/sh script.sh or /bin/sh (no args)
-            const scripts = cmdArgs.filter(a => !a.startsWith('-'));
-            if (scripts.length > 0) {
-              const scriptPath = this.fs.resolvePath(scripts[0], this.cwd);
-              try {
-                const content = await this.fs.readFile(scriptPath, 'utf8') as string;
-                const shCtx: CommandContext = { args: scripts.slice(1), fs: this.fs, cwd: this.cwd, env: this.env, stdin: '', stdout: '', stderr: '', shell: this, terminal: terminalOverride || this.terminal };
-                exitCode = await this.executeShellScript(content, scripts.slice(1), shCtx, writeStdout, stderrWriter);
-              } catch (e: any) {
-                stderrWriter(`shiro: ${scripts[0]}: ${e.message}\r\n`);
-                exitCode = 1;
-              }
-            } else {
-              exitCode = 0; // bare /bin/sh with flags only → no-op
-            }
-          }
-          this.lastExitCode = exitCode;
-          this.env['?'] = String(exitCode);
-          lastOutput = '';
-          continue;
-        }
-
-        // Handle /usr/bin/env CMD ARGS → execute CMD ARGS
-        if (cmdName === '/usr/bin/env' || cmdName === '/bin/env') {
-          if (cmdArgs.length > 0) {
-            const envCmd = cmdArgs.join(' ');
-            exitCode = await this.execute(envCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
-          } else {
-            // bare env → print environment
-            exitCode = await this.execute('env', writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
-          }
-          this.lastExitCode = exitCode;
-          this.env['?'] = String(exitCode);
-          lastOutput = '';
-          continue;
+        // Absolute compatibility paths use the same child-shell / environment adapters.
+        if (/^\/bin\/(sh|bash|zsh)$/.test(cmdName) || cmdName === '/usr/bin/env' || cmdName === '/bin/env') {
+          const name = cmdName.endsWith('/env') ? 'env' : cmdName.endsWith('/bash') ? 'bash' : 'sh';
+          const result = await this.execArgv([name,...cmdArgs], this.env['__PIPE_STDIN'] ?? lastOutput);
+          writeStdout(result.stdout.replace(/\n/g,'\r\n'));
+          stderrWriter(result.stderr.replace(/\n/g,'\r\n'));
+          exitCode = result.exitCode;
+          this.lastExitCode = exitCode; this.env['?'] = String(exitCode);
+          lastOutput = ''; continue;
         }
 
         // Alias expansion: if cmdName matches an alias, replace it
-        if (this.aliases.has(cmdName)) {
+        if (!invocation && this.shoptopts.has('expand_aliases') && this.aliases.has(cmdName)) {
           const aliasValue = this.aliases.get(cmdName)!;
           const fullCmd = aliasValue + (cmdArgs.length > 0 ? ' ' + cmdArgs.join(' ') : '');
           exitCode = await this.execute(fullCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
@@ -655,7 +700,7 @@ export class Shell {
         }
 
         // Handle array assignment: arr=(a b c) or arr[N]=val
-        if (effectiveCmdName.includes('=') && !effectiveCmdName.startsWith('=')) {
+        if (!invocation && effectiveCmdName.includes('=') && !effectiveCmdName.startsWith('=')) {
           const eqIdx = cmdName.indexOf('=');
           const key = cmdName.substring(0, eqIdx);
           const val = cmdName.substring(eqIdx + 1);
@@ -727,7 +772,7 @@ export class Shell {
 
           // Regular variable assignment: FOO=bar
           if (this.readonlyVars.has(key)) {
-            stderrWriter(`${key}: readonly variable\r\n`);
+            stderrWriter(`bash: line ${this.currentLine}: ${key}: readonly variable\r\n`);
             exitCode = 1;
             this.lastExitCode = exitCode;
             this.env['?'] = String(exitCode);
@@ -750,7 +795,7 @@ export class Shell {
 
         // Check if this builtin has been disabled via `enable -n`
         // If disabled, skip the builtin dispatch and fall through to external command lookup
-        const _builtinDisabled = this.disabledBuiltins.has(effectiveCmdName);
+        const _builtinDisabled = this.disabledBuiltins.has(effectiveCmdName) || (!invocation?.skipFunctions && !!this.functions[effectiveCmdName]);
 
         // Shell builtin: time — measure command execution time
         if (!_builtinDisabled && effectiveCmdName === 'time') {
@@ -762,9 +807,11 @@ export class Shell {
           const elapsed = (performance.now() - start) / 1000;
           const mins = Math.floor(elapsed / 60);
           const secs = elapsed % 60;
-          stderrWriter(`\nreal\t${mins}m${secs.toFixed(3)}s\r\n`);
-          stderrWriter(`user\t0m0.000s\r\n`);
-          stderrWriter(`sys\t0m0.000s\r\n`);
+          if (this.env['TIMEFORMAT'] !== '') {
+            stderrWriter(`\nreal\t${mins}m${secs.toFixed(3)}s\r\n`);
+            stderrWriter(`user\t0m0.000s\r\n`);
+            stderrWriter(`sys\t0m0.000s\r\n`);
+          }
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
           lastOutput = '';
@@ -776,7 +823,7 @@ export class Shell {
           const frameNum = cmdArgs.length > 0 ? parseInt(cmdArgs[0], 10) : 0;
           if (this.callStack.length > frameNum) {
             const frame = this.callStack[this.callStack.length - 1 - frameNum];
-            writeStdout(`1 ${frame.funcName} ${frame.source}\r\n`);
+            writeStdout(cmdArgs.length ? `1 ${frame.funcName} ${frame.source}\r\n` : `1 ${frame.source === 'main' ? 'NULL' : frame.source}\r\n`);
             exitCode = 0;
           } else {
             exitCode = 1;
@@ -914,7 +961,7 @@ export class Shell {
             let value = eqIdx >= 0 ? arg.slice(eqIdx + 1) : undefined;
             // Apply type transformations
             if (value !== undefined) {
-              if (declFlags.includes('i')) value = String(parseInt(value) || 0);
+              if (declFlags.includes('i')) value = String(this.evalArithmetic(value));
               if (declFlags.includes('l')) value = value.toLowerCase();
               if (declFlags.includes('u')) value = value.toUpperCase();
             }
@@ -1247,6 +1294,7 @@ export class Shell {
           }
 
           const hist = this.history;
+          if (!hist.length) { this.lastExitCode = 0; this.env['?'] = '0'; lastOutput = ''; continue; }
 
           if (listMode) {
             // fc -l [first [last]] — list history entries
@@ -1300,275 +1348,21 @@ export class Shell {
           continue;
         }
 
-        // Shell builtins: type, command -v, hash
-        if (!_builtinDisabled && effectiveCmdName === 'type') {
-          // As bash reports them; commands that are external programs in bash are "files".
-          let tOnly = false, pathOnly = false;
-          const names: string[] = [];
-          for (const a of cmdArgs) {
-            if (/^-[tpPaf]+$/.test(a)) { if (a.includes('t')) tOnly = true; if (/[pP]/.test(a)) pathOnly = true; }
-            else names.push(a);
-          }
-          for (const name of names) {
-            const kind = this.commandKind(name);
-            if (!kind) { if (!tOnly && !pathOnly) stderrWriter(`bash: type: ${name}: not found\r\n`); exitCode = 1; continue; }
-            if (tOnly) { writeStdout(`${kind}\r\n`); continue; }
-            if (pathOnly) { if (kind === 'file') writeStdout(`/usr/bin/${name}\r\n`); continue; }
-            writeStdout(kind === 'keyword' ? `${name} is a shell keyword\r\n`
-              : kind === 'alias' ? `${name} is aliased to \`${this.aliases.get(name)}'\r\n`
-              : kind === 'function' ? `${name} is a function\r\n`
-              : kind === 'builtin' ? `${name} is a shell builtin\r\n`
-              : `${name} is /usr/bin/${name}\r\n`);
-          }
-          this.lastExitCode = exitCode;
-          this.env['?'] = String(exitCode);
-          lastOutput = '';
-          continue;
-        }
-        if (!_builtinDisabled && effectiveCmdName === 'command') {
-          if (cmdArgs[0] === '-v' || cmdArgs[0] === '-V') {
-            // command -v: the name for keywords, functions and builtins, a path for programs
-            for (const name of cmdArgs.slice(1)) {
-              const kind = this.commandKind(name);
-              if (!kind) { exitCode = 1; continue; }
-              if (cmdArgs[0] === '-V') writeStdout(kind === 'file' ? `${name} is /usr/bin/${name}\r\n` : kind === 'alias' ? `${name} is aliased to \`${this.aliases.get(name)}'\r\n` : `${name} is a ${kind === 'keyword' ? 'shell keyword' : kind === 'function' ? 'function' : 'shell builtin'}\r\n`);
-              else writeStdout(kind === 'file' ? `/usr/bin/${name}\r\n` : kind === 'alias' ? `alias ${name}='${this.aliases.get(name)}'\r\n` : `${name}\r\n`);
-            }
-            this.lastExitCode = exitCode;
-            this.env['?'] = String(exitCode);
-            lastOutput = '';
-            continue;
-          }
-          // command NAME args: execute command bypassing functions
-          // Just fall through to normal execution
+        // Registered adapters and parser branches use the same shell-owned operations.
+        if (!_builtinDisabled && (effectiveCmdName === 'type' || effectiveCmdName === 'command')) {
+          const result = effectiveCmdName === 'type' ? await this.processType(cmdArgs)
+            : await this.processCommand(cmdArgs, this.env['__PIPE_STDIN'] ?? lastOutput);
+          writeStdout(result.stdout.replace(/\n/g, '\r\n'));
+          stderrWriter(result.stderr.replace(/\n/g, '\r\n'));
+          exitCode = result.exitCode;
+          this.lastExitCode = exitCode; this.env['?'] = String(exitCode);
+          lastOutput = ''; continue;
         }
         if (!_builtinDisabled && effectiveCmdName === 'hash') {
-          // hash -r: clear hash table (no-op, we don't cache)
-          writeStdout('hash: hash table empty\r\n');
-          exitCode = 0;
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
-          lastOutput = '';
-          continue;
-        }
-
-        // Shell builtin: printf FORMAT [ARGS...]
-        if (!_builtinDisabled && effectiveCmdName === 'printf') {
-          if (cmdArgs.length === 0) {
-            stderrWriter('printf: usage: printf format [arguments]\r\n');
-            exitCode = 1;
-          } else {
-            // Handle -v varname
-            let printfVarName: string | null = null;
-            let printfCmdArgs = cmdArgs;
-            if (cmdArgs[0] === '-v' && cmdArgs.length >= 3) {
-              printfVarName = cmdArgs[1];
-              printfCmdArgs = cmdArgs.slice(2);
-            }
-            const fmt = printfCmdArgs[0];
-            const fmtArgs = printfCmdArgs.slice(1);
-            const BYTE = 0xe000;   // escaped bytes are held as U+E000+byte until decoded below
-            let argIdx = 0;
-            let result = '';
-            // The format is reused until every argument is consumed (printf "%s\n" a b c).
-            do {
-              const passStart = argIdx;
-              let fi = 0;
-              while (fi < fmt.length) {
-                if (fmt[fi] === '\\') {
-                  // Escape sequences
-                  fi++;
-                  if (fi >= fmt.length) { result += '\\'; break; }
-                  switch (fmt[fi]) {
-                    case 'n': result += '\n'; break;
-                    case 't': result += '\t'; break;
-                    case 'r': result += '\r'; break;
-                    case '\\': result += '\\'; break;
-                    case '"': result += '"'; break;
-                    case "'": result += "'"; break;
-                    case 'a': result += '\x07'; break;
-                    case 'b': result += '\b'; break;
-                    case 'f': result += '\f'; break;
-                    case 'v': result += '\v'; break;
-                    case 'e': case 'E': result += '\x1b'; break;
-                    case 'x': {
-                      // \xHH: a byte (see BYTE below)
-                      const hex = /^[0-9a-fA-F]{1,2}/.exec(fmt.slice(fi + 1));
-                      if (!hex) { result += '\\x'; break; }
-                      result += String.fromCharCode(BYTE + parseInt(hex[0], 16));
-                      fi += hex[0].length;
-                      break;
-                    }
-                    case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': {
-                      // \0NNN or \NNN octal: a byte
-                      let oct = '';
-                      if (fmt[fi] === '0') fi++;
-                      while (fi < fmt.length && /[0-7]/.test(fmt[fi]) && oct.length < 3) { oct += fmt[fi]; fi++; }
-                      result += String.fromCharCode(BYTE + (parseInt(oct || '0', 8) & 255));
-                      fi--;
-                      break;
-                    }
-                    default: result += '\\' + fmt[fi];
-                  }
-                  fi++;
-                  continue;
-                }
-                if (fmt[fi] === '%') {
-                  fi++;
-                  if (fi >= fmt.length) { result += '%'; break; }
-                  if (fmt[fi] === '%') { result += '%'; fi++; continue; }
-                  // %(fmt)T — date/time formatting
-                  if (fmt[fi] === '(') {
-                    const closeP = fmt.indexOf(')T', fi);
-                    if (closeP > fi) {
-                      const dateFmt = fmt.slice(fi + 1, closeP);
-                      const ts = argIdx < fmtArgs.length ? parseInt(fmtArgs[argIdx++]) * 1000 : Date.now();
-                      const d = new Date(ts === -1000 ? Date.now() : ts);
-                      let dateResult = dateFmt;
-                      dateResult = dateResult.replace(/%Y/g, String(d.getFullYear()));
-                      dateResult = dateResult.replace(/%m/g, String(d.getMonth() + 1).padStart(2, '0'));
-                      dateResult = dateResult.replace(/%d/g, String(d.getDate()).padStart(2, '0'));
-                      dateResult = dateResult.replace(/%H/g, String(d.getHours()).padStart(2, '0'));
-                      dateResult = dateResult.replace(/%M/g, String(d.getMinutes()).padStart(2, '0'));
-                      dateResult = dateResult.replace(/%S/g, String(d.getSeconds()).padStart(2, '0'));
-                      result += dateResult;
-                      fi = closeP + 2;
-                      continue;
-                    }
-                  }
-                  // Flags, width and precision (* takes them from the arguments)
-                  let flags = '';
-                  while (fi < fmt.length && '-+ 0#'.includes(fmt[fi])) { flags += fmt[fi]; fi++; }
-                  let width = '';
-                  if (fmt[fi] === '*') { width = String(parseInt(fmtArgs[argIdx++] ?? '0', 10) || 0); fi++; }
-                  else while (fi < fmt.length && /\d/.test(fmt[fi])) { width += fmt[fi]; fi++; }
-                  if (width.startsWith('-')) { flags += '-'; width = width.slice(1); }
-                  let precision: string | null = null;
-                  if (fi < fmt.length && fmt[fi] === '.') {
-                    fi++;
-                    precision = '';
-                    if (fmt[fi] === '*') { precision = String(parseInt(fmtArgs[argIdx++] ?? '0', 10) || 0); fi++; }
-                    else while (fi < fmt.length && /\d/.test(fmt[fi])) { precision += fmt[fi]; fi++; }
-                  }
-                  while ('hlLjzt'.includes(fmt[fi] ?? '.')) fi++;   // length modifiers are ignored (not q: %q quotes)
-                  const spec = fi < fmt.length ? fmt[fi] : '';
-                  fi++;
-                  const arg = argIdx < fmtArgs.length ? fmtArgs[argIdx++] : '';
-                  // bash number syntax: 0x hex, 0 octal, 'c or "c the character's code.
-                  const intArg = (): bigint => {
-                    const t = arg.trim();
-                    if (t === '') return 0n;
-                    if (/^['"]/.test(t)) return BigInt(t.codePointAt(1) ?? 0);
-                    const m = /^([-+]?)(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9]\d*)/.exec(t);
-                    if (!m || m[0].length !== t.length) {
-                      stderrWriter(`printf: ${arg}: invalid number\r\n`);
-                      exitCode = 1;
-                      if (!m) return 0n;
-                    }
-                    const body = m[2];
-                    const v = /^0[xX]/.test(body) ? BigInt(body) : body.length > 1 && body.startsWith('0') ? BigInt('0o' + body.slice(1)) : BigInt(body);
-                    return m[1] === '-' ? -v : v;
-                  };
-                  const floatArg = (): number => {
-                    const t = arg.trim();
-                    if (/^['"]/.test(t)) return t.codePointAt(1) ?? 0;
-                    if (t === '') return 0;
-                    const v = Number(t.replace(/^([-+]?)0[xX]/, '$10x'));
-                    if (isNaN(v)) { stderrWriter(`printf: ${arg}: invalid number\r\n`); exitCode = 1; return parseFloat(t) || 0; }
-                    return v;
-                  };
-                  let formatted = '';
-                  let numeric = false;
-                  let sign = '';
-                  switch (spec) {
-                    case 's': formatted = precision !== null ? arg.slice(0, parseInt(precision, 10) || 0) : arg; break;
-                    case 'b': {
-                      // %b: escape sequences in the argument
-                      formatted = arg.replace(/\\(0[0-7]{0,3}|x[0-9a-fA-F]{1,2}|.)/g, (_m: string, e: string) => {
-                        if (e[0] === '0') return String.fromCharCode(BYTE + (parseInt(e.slice(1) || '0', 8) & 255));
-                        if (e[0] === 'x') return String.fromCharCode(BYTE + parseInt(e.slice(1), 16));
-                        return ({ n: '\n', t: '\t', r: '\r', '\\': '\\', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v' } as any)[e] ?? '\\' + e;
-                      });
-                      if (precision !== null) formatted = formatted.slice(0, parseInt(precision, 10) || 0);
-                      break;
-                    }
-                    case 'q': {
-                      // Shell-quoted so the result reads back as the same word
-                      formatted = arg === '' ? "''" : /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(arg) ? arg
-                        : /[\x00-\x1f\x7f]/.test(arg) ? "$'" + arg.replace(/[\\']/g, '\\$&').replace(/[\x00-\x1f\x7f]/g, c => ({ '\n': '\\n', '\t': '\\t', '\r': '\\r' } as any)[c] ?? '\\' + c.charCodeAt(0).toString(8).padStart(3, '0')) + "'"
-                        : arg.replace(/[^A-Za-z0-9_@%+=:,.\/-]/g, '\\$&');
-                      break;
-                    }
-                    case 'c': formatted = [...arg][0] ?? ''; break;
-                    case 'd': case 'i': case 'u': case 'o': case 'x': case 'X': {
-                      numeric = true;
-                      let v = intArg();
-                      if (spec === 'u' || spec === 'o' || spec === 'x' || spec === 'X') { if (v < 0n) v += 1n << 64n; }
-                      if (v < 0n) { sign = '-'; v = -v; } else if (flags.includes('+') && (spec === 'd' || spec === 'i')) sign = '+'; else if (flags.includes(' ') && (spec === 'd' || spec === 'i')) sign = ' ';
-                      formatted = spec === 'o' ? v.toString(8) : spec === 'x' ? v.toString(16) : spec === 'X' ? v.toString(16).toUpperCase() : v.toString();
-                      if (precision !== null) formatted = precision === '0' && v === 0n ? '' : formatted.padStart(parseInt(precision, 10) || 0, '0');
-                      if (flags.includes('#') && v !== 0n) formatted = (spec === 'o' ? '0' : spec === 'x' ? '0x' : spec === 'X' ? '0X' : '') + formatted;
-                      break;
-                    }
-                    case 'e': case 'E': case 'f': case 'F': case 'g': case 'G': case 'a': case 'A': {
-                      formatted = cSprintf(`%${flags.replace('-', '')}${precision !== null ? '.' + precision : ''}${spec === 'a' || spec === 'A' ? 'e' : spec}`, [floatArg()]);
-                      break;
-                    }
-                    default: formatted = '%' + flags + width + (precision !== null ? '.' + precision : '') + spec;
-                  }
-                  // Width
-                  const w = parseInt(width || '0', 10);
-                  let full = sign + formatted;
-                  if ([...full].length < w) {
-                    if (flags.includes('-')) full = full + ' '.repeat(w - [...full].length);
-                    else if (numeric && flags.includes('0') && precision === null) full = sign + formatted.padStart(w - sign.length, '0');
-                    else if (!numeric && flags.includes('0') && 'eEfFgG'.includes(spec)) full = full.startsWith('-') ? '-' + full.slice(1).padStart(w - 1, '0') : full.padStart(w, '0');
-                    else full = ' '.repeat(w - [...full].length) + full;
-                  }
-                  formatted = full;
-                  result += formatted;
-                  continue;
-                }
-                result += fmt[fi];
-                fi++;
-              }
-              if (argIdx === passStart) break;   // no conversions: printed once
-            } while (argIdx < fmtArgs.length);
-            // Escaped bytes (\xHH, \NNN) are decoded as UTF-8: '\xc3\xa9' is "é"; bytes that aren't
-            // UTF-8 stay bytes ('\xe9' writes the one byte E9, utils/bytes.ts).
-            result = result.replace(/[\ue000-\ue0ff]+/g, run => bytesToText(Uint8Array.from(run, c => c.charCodeAt(0) - BYTE)));
-            if (printfVarName) {
-              this.env[printfVarName] = result;
-            } else if (redirects.some(r => r.type === '>&2')) {
-              stderrWriter(result.replace(/\n/g, '\r\n'));
-            } else if (i < pipeline.length - 1 && !redirects.some(r => r.type === '>' || r.type === '>>')) {
-              // Feeds the next command in the pipeline.
-              lastOutput = result;
-              pipeExitCodes.push(0);
-              this.lastExitCode = 0;
-              this.env['?'] = '0';
-              continue;
-            } else {
-              // Respect stdout redirects (> file, >> file) before writing to stdout.
-              // Other builtins call writeStdout directly and skip the redirect handler
-              // via `continue`; printf is commonly used to write files so we handle it here.
-              let redirected = false;
-              for (const redir of redirects) {
-                if (redir.type === '>' || redir.type === '>>') {
-                  if (redir.target === '/dev/null') { redirected = true; }
-                  else if (redir.target === '/dev/stderr') { stderrWriter(result.replace(/\n/g, '\r\n')); redirected = true; }
-                  else if (redir.target !== '/dev/stdout') {
-                    const tp = this.fs.resolvePath(redir.target, this.cwd);
-                    if (redir.type === '>') { await this.fs.writeFile(tp, result); }
-                    else { await this.fs.appendFile(tp, result); }
-                    redirected = true;
-                  }
-                }
-              }
-              if (!redirected) writeStdout(result.replace(/\n/g, '\r\n'));
-            }
-            exitCode = 0;
-          }
+          const result = await this.processHash(cmdArgs);
+          writeStdout(result.stdout.replace(/\n/g,'\r\n'));
+          stderrWriter(result.stderr.replace(/\n/g,'\r\n'));
+          exitCode = result.exitCode;
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
           lastOutput = '';
@@ -1600,7 +1394,7 @@ export class Shell {
                   // Unknown option
                   this.env[varName] = '?';
                   this.env['OPTARG'] = opt;
-                  stderrWriter(`getopts: illegal option -- ${opt}\r\n`);
+                  if (!optstring.startsWith(':') && this.env.OPTERR !== '0') stderrWriter(`getopts: illegal option -- ${opt}\r\n`);
                   this.env['OPTIND'] = String(optind + 1);
                   exitCode = 0;
                 } else if (optstring[colonIdx + 1] === ':') {
@@ -1666,7 +1460,7 @@ export class Shell {
                 if (val !== undefined) {
                   writeStdout(`alias ${arg}='${val}'\r\n`);
                 } else {
-                  stderrWriter(`alias: ${arg}: not found\r\n`);
+                  stderrWriter(`bash: line ${this.currentLine}: alias: ${arg}: not found\r\n`);
                   exitCode = 1;
                 }
               }
@@ -1755,7 +1549,9 @@ export class Shell {
         }
         if (!_builtinDisabled && effectiveCmdName === 'dirs') {
           const stack = [this.cwd, ...this.dirStack.slice().reverse()];
-          writeStdout(stack.join(' ') + '\r\n');
+          const home = this.env['HOME'];
+          const display = (p:string) => !cmdArgs.includes('-l') && home && (p === home || p.startsWith(home + '/')) ? '~' + p.slice(home.length) : p;
+          writeStdout(stack.map(display).join(' ') + '\r\n');
           this.lastExitCode = 0;
           this.env['?'] = '0';
           lastOutput = '';
@@ -1789,7 +1585,6 @@ export class Shell {
           } else {
             const count = parseInt(this.env['#'] || '0', 10);
             if (n > count) {
-              stderrWriter(`shift: shift count (${n}) exceeds positional parameter count (${count})\r\n`);
               exitCode = 1;
             } else {
               const args = this.getPositionalArgs();
@@ -1944,7 +1739,7 @@ export class Shell {
                     writeStdout(`${opt.padEnd(15)}\t${this.options.has(opt) ? 'on' : 'off'}\r\n`);
                   }
                 } else {
-                  const optMap: Record<string, string> = { errexit: 'errexit', nounset: 'nounset', xtrace: 'xtrace', verbose: 'verbose', noexec: 'noexec', pipefail: 'pipefail' };
+                  const optMap: Record<string, string> = { errexit: 'errexit', nounset: 'nounset', xtrace: 'xtrace', verbose: 'verbose', noexec: 'noexec', pipefail: 'pipefail', hashall:'hashall' };
                   const mapped = optMap[optName];
                   if (mapped) {
                     if (arg === '-o') this.options.add(mapped);
@@ -1956,7 +1751,7 @@ export class Shell {
                 }
                 continue;
               }
-              const shortMap: Record<string, string> = { e: 'errexit', u: 'nounset', x: 'xtrace', v: 'verbose', n: 'noexec' };
+              const shortMap: Record<string, string> = { e: 'errexit', u: 'nounset', x: 'xtrace', v: 'verbose', n: 'noexec', h:'hashall' };
               if (arg.startsWith('-') && arg.length > 1 && arg[1] !== '-') {
                 for (let j = 1; j < arg.length; j++) {
                   const mapped = shortMap[arg[j]];
@@ -1989,12 +1784,22 @@ export class Shell {
               const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
               // Save/restore LINENO across source calls
               const savedLine = this.currentLine;
-              const savedDepth = this.executeDepth;
-              this.executeDepth = 0; // source starts a fresh top-level
-              exitCode = await this.execute(content, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
-              this.currentLine = savedLine;
-              this.executeDepth = savedDepth;
-              this.env['LINENO'] = String(this.currentLine);
+              const savedArgs = this.getPositionalArgs();
+              const suppliedArgs = cmdArgs.length > 1;
+              const setArgs = (values: string[]) => {
+                for (let n = 1; n <= Math.max(values.length, Number(this.env['#'] || 0)); n++) delete this.env[String(n)];
+                this.env['#'] = String(values.length);
+                values.forEach((value, n) => { this.env[String(n + 1)] = value; });
+              };
+              if (suppliedArgs) setArgs(cmdArgs.slice(1));
+              this.currentLine = 1;
+              try {
+                exitCode = await this.execute(content, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
+              } finally {
+                if (suppliedArgs) setArgs(savedArgs);
+                this.currentLine = savedLine;
+                this.env['LINENO'] = String(this.currentLine);
+              }
             } catch (e: any) {
               stderrWriter(`source: ${cmdArgs[0]}: ${e.message}\r\n`);
               exitCode = 1;
@@ -2006,7 +1811,7 @@ export class Shell {
           continue;
         }
 
-        // Shell builtin: exec — replace shell with command (in browser, just execute)
+        // exec without a command changes descriptors; with argv it terminates this shell.
         if (!_builtinDisabled && effectiveCmdName === 'exec') {
           // Handle FD redirects: exec N< file, exec N> file, exec N<&-
           for (const redir of redirects) {
@@ -2015,7 +1820,7 @@ export class Shell {
                 const content = await this.fs.readFile(this.fs.resolvePath(redir.target, this.cwd), 'utf8') as string;
                 this.fileDescriptors.set(redir.fd, { content, offset: 0 });
               } catch (e: any) {
-                stderrWriter(`shiro: ${redir.target}: ${e.message}\r\n`);
+                stderrWriter(`bash: line ${this.currentLine}: ${redir.target}: ${filesystemError(e)}\r\n`);
                 exitCode = 1;
               }
             } else if (redir.fd !== undefined && redir.type === '>&-') {
@@ -2023,8 +1828,18 @@ export class Shell {
             }
           }
           if (cmdArgs.length > 0) {
-            const execCmd = cmdArgs.join(' ');
-            exitCode = await this.execute(execCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
+            const result = await this.execArgv(cmdArgs, this.env['__PIPE_STDIN'] ?? lastOutput, true);
+            writeStdout(result.stdout.replace(/\n/g, '\r\n'));
+            stderrWriter(result.stderr.replace(/\n/g, '\r\n'));
+            exitCode = result.exitCode;
+            this.requestExit(exitCode);
+          } else {
+            const out = [...redirects].reverse().find(r => r.type === '>' || r.type === '>>');
+            if (out) {
+              this.stdoutFile = this.fs.resolvePath(out.target, this.cwd);
+              if (out.type === '>') await this.fs.writeFile(this.stdoutFile, '');
+              else await this.fs.appendFile(this.stdoutFile, '');
+            }
           }
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
@@ -2035,12 +1850,15 @@ export class Shell {
         // Shell builtin: builtin — run builtin ignoring functions
         if (!_builtinDisabled && effectiveCmdName === 'builtin') {
           if (cmdArgs.length > 0) {
-            const builtinCmd = cmdArgs.join(' ');
-            // Temporarily remove function override
-            const savedFn = this.functions[cmdArgs[0]];
-            delete this.functions[cmdArgs[0]];
-            exitCode = await this.execute(builtinCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
-            if (savedFn) this.functions[cmdArgs[0]] = savedFn;
+            if (!SHELL_BUILTINS.includes(cmdArgs[0]) || this.disabledBuiltins.has(cmdArgs[0])) {
+              stderrWriter(`bash: builtin: ${cmdArgs[0]}: not a shell builtin\r\n`);
+              exitCode = 1;
+            } else {
+              const result = await this.execArgv(cmdArgs,this.env['__PIPE_STDIN'] ?? lastOutput,true);
+              writeStdout(result.stdout.replace(/\n/g,'\r\n'));
+              stderrWriter(result.stderr.replace(/\n/g,'\r\n'));
+              exitCode = result.exitCode;
+            }
           }
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
@@ -2050,28 +1868,38 @@ export class Shell {
 
         // Shell stubs for commonly expected builtins (no-ops that scripts depend on)
         if (!_builtinDisabled && effectiveCmdName === 'ulimit') {
-          // ulimit -n → file descriptor limit, etc.
-          if (cmdArgs.includes('-n')) { writeStdout('1024\r\n'); }
-          else if (cmdArgs.includes('-s')) { writeStdout('8192\r\n'); }
-          else if (cmdArgs.length === 0 || cmdArgs.includes('-f')) { writeStdout('unlimited\r\n'); }
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
+          stderrWriter(ULIMIT_UNAVAILABLE.replace(/\n/g, '\r\n'));
+          exitCode = 2;
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           lastOutput = '';
           continue;
         }
         if (!_builtinDisabled && effectiveCmdName === 'umask') {
-          if (cmdArgs.length === 0) {
-            writeStdout('0022\r\n');
-          }
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
+          const result = processUmask(this.umask,cmdArgs);
+          this.umask = result.mask;
+          if (result.stdout) writeStdout(result.stdout.replace(/\n/g,'\r\n'));
+          if (result.stderr) stderrWriter(result.stderr.replace(/\n/g,'\r\n'));
+          exitCode = result.status;
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           lastOutput = '';
           continue;
         }
         if (!_builtinDisabled && effectiveCmdName === 'compopt') {
-          // Bash completion stub — silent no-op
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
+          const add:string[] = [], remove:string[] = [], names:string[] = [];
+          for (let n = 0; n < cmdArgs.length; n++) {
+            if (cmdArgs[n] === '-o') add.push(cmdArgs[++n]);
+            else if (cmdArgs[n] === '+o') remove.push(cmdArgs[++n]);
+            else names.push(cmdArgs[n]);
+          }
+          for (const name of names) {
+            const spec = this.completionSpecs.get(name);
+            if (!spec) {stderrWriter(`bash: line ${this.currentLine}: compopt: ${name}: no completion specification\r\n`); exitCode = 1; continue;}
+            spec.options = [...new Set([...(spec.options ?? []), ...add])].filter(o => !remove.includes(o));
+          }
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           lastOutput = '';
           continue;
         }
@@ -2142,7 +1970,9 @@ export class Shell {
 
           for (let ai = 0; ai < cmdArgs.length; ai++) {
             const a = cmdArgs[ai];
-            if (a === '-W') {
+            if (a === '-o') {
+              (spec.options ??= []).push(cmdArgs[++ai]);
+            } else if (a === '-W') {
               const wordStr = cmdArgs[++ai] || '';
               spec.words = wordStr.split(/\s+/).filter(Boolean);
             } else if (a === '-F') {
@@ -2167,6 +1997,7 @@ export class Shell {
               for (const cmd of completeCmds) {
                 const s = this.completionSpecs.get(cmd);
                 if (s) writeStdout(this.formatCompleteSpec(cmd, s) + '\r\n');
+                else {stderrWriter(`bash: line ${this.currentLine}: complete: ${cmd}: no completion specification\r\n`); exitCode = 1;}
               }
             } else {
               for (const [cmd, s] of this.completionSpecs) {
@@ -2182,8 +2013,8 @@ export class Shell {
               this.completionSpecs.set(cmd, spec);
             }
           }
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           lastOutput = '';
           continue;
         }
@@ -2259,36 +2090,10 @@ export class Shell {
           continue;
         }
         if (!_builtinDisabled && effectiveCmdName === 'coproc') {
-          // coproc [NAME] command — run command as coprocess
-          // NAME is only recognized if it's an uppercase identifier AND there are further args
-          let coprocName = 'COPROC';
-          let coprocCmd: string;
-          if (cmdArgs.length >= 2 && /^[A-Z_][A-Z0-9_]*$/.test(cmdArgs[0])) {
-            coprocName = cmdArgs[0];
-            coprocCmd = cmdArgs.slice(1).join(' ');
-          } else {
-            coprocCmd = cmdArgs.join(' ');
-          }
-          // Execute command and capture output
-          let coprocOutput = '';
-          const coprocPid = this.nextJobId++;
-          const coprocPromise = this.execute(coprocCmd, (s: string) => { coprocOutput += s; }, stderrWriter)
-            .then((code) => {
-              // Store output in the coproc array
-              this.coproc = { name: coprocName, pid: coprocPid, output: coprocOutput };
-              this.arrays.set(coprocName, [coprocOutput.replace(/\r\n/g, '\n').trimEnd()]);
-              this.env[`${coprocName}_PID`] = String(coprocPid);
-              return code;
-            });
-          // Register as background job
-          const job: BackgroundJob = { id: coprocPid, command: `coproc ${coprocCmd}`, promise: coprocPromise, status: 'running', exitCode: 0 };
-          this.backgroundJobs.set(coprocPid, job);
-          coprocPromise.then((code) => { job.status = 'done'; job.exitCode = code; });
-          this.env[`${coprocName}_PID`] = String(coprocPid);
-          writeStdout(`[${coprocPid}] coproc started\r\n`);
-          exitCode = 0;
-          this.lastExitCode = 0;
-          this.env['?'] = '0';
+          stderrWriter('bash: coproc: process file descriptors are unsupported; select native execution\r\n');
+          exitCode = 2;
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           lastOutput = '';
           continue;
         }
@@ -2351,7 +2156,7 @@ export class Shell {
             try {
               stdin = await this.fs.readFile(targetPath, 'utf8') as string;
             } catch (e: any) {
-              stderrWriter(`shiro: ${redir.target}: ${e.message}\r\n`);
+              stderrWriter(`bash: line ${this.currentLine}: ${redir.target}: ${filesystemError(e)}\r\n`);
               inputFailed = true;
               break;
             }
@@ -2391,8 +2196,12 @@ export class Shell {
         // Shell functions (and hoisted groups) first. Their output is captured like a command's,
         // so the pipe and redirect handling below applies; piped or redirected input is
         // available to `read` inside through __PIPE_STDIN.
-        const fn = this.functions[effectiveCmdName];
-        const cmd = fn ? undefined : this.commands.get(effectiveCmdName);
+        const resolved = await this.resolveCommand(effectiveCmdName, invocation?.skipFunctions, !!invocation, {pathOverride:invocation?.pathOverride});
+        if (resolved?.kind === 'file' && !resolved.hashed && !effectiveCmdName.includes('/') && this.options.has('hashall') && !this.temporaryPath) {
+          this.commandHashes.set(effectiveCmdName,{path:resolved.hashPath ?? resolved.path ?? '/usr/bin/' + effectiveCmdName,hits:1});
+        }
+        const fn = resolved?.route === 'function' ? this.functions[effectiveCmdName] : undefined;
+        const cmd = fn || resolved?.route === 'path' ? undefined : resolved?.command;
         if (fn) {
           let fout = '', ferr = '';
           const capOut = (s: string) => { fout += s; };
@@ -2424,7 +2233,7 @@ export class Shell {
           }
         } else {
           // Try to find executable in PATH
-          const executable = await this.findExecutableInPath(effectiveCmdName);
+          const executable = resolved?.path;
           if (executable) {
             try {
               exitCode = await this.executeScript(executable, cmdArgs, ctx, writeStdout, stderrWriter);
@@ -2437,30 +2246,13 @@ export class Shell {
             const wasmPkg = isAvailableAsPackage(effectiveCmdName);
             if (wasmPkg) {
               try {
-                stderrWriter(`shiro: '${effectiveCmdName}' not installed. Installing ${wasmPkg.name}...\r\n`);
-                const wasmModule = await getCompiledModule(wasmPkg.name, (msg) => {
-                  stderrWriter(`  ${msg}\r\n`);
-                });
-                const { WasiExit } = await loadWasiRuntime();
-                const config = {
-                  fs: this.fs,
-                  cwd: this.cwd,
-                  args: [wasmPkg.name, ...cmdArgs],
-                  env: { ...this.env },
-                  stdin: ctx.stdin || '',
-                  onStdout: (text: string) => { ctx.stdout += text; },
-                  onStderr: (text: string) => { ctx.stderr += text; },
-                  preopens: { '/': '/', '.': this.cwd },
-                };
-                exitCode = await this.execWasmModule(wasmModule, config);
-                // Write PATH stubs so future runs skip auto-install
-                await this.writeWasiPkgStubs(wasmPkg.name, wasmPkg.aliases);
+                exitCode = await runPackageCommand(ctx, effectiveCmdName);
               } catch (e: any) {
                 const { WasiExit } = await loadWasiRuntime();
                 if (e instanceof WasiExit) {
                   exitCode = e.code;
                   // Still write stubs on non-zero exit — package is installed
-                  await this.writeWasiPkgStubs(wasmPkg.name, wasmPkg.aliases);
+                  await writePackageStubs(this.fs, wasmPkg.name);
                 } else {
                   stderrWriter(`shiro: failed to run ${wasmPkg.name}: ${e.message}\r\n`);
                   exitCode = 1;
@@ -2476,90 +2268,9 @@ export class Shell {
           }
         }
 
-        // Check if stderr should be redirected to stdout (2>&1)
-        const redirectStderrToStdout = redirects.some(r => r.type === '2>&1');
-
-        // Handle stderr output and redirects
-        let stderrOutput = ctx.stderr;
-        for (const redir of redirects) {
-          if (redir.type === '2>' || redir.type === '2>>') {
-            if (redir.target === '/dev/null') {
-              stderrOutput = '';
-              continue;
-            }
-            // 2>/dev/stderr → default behavior (let it through)
-            if (redir.target === '/dev/stderr') continue;
-            // 2>/dev/stdout → redirect stderr to stdout
-            if (redir.target === '/dev/stdout') {
-              ctx.stdout += stderrOutput;
-              stderrOutput = '';
-              continue;
-            }
-            const targetPath = this.fs.resolvePath(redir.target, this.cwd);
-            if (redir.type === '2>') {
-              await this.fs.writeFile(targetPath, stderrOutput);
-            } else {
-              await this.fs.appendFile(targetPath, stderrOutput);
-            }
-            stderrOutput = '';
-          }
-        }
-
-        // Handle stdout redirects
-        let output = ctx.stdout;
-
-        // 2>&1 merges stderr into stdout. Order matters, as in bash: `cmd >file 2>&1` sends both to
-        // the file, but `cmd 2>&1 >file` sends stderr to where stdout pointed *before* the file
-        // redirect (the pipe or terminal) and only stdout to the file.
-        let stderrAsOriginalStdout = '';
-        if (redirectStderrToStdout && stderrOutput) {
-          const at2 = redirects.findIndex(r => r.type === '2>&1');
-          const atOut = redirects.findIndex(r => (r.type === '>' || r.type === '>>') && r.target !== '/dev/stdout');
-          if (atOut >= 0 && at2 < atOut) stderrAsOriginalStdout = stderrOutput;
-          else output += stderrOutput;
-          stderrOutput = '';
-        }
-
-        // Now write any remaining stderr to the error stream
-        if (stderrOutput) {
-          stderrWriter(stderrOutput.replace(/\n/g, '\r\n'));
-        }
-        // >&2: stdout goes to stderr
-        if (redirects.some(r => r.type === '>&2') && output) {
-          stderrWriter(output.replace(/\n/g, '\r\n'));
-          output = '';
-        }
-        for (const redir of redirects) {
-          if (redir.type === '>' || redir.type === '>>') {
-            if (redir.target === '/dev/null') {
-              output = '';
-              continue;
-            }
-            // /dev/stdout → write to stdout (default behavior, just let it through)
-            if (redir.target === '/dev/stdout') continue;
-            // /dev/stderr → redirect stdout content to stderr
-            if (redir.target === '/dev/stderr') {
-              stderrWriter(output.replace(/\n/g, '\r\n'));
-              output = '';
-              continue;
-            }
-            const targetPath = this.fs.resolvePath(redir.target, this.cwd);
-            if (redir.type === '>') {
-              await this.fs.writeFile(targetPath, output);
-            } else {
-              await this.fs.appendFile(targetPath, output);
-            }
-            output = '';
-          }
-        }
-
-        if (stderrAsOriginalStdout) output = stderrAsOriginalStdout + output;
-
-        if (i === pipeline.length - 1 && output) {
-          writeStdout(output.replace(/\n/g, '\r\n'));
-        }
-
-        lastOutput = output;
+        if (ctx.stderr) stderrWriter(ctx.stderr.replace(/\n/g, '\r\n'));
+        if (ctx.stdout) writeStdout(ctx.stdout.replace(/\n/g, '\r\n'));
+        lastOutput = ctx.stdout;
         pipeExitCodes.push(exitCode);
 
         // Update cwd from env
@@ -2569,6 +2280,7 @@ export class Shell {
       if (restorePrefix) { restorePrefix(); restorePrefix = null; }
       await this.redirectWrites;
       writeStdout = baseWriteStdout;
+      stderrWriter = baseStderrWriter;
 
       // pipefail: use last non-zero exit code from any pipe segment
       if (this.options.has('pipefail') && pipeExitCodes.length > 1) {
@@ -2608,7 +2320,7 @@ export class Shell {
     if (isTopLevel) {
       this.abortController = null;
     }
-    return exitCode;
+    return this.requestedExit ?? exitCode;
   }
 
   /**
@@ -3345,10 +3057,14 @@ export class Shell {
     return result;
   }
 
-  /** Find matching closing paren for extglob, handling nesting */
+  /** Find an unquoted closing parenthesis, shared by nested word constructs. */
   private findMatchingParen(s: string, openPos: number): number {
-    let depth = 1;
+    let depth = 1, single = false, double = false;
     for (let i = openPos + 1; i < s.length; i++) {
+      if (s[i] === '\\' && !single) { i++; continue; }
+      if (s[i] === "'" && !double) { single = !single; continue; }
+      if (s[i] === '"' && !single) { double = !double; continue; }
+      if (single || double) continue;
       if (s[i] === '(') depth++;
       else if (s[i] === ')') { depth--; if (depth === 0) return i; }
     }
@@ -3985,7 +3701,7 @@ export class Shell {
           if (next === '$' || next === '"' || next === '\\' || next === '`') {
             current += next;
           } else if (next === '*' || next === '?' || next === '[') {
-            current += '\x01' + next; // sentinel: quoted glob char
+            current += '\\' + '\x01' + next; // quoted glob char, with literal backslash
           } else {
             current += '\\' + next; // keep backslash literally
           }
@@ -4199,7 +3915,7 @@ export class Shell {
       else result.push(out.split(/[ \t\n]+/).filter(Boolean).map(sq).join(' '));
     };
     const run = async (subCmd: string) => {
-      const r = await this.exec(subCmd);
+      const r = await this.fork().exec(subCmd);
       if (r.stderr) stderrWriter(r.stderr.replace(/\n/g, '\r\n'));
       return r.stdout.replace(/\n+$/, '');
     };
@@ -4274,15 +3990,15 @@ export class Shell {
    */
   private async expandProcessSubstitution(args: string[], writeStderr: (s: string) => void): Promise<string[]> {
     const result: string[] = [];
-    let tmpCounter = 0;
     for (const arg of args) {
       // Match <(command) — must be the entire arg or standalone
-      const match = arg.match(/^<\((.+)\)$/);
+      const match = arg.match(/^<\(([\s\S]+)\)$/);
       if (match) {
         const subcmd = match[1];
         try {
-          const { stdout } = await this.exec(subcmd);
-          const tmpPath = `/tmp/.procsub_${Date.now()}_${tmpCounter++}`;
+          const { stdout, stderr } = await this.fork().exec(subcmd);
+          if (stderr) writeStderr(stderr.replace(/\n/g, '\r\n'));
+          const tmpPath = `/tmp/.procsub_${Date.now()}_${Shell.processSubstitutionSequence++}`;
           await this.fs.writeFile(tmpPath, stdout);
           result.push(tmpPath);
         } catch (e: any) {
@@ -4294,6 +4010,29 @@ export class Shell {
       }
     }
     return result;
+  }
+
+  /** Expand child scripts before the parent's variable/command expansions can alter them. */
+  private async expandProcessSubstitutionText(input: string, writeStderr: (text:string) => void): Promise<string> {
+    let output = '', single = false, double = false;
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i];
+      if (char === '\\' && !single) { output += input.slice(i,i+2); i++; continue; }
+      if (char === "'" && !double) single = !single;
+      else if (char === '"' && !single) double = !double;
+      if (!single && !double && char === '<' && input[i+1] === '(') {
+        const close = this.findMatchingParen(input,i+1);
+        if (close >= 0) {
+          const end = close+1;
+          const [path] = await this.expandProcessSubstitution([input.slice(i,end)],writeStderr);
+          output += path;
+          i = end-1;
+          continue;
+        }
+      }
+      output += char;
+    }
+    return output;
   }
 
   /**
@@ -4747,20 +4486,208 @@ export class Shell {
     return result;
   }
 
-  /** What bash would call NAME: keyword, alias, function, builtin, file (a program), or null. */
-  private commandKind(name: string): 'keyword' | 'alias' | 'function' | 'builtin' | 'file' | null {
-    const KEYWORDS = ['if', 'then', 'else', 'elif', 'fi', 'case', 'esac', 'for', 'select', 'while', 'until', 'do', 'done',
-      'in', 'function', 'time', '{', '}', '!', '[[', ']]', 'coproc'];
-    const BUILTINS = ['alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'cd', 'command', 'compgen', 'complete', 'compopt',
-      'continue', 'declare', 'dirs', 'disown', 'echo', 'enable', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg',
-      'getopts', 'hash', 'help', 'history', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd',
-      'pwd', 'read', 'readarray', 'readonly', 'return', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'times', 'trap',
-      'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'wait', '.', ':', '['];
-    if (KEYWORDS.includes(name)) return 'keyword';
-    if (this.aliases.has(name)) return 'alias';
-    if (name in this.functions && !name.startsWith('__shiro_group_')) return 'function';
-    if (BUILTINS.includes(name)) return 'builtin';
-    if (this.commands.get(name) || isAvailableAsPackage(name)) return 'file';
+  /** Discovery and execution share function/builtin/PATH/catalog/package precedence. */
+  private commandHashes = new Map<string,{path:string; hits:number}>();
+
+  /** Hash state belongs to the shell; the registered command delegates here. */
+  async processHash(args:string[]): Promise<{stdout:string; stderr:string; exitCode:number}> {
+    let stdout = '', stderr = '', exitCode = 0;
+    const error = (message:string) => { stderr += `bash: line ${this.currentLine}: hash: ${message}\n`; exitCode = 1; };
+    const usage = 'hash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n';
+    if (!this.options.has('hashall')) { error('hashing disabled'); return {stdout,stderr,exitCode}; }
+    let reset = false, remove = false, portable = false, targets = false, pathname:string|undefined;
+    let index = 0;
+    for (; index < args.length; index++) {
+      const arg = args[index];
+      if (arg === '--') { index++; break; }
+      if (!arg.startsWith('-') || arg === '-') break;
+      for (let offset = 1; offset < arg.length; offset++) {
+        const option = arg[offset];
+        if (option === 'r') reset = true;
+        else if (option === 'd') remove = true;
+        else if (option === 'l') portable = true;
+        else if (option === 't') targets = true;
+        else if (option === 'p') {
+          pathname = arg.slice(offset+1) || args[++index];
+          if (pathname === undefined) {
+            error('-p: option requires an argument'); stderr += usage;
+            return {stdout,stderr,exitCode:2};
+          }
+          break;
+        } else {
+          error(`-${option}: invalid option`); stderr += usage;
+          return {stdout,stderr,exitCode:2};
+        }
+      }
+    }
+    const names = args.slice(index);
+    if (!names.length && (remove || targets)) {
+      error(`${remove ? '-d' : '-t'}: option requires an argument`);
+      return {stdout,stderr,exitCode};
+    }
+    if (reset) this.commandHashes.clear();
+    const quote = (value:string) => /^[a-zA-Z0-9_./-]+$/.test(value) ? value : "'" + value.replace(/'/g,"'\\''") + "'";
+    const line = (name:string,entry:{path:string; hits:number}) => portable
+      ? `builtin hash -p ${quote(entry.path)} ${quote(name)}\n`
+      : String(entry.hits).padStart(4) + '\t' + entry.path + '\n';
+    if (!names.length) {
+      if (!this.commandHashes.size) { if (!portable && !reset) stdout = 'hash: hash table empty\n'; }
+      else {
+        if (!portable) stdout = 'hits\tcommand\n';
+        // Bash displays its filename table by FNV-1 bucket, newest collisions first.
+        const bucket = (name:string) => {
+          let hash = 2166136261;
+          for (const byte of textToBytes(name)) hash = (Math.imul(hash,16777619) ^ (byte < 128 ? byte : byte-256)) >>> 0;
+          return hash & 255;
+        };
+        const entries = [...this.commandHashes].reverse().sort(([a],[b]) => bucket(a)-bucket(b));
+        for (const [name,entry] of entries) stdout += line(name,entry);
+      }
+      return {stdout,stderr,exitCode};
+    }
+    for (const name of names) {
+      if (targets) {
+        const entry = this.commandHashes.get(name);
+        if (!entry) error(`${name}: not found`);
+        else {
+          entry.hits++;
+          const path = entry.path.startsWith('/') || entry.path.startsWith('./') ? entry.path : './'+entry.path;
+          stdout += portable ? `builtin hash -p ${path} ${name}\n` : (names.length > 1 ? name+'\t' : '') + path+'\n';
+        }
+      } else if (name.includes('/')) continue;
+      else if (pathname !== undefined) {
+        const stat = await this.fs.stat(this.fs.resolvePath(pathname,this.cwd)).catch(() => null);
+        if (stat?.isDirectory()) error(`${pathname}: Is a directory`);
+        else this.commandHashes.set(name,{path:pathname,hits:0});
+      } else if (remove) {
+        if (!this.commandHashes.delete(name)) error(`${name}: not found`);
+      } else if (!(name in this.functions) && !(SHELL_BUILTINS.includes(name) && !this.disabledBuiltins.has(name))) {
+        this.commandHashes.delete(name);
+        const resolution = await this.resolveCommand(name,true,true,{ignoreHash:true});
+        if (resolution?.kind === 'file') this.commandHashes.set(name,{path:resolution.hashPath ?? resolution.path ?? '/usr/bin/'+name,hits:0});
+        else error(`${name}: not found`);
+      }
+    }
+    return {stdout,stderr,exitCode};
+  }
+
+  /** Shared discovery formatting; catalog entries model external programs. */
+  private describeCommand(name:string, resolution:NonNullable<Awaited<ReturnType<Shell['resolveCommand']>>>):string {
+    if (resolution.kind === 'keyword') return `${name} is a shell keyword\n`;
+    if (resolution.kind === 'alias') return `${name} is aliased to \`${this.aliases.get(name)}'\n`;
+    if (resolution.kind === 'function') return `${name} is a function\n`;
+    if (resolution.kind === 'builtin') return `${name} is a shell builtin\n`;
+    return resolution.hashed ? `${name} is hashed (${resolution.path ?? '/usr/bin/'+name})\n`
+      : `${name} is ${resolution.path ?? '/usr/bin/'+name}\n`;
+  }
+
+  /** Bash type modes share the execution resolver and the PATH iterator. */
+  async processType(args:string[]):Promise<{stdout:string; stderr:string; exitCode:number}> {
+    let stdout = '', stderr = '', exitCode = 0;
+    let all = false, skipFunctions = false, terse = false, pathOnly = false, forcePath = false, index = 0;
+    for (; index < args.length; index++) {
+      const arg = args[index];
+      if (arg === '--') { index++; break; }
+      if (!arg.startsWith('-') || arg === '-') break;
+      for (const flag of arg.slice(1)) {
+        if (flag === 'a') all = true;
+        else if (flag === 'f') skipFunctions = true;
+        else if (flag === 't') { terse = true; pathOnly = false; }
+        else if (flag === 'p') { pathOnly = true; terse = false; }
+        else if (flag === 'P') { forcePath = true; pathOnly = true; terse = false; }
+        else return {stdout,stderr:`bash: line ${this.currentLine}: type: -${flag}: invalid option\ntype: usage: type [-afptP] name [name ...]\n`,exitCode:2};
+      }
+    }
+    for (const name of args.slice(index)) {
+      const matches:NonNullable<Awaited<ReturnType<Shell['resolveCommand']>>>[] = [];
+      const first = await this.resolveCommand(name,skipFunctions,false,{ignoreHash:all&&!forcePath,pathOnly:forcePath});
+      if (all && !(forcePath && first?.hashed)) {
+        if (!forcePath) {
+          if (this.shoptopts.has('expand_aliases') && this.aliases.has(name)) matches.push({kind:'alias',route:'parser'});
+          if (SHELL_KEYWORDS.includes(name)) matches.push({kind:'keyword',route:'parser'});
+          if (!skipFunctions && name in this.functions) matches.push({kind:'function',route:'function'});
+          if (SHELL_BUILTINS.includes(name) && !this.disabledBuiltins.has(name)) matches.push({kind:'builtin',route:'parser'});
+        }
+        const paths = await this.findExecutablePaths(name,undefined,true);
+        for (const path of paths) matches.push({kind:'file',route:'path',path});
+        if (!paths.length) {
+          const external = await this.resolveCommand(name,true,true,{ignoreHash:true,pathOnly:true});
+          if (external?.kind === 'file') matches.push(external);
+        }
+      } else if (first) matches.push(first);
+      if (!matches.length) {
+        exitCode = 1;
+        if (!terse && !pathOnly) stderr += `bash: line ${this.currentLine}: type: ${name}: not found\n`;
+      }
+      for (const match of matches) {
+        if (pathOnly && match.kind !== 'file') continue;
+        stdout += terse ? match.kind+'\n' : pathOnly ? (match.path ?? '/usr/bin/'+name)+'\n' : this.describeCommand(name,match);
+      }
+    }
+    return {stdout,stderr,exitCode};
+  }
+
+  /** command bypasses functions for execution, but discovery still describes them. */
+  async processCommand(args:string[], stdin=''):Promise<{stdout:string; stderr:string; exitCode:number}> {
+    let mode = '', defaultPath = false, index = 0;
+    for (; index < args.length; index++) {
+      const arg = args[index];
+      if (arg === '--') { index++; break; }
+      if (!arg.startsWith('-') || arg === '-') break;
+      for (const flag of arg.slice(1)) {
+        if (flag === 'p') defaultPath = true;
+        else if (flag === 'v' || flag === 'V') mode = flag;
+        else return {stdout:'',stderr:`bash: line ${this.currentLine}: command: -${flag}: invalid option\ncommand: usage: command [-pVv] command [arg ...]\n`,exitCode:2};
+      }
+    }
+    const names = args.slice(index), pathOverride = defaultPath ? '/bin:/usr/bin' : undefined;
+    if (!mode) return this.execArgv(names,stdin,true,pathOverride);
+    let stdout = '', stderr = '', found = !names.length;
+    for (const name of names) {
+      const resolution = await this.resolveCommand(name,false,false,{pathOverride});
+      if (!resolution) {
+        if (mode === 'V') stderr += `bash: line ${this.currentLine}: command: ${name}: not found\n`;
+        continue;
+      }
+      found = true;
+      if (mode === 'V') stdout += this.describeCommand(name,resolution);
+      else if (resolution.kind === 'file') stdout += (resolution.path ?? '/usr/bin/'+name)+'\n';
+      else if (resolution.kind === 'alias') stdout += `alias ${name}='${(this.aliases.get(name) ?? '').replace(/'/g,"'\\''")}'\n`;
+      else stdout += name+'\n';
+    }
+    return {stdout,stderr,exitCode:found?0:1};
+  }
+
+  async resolveCommand(name:string, skipFunctions=false, skipAliases=false, options:{ignoreHash?:boolean; pathOnly?:boolean; pathOverride?:string}={}): Promise<{
+    kind:'keyword'|'alias'|'function'|'builtin'|'file';
+    route:'parser'|'function'|'registry'|'path'|'package';
+    path?:string; hashPath?:string; command?:import('./commands/index').Command; hashed?:boolean;
+  } | null> {
+    if (!options.pathOnly) {
+      if (SHELL_KEYWORDS.includes(name)) return {kind:'keyword',route:'parser'};
+      if (!skipAliases && this.shoptopts.has('expand_aliases') && this.aliases.has(name)) return {kind:'alias',route:'parser'};
+      if (!skipFunctions && name in this.functions) return {kind:'function',route:'function'};
+      if (SHELL_BUILTINS.includes(name) && !this.disabledBuiltins.has(name)) return {kind:'builtin',route:'parser',command:this.commands.get(name)};
+    }
+    if (!name.includes('/') && !options.ignoreHash && !this.temporaryPath && this.options.has('hashall')) {
+      const entry = this.commandHashes.get(name);
+      if (entry) {
+        entry.hits++;
+        const command = this.commands.get(name);
+        if (command && (entry.path === '/usr/bin/'+name || entry.path === '/bin/'+name) && !await this.fs.exists(entry.path)) {
+          return {kind:'file',route:'registry',path:entry.path,command,hashed:true};
+        }
+        if (!command && entry.path === '/usr/bin/'+name && resolvePackageCommand(name)) return {kind:'file',route:'package',hashed:true};
+        return {kind:'file',route:'path',path:entry.path.startsWith('/') || entry.path.startsWith('./') ? entry.path : './'+entry.path,hashed:true};
+      }
+    }
+    const path = await this.findExecutableInPath(name,options.pathOverride);
+    if (path) return this.env.PATH === '' && path.startsWith('./')
+      ? {kind:'file',route:'path',path:this.fs.resolvePath(path,this.cwd),hashPath:path.slice(2)}
+      : {kind:'file',route:'path',path};
+    const command = this.commands.get(name);
+    if (command) return {kind:'file',route:'registry',command,...(options.pathOverride ? {path:options.pathOverride.split(':')[0]+'/'+name} : {})};
+    if (resolvePackageCommand(name)) return {kind:'file',route:'package'};
     return null;
   }
 
@@ -5196,7 +5123,7 @@ export class Shell {
     }
 
     let iter = 0;
-    while (iter++ < 10000) {
+    while (this.requestedExit === null && iter++ < 10000) {
       // Expand vars in condition each iteration (loop vars like $X change)
       const expandedCond = await this.conditionText(parsed.condition, writeStderr);
       if ((await this.evalCondition(expandedCond, writeStdout, writeStderr)) !== 0) break;
@@ -5226,7 +5153,7 @@ export class Shell {
     if (!parsed) { writeStderr('until: syntax error\r\n'); return 1; }
 
     let iter = 0;
-    while (iter++ < 10000) {
+    while (this.requestedExit === null && iter++ < 10000) {
       const expandedCond = await this.conditionText(parsed.condition, writeStderr);
       if ((await this.evalCondition(expandedCond, writeStdout, writeStderr)) === 0) break;
       try {
@@ -5258,7 +5185,7 @@ export class Shell {
       this.evalArithmetic(init);
       // Loop
       let iter = 0;
-      while (iter++ < 10000) {
+      while (this.requestedExit === null && iter++ < 10000) {
         // Evaluate test — 0 means false (stop)
         if (test && this.evalArithmetic(test) === 0) break;
         // Execute body
@@ -5284,6 +5211,7 @@ export class Shell {
     const varName = bare ? bare[1] : forMatch![1];
     const items = bare ? this.positionalParams() : await this.expandWordList(forMatch![2] ?? '', writeStderr);
     for (const item of items) {
+      if (this.requestedExit !== null) break;
       this.env[varName] = item;
       try {
         loopStatus = parsed.body.trim() ? await this.execute(parsed.body, writeStdout, writeStderr) : 0;
@@ -5332,7 +5260,7 @@ export class Shell {
     let readInput = hasPipeStdin ? this.env['__PIPE_STDIN'] : '';
 
     let iter = 0;
-    while (iter++ < 100) {
+    while (this.requestedExit === null && iter++ < 100) {
       // Get one line of input
       const firstNewline = readInput.indexOf('\n');
       let choice: string;
@@ -5484,46 +5412,64 @@ export class Shell {
    * Search PATH directories for an executable file.
    * Also checks node_modules/.bin relative to cwd.
    */
-  async findExecutableInPath(name: string): Promise<string | null> {
+  async findExecutableInPath(name: string, pathOverride?:string): Promise<string | null> {
+    return (await this.findExecutablePaths(name,pathOverride))[0] ?? null;
+  }
+
+  /** The same iterator supports dispatch and type's all-path modes. */
+  private async findExecutablePaths(name:string, pathOverride?:string, all=false):Promise<string[]> {
+    const matches:string[] = [];
     // If name contains '/', treat it as a path
     if (name.includes('/')) {
       const resolved = this.fs.resolvePath(name, this.cwd);
       try {
         const stat = await this.fs.stat(resolved);
-        if (stat.type === 'file') return resolved;
+        if (stat.type === 'file') return [resolved];
       } catch {
-        return null;
+        return [];
       }
-      return null;
+      return [];
     }
 
     // Build search path: node_modules/.bin first, then PATH
     const pathDirs: string[] = [];
 
     // Add node_modules/.bin from cwd (most specific first)
-    let dir = this.cwd;
+    let dir = pathOverride === undefined ? this.cwd : '/';
     while (dir !== '/') {
       pathDirs.push(`${dir}/node_modules/.bin`);
       const parent = dir.substring(0, dir.lastIndexOf('/')) || '/';
       if (parent === dir) break;
       dir = parent;
     }
-    pathDirs.push('/node_modules/.bin');
+    if (pathOverride === undefined) pathDirs.push('/node_modules/.bin');
 
     // Add PATH directories
-    const envPath = this.env['PATH'] || '';
+    const envPath = pathOverride ?? this.env['PATH'] ?? '';
     if (envPath) {
-      pathDirs.push(...envPath.split(':').filter(Boolean));
+      pathDirs.push(...envPath.split(':'));
+    } else if ('PATH' in this.env) {
+      pathDirs.push('');
     }
 
     // Search each directory (also check for .wasm extension)
     for (const pathDir of pathDirs) {
       for (const suffix of ['', '.wasm']) {
-        const candidate = `${pathDir}/${name}${suffix}`;
+        const candidate = `${pathDir || '.'}/${name}${suffix}`;
         try {
-          const stat = await this.fs.stat(candidate);
-          if (stat.type === 'file' || stat.type === 'symlink') {
-            return candidate;
+          const absolute = this.fs.resolvePath(candidate,this.cwd);
+          const stat = await this.fs.stat(absolute);
+          if ((stat.type === 'file' || stat.type === 'symlink') && (stat.mode & 0o111)) {
+            const owner = this.commands.get(name);
+            if (owner && owner.route !== 'wasm' && stat.size <= 1024) {
+              const text = await this.fs.readFile(absolute,'utf8');
+              // Installing an explicit alternative must not change a catalog command's
+              // default owner. The managed executable remains callable by its full path.
+              if (typeof text === 'string' && text.startsWith('#!wasi-pkg ')) continue;
+            }
+            matches.push(candidate);
+            if (!all) return matches;
+            break;
           }
         } catch {
           // Not found, continue
@@ -5531,7 +5477,7 @@ export class Shell {
       }
     }
 
-    return null;
+    return matches;
   }
 
   /**
@@ -5544,10 +5490,16 @@ export class Shell {
     writeStdout: (s: string) => void,
     writeStderr: (s: string) => void,
   ): Promise<number> {
+    const invokedPath = filePath;
+    filePath = this.fs.resolvePath(filePath,this.cwd);
     // Resolve symlinks
     let resolvedPath = filePath;
     try {
       const stat = await this.fs.stat(filePath);
+      if (!(stat.mode & 0o111)) {
+        ctx.stderr += `bash: line ${this.currentLine}: ${invokedPath}: Permission denied\n`;
+        return 126;
+      }
       if (stat.type === 'symlink') {
         const linkTarget = await this.fs.readlink(filePath);
         // Resolve relative symlink targets
@@ -5559,8 +5511,8 @@ export class Shell {
         }
       }
     } catch (e: any) {
-      writeStderr(`shiro: ${filePath}: ${e.message}\r\n`);
-      return 1;
+      ctx.stderr += `bash: line ${this.currentLine}: ${invokedPath}: ${filesystemError(e)}\n`;
+      return e.code === 'ENOENT' ? 127 : 126;
     }
 
     // Read script content
@@ -5582,21 +5534,7 @@ export class Shell {
     if (content.startsWith('#!wasi-pkg ')) {
       const [pkgName, ...stubArgs] = content.split('\n')[0].substring('#!wasi-pkg '.length).trim().split(/\s+/);
       try {
-        const wasmModule = await getCompiledModule(pkgName, (msg) => {
-          writeStderr(`  ${msg}\r\n`);
-        });
-        const config = {
-          fs: this.fs,
-          cwd: this.cwd,
-          args: [pkgName, ...stubArgs, ...args],
-          env: { ...this.env },
-          stdin: ctx.stdin || '',
-          onStdout: (text: string) => { ctx.stdout += text; },
-          onStderr: (text: string) => { ctx.stderr += text; },
-          trace: (globalThis as any).__fgWasiTrace,   // debugging hook: set to (line) => void
-          preopens: { '/': '/', '.': this.cwd },
-        };
-        return await this.execWasmModule(wasmModule, config);
+        return await runPackageCommand(ctx,pkgName,[...stubArgs,...args]);
       } catch (e: any) {
         const { WasiExit } = await loadWasiRuntime();
         if (e instanceof WasiExit) return e.code;
@@ -5613,7 +5551,7 @@ export class Shell {
       try {
         const { getX86Binary } = await import('./x86-packages');
         const elfData = await getX86Binary(pkgName, (msg) => {
-          writeStderr(`  ${msg}\r\n`);
+          this.onProgress?.(msg);
         });
         const { executeElfFromBytes } = await import('./x86/runtime');
         const argv0 = appletName || pkgName;
@@ -5700,38 +5638,21 @@ export class Shell {
   }
 
   /**
-   * Write #!wasi-pkg stubs to /usr/local/bin for a package and its aliases.
-   */
-  private async writeWasiPkgStubs(pkgName: string, aliases?: string[]): Promise<void> {
-    try {
-      for (const dir of ['/usr', '/usr/local', '/usr/local/bin']) {
-        try { await this.fs.stat(dir); } catch { await this.fs.mkdir(dir); }
-      }
-      const stubContent = `#!wasi-pkg ${pkgName}\n`;
-      const names = [pkgName, ...(aliases || [])];
-      for (const name of names) {
-        await this.fs.writeFile(`/usr/local/bin/${name}`, stubContent);
-      }
-    } catch {
-      // Non-fatal — auto-install still works without stubs
-    }
-  }
-
-  /**
    * Abort scopes: `timeout` runs its command inside one and aborts it when the time is up, which
    * stops the command's remaining statements and wakes a pending `sleep`, without touching the
    * enclosing script (the top-level abortController is Ctrl+C for the whole line).
    */
   private abortScopes: AbortController[] = [];
+  private inheritedSignals: AbortSignal[] = [];
   pushAbortScope(): AbortController { const c = new AbortController(); this.abortScopes.push(c); return c; }
   popAbortScope(c: AbortController): void { const i = this.abortScopes.indexOf(c); if (i >= 0) this.abortScopes.splice(i, 1); }
   /** True when Ctrl+C was pressed or an enclosing `timeout` expired. */
   isAborted(): boolean {
-    return !!this.abortController?.signal.aborted || this.abortScopes.some(c => c.signal.aborted);
+    return !!this.abortController?.signal.aborted || this.abortScopes.some(c => c.signal.aborted) || this.inheritedSignals.some(s => s.aborted);
   }
   /** One signal that fires on either of those, for commands that wait (sleep, watch). */
   abortSignal(): AbortSignal | undefined {
-    const sigs = [this.abortController?.signal, ...this.abortScopes.map(c => c.signal)].filter((x): x is AbortSignal => !!x);
+    const sigs = [this.abortController?.signal, ...this.abortScopes.map(c => c.signal), ...this.inheritedSignals].filter((x): x is AbortSignal => !!x);
     if (sigs.length === 0) return undefined;
     if (sigs.length === 1) return sigs[0];
     const any = (AbortSignal as any).any as ((s: AbortSignal[]) => AbortSignal) | undefined;
@@ -5755,32 +5676,21 @@ export class Shell {
   }
 
   /** Run a compiled WASM module (in a Worker with a deadline when one is available). */
-  private async execWasmModule(wasmModule: WebAssembly.Module, config: import('./wasi-runtime').WasiConfig): Promise<number> {
+  async execWasmModule(wasmModule: WebAssembly.Module, config: import('./wasi-runtime').WasiConfig): Promise<number> {
     const { execWasi } = await import('./wasi-host');
     // the program may fork and exec: it can run any command of this shell (see execForWasm)
     const withProcs = { ...config, exec: (req: import('./wasi-runtime').ExecRequest) => this.execForWasm(req), commands: this.commands.list().map(c => c.name) };
-    return execWasi(withProcs, wasmModule, { deadlineMs: this.remainingDeadlineMs() });
+    return execWasi(withProcs, wasmModule, { deadlineMs: this.remainingDeadlineMs(), signal:this.abortSignal() });
   }
 
   /** exec() from a WASM program: run argv as a command of this shell, under the program's environment. */
   private async execForWasm(req: import('./wasi-runtime').ExecRequest): Promise<import('./wasi-runtime').ExecResult> {
-    const { runSubcommand } = await import('./commands/run-subcommand');
-    const savedEnv = { ...this.env };
-    const savedCwd = this.cwd;
-    for (const k of Object.keys(this.env)) delete this.env[k];
-    Object.assign(this.env, req.env);
-    this.cwd = req.cwd;
-    let out = '', err = '';
-    let code: number;
-    try {
-      const ctx: CommandContext = { args: [], fs: this.fs, cwd: req.cwd, env: this.env, stdin: req.stdin, stdout: '', stderr: '', shell: this };
-      code = await runSubcommand(ctx, req.argv, s => { out += s; }, s => { err += s; });
-    } finally {
-      for (const k of Object.keys(this.env)) delete this.env[k];
-      Object.assign(this.env, savedEnv);
-      this.cwd = savedCwd;
-    }
-    return { stdout: out, stderr: err, code };
+    const child = this.fork();
+    if (req.signal) child.inheritedSignals.push(req.signal);
+    child.env = { ...req.env, PWD:req.cwd };
+    child.cwd = req.cwd;
+    const result = await child.execArgv(req.argv, req.stdin);
+    return { stdout:result.stdout, stderr:result.stderr, code:result.exitCode };
   }
 
   /**
@@ -5940,6 +5850,7 @@ export class Shell {
   /** Format a completion spec for `complete -p` output */
   private formatCompleteSpec(cmd: string, spec: CompletionSpec): string {
     let parts = ['complete'];
+    for (const option of spec.options ?? []) parts.push(`-o ${option}`);
     if (spec.words) parts.push(`-W '${spec.words.join(' ')}'`);
     if (spec.funcName) parts.push(`-F ${spec.funcName}`);
     if (spec.action) parts.push(`-A ${spec.action}`);

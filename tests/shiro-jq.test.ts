@@ -1,17 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { jqCmd } from '../shiro/commands/jq';
 
 const files: Record<string, string> = {};
-const fs: any = {
-  resolvePath: (p: string) => p,
-  readFile: async (p: string) => {
-    if (!(p in files)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-    return files[p];
-  },
-};
+import 'fake-indexeddb/auto';
+import { FileSystem } from '../shiro/filesystem';
+import { Shell } from '../shiro/shell';
+import { CommandRegistry } from '../shiro/commands/index';
+import { setWasiWorkerFactory } from '../shiro/wasi-host';
+import { nodeWorkerFactory } from './helpers/node-wasi-worker';
+let shell:Shell;
+beforeAll(async () => {
+  setWasiWorkerFactory(await nodeWorkerFactory());
+  const fs = new FileSystem(); await fs.init();
+  const commands=new CommandRegistry(); commands.register(jqCmd);
+  shell=new Shell(fs,commands); shell.cwd='/';
+});
+afterAll(() => setWasiWorkerFactory(null));
 
 async function jq(args: string[], stdin = '') {
-  const ctx: any = { args, fs, cwd: '/', env: { HOME: '/home/x' }, stdin, stdout: '', stderr: '' };
+  for (const [name,content] of Object.entries(files)) await shell.fs.writeFile(shell.fs.resolvePath(name,'/'),content);
+  const ctx = { args, fs:shell.fs, shell,cwd: '/', env: { HOME: '/home/x' }, stdin, stdout: '', stderr: '' };
   const code = await jqCmd.exec(ctx);
   return { code, out: ctx.stdout as string, err: ctx.stderr as string };
 }
@@ -109,7 +117,7 @@ describe('jq', () => {
     expect(await c('(1,2) + (10,20)', 'null', '-n')).toBe('11\n12\n21\n22');
     const e = await jq(['.a.b'], '{"a":1}');
     expect(e.code).toBe(5);
-    expect(e.err).toMatch(/Cannot index number with "b"/);
+    expect(e.err).toBe('jq: error (at <stdin>:0): Cannot index number with string ("b")\n');
     const u = await jq(['nosuchfn'], '1');
     expect(u.code).toBe(3);
     expect(u.err).toMatch(/nosuchfn\/0 is not defined/);
@@ -132,7 +140,10 @@ describe('jq', () => {
     expect(await c('[.[]|tojson]', '[1,"a"]')).toBe('["1","\\"a\\""]');
     expect(await c('IN(1,2)', '2')).toBe('true');
     expect(await c('[combinations]', '[[1,2],[3]]')).toBe('[[1,3],[2,3]]');
-    expect(await c('ascii', '65')).toBe('"A"');
+    expect(await c('[.] | implode', '65')).toBe('"A"');
+    const ascii = await jq(['ascii'], '65');
+    expect(ascii.code).toBe(3);
+    expect(ascii.err).toContain('ascii/0 is not defined');
     expect(await c('[tostream]', '{"a":[1]}')).toBe('[[["a",0],1],[["a",0]],[["a"]]]');
     expect(await c('fromstream(tostream)', '{"a":[1]}')).toBe('{"a":[1]}');
   });
@@ -160,6 +171,6 @@ describe('jq', () => {
     expect((await jq(['-f', '/prog.jq', '/in.json'])).out).toBe('2\n');
     const bad = await jq(['.'], '{"a":1} {');
     expect(bad.out).toBe('{\n  "a": 1\n}\n');
-    expect(bad.code).toBe(2);
+    expect(bad.code).toBe(5);
   });
 });

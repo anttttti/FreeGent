@@ -9,6 +9,17 @@
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
+export function concatBytes(parts:Uint8Array[]): Uint8Array {
+  const all = new Uint8Array(parts.reduce((n,p) => n + p.length,0));
+  let offset = 0;
+  for (const part of parts) {all.set(part,offset); offset += part.length;}
+  return all;
+}
+
+export function sameBytes(a:Uint8Array,b:Uint8Array): boolean {
+  return a.length === b.length && a.every((byte,i) => byte === b[i]);
+}
+
 /** Bytes → string: UTF-8, with each invalid byte as U+DC00+byte. */
 export function bytesToText(b: Uint8Array): string {
   try { return strictUtf8.decode(b); } catch { /* not all valid UTF-8: decode piece by piece */ }

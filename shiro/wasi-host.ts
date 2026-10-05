@@ -6,8 +6,8 @@
  * preloaded here and shipped over, output streams back, and file changes are applied when the
  * program ends. When the deadline passes the Worker is terminated.
  *
- * Without a Worker (headless, tests that do not provide one) it falls back to running in-thread,
- * where no deadline can be enforced.
+ * An unavailable Worker is an error. Trusted headless callers may explicitly opt into
+ * execution without a deadline; browser command execution never does so.
  */
 import { WasiRT, type WasiConfig, type WasiJob } from './wasi-runtime';
 import { memoryImports } from './wasm-module';
@@ -32,7 +32,7 @@ function createWorker(): WasiWorkerLike | null {
   if (factory) return factory();
   if (typeof __WASI_WORKER_SRC__ !== 'undefined' && typeof Worker !== 'undefined' && typeof URL !== 'undefined' && typeof Blob !== 'undefined') {
     const url = URL.createObjectURL(new Blob([__WASI_WORKER_SRC__], { type: 'text/javascript' }));
-    return new Worker(url) as unknown as WasiWorkerLike;
+    try { return new Worker(url) as unknown as WasiWorkerLike; } finally { URL.revokeObjectURL(url); }
   }
   return null;
 }
@@ -43,48 +43,77 @@ export const DEFAULT_DEADLINE_MS = 30_000;
 export interface ExecOptions {
   /** Kill the program after this many milliseconds (Infinity: no limit). */
   deadlineMs?: number;
-  /** Directory tree to preload so the program can read it (default: the cwd, 3 levels, 100 files). */
+  /** Complete filesystem root (default: /); explicit bounds fail instead of truncating. */
   preloadRoot?: string;
   preloadDepth?: number;
   preloadFiles?: number;
+  preloadBytes?: number;
+  signal?: AbortSignal;
+  /** Only trusted headless callers may opt in; requires deadlineMs: Infinity. */
+  allowInThread?: boolean;
 }
 
 /** Exit status used when the deadline kills a program (as timeout(1) does). */
 export const EXIT_DEADLINE = 124;
 
 export async function execWasi(config: WasiConfig, module: WebAssembly.Module, opts: ExecOptions = {}): Promise<number> {
-  const rt = new WasiRT(config);
-  await rt.preloadTree(opts.preloadRoot ?? config.cwd, opts.preloadDepth ?? 3, opts.preloadFiles ?? 100);
-  // package stubs live here; a program that searches PATH (a shell) has to see them
-  if (config.commands) { await rt.preloadTree('/usr/local/bin', 1, 200); await rt.preloadDir('/tmp'); }
-
-  let worker: WasiWorkerLike | null = null;
-  try { worker = createWorker(); } catch { worker = null; }
-  if (!worker) return rt.run(module);
-
-  const mem = memoryImports.get(module);
-  const job: WasiJob = rt.exportJob(mem ? { initial: mem.initial, maximum: mem.maximum } : undefined);
   const deadline = opts.deadlineMs ?? DEFAULT_DEADLINE_MS;
-  const w = worker;
-
-  return new Promise<number>((resolve, reject) => {
+  const cancellation = new AbortController();
+  return new Promise<number>((resolve,reject) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (fn: () => void) => {
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const finish = (code?:number, error?:unknown) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort',abort);
+      cancellation.abort();
+      if (error !== undefined) reject(error); else resolve(code!);
+    };
+    const abort = () => finish(130);
+    opts.signal?.addEventListener('abort',abort,{once:true});
+    if (opts.signal?.aborted) {abort(); return;}
+    if (Number.isFinite(deadline)) timer = setTimeout(() => {
+      config.onStderr?.(`shiro: ${config.args[0] ?? 'program'}: still running after ${deadline / 1000}s, killed\n`);
+      finish(EXIT_DEADLINE);
+    },Math.max(0,deadline));
+    runWasi(config,module,{...opts,signal:cancellation.signal,deadlineMs:Infinity,allowInThread:opts.allowInThread && deadline === Infinity})
+      .then(code => finish(code),error => finish(undefined,error));
+  });
+}
+
+async function runWasi(config:WasiConfig, module:WebAssembly.Module, opts:ExecOptions): Promise<number> {
+  const rt = new WasiRT(config);
+  if (opts.signal?.aborted) return 130;
+  await rt.preloadTree(opts.preloadRoot ?? '/', opts.preloadDepth, opts.preloadFiles, opts.preloadBytes, opts.signal);
+  if (opts.signal?.aborted) return 130;
+  rt.mountPackageResources(); rt.installVirtualCommands();
+  const worker = createWorker();
+  if (!worker) {
+    if (opts.allowInThread && opts.deadlineMs === Infinity) return rt.run(module);
+    throw new Error('WASI execution requires a Worker to enforce cancellation and deadlines');
+  }
+
+  const mem = memoryImports.get(module);
+  const job: WasiJob = rt.exportJob(mem ? { initial: mem.initial, maximum: mem.maximum } : undefined);
+  const w = worker;
+  const execution = new AbortController();
+
+  return new Promise<number>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      opts.signal?.removeEventListener('abort', abort);
+      execution.abort();
       w.onmessage = null;
       w.onerror = null;
       w.terminate();
       fn();
     };
-    if (Number.isFinite(deadline)) {
-      timer = setTimeout(() => finish(() => {
-        config.onStderr?.(`shiro: ${config.args[0] ?? 'program'}: still running after ${deadline / 1000}s, killed\n`);
-        resolve(EXIT_DEADLINE);
-      }), deadline);
-    }
+    const abort = () => finish(() => resolve(130));
+    opts.signal?.addEventListener('abort', abort, {once:true});
+    if (opts.signal?.aborted) { abort(); return; }
     w.onmessage = ({ data: m }) => {
       switch (m.type) {
         case 'stdout': config.onStdout?.(m.text); break;
@@ -97,7 +126,9 @@ export async function execWasi(config: WasiConfig, module: WebAssembly.Module, o
           if (!config.exec) { reply({ type: 'exec-result', id, error: 'exec is not available' }); break; }
           (async () => {
             if (m.req.writes) await rt.applyWrites(m.req.writes);          // the host sees the program's files first
-            const result = await config.exec!({ ...m.req, writes: undefined, known: undefined, dirs: undefined });
+            if (settled) return;
+            const result = await config.exec!({ ...m.req, writes: undefined, known: undefined, dirs: undefined, signal:execution.signal });
+            if (settled) return;
             result.updates = await rt.computeUpdates(m.req.known ?? [], m.req.dirs ?? []);   // and the program sees the host's changes
             reply({ type: 'exec-result', id, result });
           })().catch(e => reply({ type: 'exec-result', id, error: String(e?.message ?? e) }));
@@ -115,6 +146,6 @@ export async function execWasi(config: WasiConfig, module: WebAssembly.Module, o
     };
     w.onerror = ev => finish(() => reject(new Error(ev?.message || 'worker error')));
     try { w.postMessage({ type: 'run', module, job, trace: !!config.trace }); }
-    catch { finish(() => { rt.run(module).then(resolve, reject); }); }   // cannot be cloned: run in-thread
+    catch (e) { finish(() => reject(e)); }
   });
 }

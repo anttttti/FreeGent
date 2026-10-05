@@ -298,6 +298,11 @@ if [ -n "$_PUSH_RANGE" ]; then
 
 fi  # end _PUSH_RANGE checks
 
+# Generated routing documentation must match the catalog; this check never writes.
+step "Shiro inventory"
+npx tsx scripts/shiro-inventory.mjs --check || fail "Stale Shiro inventory — regenerate and commit its note and artifacts together."
+ok "Shiro inventory current"
+
 # 8. Typecheck + test suite
 step "Typecheck"
 if npm run typecheck 2>&1; then

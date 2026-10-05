@@ -125,7 +125,10 @@ export const iconvCmd: Command = {
       const text = inputs.map(b => decode(b, from)).join('');
       result = encode(text, to, discard, /\/\/TRANSLIT/i.test(toRaw));
       if (typeof result === 'number') {
-        ctx.stderr += `iconv: cannot convert\n`;
+        const prefix = text.slice(0,result);
+        const sourceBytes = encode(prefix,from,false);
+        if (typeof sourceBytes === 'number') throw new Error('Cannot compute source offset');
+        ctx.stderr += `iconv: illegal input sequence at position ${sourceBytes.length}\n`;
         result = encode(text.slice(0, result), to, discard) as Uint8Array;
         await emit(result);
         return 1;

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __setSevenZipForTest, sevenZipCmd } from '../shiro/commands/sevenzip';
+import { SEVENZIP_ASSET_PINS } from '../shiro/wasi-artifact-pins';
+import { createHash } from 'node:crypto';
+import { textToBytes } from '../shiro/utils/bytes';
 
 class MockWasmFS {
   private files = new Map<string, Uint8Array>();
@@ -78,6 +81,7 @@ function makeCtx(args: string[], files: Record<string, string | Uint8Array> = {}
       writeFile: async (path: string, bytes: Uint8Array | string) => {
         workspace.set(path, typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes.slice());
       },
+      exists:async (path:string) => workspace.has(path) || isDir(path),
       mkdir: async () => {},
       unlink: async (path: string) => { workspace.delete(path); },
       rmdir: async () => {},
@@ -89,6 +93,50 @@ function makeCtx(args: string[], files: Record<string, string | Uint8Array> = {}
 afterEach(() => __setSevenZipForTest(null));
 
 describe('7z Shiro command integration', () => {
+  it('rejects modified loader or WASM bytes before executing loader code', async () => {
+    const loader = new TextEncoder().encode('globalThis.__fgModifiedSevenZipLoader = true; export default () => {};');
+    const wasm = Uint8Array.of(0,97,115,109,1,0,0,0);
+    const assets = [SEVENZIP_ASSET_PINS['7zz.es6.js'], SEVENZIP_ASSET_PINS['7zz.wasm']];
+    const originals = assets.map(pin => ({...pin}));
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    try {
+      for (const modified of [0,1]) {
+        __setSevenZipForTest(null);
+        assets.forEach((pin,index) => Object.assign(pin, {
+          length:[loader,wasm][index].length,
+          sha256:createHash('sha256').update([loader,wasm][index]).digest('hex'),
+        }));
+        const bytes = [loader.slice(),wasm.slice()];
+        bytes[modified][0] ^= 1;
+        fetchMock.mockImplementation(async url => new Response(bytes[String(url).endsWith('.js') ? 0 : 1]));
+        const ctx = makeCtx(['a','archive.7z','input.txt'], {'input.txt':'payload'});
+        expect(await sevenZipCmd.exec(ctx)).toBe(1);
+        expect(ctx.stderr).toContain('Artifact SHA-256 mismatch');
+        expect((globalThis as any).__fgModifiedSevenZipLoader).toBeUndefined();
+      }
+    } finally {
+      assets.forEach((pin,index) => Object.assign(pin, originals[index]));
+      fetchMock.mockRestore();
+    }
+  });
+  it('preserves raw stdin/stdout/stderr without UTF-8 loss or added newlines', async () => {
+    const input:number[] = [];
+    __setSevenZipForTest(async (options:any) => ({
+      FS:new MockWasmFS(),
+      callMain() {
+        for (let byte = options.stdin(); byte !== null; byte = options.stdin()) input.push(byte);
+        for (const byte of [0,255,13,10,0xe2,0x82,0xac]) options.stdout(byte);
+        options.stderr(128);
+        return 0;
+      },
+    }));
+    const ctx = makeCtx(['l','input.txt'], {'input.txt':'payload'});
+    ctx.stdin = '\0\udcff\r\n';
+    expect(await sevenZipCmd.exec(ctx)).toBe(0);
+    expect(input).toEqual([0,255,13,10]);
+    expect([...textToBytes(ctx.stdout)]).toEqual([0,255,13,10,0xe2,0x82,0xac]);
+    expect([...textToBytes(ctx.stderr)]).toEqual([128]);
+  });
   it('stages workspace files, invokes the WASM CLI, and syncs archives back', async () => {
     const archive = Uint8Array.of(0x37, 0x7a, 0xbc, 0xaf);
     const calls: string[][] = [];

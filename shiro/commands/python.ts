@@ -1,5 +1,7 @@
 import type { Command, CommandContext } from './index';
-import { bytesToText, textToBytes } from '../utils/bytes';
+import { bytesToText, textToBytes, concatBytes, sameBytes } from '../utils/bytes';
+import { withRuntimeLock } from '../runtime-lock';
+import { snapshotRuntimeFiles, clearRuntimeDir, stageRuntimePath } from '../runtime-filesystem';
 
 /**
  * python/python3: Python interpreter via Pyodide (WebAssembly CPython)
@@ -25,8 +27,7 @@ async function ensurePyodide(ctx: CommandContext): Promise<any> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    // Status goes to stderr — it's diagnostic, not program output.
-    ctx.stderr += 'Loading Python (Pyodide)...\n';
+    ctx.shell.onProgress?.('Loading Python (Pyodide)...');
 
     // Load Pyodide loader script via importScripts-like eval
     const loaderUrl = `${PYODIDE_CDN}/pyodide.mjs`;
@@ -63,49 +64,14 @@ function fromPy(pyPath: string): string {
 
 /** Copy the Shiro FS tree at dir (the workspace) into Pyodide's FS. */
 async function syncToNative(py: any, ctx: CommandContext, dir: string) {
-  try {
-    try { py.FS.mkdirTree(toPy(dir)); } catch { /* exists */ }
-    const entries = await ctx.fs.readdir(dir);
-    for (const entry of entries) {
-      if (entry === '.git') continue;
-      const fullPath = dir === '/' ? '/' + entry : dir + '/' + entry;
-      const pyPath = toPy(fullPath);
-      try {
-        const stat = await ctx.fs.stat(fullPath);
-        if (stat.isDirectory()) {
-          try { py.FS.mkdirTree(pyPath); } catch { /* exists */ }
-          await syncToNative(py, ctx, fullPath);
-        } else {
-          const content = await ctx.fs.readFile(fullPath);
-          try { py.FS.mkdirTree(pyPath.slice(0, pyPath.lastIndexOf('/'))); } catch { /* exists */ }
-          py.FS.writeFile(pyPath, content);
-        }
-      } catch { /* skip unreadable files */ }
-    }
-  } catch { /* non-fatal */ }
+  await stageRuntimePath(py.FS,ctx.fs,dir,{mapPath:toPy});
 }
 
 /** Contents of every file under a Pyodide FS directory tree, by path. */
 function snapshotFiles(py: any, dir: string, out = new Map<string, Uint8Array>()): Map<string, Uint8Array> {
-  let entries: string[];
-  try { entries = py.FS.readdir(dir); } catch { return out; }
-  for (const entry of entries) {
-    if (entry === '.' || entry === '..') continue;
-    const pyPath = `${dir}/${entry}`;
-    try {
-      const st = py.FS.lstat(pyPath);
-      if (py.FS.isDir(st.mode)) snapshotFiles(py, pyPath, out);
-      else if (py.FS.isFile(st.mode)) out.set(pyPath, py.FS.readFile(pyPath));
-    } catch {}
-  }
-  return out;
+  return snapshotRuntimeFiles(py.FS,dir,out,true);
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 /**
  * Sync files written by Python back to Shiro FS (→ IDB for /workspace paths).
@@ -123,13 +89,17 @@ async function syncFromNative(py: any, ctx: CommandContext, before: Map<string, 
 
   const walkAndSync = async (pyDir: string) => {
     let entries: string[];
-    try { entries = py.FS.readdir(pyDir); } catch { return; }
+    try { entries = py.FS.readdir(pyDir); } catch(error:any) {
+      if (error.errno === 44) return;
+      throw error;
+    }
     for (const entry of entries) {
       if (entry === '.' || entry === '..') continue;
       const pyPath = `${pyDir}/${entry}`;
       const shellPath = fromPy(pyPath);
-      try {
+      {
         const st = py.FS.lstat(pyPath);
+        if (py.FS.isLink(st.mode)) throw new Error(`Cannot synchronize symbolic link: ${pyPath}`);
         if (py.FS.isDir(st.mode)) {
           if (!(await ctx.fs.exists(shellPath))) await ctx.fs.mkdir(shellPath, { recursive: true });
           await walkAndSync(pyPath);
@@ -140,16 +110,16 @@ async function syncFromNative(py: any, ctx: CommandContext, before: Map<string, 
           if (was && sameBytes(was, bytes)) continue;
           await ctx.fs.writeFile(shellPath, bytes);
         }
-      } catch { /* skip unreadable or vanished entries */ }
+      }
     }
   };
-  await walkAndSync('/workspace').catch(() => {});
-  await walkAndSync('/shiro').catch(() => {});
+  await walkAndSync('/workspace');
+  await walkAndSync('/shiro');
 
   // Sync deletions: files seeded from the shell but gone after the run were deleted by Python.
   for (const pyPath of before.keys()) {
     if (!visited.has(pyPath)) {
-      try { await ctx.fs.unlink(fromPy(pyPath)); } catch { /* already gone */ }
+      if (await ctx.fs.exists(fromPy(pyPath))) await ctx.fs.unlink(fromPy(pyPath));
     }
   }
 }
@@ -159,18 +129,6 @@ async function syncFromNative(py: any, ctx: CommandContext, before: Map<string, 
  * synced back: the workspace is the only lasting copy, and a kept one would still show files
  * deleted from the workspace since. The next run copies the workspace in again.
  */
-function clearNative(py: any, dir = '/workspace') {
-  let entries: string[];
-  try { entries = py.FS.readdir(dir); } catch { return; }
-  for (const entry of entries) {
-    if (entry === '.' || entry === '..') continue;
-    const path = `${dir}/${entry}`;
-    let isDir = false;
-    try { isDir = py.FS.isDir(py.FS.lstat(path).mode); } catch { /* vanished */ }
-    if (isDir) { clearNative(py, path); try { py.FS.rmdir(path); } catch { /* not empty */ } }
-    else { try { py.FS.unlink(path); } catch { /* vanished */ } }
-  }
-}
 
 /**
  * Python preamble run before every script/one-liner: cwd, sys.path, reloads of workspace
@@ -318,6 +276,7 @@ export const pythonCmd: Command = {
       ctx.stderr = `error: failed to load Pyodide: ${err.message}\n`;
       return 1;
     }
+    return withRuntimeLock(py,async () => {
     if (cmd.kind === 'none') return repl(py, ctx);
 
     let target = cmd.target;
@@ -369,21 +328,16 @@ export const pythonCmd: Command = {
       // Python's text streams buffer: flush whatever the program left there.
       try { py.runPython('import sys\nfor _f in (sys.stdout, sys.stderr):\n    try: _f.flush()\n    except Exception: pass'); } catch {}
       py.setStdout(); py.setStderr(); py.setStdin();
-      ctx.stdout += bytesToText(concat(out));
-      ctx.stderr += bytesToText(concat(err));
-      await syncFromNative(py, ctx, before);
-      clearNative(py);
+      ctx.stdout += bytesToText(concatBytes(out));
+      ctx.stderr += bytesToText(concatBytes(err));
+      try {await syncFromNative(py,ctx,before);}
+      finally {clearRuntimeDir(py.FS,'/workspace'); clearRuntimeDir(py.FS,'/shiro');}
     }
     return exitCode;
+    });
   },
 };
 
-function concat(parts: Uint8Array[]): Uint8Array {
-  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let k = 0;
-  for (const p of parts) { all.set(p, k); k += p.length; }
-  return all;
-}
 
 function repl(py: any, ctx: CommandContext): Promise<number> {
   const term = ctx.terminal!;
@@ -513,6 +467,7 @@ export const pipCmd: Command = {
       return 1;
     }
 
+    return withRuntimeLock(py,async () => {
     const packages = args.slice(1).filter(a => !a.startsWith('-'));
     try {
       await py.loadPackage('micropip');
@@ -527,6 +482,7 @@ export const pipCmd: Command = {
       ctx.stderr = `pip: error installing packages: ${err.message}\n`;
       return 1;
     }
+    });
   },
 };
 
@@ -541,10 +497,12 @@ async function ensurePytest(ctx: CommandContext): Promise<void> {
   if (!pytestLoadPromise) {
     pytestLoadPromise = (async () => {
       const py = await ensurePyodide(ctx);
+      await withRuntimeLock(py,async () => {
       const installed = py.runPython('import importlib.util; importlib.util.find_spec("pytest") is not None');
       if (installed) return;
-      ctx.stderr += 'Loading pytest (Pyodide package)...\n';
+      ctx.shell.onProgress?.('Loading pytest (Pyodide package)...');
       await py.loadPackage('pytest');
+      });
     })().catch((err) => {
       pytestLoadPromise = null;
       throw err;

@@ -1910,7 +1910,7 @@ function _canonLanguage(lang: string): string {
     return _LANGS[l] ?? l;
 }
 
-async function _handleExecuteCode(args, context) {
+async function _handleExecuteCode(args, context, onProgress?: (message:string)=>void) {
     const _rawCode = EXEC_CODE_ALIASES.map(k => args?.[k]).find(v => typeof v === 'string' && v) ?? '';
     const _targets = _inPlaceTargets(_rawCode);
     const _before  = _targets.length ? await _readInPlaceTargets(_targets) : null;
@@ -1918,7 +1918,7 @@ async function _handleExecuteCode(args, context) {
     // them (a coder that wrote main.py and ran it ran the old one, or got "No such file"), and
     // what the code writes must show in the worker's own read_file / list_files.
     const _stamps = context?.staging ? await _applyStagingForRun(context.staging) : null;
-    const result   = await _handleExecuteCodeInner(args, context);
+    const result   = await _handleExecuteCodeInner(args, context, onProgress);
     if (_stamps) await _stageRunChanges(context.staging, _stamps, context.snapshot);
     return _before?.size ? _annotateUnchangedInPlace(result, _before) : result;
 }
@@ -1962,7 +1962,7 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
     for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
 }
 
-async function _handleExecuteCodeInner(args, context) {
+async function _handleExecuteCodeInner(args, context, onProgress?: (message:string)=>void) {
     // Alias lists owned by tool-call-repair.ts — dispatch and pre-dispatch repair
     // must accept the same keys or they drift (pre-repair normally handles this;
     // dispatch aliasing is the backstop for paths that skip repair).
@@ -2095,8 +2095,8 @@ async function _handleExecuteCodeInner(args, context) {
                 }
             } catch (e) { return { error: `Local sandbox: ${e.message} — is the dev server (npm run dev) running?` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {
-            // Browser bash via x86-64 WASM emulator + musl-static binaries
-            try { execResult = await runWithWasm(args.code); }
+            // Browser shell and lazy upstream runtimes, inside the opaque-origin frame.
+            try { execResult = await runWithWasm(args.code, onProgress); }
             catch (e) { return { error: `WASM: ${e.message}` }; }
         } else {
             return { error: args.language === 'bash'
@@ -2184,10 +2184,10 @@ const _PHANTOM_ALIASES = {
     grep_workspace:  { tool: 'search_workspace', remap: _rSearch, hint: "Use search_workspace(pattern=…)" },
 };
 
-async function _handlePhantomAlias(name, args, context) {
+async function _handlePhantomAlias(name, args, context, onProgress?: (message:string)=>void) {
     const _alias = _PHANTOM_ALIASES[name];
     if (_alias) {
-        const result = await executeToolAsync(_alias.tool, _alias.remap(args ?? {}), context);
+        const result = await executeToolAsync(_alias.tool, _alias.remap(args ?? {}), context, onProgress);
         // Suppress the note for code-execution aliases: the command already ran; telling the agent
         // it used the wrong tool causes it to retry execute_code with rewritten code, producing
         // format divergence (different date formats, SQL predicates, etc.) vs. the first run.
@@ -2197,7 +2197,7 @@ async function _handlePhantomAlias(name, args, context) {
     }
     return { error: `Unknown tool: ${name}` };
 }
-export async function executeToolAsync(name, args, context = null) {
+export async function executeToolAsync(name, args, context = null, onProgress?: (message:string)=>void) {
     // Role tool-filter enforcement: reject calls to tools outside the role's allowed set.
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
@@ -2268,7 +2268,7 @@ export async function executeToolAsync(name, args, context = null) {
     if (name === 'context7_docs')      return _handleContext7Docs(args);
     if (name === 'fetch_url')          return _handleFetchUrl(args);
     if (name === 'generate_image')     return _handleGenerateImage(args);
-    if (name === 'execute_code')       return _handleExecuteCode(args, context);
+    if (name === 'execute_code')       return _handleExecuteCode(args, context, onProgress);
     if (name === 'academic_search')    return _handleAcademicSearch(args);
     if (name === 'package_search')     return _handlePackageSearch(args);
     if (name === 'repo_map')           return _handleRepoMap(args);
@@ -2277,7 +2277,7 @@ export async function executeToolAsync(name, args, context = null) {
     if (name === 'update_task_status') return _handleUpdateTaskStatus(args);
     if (name === 'check_page')         return _handleCheckPage(args);
     if (name.startsWith('mcp__'))      return executeMcpTool(name, args);
-    return _handlePhantomAlias(name, args, context);
+    return _handlePhantomAlias(name, args, context, onProgress);
 }
 
 

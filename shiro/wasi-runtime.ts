@@ -12,7 +12,8 @@
  */
 
 import type { FileSystem } from './filesystem';
-import { bytesToText, textToBytes } from './utils/bytes';
+import { bytesToText, textToBytes, sameBytes } from './utils/bytes';
+import { withRuntimeLock } from './runtime-lock';
 import { memoryImports } from './wasm-module';
 
 // ── WASI errno constants ─────────────────────────────────────────────
@@ -111,6 +112,8 @@ function inodeFor(path: string): bigint {
 
 /** A program asking to be replaced by another (exec): what to run, and what it sees. */
 export interface ExecRequest {
+  /** Host cancellation scope; not sent to the Worker. */
+  signal?: AbortSignal;
   argv: string[]; env: Record<string, string>; cwd: string; stdin: string;
   /** a Worker run sends, so that the host sees them before the new program runs: its unflushed file changes ... */
   writes?: WasiWrites;
@@ -120,7 +123,7 @@ export interface ExecRequest {
 }
 /** Files and directory listings that changed behind a run's back (written by a program it exec'd). */
 export interface FsUpdates {
-  files: [string, Uint8Array | null, { type: string; size: number; mtime: number }][];
+  files: [string, Uint8Array | null, WasiFileStat][];
   dirs: [string, string[]][];
 }
 export interface ExecResult { stdout: string; stderr: string; code: number; updates?: FsUpdates }
@@ -229,6 +232,10 @@ export function normPath(p: string): string {
 
 // ── WasiRT: the WASI runtime ────────────────────────────────────────
 
+export interface WasiFileStat {
+  type:string; size:number; mtime:number; atime?:number; ctime?:number; mode?:number;
+}
+
 export interface WasiConfig {
   /** Shiro filesystem instance */
   fs: FileSystem;
@@ -238,6 +245,8 @@ export interface WasiConfig {
   args: string[];
   /** Environment variables */
   env: Record<string, string>;
+  /** Read-only files from this artifact, scoped to one program instead of installed globally. */
+  resources?: [string,Uint8Array][];
   /** Stdin data */
   stdin?: string;
   /** Callback for stdout writes */
@@ -261,16 +270,27 @@ export interface WasiJob {
   env: Record<string, string>;
   stdin: string;
   preopens?: Record<string, string>;
-  files: [string, Uint8Array, { type: string; size: number; mtime: number }][];
+  files: [string, Uint8Array, WasiFileStat][];
   dirs: [string, string[]][];
   /** Limits of the memory the module imports, if any (see wasm-module.ts) */
   memory?: { initial: number; maximum: number | undefined };
   commands?: string[];
+  resourcePaths?:string[];
+  virtualCommandPaths?:string[];
 }
+
+export type WasiOperation =
+    | {type:'write'; path:string; data:Uint8Array}
+    | { type: 'delete'; path: string }
+    | { type: 'mkdir'; path: string }
+    | { type: 'rmdir'; path: string }
+    | { type: 'rename'; oldPath: string; newPath: string }
+    | { type:'utimes'; path:string; atime:number; mtime:number }
+;
 
 export interface WasiWrites {
   closedDirty: { path: string; data: Uint8Array }[];
-  deferredOps: unknown[];
+  deferredOps: WasiOperation[];
 }
 
 export class WasiRT {
@@ -392,12 +412,18 @@ export class WasiRT {
     // WASIX (wasix_32v1) is preview1 plus POSIX-ish extensions; some toolchains import even the
     // basic calls from this namespace. Only the single-process subset can work here.
     const wasix: Record<string, Function> = { ...preview1, ...this.wasixCalls() };
-    const imports: WebAssembly.Imports = { wasi_snapshot_preview1: preview1, wasi_unstable: unstable, wasix_32v1: wasix };
+    // Guest-controlled import names must never resolve Object.prototype members
+    // (e.g. constructor or __proto__) as host namespaces or callable imports.
+    const imports: WebAssembly.Imports = Object.create(null);
+    for (const [name, calls] of Object.entries({wasi_snapshot_preview1:preview1, wasi_unstable:unstable, wasix_32v1:wasix, wasi:{'thread-spawn':() => -WASI_ENOSYS}})) {
+      imports[name] = Object.assign(Object.create(null), calls);
+    }
     if (module) {
       // imports not implemented above fail with ENOSYS instead of failing to instantiate
       for (const imp of WebAssembly.Module.imports(module)) {
         if (imp.kind !== 'function') continue;
-        const ns = (imports[imp.module] ??= {}) as Record<string, Function>;
+        if (!imports[imp.module]) throw new Error(`Unsupported WASM import namespace: ${imp.module}.${imp.name}`);
+        const ns = imports[imp.module] as Record<string, Function>;
         ns[imp.name] ??= () => WASI_ENOSYS;
       }
       if (this.config.trace) {
@@ -460,33 +486,22 @@ export class WasiRT {
    * (a program it exec'd may have created, rewritten or removed any of them).
    */
   async computeUpdates(known: [string, number, number][], dirs: string[]): Promise<FsUpdates> {
-    const fs = this.config.fs;
-    const updates: FsUpdates = { files: [], dirs: [] };
-    const have = new Set(known.map(k => k[0]));
-    let budget = 300;
-    const send = async (path: string) => {
-      const st = await fs.stat(path);
-      if (st.type !== 'file' || st.size > (1 << 22) || budget-- <= 0) return;
-      const raw = await fs.readFile(path);
-      const data = typeof raw === 'string' ? textToBytes(raw) : raw;
-      updates.files.push([path, data, { type: 'file', size: data.length, mtime: st.mtime.getTime() }]);
-    };
-    for (const [path, size, mtime] of known) {
-      try {
-        const st = await fs.stat(path);
-        if (st.size !== size || st.mtime.getTime() !== mtime) await send(path);
-      } catch { updates.files.push([path, null, { type: 'file', size: 0, mtime: 0 }]); }
+    const fresh = new WasiRT(this.config);
+    const roots = [...dirs].sort((a,b) => a.length - b.length).filter((path,i,all) => !all.slice(0,i).some(root => root === '/' || path.startsWith(root + '/')));
+    for (const root of roots) await fresh.preloadTree(root);
+    fresh.mountPackageResources(); fresh.installVirtualCommands();
+    const updates:FsUpdates = {files:[],dirs:[...fresh.dirCache]};
+    const have = new Set([...known.map(([path]) => path), ...dirs]);
+    for (const [path,size,mtime] of known) {
+      const next = fresh.fileCache.get(path);
+      if (!next) { updates.files.push([path,null,{type:'file',size:0,mtime:0}]); continue; }
+      const old = this.fileCache.get(path);
+      const changed = next.stat.size !== size || next.stat.mtime !== mtime || (old && (old.data.length !== next.data.length || old.data.some((b,i) => b !== next.data[i])));
+      if (changed) updates.files.push([path,next.data,next.stat]);
     }
-    for (const dir of dirs) {
-      try {
-        const names = await fs.readdir(dir);
-        updates.dirs.push([dir, names]);
-        for (const n of names) {                      // files that appeared
-          const path = dir === '/' ? '/' + n : dir + '/' + n;
-          if (!have.has(path)) { have.add(path); try { await send(path); } catch { /* vanished */ } }
-        }
-      } catch { /* the directory is gone */ }
-    }
+    for (const [path,next] of fresh.fileCache) if (!have.has(path) && !fresh.virtualCommandPaths.has(path) && !fresh.resourcePaths.has(path)) updates.files.push([path,next.data,next.stat]);
+    this.fileCache = fresh.fileCache;
+    this.dirCache = fresh.dirCache;
     return updates;
   }
 
@@ -498,11 +513,12 @@ export class WasiRT {
       const name = path.slice(slash + 1);
       if (data === null) {
         this.fileCache.delete(path);
+        this.realFiles.delete(path);
         const l = this.dirCache.get(parent);
         if (l) { const i = l.indexOf(name); if (i >= 0) l.splice(i, 1); }
       } else {
         this.fileCache.set(path, { data, stat });
-        this.realFiles.add(path);
+        if (!this.virtualCommandPaths.has(path) && !this.resourcePaths.has(path)) this.realFiles.add(path);
       }
     }
     for (const [dir, names] of u.dirs) {
@@ -530,11 +546,34 @@ export class WasiRT {
     throw new ExecSignal({ argv, env, cwd: this.cwdPath, stdin: '' });
   }
 
+  private resourcePaths = new Set<string>();
+  private virtualCommandPaths = new Set<string>();
+
+  /** Overlay immutable package data only in this program's snapshot. */
+  mountPackageResources(): void {
+    for (const [path,data] of this.config.resources ?? []) {
+      if (!path.startsWith('/') || path.includes('/../') || path === '/workspace' || path.startsWith('/workspace/')) throw new Error(`Invalid package resource path: ${path}`);
+      this.resourcePaths.add(path);
+      this.fileCache.set(path,{data,stat:{type:'file',size:data.length,mtime:0,mode:0o444}});
+      let child = path;
+      while (child !== '/') {
+        const slash = child.lastIndexOf('/');
+        const parent = slash <= 0 ? '/' : child.slice(0,slash);
+        const name = child.slice(slash+1);
+        const names = this.dirCache.get(parent) ?? [];
+        if (!names.includes(name)) names.push(name);
+        this.dirCache.set(parent,names);
+        if (!this.fileCache.has(parent)) this.fileCache.set(parent,{data:new Uint8Array(0),stat:{type:'dir',size:0,mtime:0,mode:0o555}});
+        child = parent;
+      }
+    }
+  }
+
   /** Show the host's commands as executables under /usr/bin, /bin and /usr/local/bin, so a program that searches PATH finds them. */
   installVirtualCommands() {
     const names = this.config.commands;
     if (!names?.length) return;
-    for (const k of this.fileCache.keys()) this.realFiles.add(k);
+    for (const k of this.fileCache.keys()) if (!this.virtualCommandPaths.has(k)) this.realFiles.add(k);
     const now = 0;
     for (const dir of ['/usr/local/bin', '/usr/bin', '/bin']) {
       if (!this.fileCache.has(dir)) this.fileCache.set(dir, { data: new Uint8Array(0), stat: { type: 'dir', size: 0, mtime: now } });
@@ -542,6 +581,7 @@ export class WasiRT {
       for (const n of names) {
         const path = `${dir}/${n}`;
         if (this.fileCache.has(path)) continue;
+        this.virtualCommandPaths.add(path);
         const data = new TextEncoder().encode(`#!shiro ${n}\n`);
         this.fileCache.set(path, { data, stat: { type: 'file', size: data.length, mtime: now } });
         if (!entries.includes(n)) entries.push(n);
@@ -983,6 +1023,7 @@ export class WasiRT {
       dirs: [...this.dirCache],
       memory,
       commands: this.config.commands,
+      resourcePaths:[...this.resourcePaths], virtualCommandPaths:[...this.virtualCommandPaths],
     };
   }
 
@@ -992,24 +1033,60 @@ export class WasiRT {
     const rt = new WasiRT({ fs: noFs, cwd: job.cwd, args: job.args, env: job.env, stdin: job.stdin, preopens: job.preopens, commands: job.commands, ...io });
     for (const [path, data, stat] of job.files) rt.fileCache.set(path, { data, stat });
     for (const [path, names] of job.dirs) rt.dirCache.set(path, names);
+    rt.resourcePaths = new Set(job.resourcePaths ?? []);
+    rt.virtualCommandPaths = new Set(job.virtualCommandPaths ?? []);
     rt.remote = true;
     return rt;
   }
 
   /** File changes made by the run (written or created files, deferred mkdir/delete/rename). */
   takeWrites(): WasiWrites {
-    const closedDirty = [...this.closedDirtyFds];
-    for (const fd of this.fds.values()) {
-      if (fd.dirty && fd.path) closedDirty.push({ path: fd.path, data: new Uint8Array(fd.data) });
-    }
-    return { closedDirty, deferredOps: [...this.deferredOps] };
+    this.captureDirty();
+    return { closedDirty:[], deferredOps:[...this.deferredOps] };
   }
 
   /** Apply writes produced by another runtime (a Worker) to this one's filesystem. */
   async applyWrites(w: WasiWrites): Promise<void> {
-    this.closedDirtyFds = w.closedDirty;
-    this.deferredOps = w.deferredOps as typeof this.deferredOps;
-    await this.flushAll();
+    await withRuntimeLock(this.config.fs, async () => {
+      const touched = new Set(w.closedDirty.map(f => f.path));
+      for (const op of w.deferredOps) {
+        if (op.type === 'rename') {
+          touched.add(op.oldPath); touched.add(op.newPath);
+          for (const path of this.fileCache.keys()) if (path.startsWith(op.oldPath + '/')) touched.add(path);
+        } else touched.add(op.path);
+      }
+      // Detect changes since the snapshot before applying any effects. Concurrent WASI
+      // commits are serialized; edits through other workspace tools are checked here too.
+      for (const path of touched) {
+        const before = this.fileCache.get(path);
+        let current;
+        try { current = await this.config.fs.stat(path); }
+        catch (error:any) { if (error.code !== 'ENOENT') throw error; }
+        let conflict = !!before !== !!current;
+        if (before && current) {
+          conflict ||= before.stat.type !== current.type || before.stat.mtime !== current.mtime.getTime();
+          if (before.stat.mode !== undefined) conflict ||= before.stat.mode !== current.mode;
+          if (current.type === 'file') {
+            const data = await this.config.fs.readFile(path);
+            conflict ||= !sameBytes(before.data, typeof data === 'string' ? textToBytes(data) : data);
+          } else if (current.type === 'dir') {
+            const names = await this.config.fs.readdir(path);
+            const original = this.dirCache.get(path) ?? [];
+            conflict ||= names.length !== original.length || names.some(name => !original.includes(name));
+          }
+        }
+        if (conflict) throw Object.assign(new Error(`WASI filesystem changed during execution: ${path}`), {code:'EAGAIN'});
+      }
+      this.closedDirtyFds = w.closedDirty;
+      this.deferredOps = w.deferredOps as typeof this.deferredOps;
+      await this.flushAll();
+      if (touched.size && this.snapshotRoots.size) {
+        const fresh = new WasiRT(this.config);
+        for (const root of this.snapshotRoots) await fresh.preloadTree(root);
+        fresh.mountPackageResources(); fresh.installVirtualCommands();
+        this.fileCache = fresh.fileCache; this.dirCache = fresh.dirCache;
+      }
+    });
   }
 
   // ── Helper: read C-string from WASM memory ────────────────────────
@@ -1040,6 +1117,7 @@ export class WasiRT {
 
     const relPath = this.getString(pathPtr, pathLen);
     const basePath = fd.path || '/';
+    this.config.trace?.(`path fd=${dirFd} base=${basePath} input=${relPath}`);
     if (relPath.startsWith('/')) {
       if (this.slashRelativeToDotPreopen && fd.preopen === '.') {
         // "/x" could be the cwd-relative name "x" (that libc starts at cwd "/") or a true absolute path:
@@ -1055,69 +1133,33 @@ export class WasiRT {
 
   // ── Helper: deferred operations queue ──────────────────────────────
 
-  private deferredOps: Array<
-    | { type: 'delete'; path: string }
-    | { type: 'mkdir'; path: string }
-    | { type: 'rmdir'; path: string }
-    | { type: 'rename'; oldPath: string; newPath: string }
-  > = [];
+  private deferredOps: WasiOperation[] = [];
 
   /** Dirty file data from fds that were closed before flushAll — flushed in flushAll */
   private closedDirtyFds: Array<{ path: string; data: Uint8Array }> = [];
 
+  /** Commit buffered descriptor data before an operation that changes its path or metadata. */
+  private captureDirty(): void {
+    for (const {path,data} of this.closedDirtyFds) this.deferredOps.push({type:'write',path,data:new Uint8Array(data)});
+    this.closedDirtyFds = [];
+    for (const fd of this.fds.values()) if (fd.dirty && fd.path) {
+      this.deferredOps.push({type:'write',path:fd.path,data:new Uint8Array(fd.data)});
+      fd.dirty = false;
+    }
+  }
+
   // ── Helper: flush dirty fds and deferred ops back to filesystem ────
 
   private async flushAll(): Promise<void> {
-    // Directories first: files written below may live inside them
+    this.captureDirty();
     for (const op of this.deferredOps) {
-      if (op.type !== 'mkdir') continue;
-      try { await this.config.fs.mkdir(op.path, { recursive: true }); } catch { /* exists, or best effort */ }
-    }
-    this.deferredOps = this.deferredOps.filter(op => op.type !== 'mkdir');
-    // Flush dirty file descriptors still open
-    for (const [, fd] of this.fds) {
-      if (fd.dirty && fd.path) {
-        try {
-          await this.config.fs.writeFile(fd.path, fd.data);
-        } catch {
-          // Best effort
-        }
-        fd.dirty = false;
-      }
-    }
-    // Flush data from fds that were closed during execution
-    for (const { path, data } of this.closedDirtyFds) {
-      try {
-        await this.config.fs.writeFile(path, data);
-      } catch {
-        // Best effort
-      }
-    }
-    this.closedDirtyFds = [];
-
-    // Execute deferred filesystem operations
-    for (const op of this.deferredOps) {
-      try {
-        switch (op.type) {
-          case 'delete':
-            await this.config.fs.unlink(op.path);
-            break;
-          case 'rmdir':
-            await this.config.fs.rmdir(op.path);
-            break;
-          case 'rename':
-            // Read the data, write to new path, delete old path
-            try {
-              const data = await this.config.fs.readFile(op.oldPath);
-              await this.config.fs.writeFile(op.newPath, data);
-              await this.config.fs.unlink(op.oldPath);
-            } catch {
-              // Best effort
-            }
-            break;
-        }
-      } catch {
-        // Best effort
+      switch (op.type) {
+        case 'mkdir': await this.config.fs.mkdir(op.path); break;
+        case 'write': await this.config.fs.writeFile(op.path,op.data); break;
+        case 'delete': await this.config.fs.unlink(op.path); break;
+        case 'rmdir': await this.config.fs.rmdir(op.path); break;
+        case 'rename': await this.config.fs.rename(op.oldPath,op.newPath); break;
+        case 'utimes': await this.config.fs.utimes(op.path,new Date(op.atime),new Date(op.mtime)); break;
       }
     }
     this.deferredOps = [];
@@ -1125,10 +1167,10 @@ export class WasiRT {
 
   // ── Helper: synchronous file preload (must be called before run for path_open) ──
 
-  private fileCache: Map<string, { data: Uint8Array; stat: { type: string; size: number; mtime: number } }> = new Map();
+  private fileCache: Map<string, { data: Uint8Array; stat: WasiFileStat }> = new Map();
 
   /** Pre-load a file from Shiro FS into memory for synchronous access */
-  async preloadFile(path: string): Promise<{ data: Uint8Array; stat: { type: string; size: number; mtime: number } } | null> {
+  async preloadFile(path: string): Promise<{ data: Uint8Array; stat: WasiFileStat } | null> {
     if (this.fileCache.has(path)) return this.fileCache.get(path)!;
     try {
       const data = await this.config.fs.readFile(path) as Uint8Array;
@@ -1150,6 +1192,7 @@ export class WasiRT {
 
   /** Cache for preloaded directory listings: path → entry names */
   private dirCache: Map<string, string[]> = new Map();
+  private snapshotRoots = new Set<string>();
 
   /** Pre-load directory listing and cache it for fd_readdir */
   async preloadDir(path: string): Promise<string[] | null> {
@@ -1170,44 +1213,36 @@ export class WasiRT {
     }
   }
 
-  /**
-   * Recursively preload a directory tree for synchronous WASI access.
-   * Caps at maxDepth levels and maxFiles total to avoid blowing up memory.
-   */
-  async preloadTree(rootPath: string, maxDepth: number = 3, maxFiles: number = 100): Promise<void> {
-    // The directories above the root exist too (cd .., stat /, ls /): list them, without descending
-    for (let dir = rootPath; dir !== '/' && dir !== ''; ) {
-      const slash = dir.lastIndexOf('/');
-      dir = slash <= 0 ? '/' : dir.slice(0, slash);
-      await this.preloadDir(dir);
-    }
-    let fileCount = 0;
-    const queue: Array<{ path: string; depth: number }> = [{ path: rootPath, depth: 0 }];
-
-    while (queue.length > 0 && fileCount < maxFiles) {
-      const { path: dirPath, depth } = queue.shift()!;
-      const entries = await this.preloadDir(dirPath);
-      if (!entries) continue;
-
+  /** Complete snapshot or an explicit error; never execute on a silently truncated tree. */
+  async preloadTree(rootPath: string, maxDepth = Infinity, maxFiles = 50_000, maxBytes = 256 * 1024 * 1024, signal?: AbortSignal): Promise<void> {
+    this.snapshotRoots.add(rootPath);
+    let count = 0, bytes = 0;
+    const queue = [{ path:rootPath, depth:0 }];
+    for (let at = 0; at < queue.length; at++) {
+      if (signal?.aborted) throw new Error('WASI filesystem snapshot cancelled');
+      const { path, depth } = queue[at];
+      const entries = await this.config.fs.readdir(path);
+      const st = await this.config.fs.stat(path);
+      this.dirCache.set(path, entries);
+      this.fileCache.set(path, {data:new Uint8Array(0), stat:{type:'dir', size:0, mtime:st.mtime.getTime(), atime:st.atime?.getTime(), ctime:st.ctime?.getTime(), mode:st.mode}});
       for (const name of entries) {
-        if (fileCount >= maxFiles) break;
-        const fullPath = dirPath === '/' ? `/${name}` : `${dirPath}/${name}`;
-        try {
-          const stat = await this.config.fs.stat(fullPath);
-          if (stat.type === 'dir') {
-            this.fileCache.set(fullPath, {
-              data: new Uint8Array(0),
-              stat: { type: 'dir', size: 0, mtime: stat.mtime.getTime() },
-            });
-            if (depth < maxDepth) {
-              queue.push({ path: fullPath, depth: depth + 1 });
-            }
-          } else {
-            await this.preloadFile(fullPath);
-            fileCount++;
-          }
-        } catch {
-          // Skip files we can't stat
+        if (signal?.aborted) throw new Error('WASI filesystem snapshot cancelled');
+        const full = path === '/' ? '/' + name : path + '/' + name;
+        // Device data is generated by path_open/fd_read, never captured as a regular file.
+        if (full === '/dev' || full.startsWith('/dev/')) continue;
+        const info = await this.config.fs.lstat(full);
+        if (info.type === 'dir') {
+          if (depth >= maxDepth) throw new Error(`WASI snapshot exceeds depth limit ${maxDepth}: ${full}`);
+          if (queue.length >= maxFiles) throw new Error(`WASI snapshot exceeds directory limit ${maxFiles}`);
+          queue.push({path:full, depth:depth + 1});
+        } else {
+          if (info.type !== 'file') throw new Error(`WASI snapshot cannot represent ${info.type}: ${full}`);
+          if (++count > maxFiles || bytes + info.size > maxBytes) throw new Error(`WASI snapshot exceeds file/byte limit at ${full}`);
+          const raw = await this.config.fs.readFile(full);
+          const data = typeof raw === 'string' ? textToBytes(raw) : raw.slice();
+          bytes += data.byteLength;
+          if (bytes > maxBytes) throw new Error(`WASI snapshot exceeds byte limit at ${full}`);
+          this.fileCache.set(full, {data, stat:{type:info.type, size:data.byteLength, mtime:info.mtime.getTime(), atime:info.atime?.getTime(), ctime:info.ctime?.getTime(), mode:info.mode}});
         }
       }
     }
@@ -1339,8 +1374,11 @@ export class WasiRT {
     return WASI_ESUCCESS;
   }
 
-  private fd_fdstat_set_flags(_fd: number, _flags: number): number {
-    return WASI_ESUCCESS; // no-op
+  private fd_fdstat_set_flags(fd:number, flags:number): number {
+    const f = this.fds.get(fd);
+    if (!f) return WASI_EBADF;
+    f.append = (flags & 1) !== 0;
+    return WASI_ESUCCESS;
   }
 
   private fd_filestat_get(fd: number, bufPtr: number): number {
@@ -1354,10 +1392,11 @@ export class WasiRT {
     view.setUint8(bufPtr + 16, f.filetype);       // filetype
     view.setBigUint64(bufPtr + 24, 1n, true);    // nlink
     view.setBigUint64(bufPtr + 32, BigInt(f.data.length), true); // size
-    const now = BigInt(Date.now()) * 1_000_000n;
-    view.setBigUint64(bufPtr + 40, now, true);    // atim
-    view.setBigUint64(bufPtr + 48, now, true);    // mtim
-    view.setBigUint64(bufPtr + 56, now, true);    // ctim
+    const info = f.path ? this.fileCache.get(f.path)?.stat : undefined;
+    const mtime = info?.mtime ?? Date.now();
+    view.setBigUint64(bufPtr + 40, BigInt(info?.atime ?? mtime) * 1_000_000n,true);
+    view.setBigUint64(bufPtr + 48, BigInt(mtime) * 1_000_000n,true);
+    view.setBigUint64(bufPtr + 56, BigInt(info?.ctime ?? mtime) * 1_000_000n,true);
     return WASI_ESUCCESS;
   }
 
@@ -1376,8 +1415,11 @@ export class WasiRT {
     return WASI_ESUCCESS;
   }
 
-  private fd_filestat_set_times(_fd: number, _atim: bigint, _mtim: bigint, _flags: number): number {
-    return WASI_ESUCCESS; // no-op for now
+  private fd_filestat_set_times(fd:number, atim:bigint, mtim:bigint, flags:number): number {
+    const f = this.fds.get(fd);
+    if (!f) return WASI_EBADF;
+    if (!f.path) return WASI_EINVAL;
+    return this.setTimes(f.path,atim,mtim,flags);
   }
 
   private fd_read(fd: number, iovsPtr: number, iovsLen: number, nreadPtr: number): number {
@@ -1438,11 +1480,16 @@ export class WasiRT {
       return;
     }
     f.write(chunk);
+    if (f.path) {
+      const cached = this.fileCache.get(f.path);
+      if (cached) {cached.data = f.data; cached.stat.size = f.data.length; cached.stat.mtime = Date.now(); cached.stat.ctime = cached.stat.mtime;}
+    }
   }
 
   private fd_write(fd: number, iovsPtr: number, iovsLen: number, nwrittenPtr: number): number {
     const f = this.fds.get(fd);
     if (!f) return WASI_EBADF;
+    if (!f.writable) return WASI_EBADF;
     const view = this.getView();
     const mem = this.getU8();
     let totalWritten = 0;
@@ -1474,8 +1521,14 @@ export class WasiRT {
   private fd_seek(fd: number, offset: bigint, whence: number, newOffsetPtr: number): number {
     const f = this.fds.get(fd);
     if (!f) return WASI_EBADF;
-    // Stdio is not seekable
-    if (fd <= 2) return WASI_ESPIPE;
+    // freopen/fd_renumber may put a regular file on descriptor 0, 1 or 2.
+    // Seekability belongs to the open object, including duplicates, not its number.
+    if (f.pipe || f.device || f.filetype !== WASI_FILETYPE_REGULAR_FILE) return WASI_ESPIPE;
+    if (![WASI_WHENCE_SET,WASI_WHENCE_CUR,WASI_WHENCE_END].includes(whence)) return WASI_EINVAL;
+    const base = whence === WASI_WHENCE_CUR ? f.offset : whence === WASI_WHENCE_END ? f.data.length : 0;
+    const target = BigInt(base) + offset;
+    if (target < 0n) return WASI_EINVAL;
+    if (target > BigInt(Number.MAX_SAFE_INTEGER)) return WASI_EOVERFLOW;
     const newOffset = f.seek(offset, whence);
     const view = this.getView();
     view.setBigUint64(newOffsetPtr, newOffset, true);
@@ -1485,6 +1538,7 @@ export class WasiRT {
   private fd_tell(fd: number, offsetPtr: number): number {
     const f = this.fds.get(fd);
     if (!f) return WASI_EBADF;
+    if (f.pipe || f.device || f.filetype !== WASI_FILETYPE_REGULAR_FILE) return WASI_ESPIPE;
     const view = this.getView();
     view.setBigUint64(offsetPtr, BigInt(f.offset), true);
     return WASI_ESUCCESS;
@@ -1571,7 +1625,7 @@ export class WasiRT {
         const ftype = cached?.stat.type === 'dir' ? WASI_FILETYPE_DIRECTORY : WASI_FILETYPE_REGULAR_FILE;
 
         dv.setBigUint64(off, BigInt(i + 1), true);       // d_next
-        dv.setBigUint64(off + 8, 0n, true);              // d_ino
+        dv.setBigUint64(off + 8, inodeFor(entryPath), true); // d_ino: zero denotes an unused entry to Unix consumers
         dv.setUint32(off + 16, nameBytes.length, true);  // d_namlen
         buf[off + 20] = ftype;                            // d_type
         // 3 bytes padding (already 0)
@@ -1646,10 +1700,13 @@ export class WasiRT {
       }
     }
 
+    if (this.resourcePaths.has(absPath) && (creating || truncating || (_fsRightsBase & WASI_RIGHT_FD_WRITE))) return WASI_EACCES;
     // Check preloaded cache
     const cached = this.fileCache.get(absPath);
 
-    if (wantDir) {
+    if (wantDir && !cached) return WASI_ENOENT;
+    if (wantDir && cached?.stat.type !== 'dir') return WASI_ENOTDIR;
+    if (wantDir || cached?.stat.type === 'dir') {
       // Open as directory
       const newFd = this.nextFd++;
       this.fds.set(newFd, new FD({
@@ -1670,7 +1727,7 @@ export class WasiRT {
         path: absPath,
         filetype: WASI_FILETYPE_REGULAR_FILE,
         data,
-        writable: true,
+        writable: !this.resourcePaths.has(absPath),
         rights: WASI_RIGHTS_ALL,
       }));
       if (truncating) {
@@ -1719,7 +1776,9 @@ export class WasiRT {
     if (this.fileCache.has(absPath)) return WASI_EEXIST;
     const slash = absPath.lastIndexOf('/');
     const parent = this.fileCache.get(slash <= 0 ? '/' : absPath.slice(0, slash));
+    if (!parent) return WASI_ENOENT;
     if (parent && parent.stat.type !== 'dir') return WASI_ENOTDIR;
+    this.captureDirty();
     this.deferredOps.push({ type: 'mkdir', path: absPath });
     this.registerNew(absPath, 'dir');
     return WASI_ESUCCESS;
@@ -1766,12 +1825,23 @@ export class WasiRT {
     return WASI_ENOENT;
   }
 
-  private path_filestat_set_times(
-    _dirFd: number, _flags: number,
-    _pathPtr: number, _pathLen: number,
-    _atim: bigint, _mtim: bigint, _fstFlags: number,
-  ): number {
-    return WASI_ESUCCESS; // no-op
+  private setTimes(path:string, atim:bigint, mtim:bigint, flags:number): number {
+    if ((flags & 3) === 3 || (flags & 12) === 12 || (flags & ~15)) return WASI_EINVAL;
+    const cached = this.fileCache.get(path);
+    if (!cached) return WASI_ENOENT;
+    if (this.resourcePaths.has(path)) return WASI_EACCES;
+    this.captureDirty();
+    const now = Date.now();
+    const atime = flags & 2 ? now : flags & 1 ? Number(atim / 1_000_000n) : cached.stat.atime ?? cached.stat.mtime;
+    const mtime = flags & 8 ? now : flags & 4 ? Number(mtim / 1_000_000n) : cached.stat.mtime;
+    cached.stat.atime = atime; cached.stat.mtime = mtime; cached.stat.ctime = now;
+    this.deferredOps.push({type:'utimes',path,atime,mtime});
+    return WASI_ESUCCESS;
+  }
+
+  private path_filestat_set_times(dirFd:number, _flags:number, pathPtr:number, pathLen:number, atim:bigint, mtim:bigint, fstFlags:number): number {
+    const path = this.resolveFdPath(dirFd,pathPtr,pathLen);
+    return path ? this.setTimes(path,atim,mtim,fstFlags) : WASI_EBADF;
   }
 
   private path_link(
@@ -1792,10 +1862,16 @@ export class WasiRT {
   private path_remove_directory(dirFd: number, pathPtr: number, pathLen: number): number {
     const absPath = this.resolveFdPath(dirFd, pathPtr, pathLen);
     if (!absPath) return WASI_EBADF;
+    const entry = this.fileCache.get(absPath);
+    if (!entry) return WASI_ENOENT;
+    if (entry.stat.type !== 'dir') return WASI_ENOTDIR;
+    if (this.dirCache.get(absPath)?.length) return WASI_ENOTEMPTY;
+    this.captureDirty();
     this.deferredOps.push({ type: 'rmdir', path: absPath });
     // Remove from caches
     this.fileCache.delete(absPath);
     this.dirCache.delete(absPath);
+    this.removeDirectoryEntry(absPath);
     return WASI_ESUCCESS;
   }
 
@@ -1806,13 +1882,31 @@ export class WasiRT {
     const oldPath = this.resolveFdPath(oldDirFd, oldPathPtr, oldPathLen);
     const newPath = this.resolveFdPath(newDirFd, newPathPtr, newPathLen);
     if (!oldPath || !newPath) return WASI_EBADF;
+    if ([...this.resourcePaths].some(p => p === oldPath || p.startsWith(oldPath + '/') || p === newPath)) return WASI_EACCES;
+    const cached = this.fileCache.get(oldPath);
+    if (!cached) return WASI_ENOENT;
+    const parent = this.fileCache.get(newPath.slice(0,newPath.lastIndexOf('/')) || '/');
+    if (!parent) return WASI_ENOENT;
+    if (parent.stat.type !== 'dir') return WASI_ENOTDIR;
+    if (newPath === oldPath) return WASI_ESUCCESS;
+    if (newPath.startsWith(oldPath + '/')) return WASI_EINVAL;
+    const destination = this.fileCache.get(newPath);
+    if (destination && destination.stat.type !== cached.stat.type) return cached.stat.type === 'dir' ? WASI_ENOTDIR : WASI_EISDIR;
+    if (destination?.stat.type === 'dir' && this.dirCache.get(newPath)?.length) return WASI_ENOTEMPTY;
+    this.captureDirty();
     this.deferredOps.push({ type: 'rename', oldPath, newPath });
     // Update caches
-    const cached = this.fileCache.get(oldPath);
-    if (cached) {
-      this.fileCache.set(newPath, cached);
-      this.fileCache.delete(oldPath);
+    for (const [path,entry] of [...this.fileCache]) if (path === oldPath || path.startsWith(oldPath + '/')) {
+      this.fileCache.set(newPath + path.slice(oldPath.length),entry); this.fileCache.delete(path);
     }
+    for (const [path,names] of [...this.dirCache]) if (path === oldPath || path.startsWith(oldPath + '/')) {
+      this.dirCache.set(newPath + path.slice(oldPath.length),names); this.dirCache.delete(path);
+    }
+    for (const fd of this.fds.values()) if (fd.path && (fd.path === oldPath || fd.path.startsWith(oldPath + '/'))) fd.path = newPath + fd.path.slice(oldPath.length);
+    this.removeDirectoryEntry(oldPath);
+    const siblings = this.dirCache.get(newPath.slice(0,newPath.lastIndexOf('/')) || '/');
+    const name = newPath.slice(newPath.lastIndexOf('/')+1);
+    if (siblings && !siblings.includes(name)) siblings.push(name);
     return WASI_ESUCCESS;
   }
 
@@ -1823,10 +1917,24 @@ export class WasiRT {
   private path_unlink_file(dirFd: number, pathPtr: number, pathLen: number): number {
     const absPath = this.resolveFdPath(dirFd, pathPtr, pathLen);
     if (!absPath) return WASI_EBADF;
+    if (this.resourcePaths.has(absPath)) return WASI_EACCES;
+    const entry = this.fileCache.get(absPath);
+    if (!entry) return WASI_ENOENT;
+    if (entry.stat.type === 'dir') return WASI_EISDIR;
+    this.captureDirty();
     this.deferredOps.push({ type: 'delete', path: absPath });
     // Remove from cache
     this.fileCache.delete(absPath);
+    for (const fd of this.fds.values()) if (fd.path === absPath) fd.path = undefined;
+    this.removeDirectoryEntry(absPath);
     return WASI_ESUCCESS;
+  }
+
+  private removeDirectoryEntry(path:string): void {
+    const parent = path.slice(0,path.lastIndexOf('/')) || '/';
+    const name = path.slice(path.lastIndexOf('/')+1);
+    const entries = this.dirCache.get(parent);
+    if (entries) {const i = entries.indexOf(name); if (i >= 0) entries.splice(i,1);}
   }
 
   // ── process ────────────────────────────────────────────────────────
@@ -1842,8 +1950,13 @@ export class WasiRT {
   // ── random ─────────────────────────────────────────────────────────
 
   private random_get(bufPtr: number, bufLen: number): number {
-    const buf = new Uint8Array(this.memory.buffer, bufPtr, bufLen);
-    crypto.getRandomValues(buf);
+    let buf:Uint8Array<ArrayBuffer>;
+    try { buf = new Uint8Array(this.memory.buffer, bufPtr >>> 0, bufLen >>> 0); }
+    catch { return WASI_EFAULT; }
+    // Web Crypto limits each call to 64 KiB; WASI has no such request limit.
+    for (let offset = 0; offset < buf.length; offset += 65536) {
+      crypto.getRandomValues(buf.subarray(offset, offset + 65536));
+    }
     return WASI_ESUCCESS;
   }
 

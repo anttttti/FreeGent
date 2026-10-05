@@ -13,7 +13,7 @@ export const npxCmd: Command = {
     const args = ctx.args; // args already excludes the command name
 
     // Filter flags we handle
-    let yesFlag = false;
+    let noInstall = false;
     const passthrough: string[] = [];
     let packageArg: string | null = null;
 
@@ -28,9 +28,9 @@ export const npxCmd: Command = {
         return 0;
       }
       if (!packageArg && (a === '-y' || a === '--yes')) {
-        yesFlag = true;
         continue;
       }
+      if (!packageArg && (a === '--no-install' || a === '--no')) {noInstall = true; continue;}
       if (!packageArg) {
         packageArg = a;
       } else {
@@ -71,36 +71,29 @@ export const npxCmd: Command = {
     }
 
     // Check if binary already exists in PATH
-    const existingBin = await ctx.shell.findExecutableInPath(binName);
+    const localBin = ctx.fs.resolvePath('node_modules/.bin/' + binName,ctx.cwd);
+    const existingBin = await ctx.fs.exists(localBin) ? localBin : await ctx.shell.findExecutableInPath(binName);
+    const child = ctx.shell.fork();
+    child.env.PATH = ctx.fs.resolvePath('node_modules/.bin',ctx.cwd) + ':' + child.env.PATH;
+    const run = async(argv:string[]) => {
+      const result = await child.execArgv(argv,ctx.stdin);
+      ctx.stdout += result.stdout; ctx.stderr += result.stderr; return result.exitCode;
+    };
     if (existingBin) {
       // Execute directly
-      const cmdLine = buildCmdLine(binName, passthrough);
-      return ctx.shell.execute(cmdLine, (s) => ctx.stdout += s, (s) => ctx.stderr += s);
+      return run([existingBin,...passthrough]);
     }
+    if (noInstall) {ctx.stderr += `npx: local executable not found: ${binName}\n`; return 1;}
 
     // Install the package first
-    ctx.stdout += `Installing ${installSpec}...\n`;
-    const installCode = await ctx.shell.execute(
-      `npm install ${installSpec}`,
-      (s) => ctx.stdout += s,
-      (s) => ctx.stderr += s,
-    );
+    ctx.shell.onProgress?.(`Installing ${installSpec}...`);
+    const installCode = await run(['npm','install',installSpec]);
     if (installCode !== 0) {
       ctx.stderr += `npx: npm install failed with exit code ${installCode}\n`;
       return installCode;
     }
 
     // Now execute the binary
-    const cmdLine = buildCmdLine(binName, passthrough);
-    return ctx.shell.execute(cmdLine, (s) => ctx.stdout += s, (s) => ctx.stderr += s);
+    return run([binName,...passthrough]);
   },
 };
-
-function buildCmdLine(binName: string, passthrough: string[]): string {
-  return [binName, ...passthrough].map(a => {
-    if (a.includes(' ') || a.includes('"') || a.includes("'")) {
-      return `"${a.replace(/"/g, '\\"')}"`;
-    }
-    return a;
-  }).join(' ');
-}

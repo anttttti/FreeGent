@@ -29,7 +29,7 @@ function installFakeSandboxFrame(py: any) {
                                                           err => toPage({ fg: 'reply', id: msg.id, error: String(err?.message ?? err) }));
                 switch (msg.kind) {
                     case 'js': reply(runJs(String(msg.code ?? ''), msg.files ?? {})); break;
-                    case 'bash': reply(runBash(String(msg.code ?? ''))); break;
+                    case 'bash': reply(runBash(String(msg.code ?? ''),message => toPage({fg:'progress',id:msg.id,message}))); break;
                     case 'py-start': reply(Promise.resolve(true)); setTimeout(() => worker({ type: 'ready' }), 0); break;
                     case 'py-post': {
                         const m = msg.msg;

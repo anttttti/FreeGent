@@ -1,8 +1,26 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { xzCompress, xzDecompress } from '../shiro/commands/xz';
-import { zstdCompress, zstdDecompress } from '../shiro/commands/zstd';
+import { zstdCompress as upstreamCompress, zstdDecompress as upstreamDecompress, zstdCmd, unzstdCmd, zstdcatCmd } from '../shiro/commands/zstd';
 import { bzip2Compress, bzip2Decompress } from '../shiro/commands/bzip2';
+
+import 'fake-indexeddb/auto';
+import { FileSystem } from '../shiro/filesystem';
+import { Shell } from '../shiro/shell';
+import { CommandRegistry, type CommandContext } from '../shiro/commands/index';
+import { setWasiWorkerFactory } from '../shiro/wasi-host';
+import { nodeWorkerFactory } from './helpers/node-wasi-worker';
+let codecContext:CommandContext;
+beforeAll(async () => {
+  setWasiWorkerFactory(await nodeWorkerFactory());
+  const fs = new FileSystem(); await fs.init();
+  const registry = new CommandRegistry(); registry.registerAll([zstdCmd,unzstdCmd,zstdcatCmd]);
+  const shell = new Shell(fs,registry); shell.cwd='/tmp';
+  codecContext = {fs:shell.fs,shell,cwd:shell.cwd,env:shell.env,args:[],stdin:'',stdout:'',stderr:''};
+});
+afterAll(() => setWasiWorkerFactory(null));
+const zstdCompress = (data:Uint8Array,level=3) => upstreamCompress(data,codecContext,level);
+const zstdDecompress = (data:Uint8Array) => upstreamDecompress(data,codecContext);
 
 // Deterministic ~6.7 KB text; fixtures below were produced by the real `zstd -19`, `xz -9`,
 // `xz --check=crc32` and `bzip2 -9` on exactly this input.
@@ -42,40 +60,40 @@ const inputs: Record<string, Uint8Array> = {
   longRange: concat(prng(200000, 3), prng(200000, 3)),   // a match 200 KB back
 };
 
-describe('zstd', () => {
-  it('decodes a real zstd -19 stream (Huffman literals + FSE sequences)', () => {
-    expect(eq(zstdDecompress(ZST), sample())).toBe(true);
+describe('zstd', async () => {
+  it('decodes a real zstd -19 stream (Huffman literals + FSE sequences)', async () => {
+    expect(eq(await zstdDecompress(ZST), sample())).toBe(true);
   });
-  it('round-trips through its own compressor', () => {
+  it('round-trips through its own compressor', async () => {
     for (const [name, data] of Object.entries(inputs)) {
-      const c = zstdCompress(data);
-      expect(eq(zstdDecompress(c), data), name).toBe(true);
+      const c = await zstdCompress(data);
+      expect(eq(await zstdDecompress(c), data), name).toBe(true);
     }
   });
-  it('actually compresses redundant data', () => {
-    expect(zstdCompress(inputs.text).length).toBeLessThan(inputs.text.length * 0.5);
-    expect(zstdCompress(inputs.zeros).length).toBeLessThan(100);
+  it('actually compresses redundant data', async () => {
+    expect((await zstdCompress(inputs.text)).length).toBeLessThan(inputs.text.length * 0.5);
+    expect((await zstdCompress(inputs.zeros)).length).toBeLessThan(100);
   });
-  it('handles concatenated and skippable frames', () => {
+  it('handles concatenated and skippable frames', async () => {
     const skippable = Uint8Array.of(0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3);
-    const out = zstdDecompress(concat(ZST, skippable, zstdCompress(Uint8Array.of(1, 2, 3))));
+    const out = await zstdDecompress(concat(ZST, skippable, await zstdCompress(Uint8Array.of(1, 2, 3))));
     expect(eq(out, concat(sample(), Uint8Array.of(1, 2, 3)))).toBe(true);
   });
-  it('detects corruption', () => {
+  it('detects corruption', async () => {
     const bad = ZST.slice();
     bad[bad.length - 1] ^= 0xff;
-    expect(() => zstdDecompress(bad)).toThrow();
-    expect(() => zstdDecompress(ZST.slice(0, ZST.length - 20))).toThrow();
-    expect(() => zstdDecompress(Uint8Array.of(1, 2, 3, 4, 5))).toThrow(/not in zstd format/);
+    await expect(zstdDecompress(bad)).rejects.toThrow();
+    await expect(zstdDecompress(ZST.slice(0, ZST.length - 20))).rejects.toThrow();
+    await expect(zstdDecompress(Uint8Array.of(1, 2, 3, 4, 5))).rejects.toThrow(/unsupported format/);
   });
-  it.skipIf(!have('zstd'))('interoperates with the real zstd binary', () => {
+  it.skipIf(!have('zstd'))('interoperates with the real zstd binary', async () => {
     for (const [name, data] of Object.entries(inputs)) {
-      const c = Buffer.from(zstdCompress(data));
+      const c = Buffer.from(await zstdCompress(data));
       const back = execFileSync('zstd', ['-q', '-d', '-c'], { input: c, maxBuffer: 1 << 28 });
       expect(Buffer.compare(back, Buffer.from(data)), `real zstd reads ours: ${name}`).toBe(0);
       for (const lvl of ['-1', '-9', '-19']) {
         const real = execFileSync('zstd', ['-q', lvl, '-c'], { input: Buffer.from(data), maxBuffer: 1 << 28 });
-        expect(eq(zstdDecompress(real), data), `we read zstd ${lvl}: ${name}`).toBe(true);
+        expect(eq(await zstdDecompress(real), data), `we read zstd ${lvl}: ${name}`).toBe(true);
       }
     }
   });
