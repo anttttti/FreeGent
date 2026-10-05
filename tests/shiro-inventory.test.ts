@@ -17,11 +17,6 @@ beforeAll(() => {
     for (const path of ['shiro','exec-sandbox','docs/shiro']) cpSync(join(repository,path),join(root,path),{recursive:true});
     mkdirSync(join(root,'scripts')); copyFileSync(join(repository,'scripts/shiro-inventory.mjs'),join(root,'scripts/shiro-inventory.mjs'));
     for (const name of ['shiro-commands-v0.61.md','shiro-commands-v0.61-historical.md']) copyFileSync(join(repository,'docs',name),join(root,'docs',name));
-    mkdirSync(join(root,'notes'));
-    for (const suffix of ['commands','commands-historical']) {
-        const name = `2026_10_03_v0.61_codex_shiro${suffix}.md`;
-        copyFileSync(join(repository,'notes',name),join(root,'notes',name));
-    }
     copyFileSync(join(repository,'package.json'),join(root,'package.json'));
     symlinkSync(join(repository,'node_modules'),join(root,'node_modules'),'dir');
 });
@@ -31,8 +26,6 @@ const snapshot = () => Object.fromEntries([
     ...readdirSync(join(root,'docs/shiro')).map(name => `docs/shiro/${name}`),
     'docs/shiro-commands-v0.61.md',
     'docs/shiro-commands-v0.61-historical.md',
-    'notes/2026_10_03_v0.61_codex_shirocommands.md',
-    'notes/2026_10_03_v0.61_codex_shirocommands-historical.md',
 ].map(path => [path, {sha256:createHash('sha256').update(readFileSync(join(root,path))).digest('hex'),mtime:statSync(join(root,path)).mtimeMs}]));
 
 describe('Shiro inventory CLI', () => {
