@@ -2,7 +2,7 @@
 
 Regenerate: `npx tsx scripts/shiro-inventory.mjs --update-note`. Check: `npx tsx scripts/shiro-inventory.mjs --check`. Do not hand edit.
 
-Registration describes availability. Acceptance requires independent byte comparisons. Static reachability alone does not authorize deleting a file.
+The matrix includes the generator hash and separately versioned coverage snapshot hash. Registration describes availability. Acceptance requires independent byte comparisons. Static reachability alone does not authorize deleting a file.
 
 | Command | Default owner / route | Parity scope | Explicit package alternative | Native inputs |
 |---|---|---|---|---:|

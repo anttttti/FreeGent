@@ -1,6 +1,6 @@
 # Current Shiro command inventory
 
-Generated from the working tree by `npx tsx scripts/shiro-inventory.mjs --update-note`. Regenerate after routing changes. The machine-readable command matrix retains source hashes and candidate declarations.
+Generated from the working tree by `npx tsx scripts/shiro-inventory.mjs --update-note`. Regenerate after routing changes. The machine-readable command matrix retains source hashes and candidate declarations. `command-coverage.json` retains a generated snapshot from the separately versioned benchmark repository; when that checkout is present, `--check` also detects coverage drift.
 
 248 command names; 140 command modules; 29 WASI artifact identities. Availability does not establish complete flag compatibility or migration acceptance.
 
