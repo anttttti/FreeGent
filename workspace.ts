@@ -2295,9 +2295,12 @@ async function _collectProjectData(name) {
     if (typeof getChatList === 'function' && typeof sessionLoadHistory === 'function') {
         for (const c of getChatList()) {
             const k = `fg_chat_${c.id}_oh`;
-            if (chatData[k] != null) continue;
             const h = await sessionLoadHistory(c.id);
-            if (h?.length) chatData[k] = JSON.stringify(h);
+            if (!h?.length) continue;
+            // A cached copy may be a trimmed snapshot of the stored history; keep the longer one.
+            let cachedLen = -1;
+            if (chatData[k] != null) { try { cachedLen = JSON.parse(chatData[k]).length; } catch { cachedLen = 0; } }
+            if (h.length >= cachedLen) chatData[k] = JSON.stringify(h);
         }
     }
     return {

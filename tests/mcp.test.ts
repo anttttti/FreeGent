@@ -75,6 +75,30 @@ describe('sanitizeMcpSchema', () => {
     });
 });
 
+describe('sanitizeMcpSchema: $ref (R09)', () => {
+    it('resolves a referenced object and array instead of turning them into strings', () => {
+        const out = W.sanitizeMcpSchema({
+            type: 'object',
+            properties: { filter: { $ref: '#/$defs/Filter' }, tags: { type: 'array', items: { $ref: '#/$defs/Tag' } } },
+            required: ['filter'],
+            $defs: {
+                Filter: { type: 'object', properties: { field: { type: 'string' }, min: { type: 'integer' } }, required: ['field'] },
+                Tag: { type: 'object', properties: { name: { type: 'string' } } },
+            },
+        });
+        expect(out.properties.filter).toEqual({ type: 'object', properties: { field: { type: 'string' }, min: { type: 'integer' } }, required: ['field'] });
+        expect(out.properties.tags.items).toEqual({ type: 'object', properties: { name: { type: 'string' } } });
+    });
+    it('stops on a recursive reference and says an unresolvable one is unresolved', () => {
+        const tree = W.sanitizeMcpSchema({ type: 'object', properties: { node: { $ref: '#/$defs/Node' } },
+            $defs: { Node: { type: 'object', properties: { child: { $ref: '#/$defs/Node' } } } } });
+        expect(tree.properties.node.properties.child.description).toMatch(/recursive/);
+        const bad = W.sanitizeMcpSchema({ type: 'object', properties: { x: { $ref: 'https://example.com/s.json' } } });
+        expect(bad.properties.x.type).toBe('object');
+        expect(bad.properties.x.description).toMatch(/could not be resolved/);
+    });
+});
+
 describe('server registry', () => {
     it('adds a server after initialize + tools/list; tools start disabled', async () => {
         const calls = mockServer(standardHandler);
@@ -386,6 +410,24 @@ describe('text-format tool calls with MCP names', () => {
 
 describe('MCP session handling', () => {
     beforeEach(() => { localStorage.clear(); });
+
+    it('does not re-send a tools/call after a network error (R08)', async () => {
+        let ran = 0;
+        const reqs: any[] = [];
+        W.fetch.mockImplementation(async (_url: string, init: any) => {
+            const body = JSON.parse(init.body);
+            reqs.push(body.method);
+            if (body.method === 'tools/call') { ran++; throw new TypeError('Failed to fetch'); }   // ran on the server, reply lost
+            if (body.id === undefined) return new Response(null, { status: 202 });
+            const msg = standardHandler(body);
+            return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, ...msg }), { headers: { 'Content-Type': 'application/json' } });
+        });
+        const s = await W.addMcpServer({ name: 'maps', url: 'https://x.example.com/mcp' });
+        W.setMcpToolEnabled(s.id, 'search_places', true);
+        const r = await W.executeToolAsync('mcp__maps__search_places', { query: 'q' });
+        expect(r.error).toMatch(/unknown whether the tool ran/);
+        expect(ran).toBe(1);
+    });
 
     it('does not replay a tools/call whose error merely mentions a session', async () => {
         let calls = 0;

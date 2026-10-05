@@ -141,8 +141,16 @@ function pruneConvoLogFrom(chatId: string, sinceMs: number): void {
 // session store (localStorage keeps only the most recent chats — see saveHistory).
 async function _chatHistoryFor(id: string): Promise<any[] | null> {
     if (id === activeChatId && openaiHistory.length) return openaiHistory;
-    try { const oh = localStorage.getItem(chatKey.oh(id)); if (oh) return JSON.parse(oh); } catch {}
-    return typeof sessionLoadHistory === 'function' ? (await sessionLoadHistory(id)) ?? null : null;
+    let cached: any[] | null = null;
+    try { const oh = localStorage.getItem(chatKey.oh(id)); if (oh) cached = JSON.parse(oh); } catch {}
+    // The localStorage copy can be a trimmed snapshot (first message + recent tail) of a history
+    // the store holds whole, or a newer one the async store save hasn't reached yet: the longer wins.
+    const stored = typeof sessionLoadHistory === 'function' ? (await sessionLoadHistory(id)) ?? null : null;
+    return fullerHistory(cached, stored);
+}
+export function fullerHistory(cached: any[] | null, stored: any[] | null): any[] | null {
+    if (cached && stored) return stored.length >= cached.length ? stored : cached;
+    return stored ?? cached;
 }
 
 // ── Badge helper ──────────────────────────────────────────────────────────

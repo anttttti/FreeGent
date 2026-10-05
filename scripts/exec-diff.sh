@@ -30,9 +30,15 @@ sandbox=(bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-
     --setenv PATH "$nodedir:/usr/bin:/bin" --setenv HOME /workspace --setenv LC_ALL C.UTF-8
     --setenv PYTHONDONTWRITEBYTECODE 1)
 
-# Share selected native versions with the oracle recorder, without changing /usr.
-python3 bench/dev-tests/log-replay/native-tools.py > "$out/native-programs.json"
-[ "$?" -eq 0 ] || exit 2
+# Share selected native versions with the oracle recorder, without changing /usr. The helper lives
+# in the bench checkout (git-ignored here); without it only the log-replay cases lose their pinned
+# native programs, and the tracked cases still run against the system ones.
+if [ -f bench/dev-tests/log-replay/native-tools.py ]; then
+    python3 bench/dev-tests/log-replay/native-tools.py > "$out/native-programs.json"
+    [ "$?" -eq 0 ] || exit 2
+else
+    echo '[]' > "$out/native-programs.json"
+fi
 mapfile -d '' -t native_mount_args < <(python3 - "$out/native-programs.json" <<'PY'
 import json, os, sys
 for program in json.load(open(sys.argv[1])):

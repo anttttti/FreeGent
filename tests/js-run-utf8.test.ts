@@ -15,3 +15,14 @@ describe('runJs stdout/stderr byte writes', () => {
         expect(r.stdout).toBe('�');
     });
 });
+
+describe('runJs mixed string and byte writes (R12)', () => {
+    it('keeps a pending partial character ahead of later text', async () => {
+        const r = await runJs(`process.stdout.write(new Uint8Array([0xc3])); process.stdout.write('é');`, {});
+        expect(r.stdout).toBe('�é');
+    });
+    it('orders console output after a split character the same way', async () => {
+        const r = await runJs(`process.stdout.write(new Uint8Array([0xe2, 0x82])); console.log('x');`, {});
+        expect(r.stdout).toBe('�x\n');
+    });
+});

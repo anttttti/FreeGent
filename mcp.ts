@@ -161,19 +161,25 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
     if (id !== undefined) payload.id = id;
     const body = JSON.stringify(payload);
 
+    // A tool call is never re-sent after a network error: a TypeError does not say the server
+    // didn't run it (the reply may be what was lost), and a replayed write runs twice. Header and
+    // proxy compatibility is settled on the handshake and discovery calls, which are safe to repeat.
+    const replayable = method !== 'tools/call';
     let resp: Response;
     try {
         try {
             resp = await _send(server.url, headers, body, c.viaProxy);
         } catch (e) {
             // A browser CORS failure that appears only once the version header is added: drop it.
-            if (!(e instanceof TypeError) || c.viaProxy || !headers['MCP-Protocol-Version']) throw e;
+            if (!replayable || !(e instanceof TypeError) || c.viaProxy || !headers['MCP-Protocol-Version']) throw e;
             delete headers['MCP-Protocol-Version'];
             resp = await _send(server.url, headers, body, false);
             c.noVersionHeader = true;
         }
     } catch (e) {
         // TypeError = network or CORS failure. Retry once through the local proxy if there is one.
+        if (e instanceof TypeError && !replayable)
+            throw new Error(`MCP: the connection to ${new URL(server.url).host} failed during a tool call, so it is unknown whether the tool ran. It was not retried — check the result on the server before calling it again.`);
         if (!(e instanceof TypeError) || c.viaProxy || !_proxyUrl()) {
             if (e instanceof TypeError) throw new Error(`MCP: cannot reach ${new URL(server.url).host} from the browser (network error or CORS). Use the local dev server (npm run dev) or fg-run for servers that don't allow browser access.`);
             throw e;
@@ -417,8 +423,32 @@ function setMcpToolEnabled(id: string, toolName: string, on: boolean): void {
 // particular) reject $schema/$ref/additionalProperties/oneOf and other richer JSON Schema.
 const _SCHEMA_KEYS = new Set(['type', 'description', 'properties', 'required', 'items', 'enum', 'default', 'minimum', 'maximum', 'minItems', 'maxItems', 'nullable']);
 
-function sanitizeMcpSchema(schema: any, depth = 0): any {
+// Resolves a local JSON Pointer reference ("#/$defs/Filter") against the schema's root.
+function _resolveRef(ref: string, root: any): any {
+    if (typeof ref !== 'string' || !ref.startsWith('#')) return undefined;
+    let node = root;
+    for (const part of ref.slice(1).split('/').filter(Boolean)) {
+        if (node == null || typeof node !== 'object') return undefined;
+        node = node[part.replace(/~1/g, '/').replace(/~0/g, '~')];
+    }
+    return node;
+}
+
+function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack: string[] = []): any {
     if (!schema || typeof schema !== 'object' || depth > 8) return { type: 'string' };
+    // Local $ref: follow it (depth- and cycle-bounded) instead of dropping it, which used to turn a
+    // referenced object or array argument into a string. A reference that can't be followed is
+    // said so in the description rather than given an invented type.
+    if (typeof schema.$ref === 'string') {
+        const ref = schema.$ref;
+        const target = refStack.includes(ref) ? undefined : _resolveRef(ref, root);
+        const { $ref: _r, ...rest } = schema;
+        if (target && typeof target === 'object') {
+            return sanitizeMcpSchema({ ...target, ...rest, description: rest.description ?? target.description }, depth + 1, root, [...refStack, ref]);
+        }
+        const note = `(schema reference ${ref} could not be resolved${refStack.includes(ref) ? ' — recursive' : ''})`;
+        return { type: 'object', properties: {}, description: rest.description ? `${rest.description} ${note}` : note };
+    }
     const out: any = {};
     let type = schema.type;
     if (Array.isArray(type)) {                          // ["string","null"] → "string"
@@ -427,8 +457,8 @@ function sanitizeMcpSchema(schema: any, depth = 0): any {
         type = nonNull[0] || 'string';
     }
     if (!type && Array.isArray(schema.anyOf ?? schema.oneOf)) {   // take the first concrete branch
-        const branch = (schema.anyOf ?? schema.oneOf).find((b: any) => b && b.type && b.type !== 'null');
-        if (branch) return sanitizeMcpSchema({ ...branch, description: schema.description ?? branch.description }, depth);
+        const branch = (schema.anyOf ?? schema.oneOf).find((b: any) => b && (b.type || b.$ref) && b.type !== 'null');
+        if (branch) return sanitizeMcpSchema({ ...branch, description: schema.description ?? branch.description }, depth, root, refStack);
     }
     if (!type) type = schema.properties ? 'object' : schema.items ? 'array' : 'string';
     out.type = type;
@@ -436,9 +466,9 @@ function sanitizeMcpSchema(schema: any, depth = 0): any {
         if (!_SCHEMA_KEYS.has(k) || k === 'type') continue;
         if (k === 'properties') {
             out.properties = {};
-            for (const [p, v] of Object.entries(schema.properties || {})) out.properties[p] = sanitizeMcpSchema(v, depth + 1);
+            for (const [p, v] of Object.entries(schema.properties || {})) out.properties[p] = sanitizeMcpSchema(v, depth + 1, root, refStack);
         } else if (k === 'items') {
-            out.items = sanitizeMcpSchema(Array.isArray(schema.items) ? schema.items[0] : schema.items, depth + 1);
+            out.items = sanitizeMcpSchema(Array.isArray(schema.items) ? schema.items[0] : schema.items, depth + 1, root, refStack);
         } else if (k === 'required') {
             if (Array.isArray(schema.required)) out.required = schema.required.filter((r: string) => schema.properties?.[r]);
         } else {

@@ -130,8 +130,13 @@ function _thinkEnd(s: string, from: number): TagMatch {
 // normal. Short outputs are never checked — normal steps are 40–200 tokens.
 export const DEGENERATE_MIN_CHARS = 3000;
 const _DEGEN_TAIL = 2000;
-export function _degenerateTail(s: string): string | null {
-    if (s.length < DEGENERATE_MIN_CHARS) return null;
+// Tools whose arguments are file content: a generated CSV, fixture or padding is legitimately
+// periodic, so these are only checked once the payload is far past a normal step. A real runaway
+// still reaches this length well before the output cap.
+export const CONTENT_ARG_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch']);
+export const DEGENERATE_MIN_CHARS_CONTENT = 20000;
+export function _degenerateTail(s: string, minChars = DEGENERATE_MIN_CHARS): string | null {
+    if (s.length < minChars) return null;
     const t = s.slice(-_DEGEN_TAIL);
     // 1. Exactly periodic tail: one unit (up to 200 chars) repeated over the last 1,000+ chars.
     for (let p = 1; p <= 200; p++) {
@@ -251,7 +256,8 @@ export async function streamOAICompat(resp: any, onChunk: any) {
                 if (degenerate) break;
                 const a = tc.function.arguments;
                 degenerate = tc.function.name === 'fetch_url' && _RUNAWAY_URL_RE.test(a)
-                    ? 'a fetch_url URL over 2,000 characters' : _degenerateTail(a);
+                    ? 'a fetch_url URL over 2,000 characters'
+                    : _degenerateTail(a, CONTENT_ARG_TOOLS.has(tc.function.name) ? DEGENERATE_MIN_CHARS_CONTENT : DEGENERATE_MIN_CHARS);
             }
             if (degenerate) break;
         }
