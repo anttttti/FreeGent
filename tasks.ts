@@ -172,7 +172,7 @@ function openAddTaskDialog(status: string) {
             const content = `---\nid: ${id}\ntitle: ${title.replace(/:/g, ' -')}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n## Log\n`;
             await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
             overlay.remove();
-            await refreshTasks();
+            await syncLedgerWithTaskFiles();   // new row in the ledger, then refresh the board
         } catch (e: any) {
             $('atd-err').textContent = 'Failed to add task: ' + (e?.message || e);
             $('atd-ok').disabled = false;
@@ -192,11 +192,12 @@ async function moveTaskToColumn(path: string, colStatus: string) {
     try {
         const r = await transitionTask(path, newStatus);
         if (!r.transitioned) { alert('Move blocked: ' + (r.reason || 'QA gate blocked transition')); return; }
-        await _updateLedgerRow?.(path, newStatus);
     } catch (e: any) {
         alert('Failed to move task: ' + (e?.message || e));
     }
-    await refreshTasks();
+    // Rebuild rather than patch the row: it also covers a task with no row yet, and keeps the
+    // ledger right when the move itself was refused or failed half-way.
+    await syncLedgerWithTaskFiles();
 }
 function initKanbanDnD() {
     document.querySelectorAll('.kanban-col').forEach((col: any) => {
@@ -248,4 +249,4 @@ async function syncLedgerWithTaskFiles() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { openAddTaskDialog, loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });
+Object.assign(window, { openAddTaskDialog, moveTaskToColumn, loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });

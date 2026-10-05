@@ -1,42 +1,17 @@
 // Three-band checks (step-validator.ts) replacing regex-only judgments:
-//  - autopilot step output (autopilot.ts _shouldReplan)
 //  - task-intent detection (turn-context.ts isTaskCompletionRequest)
 //  - merged-file placeholder detection (workers.ts _mergeLostContent)
 // Deterministic bands never call the model; ambiguous text does, and the answer is followed.
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 
-let AP: any, TC: any, WK: any;
+let TC: any, WK: any;
 const W = window as any;
 beforeAll(async () => {
     await import('../step-validator.ts');
-    AP = await import('../autopilot.ts');
     TC = await import('../turn-context.ts');
     WK = await import('../workers.ts');
 });
 const judge = (answer: string) => vi.fn(async () => answer);
-
-describe('autopilot step output', () => {
-    const replan = (text: string, llm: any) => { W.callLLMComplete = llm; return AP._shouldReplan(text, [], 0, false, ''); };
-
-    it('empty output or a stall marker → replan, no model call', async () => {
-        const llm = judge('NO');
-        expect(await replan('', llm)).toMatch(/no meaningful output/);
-        expect(await replan('*(max steps reached)*', llm)).toMatch(/no meaningful output/);
-        expect(llm).not.toHaveBeenCalled();
-    });
-
-    it('a short but complete result → no replan, no model call (the old <50-char rule replanned it)', async () => {
-        const llm = judge('YES');
-        expect(await replan('Fixed in parser.py:88; tests pass.', llm)).toBeNull();
-        expect(await replan('STATUS: complete', llm)).toBeNull();
-        expect(llm).not.toHaveBeenCalled();
-    });
-
-    it('short output without clear markers → the model decides', async () => {
-        expect(await replan('Looked at the config.', judge('YES'))).toMatch(/no meaningful output/);
-        expect(await replan('Looked at the config.', judge('NO'))).toBeNull();
-    });
-});
 
 describe('task-intent detection', () => {
     it('regex matches → task request; no task vocabulary → not; neither costs a model call', async () => {

@@ -1814,7 +1814,6 @@ function populateAgentSettings() {
       if (h) { const opts = [...h.options].map(o => o.value); h.value = opts.includes(v) ? v : '20000'; } }
 
     cb('agent-concise-prompts',   getAgentConcisePrompts());
-    cb('agent-plan-mode',         getAgentPlanMode());
     num('agent-max-rounds',       getAgentMaxSteps());
     num('rate-limit-cooldown-min', parseInt(ls('fg_rate_limit_cooldown_min', '2'), 10));
     cb('agent-lean-workers',      getAgentLeanWorkers());

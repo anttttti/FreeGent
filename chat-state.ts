@@ -742,13 +742,8 @@ function closeChatsDropdown() {
     document.getElementById('rail-sidebar')?.classList.remove('open');
 }
 
-// `internal` is for the job that owns the active chat (autopilot reselecting its task's chat, or
-// the user opening one of its task tabs): any other switch while autopilot holds the job is
-// refused, because between plan steps nothing is streaming and the next step would be sent into
-// whichever chat was selected, after clearing its in-memory history.
-async function switchToChat(id, opts: { internal?: boolean } = {}) {
+async function switchToChat(id) {
     if (id === activeChatId || agentStreaming) return;
-    if (!opts.internal && typeof aiJob !== 'undefined' && aiJob === 'autopilot') return;
     // The task runner drives the active chat's global history; leaving its chat mid-run would
     // put the runner's next turn (or the tail of a stopped one) into the chat switched to.
     if (typeof isRunnerRunning === 'function' && isRunnerRunning()

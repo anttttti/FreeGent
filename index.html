@@ -286,7 +286,7 @@
         <div class="tasks-toolbar">
             <span class="tasks-toolbar-title">&#10003; Tasks</span>
             <button class="ws-action-btn" id="sync-ledger-btn" onclick="syncLedgerWithTaskFiles()" title="Rebuild the ledger from task files and refresh the board">&#8634; Sync</button>
-            <button class="ws-action-btn" id="autopilot-btn" onclick="toggleAutopilot()" title="Work the task backlog unattended. Plan mode (Settings → Agent) runs each task as a checkbox plan with per-step context resets.">&#9654; Autopilot</button>
+            <button class="ws-action-btn" id="autopilot-btn" onclick="runnerAutopilot()" title="Keep completing tasks, one chat per task, until none are left. Run completes just the next task.">&#9654; Autopilot</button>
             <div class="tasks-toolbar-sep"></div>
             <div class="runner-btns">
                 <button class="ws-action-btn" id="runner-run-btn" onclick="runnerStart()">&#9654; Run</button>
@@ -627,8 +627,6 @@
                     </div>
                     <div class="settings-section" style="border-bottom:none;margin-bottom:0">
                         <span class="settings-label">Agent Loop</span>
-                        <label class="settings-check-row"><input type="checkbox" id="agent-plan-mode" onchange="saveAgentSetting('fg_agent_plan_mode', this.checked)"> Plan mode</label>
-                        <p class="settings-hint agent-hint">Emit a step-by-step plan file before executing multi-step tasks.</p>
                         <label class="settings-input-label" style="margin-top:8px">Max steps per turn</label>
                         <input class="settings-input" id="agent-max-rounds" type="number" min="1" max="500" step="1" style="width:80px" oninput="saveAgentSetting('fg_agent_max_rounds', this.value)">
                         <label class="settings-input-label" style="margin-top:8px">Rate-limit cooldown (minutes)</label>
@@ -702,7 +700,7 @@
                         <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="runner-qa" onchange="saveAgentSetting('fg_agent_loop_qa', this.checked)"> Run QA gates after each task</label>
                         <p class="settings-hint agent-hint">When enabled, the agent loop runs lifecycle gates (task 036) after completing each task. Failures route the task to in-review for rework.</p>
 <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-ledger" onchange="saveAgentSetting('fg_agent_ledger', this.checked)"> Use Task/Progress Ledger</label>
-<p class="settings-hint agent-hint">Maintain explicit ledger files for long-horizon coherence (Magentic-One pattern). Only active in Plan mode.</p>
+<p class="settings-hint agent-hint">Maintain explicit ledger files for long-horizon coherence (Magentic-One pattern).</p>
 <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-review-logs" onchange="saveAgentSetting('fg_agent_review_logs', this.checked)"> Review message logs</label>
 <p class="settings-hint agent-hint">After each turn, save the session log to <code>logs/</code> and create a task to review it for AI inefficiencies. Review tasks will create follow-up tasks for novel issues found.</p>
                         <label class="settings-input-label" style="margin-top:8px">Consecutive failure limit</label>
@@ -885,7 +883,6 @@
 <script type="module" src="post-turn.ts"></script>
 <script type="module" src="prompt-suggest.ts"></script>
 <script type="module" src="voice.ts"></script>
-<script type="module" src="autopilot.ts"></script>
 <script type="module" src="runner.ts"></script>
 <script type="module" src="init.ts"></script>
 <!-- Document extraction: loaded async — only needed when user attaches a file.
