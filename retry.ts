@@ -22,8 +22,12 @@ export function _isTimeoutError(e) {
 // or undici "terminated". Call sites tag the error once; isTransient() trusts the tag, and the
 // message list below stays as the fallback for errors that arrive untagged (wrapped, re-thrown
 // as a string, or from a call site that doesn't tag yet).
+// Tagged in a WeakSet rather than by assigning a property: a frozen or non-extensible error
+// (a DOMException subclass, a library's sealed error) takes the tag all the same, and the
+// classifier never throws from the one place that must not.
+const _transportErrors = new WeakSet<object>();
 export function asTransportError<E>(e: E): E {
-    if (e && typeof e === 'object' && (e as any).name !== 'AbortError') (e as any).transport = true;
+    if (e && typeof e === 'object' && (e as any).name !== 'AbortError') _transportErrors.add(e as object);
     return e;
 }
 
@@ -56,11 +60,24 @@ const _TRANSIENT_MSG_RE = new RegExp([
     'signal timed out|bodystreambuffer|stream.*aborted',
 ].join('|'), 'i');
 
+// Prose that says "retry" only by accident of wording. Matching one of these, with nothing
+// stronger (an HTTP status, rate limit, overload) and no transport tag, errno or timeout, is
+// the weakest reason to retry — withRetry bounds it even where maxAttempts is Infinity.
+const _WEAK_PROSE_RE = /not found|try again later|internal error|connection error|request timed out/i;
+const _STRONG_PROSE_RE = /HTTP \d{3}|rate.?limit|too many requests|overloaded|unavailable|bad gateway|gateway time|quota|insufficient balance|high (?:traffic|demand)|spikes in demand|upstream|idle timeout|net::ERR_|Failed to fetch|network/i;
+const WEAK_PROSE_MAX_ATTEMPTS = 6;
+export function isWeakProseTransient(e): boolean {
+    if (!e || (typeof e === 'object' && _transportErrors.has(e))) return false;
+    if (_NET_CODE_RE.test(e.code ?? '') || _NET_CODE_RE.test(e.cause?.code ?? '') || _isTimeoutError(e)) return false;
+    const msg = e.message || '';
+    return _WEAK_PROSE_RE.test(msg) && !_STRONG_PROSE_RE.test(msg);
+}
+
 export function isTransient(e) {
     const msg = e.message || '';
     // Permanent configuration errors — model ID or endpoint wrong, retrying won't help
     if (/does not exist|you do not have access|model not found|no such model/i.test(msg)) return false;
-    if (e.transport === true) return true;
+    if (e && typeof e === 'object' && _transportErrors.has(e)) return true;
     if (_NET_CODE_RE.test(e.code ?? '') || _NET_CODE_RE.test(e.cause?.code ?? '')) return true;
     if (_isTimeoutError(e)) return true;
     // HTTP 429/402 by status: some providers return a bare status with no body ("[nvidia|…] HTTP 429"),
@@ -136,12 +153,34 @@ export function sleepInterruptible(ms: number, signal?: AbortSignal | null) {
     });
 }
 
+// Resolve once the page is visible and the browser reports online (max 10 min, abort-aware).
+// Mobile browsers freeze hidden pages and bring the network back a moment after wake.
+async function _waitUntilReachable(): Promise<void> {
+    if (typeof document === 'undefined') return;
+    const ready = () => !document.hidden && (typeof navigator === 'undefined' || navigator.onLine !== false);
+    if (ready()) return;
+    const signal = activeAbortController?.signal;
+    await new Promise<void>(resolve => {
+        const done = () => {
+            document.removeEventListener('visibilitychange', check);
+            window.removeEventListener('online', check);
+            clearTimeout(timer); resolve();
+        };
+        const check = () => { if (ready() || signal?.aborted) { setTimeout(done, ready() ? 1_500 : 0); } };
+        const timer = setTimeout(done, 600_000);
+        document.addEventListener('visibilitychange', check);
+        window.addEventListener('online', check);
+        signal?.addEventListener('abort', done, { once: true });
+    });
+}
+
 // isTransientOverride: optional fn(e) → bool that supplements isTransient().
 // Used by callers that can classify errors the generic pattern list can't (e.g. custom endpoints).
 // onFailure: optional fn(e) called for EVERY caught exception, before the transient/non-transient
 // branch — a non-transient error (e.g. a 400 that doesn't match any isTransient() pattern) never
 // reaches onRetry at all, so this is the only hook that sees every failed attempt unconditionally.
 export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverride = null, onFailure = null) {
+    let weakProse = 0;
     for (let attempt = 0; ; attempt++) {
         try { return await fn(); }
         catch (e) {
@@ -157,11 +196,16 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
             // sending execution to the outer executeWorkers retry loop (3×90s = 270s stall).
             if (e.name !== 'AbortError' && !isTransient(e) && !isTransientOverride?.(e)) throw e;
             if (attempt + 1 >= maxAttempts) throw e;
+            // An error that matched only on weak prose ("not found", "try again later") gets a
+            // short bounded run, not an unbounded one: a wording coincidence must not loop a turn.
+            if (!isTransientOverride?.(e) && isWeakProseTransient(e) && ++weakProse >= WEAK_PROSE_MAX_ATTEMPTS) throw e;
             const delay = retryDelay(attempt, e);
             const bail  = onRetry?.(attempt, e, delay);
             if (bail === false) throw e;
             // onRetry may return a number to override the delay (e.g. 0 after an endpoint switch)
             await sleepInterruptible(typeof bail === 'number' ? bail : delay);
+            // Phone locked / radio asleep: retrying now just burns attempts against a dead network.
+            if (isTransient(e)) await _waitUntilReachable();
         }
     }
 }

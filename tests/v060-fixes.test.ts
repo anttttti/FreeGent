@@ -33,6 +33,18 @@ describe('fetch_url body', () => {
         expect(JSON.stringify(calls)).toBe(before);
     });
 
+    it('lifts params into an empty body, but never over a body with content', () => {
+        const calls = [
+            { name: 'fetch_url', args: { method: 'POST', url: 'u', body: {}, params: { a: 1 } } },
+            { name: 'fetch_url', args: { method: 'POST', url: 'u', body: '', json: '{"b":2}' } },
+            { name: 'fetch_url', args: { method: 'POST', url: 'u', body: { keep: 1 }, params: { a: 1 } } },
+        ];
+        _repairFetchBody(calls);
+        expect((calls[0].args as any).body).toEqual({ a: 1 });
+        expect((calls[1].args as any).body).toBe('{"b":2}');
+        expect((calls[2].args as any).body).toEqual({ keep: 1 });
+    });
+
     it('runs as part of repairAllToolCalls', () => {
         const { norm } = repairAllToolCalls([{ function: { name: 'fetch_url', arguments: JSON.stringify({ method: 'POST', url: 'u', data: '{"x":1}' }) } }]);
         expect(norm[0].args.body).toBe('{"x":1}');

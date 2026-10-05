@@ -93,7 +93,29 @@ export let _sessionToolFilter: Set<string> | null = null; // classifier output; 
 export let aiJob: string = '';
 
 export function setOpenaiHistory(v: any): void         { openaiHistory         = v; }
-export function setAgentStreaming(v: any): void        { agentStreaming = v; (window as any).updateRailRecentChats?.(); }
+// Keep the screen on while a turn streams: on mobile, screen-off freezes the page and kills the
+// SSE connection ("Network error"). The lock is released by the browser when the page is hidden,
+// so re-acquire on return to visible while a turn is still running.
+let _wakeLock: any = null;
+async function _acquireWakeLock(): Promise<void> {
+    try {
+        if (_wakeLock || !agentStreaming || document.hidden) return;
+        const nav: any = navigator;
+        if (!nav.wakeLock?.request) return;
+        _wakeLock = await nav.wakeLock.request('screen');
+        _wakeLock.addEventListener?.('release', () => { _wakeLock = null; });
+        if (!agentStreaming) { _wakeLock.release?.().catch?.(() => {}); _wakeLock = null; }
+    } catch { _wakeLock = null; }
+}
+if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) _acquireWakeLock(); });
+}
+export function setAgentStreaming(v: any): void {
+    agentStreaming = v;
+    (window as any).updateRailRecentChats?.();
+    if (v) _acquireWakeLock();
+    else if (_wakeLock) { try { _wakeLock.release?.().catch?.(() => {}); } catch {} _wakeLock = null; }
+}
 export function setActivePlaceholder(v: any): void     { activePlaceholder     = v; }
 export function setActiveAbortController(v: any): void { activeAbortController = v; }
 export function setLastProvider(v: any): void          { lastProvider          = v; }

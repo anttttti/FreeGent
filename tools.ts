@@ -2227,7 +2227,9 @@ export async function executeToolAsync(name, args, context = null) {
     }
 
     // Tool approval gate (when enabled). Commands that run on the host — execute_code through the
-    // local sandbox, and run_git — are gated for workers too; other tools only for the main agent.
+    // local sandbox, and run_git — are gated for workers too, and so are MCP tools (a tools/call
+    // reaches a third-party server with the user's credentials; nothing sandboxes it). Other tools
+    // only for the main agent.
     if (!_toolApprovalSession.has(name)) {
         const approval = getToolApproval();
         const onHost = _runsOnHost(name, args);
@@ -2237,7 +2239,7 @@ export async function executeToolAsync(name, args, context = null) {
         const needsApproval =
             (approval === 'high' && (onHost || mcpRisk === 'destructive' || (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python')))) ||
             (approval === 'all'  && (onHost || (mcpRisk && mcpRisk !== 'read') || _APPROVAL_ALL_WRITE.has(name)));
-        if (needsApproval && (!context || onHost)) {
+        if (needsApproval && (!context || onHost || mcpRisk)) {
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
         }

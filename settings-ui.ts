@@ -258,12 +258,22 @@ function fillKeysFromText(text: string) {
     const box = document.getElementById('key-paste') as HTMLTextAreaElement | null;
     const found = findKeysInText(text);
     const labels = Object.keys(found).map(env => ENV_KEY_MAP[env].label);
+    // Filling an empty field needs no question; replacing a working key with a different one does
+    // (a log excerpt or another project's .env pasted by mistake would otherwise overwrite it).
+    const replaced = Object.entries(found)
+        .filter(([env, val]) => { const old = localStorage.getItem(ENV_KEY_MAP[env].ls); return !!old && old !== val; })
+        .map(([env]) => ENV_KEY_MAP[env].label);
+    if (replaced.length && !confirm(`This replaces the saved key for: ${replaced.join(', ')}. Continue?`)) {
+        if (box) { box.value = ''; _keyPasteLen = 0; }
+        if (status) status.textContent = 'Cancelled — no keys changed.';
+        return;
+    }
     if (labels.length) {
         applyFoundKeys(found);
         if (box) { box.value = ''; _keyPasteLen = 0; }  // don't leave keys sitting in plain text
     }
     if (status) status.textContent = labels.length
-        ? `✓ Filled ${labels.length}: ${labels.join(', ')}`
+        ? `✓ Filled ${labels.length}: ${labels.join(', ')}${replaced.length ? ` (replaced: ${replaced.join(', ')})` : ''}`
         : 'No recognised keys found.';
 }
 
