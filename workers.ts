@@ -3,6 +3,7 @@
 // Note: workers.js defines setMainAgentRole(name) that takes a role-NAME string and
 // resolves it through rolesRegistry — this overrides state.js's same-named setter on window.
 // The state module's object-setter is imported under an alias for the direct-assignment sites.
+import { runtime } from './runtime.js';
 import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
@@ -137,7 +138,7 @@ ${toolSection}`;
         //   are excluded: they are not Director workflow tools and should be delegated.
         // • Headless (benchmarks, fg-run): controlled set for reproducible benchmark runs.
         get tools() {
-            if (typeof nativeExec !== 'function')
+            if (!runtime.hasNativeExec)
                 return new Set([...ALL_TOOL_NAMES as string[], ...(typeof mcpToolNames === 'function' ? mcpToolNames() : [])]);
             // Headless ceiling (benchmarks / fg-run / TUI): tools the director can call directly.
             // write_file is included so a one-file change doesn't need a worker round-trip; the

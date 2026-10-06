@@ -13,6 +13,7 @@
 // Same bug class as the payload-builder split: two call sites, one missing the logic.
 // Follows the payload-builder/step-validator pattern: ES module, exports, window bridge.
 
+import { runtime } from './runtime.js';
 import {
     currentTurnSkills, setCurrentTurnSkills,
     mainAgentRole, pendingAgentsContextInject,
@@ -170,7 +171,7 @@ export async function buildTurnPrelude({
     if (isFirstTurn) {
         try {
             const inContainer = typeof fgTargetContainer !== 'undefined' && !!fgTargetContainer;
-            const nativeFs = typeof nativeExec === 'function';
+            const nativeFs = runtime.hasNativeExec;
             wsFilesBlock = formatWorkspaceListing(await collectWorkspacePaths(), { inContainer, nativeFs });
         } catch {}
     }
