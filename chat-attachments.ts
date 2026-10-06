@@ -6,8 +6,17 @@ let _attachmentGeneration = 0;
 const _attachmentReads = new Set<Promise<void>>();
 
 // Sending waits for file decoding/extraction rather than snapshotting an empty list.
+// Bounded: a read that never settles must not leave the composer stuck in "send-preparing", and one
+// failed read must not sink the others (each read reports its own failure as a chip error).
+const ATTACHMENT_WAIT_MS = 30_000;
 async function waitForAttachments(): Promise<void> {
-    while (_attachmentReads.size) await Promise.all(Array.from(_attachmentReads));
+    const deadline = Date.now() + ATTACHMENT_WAIT_MS;
+    while (_attachmentReads.size && Date.now() < deadline) {
+        await Promise.race([
+            Promise.allSettled(Array.from(_attachmentReads)),
+            new Promise(r => setTimeout(r, Math.max(0, deadline - Date.now()))),
+        ]);
+    }
 }
 function hasPendingAttachments(): boolean { return !!(_pendingImages.length || _pendingFiles.length || _attachmentReads.size); }
 function warnAttachmentSendBusy(): void {
@@ -234,10 +243,12 @@ async function _loadFileAttachment(file: File, generation: number): Promise<void
     if (contentType === 'text' && content.length > 50_000) content = content.slice(0, 50_000) + '\n…[truncated — showing first 50,000 characters]';
     let workspacePath: string | undefined;
     if (original && typeof agentWriteFile === 'function') {
-        const basename = name.replace(/\\/g, '/').split('/').pop() || 'attachment';
+        // Last path segment only, with dot-segments dropped, so a hostile name cannot leave attachments/.
+        const basename = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'attachment';
         workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
+        if (!current()) return;   // composer was cleared while reading: don't write a file nothing references
         await agentWriteFile(workspacePath, original, 'base64');
-        if (!current()) return;
+        if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
     _pendingFiles.push(att);

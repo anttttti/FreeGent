@@ -174,7 +174,8 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
     const _lf = seenListFiles ?? _seenListFiles;
 
     if (name.startsWith('browser_')) {
-        const text = JSON.stringify(result) ?? '';
+        let text: string;
+        try { text = JSON.stringify(result) ?? ''; } catch { text = String(result); }   // BigInt or a cycle must not throw out of truncation
         const kept = text.length > limit ? { url: result?.url, observation: text.slice(0, limit), truncated: true } : result;
         if (stepBudget) stepBudget.remaining = Math.max(0, stepBudget.remaining - Math.min(text.length, limit));
         return kept;

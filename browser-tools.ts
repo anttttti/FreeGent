@@ -47,12 +47,20 @@ export async function executeBrowserTool(name: string, args: any = {}): Promise<
     try {
         const res = await fetch(`${_browserUrl}/browser/${name.slice(8)}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args), signal: AbortSignal.timeout(60_000),
+            body: JSON.stringify(args),
+            // Stop must interrupt a hung bridge call, so the turn's signal joins the timeout.
+            signal: (globalThis as any).activeAbortController?.signal
+                ? AbortSignal.any([AbortSignal.timeout(60_000), (globalThis as any).activeAbortController.signal])
+                : AbortSignal.timeout(60_000),
         });
-        const value = await res.json();
-        if (!res.ok) return { error: typeof value.error === 'string' ? value.error.slice(0, 300) : `Browser operation failed (HTTP ${res.status}).` };
+        // A proxy or bridge error page is not JSON: read the text first so the HTTP status survives.
+        const text = await res.text();
+        let value: any;
+        try { value = JSON.parse(text); } catch { value = null; }
+        if (!res.ok) return { error: typeof value?.error === 'string' ? value.error.slice(0, 300) : `Browser operation failed (HTTP ${res.status}${value ? '' : `: ${text.slice(0, 200)}`}).` };
+        if (value === null) return { error: `Browser bridge returned a non-JSON reply: ${text.slice(0, 200)}` };
         return value;
-    } catch (e) { return { error: `Browser operation failed: ${e.message}` }; }
+    } catch (e: any) { return { error: `Browser operation failed: ${String(e?.message ?? e)}` }; }
 }
 
 export function browserPromptGuidance(allows: (name: string) => boolean): string {

@@ -391,7 +391,8 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     // containment is the caller's job (network isolation around this process).
     if (fetchAllow) {
         setFetchAllow(parseFetchAllow(fetchAllow));
-        const _netTools = ['web_search', 'deep_research', 'academic_search', 'package_search', 'context7_docs', 'generate_image'];
+        const _netTools = ['web_search', 'deep_research', 'academic_search', 'package_search', 'context7_docs', 'generate_image',
+            'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs'];
         _disabledList = [...new Set([..._disabledList, ..._netTools])];
     }
     // --enable-tools: make tools available and add them to the director's headless ceiling.
