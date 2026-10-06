@@ -278,6 +278,7 @@ declare global {
     var convoLogTurn: any;
     var esc: any;
     var exportChat: any;
+    var sendChatLog: any;
     var exportChatMarkdown: any;
     var importChat: any;
     var loadChatLog: any;

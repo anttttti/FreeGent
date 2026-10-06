@@ -343,8 +343,13 @@ function getBraveKey()       { return ls('fg_brave_key'); }
 function getGithubToken()      { return ls('fg_github_token'); }
 function getStackExchangeKey() { return ls('fg_stackexchange_key'); }
 export function getSandboxProvider()  { return ls('fg_sandbox_provider', 'wasm'); }
+// Set when the bash runtime fails to start in this browser (older engines pass the feature check
+// but cannot run the bundle). The prompt and tool list are rebuilt each turn, so they then stop
+// offering bash instead of the AI retrying a shell that cannot work.
+let _bashBroken: string | null = null;
+let _bashEverRan = false;
 export function browserBashAvailable(): boolean {
-    return typeof BigInt === 'function' && typeof WebAssembly === 'object' && typeof Worker === 'function'
+    return !_bashBroken && typeof BigInt === 'function' && typeof WebAssembly === 'object' && typeof Worker === 'function'
         && typeof DataView.prototype.getBigUint64 === 'function' && typeof DataView.prototype.setBigUint64 === 'function';
 }
 
@@ -1083,7 +1088,19 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
 const WASM_TIMEOUT_MS = 10 * 60_000;
 async function runWithWasm(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     if (!browserBashAvailable()) throw new Error('Browser bash is unavailable: use JavaScript or configure a local execution server');
-    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress, typeof activeAbortController !== 'undefined' ? activeAbortController?.signal : undefined);
+    try {
+        const r = await sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress, typeof activeAbortController !== 'undefined' ? activeAbortController?.signal : undefined);
+        _bashEverRan = true;
+        return r;
+    } catch (e: any) {
+        // A command's own failure comes back as an exit code; a throw here means the runtime itself failed.
+        // Only latch when bash has never worked and the cause is not a cancel or timeout.
+        if (!_bashEverRan && e?.name !== 'AbortError' && !/timed out/i.test(String(e?.message))) {
+            _bashBroken = String(e?.message ?? e);
+            throw new Error(`Browser bash cannot run on this browser (${_bashBroken}). It is switched off for this session — do not retry it; use language "javascript" instead (Node-style fs/path over the same /workspace files).`);
+        }
+        throw e;
+    }
 }
 
 // ── Shared utilities ──────────────────────────────────────────────────────

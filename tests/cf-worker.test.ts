@@ -88,3 +88,36 @@ describe('CF Worker', () => {
         expect((await worker.fetch(get('https://example.com/'), {})).status).toBe(200);
     });
 });
+
+describe('CF Worker POST /log', () => {
+    const logReq = (body: string, origin = 'http://192.168.1.20:5000') => new Request('https://proxy.example/log', {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'text/plain', 'CF-Connecting-IP': '203.0.113.9' }, body });
+    const kv = () => ({ put: vi.fn().mockResolvedValue(undefined) });
+
+    it('stores a log for 14 days and returns an id, from any origin', async () => {
+        const FG_LOGS = kv();
+        const r = await worker.fetch(logReq('{"a":1}'), { FG_LOGS });
+        expect(r.status).toBe(200);
+        const { id } = await r.json() as any;
+        expect(id).toMatch(/^[0-9a-f]{16}$/);
+        expect(FG_LOGS.put).toHaveBeenCalledWith(`log:${id}`, '{"a":1}', { expirationTtl: 14 * 24 * 3600 });
+    });
+    it('answers 503 without the KV binding, 413 over 2 MB, 429 when rate limited', async () => {
+        expect((await worker.fetch(logReq('x'), {})).status).toBe(503);
+        const FG_LOGS = kv();
+        expect((await worker.fetch(logReq('x'.repeat(2 * 1024 * 1024 + 1)), { FG_LOGS })).status).toBe(413);
+        expect((await worker.fetch(logReq('x'), { FG_LOGS, FG_RATE_LIMITER: limiter(false) })).status).toBe(429);
+        expect(FG_LOGS.put).not.toHaveBeenCalled();
+    });
+    it('answers 507 with CORS headers when KV refuses the write (quota exhausted)', async () => {
+        const FG_LOGS = { put: vi.fn().mockRejectedValue(new Error('KV PUT failed: 429 Too Many Requests')) };
+        const r = await worker.fetch(logReq('{"a":1}'), { FG_LOGS });
+        expect(r.status).toBe(507);
+        expect(r.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(((await r.json()) as any).error).toMatch(/full|limit/);
+    });
+    it('cannot read logs back', async () => {
+        const r = await worker.fetch(new Request('https://proxy.example/log', { method: 'GET', headers: { Origin: ORIGIN } }), { FG_LOGS: kv() });
+        expect(r.status).toBe(405);
+    });
+});

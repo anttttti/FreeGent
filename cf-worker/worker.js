@@ -44,7 +44,10 @@
  *
  * Privacy
  * ──────────────────
- * The Worker is a pure passthrough. No data is logged, stored, or inspected.
+ * The Worker is a pure passthrough. No data is logged, stored, or inspected —
+ * with one opt-in exception: POST /log stores a chat log the user explicitly sends from the app
+ * ("Send log to developer") in the FG_LOGS KV namespace for 14 days. It is write-only here;
+ * logs are read with `wrangler kv`. Without the FG_LOGS binding the endpoint answers 503.
  * API keys (user's own or injected from env) are forwarded directly to the
  * provider and never retained.
  *
@@ -115,9 +118,39 @@ const CORS = {
     'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
 };
 
+// ── POST /log: a user-sent chat log, stored for debugging ─────────────────────
+// Handled before the origin check: the app also runs from LAN-IP and plain-HTTP pages (older iPads)
+// whose origin cannot be allow-listed. Bounded instead by the size cap, the per-IP rate limit and
+// the KV expiry; the endpoint cannot read anything back.
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
+const LOG_TTL_SECONDS = 14 * 24 * 3600;
+async function _storeLog(request, env) {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (request.method !== 'POST') return _err(405, 'POST only');
+    if (!env || !env.FG_LOGS) return _err(503, 'Log upload is not configured on this Worker');
+    if (await _rateLimited(request, env, 'log')) return _err(429, 'Rate limit exceeded — try again in a minute');
+    const declared = Number(request.headers.get('Content-Length') || 0);
+    if (declared > LOG_MAX_BYTES) return _err(413, 'Log too large (max 2 MB)');
+    const body = await request.text();
+    if (!body.trim()) return _err(400, 'Empty log');
+    if (new TextEncoder().encode(body).length > LOG_MAX_BYTES) return _err(413, 'Log too large (max 2 MB)');
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    const id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        await env.FG_LOGS.put(`log:${id}`, body, { expirationTtl: LOG_TTL_SECONDS });
+    } catch (e) {
+        // KV refuses writes when the account's storage or daily write quota is used up. Say so with
+        // CORS headers; an uncaught throw reaches the browser as an opaque network error.
+        return _err(507, 'Log storage is full or over its daily limit — download the chat instead (⬇) and try again tomorrow');
+    }
+    return new Response(JSON.stringify({ id }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+}
+
 export default {
     async fetch(request, env) {
         const origin = request.headers.get('Origin') || '';
+
+        if (new URL(request.url).pathname === '/log') return _storeLog(request, env);
 
         // ── CORS preflight ────────────────────────────────────────────────────
         if (request.method === 'OPTIONS') {

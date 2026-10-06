@@ -693,13 +693,19 @@ function renderChatsDropdown() {
         mdBtn.title       = 'Download Markdown';
         mdBtn.onclick     = e => { e.stopPropagation(); exportChatMarkdown(chat.id); };
 
+        const sendBtn = document.createElement('button');
+        sendBtn.className   = 'chat-act-btn';
+        sendBtn.textContent = '📤';
+        sendBtn.title       = 'Send log to developer';
+        sendBtn.onclick     = e => { e.stopPropagation(); sendChatLog(chat.id); };
+
         const delBtn = document.createElement('button');
         delBtn.className   = 'chat-act-btn chat-act-btn-del';
         delBtn.textContent = '🗑';
         delBtn.title       = 'Delete';
         delBtn.onclick     = e => { e.stopPropagation(); deleteChat(chat.id); };
 
-        actions.append(renBtn, dlBtn, mdBtn, delBtn);
+        actions.append(renBtn, dlBtn, mdBtn, sendBtn, delBtn);
         item.append(info, actions);
         el.appendChild(item);
     }

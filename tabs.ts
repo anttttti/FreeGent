@@ -349,7 +349,7 @@ function closeFileTab(name) {
 // Sandboxed iframes (no allow-same-origin) throw SecurityError on Storage access; the
 // polyfill silently replaces the broken property with an in-memory Map-backed store so
 // games and apps that use localStorage don't crash.
-const _STORAGE_POLYFILL = `<script>(function(){function mk(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[String(k)]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(n){return Object.keys(d)[n]??null},get length(){return Object.keys(d).length}}};['localStorage','sessionStorage'].forEach(function(n){try{window[n].getItem('_')}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(_){}}})})();<\/script>`;
+const _STORAGE_POLYFILL = `<script>(function(){function mk(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[String(k)]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(n){var k=Object.keys(d)[n];return k===undefined?null:k},get length(){return Object.keys(d).length}}};['localStorage','sessionStorage'].forEach(function(n){try{window[n].getItem('_')}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(_){}}})})();<\/script>`;
 
 function _wrapArtifact(content) {
     // Bare SVG document → wrap in HTML so the iframe renders it with full animation support.
@@ -882,6 +882,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const notes: string[] = [];
     if (!loaded) notes.push('The page did not finish loading within 8 s.');
     if (fps !== null && fps < 20) notes.push(`Animation frames ran at only ~${fps} fps (browser throttling), so game time advanced far slower than real time — treat movement and timing results as unreliable.`);
+    // Old engines (iPadOS ≤ 15 Safari) reject newer syntax in the page's own scripts and lack newer
+    // library methods; the AI otherwise reads those errors as bugs in the app or a broken tool.
+    let _modernSyntax = true;
+    try { new Function('var a={};return a?.b??1'); } catch { _modernSyntax = false; }
+    if (!_modernSyntax) {
+        notes.push('This browser is an older engine: a SyntaxError from ?., ??, class fields or a lookbehind regex, or a missing method (Array.prototype.at/flat/findLast, replaceAll, structuredClone), is the browser\'s limit, not necessarily a bug. Write ES2017 JavaScript without newer methods so the page works here too.');
+    }
+    if (!loaded && !logs.length) notes.push('The check script never reported from the page, so the browser blocked or could not run it (very old engine, or a fatal syntax error before any code ran). Simplify the page and retry; do not conclude the HTML itself is wrong.');
     if (document.hidden) notes.push('The FreeGent tab was in the background, so the browser paused animation frames — movement and timers may look frozen; re-run with the tab visible.');
     const summary = !errors.length
         ? `Loaded ${loaded ? 'fine' : 'partially'}; no errors.`
