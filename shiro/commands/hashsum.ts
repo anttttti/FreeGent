@@ -1,6 +1,7 @@
 import type { Command, CommandContext } from './index';
 import { sha256 } from './checksums';
 import { bytesToText, textToBytes } from '../utils/bytes';
+import { readOperandBytes as readBytes } from './flags';
 
 // GNU md5sum / sha1sum / sha256sum / sha512sum: "HASH  NAME" per file ("-" for stdin), -c to check
 // a list of sums. File bytes are hashed as stored (binary files as bytes).
@@ -48,11 +49,6 @@ async function digest(algo: string, data: Uint8Array): Promise<string> {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function readBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
-  if (f === '-') return textToBytes(ctx.stdin);
-  const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-  return typeof c === 'string' ? textToBytes(c) : c;
-}
 
 const TAGS: Record<string, string> = { MD5: 'MD5', 'SHA-1': 'SHA1', 'SHA-256': 'SHA256', 'SHA-384': 'SHA384', 'SHA-512': 'SHA512' };
 

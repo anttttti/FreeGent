@@ -5,6 +5,7 @@
  */
 import type { Command } from './index';
 import { textToBytes } from '../utils/bytes';
+import { fmtG } from '../utils/format';
 
 interface Format { kind: 'a' | 'c' | 'o' | 'x' | 'd' | 'u' | 'f'; size: number }
 
@@ -17,19 +18,6 @@ const WIDTH = {
   d: { 1: 4, 2: 6, 4: 11, 8: 20 }, u: { 1: 3, 2: 5, 4: 10, 8: 20 },
 } as Record<string, Record<number, number>>;
 
-/** C's %g with the given number of significant digits. */
-function fmtG(x: number, p: number): string {
-  if (!Number.isFinite(x)) return Number.isNaN(x) ? 'nan' : x < 0 ? '-inf' : 'inf';
-  if (x === 0) return Object.is(x, -0) ? '-0' : '0';
-  const [mant, expStr] = x.toExponential(p - 1).split('e');
-  const exp = parseInt(expStr, 10);
-  const trim = (s: string) => (s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s);
-  if (exp < -4 || exp >= p) {
-    const sign = exp < 0 ? '-' : '+';
-    return `${trim(mant)}e${sign}${String(Math.abs(exp)).padStart(2, '0')}`;
-  }
-  return trim(x.toFixed(Math.max(0, p - 1 - exp)));
-}
 
 /** Shortest %g that reads back as the same value (what coreutils prints for floats). */
 function shortest(x: number, bits: 32 | 64): string {

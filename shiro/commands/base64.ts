@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from './index';
 import { bytesToText, textToBytes } from '../utils/bytes';
+import { readOperandBytes as readBytes } from './flags';
 
 // GNU base64: encode bytes, wrapped at 76 columns (-w N, 0 = no wrapping); -d decodes (-i ignores
 // non-alphabet characters). Binary-safe: works on bytes, not JavaScript strings.
@@ -38,11 +39,6 @@ export function b64decodeStream(text: string): { bytes: Uint8Array; ok: boolean 
   return { bytes: Uint8Array.from(out), ok };
 }
 
-async function readBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
-  if (f === '-') return textToBytes(ctx.stdin);
-  const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
-  return typeof c === 'string' ? textToBytes(c) : c;
-}
 
 export const base64: Command = {
   name: "base64",

@@ -1,6 +1,7 @@
 import { withRuntimeLock } from '../../runtime-lock';
 import type { CommandContext } from '../../commands/index';
 import { bytesToText, textToBytes, toDisplayText } from '../../utils/bytes';
+import { fsError } from '../../utils/errors.js';
 
 /** Keep synchronous API effects in call order when persisting to the async workspace. */
 function queueFsOperation(pending: Promise<any>[], operation: () => Promise<any>): Promise<any> {
@@ -20,15 +21,6 @@ export interface FsDeps {
   homeDir: string;
 }
 
-/** Create a Node.js-style fs error with code, errno, syscall properties */
-function fsError(code: string, message: string, syscall?: string, path?: string): Error {
-  const err: any = new Error(message);
-  err.code = code;
-  err.errno = code === 'ENOENT' ? -2 : code === 'EEXIST' ? -17 : code === 'EISDIR' ? -21 : code === 'ENOTDIR' ? -20 : code === 'EACCES' ? -13 : -1;
-  if (syscall) err.syscall = syscall;
-  if (path) err.path = path;
-  return err;
-}
 
 function createRemovalHelpers(
   ctx: CommandContext,

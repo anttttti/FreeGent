@@ -9,6 +9,7 @@ import { transformBytes } from '../utils/streams';
 import type { Command, CommandContext } from './index';
 import { readdirEntries, statEntry } from './flags';
 import { bytesToText, textToBytes } from '../utils/bytes';
+import { globToRegex } from '../utils/glob-regex.js';
 
 const BLOCK = 512;
 const enc = new TextEncoder();
@@ -208,21 +209,6 @@ function parseArchive(buf: Uint8Array): Entry[] {
 
 // ── patterns ─────────────────────────────────────────────────────────
 
-/** GNU tar exclusion globs: `*` and `?` also match `/`, and the pattern may match any trailing path part. */
-function globToRegex(g: string): RegExp {
-  let re = '';
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i];
-    if (c === '*') re += '.*';
-    else if (c === '?') re += '.';
-    else if (c === '[') {
-      const close = g.indexOf(']', i + 2);
-      if (close > 0) { re += '[' + g.slice(i + 1, close).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = close; } else re += '\\[';
-    } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
-  }
-  return new RegExp('^' + re + '$');
-}
-
 function excluded(name: string, patterns: RegExp[]): boolean {
   if (patterns.length === 0) return false;
   const bare = name.replace(/\/+$/, '');
@@ -368,7 +354,7 @@ export const tar: Command = {
     };
 
     try {
-      const allExcludes = o.excludes.map(globToRegex);
+      const allExcludes = o.excludes.map(g => globToRegex(g));
       const fromFiles: RegExp[] = [];
       for (const f of o.excludeFiles) {
         try { for (const line of await readList(f)) fromFiles.push(globToRegex(line)); }

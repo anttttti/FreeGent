@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from './index';
 import { ereToJs } from '../utils/posix-regex';
+import { globToRegex } from '../utils/glob-regex.js';
 
 // GNU find: start paths, global options (-maxdepth -mindepth -depth), and an expression of tests
 // (-name -iname -path -ipath -regex -iregex -type -empty -size -newer -mtime -true -false ...),
@@ -16,28 +17,6 @@ type Node =
 interface Entry { path: string; abs: string; name: string; depth: number; isDir: boolean; size: number; mtime: number; mode: number }
 
 /** fnmatch(3) glob → RegExp: * ? [...] (with ! or ^), backslash escapes. `*` crosses "/" (find -path). */
-function globRe(glob: string, icase: boolean): RegExp {
-  let re = '^';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '\\' && i + 1 < glob.length) { re += glob[++i].replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&'); continue; }
-    if (c === '*') { re += '[\\s\\S]*'; continue; }
-    if (c === '?') { re += '[\\s\\S]'; continue; }
-    if (c === '[') {
-      const end = glob.indexOf(']', i + 2);
-      if (end > 0) {
-        let body = glob.slice(i + 1, end);
-        if (body[0] === '!') body = '^' + body.slice(1);
-        re += '[' + body.replace(/\\/g, '\\\\') + ']';
-        i = end;
-        continue;
-      }
-    }
-    re += c.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
-  }
-  return new RegExp(re + '$', icase ? 'i' : '');
-}
-
 const shq = (s: string) => /^[A-Za-z0-9_\/.,:=+@%-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 
 export const findCmd: Command = {
@@ -75,9 +54,9 @@ export const findCmd: Command = {
         case '-mindepth': minDepth = parseInt(next(a), 10); return { k: 'test', fn: () => true };
         case '-depth': depthFirst = true; return { k: 'test', fn: () => true };
         case '-xdev': case '-mount': case '-noleaf': case '-ignore_readdir_race': case '-follow': return { k: 'test', fn: () => true };
-        case '-name': case '-iname': { const re = globRe(next(a), a === '-iname'); return { k: 'test', fn: e => re.test(e.name) }; }
+        case '-name': case '-iname': { const re = globToRegex(next(a), { icase: a === '-iname' }); return { k: 'test', fn: e => re.test(e.name) }; }
         case '-path': case '-wholename': case '-ipath': case '-iwholename': {
-          const re = globRe(next(a), a.startsWith('-i'));
+          const re = globToRegex(next(a), { icase: a.startsWith('-i') });
           return { k: 'test', fn: e => re.test(e.path) };
         }
         case '-regex': case '-iregex': { const re = new RegExp('^(?:' + ereToJs(next(a)) + ')$', a === '-iregex' ? 'i' : ''); return { k: 'test', fn: e => re.test(e.path) }; }

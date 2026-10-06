@@ -5,6 +5,9 @@
  */
 import type { Command } from './index';
 import { readFileText } from './flags';
+import { toLines } from './flags';
+
+function splitLines(text: string): { lines: string[]; endsNl: boolean } { const { lines, lastNl } = toLines(text); return { lines, endsNl: lastNl }; }
 
 interface HunkLine { op: ' ' | '+' | '-'; text: string }
 interface Hunk {
@@ -173,12 +176,6 @@ function parsePatch(text: string): FilePatch[] {
 
 interface Applied { text: string; results: { ok: boolean; at: number; offset: number; fuzz: number }[]; failed: Hunk[] }
 
-function splitLines(text: string): { lines: string[]; endsNl: boolean } {
-  if (text === '') return { lines: [], endsNl: true };
-  const endsNl = text.endsWith('\n');
-  const lines = (endsNl ? text.slice(0, -1) : text).split('\n');
-  return { lines, endsNl };
-}
 
 function sides(h: Hunk, reverse: boolean) {
   const oldL = h.lines.filter(x => (reverse ? x.op !== '-' : x.op !== '+')).map(x => x.text);

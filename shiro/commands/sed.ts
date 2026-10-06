@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from './index';
 import { breToJs, ereToJs } from '../utils/posix-regex';
+import { readFileText as sharedReadFileText } from './flags';
 
 // GNU sed: a script parser and the pattern-space/hold-space machine. Supports addresses (N, $,
 // /re/I, \cREc, first~step, addr,+N, addr,~N, 0,/re/, !), { } blocks and the commands
@@ -528,5 +529,5 @@ export const sedCmd: Command = {
 };
 
 async function readFileText(ctx: CommandContext, f: string): Promise<string> {
-  return await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd), 'utf8') as string;
+  return sharedReadFileText(ctx.fs, ctx.fs.resolvePath(f, ctx.cwd));
 }

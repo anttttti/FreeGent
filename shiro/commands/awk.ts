@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from './index';
 import { ereToJs } from '../utils/posix-regex';
+import { fmtExp, fmtG } from '../utils/format';
 
 // POSIX awk (with the common mawk/gawk extensions): lexer, parser and an evaluator following awk's
 // value rules — numbers, strings and "strnums" (input that looks numeric compares as a number).
@@ -33,25 +34,6 @@ function numToStr(n: number, fmt: string): string {
 
 // ─── printf ──────────────────────────────────────────────────────────────────
 
-function fmtExp(n: number, prec: number, upper: boolean): string {
-  let s = n.toExponential(prec);
-  s = s.replace(/e([+-])(\d)$/, 'e$10$2');
-  return upper ? s.toUpperCase() : s;
-}
-function fmtG(n: number, prec: number, alt: boolean, upper: boolean): string {
-  if (n === 0) return alt ? (0).toFixed(Math.max(prec - 1, 0)) : '0';
-  const p = prec === 0 ? 1 : prec;
-  const exp = parseInt(n.toExponential(p - 1).split('e')[1], 10);
-  let s: string;
-  if (exp < -4 || exp >= p) {
-    s = fmtExp(n, p - 1, upper);
-    if (!alt) s = s.replace(/\.?0+(e)/i, '$1');
-  } else {
-    s = n.toFixed(Math.max(p - 1 - exp, 0));
-    if (!alt && s.includes('.')) s = s.replace(/\.?0+$/, '');
-  }
-  return s;
-}
 
 export class MissingArgs extends Error { constructor(public partial: string) { super('not enough arguments passed to printf'); } }
 

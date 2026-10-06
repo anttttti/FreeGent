@@ -3,6 +3,8 @@
  */
 
 import type { FileSystem } from '../filesystem';
+import type { CommandContext } from './index';
+import { textToBytes } from '../utils/bytes';
 
 /** Stable CLI wording for filesystem errors; unknown storage failures retain their message. */
 export function filesystemError(error: unknown): string {
@@ -114,6 +116,27 @@ export async function readInput(
  */
 export async function readFileText(fs: FileSystem, path: string): Promise<string> {
   return (await fs.readFile(path, 'utf8')) as string;
+}
+
+/** A file operand as bytes ("-" = stdin), for commands that work on raw data. */
+export async function readOperandBytes(ctx: CommandContext, f: string): Promise<Uint8Array> {
+  if (f === '-') return textToBytes(ctx.stdin);
+  const c = await ctx.fs.readFile(ctx.fs.resolvePath(f, ctx.cwd));
+  return typeof c === 'string' ? textToBytes(c) : c;
+}
+
+/** GNU size operand: 1k = 1024, 1kB = 1000, `b` = 512, plain digits as is. null when malformed. */
+export function parseSize(s: string): number | null {
+  const m = /^(\d+)([a-zA-Z]*)$/.exec(s);
+  if (!m) return null;
+  const n = parseInt(m[1], 10), u = m[2];
+  if (u === '') return n;
+  if (u === 'b') return n * 512;
+  const idx = 'KMGTPEZY'.indexOf(u[0].toUpperCase());
+  if (idx < 0) return null;
+  if (u.length === 1) return n * 1024 ** (idx + 1);            // K, M, G …: powers of 1024
+  if (u.length === 2 && u[1] === 'B') return n * 1000 ** (idx + 1);   // kB, MB, GB …: powers of 1000
+  return null;
 }
 
 /** Directory entry with metadata (replaces FluffyEntry). */
