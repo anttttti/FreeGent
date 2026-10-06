@@ -206,7 +206,7 @@ export default defineConfig(() => {
     configureServer(server: any) {
       const root = server.config.root;
       server.watcher.on('change', (f: string) => {
-        if (/[\\/](shiro|exec-sandbox)[\\/]|pyodide-(worker|run)\.ts$/.test(f)) sandboxCode = null;
+        if (/[\\/](shiro|exec-sandbox)[\\/]|pyodide-(worker|run)\.ts$|[\\/]polyfills\.ts$/.test(f)) sandboxCode = null;
       });
       server.middlewares.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
         if ((req.url ?? '').split('?')[0] !== `${base}${SANDBOX_FILE}`) { next(); return; }

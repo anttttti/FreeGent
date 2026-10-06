@@ -8,7 +8,7 @@
 import { WasiRT, type WasiJob, type WasiWrites, type ExecRequest, type ExecResult } from './wasi-runtime';
 import { memoryImports } from './wasm-module';
 
-export interface RunRequest { type: 'run'; module: WebAssembly.Module; job: WasiJob; trace?: boolean }
+export interface RunRequest { type: 'run'; module?: WebAssembly.Module; bytes?: Uint8Array; job: WasiJob; trace?: boolean }
 
 export type WorkerReply =
   | { type: 'stdout' | 'stderr' | 'trace'; text: string }
@@ -40,9 +40,11 @@ export function makeHandler(post: (m: WorkerReply) => void): (msg: HostMessage) 
 
 export async function handleRun(req: RunRequest, post: (m: WorkerReply) => void, exec?: (r: ExecRequest) => Promise<ExecResult>): Promise<void> {
   try {
+    const module = req.module ?? (req.bytes ? await WebAssembly.compile(req.bytes as unknown as BufferSource) : null);
+    if (!module) throw new Error('WASM worker request has no module or bytes');
     // WeakMap metadata does not survive structured clone: re-attach it from the job
     if (req.job.memory) {
-      memoryImports.set(req.module, { module: 'env', name: 'memory', ...req.job.memory, wasShared: false });
+      memoryImports.set(module, { module: 'env', name: 'memory', ...req.job.memory, wasShared: false });
     }
     const rt = WasiRT.fromJob(req.job, {
       onStdout: text => post({ type: 'stdout', text }),
@@ -50,7 +52,7 @@ export async function handleRun(req: RunRequest, post: (m: WorkerReply) => void,
       trace: req.trace ? (text => post({ type: 'trace', text })) : undefined,
       exec,
     });
-    const code = await rt.runProgram(req.module);
+    const code = await rt.runProgram(module);
     post({ type: 'done', code, writes: rt.takeWrites() });
   } catch (e: any) {
     post({ type: 'error', message: String(e?.message ?? e) });

@@ -58,6 +58,11 @@ export async function setupBrowserTools(): Promise<void> {
     resetShell();
     localStorage.setItem('fg_sandbox_provider', 'wasm');
     if (!uninstall) {
+        // This fixture supplies the frame/Python worker protocol; JSDOM itself
+        // has no Worker global. Declare its emulated capability for tool schemas.
+        const oldWorker = W.Worker;
+        if (!oldWorker) W.Worker = class { constructor() { throw new Error('Use the injected test worker factory'); } };
+        afterAll(() => { if (!oldWorker) delete W.Worker; });
         const py = await loadNodePyodide();
         __setPyodideForTest(py);   // the shell's python3
         uninstall = installFakeSandboxFrame(py);

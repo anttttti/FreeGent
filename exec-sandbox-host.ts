@@ -24,8 +24,9 @@ export const EXEC_FILE_MAX_CHARS = 10_000_000;
 
 let frame: HTMLIFrameElement | null = null;
 let ready: Promise<void> | null = null;
+let boot: { frame: HTMLIFrameElement; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; onReady: (e: MessageEvent) => void } | null = null;
 let seq = 0;
-const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; onProgress?: (message: string) => void }>();
+const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; cleanup?: () => void; onProgress?: (message: string) => void }>();
 const eventListeners = new Map<string, Set<(data: any) => void>>();
 
 // Workspace operations the frame may request (the page's bridged workspace functions).
@@ -35,13 +36,16 @@ function _onMessage(e: MessageEvent): void {
     if (!frame || e.source !== frame.contentWindow) return;
     const d = e.data;
     if (!d || typeof d !== 'object') return;
-    if (d.fg === 'progress') {
+    if (d.fg === 'load-error') {
+        if (boot) resetSandbox('The execution sandbox script could not load; reload the page and check the connection');
+    } else if (d.fg === 'progress') {
         if (typeof d.message === 'string') pending.get(d.id)?.onProgress?.(d.message);
     } else if (d.fg === 'reply') {
         const p = pending.get(d.id);
         if (!p) return;
         pending.delete(d.id);
         clearTimeout(p.timer);
+        p.cleanup?.();
         if (d.error !== undefined) p.reject(new Error(d.error)); else p.resolve(d.value);
     } else if (d.fg === 'ws') {
         void _answerWorkspace(d,frame.contentWindow!);
@@ -123,24 +127,38 @@ function _ensureFrame(): Promise<void> {
     frame.tabIndex = -1;
     frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
     const src = sandboxScriptUrl().replace(/"/g, '&quot;');
-    frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><script src="${src}"></script></head><body></body></html>`;
+    frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body></body></html>`;
+    const ownedFrame = frame;
     ready = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => { reject(new Error('the code sandbox did not load')); resetSandbox(); }, LOAD_TIMEOUT_MS);
         const onReady = (e: MessageEvent) => {
-            if (!frame || e.source !== frame.contentWindow || e.data?.fg !== 'ready') return;
+            if (e.source !== ownedFrame.contentWindow || e.data?.fg !== 'ready') return;
             window.removeEventListener('message', onReady);
             clearTimeout(timer);
+            if (boot?.frame === ownedFrame) boot = null;
             resolve();
         };
+        const timer = setTimeout(() => {
+            if (boot?.frame === ownedFrame) resetSandbox('The code sandbox did not load within 30 seconds');
+        }, LOAD_TIMEOUT_MS);
+        boot = { frame: ownedFrame, reject, timer, onReady };
         window.addEventListener('message', onReady);
     });
     document.body.appendChild(frame);
     return ready;
 }
 
+export function sandboxBusy(): boolean { return !!boot || pending.size > 0; }
+
 // Tear the frame down (stuck code, or a fresh start). Pending calls fail; the next call reloads it.
-export function resetSandbox(reason = 'the code sandbox was reset'): void {
-    for (const [, p] of pending) { clearTimeout(p.timer); p.reject(new Error(reason)); }
+export function resetSandbox(reason = 'the code sandbox was reset', errorName = 'Error'): void {
+    const error = new Error(reason); error.name = errorName;
+    if (boot) {
+        const loading = boot; boot = null;
+        clearTimeout(loading.timer);
+        window.removeEventListener('message', loading.onReady);
+        loading.reject(error);
+    }
+    for (const [, p] of pending) { clearTimeout(p.timer); p.cleanup?.(); p.reject(error); }
     pending.clear();
     for (const l of eventListeners.get('py-error') ?? []) l(reason);
     frame?.remove();
@@ -149,15 +167,31 @@ export function resetSandbox(reason = 'the code sandbox was reset'): void {
     window.removeEventListener('message', _onMessage);
 }
 
-export async function sandboxCall(kind: string, payload: Record<string, any> = {}, timeoutMs = 0, onProgress?: (message: string) => void): Promise<any> {
-    await _ensureFrame();
+export async function sandboxCall(kind: string, payload: Record<string, any> = {}, timeoutMs = 0, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<any> {
+    const cancelled = () => { const error = new Error('Execution cancelled'); error.name = 'AbortError'; return error; };
+    if (signal?.aborted) throw cancelled();
+    const start = _ensureFrame();
+    if (signal) await new Promise<void>((resolve, reject) => {
+        const abort = () => { resetSandbox('Execution cancelled', 'AbortError'); reject(cancelled()); };
+        const cleanup = () => signal.removeEventListener('abort', abort);
+        signal.addEventListener('abort', abort, { once: true });
+        start.then(() => { cleanup(); resolve(); }, error => { cleanup(); reject(error); });
+        if (signal.aborted) abort();
+    });
+    else await start;
+    if (signal?.aborted) throw cancelled();
     const id = ++seq;
     return new Promise((resolve, reject) => {
         const timer = timeoutMs > 0
             ? setTimeout(() => resetSandbox(`timed out after ${Math.round(timeoutMs / 1000)} s — the code sandbox was restarted`), timeoutMs)
             : null;
-        pending.set(id, { resolve, reject, timer, onProgress });
-        frame!.contentWindow!.postMessage({ fg: 'call', id, kind, ...payload }, '*');
+        const abort = () => resetSandbox('Execution cancelled', 'AbortError');
+        const cleanup = () => signal?.removeEventListener('abort', abort);
+        pending.set(id, { resolve, reject, timer, cleanup, onProgress });
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) { abort(); return; }
+        try { frame!.contentWindow!.postMessage({ fg: 'call', id, kind, ...payload }, '*'); }
+        catch (error) { pending.delete(id); clearTimeout(timer); cleanup(); reject(error); }
     });
 }
 

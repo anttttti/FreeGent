@@ -7,6 +7,7 @@
  * Uses the same IndexedDB caching pattern as build.ts (esbuild-wasm).
  */
 
+import { sha256 } from './commands/checksums';
 import { compileWasm } from './wasm-module';
 import { ARTIFACT_PINS } from './wasi-artifact-pins';
 import type { FileSystem } from './filesystem';
@@ -519,7 +520,10 @@ export async function removePackageStubs(fs: FileSystem, name: string): Promise<
 /** Integrity is checked before any offsets are trusted, including cached artifacts. */
 export async function verifyArtifact(raw:ArrayBuffer, pin:{length:number; sha256:string}): Promise<void> {
   if (raw.byteLength !== pin.length) throw new Error(`Artifact length mismatch: expected ${pin.length}, received ${raw.byteLength}`);
-  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256',raw));
+  // HTTP LAN access and opaque origins may not expose SubtleCrypto. Integrity
+  // remains mandatory: use the existing SHA-256 implementation in that case.
+  const hash = typeof crypto !== 'undefined' && crypto.subtle?.digest
+    ? new Uint8Array(await crypto.subtle.digest('SHA-256',raw)) : sha256(new Uint8Array(raw));
   const hex = Array.from(hash,b => b.toString(16).padStart(2,'0')).join('');
   if (hex !== pin.sha256) throw new Error('Artifact SHA-256 mismatch');
 }

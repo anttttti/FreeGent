@@ -58,7 +58,7 @@ export function createUtilModule(): any {
       isNativeError: (v: any) => v instanceof Error,
       isPromise: (v: any) => v instanceof Promise,
       isProxy: (_v: any) => false,
-      isAnyArrayBuffer: (v: any) => v instanceof ArrayBuffer || v instanceof SharedArrayBuffer,
+      isAnyArrayBuffer: (v: any) => v instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && v instanceof SharedArrayBuffer),
       isArrayBuffer: (v: any) => v instanceof ArrayBuffer,
       isSharedArrayBuffer: (v: any) => typeof SharedArrayBuffer !== 'undefined' && v instanceof SharedArrayBuffer,
       isDataView: (v: any) => v instanceof DataView,

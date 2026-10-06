@@ -935,43 +935,45 @@ export function lanUrls(port: number, https: boolean): string[] {
 //   - the Pyodide and WASI worker sources are inlined; the frame starts them from blob URLs
 export async function buildExecSandbox(root: string): Promise<string> {
     const esbuild = await import('esbuild');
-    const workerBuild = await esbuild.build({
-        entryPoints: [join(root, 'pyodide-worker.ts')],
-        bundle: true, format: 'iife', platform: 'browser', target: 'es2020', write: false, logLevel: 'silent',
-    });
-    const worker = { code: workerBuild.outputFiles[0].text };
-    // WASM programs run in their own Worker so a runaway one can be killed (shiro/wasi-host.ts)
-    const wasiWorkerBuild = await esbuild.build({
-        entryPoints: [join(root, 'shiro', 'wasi-worker.ts')],
-        bundle: true, format: 'iife', platform: 'browser', target: 'es2020', write: false, logLevel: 'silent',
-    });
     const workspaceShim = join(root, 'exec-sandbox', 'workspace-rpc.ts');
-    const result = await esbuild.build({
-        entryPoints: [join(root, 'exec-sandbox', 'entry.ts')],
-        bundle: true,
-        format: 'iife',
-        platform: 'browser',
-        target: 'es2020',
-        write: false,
-        logLevel: 'silent',
-        define: {
-            __PYODIDE_WORKER_SRC__: JSON.stringify(worker.code),
-            __WASI_WORKER_SRC__: JSON.stringify(wasiWorkerBuild.outputFiles[0].text),
-            'localStorage': 'globalThis.__fgMemStorage',
-            'window.localStorage': 'globalThis.__fgMemStorage',
-            'globalThis.localStorage': 'globalThis.__fgMemStorage',
-            'sessionStorage': 'globalThis.__fgMemSession',
-            'window.sessionStorage': 'globalThis.__fgMemSession',
-            'indexedDB': 'globalThis.__fgNoIndexedDB',
-            'window.indexedDB': 'globalThis.__fgNoIndexedDB',
+    const legacyInspect = join(root, 'exec-sandbox', 'legacy-inspect.ts');
+    const storageDefines = {
+        'localStorage': 'globalThis.__fgMemStorage',
+        'window.localStorage': 'globalThis.__fgMemStorage',
+        'globalThis.localStorage': 'globalThis.__fgMemStorage',
+        'sessionStorage': 'globalThis.__fgMemSession',
+        'window.sessionStorage': 'globalThis.__fgMemSession',
+        'indexedDB': 'globalThis.__fgNoIndexedDB',
+        'window.indexedDB': 'globalThis.__fgNoIndexedDB',
+    };
+    const rpcPlugin = (shared: boolean, legacyFormat: boolean) => ({
+        name: 'fg-workspace-rpc',
+        setup(b: any) {
+            b.onResolve({ filter: /^\.\.\/workspace$/ }, (args: any) =>
+                args.importer.endsWith(join('shiro', 'fg-filesystem.ts')) ? { path: workspaceShim } : undefined);
+            if (legacyFormat) b.onResolve({ filter: /^node-inspect-extracted$/ }, () => ({ path: legacyInspect }));
+            if (shared) {
+                b.onResolve({ filter: /^\.\/channel$/ }, (args: any) =>
+                    args.importer.startsWith(join(root, 'exec-sandbox')) ? { path: 'shared-channel', namespace: 'fg-rpc' } : undefined);
+                b.onLoad({ filter: /.*/, namespace: 'fg-rpc' }, () => ({ contents:
+                    'export const workspaceCall=(...a)=>globalThis.__fgExecChannel.workspaceCall(...a);' +
+                    'export const pageFetch=(...a)=>globalThis.__fgExecChannel.pageFetch(...a);' +
+                    'export const packageCacheCall=(...a)=>globalThis.__fgExecChannel.packageCacheCall(...a);', loader: 'js' }));
+            }
         },
-        plugins: [{
-            name: 'fg-workspace-rpc',
-            setup(b) {
-                b.onResolve({ filter: /^\.\.\/workspace$/ }, args =>
-                    args.importer.endsWith(join('shiro', 'fg-filesystem.ts')) ? { path: workspaceShim } : undefined);
-            },
-        }],
     });
+    const common = { bundle: true, format: 'iife' as const, platform: 'browser' as const, write: false, logLevel: 'silent' as const, supported: { 'regexp-lookbehind-assertions': false } };
+    const workerBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'pyodide-worker.ts')], target: 'es2019' });
+    const wasiWorkerBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'shiro', 'wasi-worker.ts')], target: 'es2019', supported: { 'bigint': true, 'regexp-lookbehind-assertions': false } });
+    const bashBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'bash-entry.ts')], target: 'es2019', supported: { 'bigint': true, 'regexp-lookbehind-assertions': false },
+        define: { ...storageDefines, __WASI_WORKER_SRC__: JSON.stringify(wasiWorkerBuild.outputFiles[0].text) }, plugins: [rpcPlugin(true, true)] });
+    const modernJsBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'js-modern-entry.ts')], target: 'es2019',
+        define: storageDefines, plugins: [rpcPlugin(true, false)] });
+    const result = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'entry.ts')], target: 'es2019',
+        define: { ...storageDefines,
+            __PYODIDE_WORKER_SRC__: JSON.stringify(workerBuild.outputFiles[0].text),
+            __BASH_SANDBOX_SRC__: JSON.stringify(bashBuild.outputFiles[0].text),
+            __MODERN_JS_SRC__: JSON.stringify(modernJsBuild.outputFiles[0].text),
+        }, plugins: [rpcPlugin(false, true)] });
     return result.outputFiles[0].text;
 }

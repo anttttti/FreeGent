@@ -1,5 +1,6 @@
 // pyodide-worker.ts — runs Python in a Web Worker via Pyodide (the run itself: pyodide-run.ts).
 // Bundled into one classic script by dev-api.ts buildExecSandbox().
+import './polyfills';
 import { runInPyodide } from './pyodide-run';
 
 importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js');

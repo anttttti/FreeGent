@@ -5,8 +5,9 @@
 //     and uses the workspace channel instead of the page's workspace module
 //   - bubblewrap isolation for /api/execute (dev-api.ts bwrapArgs / toolchainBinds)
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { createContext, runInContext } from 'node:vm';
 import { bwrapArgs, toolchainBinds } from '../dev-api.ts';
 import { sandboxCall, resetSandbox } from '../exec-sandbox-host.ts';
 
@@ -120,6 +121,49 @@ describe('exec sandbox host', () => {
         });
     });
 
+    it('cancels a pending execution promptly and reloads the sandbox next time',async()=>{
+        const controller=new AbortController();
+        const call=sandboxCall('bash',{code:'sleep 600'},60_000,undefined,controller.signal);
+        const cancelled=expect(call).rejects.toMatchObject({name:'AbortError'});
+        await vi.waitFor(()=>expect(posted.some(m=>m.fg==='call')).toBe(true));
+        controller.abort();await cancelled;
+        expect(document.querySelector('iframe[sandbox]')).toBeNull();
+    });
+    it('finishes the current sandbox operation on stop-after-step',async()=>{
+        await import('../agent-core.ts');
+        const controller=new AbortController();W.setActiveAbortController(controller);
+        const call=sandboxCall('bash',{code:'echo saved'},1000,undefined,controller.signal);
+        await vi.waitFor(()=>expect(posted.some(m=>m.fg==='call')).toBe(true));
+        W.stopAfterStep();expect(controller.signal.aborted).toBe(false);
+        const id=posted.find(m=>m.fg==='call').id;
+        fromFrame({fg:'reply',id,value:{stdout:'saved\n',exit_code:0}});
+        expect((await call).stdout).toBe('saved\n');
+        W.setActiveAbortController(null);W.setSoftStopPending(false);
+    });
+    it('does not leave a failed postMessage timer that resets a later execution',async()=>{
+        frame.contentWindow!.postMessage=(()=>{throw new DOMException('Cannot clone','DataCloneError');}) as any;
+        await expect(sandboxCall('js',{},10)).rejects.toMatchObject({name:'DataCloneError'});
+        await new Promise(resolve=>setTimeout(resolve,25));
+        expect(frame.isConnected).toBe(true);
+    });
+
+    it('rejects boot waiters on reset and ignores a stale ready message',async()=>{
+        resetSandbox();
+        const first=sandboxCall('js');const failed=expect(first).rejects.toThrow('cancelled boot');
+        const old=document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        const oldWindow=old.contentWindow;
+        resetSandbox('cancelled boot');await failed;
+        const next=sandboxCall('js');const current=document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        const messages:any[]=[];current.contentWindow!.postMessage=((m:any)=>messages.push(m)) as any;
+        window.dispatchEvent(new MessageEvent('message',{source:oldWindow,data:{fg:'ready'}}));
+        await Promise.resolve();expect(messages).toEqual([]);
+        window.dispatchEvent(new MessageEvent('message',{source:current.contentWindow,data:{fg:'ready'}}));
+        await vi.waitFor(()=>expect(messages.some(m=>m.fg==='call')).toBe(true));
+        const call=messages.find(m=>m.fg==='call');
+        window.dispatchEvent(new MessageEvent('message',{source:current.contentWindow,data:{fg:'reply',id:call.id,value:'new frame'}}));
+        expect(await next).toBe('new frame');
+    });
+
     it('ignores messages from other windows', async () => {
         W.agentListFiles = vi.fn(async () => []);
         fromFrame({ fg: 'ws', id: 9, op: 'agentListFiles', args: [] }, window);
@@ -134,11 +178,85 @@ describe('exec sandbox bundle', () => {
     // Built in a separate Node process: esbuild refuses to start under jsdom (its TextEncoder
     // returns a Uint8Array from another realm).
     beforeAll(() => {
+        if (process.env.FG_TEST_SANDBOX_BUNDLE) { code=readFileSync(process.env.FG_TEST_SANDBOX_BUNDLE,'utf8'); if(!code.trim()) throw new Error('Empty sandbox fixture'); return; }
         const r = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--loader', './js-to-ts-loader.mjs',
             'scripts/build-exec-sandbox.mjs'], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
-        if (r.status !== 0) throw new Error(`bundle build failed: ${r.stderr}`);
+        if (r.error || r.status !== 0 || !r.stdout.trim()) throw new Error(`bundle build failed: ${r.error || r.stderr || 'empty output'}`);
         code = r.stdout;
     }, 60_000);
+
+    function frameRealm({ legacy = false } = {}) {
+        const posted: any[] = [], listeners: any[] = [];
+        const files = new Map<string, any>([['sample.txt', {name:'sample.txt',content:'sample content'}]]);
+        const urls = new Map<string, any>(); let next = 0;
+        let context: any;
+        const parent = { postMessage(message: any) {
+            posted.push(message);
+            if (message.fg !== 'ws') return;
+            const args=message.args || []; let value: any;
+            if (message.op === 'agentListFiles') value=[...files.values()];
+            else if (message.op === 'readWorkspaceFile') value=files.get(args[0]) || null;
+            else if (message.op === 'agentWriteFile') files.set(args[0],{name:args[0],content:args[1],encoding:args[2]});
+            else if (message.op === 'agentDeleteFile') files.delete(args[0]);
+            else throw new Error('Unexpected workspace operation');
+            queueMicrotask(()=>listeners.forEach(fn=>fn({source:parent,data:{fg:'ws-reply',id:message.id,value}})));
+        }};
+        class RealmBlob { parts: any[]; constructor(parts:any[]) {this.parts=parts;} }
+        const RealmURL = class extends URL {
+            static createObjectURL(blob:any) {const url='blob:fixture-'+(++next);urls.set(url,blob);return url;}
+            static revokeObjectURL(url:string) {urls.delete(url);}
+        };
+        const document = {
+            createElement: () => ({remove() {},src:'',onload:null as any,onerror:null as any}),
+            head: {appendChild(script:any) {
+                try {runInContext(urls.get(script.src).parts.join(''),context);script.onload?.();}
+                catch(error) {script.onerror?.(error);}
+            }},
+        };
+        context=createContext({parent,document,addEventListener:(_name:string,fn:any)=>listeners.push(fn),
+            setTimeout,clearTimeout,TextEncoder,TextDecoder,Blob:RealmBlob,URL:RealmURL,
+            AbortController,AbortSignal,DOMException,fetch:async()=>{throw new Error('Unexpected direct fetch');},
+            atob:(s:string)=>Buffer.from(s,'base64').toString('binary'),btoa:(s:string)=>Buffer.from(s,'binary').toString('base64'),
+            console,Worker:class {},performance,crypto});
+        runInContext('window=this;self=this;',context);
+        if (legacy) runInContext(`
+            BigInt=undefined;globalThis=undefined;
+            delete Array.prototype.at;delete Array.prototype.findLast;
+            delete Object.fromEntries;delete String.prototype.matchAll;delete Promise.allSettled;
+            const NativeRegExp=RegExp;
+            RegExp=function(pattern,flags){if(String(pattern).includes('(?<'))throw new SyntaxError('Unsupported lookbehind');return new NativeRegExp(pattern,flags);};
+            RegExp.prototype=NativeRegExp.prototype;
+        `,context);
+        runInContext(code,context);
+        const call=async(kind:string,payload:any) => {
+            const id=++next;
+            await listeners[0]({source:parent,data:{fg:'call',id,kind,...payload}});
+            return posted.find(m=>m.fg==='reply' && m.id===id);
+        };
+        return {posted,files,call,context};
+    }
+    it('boots without BigInt/globalThis/new collection methods and executes JavaScript files', async () => {
+        const realm=frameRealm({legacy:true});
+        expect(realm.posted).toContainEqual({fg:'ready'});
+        const reply=await realm.call('js',{code:`const fs=require('fs');console.log(fs.readFileSync('hello.txt','utf8'));fs.writeFileSync('out.txt','written');`,files:{'hello.txt':'visible content'}});
+        expect(reply.error).toBeUndefined();expect(reply.value.stdout).toBe('visible content\n');
+        expect(reply.value.written['out.txt']).toBe('written');
+        await expect(runInContext('Promise.allSettled(new Set([Promise.resolve(1)])).then(x=>x.length)',realm.context)).resolves.toBe(1);
+    });
+    it('returns a useful bash capability error rather than breaking all tools on legacy engines', async () => {
+        const realm=frameRealm({legacy:true});
+        expect((await realm.call('bash',{code:'echo hi'})).error).toContain('requires BigInt');
+        expect((await realm.call('js',{code:'console.log("still working")',files:{}})).value.stdout).toBe('still working\n');
+    });
+    it('loads modern formatting and bash through the same private workspace channel', async () => {
+        const realm=frameRealm();
+        const js=await realm.call('js',{code:'console.log({value:1})',files:{}});
+        expect(js.error).toBeUndefined();expect(js.value.stdout).toBe('{ value: 1 }\n');
+        const bash=await realm.call('bash',{code:'echo hello; printf "%s\\n" ok; echo saved > result.txt; cat result.txt'});
+        expect(bash.error).toBeUndefined();expect(bash.value.exit_code).toBe(0);
+        expect(bash.value.stdout).toBe('hello\nok\nsaved\n');
+        expect(realm.files.get('result.txt').content).toBe('saved\n');
+    });
 
     it('has no direct Web Storage or IndexedDB references', () => {
         expect(code).not.toMatch(/[^.\w$]localStorage\b/);
@@ -147,7 +265,8 @@ describe('exec sandbox bundle', () => {
     });
 
     it('reaches the workspace through the channel, not the page module', () => {
-        expect(code).toMatch(/workspaceCall\(["']agentWriteFile["']/);
+        expect(code).toContain('agentWriteFile');
+        expect(code).toContain('__fgExecChannel.workspaceCall');
         expect(code).not.toContain('_buildPyRunnerHtml');   // workspace.ts was not bundled
     });
 

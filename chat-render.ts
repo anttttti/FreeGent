@@ -508,6 +508,38 @@ export function scrollBottom(el: any, threshold: number | undefined = 80): void 
     window._updateScrollBtn?.();
 }
 
+// Clipboard writes are unavailable on HTTP LAN pages and older browsers.
+// This fallback runs synchronously in the user's click gesture and restores focus.
+export function copyChatText(text: string): Promise<void> {
+    const fallback = () => {
+        if (typeof document.execCommand !== 'function') throw new Error('Copy is unavailable in this browser');
+        const active = document.activeElement as HTMLElement | null;
+        const selection = window.getSelection();
+        const ranges: Range[] = [];
+        if (selection) for (let i = 0; i < selection.rangeCount; i++) ranges.push(selection.getRangeAt(i).cloneRange());
+        const field = document.createElement('textarea');
+        field.value = text; field.readOnly = true; field.tabIndex = -1;
+        field.setAttribute('aria-hidden', 'true');
+        field.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px';
+        document.body.appendChild(field);
+        try {
+            field.focus(); field.select(); field.setSelectionRange(0, text.length);
+            if (!document.execCommand('copy')) throw new Error('The browser refused to copy');
+        } finally {
+            field.remove();
+            try {
+                active?.focus({ preventScroll: true });
+                selection?.removeAllRanges();
+                for (const range of ranges) selection?.addRange(range);
+            } catch {} // the original selection may have been removed during rendering
+        }
+    };
+    try {
+        if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => fallback());
+        fallback(); return Promise.resolve();
+    } catch (error) { return Promise.reject(error); }
+}
+
 export function appendMessage(role: any, html: any, container: HTMLElement | null | undefined = null): HTMLDivElement {
     const msgs = container || getMessagesEl();
     const div  = document.createElement('div');
@@ -532,8 +564,8 @@ export function appendMessage(role: any, html: any, container: HTMLElement | nul
             e.stopPropagation();
             // Clone the bubble and strip the copy button to get only the message text.
             const clone = bubble.cloneNode(true) as HTMLElement;
-            clone.querySelector('[data-action="copy-user-message"]')?.remove();
-            navigator.clipboard.writeText(clone.innerText.trim()).then(() => {
+            clone.querySelectorAll('[data-action="copy-user-message"], [data-action="edit-user-message"]').forEach(el => el.remove());
+            copyChatText((clone.innerText ?? clone.textContent ?? '').trim()).then(() => {
                 copyBtn.textContent = '✓';
                 setTimeout(() => { copyBtn.textContent = '⎘'; }, 1500);
             }).catch(() => {
@@ -1261,7 +1293,7 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         copyResponseBtn.textContent = '⎘';
         copyResponseBtn.title = 'Copy this response to clipboard';
         copyResponseBtn.onclick = () => {
-            navigator.clipboard.writeText(responseEl.innerText ?? '').then(() => {
+            copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
                 copyResponseBtn.textContent = '✓';
                 setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
             }).catch(() => {
@@ -1335,5 +1367,5 @@ export function initChatEmpty(): void {
 
 // Window bridge for classic scripts.
 Object.assign(window, { processImgSlots, processFileLinks, renderMarkdown, cleanResponse,
-    getMessagesEl, scrollBottom, appendMessage, createResponsePlaceholder,
+    getMessagesEl, scrollBottom, copyChatText, appendMessage, createResponsePlaceholder,
     _updateChatEmpty, initChatEmpty });

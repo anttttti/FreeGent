@@ -421,8 +421,11 @@ html, body {
 
 /* ── Messages ── */
 #agent-messages {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 16px;
     background: var(--bg);
     display: flex;
@@ -431,19 +434,26 @@ html, body {
        Spacing is handled via margin-bottom on .agent-msg instead. */
 }
 
-.agent-msg { display: flex; flex-direction: column; max-width: 90%; margin-bottom: 12px; }
+.agent-msg { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; max-width: 90%; margin-bottom: 12px; }
+/* Every direct child keeps its content height, including checkpoints and nudges.
+   Otherwise WebKit can shrink the wrappers while their content still paints below. */
+#agent-messages > * { flex-shrink: 0; }
 .agent-msg:last-child { margin-bottom: 0; }
 .agent-msg-user  { align-self: flex-end; }
 .agent-msg-model { align-self: flex-start; width: 100%; max-width: 100%; }
 .agent-turn-collapse-row { display: flex; align-items: center; gap: 6px; padding: 0 0 4px; margin: 0; }
 
-.agent-msg-bubble { border-radius: 12px; padding: 10px 14px; }
+.agent-msg-bubble { border-radius: 12px; padding: 10px 14px; min-width: 0; max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; }
+.agent-msg-bubble pre { max-width: 100%; overflow-x: auto; }
+.agent-msg-bubble table { display: block; max-width: 100%; overflow-x: auto; }
+.agent-msg-bubble img { max-width: 100%; height: auto; }
 
 .agent-msg-user .agent-msg-bubble {
     background: var(--user-bg);
     border-radius: 12px 12px 0 12px;
     font-size: 14px; color: var(--text);
     position: relative;
+    padding-bottom: 26px; /* reserve room for copy/edit controls below the text */
 }
 /* Copy / edit icon buttons inside user bubble — always visible */
 .user-msg-copy-btn,

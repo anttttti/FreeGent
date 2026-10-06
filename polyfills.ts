@@ -36,33 +36,63 @@ def(String.prototype, 'replaceAll', function (this: string, pat: any, rep: any) 
 });
 
 // Safari < 13: Object.fromEntries 12.1, matchAll/allSettled 13, Blob.arrayBuffer/text 14.
-def(Object, 'fromEntries', (it: Iterable<[PropertyKey, any]>) => { const o: any = {}; for (const [k, v] of it) o[k] = v; return o; });
+def(Object, 'fromEntries', (it: Iterable<[PropertyKey, any]>) => { const o: any = {}; for (const [k, v] of it) Object.defineProperty(o, k, { value: v, enumerable: true, configurable: true, writable: true }); return o; });
 def(Promise, 'allSettled', (ps: Iterable<any>) => Promise.all([...ps].map(p => Promise.resolve(p).then(
     value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason })))));
-def(String.prototype, 'matchAll', function* (this: string, re: RegExp | string) {
-    const g = re instanceof RegExp ? new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g') : new RegExp(String(re), 'g');
-    for (let m; (m = g.exec(this));) { yield m; if (m[0] === '') g.lastIndex++; }
+def(String.prototype, 'matchAll', function (this: string, re: RegExp | string) {
+    if (re instanceof RegExp && !re.global) throw new TypeError('matchAll requires a global RegExp');
+    const g = re instanceof RegExp ? new RegExp(re.source, re.flags) : new RegExp(String(re), 'g');
+    if (re instanceof RegExp) g.lastIndex = re.lastIndex;
+    const text = String(this);
+    return (function* () { for (let m; (m = g.exec(text));) {
+        yield m;
+        if (m[0] === '') {
+            const i = g.lastIndex;
+            const hi = text.charCodeAt(i), lo = text.charCodeAt(i + 1);
+            g.lastIndex += g.unicode && hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff ? 2 : 1;
+        }
+    } })();
 });
 if (typeof Blob !== 'undefined') {
     const read = (b: Blob, how: 'readAsArrayBuffer' | 'readAsText') => new Promise<any>((res, rej) => {
-        const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); (r as any)[how](b);
+        const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error || new Error('Could not read blob')); r.onabort = () => rej(new DOMException('File reading cancelled', 'AbortError')); (r as any)[how](b);
     });
     def(Blob.prototype, 'arrayBuffer', function (this: Blob) { return read(this, 'readAsArrayBuffer'); });
     def(Blob.prototype, 'text', function (this: Blob) { return read(this, 'readAsText'); });
 }
 
 // Safari < 16 has no AbortSignal.timeout, < 17.4 no AbortSignal.any; the request path uses both.
-if (typeof AbortSignal !== 'undefined') {
+if (typeof AbortSignal !== 'undefined' && typeof AbortController !== 'undefined') {
+    // Old engines ignore abort(reason). Preserve it for retry/timeout classification.
+    if (!('reason' in AbortSignal.prototype)) {
+        const reasons = new WeakMap<AbortSignal, any>();
+        const abort = AbortController.prototype.abort;
+        Object.defineProperty(AbortSignal.prototype, 'reason', { configurable: true,
+            get() { return this.aborted ? reasons.get(this) ?? new DOMException('Operation aborted', 'AbortError') : undefined; } });
+        AbortController.prototype.abort = function (reason?: any) {
+            if (!this.signal.aborted) reasons.set(this.signal, reason ?? new DOMException('Operation aborted', 'AbortError'));
+            return abort.call(this);
+        };
+    }
     def(AbortSignal, 'timeout', (ms: number) => {
         const c = new AbortController();
         setTimeout(() => c.abort(new DOMException('signal timed out', 'TimeoutError')), ms);
         return c.signal;
     });
-    def(AbortSignal, 'any', (signals: AbortSignal[]) => {
+    def(AbortSignal, 'any', (signals: Iterable<AbortSignal>) => {
         const c = new AbortController();
-        for (const s of signals) {
-            if (s.aborted) { c.abort((s as any).reason); break; }
-            s.addEventListener('abort', () => c.abort((s as any).reason), { once: true });
+        const listeners: [AbortSignal, () => void][] = [];
+        const cleanup = () => { for (const [s, fn] of listeners) s.removeEventListener('abort', fn); listeners.length = 0; };
+        const inputs = Array.from(signals);
+        for (const s of inputs) {
+            if (!s || typeof s.addEventListener !== 'function') throw new TypeError('Expected AbortSignal');
+        }
+        const aborted = inputs.find(s => s.aborted);
+        if (aborted) { c.abort(aborted.reason); return c.signal; }
+        for (const s of inputs) {
+            const onAbort = () => { cleanup(); c.abort(s.reason); };
+            listeners.push([s, onAbort]);
+            s.addEventListener('abort', onAbort, { once: true });
         }
         return c.signal;
     });
