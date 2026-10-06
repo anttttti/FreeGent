@@ -1,3 +1,4 @@
+import { base64ToBytes } from '../shiro/utils/bytes.js';
 // exec-sandbox/js-fs.ts — the `fs` and `path` modules for execute_code JavaScript.
 //
 // The same /workspace the bash shell and Python see: the working directory is /workspace, and
@@ -52,7 +53,7 @@ function fsError(code: string, op: string, p: string): Error {
 export type WorkspaceFileData = string | { base64: string };
 type Content = string | Uint8Array;
 
-const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+const fromBase64 = base64ToBytes;
 
 /**
  * Buffer stands in for Node's Buffer (shiro/node-compat/buffer.ts in the sandbox): reads without

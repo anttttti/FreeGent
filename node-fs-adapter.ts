@@ -8,6 +8,72 @@ import type { WorkspaceAdapter } from './workspace.js';
 const _LOCAL = 'local/';
 const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__']);
 
+// ── Shared by NodeFsAdapter and DockerFsAdapter ──────────────────────────────
+
+const _OFFICE_RE = /\.(odt|ods|odp|odf|docx|xlsx|pptx)$/i;
+
+/** Python that prints the text of an Office/OpenDocument archive; pathExpr is a Python expression. */
+function _officeExtractPy(pathExpr: string): string {
+    return [
+        'import zipfile,sys,re',
+        'try:',
+        ` z=zipfile.ZipFile(${pathExpr})`,
+        ' n=z.namelist()',
+        " cands=['content.xml','word/document.xml']+[x for x in n if x.endswith('/content.xml') or x.startswith('xl/')]",
+        " t=[re.sub(r'<[^>]+>',' ',z.read(f).decode('utf-8','ignore')) for f in cands if f in n]",
+        " print((re.sub(r'\\s+',' ',' '.join(t)).strip() or '[no text in archive]')[:100000])",
+        'except Exception as e:',
+        " print('[doc extract failed: '+str(e)+']')",
+    ].join('\n');
+}
+
+/** Extracted text, or '' when extraction failed (the caller then reads the file normally). */
+function _usableOfficeText(text: string): string {
+    return text.trim() && !text.startsWith('[doc extract failed') ? text : '';
+}
+
+/** Throws the "binary file" error when the first 512 bytes hold a NUL; otherwise decodes as UTF-8. */
+function _decodeTextOrThrow(buf: Buffer, path: string): string {
+    const probe = buf.subarray(0, 512);
+    if (probe.includes(0)) {
+        const hint = probe.subarray(0, 5).toString('ascii').startsWith('%PDF-')
+            ? `Use execute_code(language='bash', code='pdftotext "${path}" -') to extract text.`
+            : `Use execute_code(language='bash', code='file "${path}"') to identify the format.`;
+        throw new Error(`Binary file — cannot read as text: ${path}. ${hint}`);
+    }
+    return buf.toString('utf8');
+}
+
+/**
+ * Recursive directory listing. skipNoise drops _SKIP directories; maxDepth caps recursion (Infinity
+ * = none); withStat adds size/mtime (a failed stat still lists the file). Dot-entries are always skipped.
+ */
+async function _walkFiles(root: string, { skipNoise = true, maxDepth = Infinity, withStat = false } = {}) {
+    const files: Array<{ name: string; size?: number; lastModified?: number }> = [];
+    const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
+        let entries;
+        try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+        const pending: Promise<void>[] = [];
+        for (const e of entries) {
+            if ((skipNoise && _SKIP.has(e.name)) || e.name.startsWith('.')) continue;
+            const rel = prefix ? `${prefix}/${e.name}` : e.name;
+            const abs = join(dir, e.name);
+            if (e.isDirectory()) {
+                if (depth < maxDepth) pending.push(walk(abs, rel, depth + 1));
+            } else if (withStat) {
+                pending.push(stat(abs)
+                    .then(s => { files.push({ name: rel, size: s.size, lastModified: s.mtimeMs }); })
+                    .catch(() => { files.push({ name: rel, size: 0, lastModified: 0 }); }));
+            } else {
+                files.push({ name: rel });
+            }
+        }
+        if (pending.length) await Promise.all(pending);
+    };
+    await walk(root, '', 0);
+    return files;
+}
+
 export class NodeFsAdapter implements WorkspaceAdapter {
     constructor(root, { sidecarRoot = null, sidecarPrefixes = [] } = {}) {
         this._root = resolve(root);
@@ -47,30 +113,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
     }
 
     async agentListFiles() {
-        const files: Array<{name: string; size: number; lastModified: number}> = [];
-        const walk  = async (dir: string, prefix: string): Promise<void> => {
-            let entries;
-            try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
-            const subs: Promise<void>[] = [];
-            const stats: Promise<void>[] = [];
-            for (const e of entries) {
-                if (_SKIP.has(e.name) || e.name.startsWith('.')) continue;
-                const rel = prefix ? `${prefix}/${e.name}` : e.name;
-                const abs = join(dir, e.name);
-                if (e.isDirectory()) {
-                    subs.push(walk(abs, rel));
-                } else {
-                    stats.push(
-                        stat(abs)
-                            .then(s => { files.push({ name: rel, size: s.size, lastModified: s.mtimeMs }); })
-                            .catch(() => { files.push({ name: rel, size: 0, lastModified: 0 }); })
-                    );
-                }
-            }
-            if (subs.length || stats.length) await Promise.all([...subs, ...stats]);
-        };
-        await walk(this._root, '');
-        return files;
+        return (await _walkFiles(this._root, { withStat: true })) as Array<{name: string; size: number; lastModified: number}>;
     }
 
     /** Full workspace walk with _SKIP exclusions, WITHOUT stat() calls, and with a
@@ -84,66 +127,23 @@ export class NodeFsAdapter implements WorkspaceAdapter {
      *  count to a few thousand regardless of how large tmp/, bench/, logs/ etc. grow.
      */
     async agentListFilesNoStat(maxDepth = 4): Promise<Array<{name: string}>> {
-        const files: Array<{name: string}> = [];
-        const walk  = async (dir: string, prefix: string, depth: number): Promise<void> => {
-            let entries;
-            try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
-            const subs: Promise<void>[] = [];
-            for (const e of entries) {
-                if (_SKIP.has(e.name) || e.name.startsWith('.')) continue;
-                const rel = prefix ? `${prefix}/${e.name}` : e.name;
-                if (e.isDirectory()) {
-                    if (depth < maxDepth) subs.push(walk(join(dir, e.name), rel, depth + 1));
-                } else {
-                    files.push({ name: rel });
-                }
-            }
-            if (subs.length) await Promise.all(subs);
-        };
-        await walk(this._root, '', 0);
-        return files;
+        return _walkFiles(this._root, { maxDepth });
     }
 
     /** Scan a single subdirectory without stat() calls — used by loadSkills() to
      *  avoid a full workspace walk (64K files × per-tick JSDOM overhead = ~5 s). */
     async agentListFilesInDir(dir: string): Promise<Array<{name: string}>> {
-        const root  = join(this._root, dir);
-        const files: Array<{name: string}> = [];
-        const walk  = async (d: string, prefix: string): Promise<void> => {
-            let entries;
-            try { entries = await readdir(d, { withFileTypes: true }); } catch { return; }
-            const subs: Promise<void>[] = [];
-            for (const e of entries) {
-                if (e.name.startsWith('.')) continue;
-                const rel = prefix ? `${prefix}/${e.name}` : e.name;
-                if (e.isDirectory()) subs.push(walk(join(d, e.name), rel));
-                else files.push({ name: rel });
-            }
-            if (subs.length) await Promise.all(subs);
-        };
-        await walk(root, '');
-        return files;
+        return _walkFiles(join(this._root, dir), { skipNoise: false });
     }
 
     async agentReadFile(path) {
         const abs = this._resolve(path);
-        if (/\.(odt|ods|odp|odf|docx|xlsx|pptx)$/i.test(abs)) {
-            const _py = [
-                'import zipfile,sys,re',
-                'try:',
-                ' z=zipfile.ZipFile(sys.argv[1])',
-                ' n=z.namelist()',
-                " cands=['content.xml','word/document.xml']+[x for x in n if x.endswith('/content.xml') or x.startswith('xl/')]",
-                " t=[re.sub(r'<[^>]+>',' ',z.read(f).decode('utf-8','ignore')) for f in cands if f in n]",
-                " print((re.sub(r'\\s+',' ',' '.join(t)).strip() or '[no text in archive]')[:100000])",
-                'except Exception as e:',
-                " print('[doc extract failed: '+str(e)+']')",
-            ].join('\n');
+        if (_OFFICE_RE.test(abs)) {
             const text = await new Promise<string>((res) => {
-                execFile('python3', ['-c', _py, abs], { maxBuffer: 10_000_000 },
+                execFile('python3', ['-c', _officeExtractPy('sys.argv[1]'), abs], { maxBuffer: 10_000_000 },
                     (err, stdout) => res(err ? '' : stdout));
             });
-            if (text.trim() && !text.startsWith('[doc extract failed')) return text;
+            if (_usableOfficeText(text)) return text;
         }
         let buf: Buffer;
         try {
@@ -151,15 +151,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         } catch {
             throw new Error(`File not found: ${path}`);
         }
-        const probe = buf.slice(0, 512);
-        if (probe.includes(0)) {
-            const magic = probe.slice(0, 5).toString('ascii');
-            const hint = magic.startsWith('%PDF-')
-                ? `Use execute_code(language='bash', code='pdftotext "${path}" -') to extract text.`
-                : `Use execute_code(language='bash', code='file "${path}"') to identify the format.`;
-            throw new Error(`Binary file — cannot read as text: ${path}. ${hint}`);
-        }
-        return buf.toString('utf8');
+        return _decodeTextOrThrow(buf, path);
     }
 
     async agentWriteFile(path, content, encoding = null) {
@@ -198,39 +190,20 @@ export class DockerFsAdapter implements WorkspaceAdapter {
 
     async agentReadFile(path: string): Promise<string> {
         const esc = path.replace(/'/g, "'\\''");
-        if (/\.(odt|ods|odp|odf|docx|xlsx|pptx)$/i.test(path)) {
-            const _py = [
-                'import zipfile,re',
-                `try:`,
-                ` z=zipfile.ZipFile(${JSON.stringify(path)})`,
-                ` n=z.namelist()`,
-                ` cands=['content.xml','word/document.xml']+[x for x in n if x.endswith('/content.xml') or x.startswith('xl/')]`,
-                ` t=[re.sub(r'<[^>]+>',' ',z.read(f).decode('utf-8','ignore')) for f in cands if f in n]`,
-                ` print((re.sub(r'\\s+',' ',' '.join(t)).strip() or '[no text in archive]')[:100000])`,
-                'except Exception as e:',
-                ` print('[doc extract failed: '+str(e)+']')`,
-            ].join('\n');
+        if (_OFFICE_RE.test(path)) {
             const text = await new Promise<string>((res) => {
-                execFile('docker', ['exec', this._ctr, 'python3', '-c', _py],
+                execFile('docker', ['exec', this._ctr, 'python3', '-c', _officeExtractPy(JSON.stringify(path))],
                     { maxBuffer: 10_000_000 },
                     (err, stdout) => res(err ? '' : stdout));
             });
-            if (text.trim() && !text.startsWith('[doc extract failed')) return text;
+            if (_usableOfficeText(text)) return text;
         }
         return new Promise((resolve, reject) => {
             execFile('docker', ['exec', this._ctr, 'bash', '-c', `cat '${esc}'`],
                 { maxBuffer: 10_000_000, encoding: 'buffer' },
                 (err, stdout) => {
                     if (err) { reject(new Error(`File not found in container: ${path}`)); return; }
-                    const probe = (stdout as unknown as Buffer).slice(0, 512);
-                    if (probe.includes(0)) {
-                        const magic = probe.slice(0, 5).toString('ascii');
-                        const hint = magic.startsWith('%PDF-')
-                            ? `Use execute_code(language='bash', code='pdftotext "${path}" -') to extract text.`
-                            : `Use execute_code(language='bash', code='file "${path}"') to identify the format.`;
-                        reject(new Error(`Binary file — cannot read as text: ${path}. ${hint}`)); return;
-                    }
-                    resolve((stdout as unknown as Buffer).toString('utf8'));
+                    try { resolve(_decodeTextOrThrow(stdout as unknown as Buffer, path)); } catch (e) { reject(e); }
                 });
         });
     }
