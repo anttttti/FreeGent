@@ -86,3 +86,15 @@ describe('page references resolve from the page\'s folder', () => {
         } finally { W.agentReadFile = prev.read; W.readFileAsDataUrl = prev.data; }
     });
 });
+
+describe('scripts injected into page frames', () => {
+    it('use no syntax newer than ES2017 (older Safari rejects ?? and ?. and skips the whole script)', async () => {
+        const { readFileSync } = await import('node:fs');
+        const src = readFileSync(process.cwd() + '/tabs.ts', 'utf8');
+        for (const name of ['_STORAGE_POLYFILL', '_CHECK_CAPTURE']) {
+            const m = src.match(new RegExp('const ' + name + ' = `([\\s\\S]*?)<\\\\/script>`'));
+            expect(m, name).toBeTruthy();
+            expect(m![1], name).not.toMatch(/\?\?|\?\.[a-zA-Z_$[(]/);
+        }
+    });
+});

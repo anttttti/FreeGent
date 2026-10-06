@@ -217,8 +217,7 @@ async function exportAllChats() {
     );
 }
 
-async function exportChat(id) {
-    if (!id) { alert('No chat to export.'); return; }
+async function _buildChatPayload(id) {
     const list = getChatList();
     const meta = list.find(c => c.id === id);
     const oai = await _chatHistoryFor(id);
@@ -240,10 +239,55 @@ async function exportChat(id) {
         // a failure cascade with no successful turn in between is a silent gap in every export.
         rawCaptures: typeof sessionLoadRawMessages === 'function' ? await sessionLoadRawMessages(id) : [],
     };
+    return payload;
+}
+
+async function exportChat(id) {
+    if (!id) { alert('No chat to export.'); return; }
     _downloadBlob(
-        new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+        new Blob([JSON.stringify(await _buildChatPayload(id), null, 2)], { type: 'application/json' }),
         `fg-chat-${_slugDate()}.json`
     );
+}
+
+// ── Send a chat log to the developer (one tap, no download/upload) ────────────
+// POSTs the chat JSON to the Worker's /log endpoint (cf-worker/worker.js), which keeps it for 14 days.
+// Credentials are removed first: this chat may hold pasted keys, and the user's own saved keys.
+const _SECRET_RES = [
+    /\b(?:sk|gsk|xai|pplx|cfut|hf|nvapi)[-_][A-Za-z0-9_-]{16,}/g,
+    /\bAIza[0-9A-Za-z_-]{30,}/g,
+    /\bgh[pousr]_[A-Za-z0-9]{30,}/g,
+    /\b(Bearer\s+)[A-Za-z0-9._~+\/=-]{16,}/gi,
+];
+export function redactSecrets(text: string, extra: string[] = []): string {
+    let out = text;
+    for (const v of extra) if (v.length >= 8) out = out.split(v).join('[redacted]');
+    for (const re of _SECRET_RES) out = out.replace(re, (m, g1) => (g1 ? g1 : '') + '[redacted]');
+    return out;
+}
+function _storedSecretValues(): string[] {
+    const vals: string[] = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i) || '';
+            if (/key|token|secret|password/i.test(k)) { const v = localStorage.getItem(k) || ''; if (v) vals.push(v.replace(/^"|"$/g, '')); }
+        }
+    } catch {}
+    return vals;
+}
+async function sendChatLog(id) {
+    if (!id) { alert('No chat to send.'); return; }
+    const url = 'https://proxy.freegent.ai/log';
+    if (!confirm('Send this chat (messages, tool calls and results) to the FreeGent developer for debugging? API keys are removed first. It is kept for 14 days.')) return;
+    try {
+        const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), _storedSecretValues());
+        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.id) throw new Error(j.error || `HTTP ${r.status}`);
+        alert(`Log sent. Tell the developer this ID: ${j.id}`);
+    } catch (e) {
+        alert(`Could not send the log: ${(e as any)?.message ?? e}. Use the ⬇ download instead.`);
+    }
 }
 
 function exportCurrentChat() {
@@ -410,4 +454,4 @@ function esc(s) {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, exportChatMarkdown, importChat, esc, pruneConvoLogFrom });
+Object.assign(window, { conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc, pruneConvoLogFrom });
