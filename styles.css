@@ -447,6 +447,7 @@ html, body {
 .agent-msg-bubble pre { max-width: 100%; overflow-x: auto; }
 .agent-msg-bubble table { display: block; max-width: 100%; overflow-x: auto; }
 .agent-msg-bubble img { max-width: 100%; height: auto; }
+.agent-msg-user .agent-msg-bubble h1,.agent-msg-user .agent-msg-bubble h2,.agent-msg-user .agent-msg-bubble h3,.agent-msg-user .agent-msg-bubble h4,.agent-msg-user .agent-msg-bubble h5,.agent-msg-user .agent-msg-bubble h6 { font-size: 1em; font-weight: 700; margin: 0.7em 0 0.3em; }
 
 .agent-msg-user .agent-msg-bubble {
     background: var(--user-bg);
@@ -1086,6 +1087,9 @@ html, body {
 .kanban-card-trash { position: absolute; top: 4px; right: 4px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; }
 .kanban-card:hover .kanban-card-trash { opacity: 0.6; }
 .kanban-card-trash:hover { opacity: 1 !important; }
+.kanban-card-block { position: absolute; top: 4px; right: 24px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; }
+.kanban-card:hover .kanban-card-block { opacity: 0.6; }
+.kanban-card-block:hover { opacity: 1 !important; }
 .kanban-card-title { padding-right: 16px; font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.35; }
 .kanban-card-log { font-size: 11px; color: var(--muted); margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kanban-card-meta { font-size: 10px; color: var(--muted); margin-top: 4px; }
