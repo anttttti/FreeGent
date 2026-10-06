@@ -25,6 +25,7 @@ import { sessionSaveRawMessage } from './session-store.js';
 import { registry } from './session-registry.js';
 import { compactSurface, type Session } from './session.js';
 import { type SurfaceIntent } from './session-event.js';
+import { connectSignal } from './abort.js';
 
 // Typed alias for Session.append called with a known surface event type.
 // The conditional `surfaceIntent?` parameter defeats inference at call sites
@@ -2417,15 +2418,8 @@ async function callLLM(
     // Two-phase abort: connection-establishment timeout clears once headers arrive so it
     // cannot fire during the stream body read. AbortSignal.timeout() as a static timer
     // would kill active SSE streams mid-response (e.g. thinking models streaming past 90s).
-    const _connCtrl  = new AbortController();
-    const _connTimer = setTimeout(
-        () => _connCtrl.abort(new DOMException('signal timed out', 'TimeoutError')),
-        isCustom ? FETCH_TIMEOUT_CUSTOM_MS : FETCH_TIMEOUT_MS,
-    );
-    const _userSig = activeAbortController?.signal;
-    const _connSig = _userSig && typeof AbortSignal.any === 'function'
-        ? AbortSignal.any([_userSig, _connCtrl.signal])
-        : (_userSig ?? _connCtrl.signal);
+    const _conn = connectSignal(activeAbortController?.signal, isCustom ? FETCH_TIMEOUT_CUSTOM_MS : FETCH_TIMEOUT_MS);
+    const _connSig = _conn.signal;
 
     let resp: Response;
     // Serialise before the try: a TypeError from JSON.stringify is a bug, not a dropped connection.
@@ -2442,7 +2436,7 @@ async function callLLM(
     } catch (e) {
         throw asTransportError(e); // fetch only rejects when the request never completed
     } finally {
-        clearTimeout(_connTimer); // release timer — cannot abort the body reader after headers received
+        _conn.clear(); // release timer — cannot abort the body reader after headers received
     }
     if (!resp.ok) throw await _httpErrorFromResponse(resp, `[${provider}|${model}]`);
     return decodeOAIResponse(resp, onChunk);

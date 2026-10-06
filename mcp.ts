@@ -15,6 +15,8 @@
 // localStorage, never in profiles.
 
 import { resolveProxy } from './proxy.js';
+import { combineSignals } from './abort.js';
+import { activeAbortController } from './state.js';
 
 const MCP_CONTEXT7_URL = 'https://mcp.context7.com/mcp';
 const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -113,7 +115,7 @@ function _conn(server: { url: string; headers?: Record<string, string> }) {
 function _proxyUrl(): string { return resolveProxy('local'); }
 
 async function _send(url: string, headers: Record<string, string>, body: string, viaProxy: boolean): Promise<Response> {
-    const signal = AbortSignal.timeout(_TIMEOUT_MS);
+    const signal = combineSignals(activeAbortController?.signal, _TIMEOUT_MS)!;
     if (!viaProxy) return fetch(url, { method: 'POST', headers, body, signal });
     return fetch(_proxyUrl(), {
         method: 'POST',

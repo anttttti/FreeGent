@@ -7,6 +7,7 @@ import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
+import { combineSignals } from './abort.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 120_000;
@@ -1608,10 +1609,7 @@ async function _handleFetchUrl(args) {
             'Upgrade-Insecure-Requests': '1',
             ...reqHdrs,   // caller overrides sit on top
         });
-        const _fetchTimeout = AbortSignal.timeout(30_000);
-        const _fetchSignal  = activeAbortController?.signal
-            ? (typeof AbortSignal.any === 'function' ? AbortSignal.any([activeAbortController.signal, _fetchTimeout]) : _fetchTimeout)
-            : _fetchTimeout;
+        const _fetchSignal  = combineSignals(activeAbortController?.signal, 30_000)!;
         let resp;
         if (isPlain && proxy && !_sandboxed) {
             resp = await fetch(`${proxy}?url=${encodeURIComponent(args.url)}`, { signal: _fetchSignal });

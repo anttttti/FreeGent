@@ -2,16 +2,12 @@
 // Depends on: config.js globals (getTavilyKey, getBraveKey, getSearchProxy, getSearchProvider),
 //             state.js (activeAbortController live binding).
 import { activeAbortController } from './state.js';
+import { combineSignals } from './abort.js';
 
 // Combines the user-facing abort controller with a per-request hard timeout so
 // search fetches always terminate even if the global controller is null or stale.
 const SEARCH_TIMEOUT_MS = 30_000;
-function _searchSignal(): AbortSignal {
-    const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS);
-    const user    = activeAbortController?.signal;
-    if (!user) return timeout;
-    return typeof AbortSignal.any === 'function' ? AbortSignal.any([user, timeout]) : timeout;
-}
+function _searchSignal(): AbortSignal { return combineSignals(activeAbortController?.signal, SEARCH_TIMEOUT_MS)!; }
 
 export async function tavilySearch(query: any): Promise<{ error: string; authFailed?: boolean; source?: undefined; results?: undefined; } | { source: string; results: any; error?: undefined; }> {
     const localKey  = getTavilyKey();
