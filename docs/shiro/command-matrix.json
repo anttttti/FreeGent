@@ -5394,8 +5394,10 @@
       "reachable": true,
       "imports": [],
       "referencedBy": [
+        "shiro/commands/hashsum.ts",
         "shiro/commands/xz.ts",
-        "shiro/commands/zip.ts"
+        "shiro/commands/zip.ts",
+        "shiro/wasi-packages.ts"
       ]
     },
     {
@@ -5905,6 +5907,7 @@
       "path": "shiro/commands/hashsum.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/checksums.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts"
       ],
@@ -10025,8 +10028,8 @@
   "sourceSha256": {
     "exec-sandbox/bash-run.ts": "eeb71e95458338b585f1326b5ccc9e796fb2254911e4224558027072e201f9f2",
     "exec-sandbox/channel.ts": "90bf0416f164b7042bb28e885448978ecfe7de2c7302d05b85d96983c97d2fd9",
-    "exec-sandbox/entry.ts": "dc6d567f79e0116f521a86807deab73a27dbb831de61cb5d28c0193f583de1e7",
-    "headless-runner.ts": "a152110aa9377b00d7a020d06a3621698ad4356bbe4217885a5d468d7a96ab43",
+    "exec-sandbox/entry.ts": "860a6034017e656ee8d3634334be2235d77d78d2a8342774b3d3bd5c3d2a589b",
+    "headless-runner.ts": "59e8cdb64fe6c4ac6039a3778d269dffb3792c2ca8a376d25898f0e4305e6231",
     "pyodide-run.ts": "6352e4714d9c5d1173a3785d96804f8cf0a95bad3cfd18c57ee7739bbca1b071",
     "shiro/claude-config.ts": "95dc5aebac869a0a4eb395b046069067ab8f6da24f2c480eef7868534ee20992",
     "shiro/commands/awk.ts": "5c4ae15afa7749f242cf7ec1118c7fc10895f8bcfef3246123260ebd15c02621",
@@ -10081,7 +10084,7 @@
     "shiro/commands/grep.ts": "1bc48ab60e5faecb6b4c052eeffe88cadadb3de1fefd349f82b9b681a5bbd1db",
     "shiro/commands/gzip.ts": "b62e26ad02635ea84189724336e2d9b44564403673e1e749830cedcc88b7403d",
     "shiro/commands/hash.ts": "5f8038c734a63c3fb06972bc64b17ba57fb7396b854d52959e47deb29ad2c201",
-    "shiro/commands/hashsum.ts": "e8fa21191e091a093d2253510bc8049c738d4d03870f1fe99963dec6ceae4eb2",
+    "shiro/commands/hashsum.ts": "42dab5023a51450b0dbb34682ef15f0397807672c7d12896b8e9dc8d7f20adb5",
     "shiro/commands/head.ts": "40eb0789a2cd0651bc0536af5d2d8b213ab3b62764cb5237f73c06bce1cee946",
     "shiro/commands/iconv.ts": "3ca960a4e7360a9eb25a7d41687c7149bd5f47a009cdbfcbf1a51bac81ac0d53",
     "shiro/commands/id.ts": "1aacbc26e128e07d4f2818728ddffcaa707fb67e6ce047175908aff7e9b27629",
@@ -10192,7 +10195,7 @@
     "shiro/node-compat/modules/path.ts": "3381c3d2082c99177bc0799aebb1272c36bafd84a4272206cb9919d15e818467",
     "shiro/node-compat/modules/stream.ts": "e0b4f3635bf57a0dcfc03e68813c04cabe5f7282d75cf37c06186ada3db31ee5",
     "shiro/node-compat/modules/url.ts": "e670bc2c756660806368be9f9d8b6b207588e40c00e6396978cf9685b370c938",
-    "shiro/node-compat/modules/util.ts": "d4038bfb27946c9b8addc7bdafe59cccdaf87fe92afe3a2d18c2c4c0070c31cd",
+    "shiro/node-compat/modules/util.ts": "28a99cd24caab60934fb47eeddaa1195348fae4e41ecfd071dfb60dc37f0c157",
     "shiro/node-compat/preload.ts": "2bc6a4d5444524f4713bd5e4a2c3c5143709fe0d8c74e87ea3578e65a280f171",
     "shiro/node-compat/process.ts": "00847d3e3c4983ac2983107792fd76a2861daa528256eaa0a684457efc00fedc",
     "shiro/node-compat/require.ts": "9f45fc809321aa33efc5d19ed1ef6dd84b53f5a03bfa2b396e68306b90a50413",
@@ -10222,12 +10225,12 @@
     "shiro/utils/streams.ts": "d99007183cbe422ef84f92458e35d6330939bd8cc8c16550398290ccd736d6da",
     "shiro/utils/tar-utils.ts": "207247ace69e7f9d86ba835a70f25a9e11a5f75173bdce14d4f8a4db993dd245",
     "shiro/wasi-artifact-pins.ts": "b600438a258ecafcc3c4f90024338b43427de4cb478586b688522a022d68fc03",
-    "shiro/wasi-host.ts": "796344a8a198ed66e3b50ddcf8c73a6122f800b9a7ac0f5773da3df12dc63f6b",
-    "shiro/wasi-packages.ts": "13124073b1d8f3f63754e598d0bb43b6a9531a2d3c1de48abe4bd711c808dddb",
+    "shiro/wasi-host.ts": "50e480148433cd80ad8e3937201cdb2ca814d2ed52ebbd396b9e50c24a01efa8",
+    "shiro/wasi-packages.ts": "723f33f2a0793870b4cc90b8895070eec6322d123cdc7b710af3a0af86eff505",
     "shiro/wasi-runtime.ts": "f5a89bc074ae886942bffb393cc20c86b165c2f4470048a7cb778e71ae11393b",
-    "shiro/wasi-worker-core.ts": "ef31ca7e73f6f4b67134d7b2b30059921cf3f35a40bf7f4ed010380d30b92e6f",
-    "shiro/wasi-worker.ts": "01de2600a21cad9852c88aeb1d15743a245f65a63556b7b4a569a9575b7883b4",
-    "shiro/wasm-module.ts": "3475a5fe3718e1b31d7ec2d25187acf87d017c4c1f5a325e12d8cc929e4a415e",
+    "shiro/wasi-worker-core.ts": "8d8e5d6931061b3fbb28ccad778f1404215b3765990b464f7462ba5572f56b2d",
+    "shiro/wasi-worker.ts": "631d06339ff766abf2596715746f62a3eededa59c2950e1dd2cbb15b4ca9c715",
+    "shiro/wasm-module.ts": "d1ca9367878cb42359a6bb92b7ff018f45a291e8fe2eaedaf2f2f84aae93c9e0",
     "shiro/window-terminal.ts": "c813f26217404a51af56694dcd21f46e855f91964da2ec82cad70842701aa5af",
     "shiro/x86-packages.ts": "003916cd8d58f8e55341bf07ba5e08492034460370e519aa884a5d791e0fec48",
     "shiro/x86/cpu.ts": "75f3f091cc16a37ea8f74d74536efffc28609b1b418c16ad91cc167a238a2770",
