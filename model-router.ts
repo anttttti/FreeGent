@@ -137,6 +137,9 @@ export function isCacheCapable(endpoint: any): boolean {
 
 // ── Error classification + cooldown operations ───────────────────────────────
 
+// These pick a *recovery action* (cool down + rotate). retry.ts isTransient() decides whether to
+// retry at all; every message _isRateLimit accepts must also be transient (pinned by
+// tests/retry-consistency.test.ts). _isServerError is wider on purpose: any HTTP 4xx/5xx rotates.
 export function _isRateLimit(msg: string): boolean {
     // 429: standard rate limit. 402: payment required / quota exhausted. 503: provider throttle.
     return /HTTP 429|HTTP 402|HTTP 503|rate.?limit|too many requests|quota exceeded|insufficient balance|high demand|spikes in demand/i.test(msg || '');
