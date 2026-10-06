@@ -15,6 +15,7 @@
 // localStorage, never in profiles.
 
 import { resolveProxy } from './proxy.js';
+import { redactText } from './secrets.js';
 import { combineSignals } from './abort.js';
 import { activeAbortController } from './state.js';
 
@@ -284,7 +285,7 @@ async function callMCPTool(serverUrl: string, toolName: string, args: any, heade
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
-function getMcpServers(): McpServer[] {
+export function getMcpServers(): McpServer[] {
     try {
         const v = JSON.parse(localStorage.getItem(MCP_SERVERS_KEY) || '[]');
         return Array.isArray(v) ? v : [];
@@ -555,24 +556,11 @@ function mcpToolRisk(name: string): 'read' | 'write' | 'destructive' {
     return a.destructiveHint === false ? 'write' : 'destructive';
 }
 
-// Replace the server's auth header values in text bound for the model, logs or the UI — a
-// server that echoes the request (e.g. in an error message) must not hand the key to the LLM.
-// Also covers the bare token of "Bearer <token>" and URL-encoded forms. Values under 8 chars
-// are skipped: too short to be a secret and would mangle ordinary text.
+// Redact the server's auth header values and anything credential-shaped in text bound for the
+// model, logs or the UI — a server that echoes the request (e.g. in an error message) must not
+// hand the key to the LLM. Rules live in secrets.ts.
 function redactMcpSecrets(text: string, headers?: Record<string, string>): string {
-    if (!text || !headers) return text;
-    const secrets = new Set<string>();
-    for (const v of Object.values(headers)) {
-        const val = String(v ?? '').trim();
-        for (const s of [val, val.replace(/^(Bearer|Basic|Token)\s+/i, '')]) {
-            if (s.length < 8) continue;
-            secrets.add(s);
-            secrets.add(encodeURIComponent(s));
-        }
-    }
-    // Longest first, so a full "Bearer xyz" goes before its bare token.
-    for (const s of [...secrets].sort((a, b) => b.length - a.length)) text = text.split(s).join('[redacted]');
-    return text;
+    return redactText(text, Object.values(headers ?? {}));
 }
 
 async function executeMcpTool(name: string, args: any): Promise<any> {

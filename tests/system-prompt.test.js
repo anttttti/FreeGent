@@ -40,6 +40,17 @@ describe('buildSystemPrompt — shape', () => {
     it('mentions web_search', () => {
         expect(W.buildSystemPrompt()).toContain('web_search');
     });
+
+    it('explains exact output and the hidden terminal marker without requiring prose', () => {
+        const p = W.rolesRegistry.get('director').body_fn();
+        expect(p).toContain('For JSON-only or other exact output');
+        expect(p).toContain('FreeGent removes it before displaying or returning your answer');
+        expect(p).not.toContain('Complete with one sentence stating the outcome and nothing else');
+        // The promised output behavior is the actual shared protocol behavior.
+        const answer = '{"count":3,"files":["a","b","c"]}';
+        expect(W._stripTerminal(answer + '\nCOMPLETED')).toBe(answer);
+        expect(JSON.parse(W._stripTerminal(answer + '\nCOMPLETED')).count).toBe(3);
+    });
 });
 
 // ── Size / bloat guard ────────────────────────────────────────────────────────
