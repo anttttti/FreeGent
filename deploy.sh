@@ -327,6 +327,33 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Deployment version: <benchmark version>.<counter>, e.g. v0.63.12.
+#   benchmark version = the newest vX.Y with a bench/run_all_output_vX.Y*.log (the version the
+#                       code was last benchmarked at); without bench/, the prefix of the latest
+#                       deployment tag.
+#   counter           = highest counter among existing vX.Y.N deployment tags + 1, so it is unique
+#                       and increasing across all deployments, whatever the prefix.
+# The version is baked into the build (FG_VERSION) and recorded as a git tag, which is pushed with
+# the commit; the Pages workflow reads it from that tag. Uploaded chat logs carry it.
+step "Deployment version"
+git fetch --tags --quiet 2>/dev/null || warn "Could not fetch tags — counter may repeat a deployment from another machine"
+_DEPLOY_TAGS=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+_BENCH_V=$(ls bench/run_all_output_v*.log 2>/dev/null \
+    | sed -E 's#.*run_all_output_(v[0-9]+\.[0-9]+).*#\1#' | grep -E '^v[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+if [ -z "$_BENCH_V" ] && [ -n "$_DEPLOY_TAGS" ]; then
+    _BENCH_V=$(echo "$_DEPLOY_TAGS" | sort -V | tail -1 | sed -E 's/\.[0-9]+$//')
+    warn "bench/ not found — reusing benchmark version $_BENCH_V from the latest deployment tag"
+fi
+[ -n "$_BENCH_V" ] || fail "Cannot determine the benchmark version (no bench/run_all_output_vX.Y*.log and no deployment tag)."
+_LAST_N=$(echo "$_DEPLOY_TAGS" | sed -E 's/^v[0-9]+\.[0-9]+\.//' | sort -n | tail -1)
+FG_VERSION="${_BENCH_V}.$(( ${_LAST_N:-0} + 1 ))"
+export FG_VERSION
+ok "Deployment version $FG_VERSION"
+if $DO_DEPLOY; then
+    git tag "$FG_VERSION" HEAD || fail "Could not create tag $FG_VERSION"
+    ok "Tagged HEAD as $FG_VERSION"
+fi
+
 if $DO_GIT || ! $DO_DEPLOY; then
     step "Build"
     npm run build 2>&1 | grep -v "^$" | tail -8
@@ -349,7 +376,7 @@ if $DO_WORKER; then
     [ -n "${CLOUDFLARE_API_TOKEN:-}" ] \
         || fail "CLOUDFLARE_API_TOKEN not set.\n  Export it, or add to: $CREDS"
 
-    (cd cf-worker && CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" npx wrangler deploy)
+    (cd cf-worker && CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" npx wrangler deploy --tag "$FG_VERSION" --message "Deployment $FG_VERSION")
     ok "CF Worker deployed → https://proxy.freegent.ai"
 fi
 
@@ -357,10 +384,16 @@ fi
 if $DO_GIT; then
     step "Git push"
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    FREEGENT_DEPLOY=1 git push
+    FREEGENT_DEPLOY=1 git push origin HEAD "refs/tags/$FG_VERSION"
     ok "Pushed branch '$BRANCH' → https://github.com/anttttti/FreeGent"
     ok "GitHub Pages → https://freegent.ai (Pages build may take ~60s)"
 fi
 
+# A Worker-only deployment has no branch push; still publish its tag so the counter stays unique.
+if ! $DO_GIT; then
+    FREEGENT_DEPLOY=1 git push origin "refs/tags/$FG_VERSION"
+    ok "Pushed tag $FG_VERSION"
+fi
+
 echo
-echo -e "${G}✓ Deployment complete${N}"
+echo -e "${G}✓ Deployment $FG_VERSION complete${N}"

@@ -2,6 +2,7 @@
 // Depends on: config.js, chat-state.js
 // Loaded after chat-state.js, before agent-core.js
 import { chatKey, SESSION_KEYS } from './storage-keys.js';
+import { FG_VERSION } from './build-info.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
 // Each entry records one LLM response turn (may include tool calls).
@@ -106,6 +107,19 @@ async function loadChatLog(chatId: string | null): Promise<void> {
         window.conversationLog = conversationLog;
         _updateLogBadge();
     } catch {}
+}
+
+// Per-chat numbers for the Chats tab: user turns and the models that answered (with step counts).
+async function getChatStats(chatId: string): Promise<{ turns: number; models: { model: string; steps: number }[] }> {
+    const hist = (await _chatHistoryFor(chatId)) ?? [];
+    const turns = hist.filter((m: any) => m?.role === 'user').length;
+    const counts = new Map<string, number>();
+    try {
+        for (const e of await _loadPersistedLog(chatId)) {
+            const m = e.model; if (m) counts.set(m, (counts.get(m) || 0) + 1);
+        }
+    } catch {}
+    return { turns, models: [...counts].map(([model, steps]) => ({ model, steps })).sort((a, b) => b.steps - a.steps) };
 }
 
 function clearConvoLog() {
@@ -227,6 +241,7 @@ async function _buildChatPayload(id) {
 
     const payload = {
         exportedAt: new Date().toISOString(),
+        deployVersion: FG_VERSION,
         id,
         name:       meta?.name ?? 'Untitled',
         createdAt:  meta?.createdAt ? new Date(meta.createdAt).toISOString() : null,
@@ -284,7 +299,6 @@ async function sendChatLog(id) {
         const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body });
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.id) throw new Error(j.error || `HTTP ${r.status}`);
-        alert(`Log sent. Tell the developer this ID: ${j.id}`);
     } catch (e) {
         alert(`Could not send the log: ${(e as any)?.message ?? e}. Use the ⬇ download instead.`);
     }
@@ -454,4 +468,4 @@ function esc(s) {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc, pruneConvoLogFrom });
+Object.assign(window, { getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc, pruneConvoLogFrom });

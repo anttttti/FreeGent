@@ -121,7 +121,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
     </div>
-    <button class="rail-btn" onclick="closeChatsDropdown();newChat();activateTab('chat');expandChatToolbar()" title="New chat">
+    <button class="rail-btn" onclick="newChat();activateTab('chat');expandChatToolbar()" title="New chat">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         <span class="rail-label">New Chat</span>
     </button>
@@ -134,7 +134,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span class="rail-label">Tasks</span>
     </button>
-    <button class="rail-btn rail-nav-btn" data-tab="chat" onclick="activateTab('chat');toggleChatsDropdown()" title="Chats">
+    <button class="rail-btn rail-nav-btn" data-tab="chat" onclick="activateTab('chats')" title="Browse all chats with turn counts, models and workspace snapshots">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span class="rail-label">Chats</span>
     </button>
@@ -152,16 +152,6 @@
 </nav>
 
 <!-- Sidebar: chat history -->
-<div class="rail-sidebar" id="rail-sidebar">
-    <div class="rail-sidebar-header">
-        <span>Chats</span>
-        <button class="rail-sidebar-close" onclick="closeChatsDropdown()" title="Close">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-    </div>
-    <div id="chats-dropdown"></div>
-</div>
-
 <!-- Tab content -->
 <div class="tab-content" id="tab-content">
 
@@ -274,6 +264,11 @@
         </div>
     </div>
 
+    <!-- Chats tab (full screen) -->
+    <div class="tab-panel" data-panel="chats">
+        <div id="chats-dropdown" class="chats-full"></div>
+    </div>
+
     <!-- Tasks + Agent panel (merged) -->
     <div class="tab-panel" data-panel="tasks">
         <div class="tasks-toolbar">
@@ -282,11 +277,11 @@
             <button class="ws-action-btn" id="autopilot-btn" onclick="runnerAutopilot()" title="Keep completing tasks, one chat per task, until none are left. Run completes just the next task.">&#9654; Autopilot</button>
             <div class="tasks-toolbar-sep"></div>
             <div class="runner-btns">
-                <button class="ws-action-btn" id="runner-run-btn" onclick="runnerStart()">&#9654; Run</button>
-                <button class="ws-action-btn" id="runner-pause-btn" onclick="runnerPause()" style="display:none">&#9646;&#9646; Pause</button>
-                <button class="ws-action-btn" id="runner-resume-btn" onclick="runnerResume()" style="display:none">&#9654; Resume</button>
-                <button class="ws-action-btn" id="runner-restart-btn" onclick="runnerRestart()" style="display:none">&#8635; Restart</button>
-                <button class="ws-action-btn runner-stop-btn" id="runner-stop-btn" onclick="runnerStop()" style="display:none">&#9632; Stop</button>
+                <button class="ws-action-btn" id="runner-run-btn" onclick="runnerStart()" title="Run the next task (To Do, or one already in progress/review) in its own chat, then stop">&#9654; Run</button>
+                <button class="ws-action-btn" id="runner-pause-btn" onclick="runnerPause()" title="Pause the runner after the current step; Resume continues where it left off" style="display:none">&#9646;&#9646; Pause</button>
+                <button class="ws-action-btn" id="runner-resume-btn" onclick="runnerResume()" title="Continue the paused runner" style="display:none">&#9654; Resume</button>
+                <button class="ws-action-btn" id="runner-restart-btn" onclick="runnerRestart()" title="Stop the current run and start it again from the beginning (same Run/Autopilot mode)" style="display:none">&#8635; Restart</button>
+                <button class="ws-action-btn runner-stop-btn" id="runner-stop-btn" onclick="runnerStop()" title="Stop the runner now and abort the step in progress" style="display:none">&#9632; Stop</button>
             </div>
             <span id="runner-status" class="runner-status-text">Idle</span>
             <small id="runner-token-label" style="color:var(--muted);font-size:11px;line-height:1;flex-shrink:0"></small>
@@ -295,22 +290,22 @@
             <div class="kanban-col" data-status="todo">
                 <div class="kanban-col-header">To Do <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-todo"></div>
-                <button class="kanban-add-btn" onclick="openAddTaskDialog('todo')" title="Add task">+</button>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('todo')" title="Add a new task to To Do">+</button>
             </div>
             <div class="kanban-col" data-status="in-progress">
                 <div class="kanban-col-header">In Progress <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-in-progress"></div>
-                <button class="kanban-add-btn" onclick="openAddTaskDialog('in-progress')" title="Add task">+</button>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('in-progress')" title="Add a new task already marked In Progress">+</button>
             </div>
             <div class="kanban-col" data-status="review">
                 <div class="kanban-col-header">Review <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-review"></div>
-                <button class="kanban-add-btn" onclick="openAddTaskDialog('review')" title="Add task">+</button>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('review')" title="Add a new task already marked Review">+</button>
             </div>
             <div class="kanban-col" data-status="done">
                 <div class="kanban-col-header">Done <span class="kanban-col-count">0</span></div>
                 <div class="kanban-cards" id="col-done"></div>
-                <button class="kanban-add-btn" onclick="openAddTaskDialog('done')" title="Add task">+</button>
+                <button class="kanban-add-btn" onclick="openAddTaskDialog('done')" title="Add a new task already marked Done">+</button>
             </div>
         </div>
         <div id="task-preview" class="task-preview"></div>
@@ -320,7 +315,7 @@
             <div class="runner-header" onclick="toggleRunnerZone()">
                 <span class="runner-label">&#9889; Runner</span>
                 <span id="runner-current-task" class="runner-task-name">—</span>
-                <button class="runner-zone-toggle" id="runner-zone-toggle" title="Expand / collapse">&#9660;</button>
+                <button class="runner-zone-toggle" id="runner-zone-toggle" title="Expand or collapse the Runner panel (live steps, session log)">&#9660;</button>
             </div>
             <div class="runner-body">
                 <div id="runner-process" class="runner-process">
@@ -328,7 +323,7 @@
                 </div>
                 <div id="runner-interrupt-bar" class="runner-input-bar" style="display:none">
                     <textarea id="runner-interrupt-input" class="runner-input" placeholder="Interrupt agent with instructions..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerInterrupt()}"></textarea>
-                    <button class="send-btn send-btn-go" onclick="runnerInterrupt()" title="Interrupt">&#9654;</button>
+                    <button class="send-btn send-btn-go" onclick="runnerInterrupt()" title="Send this message to the running task's agent now (cuts the current step short)">&#9654;</button>
                 </div>
                 <div class="runner-log-wrap">
                     <div class="runner-section-label">Session log</div>
@@ -340,7 +335,7 @@
                     <textarea id="runner-unblock-input" class="runner-input"
                         placeholder="Reply to unblock the agent…" rows="2"
                         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerSendUnblock()}"></textarea>
-                    <button class="send-btn send-btn-go" onclick="runnerSendUnblock()" title="Send">&#9654;</button>
+                    <button class="send-btn send-btn-go" onclick="runnerSendUnblock()" title="Send your reply so the blocked task can continue">&#9654;</button>
                 </div>
             </div>
         </div>
@@ -351,16 +346,16 @@
         <div class="settings-panel-scroll">
             <div class="settings-panel-inner">
                 <div class="settings-tabs">
-                    <button class="settings-tab-btn active" data-tab="profiles" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
-                    <button class="settings-tab-btn"        data-tab="model"    onclick="switchSettingsTab('model')">Models</button>
-                    <button class="settings-tab-btn"        data-tab="search"   onclick="switchSettingsTab('search')">Search</button>
-                    <button class="settings-tab-btn"        data-tab="code"     onclick="switchSettingsTab('code')">Code Execution</button>
-                    <button class="settings-tab-btn"        data-tab="agent"    onclick="switchSettingsTab('agent')">Agent</button>
-                    <button class="settings-tab-btn"        data-tab="skills"   onclick="switchSettingsTab('skills')">Skills</button>
-                    <button class="settings-tab-btn"        data-tab="tools"    onclick="switchSettingsTab('tools')">Tools</button>
-                    <button class="settings-tab-btn"        data-tab="mcp"      onclick="switchSettingsTab('mcp');renderMcpTab()">MCP</button>
-                    <button class="settings-tab-btn"        data-tab="roles"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
-                    <button class="settings-tab-btn"        data-tab="voice"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
+                    <button class="settings-tab-btn active" data-tab="profiles" title="Saved presets that bundle a model, tools and settings; switch or save one in a click" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
+                    <button class="settings-tab-btn"        data-tab="model" title="Add and order model providers, API keys and endpoints, and set the utility and fallback models"    onclick="switchSettingsTab('model')">Models</button>
+                    <button class="settings-tab-btn"        data-tab="search" title="Choose the web search provider and its API key used by web_search and research tools"   onclick="switchSettingsTab('search')">Search</button>
+                    <button class="settings-tab-btn"        data-tab="code" title="Choose where code the agent runs executes (in-browser sandbox, local shell) and its limits"     onclick="switchSettingsTab('code')">Code Execution</button>
+                    <button class="settings-tab-btn"        data-tab="agent" title="Agent behavior: step limits, retries, context and compaction, QA gates and the task runner"    onclick="switchSettingsTab('agent')">Agent</button>
+                    <button class="settings-tab-btn"        data-tab="skills" title="Turn built-in and custom skills (extra instructions the agent loads on demand) on or off"   onclick="switchSettingsTab('skills')">Skills</button>
+                    <button class="settings-tab-btn"        data-tab="tools" title="Enable or disable individual tools the agent may call, separately for Chat and Cowork modes"    onclick="switchSettingsTab('tools')">Tools</button>
+                    <button class="settings-tab-btn"        data-tab="mcp" title="Connect MCP servers and pick which of their tools the agent can use"      onclick="switchSettingsTab('mcp');renderMcpTab()">MCP</button>
+                    <button class="settings-tab-btn"        data-tab="roles" title="View and edit agent roles (Director, coder, etc.): their prompts and allowed tools"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
+                    <button class="settings-tab-btn"        data-tab="voice" title="Speech input and spoken replies: voice, language and speed"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
                 </div>
 
                 <div class="settings-tab-panel" data-tab="model">

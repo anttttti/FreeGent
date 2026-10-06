@@ -309,6 +309,11 @@ export default defineConfig(() => {
     // Dev-mode syntax downleveling for Safari 12 is handled by the safari12Plugin above
     // (Vite 8 dev server ignores esbuild.target for transforms; plugin enforce:'post' wins).
     // build.target covers production bundles.
+    // Deployment version (<benchmark version>.<counter>, set by deploy.sh / the Pages workflow from
+    // the deploy tag); 'dev' for local servers and untagged builds. Sent with uploaded chat logs.
+    define: {
+      __FG_VERSION__: JSON.stringify(process.env.FG_VERSION || 'dev'),
+    },
     esbuild: {
       target: 'safari12',
     },

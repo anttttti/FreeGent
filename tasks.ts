@@ -52,6 +52,7 @@ async function previewTask(path) {
     closeBtn.className = 'ws-action-btn';
     closeBtn.style.cssText = 'font-size:10px; padding:1px 6px;';
     closeBtn.textContent = '✕ Close';
+    closeBtn.title = 'Close this task preview';
     closeBtn.onclick = () => previewEl.classList.remove('active');
     header.append(nameEl, closeBtn);
     const body = document.createElement('div');
@@ -86,7 +87,7 @@ function makeKanbanCard(task) {
 
     const trash = document.createElement('button');
     trash.className = 'kanban-card-trash';
-    trash.title = 'Delete task';
+    trash.title = 'Delete this task file permanently (asks to confirm)';
     trash.textContent = '🗑';
     trash.draggable = false;
     trash.onclick = async e => {
@@ -107,8 +108,8 @@ function makeKanbanCard(task) {
     const isBlocked = canonTaskStatus(task.fm.status) === 'blocked';
     const blockBtn = document.createElement('button');
     blockBtn.className = 'kanban-card-block';
-    blockBtn.title = isBlocked ? 'Unblock task' : 'Block task';
-    blockBtn.textContent = isBlocked ? '▶' : '⊘';
+    blockBtn.title = isBlocked ? 'Unblock this task: move it back to To Do so the runner can pick it up' : 'Block this task: the runner skips it until you unblock it';
+    blockBtn.textContent = isBlocked ? '🔓' : '⊘';
     blockBtn.draggable = false;
     blockBtn.onclick = async e => {
         e.stopPropagation();
@@ -120,6 +121,21 @@ function makeKanbanCard(task) {
         }
     };
     card.appendChild(blockBtn);
+
+    // Manual start: run just this task (one chat, then the runner stops).
+    const canon = canonTaskStatus(task.fm.status);
+    if (canon !== 'done' && canon !== 'blocked') {
+        const playBtn = document.createElement('button');
+        playBtn.className = 'kanban-card-play';
+        playBtn.title = 'Start this task now: runs only this task in its own chat, then stops';
+        playBtn.textContent = '▶';
+        playBtn.draggable = false;
+        playBtn.onclick = e => {
+            e.stopPropagation();
+            runnerStartTask(task.path);
+        };
+        card.appendChild(playBtn);
+    }
 
     const title = document.createElement('div');
     title.className = 'kanban-card-title';
@@ -169,7 +185,7 @@ function openAddTaskDialog(status: string) {
     overlay.innerHTML = `<div class="fg-modal" style="max-width:520px;width:95%">
   <div class="fg-modal-header">
     <span class="fg-modal-title">Add task</span>
-    <button class="fg-modal-close" id="atd-close">✕</button>
+    <button class="fg-modal-close" id="atd-close" title="Close without adding a task">✕</button>
   </div>
   <div class="fg-modal-body">
     <table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>
@@ -182,8 +198,8 @@ function openAddTaskDialog(status: string) {
     <div id="atd-err" style="color:#c62828;font-size:11px;min-height:14px"></div>
   </div>
   <div class="fg-modal-btns">
-    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel">Cancel</button>
-    <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok">Add task</button>
+    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel" title="Close without adding a task">Cancel</button>
+    <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok" title="Create the task file with these details and add it to the board">Add task</button>
   </div>
 </div>`;
     document.body.appendChild(overlay);

@@ -622,38 +622,53 @@ function deleteCurrentChat() {
     if (activeChatId) deleteChat(activeChatId);
 }
 
+const _fmtBytes = (n: number) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+
+// The Chats tab: a full-screen list with one card per chat. Each card shows its turn count, the
+// models used and its first/last workspace snapshots (filled in asynchronously), with buttons to
+// set the workspace to either state.
 function renderChatsDropdown() {
     const el = document.getElementById('chats-dropdown');
     if (!el) return;
     const list = getChatList().slice().reverse();
     el.innerHTML = '';
 
-    // Search box + import button at the top of the list
     const toolbar = document.createElement('div');
-    toolbar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)';
+    toolbar.className = 'chats-toolbar';
+    const title = document.createElement('span');
+    title.className = 'chats-toolbar-title';
+    title.textContent = `Chats (${list.length})`;
     const searchInput = document.createElement('input');
     searchInput.type = 'text'; searchInput.placeholder = 'Search chats…';
-    searchInput.style.cssText = 'flex:1;font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);min-width:0';
+    searchInput.className = 'chats-search';
     searchInput.id = 'chat-search-input';
+    searchInput.title = 'Filter the chats below by name';
     searchInput.oninput = () => _filterChatsDropdown(searchInput.value);
     const importBtn = document.createElement('button');
-    importBtn.className = 'chat-act-btn'; importBtn.textContent = '⬆'; importBtn.title = 'Import chat JSON';
+    importBtn.className = 'ws-action-btn'; importBtn.textContent = '⬆ Import';
+    importBtn.title = 'Import a chat from a JSON file exported earlier';
     importBtn.onclick = () => importChat();
-    toolbar.append(searchInput, importBtn);
+    toolbar.append(title, searchInput, importBtn);
     el.appendChild(toolbar);
 
+    const body = document.createElement('div');
+    body.className = 'chats-list';
+    el.appendChild(body);
+
     if (!list.length) {
-        el.innerHTML += '<div style="padding:10px 12px;color:var(--muted);font-size:13px">No saved chats</div>';
+        body.innerHTML = '<div class="chats-empty">No saved chats</div>';
+        updateRailRecentChats();
         return;
     }
     const lsByChat = computeStorageUsage().chats;
     for (const chat of list) {
         const item = document.createElement('div');
-        item.className = 'chat-list-item' + (chat.id === activeChatId ? ' current' : '');
+        item.className = 'chat-list-item chat-card' + (chat.id === activeChatId ? ' current' : '');
 
         const info = document.createElement('div');
         info.className = 'chat-list-info';
-        info.onclick   = () => { closeChatsDropdown(); activateTab?.('chat'); switchToChat(chat.id); };
+        info.title = 'Open this chat';
+        info.onclick = () => { activateTab?.('chat'); switchToChat(chat.id); };
 
         const nameEl = document.createElement('div');
         nameEl.className   = 'chat-list-name';
@@ -661,55 +676,84 @@ function renderChatsDropdown() {
 
         const metaEl = document.createElement('div');
         metaEl.className = 'chat-list-meta';
-        const parts = [];
+        const parts: string[] = [];
         if (chat.createdAt) parts.push('Started ' + fmtTime(chat.createdAt));
         if (chat.lastAt && chat.lastAt !== chat.createdAt) parts.push('Last ' + fmtTime(chat.lastAt));
-        // Older chats keep no localStorage cache — their history is in IndexedDB only.
         const ls = lsByChat.get(chat.id) || 0;
         if (ls) parts.push('LS ' + fmtStorageSize(ls));
         metaEl.textContent = parts.join('  ·  ');
         metaEl.title = 'localStorage: history cache, draft and checkpoints of this chat';
 
-        info.append(nameEl, metaEl);
+        const detail = document.createElement('div');
+        detail.className = 'chat-card-detail';
+        detail.textContent = 'Loading details…';
+        const snaps = document.createElement('div');
+        snaps.className = 'chat-card-snaps';
+        info.append(nameEl, metaEl, detail, snaps);
+        _fillChatCard(chat.id, detail, snaps);
 
         const actions = document.createElement('div');
         actions.className = 'chat-list-actions';
-
-        const renBtn = document.createElement('button');
-        renBtn.className   = 'chat-act-btn';
-        renBtn.textContent = '✏';
-        renBtn.title       = 'Rename';
-        renBtn.onclick     = e => { e.stopPropagation(); closeChatsDropdown(); promptRenameChat(chat.id); };
-
-        const dlBtn = document.createElement('button');
-        dlBtn.className   = 'chat-act-btn';
-        dlBtn.textContent = '⬇';
-        dlBtn.title       = 'Download JSON';
-        dlBtn.onclick     = e => { e.stopPropagation(); exportChat(chat.id); };
-
-        const mdBtn = document.createElement('button');
-        mdBtn.className   = 'chat-act-btn';
-        mdBtn.textContent = '📄';
-        mdBtn.title       = 'Download Markdown';
-        mdBtn.onclick     = e => { e.stopPropagation(); exportChatMarkdown(chat.id); };
-
-        const sendBtn = document.createElement('button');
-        sendBtn.className   = 'chat-act-btn';
-        sendBtn.textContent = '📤';
-        sendBtn.title       = 'Send log to developer';
-        sendBtn.onclick     = e => { e.stopPropagation(); sendChatLog(chat.id); };
-
-        const delBtn = document.createElement('button');
-        delBtn.className   = 'chat-act-btn chat-act-btn-del';
-        delBtn.textContent = '🗑';
-        delBtn.title       = 'Delete';
-        delBtn.onclick     = e => { e.stopPropagation(); deleteChat(chat.id); };
-
-        actions.append(renBtn, dlBtn, mdBtn, sendBtn, delBtn);
+        const mk = (cls: string, text: string, tip: string, fn: () => void) => {
+            const b = document.createElement('button');
+            b.className = cls; b.textContent = text; b.title = tip;
+            b.onclick = e => { e.stopPropagation(); fn(); };
+            return b;
+        };
+        actions.append(
+            mk('chat-act-btn', '✏', 'Rename this chat', () => promptRenameChat(chat.id)),
+            mk('chat-act-btn', '⬇', 'Download this chat as JSON (messages, tool calls and results)', () => exportChat(chat.id)),
+            mk('chat-act-btn', '📄', 'Download this chat as a readable Markdown file', () => exportChatMarkdown(chat.id)),
+            mk('chat-act-btn', '📤', 'Send this chat\'s log to the FreeGent developer for debugging (asks first; API keys are removed)', () => sendChatLog(chat.id)),
+            mk('chat-act-btn chat-act-btn-del', '🗑', 'Delete this chat and its checkpoints permanently', () => deleteChat(chat.id)),
+        );
         item.append(info, actions);
-        el.appendChild(item);
+        body.appendChild(item);
     }
     updateRailRecentChats();
+}
+
+// Turn/model counts and start/end snapshots of one chat, loaded after the list is drawn.
+async function _fillChatCard(chatId: string, detail: HTMLElement, snaps: HTMLElement) {
+    try {
+        const stats = await getChatStats(chatId);
+        const models = stats.models.length
+            ? stats.models.map(m => `${m.model} (${m.steps})`).join(', ')
+            : 'none logged';
+        detail.textContent = `${stats.turns} turn${stats.turns === 1 ? '' : 's'}  ·  Models: ${models}`;
+        detail.title = 'Turns = messages you sent. Models lists each model used with its number of LLM steps.';
+    } catch { detail.textContent = 'Details unavailable'; }
+    try {
+        const info = typeof getChatSnapshotInfo === 'function' ? await getChatSnapshotInfo(chatId) : null;
+        if (!info) { snaps.textContent = 'No workspace snapshots for this chat.'; return; }
+        const c = info.changes;
+        const row = (label: string, snap: any, tip: string, which: string) => {
+            const r = document.createElement('div');
+            r.className = 'chat-snap-row';
+            const t = document.createElement('span');
+            t.textContent = `${label}: ${snap.files} file${snap.files === 1 ? '' : 's'}, ${_fmtBytes(snap.bytes)} · ${fmtTime(snap.ts)}`;
+            const btn = document.createElement('button');
+            btn.className = 'ws-action-btn';
+            btn.textContent = `⟲ Set workspace to ${which}`;
+            btn.title = tip;
+            btn.onclick = async e => {
+                e.stopPropagation();
+                if (!confirm(`Replace the current workspace files with the ${which} state of this chat (${snap.files} files)? Files created since will be removed.`)) return;
+                if (await restoreChatWorkspace(chatId, snap.ckptId)) btn.textContent = '✓ Restored';
+            };
+            r.append(t, btn);
+            return r;
+        };
+        snaps.append(
+            row('Start', info.start, 'Replace the workspace files with how they were when this chat\'s first message was sent (asks to confirm)', 'start'),
+            row('End', info.end, 'Replace the workspace files with how they were after this chat\'s last turn (asks to confirm)', 'end'),
+        );
+        const ch = document.createElement('div');
+        ch.className = 'chat-snap-changes';
+        ch.textContent = `Start → end: ${c.added} added, ${c.modified} modified, ${c.deleted} deleted`;
+        ch.title = 'File changes between the starting and ending snapshots';
+        snaps.append(ch);
+    } catch { snaps.textContent = 'Snapshots unavailable'; }
 }
 
 // Render the 2 most recent chat titles directly in the left rail, below the Chats button.
@@ -726,7 +770,7 @@ function updateRailRecentChats() {
             + (isActive    ? ' active'    : '')
             + (isStreaming ? ' streaming' : '');
         btn.title = chat.name || 'Untitled Chat';
-        btn.onclick = () => { closeChatsDropdown(); activateTab?.('chat'); switchToChat(chat.id); };
+        btn.onclick = () => { activateTab?.('chat'); switchToChat(chat.id); };
         const span = document.createElement('span');
         span.className = 'rail-label';
         span.textContent = chat.name || 'Untitled Chat';
@@ -735,18 +779,12 @@ function updateRailRecentChats() {
     }
 }
 
+// The Chats tab replaced the sliding sidebar; these names stay because the rail and shortcuts call them.
 function toggleChatsDropdown() {
-    const sidebar = document.getElementById('rail-sidebar');
-    if (!sidebar) return;
-    chatsDropdownOpen = !chatsDropdownOpen;
-    if (chatsDropdownOpen) { renderChatsDropdown(); sidebar.classList.add('open'); }
-    else                   { sidebar.classList.remove('open'); }
+    activateTab?.('chats');
 }
 
-function closeChatsDropdown() {
-    chatsDropdownOpen = false;
-    document.getElementById('rail-sidebar')?.classList.remove('open');
-}
+function closeChatsDropdown() {}
 
 async function switchToChat(id) {
     if (id === activeChatId || agentStreaming) return;
@@ -856,9 +894,7 @@ function _filterChatsDropdown(query: string) {
 
 // Open the chats dropdown and focus the search box (Cmd/Ctrl+K).
 function focusChatSearch() {
-    if (!chatsDropdownOpen) {
-        toggleChatsDropdown();
-    }
+    activateTab?.('chats');
     setTimeout(() => {
         const inp = document.getElementById('chat-search-input') as HTMLInputElement | null;
         inp?.focus();
