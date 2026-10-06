@@ -14,6 +14,7 @@ import { getActiveMainModelList, specHasKey } from './config.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
+import { escapeHtml } from './html-escape.js';
 
 // Max binary-attachment size to include in a checkpoint snapshot (bytes).
 // Larger binary files are excluded to keep checkpoint storage bounded.
@@ -279,7 +280,6 @@ function _confirmLocalRestore(count: number): Promise<boolean> {
 }
 
 function _showSideBySideDiff(filename: string, oldContent: string, newContent: string): void {
-    const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const oldLines = splitLines(oldContent);
     const newLines = splitLines(newContent);
     const regions  = diffRegions(oldLines, newLines);
@@ -288,33 +288,33 @@ function _showSideBySideDiff(filename: string, oldContent: string, newContent: s
         if (r.type === 'eq') {
             for (let k = 0; k < r.baseEnd - r.baseStart; k++) {
                 const i = r.baseStart + k, j = r.sideStart + k;
-                rows += `<tr><td class="fg-sdiff-ln">${i+1}</td><td class="fg-sdiff-cell">${_esc(oldLines[i])}</td>`
-                      + `<td class="fg-sdiff-ln">${j+1}</td><td class="fg-sdiff-cell">${_esc(newLines[j])}</td></tr>`;
+                rows += `<tr><td class="fg-sdiff-ln">${i+1}</td><td class="fg-sdiff-cell">${escapeHtml(oldLines[i])}</td>`
+                      + `<td class="fg-sdiff-ln">${j+1}</td><td class="fg-sdiff-cell">${escapeHtml(newLines[j])}</td></tr>`;
             }
         } else if (r.type === 'del') {
             for (let i = r.baseStart; i < r.baseEnd; i++)
-                rows += `<tr class="fg-sdiff-del"><td class="fg-sdiff-ln">${i+1}</td><td class="fg-sdiff-cell">${_esc(oldLines[i])}</td>`
+                rows += `<tr class="fg-sdiff-del"><td class="fg-sdiff-ln">${i+1}</td><td class="fg-sdiff-cell">${escapeHtml(oldLines[i])}</td>`
                       + `<td class="fg-sdiff-ln"></td><td class="fg-sdiff-cell"></td></tr>`;
         } else if (r.type === 'ins') {
             for (let j = r.sideStart; j < r.sideEnd; j++)
                 rows += `<tr class="fg-sdiff-ins"><td class="fg-sdiff-ln"></td><td class="fg-sdiff-cell"></td>`
-                      + `<td class="fg-sdiff-ln">${j+1}</td><td class="fg-sdiff-cell">${_esc(newLines[j])}</td></tr>`;
+                      + `<td class="fg-sdiff-ln">${j+1}</td><td class="fg-sdiff-cell">${escapeHtml(newLines[j])}</td></tr>`;
         } else {
             const dLen = r.baseEnd - r.baseStart, iLen = r.sideEnd - r.sideStart;
             for (let k = 0; k < Math.max(dLen, iLen); k++) {
                 const hasOld = k < dLen, hasNew = k < iLen;
                 const i = r.baseStart + k, j = r.sideStart + k;
                 rows += `<tr><td class="fg-sdiff-ln">${hasOld ? i+1 : ''}</td>`
-                      + `<td class="fg-sdiff-cell${hasOld ? ' fg-sdiff-del-cell' : ''}">${hasOld ? _esc(oldLines[i]) : ''}</td>`
+                      + `<td class="fg-sdiff-cell${hasOld ? ' fg-sdiff-del-cell' : ''}">${hasOld ? escapeHtml(oldLines[i]) : ''}</td>`
                       + `<td class="fg-sdiff-ln">${hasNew ? j+1 : ''}</td>`
-                      + `<td class="fg-sdiff-cell${hasNew ? ' fg-sdiff-ins-cell' : ''}">${hasNew ? _esc(newLines[j]) : ''}</td></tr>`;
+                      + `<td class="fg-sdiff-cell${hasNew ? ' fg-sdiff-ins-cell' : ''}">${hasNew ? escapeHtml(newLines[j]) : ''}</td></tr>`;
             }
         }
     }
     const ov2 = document.createElement('div');
     ov2.className = 'fg-modal-overlay';
     ov2.style.zIndex = '9100';
-    ov2.innerHTML = `<div class="fg-modal fg-sdiff-modal"><div class="fg-modal-header"><span class="fg-modal-title">${_esc(filename)}</span><button class="fg-modal-close">✕</button></div><div class="fg-modal-body fg-sdiff-body"><table class="fg-sdiff-table"><thead><tr><th class="fg-sdiff-ln"></th><th class="fg-sdiff-hdr">Before</th><th class="fg-sdiff-ln"></th><th class="fg-sdiff-hdr">After</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+    ov2.innerHTML = `<div class="fg-modal fg-sdiff-modal"><div class="fg-modal-header"><span class="fg-modal-title">${escapeHtml(filename)}</span><button class="fg-modal-close">✕</button></div><div class="fg-modal-body fg-sdiff-body"><table class="fg-sdiff-table"><thead><tr><th class="fg-sdiff-ln"></th><th class="fg-sdiff-hdr">Before</th><th class="fg-sdiff-ln"></th><th class="fg-sdiff-hdr">After</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
     (ov2.querySelector('.fg-modal-close') as HTMLElement).onclick = () => ov2.remove();
     ov2.addEventListener('click', e => { if (e.target === ov2) ov2.remove(); });
     document.body.appendChild(ov2);
@@ -325,7 +325,6 @@ async function showCheckpointDiff(ckptId: string, forChatId: string | null = nul
     if (!chatId || typeof getCheckpointDiff !== 'function') return;
     const diff = await getCheckpointDiff(chatId, ckptId);
     const _sz  = n => n >= 1048576 ? `${(n/1048576).toFixed(1)}MB` : n >= 1024 ? `${(n/1024).toFixed(1)}KB` : `${n}B`;
-    const _esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
     let bodyHtml, all = [];
     if (!diff || (!diff.idbDelta.length && !diff.localDelta.length)) {
@@ -343,7 +342,7 @@ async function showCheckpointDiff(ckptId: string, forChatId: string | null = nul
                     const idx = all.indexOf(f);
                     const clickable = (f.op === 'modify' || f.op === 'add') ? ' fg-diff-file-clickable' : '';
                     const hint = f.op === 'modify' ? ' title="Double-click to view diff"' : f.op === 'add' ? ' title="Double-click to open file"' : '';
-                    return `<div class="fg-diff-file${clickable}" data-idx="${idx}"${hint}>${_esc(f.name)}`
+                    return `<div class="fg-diff-file${clickable}" data-idx="${idx}"${hint}>${escapeHtml(f.name)}`
                         + (f.content != null ? ` <span class="fg-diff-size">${_sz(f.content.length)}</span>` : '')
                         + `</div>`;
                 }).join('')

@@ -19,6 +19,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile, readFile, mkdir, readdir, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { configDir, loadDotenv } from './dotenv.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, realpathSync } from 'node:fs';
 import { join, dirname, basename, normalize, relative, sep } from 'node:path';
 import { tmpdir, networkInterfaces, homedir } from 'node:os';
@@ -174,29 +175,7 @@ function _tokenOk(given: string | undefined, token: string): boolean {
 
 // ── Dotenv ────────────────────────────────────────────────────────────────────
 
-function _parseDotenvFile(envPath: string): void {
-    if (!existsSync(envPath)) return;
-    for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-        const t = line.trim();
-        if (!t || t.startsWith('#') || !t.includes('=')) continue;
-        const idx = t.indexOf('=');
-        const key = t.slice(0, idx).trim();
-        let val = t.slice(idx + 1).trim();
-        if (val.length >= 2 && val[0] === val.at(-1) && (val[0] === '"' || val[0] === "'"))
-            val = val.slice(1, -1);
-        if (key && !(key in process.env)) process.env[key] = val;
-    }
-}
-
-export function configDir(): string {
-    return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'freegent');
-}
-
-// Precedence: shell env, then <project>/.env, then ~/.config/freegent/credentials.
-export function loadDotenv(): void {
-    _parseDotenvFile(join(process.cwd(), '.env'));
-    _parseDotenvFile(join(configDir(), 'credentials'));
-}
+export { configDir, loadDotenv };
 
 // ── Self-target detection ─────────────────────────────────────────────────────
 

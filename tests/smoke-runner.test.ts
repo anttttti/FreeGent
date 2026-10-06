@@ -19,6 +19,10 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
             const path = require('node:path');
             const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
             require('node:child_process').spawnSync = (_command, args) => {
+                if (args.includes('--print-model')) {
+                    const model = args.includes('--llm') ? args[args.indexOf('--llm') + 1] : 'test|primary-model';
+                    return { status: 0, stdout: model + '\\n', stderr: '' };
+                }
                 fs.writeFileSync(path.join(__dirname, 'args.json'), JSON.stringify(args));
                 fs.writeFileSync(args[args.indexOf('--log') + 1], fixture.entries.map(e => JSON.stringify(e)).join('\\n'));
                 for (const [name, content] of Object.entries(fixture.files))
@@ -36,6 +40,7 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
         const logName = readdirSync(logDir).find(name => name.startsWith('smoke-'))!;
         return {
             exit: result.status,
+            stdout: result.stdout,
             row: JSON.parse(readFileSync(join(logDir, logName), 'utf8')),
             args: JSON.parse(readFileSync(join(root, 'args.json'), 'utf8')) as string[],
         };
@@ -58,6 +63,8 @@ describe('smoke runner', () => {
         expect(result.row.info).toContain('steps: 1');
         expect(result.row.output).toBe('Helsinki.');
         expect(result.args).not.toContain('--llm');
+        expect(result.stdout).toContain('Primary model: test|primary-model');
+        expect(result.stdout.indexOf('Primary model:')).toBeLessThan(result.stdout.indexOf('Recorded response'));
     });
 
     it('still fails when actual LLM responses exceed the step budget', () => {
@@ -81,6 +88,7 @@ describe('smoke runner', () => {
         expect(result.exit).toBe(1);
         expect(result.row.failures).toContain('tool "write_file" was not called');
         expect(result.args[result.args.indexOf('--llm') + 1]).toBe('google|test-model');
+        expect(result.stdout).toContain('Primary model: google|test-model');
     });
 
     it('accepts the basic file-write case through bash and rejects a missing or incorrect file', () => {
@@ -122,5 +130,21 @@ describe('smoke runner', () => {
     it('forwards a CLI tool override when the case has no override', () => {
         const result = runFixture({}, [], 'Done.', undefined, {}, {}, ['--enable-tools', 'replace_in_file,append_file']);
         expect(result.args[result.args.indexOf('--enable-tools') + 1]).toBe('replace_in_file,append_file');
+    });
+
+    it('summarises actual primary and fallback steps while excluding non-step records', () => {
+        const result = runFixture({ max_steps: 3 }, [
+            { timing: { step: 'setup:start', ms: 0 } },
+            { step: 0, provider: 'nous', model: 'primary', response: 'Working.' },
+            { type: 'nudge', provider: 'nous', model: 'primary', step: 0 },
+            { step: 1, provider: 'google', model: 'fallback', response: 'Working.' },
+            { type: 'history_snapshot', provider: 'google', model: 'fallback', step: 1 },
+            { step: 2, provider: 'google', model: 'fallback', response: 'Done.' },
+            { type: 'history_final', history: [] },
+        ], 'Done.');
+        expect(result.exit).toBe(0);
+        expect(result.stdout).toContain('Models used (LLM steps):');
+        expect(result.stdout).toMatch(/google\|fallback\s+2/);
+        expect(result.stdout).toMatch(/nous\|primary\s+1/);
     });
 });

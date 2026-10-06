@@ -214,7 +214,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
         const fit = () => {
             if (!isCustomEndpoint(ep) && getOAIContextTokens() >= 50000) { maxTok = _effectiveSummaryTokens(); return; }
             const est = Math.ceil(estimateTokens([{ role: 'system', content: system }, ...msgs, instr]) * 1.1)
-                      + (tools ? Math.ceil(JSON.stringify(tools).length / 4) : 0);
+                      + (tools ? estimateTokens(tools) : 0);
             maxTok = Math.min(_effectiveSummaryTokens(), getOAIContextTokens() - est - 512);
         };
         const dropOldest = (): boolean => {

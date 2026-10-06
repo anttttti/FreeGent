@@ -114,7 +114,16 @@ const cases = allCases.filter(c => {
     return true;
 });
 
-console.log(`\nFreeGent smoke tests — ${cases.length} of ${allCases.length} cases\n`);
+// Ask the same CLI used by the cases to resolve profile, keys and model priority.
+// This performs no LLM request and creates no workspace/session/log files.
+const fgRun = resolve(ROOT, 'fg-run.ts');
+const tsx = resolve(ROOT, 'node_modules/.bin/tsx');
+const primaryResult = spawnSync(tsx, ['--env-file-if-exists=.env', fgRun, '--print-model', ...buildFgExtras(cases[0])], {
+    cwd: ROOT, timeout: 30_000, encoding: 'utf8',
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+});
+console.log(`\nFreeGent smoke tests — ${cases.length} of ${allCases.length} cases`);
+console.log(`Primary model: ${primaryResult.status === 0 ? primaryResult.stdout.trim() : '(could not resolve)'}\n`);
 if (dryRun) {
     for (const c of cases) console.log(`  ${c.id.padEnd(25)} [${c.group}] ${c.desc}`);
     process.exit(0);
@@ -143,6 +152,10 @@ function readWsFile(path) {
 function wsFileSize(path) {
     const full = join(workspace, path);
     return existsSync(full) ? readFileSync(full).length : -1;
+}
+
+function llmSteps(logEntries) {
+    return logEntries.filter(e => !e.type && Number.isInteger(e.step));
 }
 
 // ── Check evaluation ─────────────────────────────────────────────────────────
@@ -179,7 +192,7 @@ function evalChecks(c, output, logEntries) {
 
     // max_steps: count LLM response records, excluding timing, nudges and snapshots.
     if (ch.max_steps != null) {
-        const steps = logEntries.filter(e => !e.type && Number.isInteger(e.step)).length;
+        const steps = llmSteps(logEntries).length;
         if (steps > ch.max_steps) failures.push(`used ${steps} steps, limit is ${ch.max_steps}`);
         info.push(`steps: ${steps}`);
     }
@@ -218,6 +231,7 @@ function evalChecks(c, output, logEntries) {
 
 const results = [];
 let passed = 0, failed = 0, errored = 0;
+const modelSteps = new Map();
 
 for (const c of cases) {
     if (!keepWs) resetWorkspace();
@@ -249,8 +263,6 @@ for (const c of cases) {
     let runError = null;
 
     try {
-        const fgRun    = resolve(ROOT, 'fg-run.ts');
-        const tsx      = resolve(ROOT, 'node_modules/.bin/tsx');
         const result = spawnSync(tsx, ['--env-file-if-exists=.env', fgRun, ...fgArgs], {
             cwd: ROOT,
             timeout: caseTimeoutMs + 10_000,
@@ -276,6 +288,11 @@ for (const c of cases) {
             .split('\n').filter(Boolean)
             .map(l => { try { return JSON.parse(l); } catch { return null; } })
             .filter(Boolean);
+    }
+
+    for (const entry of llmSteps(logEntries)) {
+        const model = entry.model ? `${entry.provider || 'unknown'}|${entry.model}` : '(unknown model)';
+        modelSteps.set(model, (modelSteps.get(model) || 0) + 1);
     }
 
     if (runError) {
@@ -306,6 +323,15 @@ for (const c of cases) {
 
 console.log(`\n${'─'.repeat(80)}`);
 console.log(`Results: ${passed} passed, ${failed} failed, ${errored} errored  (${cases.length} total)`);
+console.log('\nModels used (LLM steps):');
+if (modelSteps.size) {
+    const width = Math.max('Model'.length, ...[...modelSteps.keys()].map(model => model.length));
+    console.log(`  ${'Model'.padEnd(width)}  Steps`);
+    for (const [model, steps] of [...modelSteps].sort((a, b) => b[1] - a[1]))
+        console.log(`  ${model.padEnd(width)}  ${steps}`);
+} else {
+    console.log('  No LLM steps recorded.');
+}
 console.log(`Log: ${logPath}`);
 
 if (failed + errored > 0) process.exit(1);

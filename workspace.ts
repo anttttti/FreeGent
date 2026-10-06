@@ -1,6 +1,7 @@
 // workspace.js — FreeGent file workspace
 // IndexedDB storage + optional File System Access API
 
+import { escapeHtml } from './html-escape.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -912,21 +913,20 @@ function updateSelectionUI() {
 
 function _buildPyOutputHtml(filename, result) {
     const { stdout = '', stderr = '', exit_code = 0 } = result;
-    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const parts = [];
     if (stdout) {
         const lines = stdout.split('\n').map(line => {
             const m = line.match(/^\[IMAGE:(.+)\]$/);
             if (m) {
                 const img = _pyodideImageStore?.[m[1]];
-                if (img && typeof img === 'string') return `<img src="${esc(img)}" style="max-width:100%;margin:6px 0;display:block;">`;
+                if (img && typeof img === 'string') return `<img src="${escapeHtml(img)}" style="max-width:100%;margin:6px 0;display:block;">`;
                 if (img?.type === 'svg') return `<div style="margin:6px 0;">${img.content}</div>`;
             }
-            return esc(line);
+            return escapeHtml(line);
         });
         parts.push(`<pre class="out">${lines.join('\n')}</pre>`);
     }
-    if (stderr) parts.push(`<pre class="err">${esc(stderr)}</pre>`);
+    if (stderr) parts.push(`<pre class="err">${escapeHtml(stderr)}</pre>`);
     if (!stdout && !stderr) parts.push('<span class="empty">No output</span>');
     if (exit_code) parts.push(`<div class="exit">exit code ${exit_code}</div>`);
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
@@ -937,7 +937,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;}
 .exit{color:#f48;font-size:11px;margin-top:8px;}
 .empty{color:#666;font-style:italic;}
 </style></head><body>
-<div class="hdr">${esc(filename)}</div>${parts.join('\n')}
+<div class="hdr">${escapeHtml(filename)}</div>${parts.join('\n')}
 </body></html>`;
 }
 
@@ -1555,7 +1555,7 @@ function _attachFileTooltip(row, info) {
                 document.body.appendChild(tip);
             }
         }
-        const lines = [`<b>${_esc(info.name)}</b>`];
+        const lines = [`<b>${escapeHtml(info.name)}</b>`];
         if (info.size != null) lines.push(`Size: ${_fmtFileSize(info.size)}`);
         if (info.lastModified) lines.push(`Modified: ${new Date(info.lastModified).toLocaleString()}`);
         tip.innerHTML = lines.join('<br>');
@@ -2472,9 +2472,6 @@ async function _extractDocText(name, base64Content) {
     catch (error) { return `[Document extraction failed for ${name}: ${error.message}]`; }
 }
 
-function _esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
 
 async function _restoreProjectData(data) {
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
@@ -2549,7 +2546,7 @@ function _showFolderPrompt(projectName, folderName, projectId) {
     ov.innerHTML = `<div class="fg-modal fg-modal-sm">
         <div class="fg-modal-header"><span class="fg-modal-title">Local folder</span></div>
         <div class="fg-modal-body">
-          <p>Project <strong>${_esc(projectName)}</strong> was saved with local folder <code>${_esc(folderName)}</code>. Open a local folder now?</p>
+          <p>Project <strong>${escapeHtml(projectName)}</strong> was saved with local folder <code>${escapeHtml(folderName)}</code>. Open a local folder now?</p>
           <label class="fg-modal-check-label"><input type="checkbox" id="fg-folder-suppress"> Don't ask again for this project</label>
         </div>
         <div class="fg-modal-btns">
@@ -2652,7 +2649,7 @@ async function loadProjectUI() {
     ov.className = 'fg-modal-overlay';
     const rows = projects.map(p =>
         `<div class="fg-proj-row" data-id="${p.id}">
-           <span class="fg-proj-name">${_esc(p.name)}</span>
+           <span class="fg-proj-name">${escapeHtml(p.name)}</span>
            <span class="fg-proj-date">${p.savedAt?.slice(0,16).replace('T',' ') || ''}</span>
            <button class="fg-proj-delete ws-action-btn" data-del="${p.id}">✕</button>
          </div>`

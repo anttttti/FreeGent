@@ -5,10 +5,10 @@
 // app module body runs. It is also imported inside headless-runner.js, but Node.js
 // module caching means it only executes once — the first time (here).
 import './bootstrap-jsdom.js';
-import { run, prompt as llmPrompt } from './headless-runner.js';
+import { run, prompt as llmPrompt, getHeadlessPrimaryModel } from './headless-runner.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { homedir } from 'node:os';
+import { loadDotenv } from './dotenv.js';
 
 // ── .env loader ───────────────────────────────────────────────────────────────
 // Reads KEY=VALUE pairs from .env files and sets any key not already present
@@ -18,23 +18,7 @@ import { homedir } from 'node:os';
 //   1. <cwd>/.env                  — project-local; gitignored; legacy/override path
 //   2. ~/.config/freegent/credentials — user-global; outside any repo, cannot be committed
 //                                       Recommended location for API keys.
-{
-    function _loadEnvFile(path: string) {
-        if (!existsSync(path)) return;
-        for (const line of readFileSync(path, 'utf8').split('\n')) {
-            const t = line.trim();
-            if (!t || t.startsWith('#') || !t.includes('=')) continue;
-            const eq = t.indexOf('=');
-            const k  = t.slice(0, eq).trim();
-            let   v  = t.slice(eq + 1).trim();
-            if (v.length >= 2 && v[0] === v[v.length - 1] && (v[0] === '"' || v[0] === "'")) v = v.slice(1, -1);
-            if (k && !(k in process.env)) process.env[k] = v;
-        }
-    }
-    _loadEnvFile(join(resolve('.'), '.env'));
-    const _xdg = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
-    _loadEnvFile(join(_xdg, 'freegent', 'credentials'));
-}
+loadDotenv();
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -58,6 +42,7 @@ Options:
   --workspace <path>    Root directory for file operations (default: WORKSPACE_ROOT env or cwd)
   --provider  <id>      LLM provider: google|openai|nvidia|groq|… (default: openai)
   --model     <id>      Model ID
+  --print-model        Print the resolved primary model without running a task
   --api-key   <key>     API key (or FREEGENT_API_KEY env var)
   --api-url   <url>     Base URL for OpenAI-compatible endpoints
   --timeout     <ms>    Abort agent after this many ms (default: 1800000 = 30 min)
@@ -130,10 +115,15 @@ if (!task && taskFile) {
     try { task = readFileSync(taskFile, 'utf8').trim(); }
     catch (e) { console.error(`Cannot read task file: ${taskFile} — ${e.message}`); process.exit(1); }
 }
-if (!task && !promptText) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
+if (!task && !promptText && !_flag('--print-model')) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 
 const workspaceRoot = resolve(workspacePath);
 const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
+
+if (_flag('--print-model')) {
+    console.log(getHeadlessPrimaryModel(sharedOpts) || '(no active model)');
+    process.exit(0);
+}
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 // init.js — FreeGent: DOMContentLoaded bootstrap, wires all modules together
 // Depends on: all other modules (loaded last)
 import { KEYS, chatKey } from './storage-keys.js';
+import { escapeHtml } from './html-escape.js';
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
 // data-theme is set by an inline <script> in <head> (before styles.css) to
@@ -481,14 +482,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const hits = (await searchMessages?.(query)) ?? [];
         if (seq !== _msgSearchSeq) return;  // a newer keystroke started another search
         if (!hits.length) {
-            results.innerHTML = `<div class="msg-search-empty">No results for "${_esc(query)}"</div>`;
+            results.innerHTML = `<div class="msg-search-empty">No results for "${escapeHtml(query)}"</div>`;
             return;
         }
         results.innerHTML = hits.map((h: any, i: number) => `
             <div class="msg-search-result" role="option" data-chat-id="${h.chatId}" data-idx="${i}"
                  onclick="msgSearchSelect('${h.chatId}')" tabindex="-1">
-                <div class="msg-search-result-chat">${_esc(h.chatName)}</div>
-                <div class="msg-search-result-role">${_esc(h.role)}</div>
+                <div class="msg-search-result-chat">${escapeHtml(h.chatName)}</div>
+                <div class="msg-search-result-role">${escapeHtml(h.role)}</div>
                 <div class="msg-search-result-excerpt">${h.excerptHtml}</div>
                 <div class="msg-search-result-date">${_fmtDate(h.lastAt)}</div>
             </div>`).join('');
@@ -521,9 +522,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             switchToChat?.(chatId);
     }
 
-    function _esc(s: string): string {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
     function _fmtDate(ts: number): string {
         if (!ts) return '';
         return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });

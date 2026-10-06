@@ -8,6 +8,7 @@
 // ── Proxy helpers ─────────────────────────────────────────────────────────
 
 // Returns the active proxy base URL — CF Worker on GitHub Pages, local /api/proxy otherwise.
+import { escapeHtml } from './html-escape.js';
 function _proxyBase(): string {
     return typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '/api/proxy';
 }
@@ -707,9 +708,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
 
 // ── Modal UI ──────────────────────────────────────────────────────────────
 
-function _esc(s: string): string {
-    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
 
 function _getSuppressedRemoves(): Set<string> {
     try { return new Set(JSON.parse(localStorage.getItem('fg_suppressed_removes') || '[]')); }
@@ -794,19 +792,19 @@ function _renderSectionRows(items: Proposal[], sectionIdx: 'adds' | 'removes', a
     const color = sectionIdx === 'adds' ? '#4caf50' : '#e57373';
     return visible.map((p, idx) => {
         const checked   = p.selected ? 'checked' : '';
-        const provBadge = `<span style="font-size:10px;background:var(--border);padding:1px 5px;border-radius:3px;margin-right:4px">${_esc(p.provider)}</span>`;
+        const provBadge = `<span style="font-size:10px;background:var(--border);padding:1px 5px;border-radius:3px;margin-right:4px">${escapeHtml(p.provider)}</span>`;
         const _lnk = (text: string) => p.url
-            ? `<a href="${_esc(p.url)}" target="_blank" rel="noopener" title="${_esc(p.url)}" style="color:var(--accent);text-decoration:underline">${text}</a>`
+            ? `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener" title="${escapeHtml(p.url)}" style="color:var(--accent);text-decoration:underline">${text}</a>`
             : text;
         const filterTag = p.filteredBy
-            ? `<span style="font-size:10px;background:rgba(255,165,0,0.15);color:#f5a623;padding:1px 5px;border-radius:3px;margin-left:4px">${_esc(p.filteredBy)}</span>`
+            ? `<span style="font-size:10px;background:rgba(255,165,0,0.15);color:#f5a623;padding:1px 5px;border-radius:3px;margin-left:4px">${escapeHtml(p.filteredBy)}</span>`
             : '';
         return `<label style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;cursor:pointer;font-size:12px">
-            <input type="checkbox" data-spec="${_esc(p.spec)}" data-section="${sectionIdx}" ${checked} style="margin-top:2px;flex-shrink:0">
+            <input type="checkbox" data-spec="${escapeHtml(p.spec)}" data-section="${sectionIdx}" ${checked} style="margin-top:2px;flex-shrink:0">
             <span style="flex:1;min-width:0">
-                ${provBadge}<strong style="color:${color}">${_lnk(_esc(p.label))}</strong>
-                <span style="color:var(--muted);margin-left:4px">${_lnk(_esc(p.model))}</span>${filterTag}
-                <br><span style="color:var(--muted)">${_esc(p.note)}</span>
+                ${provBadge}<strong style="color:${color}">${_lnk(escapeHtml(p.label))}</strong>
+                <span style="color:var(--muted);margin-left:4px">${_lnk(escapeHtml(p.model))}</span>${filterTag}
+                <br><span style="color:var(--muted)">${escapeHtml(p.note)}</span>
             </span>
         </label>`;
     }).join('');
@@ -854,7 +852,7 @@ export function showModelUpdateModal(): void {
 
         if (errors.length) {
             html += `<div style="background:rgba(229,115,115,0.1);border:1px solid rgba(229,115,115,0.3);border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#e57373">`;
-            html += errors.map(e => `<div>${_esc(e)}</div>`).join('');
+            html += errors.map(e => `<div>${escapeHtml(e)}</div>`).join('');
             html += `</div>`;
         }
 
@@ -900,9 +898,9 @@ export function showModelUpdateModal(): void {
             // Chips start in the "filter active" (hiding) state — grey/subdued.
             // Clicking turns them blue to indicate they're actively showing filtered models.
             const chipsHtml = chipsWithData.map(f =>
-                `<button class="fg-mu-chip fg-mu-chip-on" data-filter="${f.key}" title="${_esc(f.title)}"
+                `<button class="fg-mu-chip fg-mu-chip-on" data-filter="${f.key}" title="${escapeHtml(f.title)}"
                     style="font-size:11px;padding:2px 8px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap;line-height:1.4;opacity:0.7">
-                    ${_esc(f.label)} <span>(${filterCounts[f.key]})</span>
+                    ${escapeHtml(f.label)} <span>(${filterCounts[f.key]})</span>
                 </button>`
             ).join('');
 
