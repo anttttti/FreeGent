@@ -103,6 +103,24 @@ function makeKanbanCard(task) {
     };
     card.appendChild(trash);
 
+    // Manual block / unblock: a plain status flip (no QA gates). Unblocking returns the task to To Do.
+    const isBlocked = canonTaskStatus(task.fm.status) === 'blocked';
+    const blockBtn = document.createElement('button');
+    blockBtn.className = 'kanban-card-block';
+    blockBtn.title = isBlocked ? 'Unblock task' : 'Block task';
+    blockBtn.textContent = isBlocked ? '▶' : '⊘';
+    blockBtn.draggable = false;
+    blockBtn.onclick = async e => {
+        e.stopPropagation();
+        try {
+            await setTaskStatus(task.path, isBlocked ? 'open' : 'blocked');
+            await syncLedgerWithTaskFiles();
+        } catch (err: any) {
+            alert('Failed to ' + (isBlocked ? 'unblock' : 'block') + ' task: ' + (err?.message || err));
+        }
+    };
+    card.appendChild(blockBtn);
+
     const title = document.createElement('div');
     title.className = 'kanban-card-title';
     const taskName = task.fm.title || task.path.replace(/^(?:fg-|local\/)?tasks\//, '').replace('.md', '');
