@@ -14,7 +14,7 @@
 // Server entries hold their auth headers the way custom models hold their keys: in
 // localStorage, never in profiles.
 
-import { isStaticHost } from './static-hosts.js';
+import { resolveProxy } from './proxy.js';
 
 const MCP_CONTEXT7_URL = 'https://mcp.context7.com/mcp';
 const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -109,14 +109,8 @@ function _conn(server: { url: string; headers?: Record<string, string> }) {
     return c;
 }
 
-// The local dev server's proxy, or '' where there is none (static host, headless).
-function _proxyUrl(): string {
-    try {
-        if ((window as any)._fgHeadless) return '';
-        if (isStaticHost(window.location.hostname)) return '';
-        return `${window.location.origin}/api/proxy`;
-    } catch { return ''; }
-}
+// The local dev server's proxy, or '' where there is none (static host, headless): see proxy.ts.
+function _proxyUrl(): string { return resolveProxy('local'); }
 
 async function _send(url: string, headers: Record<string, string>, body: string, viaProxy: boolean): Promise<Response> {
     const signal = AbortSignal.timeout(_TIMEOUT_MS);
