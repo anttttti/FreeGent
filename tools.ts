@@ -386,7 +386,8 @@ function _runsOnHost(name: string, args: any): boolean {
     const pyodideRuns = lang !== 'bash' && pyodideStatus === 'ready';
     return !pyodideRuns;
 }
-const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'apply_patch', 'replace_in_file']);
+// browser_* tools that change what a page does or holds (click, type, select, navigate) act on an external site.
+const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'apply_patch', 'replace_in_file', 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
 
 // ── apply_patch helpers: fuzzy offset correction + LLM disambiguation ────────
 
