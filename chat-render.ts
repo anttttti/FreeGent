@@ -3,6 +3,7 @@
 import { mainAgentRole } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { _stripTerminal } from './turn-protocol.js';
+import { escapeHtml } from './html-escape.js';
 
 // ── Media rendering helpers ────────────────────────────────────────────────
 
@@ -428,7 +429,7 @@ export function renderMarkdown(text: any): any {
             // that the replace below adds. Falls back to HTML-escaped text if DOMPurify absent.
             let html = (typeof DOMPurify !== 'undefined')
                 ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
-                : raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                : escapeHtml(raw);
             html = html.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=');
             // Restore pre-rendered math (%%FWMATH0%% placeholders survive DOMPurify as text)
             if (_mathParts.length) {
@@ -441,7 +442,7 @@ export function renderMarkdown(text: any): any {
     return preprocessed
         .split(/(<div class="md-img-slot"[^>]*><\/div>)/g)
         .map(chunk => chunk.startsWith('<div class="md-img-slot"') ? chunk :
-            chunk.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            escapeHtml(chunk)
                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                  .replace(/`([^`]+)`/g, '<code>$1</code>')
                  .replace(/\n/g, '<br>'))

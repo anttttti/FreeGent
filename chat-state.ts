@@ -936,8 +936,10 @@ async function searchMessages(query: string): Promise<any[]> {
             const raw   = (start > 0 ? '…' : '') + content.slice(start, end) + (end < content.length ? '…' : '');
             // Highlight the match term in the excerpt
             const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const excerptHtml = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                .replace(new RegExp(safeQ, 'gi'), m => `<mark>${m}</mark>`);
+            // Split the raw text on the query, then escape each piece: matching escaped text would
+            // miss queries containing & < > " and could hit inside entities (e.g. "amp" in &amp;).
+            const excerptHtml = raw.split(new RegExp(`(${safeQ})`, 'gi'))
+                .map((part, i) => i % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)).join('');
             results.push({ chatId: chat.id, chatName: chat.name, role: msg.role, excerptHtml, lastAt: chat.lastAt ?? 0 });
             break; // one match per chat per search
         }

@@ -27,3 +27,13 @@ describe('parseDotenvFile', () => {
             .toEqual(['1', 'two', 'three', 'shell']);
     });
 });
+
+describe('no hand-rolled HTML escapers', () => {
+    it('escapeHtml is the only place that chains replace(/&/g, …)', async () => {
+        const { readdirSync, readFileSync } = await import('node:fs');
+        const root = join(__dirname, '..');
+        const offenders = readdirSync(root).filter(f => /\.tsx?$/.test(f) && f !== 'html-escape.ts')
+            .filter(f => /replace\(\/&\/g\s*,\s*['"]&amp;['"]\)/.test(readFileSync(join(root, f), 'utf-8')));
+        expect(offenders).toEqual([]);
+    });
+});
