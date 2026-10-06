@@ -8,32 +8,8 @@
  */
 import type { Command } from './index';
 import { readFileText } from './flags';
+import { strftime } from './date';
 
-function strftime(fmt: string, d: Date): string {
-  const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  return fmt.replace(/%([a-zA-Z%])/g, (_m, c) => {
-    switch (c) {
-      case 'Y': return String(d.getFullYear());
-      case 'y': return p(d.getFullYear() % 100);
-      case 'm': return p(d.getMonth() + 1);
-      case 'd': return p(d.getDate());
-      case 'e': return String(d.getDate()).padStart(2, ' ');
-      case 'H': return p(d.getHours());
-      case 'M': return p(d.getMinutes());
-      case 'S': return p(d.getSeconds());
-      case 'a': return DAYS[d.getDay()].slice(0, 3);
-      case 'A': return DAYS[d.getDay()];
-      case 'b': case 'h': return MONTHS[d.getMonth()].slice(0, 3);
-      case 'B': return MONTHS[d.getMonth()];
-      case 'F': return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-      case 'T': return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-      case '%': return '%';
-      default: return '%' + c;
-    }
-  });
-}
 
 /** Pad `text` (currently `at` columns wide) out to column `to`: tabs while a stop fits, then spaces. */
 function padTo(at: number, to: number, tabs: boolean): string {
@@ -162,7 +138,7 @@ export const pr: Command = {
       const cursors = inputs.map(() => 0);
       const total = mergedSrcs ? Math.max(...inputs.map(l => l.length)) : s.lines.length;
       const title = header ?? s.name;
-      const when = strftime(dateFmt, s.mtime);
+      const when = strftime(dateFmt, s.mtime, false);
       const doneAll = () => (mergedSrcs ? cursors.every((c, k) => c >= inputs[k].length) : idx >= total);
       while (!doneAll()) {
         let rows: string[][] = [];

@@ -1,17 +1,15 @@
 import type { Command, CommandContext } from './index';
 import { breToJs, ereToJs } from '../utils/posix-regex';
+import { toLines } from './flags';
+
+/** Lines of a text, without the empty element a final newline would leave. */
+export const splitLines = (text: string): string[] => toLines(text).lines;
 
 // GNU grep: BRE by default (-E extended, -F fixed strings, -P Perl-like = JavaScript regex).
 // Output, file-name prefixes, context separators and exit status (0 match, 1 none, 2 error) match
 // GNU grep.
 
 /** Lines of a file or stream; a final newline ends the last line rather than starting another. */
-export function splitLines(text: string): string[] {
-  if (text === '') return [];
-  const lines = text.split('\n');
-  if (text.endsWith('\n')) lines.pop();
-  return lines;
-}
 
 // grep -w: the match must not follow a word character. Lookbehind is a RegExp SyntaxError before
 // Safari 16.4 (it is built from a string here, so only `grep -w` would fail); there, \b is the

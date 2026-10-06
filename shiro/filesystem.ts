@@ -1,3 +1,4 @@
+import { fsError } from './utils/errors.js';
 export function globPatternToRegex(pattern: string, base: string, caseInsensitive?: boolean): RegExp {
   // Resolve the pattern relative to base
   let fullPattern: string;
@@ -109,22 +110,6 @@ function makeStat(node: FSNode): StatResult {
   } as any;
 }
 
-/** Create an Error with a .code property for Node.js/isomorphic-git compatibility */
-function fsError(code: string, message: string): Error {
-  const err = new Error(message) as Error & { code: string; errno: number };
-  err.code = code;
-  // Add errno for isomorphic-git compatibility
-  // Common errno values: ENOENT=-2, EISDIR=-21, ENOTDIR=-20, EEXIST=-17
-  const errnos: Record<string, number> = {
-    ENOENT: -2,
-    EISDIR: -21,
-    ENOTDIR: -20,
-    EEXIST: -17,
-    ENOTEMPTY: -39,
-  };
-  err.errno = errnos[code] || -1;
-  return err;
-}
 
 export type FSChangeEvent = 'write' | 'delete' | 'mkdir' | 'rename';
 export type FSChangeListener = (event: FSChangeEvent, path: string, newPath?: string) => void;

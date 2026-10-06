@@ -10,6 +10,7 @@ import type { Command, CommandContext } from './index';
 import { crc32 } from './checksums';
 import { bytesToText, textToBytes } from '../utils/bytes';
 import { readdirEntries, statEntry } from './flags';
+import { globToRegex } from '../utils/glob-regex.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -108,18 +109,6 @@ async function entryData(e: Entry): Promise<Uint8Array> {
   if (e.method === 0) return e.data;
   if (e.method === 8) return inflateRaw(e.data);
   throw new Error(`unsupported compression method ${e.method}`);
-}
-
-function globToRegex(g: string, slashSpecial = false): RegExp {
-  let re = '';
-  for (let i = 0; i < g.length; i++) {
-    const ch = g[i];
-    if (ch === '*') re += slashSpecial ? '[^/]*' : '.*';
-    else if (ch === '?') re += slashSpecial ? '[^/]' : '.';
-    else if (ch === '[') { const close = g.indexOf(']', i + 2); if (close > 0) { re += '[' + g.slice(i + 1, close).replace(/^!/, '^') + ']'; i = close; } else re += '\\['; }
-    else re += ch.replace(/[.+^${}()|\\]/g, '\\$&');
-  }
-  return new RegExp('^' + re + '$');
 }
 
 async function readFileBytes(ctx: CommandContext, path: string): Promise<Uint8Array> {

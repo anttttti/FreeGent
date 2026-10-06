@@ -1,4 +1,5 @@
 import { base64ToBytes } from '../shiro/utils/bytes.js';
+import { fsError as makeFsError } from '../shiro/utils/errors.js';
 // exec-sandbox/js-fs.ts — the `fs` and `path` modules for execute_code JavaScript.
 //
 // The same /workspace the bash shell and Python see: the working directory is /workspace, and
@@ -44,9 +45,8 @@ export const path = {
 };
 
 function fsError(code: string, op: string, p: string): Error {
-    const e: any = new Error(`${code}: ${code === 'ENOENT' ? 'no such file or directory' : code === 'EISDIR' ? 'illegal operation on a directory' : 'operation failed'}, ${op} '${p}'`);
-    e.code = code;
-    return e;
+    const what = code === 'ENOENT' ? 'no such file or directory' : code === 'EISDIR' ? 'illegal operation on a directory' : 'operation failed';
+    return makeFsError(code, `${code}: ${what}, ${op} '${p}'`, op, p);
 }
 
 /** A workspace file as the page sends it: text, or binary as base64. */

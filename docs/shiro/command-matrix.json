@@ -5282,6 +5282,7 @@
       "reachable": true,
       "imports": [
         "shiro/commands/index.ts",
+        "shiro/utils/format.ts",
         "shiro/utils/posix-regex.ts"
       ],
       "referencedBy": [
@@ -5307,6 +5308,7 @@
       "path": "shiro/commands/base64.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts"
       ],
@@ -5542,6 +5544,7 @@
         "shiro/commands/index.ts"
       ],
       "referencedBy": [
+        "shiro/commands/pr.ts",
         "shiro/commands/touch.ts",
         "shiro/commands/unix.ts"
       ]
@@ -5560,6 +5563,7 @@
       "path": "shiro/commands/dd.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts"
       ],
@@ -5603,7 +5607,8 @@
       "reachable": true,
       "imports": [
         "shiro/commands/flags.ts",
-        "shiro/commands/index.ts"
+        "shiro/commands/index.ts",
+        "shiro/utils/glob-regex.ts"
       ],
       "referencedBy": [
         "shiro/commands/unix.ts"
@@ -5724,6 +5729,7 @@
       "reachable": true,
       "imports": [
         "shiro/commands/index.ts",
+        "shiro/utils/glob-regex.ts",
         "shiro/utils/posix-regex.ts"
       ],
       "referencedBy": [
@@ -5734,10 +5740,13 @@
       "path": "shiro/commands/flags.ts",
       "reachable": true,
       "imports": [
-        "shiro/filesystem.ts"
+        "shiro/commands/index.ts",
+        "shiro/filesystem.ts",
+        "shiro/utils/bytes.ts"
       ],
       "referencedBy": [
         "shiro/commands/base32.ts",
+        "shiro/commands/base64.ts",
         "shiro/commands/break.ts",
         "shiro/commands/cat.ts",
         "shiro/commands/chmod.ts",
@@ -5747,6 +5756,7 @@
         "shiro/commands/continue.ts",
         "shiro/commands/cp.ts",
         "shiro/commands/cut.ts",
+        "shiro/commands/dd.ts",
         "shiro/commands/df.ts",
         "shiro/commands/du.ts",
         "shiro/commands/eval.ts",
@@ -5756,6 +5766,8 @@
         "shiro/commands/fmt.ts",
         "shiro/commands/fold.ts",
         "shiro/commands/free.ts",
+        "shiro/commands/grep.ts",
+        "shiro/commands/hashsum.ts",
         "shiro/commands/head.ts",
         "shiro/commands/id.ts",
         "shiro/commands/install.ts",
@@ -5772,8 +5784,10 @@
         "shiro/commands/pr.ts",
         "shiro/commands/printenv.ts",
         "shiro/commands/return.ts",
+        "shiro/commands/sed.ts",
         "shiro/commands/shift.ts",
         "shiro/commands/sleep.ts",
+        "shiro/commands/split.ts",
         "shiro/commands/stat.ts",
         "shiro/commands/strings.ts",
         "shiro/commands/tail.ts",
@@ -5874,6 +5888,7 @@
       "path": "shiro/commands/grep.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/posix-regex.ts"
       ],
@@ -5908,6 +5923,7 @@
       "reachable": true,
       "imports": [
         "shiro/commands/checksums.ts",
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts"
       ],
@@ -6031,6 +6047,7 @@
         "shiro/commands/false.ts",
         "shiro/commands/file.ts",
         "shiro/commands/find.ts",
+        "shiro/commands/flags.ts",
         "shiro/commands/fmt.ts",
         "shiro/commands/fold.ts",
         "shiro/commands/for.ts",
@@ -6405,7 +6422,8 @@
       "reachable": true,
       "imports": [
         "shiro/commands/index.ts",
-        "shiro/utils/bytes.ts"
+        "shiro/utils/bytes.ts",
+        "shiro/utils/format.ts"
       ],
       "referencedBy": [
         "shiro/commands/unix.ts"
@@ -6480,6 +6498,7 @@
       "path": "shiro/commands/pr.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/date.ts",
         "shiro/commands/flags.ts",
         "shiro/commands/index.ts"
       ],
@@ -6594,6 +6613,7 @@
       "path": "shiro/commands/sed.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/posix-regex.ts"
       ],
@@ -6705,6 +6725,7 @@
       "path": "shiro/commands/split.ts",
       "reachable": true,
       "imports": [
+        "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts"
       ],
@@ -6767,6 +6788,7 @@
         "shiro/commands/xz.ts",
         "shiro/commands/zstd.ts",
         "shiro/utils/bytes.ts",
+        "shiro/utils/glob-regex.ts",
         "shiro/utils/streams.ts"
       ],
       "referencedBy": [
@@ -7148,6 +7170,7 @@
         "shiro/commands/flags.ts",
         "shiro/commands/index.ts",
         "shiro/utils/bytes.ts",
+        "shiro/utils/glob-regex.ts",
         "shiro/utils/streams.ts"
       ],
       "referencedBy": [
@@ -10032,9 +10055,9 @@
     "headless-runner.ts": "e7ef77201bb3f9bc59d34a07703962dca1c35a18d4f9ee8d8a5745bdd976a7da",
     "pyodide-run.ts": "1c5770ccaf45d404adb9d2427739768f5df53ab989bcde212b27ef45b0dff635",
     "shiro/claude-config.ts": "95dc5aebac869a0a4eb395b046069067ab8f6da24f2c480eef7868534ee20992",
-    "shiro/commands/awk.ts": "5c4ae15afa7749f242cf7ec1118c7fc10895f8bcfef3246123260ebd15c02621",
+    "shiro/commands/awk.ts": "4dc0c11ccfdb54c123366abb8e82dc2b61565fc763d59021df6d4b7a8322fa88",
     "shiro/commands/base32.ts": "23dd6ad17b2840f7f97830e988df278f0e227549de016f5b6a61f07d9967daf4",
-    "shiro/commands/base64.ts": "4e18c28ba898932d08d96871dfc95d7ecf522a725788e5c720bb7c5021862a17",
+    "shiro/commands/base64.ts": "cd3d50d36f7b3fd70f0cbcd35a5767ae53960f0f3ee33c886794e4c87089da3e",
     "shiro/commands/basename.ts": "c2c597345e6cb3f57f9b9003f2a224cac7ad0974da2e549ba4aa4084d780acad",
     "shiro/commands/bc.ts": "20919a1163145ea4ae7f0ba23e94517d7ebef8072a05aef4428bba96f4e2d9db",
     "shiro/commands/break.ts": "23591e4b23ec0125a08aea1dc78d0e02e7945b174457dfb3bfb0ebf95be40468",
@@ -10057,11 +10080,11 @@
     "shiro/commands/cut.ts": "36f1513ef44adeec85437398f22dc02d19b4e5768fea57b18864789ec839d095",
     "shiro/commands/date.ts": "946a8ded853f07fcfe9577a81ceadc2123b3a7288d52d68fa2fff318ca3866ed",
     "shiro/commands/dc.ts": "6d4ca5c9bd536601598592c9f88948973b9af9c8e0b437aa0e23a53cb3970416",
-    "shiro/commands/dd.ts": "ddaf61d4146718aaee00f6ce1f6acdb74bce9ff8faadc80ac16d946a00b5d5fc",
+    "shiro/commands/dd.ts": "fdd91de095ffea9f68399cfcb596a7cda960e8c79b2705fbbc9988ca18d44847",
     "shiro/commands/df.ts": "dec388ade1b47a803593c1a1f69fbac7e7dcc3e2f338d213b730c6ca91a96cde",
     "shiro/commands/diff.ts": "6b8552ff511e717387470d3bb88a607b754337b7033aae079dd45f411e3d98c4",
     "shiro/commands/dirname.ts": "0ec134a394337625a0daa5e26d1951d6c5a4357a846a541f0d71c62d37530436",
-    "shiro/commands/du.ts": "246e25e541bda21c7b7670f53f0ad3bb0a6e32fff65ae2e67cca305c87cd548c",
+    "shiro/commands/du.ts": "bde834472305485951b8ea1cf57c3862b80ae6f9d0c9aee00dc7526f670febe0",
     "shiro/commands/echo.ts": "0fc7624bb40179f54be09d64b857c971f766a8d2ab129bb49e3a042f22997dba",
     "shiro/commands/env.ts": "0ea6bdd1acebb0ec8f7102a8c2759127dceabb02c714129b917c8d1c97006742",
     "shiro/commands/eval.ts": "a26c21b13960992a3701f7b5f7702b25a93d9588bd7c5944f3b1e4bf7eea539d",
@@ -10072,8 +10095,8 @@
     "shiro/commands/factor.ts": "839082f2f38cb7d82b969058e4878e40f62601b582b80c46441859481a038bda",
     "shiro/commands/false.ts": "4ecd89d893e1c03bd5c37ebff3602d0e13dd91b87fe19142c8e4d9b59769040e",
     "shiro/commands/file.ts": "1ab37f8fc395e1b8f6808c9316b5d6d8bc67d7d569e5476f8ed3b5ab564a5a69",
-    "shiro/commands/find.ts": "74b406df21f2681135914233c1622537bc8d26cdc22b0d664f8ecca5a7895a0e",
-    "shiro/commands/flags.ts": "7aeb05d4ed57d8888dcf8163662a09e809403dc5409ce0560577fb88d2bacba5",
+    "shiro/commands/find.ts": "b33dfa0f75d9f370d005519d62fe090fd9c95fac440f4cfa58581e9ac5dae068",
+    "shiro/commands/flags.ts": "0ec0b4b006858fceef58d6913e70008fe884df7759433c135ce41007b1330689",
     "shiro/commands/fmt.ts": "c8e7cfeeb12ada39d4844a84fea4a61b6e71f2f47e14320efa522dfc2ac19135",
     "shiro/commands/fold.ts": "199ef7773207f5404ecee818e4b6d01c0eb4a5f6e26c6c7d372a22253a18dbc5",
     "shiro/commands/for.ts": "c01bfa6b4386ab46882b89223081ce48735291db355bab57a2632049143b49e1",
@@ -10081,10 +10104,10 @@
     "shiro/commands/function.ts": "26d6bbf6d611f86b664c57776321599ec62c790c2f54ceb75bdc634a9d4aafb7",
     "shiro/commands/getconf.ts": "96dc93fc7ec6cee8ad7412b81e26a6c53aa37ea71a36fe706484af377fbae140",
     "shiro/commands/glob.ts": "c24e3b313625efbb33a2a43428d8c36e1e885c82cc918ae5c2f74d21bccb2346",
-    "shiro/commands/grep.ts": "1bc48ab60e5faecb6b4c052eeffe88cadadb3de1fefd349f82b9b681a5bbd1db",
+    "shiro/commands/grep.ts": "d61d168bc4cb763d7954910185478044bb6a21158d0eceb416a6a47a18248db9",
     "shiro/commands/gzip.ts": "b62e26ad02635ea84189724336e2d9b44564403673e1e749830cedcc88b7403d",
     "shiro/commands/hash.ts": "5f8038c734a63c3fb06972bc64b17ba57fb7396b854d52959e47deb29ad2c201",
-    "shiro/commands/hashsum.ts": "42dab5023a51450b0dbb34682ef15f0397807672c7d12896b8e9dc8d7f20adb5",
+    "shiro/commands/hashsum.ts": "2ca0bf0f9b80066a68630dd7c822fb0216f17771b811bb30cae728e9971df416",
     "shiro/commands/head.ts": "40eb0789a2cd0651bc0536af5d2d8b213ab3b62764cb5237f73c06bce1cee946",
     "shiro/commands/iconv.ts": "3ca960a4e7360a9eb25a7d41687c7149bd5f47a009cdbfcbf1a51bac81ac0d53",
     "shiro/commands/id.ts": "1aacbc26e128e07d4f2818728ddffcaa707fb67e6ce047175908aff7e9b27629",
@@ -10114,14 +10137,14 @@
     "shiro/commands/nproc.ts": "a62f3525ab213a707914ab24bd8b16780dea34a6869b0c41c9e78aa12895fd99",
     "shiro/commands/npx.ts": "0b72ee176c37465b2f965d71f6c2298e28af71fd33195bea4bd2232a7db8e99b",
     "shiro/commands/numfmt.ts": "b70bc079f7d57aee0ac6cf2fa52d4cc01571d0087bc42dfddb02716bdf6bce12",
-    "shiro/commands/od.ts": "92b3855a6c2c6a266dce50b3fcba8bf7d5a8cc544907a66ecb068ec5a6340e7e",
+    "shiro/commands/od.ts": "efc34c0d1fdcd3c96c9977bf9044d6b99726a4bdc8bdbee2e4a0fc973c82134e",
     "shiro/commands/openssl.ts": "d706c9434a0ca3dc9840e5d2b3d899bca7fd7585d4bd3cc4e089cc044f7a5e64",
     "shiro/commands/paste.ts": "d804841cf48d54d5b6096d6f1e45aef3ac67684cf00685c376a5c3ac45ae6043",
-    "shiro/commands/patch.ts": "86be6fbd0d43b9694f22ac57bb7219cb3157b5632592804319832ba14665e07c",
+    "shiro/commands/patch.ts": "257feecf4e395719b7b71fd300849162a826b4f38e41b32f91028a9945f64b10",
     "shiro/commands/pkg-config.ts": "c92836e65f8284745d036f3f3860ec14e1121fc0ef713d41d4843b4a3dfb3fb9",
     "shiro/commands/pkg.ts": "9e91af9429ce91afcbf1090349802d6c85225a423c115251209c15e989186ec7",
     "shiro/commands/posix-test.ts": "e7c4fb624926f7ea1f97b4fe8c5563d376448e4c7bd6d67b02f1a680d1347ebd",
-    "shiro/commands/pr.ts": "d32aa74e0021b4cc21767bec2aae9d1a7e3789bf8fcc8f9d9c31ed320125c424",
+    "shiro/commands/pr.ts": "cc509efafc6e33665ae7042bb82815ddeba8a5e4f8c18a6d310558f1f70690cc",
     "shiro/commands/printenv.ts": "5f00087b8323d5652f28e6edd9d971480f6a56c4d0b67ac136c64f9575770f7e",
     "shiro/commands/printf.ts": "9c77853faa6bd7cc15e64336ee9eeb2f9a555a884f06c6f63be88fcdb2314105",
     "shiro/commands/pwd.ts": "8366faeaf19b85b879707461752e09de15ec299c9ee5068fd8257e45e5fe2162",
@@ -10131,7 +10154,7 @@
     "shiro/commands/return.ts": "0053047e0beae664697aff88d543b44bd194407fb00ec7dfb0e09f5459e08808",
     "shiro/commands/rg.ts": "916a0a503f7fd18ae26be61acf2a394be1e3753d59c1226238625b8283af1d8d",
     "shiro/commands/run-subcommand.ts": "b2cb2ec7b0ba7097fc89e184d119356dab0bceb35b4d53259fcd221e297b4133",
-    "shiro/commands/sed.ts": "be279d26404a942b7c0509dd62444d21a3abc4dfc47c5e0e80af110f76c3e329",
+    "shiro/commands/sed.ts": "17a01f23471561abcb0b7d2c756eae6047c0fc441dd3adf3418174df62f81010",
     "shiro/commands/seq.ts": "118a5395c85b1849a520074300ee90db1756d86d122dfa4db36cc017ea82aeff",
     "shiro/commands/set.ts": "3b1ec0f95898eb8158d6c0fcb0ab88eb2e1fd902a995c691aa4b694723c88b5c",
     "shiro/commands/sevenzip.ts": "956c36ac382359e5bc93619025ac5c98c34a6751a7ba2c7564189b659612f48c",
@@ -10141,12 +10164,12 @@
     "shiro/commands/shiro-cmds.ts": "a021757029c0c78466eedaf77ff0789e8a6263bfbd2abf6f15dadf0909d009ff",
     "shiro/commands/sleep.ts": "037b9b8c67b516429ff9de46adfd7f9e3eaf18ee4ff4513326896e73233a7f4f",
     "shiro/commands/sort.ts": "bf6520b7700ab454d534f4af2b993799fd54adc025de3040873b5e87b2485bdf",
-    "shiro/commands/split.ts": "845205c6605a2744883813e2f0e6c6cc67dcd2fe75f66a49a48d91e92d659278",
+    "shiro/commands/split.ts": "3c4d4be00f32251138b17448b903d849c920a5292f890ce310d4065ea2112835",
     "shiro/commands/stat.ts": "e9d20331e69af31f2cf6c88cf529a50aac719abf25d73d32fb0c888a92210005",
     "shiro/commands/strings.ts": "799d6eb288d6b8c6a9b4e7cb40bb8dcd66487facc8d5ccc6e0b739979cbb3aeb",
     "shiro/commands/sum.ts": "7c91aa3ea59489444cf70e8deae095a35c63dae716ab028e653e382f0cfb89c3",
     "shiro/commands/tail.ts": "2d9815cdb5a2bbcf0e72ec935bf6a7a49f99e24072ae9fe8c2b0b5f5aaadf7fc",
-    "shiro/commands/tar.ts": "1009e75bae12259702d0ea75e0148c4dc0ae4e93b93859bc5c7ce3b51f9200e1",
+    "shiro/commands/tar.ts": "428d1b6820369f57820ddf56ce6221906f1606ba1f3a5adee51800ff546982da",
     "shiro/commands/tee.ts": "6f2bff5a8880acfbd60cca61d4a0a741d902fa0cbf6044390ada6da750383f63",
     "shiro/commands/text-utils.ts": "657585eeb28466fe4fb226c9d4f846a737115b5f4d5de08e7750e8fb8ae9aef6",
     "shiro/commands/timeout.ts": "0d9d24ad044c1e6c5b746e26537a02950885fa72a6723d1339bf2d470755fdef",
@@ -10170,12 +10193,12 @@
     "shiro/commands/xxd.ts": "fa51547aed5337fb58016b20d4c16e1f36f0d7291ff75d9000b67c5b0751d383",
     "shiro/commands/xz.ts": "c174daad329a23822fbd01123099ca7d90dc6a1274cf4b1e2798b4941010ef05",
     "shiro/commands/yes.ts": "06957f0fcf2ebb0915d8f6c196deec8d46de806f7f4c44272dbeda7af47d777b",
-    "shiro/commands/zip.ts": "086b905214db6f915f812c01acc62f280d8b9b8e7e6b72847d4d8d74516a5b9a",
+    "shiro/commands/zip.ts": "46f4a51089ea05689e48758c5198472d936a49b8f4c20158b0a6a7939f0acb26",
     "shiro/commands/zstd.ts": "74b032ee6c3d7da384196395fda828f5192c5a5c6a0f34b43adc8fe751c0d5ad",
     "shiro/favicon.ts": "83781e9653ed3e7d7bf8cbc9e41450bd3036ab149cf620cbfc9f3003aa0e85ef",
     "shiro/fg-filesystem.ts": "569f5f5b61e59c0e6d469a008c767b611aff7d861ce03e04f8f57c7cdbfe2b6e",
     "shiro/file-associations.ts": "57978b1e96ca98b5f982cf802348afda7969bd41d653f58957003f4b9421ab6c",
-    "shiro/filesystem.ts": "e6443d289fb1055bf30060d08c54d8d1de40d7c1e5d663f0d17a354ea17bd8dd",
+    "shiro/filesystem.ts": "4143da8b976f986dbbfb4fd23fcc636b79ab7bbe6768d3d891149757706364f5",
     "shiro/iframe-server.ts": "4e9f880e3a4c10c73d97a668e79667885f6530b7c01ee9bd0f5c904563aed57d",
     "shiro/node-compat/auto-stub.ts": "59407e46c8ea07ef7629f506d8db3667cd9bee296286c22976eb46226000198e",
     "shiro/node-compat/buffer.ts": "c43d57058dcf4bc3d802f4bf2e8d27daf3ede8f56ce340ecd194d9fbabb4c8a6",
@@ -10186,7 +10209,7 @@
     "shiro/node-compat/modules/child-process.ts": "bd2914cded7dc09bd3ef7c574169157457784141270dbc72558646b46cf62593",
     "shiro/node-compat/modules/crypto.ts": "caf9725b75f6c9c7485f2b7624186968c3e918a2c320f74ad4e2d6208fb0fa4c",
     "shiro/node-compat/modules/events.ts": "0fd4ceeeb98071447e6021ac7ba80428d12b8cc7498d039b932a3c6993bfa237",
-    "shiro/node-compat/modules/fs.ts": "898255193d36824ba82d92c86598de40a2c5ab2b792c5a6f303c83249150e903",
+    "shiro/node-compat/modules/fs.ts": "c8065da47e3b12854962b8353976548d5d3b3ab971a2792829bceefb52488415",
     "shiro/node-compat/modules/http.ts": "eb01ea85a75ff2c869b6c87ad65214878b43fad1817eceb67890749e3f53d097",
     "shiro/node-compat/modules/index.ts": "0103dddce1520153a3b10b839c512bcca7d09885ae426ecdd7ddd17f6fe7e10f",
     "shiro/node-compat/modules/misc.ts": "148e1331085b11dcb6362177b8b1be6095c3fad085e1e663ff3b65f9ed0ef66e",
@@ -10217,6 +10240,9 @@
     "shiro/terminal.ts": "104b70ca7d01d1672d6440e1c9b88b78a8930f2dc7a04cc925b95fb89a6babaf",
     "shiro/utils/bytes.ts": "d5a0e42e02d0d739f0148b37055f78391a72ba04c2b47d2c3d79901cdf5ebce9",
     "shiro/utils/copy-utils.ts": "c47dadf5c33c99e289d6898eb7262b34bc5c5a7f8610a952231fa568f5e77190",
+    "shiro/utils/errors.ts": "a5981069eda583441943c4276ce5e336d19d59218203d084c3f02a579e5f8c7b",
+    "shiro/utils/format.ts": "580207eedb905e2c85443106eb6586677d9816e34816662737efbb508d42af3b",
+    "shiro/utils/glob-regex.ts": "cb608d4c7b26ae48a351a73c608a61bfd6fb50f7e92ab52d9a1e28c4d4025d49",
     "shiro/utils/lazy-command.ts": "b29334782703172ec3020cfb89f613beab704cce9dfe695dde3303a7fac6b530",
     "shiro/utils/permissions.ts": "9b0fa1ff5a6e0c504a8881df846020cb93443ba7cbdcdf4f2dc8c2a74e461fc0",
     "shiro/utils/posix-regex.ts": "b44cc9f9dc4ee35ad602ff1ed00dd8c9446df11c7661bdfc8acff746171fe6ab",

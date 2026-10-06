@@ -4,19 +4,10 @@
 
 import type { Command } from './index';
 import { fromByteString, toByteString } from '../utils/bytes';
+import { parseSize as parseSizeStrict } from './flags';
 
-function parseSize(s: string): number {
-  const m = s.match(/^(\d+)([bkKMG]?)$/);
-  if (!m) return parseInt(s, 10) || 512;
-  const n = parseInt(m[1], 10);
-  switch (m[2]) {
-    case 'b': return n * 512;
-    case 'k': case 'K': return n * 1024;
-    case 'M': return n * 1024 * 1024;
-    case 'G': return n * 1024 * 1024 * 1024;
-    default: return n;
-  }
-}
+// dd falls back to 512 for an unparsable block size.
+function parseSize(s: string): number { return parseSizeStrict(s) ?? (parseInt(s, 10) || 512); }
 
 export const ddCmd: Command = {
   name: 'dd',

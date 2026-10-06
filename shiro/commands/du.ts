@@ -5,6 +5,7 @@
  */
 import type { Command } from './index';
 import { readdirEntries, statEntry } from './flags';
+import { globToRegex } from '../utils/glob-regex.js';
 
 const BLOCK = 4096;
 
@@ -15,10 +16,6 @@ function human(bytes: number, base: 1024 | 1000): string {
   if (u === 0) return String(bytes);
   const unit = base === 1000 && u === 1 ? 'k' : units[u];
   return (v < 10 ? (Math.ceil(v * 10) / 10).toFixed(1) : String(Math.ceil(v))) + unit;
-}
-
-function globRe(g: string): RegExp {
-  return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
 }
 
 export const du: Command = {
@@ -48,7 +45,7 @@ export const du: Command = {
           case 'total': total = true; break;
           case 'null': nul = true; break;
           case 'max-depth': maxDepth = parseInt(v ?? a[++i], 10); if (!(maxDepth >= 0)) return bad(`invalid maximum depth '${v}'`); break;
-          case 'exclude': excludes.push(globRe(v ?? a[++i] ?? '')); break;
+          case 'exclude': excludes.push(globToRegex(v ?? a[++i] ?? '')); break;
           case 'block-size': { const b = (v ?? a[++i] ?? ''); const m = /^(\d*)([KMG]?)$/i.exec(b); if (!m) return bad(`invalid --block-size argument '${b}'`); unit = (m[1] ? parseInt(m[1], 10) : 1) * ({ '': 1, K: 1024, M: 1048576, G: 1073741824 } as Record<string, number>)[m[2].toUpperCase()]; break; }
           case 'one-file-system': case 'dereference': case 'count-links': case 'separate-dirs': case 'time': break;
           default: return bad(`unrecognized option '--${name}'`);

@@ -5,21 +5,10 @@
 
 import type { Command } from './index';
 import { textToBytes } from '../utils/bytes';
+import { parseSize } from './flags';
 
 const enc = new TextEncoder();
 
-function parseSize(s: string): number | null {
-  const m = /^(\d+)([a-zA-Z]*)$/.exec(s);
-  if (!m) return null;
-  const n = parseInt(m[1], 10), u = m[2];
-  if (u === '') return n;
-  if (u === 'b') return n * 512;
-  const idx = 'KMGTPEZY'.indexOf(u[0].toUpperCase());
-  if (idx < 0) return null;
-  if (u.length === 1) return n * 1024 ** (idx + 1);            // K, M, G …: powers of 1024
-  if (u.length === 2 && u[1] === 'B') return n * 1000 ** (idx + 1);   // kB, MB, GB …: powers of 1000
-  return null;
-}
 
 /** Suffix number → text: alphabetic (aa, ab …) or numeric / hex with a fixed width. */
 function suffix(i: number, len: number, kind: 'alpha' | 'num' | 'hex', from: number): string | null {
