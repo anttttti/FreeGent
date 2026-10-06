@@ -46,6 +46,7 @@ import './turn-protocol.js';
 import './system-prompt.js';
 import './tool-schemas.js';
 import './mcp.js';
+import './browser-tools.js';
 import './deep-research.js';
 import './post-turn.js';
 import './llm-shared.js';
@@ -296,6 +297,8 @@ function _parseOpts(opts: any) {
         harness:   opts.harness   ?? e.FREEGENT_HARNESS ?? 'freegent',
         fetchAllow:      opts.fetchAllow      ?? e.FREEGENT_FETCH_ALLOW      ?? '',
         enableTools:     opts.enableTools     ?? e.FREEGENT_ENABLE_TOOLS     ?? '',
+        browserUrl: opts.browserUrl ?? '',
+        mcpServers: opts.mcpServers ?? null,
     };
 }
 
@@ -315,7 +318,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
         contextWindow, compactionLimit, disabledTools, mainRole, workflowMode, resumeSessionId, sessionDbPath,
-        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools, browserUrl, mcpServers,
     } = _parseOpts(opts);
 
     // ── Startup timing instrumentation ────────────────────────────────────────
@@ -399,7 +402,25 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     }
     if (disabledTools || fetchAllow) dom.window.setDisabledTools(_disabledList);
     for (const t of _enableList) dom.window.enabledTools.add(t);
-    setDirectorHeadlessTools(_enableList);
+    dom.window.setBrowserBridge(browserUrl);
+    const _mcpNames: string[] = [];
+    if (mcpServers !== null) {
+        if (!Array.isArray(mcpServers)) throw new Error('mcpServers must be an array');
+        // Task processes start with only their explicitly configured servers.
+        dom.window.saveMcpServers([]);
+        for (const server of mcpServers) {
+            if (!server || typeof server.url !== 'string' || !server.name)
+                throw new Error('MCP server requires name and URL');
+            const entry = await dom.window.addMcpServer(server);
+            // Omitted enabledTools means enable all discovered tools for this task;
+            // an explicit empty array means none. Never silently broaden an allowlist.
+            if (server.enabledTools === undefined) {
+                for (const tool of entry.tools || []) dom.window.setMcpToolEnabled(entry.id, tool.name, true);
+            }
+        }
+        _mcpNames.push(...dom.window.mcpToolSpecs().map((t: any) => t.name));
+    }
+    setDirectorHeadlessTools([..._enableList, ..._mcpNames]);
     // Enable file-write tools for worker roles. setDisabledTools() skips OPT_IN_TOOLS
     // (write_file, replace_in_file, apply_patch) by design, but workers need them to make
     // code edits without falling back to error-prone bash redirection. The director's

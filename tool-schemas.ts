@@ -236,7 +236,7 @@ function execToolSpec() {
         languages   = ['python', 'bash', 'javascript'];
     } else {
         const hasPyodide = pyodideStatus === 'ready' || pyodideStatus === 'loading';
-        const hasWasm    = p === 'wasm';
+        const hasWasm    = p === 'wasm' && browserBashAvailable();
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
                 `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ${_noReadBash}` +
@@ -258,6 +258,8 @@ function execToolSpec() {
             languages = ['javascript'];
         }
     }
+    if (!hasNative && !hasBash && typeof BigInt !== 'function')
+        description += ' On this older engine, use ES2019 JavaScript syntax in executed code; avoid optional chaining, nullish coalescing and BigInt.';
     // Every backend starts each call fresh (a new process headless; a new shell and namespace
     // in the browser).
     description += ' Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over to the next call; files do.';
@@ -432,6 +434,8 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
     for (const [name, cond, spec] of _conditionalTools) {
         if (isToolActive(name) && cond() && _allows(name)) t.push(spec());
     }
+    if (typeof browserBridgeAvailable === 'function' && browserBridgeAvailable())
+        for (const spec of BROWSER_TOOLS_SPEC) if (isToolActive(spec.name) && _allows(spec.name)) t.push(spec);
     // MCP tools: enabled per server and per tool in Settings → MCP (mcp.ts), not in enabledTools.
     if (typeof mcpToolSpecs === 'function')
         for (const spec of mcpToolSpecs()) if (_allows(spec.name)) t.push(spec);

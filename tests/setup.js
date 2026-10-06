@@ -36,6 +36,7 @@ await import('../model-caps.ts');
 await import('../tool-schemas.ts');
 // mcp.ts: MCP server registry, mcpToolSpecs, executeMcpTool, callMCPTool
 await import('../mcp.ts');
+await import('../browser-tools.ts');
 // skill-guidance.ts: evaluateSkillTriggers, _skillExcludedForRole, buildTriggeredGuidance
 await import('../skill-guidance.ts');
 // turn-context.ts: applyTurnTriggers, buildTurnPrelude, buildWorkspaceIndex — shared

@@ -23,7 +23,7 @@ export function _buildWorkspaceDesc(): string {
         return `Files live in the user's browser (IndexedDB). "local/" files are in a folder from the user's filesystem — changes write to disk. Use "local/" prefix for all local paths (e.g. "local/src/main.js").`;
     }
     // WASM bash: workspace files are pre-loaded at /workspace; bash is the primary file tool.
-    if (typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm') {
+    if (typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm' && browserBashAvailable()) {
         return 'Files live in the browser workspace. Use plain relative paths everywhere: `src/main.js` names the same file in read_file/write_file, check_page and the preview, and in bash, Python and JavaScript, which all start in the workspace directory (mounted at `/workspace`, so `/workspace/src/main.js` also works). Changes made by code sync back to the workspace automatically.';
     }
     // Check if the individual file tools are enabled (they're OPT_IN, off by default).
@@ -42,7 +42,7 @@ export function _buildLangsDesc(): string {
     const _l = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
     if (_l) return 'Languages: **python**, **bash**, **javascript** — run via local sandbox with workspace files at relative paths.';
     const _p = typeof pyodideStatus !== 'undefined' && (pyodideStatus === 'ready' || pyodideStatus === 'loading');
-    const _wasm = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
+    const _wasm = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm' && browserBashAvailable();
     if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide and also starts in the workspace — use relative paths (`open(\'foo\')`).';
     if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
     if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm).';
@@ -195,7 +195,9 @@ export function buildSystemPrompt(): string {
     const _mcpCtx = typeof mcpServerInstructionsBlock === 'function'
         ? mcpServerInstructionsBlock((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n))
         : '';
-    return `${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
+    const _browserCtx = typeof browserPromptGuidance === 'function'
+        ? browserPromptGuidance((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n)) : '';
+    return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
 }
 
 // Window bridge for classic scripts.

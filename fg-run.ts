@@ -72,6 +72,8 @@ Options:
   --fetch-allow <origins>   Restrict fetch_url to these origins (comma-separated, e.g.
                             http://fg-gw:41234) and disable web_search and other
                             outbound-request tools. Request policy, not containment.
+  --browser-url <url>       Text-only Playwright bridge URL (explicit opt-in)
+  --mcp-config <path>       JSON array of per-run MCP servers; replaces saved servers
   --temperature   <n>       Sampling temperature 0–2 (default: 0.2)
   --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
   --retry-mode <mode>       Retry delay mode: exponential (default) | fixed
@@ -106,6 +108,15 @@ const compactionLimit = parseInt(_arg('--compaction-limit') || '') || 0;
 const disabledTools   = _arg('--disable-tools') || '';
 const fetchAllow      = _arg('--fetch-allow') || '';
 const enableTools     = _arg('--enable-tools') || '';
+const browserUrl      = _arg('--browser-url') || '';
+const mcpConfigFile   = _arg('--mcp-config');
+let mcpServers = null;
+if (mcpConfigFile) {
+    try {
+        mcpServers = JSON.parse(readFileSync(mcpConfigFile, 'utf8'));
+        if (!Array.isArray(mcpServers)) throw new Error('Expected an array of MCP servers');
+    } catch (e) { console.error(`Cannot read MCP config: ${e.message}`); process.exit(1); }
+}
 const mainRole          = _arg('--main-role')          || '';
 const temperatureArg  = _arg('--temperature');
 const temperature     = temperatureArg != null ? parseFloat(temperatureArg) : null;
@@ -122,7 +133,7 @@ if (!task && taskFile) {
 if (!task && !promptText) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 
 const workspaceRoot = resolve(workspacePath);
-const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
+const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 

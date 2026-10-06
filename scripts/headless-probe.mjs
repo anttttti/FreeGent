@@ -4,7 +4,9 @@ process.env.WORKSPACE_ROOT = '/tmp/fg-probe-ws';
 import(new URL('../headless-runner.ts', import.meta.url).href).then(mod => {
     const need = ['_runToolCalls', '_updateStuckDetector', '_normPath',
                   'truncateResultForHistory', 'callOAI', 'repairOAIHistory',
-                  'convoLogTurn', 'runTurn', 'agentSend', 'loadSkills', 'validateOutput'];
+                  'convoLogTurn', 'runTurn', 'agentSend', 'loadSkills', 'validateOutput',
+                  'setBrowserBridge', 'browserBridgeAvailable', 'executeBrowserTool', 'browserPromptGuidance',
+                  'saveMcpServers', 'addMcpServer', 'mcpToolSpecs'];
     const missing = need.filter(n => typeof globalThis[n] !== 'function' && typeof globalThis.window?.[n] !== 'function');
     console.log('run() exported:', typeof mod.run === 'function');
     console.log('globalThis visibility:', missing.length === 0 ? 'ALL PRESENT' : 'MISSING: ' + missing.join(', '));
