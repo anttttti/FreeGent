@@ -112,3 +112,40 @@ describe('one job at a time', () => {
         } finally { W.setAiJob(''); }
     });
 });
+
+describe('start gates and unblock (v0.62 review R14, R15)', () => {
+    it('R14: a task the start gate refuses is not worked on and is skipped, not re-picked', async () => {
+        W.getRunnerQa = () => true;
+        const starts = [];
+        W.transitionTask = async (p, s) => {
+            if (s === 'in-progress') starts.push(p);
+            if (p.includes('001') && s === 'in-progress') return { transitioned: false, reason: 'depends on 000' };
+            await W.setTaskStatus(p, s);
+            return { transitioned: true };
+        };
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/002-b.md']);
+        expect(starts.filter(p => p.includes('001'))).toHaveLength(1);
+        expect(files['fg-tasks/001-a.md']).toMatch(/^status: todo$/m);
+    });
+
+    it('R15: Run does not start a second task after a blocked task is resumed', async () => {
+        let n = 0;
+        W.runAgentTurn = async (prompt) => {
+            turns.push(/File: (\S+)/.exec(prompt)?.[1] ?? 'follow-up');
+            if (++n === 1) return { text: 'need input', finishSignal: 'blocked' };
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');
+            return { text: 'ok', finishSignal: 'completed' };
+        };
+        document.body.insertAdjacentHTML('beforeend', '<input id="runner-unblock-input">');
+        W.runnerStart();
+        await vi.waitFor(() => expect(turns).toHaveLength(1));
+        await new Promise(r => setTimeout(r, 20));
+        document.getElementById('runner-unblock-input').value = 'go ahead';
+        W.runnerSendUnblock();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/001-a.md', 'follow-up']);
+        expect(files['fg-tasks/002-b.md']).toMatch(/^status: todo$/m);
+    });
+});

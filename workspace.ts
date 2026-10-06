@@ -2257,12 +2257,21 @@ function _projectSlug(name) {
     return (name || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
 }
 
+// The localStorage keys that belong to a project's chats. Anything else (settings, API keys,
+// role bodies that run as JavaScript) is out of project scope.
+function _isProjectChatKey(k: string): boolean {
+    return k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_') || k.startsWith('fg_draft_');
+}
+
+// A chat's rendered-message HTML. The app writes it from its own DOM, but a project file is
+// external input, so it is never restored: the view is rebuilt from the validated history.
+const _isChatHtmlSnapshot = (k: string) => /^fg_chat_.+_msgs$/.test(k);
+
 function _chatKeys() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && (k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_') || k.startsWith('fg_draft_')))
-            keys.push(k);
+        if (k && _isProjectChatKey(k)) keys.push(k);
     }
     return keys;
 }
@@ -2274,8 +2283,7 @@ function _snapshotSettings() {
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
-        if (k === 'fg_chat_list' || k === 'fg_active_chat' || k.startsWith('fg_chat_') ||
-            k.startsWith('fg_draft_') || k.startsWith('fg_ckpt_') || k === 'fg_project_name') continue;
+        if (_isProjectChatKey(k) || k.startsWith('fg_ckpt_') || k === 'fg_project_name') continue;
         snap[k] = localStorage.getItem(k);
     }
     return snap;
@@ -2370,40 +2378,64 @@ async function _gunzipToJson(buffer) {
     return JSON.parse(await textPromise);
 }
 
-async function _extractDocText(name, base64Content) {
-    let bytes: ArrayBuffer;
-    try { bytes = _base64ToUint8(base64Content).buffer; }
-    catch { return `[Binary file: ${name} — could not decode base64 content]`; }
+async function _documentLibrary(name: 'pdfjsLib' | 'mammoth' | 'XLSX', selector: string): Promise<any> {
+    const value = () => (globalThis as any)[name];
+    if (value()) return value();
+    const script = document.querySelector(selector) as HTMLScriptElement | null;
+    if (!script || script.dataset.loadFailed) throw new Error(`${name} document reader could not load; check the connection and attach again`);
+    await new Promise<void>((resolve, reject) => {
+        const clean = () => { clearTimeout(timer); script.removeEventListener('load', loaded); script.removeEventListener('error', failed); };
+        const loaded = () => { clean(); value() ? resolve() : reject(new Error(`${name} document reader is unavailable`)); };
+        const failed = () => { clean(); reject(new Error(`${name} document reader could not load`)); };
+        const timer = setTimeout(() => { clean(); reject(new Error(`${name} document reader did not load within 20 seconds`)); }, 20_000);
+        script.addEventListener('load', loaded, { once: true });
+        script.addEventListener('error', failed, { once: true });
+        if (value()) loaded();
+    });
+    return value();
+}
 
+// Strict document extraction for attachments: failures must be visible, not a
+// filename-only placeholder that looks like successful model input.
+export async function extractDocumentText(name: string, base64Content: string): Promise<string> {
+    const bytes = _base64ToUint8(base64Content);
     const ext = _extOf(name);
-    try {
-        if (ext === '.pdf' && pdfjsLib) {
-            if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/legacy/build/pdf.worker.min.js';
-            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
-            const pages = [];
+    if (ext === '.pdf') {
+        const lib = await _documentLibrary('pdfjsLib', 'script[src*="pdfjs-dist@"]');
+        if (!lib.GlobalWorkerOptions.workerSrc)
+            lib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/legacy/build/pdf.worker.min.js';
+        const task = lib.getDocument({ data: bytes, isEvalSupported: false });
+        let pdf: any;
+        try {
+            pdf = await task.promise;
+            const pages: string[] = [];
+            let chars = 0;
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
-                const tc   = await page.getTextContent();
-                pages.push(tc.items.map(it => it.str).join(' '));
+                try {
+                    const tc = await page.getTextContent();
+                    const text = tc.items.map(it => it.str || '').join(' ');
+                    pages.push(text); chars += text.length;
+                } finally { page.cleanup?.(); }
+                if (chars >= 50_000) { pages.push('[Remaining pages omitted: attachment text limit]'); break; }
             }
             return pages.join('\n\n');
-        }
-        if ((ext === '.docx' || ext === '.doc') && mammoth) {
-            const result = await mammoth.extractRawText({ arrayBuffer: bytes });
-            return result.value;
-        }
-        if ((ext === '.xlsx' || ext === '.xls' || ext === '.ods') && XLSX) {
-            const wb = XLSX.read(bytes, { type: 'buffer' });
-            return wb.SheetNames
-                .map(sn => `Sheet: ${sn}\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`)
-                .join('\n\n');
-        }
-    } catch (e) {
-        return `[Document extraction failed for ${name}: ${e.message}]`;
+        } finally { if (pdf) await pdf.destroy(); else await task.destroy?.(); }
     }
-    const kb = Math.round(base64Content.length * 0.75 / 1024);
-    return `[Binary file: ${name} — ${kb} KB. Use Pyodide (python-docx / pypdf / openpyxl) to process this file.]`;
+    if (ext === '.docx') {
+        const lib = await _documentLibrary('mammoth', 'script[src*="mammoth@"]');
+        return (await lib.extractRawText({ arrayBuffer: bytes.buffer })).value;
+    }
+    if (['.xlsx', '.xls', '.ods'].includes(ext)) {
+        const lib = await _documentLibrary('XLSX', 'script[src*="xlsx@"]');
+        const wb = lib.read(bytes, { type: 'array' });
+        return wb.SheetNames.map(sn => `Sheet: ${sn}\n${lib.utils.sheet_to_csv(wb.Sheets[sn])}`).join('\n\n');
+    }
+    throw new Error(`Text extraction is not supported for ${ext || 'this document type'}`);
+}
+async function _extractDocText(name, base64Content) {
+    try { return await extractDocumentText(name, base64Content); }
+    catch (error) { return `[Document extraction failed for ${name}: ${error.message}]`; }
 }
 
 function _esc(s) {
@@ -2439,7 +2471,8 @@ async function _restoreProjectData(data) {
     // Restore chat data to localStorage
     for (const k of _chatKeys()) localStorage.removeItem(k);
     for (const [k, v] of Object.entries(data.chatData || {})) {
-        if (v == null) continue;
+        if (typeof v !== 'string') continue;
+        if (!_isProjectChatKey(k) || _isChatHtmlSnapshot(k)) continue;
         // History goes to IndexedDB, which loadChatHistory reads first; the localStorage copy
         // is a cache that may not fit for every chat (saveHistory prunes it to recent chats).
         const oh = /^fg_chat_(.+)_oh$/.exec(k);
@@ -2668,7 +2701,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
     initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile,
     // Document helpers exposed for tools.js and other classic scripts
-    _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8,
+    _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,
     // Agent file ops (called via window.X in tools.js)
     agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentWriteFile, agentDeleteFile, agentFileMtime,
     setWorkspaceAdapter, workspaceUsesAbsolutePaths, workspaceRootDir, workspaceName,

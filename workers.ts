@@ -20,6 +20,7 @@ import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
 import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn, getLocalApiProxy } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
+import { activeTools } from './tool-schemas.js';
 import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, renderFileList } from './workspace.js';
 import { sessionSetChatRole, sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent } from './session-store.js';
 import { convoLogTurn } from './convo-log.js';
@@ -415,7 +416,7 @@ function _saveRoleForChat(name: string): void {
         sessionSetChatRole?.(id, name && name !== 'director' ? name : null);
     } catch {}
 }
-function setMainAgentRole(name: string): void {
+export function setMainAgentRole(name: string): void {
     const _name = name?.toLowerCase() ?? name;
     _setRoleObj(rolesRegistry.get(_name) || null);
     _saveRoleForChat(_name);
@@ -771,6 +772,8 @@ function _userRequestMsgs(messages: any[], roleName: string | null = null): { ro
         `Background only: the overall request the lead agent is working on. Your job is ONLY the subtask in the next message — do not take on the whole request. ${scope}` }];
 }
 
+let _workerSessionSeq = 0;
+
 async function runWorkerTurn(task: string, context: any, taskHandle: any, workerModelSpec: string | null = null, role: any = null, forkBase: ForkBase | null = null, rotateEndpoints = false, explicitModel = false): Promise<{ output: string; toolCalls: { name: string; label: string }[] }> {
     const wSpec = resolveWorkerModelSpec(workerModelSpec, role);
     let endpoint = wSpec ? specToEndpoint(wSpec) : null;
@@ -785,6 +788,15 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     // null means no ceiling — worker gets all of enabledTools.
     const localToolFilter = role?.tools ?? (getAgentLeanWorkers() ? inferWorkerTools(task) : null);
 
+    // Names of the tools the worker's request offers at this moment: a fork reuses the parent's
+    // request tools; otherwise role ceiling ∩ enabled ∩ conditional gates (and MCP).
+    const _offeredToolNames = (): Set<string> => {
+        const specs: any[] = (isFork && Array.isArray(forkBase?.tools))
+            ? forkBase!.tools!.map((t: any) => t.function ?? t)
+            : activeTools(true, localToolFilter);
+        return new Set(specs.map(t => t.name));
+    };
+
     const localOH   = [];
     const localSeenRF = new Map(); // per-worker read-file dedup (isolates from main agent globals)
     const localSeenLF = new Set(); // per-worker list-files dedup
@@ -792,8 +804,10 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     const _wToolCalls: { name: string; label: string }[] = [];
 
     // create an isolated session for this worker.
-    // Uses a deterministic ID so parallel workers don't collide (activeChatId + role + timestamp).
-    const _wSessId = `worker-${activeChatId ?? 'anon'}-${localRole?.name ?? 'w'}-${Date.now()}`;
+    // Chat + role + timestamp + a per-process counter and random tail: same-role workers started in
+    // one millisecond must not share an ID (the registry would replace the first session, and both
+    // would append to one persisted log).
+    const _wSessId = `worker-${activeChatId ?? 'anon'}-${localRole?.name ?? 'w'}-${Date.now()}-${(++_workerSessionSeq).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const _wSession = (() => {
         try { return registry.create({ id: _wSessId, chatId: activeChatId ?? 'anon' }); } catch { return null; }
     })();
@@ -967,6 +981,8 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             // Repeat guard (same as the main loop): refuse a call that already repeated with the same result.
             const _wCallSig = _callSig(_normCalls);
             const _wRefused = _repeatRefused(_wRepeatGuard, _wCallSig);
+            // The tools this step's request offered; dispatch refuses anything else (tools.ts).
+            context.allowedTools = _offeredToolNames();
             const _exec = _wRefused
                 ? _normCalls.map(({ name, args }) => ({ name, args, result: _repeatRefusalResult(_repeatCount(_wRepeatGuard, _wCallSig)) }))
                 : await _runToolCalls(_normCalls, null, {
@@ -1439,7 +1455,9 @@ async function executeWorkers(args: any): Promise<any> {
 
     const agentResults = await Promise.all(agents.map(async (agent, i) => {
         const staging = new Map();
-        const context = { snapshot, staging, depth };
+        // binary: base64 write_file content, held back like staging (which holds text only).
+        const binary = new Map<string, string>();
+        const context = { snapshot, staging, binary, depth } as any;
         const handle  = handles[i];
         const _agentStart = Date.now();
         handle.setPrompt(agent.task);
@@ -1481,7 +1499,7 @@ async function executeWorkers(args: any): Promise<any> {
                     startedAt: _agentStart, finishedAt: Date.now(),
                     staged: [...staging].map(([path, content]) => ({ path, content })),
                 });
-                return { id: agent.id, output: output || '', staging, error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
+                return { id: agent.id, output: output || '', staging, binary, error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
             } catch (e) {
                 lastError = e;
                 // Permanent failures (bad auth, model discontinued, no tool support) — don't retry.
@@ -1489,6 +1507,7 @@ async function executeWorkers(args: any): Promise<any> {
                 if (attempt < MAX_RETRIES && !isPermanent) {
                     // Transient error (stream abort, network) — clear partial staging and retry
                     staging.clear();
+                    binary.clear();
                     handle.setOutput(`Error: ${e.message}\n[Retrying… attempt ${attempt + 2} of ${MAX_RETRIES + 1}]`);
                     await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
                 }
@@ -1506,7 +1525,7 @@ async function executeWorkers(args: any): Promise<any> {
             output: '', error: _errMsg, status: 'blocked', note: _errMsg,
             startedAt: _agentStart, finishedAt: Date.now(), staged: [],
         });
-        return { id: agent.id, output: '', staging: new Map(), error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
+        return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
     }));
 
     const fileAuthors = new Map();
@@ -1526,6 +1545,22 @@ async function executeWorkers(args: any): Promise<any> {
     for (const [path, content] of Object.entries(clean)) {
         if (content === null) { try { await agentDeleteFile(path); } catch {} }
         else await agentWriteFile(path, content);
+    }
+
+    // Binary assets cannot be merged: a path written by one worker is applied, a path written by
+    // several is left alone and reported.
+    const binaryAuthors = new Map<string, { id: any; content: string }[]>();
+    for (const { id, binary } of agentResults as any[]) {
+        for (const [path, content] of binary as Map<string, string>) {
+            if (!binaryAuthors.has(path)) binaryAuthors.set(path, []);
+            binaryAuthors.get(path)!.push({ id, content });
+        }
+    }
+    const binaryApplied: string[] = [], binaryConflicts: string[] = [];
+    for (const [path, authors] of binaryAuthors) {
+        if (authors.length === 1) {
+            try { await agentWriteFile(path, authors[0].content, 'base64'); binaryApplied.push(path); } catch {}
+        } else binaryConflicts.push(path);
     }
 
     let resolvedFiles: Record<string, any> = {};
@@ -1583,10 +1618,10 @@ async function executeWorkers(args: any): Promise<any> {
 
     // Files written by blocked workers may be incomplete or wrong — keep separate from applied.
     const blockedFiles = new Set(
-        agentResults.filter(r => r.status === 'blocked').flatMap(r => [...r.staging.keys()])
+        agentResults.filter(r => r.status === 'blocked').flatMap(r => [...r.staging.keys(), ...(r as any).binary.keys()])
     );
-    const applied    = Object.keys(clean).filter(p => !blockedFiles.has(p));
-    const incomplete = Object.keys(clean).filter(p =>  blockedFiles.has(p));
+    const applied    = [...Object.keys(clean), ...binaryApplied].filter(p => !blockedFiles.has(p));
+    const incomplete = [...Object.keys(clean), ...binaryApplied].filter(p =>  blockedFiles.has(p));
 
     // If every worker blocked due to context overflow, record the call signature so the next
     // identical run_workers call is blocked immediately with a clear explanation.
@@ -1622,12 +1657,13 @@ async function executeWorkers(args: any): Promise<any> {
             ? { warning: `${blocked.length} worker(s) blocked — files in "incomplete" may be partially or incorrectly written. Current content shown in incomplete_contents — read it before deciding next step.` }
             : {}),
         agents:            agentResults
-            .map(r => ({ id: r.id, error: r.error, wrote: [...r.staging.keys()], status: r.status, note: r.note,
+            .map(r => ({ id: r.id, error: r.error, wrote: [...r.staging.keys(), ...(r as any).binary.keys()], status: r.status, note: r.note,
                          ...(r.toolCalls?.length ? { toolCalls: r.toolCalls } : {}) })),
         applied,
         ...(incomplete.length > 0 ? { incomplete } : {}),
         ...(Object.keys(incompleteContents).length > 0 ? { incomplete_contents: incompleteContents } : {}),
-        conflictsFound:    Object.keys(conflicts),
+        conflictsFound:    [...Object.keys(conflicts), ...binaryConflicts],
+        ...(binaryConflicts.length > 0 ? { binaryConflicts: `${binaryConflicts.join(', ')}: written by more than one worker; not applied (binary files cannot be merged)` } : {}),
         conflictsResolved: Object.keys(resolvedFiles),
         blocked,
         ...outputField,

@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { failStreakKind, failureSignature, ENV_MISSING_RE } from '../detectors.ts';
+import { failStreakKind, failureSignature, isEnvMissing, noteAgentFiles, resetAgentFiles } from '../detectors.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CASES = join(ROOT, 'bench/dev-tests/error-taxonomy/cases.jsonl');
@@ -114,8 +114,8 @@ describe.skipIf(!CASES_PRESENT)(`error taxonomy (${cases.length} cases from benc
     it('every env_missing execute_code case is one the runtime also reads as missing env', () => {
         const disagree = cases
             .filter(c => c.class === 'env_missing' && c.tool === 'execute_code' && !fromWorkspace(c))
-            // ENV_MISSING_RE is applied to stderr+stdout, as failStreakKind does.
-            .filter(c => !ENV_MISSING_RE.test(`${c.result.stderr ?? ''}\n${c.result.stdout ?? ''}`))
+            // isEnvMissing is applied to stderr+stdout, as failStreakKind does.
+            .filter(c => !isEnvMissing(`${c.result.stderr ?? ''}\n${c.result.stdout ?? ''}`))
             .map(c => `${c.tool}: ${c.sig}`);
         expect(disagree).toEqual([]);
     });
@@ -165,6 +165,15 @@ describe('ENV_MISSING_RE boundary', () => {
     it('excuses a name an installed package does not carry', () => {
         expect(env("ImportError: cannot import name 'Minisat' from 'pysat.solvers' (/usr/local/lib/python3.12/dist-packages/pysat/solvers.py)")).toBe('neutral');
         expect(env("ModuleNotFoundError: No module named 'foo'")).toBe('neutral');
+    });
+    it("counts a module the agent wrote missing an attribute as a failure, an installed package's as environment", () => {
+        const msg = (m: string) => `Traceback (most recent call last):\n  File "/workspace/main.py", line 3, in <module>\n    x()\nAttributeError: module '${m}' has no attribute 'serve'`;
+        expect(env(msg('app'))).toBe('neutral');          // nothing says app is the agent's
+        noteAgentFiles(['/workspace/app.py', 'mypkg/utils.py']);
+        expect(env(msg('app'))).toBe('fail');
+        expect(env(msg('mypkg.utils'))).toBe('fail');
+        expect(env(msg('cv2'))).toBe('neutral');
+        resetAgentFiles();
     });
     it("counts an ImportError in the agent's own code as a failure", () => {
         expect(env("ImportError while loading conftest '/workspace/tests/conftest.py'.")).toBe('fail');

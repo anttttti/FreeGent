@@ -99,6 +99,15 @@ describe('sanitizeMcpSchema: $ref (R09)', () => {
     });
 });
 
+describe('window bridge', () => {
+    it('exposes saveMcpServers, which the headless runner calls to start a task with no saved servers', () => {
+        W.saveMcpServers([{ id: 'x', name: 'x', url: 'https://x.example.com/mcp' }]);
+        expect(W.getMcpServers()).toHaveLength(1);
+        W.saveMcpServers([]);
+        expect(W.getMcpServers()).toEqual([]);
+    });
+});
+
 describe('server registry', () => {
     it('adds a server after initialize + tools/list; tools start disabled', async () => {
         const calls = mockServer(standardHandler);
@@ -188,6 +197,26 @@ describe('dispatch through executeToolAsync', () => {
         W.setMcpToolEnabled(s.id, 'search_places', true);
         const r = await W.executeToolAsync('mcp__maps__search_places', { query: 'q' });
         expect(r.content).toMatch(/found: q/);
+        expect(calls.filter(c => c.body.method === 'initialize')).toHaveLength(2);
+    });
+
+    it('keeps a separate session per credential at one endpoint (R23)', async () => {
+        const sessions: Record<string, string> = { 'Bearer A': 'sess-A', 'Bearer B': 'sess-B' };
+        const calls: { url: string; body: any; headers: Record<string, string> }[] = [];
+        W.fetch.mockImplementation(async (url: string, init: any) => {
+            const body = JSON.parse(init.body); const headers = init.headers || {};
+            calls.push({ url, body, headers });
+            if (body.id === undefined) return new Response(null, { status: 202 });
+            const rh: Record<string, string> = { 'Content-Type': 'application/json' };
+            let result: any;
+            if (body.method === 'initialize') { rh['Mcp-Session-Id'] = sessions[headers.Authorization]; result = { protocolVersion: '2025-06-18', capabilities: {} }; }
+            else result = { content: [{ type: 'text', text: headers['Mcp-Session-Id'] === sessions[headers.Authorization] ? 'ok' : 'session/credential mismatch' }] };
+            return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { status: 200, headers: rh });
+        });
+        const url = 'https://shared.example.com/mcp';
+        expect(await W.callMCPTool(url, 't', {}, { Authorization: 'Bearer A' })).toBe('ok');
+        expect(await W.callMCPTool(url, 't', {}, { Authorization: 'Bearer B' })).toBe('ok');
+        expect(await W.callMCPTool(url, 't', {}, { Authorization: 'Bearer A' })).toBe('ok');
         expect(calls.filter(c => c.body.method === 'initialize')).toHaveLength(2);
     });
 

@@ -94,9 +94,18 @@ const _conns = new Map<string, { sessionId: string | null; protocolVersion: stri
 
 class McpSessionExpired extends Error {}
 
-function _conn(url: string) {
-    let c = _conns.get(url);
-    if (!c) { c = { sessionId: null, protocolVersion: null, viaProxy: false, ready: false }; _conns.set(url, c); }
+// One connection per server identity: URL plus the headers that authenticate it. Two entries for
+// different accounts at one endpoint (or a changed token) must not share a session id, and a
+// session opened under one credential is useless under another.
+function _connKey(server: { url: string; headers?: Record<string, string> }): string {
+    const h = Object.entries(server.headers || {}).map(([k, v]) => [k.toLowerCase(), v]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `${server.url}\n${JSON.stringify(h)}`;
+}
+
+function _conn(server: { url: string; headers?: Record<string, string> }) {
+    const key = _connKey(server);
+    let c = _conns.get(key);
+    if (!c) { c = { sessionId: null, protocolVersion: null, viaProxy: false, ready: false }; _conns.set(key, c); }
     return c;
 }
 
@@ -148,7 +157,7 @@ function _isSessionError(err: any, method: string): boolean {
 
 // One JSON-RPC exchange. `id` undefined = notification (no response body expected).
 async function _rpc(server: { url: string; headers?: Record<string, string> }, method: string, params: any, id?: any): Promise<any> {
-    const c = _conn(server.url);
+    const c = _conn(server);
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
@@ -220,7 +229,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
 let _rpcId = 1;
 
 async function _ensureSession(server: { url: string; headers?: Record<string, string> }): Promise<any> {
-    const c = _conn(server.url);
+    const c = _conn(server);
     if (c.ready) return null;
     // Workers call in parallel: callers that arrive during the handshake wait for it instead of
     // sending their own `initialize`, which would replace the session id under the first call.
@@ -248,7 +257,7 @@ async function _request(server: { url: string; headers?: Record<string, string> 
             return await _rpc(server, method, params, _rpcId++);
         } catch (e) {
             if (!(e instanceof McpSessionExpired) || attempt > 0) throw e;
-            const c = _conn(server.url);
+            const c = _conn(server);
             if (!c.sessionId && !c.viaProxy && _proxyUrl()) c.viaProxy = true;
             c.ready = false;
         }
@@ -336,7 +345,7 @@ async function refreshMcpServer(id: string): Promise<McpServer> {
 
 // Fresh handshake + tools/list. Also returns the server's `instructions` from initialize.
 async function _listTools(server: { url: string; headers?: Record<string, string> }): Promise<{ tools: McpToolInfo[]; instructions: string }> {
-    _conn(server.url).ready = false;     // fresh handshake: headers may have changed
+    _conn(server).ready = false;     // fresh handshake: headers may have changed
     const init = await _ensureSession(server);
     const instructions = typeof init?.instructions === 'string' ? init.instructions.trim().slice(0, _MAX_INSTRUCTIONS_STORED) : '';
     const tools: McpToolInfo[] = [];
@@ -395,7 +404,7 @@ async function addMcpLibraryServer(libraryId: string, key = ''): Promise<McpServ
 function removeMcpServer(id: string): void {
     const list = getMcpServers();
     const s = list.find(x => x.id === id);
-    if (s) _conns.delete(s.url);
+    if (s) _conns.delete(_connKey(s));
     saveMcpServers(list.filter(x => x.id !== id));
 }
 
@@ -589,6 +598,6 @@ async function executeMcpTool(name: string, args: any): Promise<any> {
 // Window bridge for classic scripts and inline handlers (ESM migration).
 Object.assign(window, {
     MCP_CONTEXT7_URL, callMCPTool,
-    getMcpServers, getMcpLibrary, addMcpServer, addMcpLibraryServer, removeMcpServer, refreshMcpServer, setMcpServerEnabled, setMcpToolEnabled,
+    getMcpServers, saveMcpServers, getMcpLibrary, addMcpServer, addMcpLibraryServer, removeMcpServer, refreshMcpServer, setMcpServerEnabled, setMcpToolEnabled,
     mcpToolSpecs, mcpToolNames, mcpServerInstructionsBlock, mcpToolName, mcpToolRisk, executeMcpTool, sanitizeMcpSchema, redactMcpSecrets,
 });

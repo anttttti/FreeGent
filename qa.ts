@@ -2,6 +2,8 @@
 // Depends on: config.js, tools.js, workers.js, tasks.js
 
 
+import { canonTaskStatus } from './task-status.js';
+
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
     'open->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -10,6 +12,27 @@ const QA_DEFAULT_GATES = {
     // Direct in-progress→done (model skipped in-review): run the full review suite
     'in-progress->done':      ['completeness-check', 'self-review', 'acceptance-review', 'test-runner'],
 };
+
+// The body of the first "## <name>" section (any of `names`, case-insensitive), up to the next
+// "# " or "## " heading or the end of the file. null when there is no such section. Shared by every
+// gate so they agree on what a section holds; handles blank lines, CRLF and a missing final newline.
+function _mdSection(content: string, ...names: string[]): string | null {
+    const lines = content.replace(/\r\n?/g, '\n').split('\n');
+    const want = names.map(n => n.toLowerCase());
+    const start = lines.findIndex(l => {
+        const m = /^##\s+(.+?)\s*$/.exec(l);
+        return !!m && want.includes(m[1].toLowerCase());
+    });
+    if (start < 0) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) if (/^#{1,2}\s/.test(lines[i])) { end = i; break; }
+    return lines.slice(start + 1, end).join('\n');
+}
+
+// Run `cmd`, show only the last `n` lines of its output, and keep the command's own exit status:
+// a plain `cmd | tail` reports tail's status, so a failing test run or build looked like a pass.
+const _tailKeepStatus = (cmd: string, n: number) =>
+    `fg_qa_out=$(${cmd} 2>&1); fg_qa_rc=$?; printf '%s\\n' "$fg_qa_out" | tail -n ${n}; exit $fg_qa_rc`;
 
 async function loadWorkflow() {
     try {
@@ -186,9 +209,9 @@ async function gate_completeness_check(taskPath, content) {
     if (unchecked.length)
         return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''}` };
 
-    const fileSec = content.match(/^## Files\n([\s\S]*?)(?=^##|\s*$)/m);
+    const fileSec = _mdSection(content, 'Files');
     if (fileSec) {
-        const paths = [...fileSec[1].matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 8);
+        const paths = [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 8);
         for (const fp of paths) {
             try {
                 const fc   = await agentReadFile(fp);
@@ -233,9 +256,9 @@ async function gate_task_enrichment(taskPath, content) {
 
 
 async function gate_self_review(taskPath, content) {
-    const fileSec  = content.match(/^## Files\n([\s\S]*?)(?=^##|\s*$)/m);
+    const fileSec  = _mdSection(content, 'Files');
     const filePaths = fileSec
-        ? [...fileSec[1].matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 4)
+        ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 4)
         : [];
 
     let fileContents: string = '';
@@ -263,13 +286,13 @@ async function gate_self_review(taskPath, content) {
 async function gate_acceptance_review(taskPath, content) {
     if (!getQaAcceptanceReview()) return { blocks: false };
 
-    const acceptM = content.match(/^## Acceptance\n([\s\S]*?)(?=^##|\s*$)/m);
-    if (!acceptM) return { blocks: false, detail: 'No acceptance criteria — skipping review' };
+    const acceptM = _mdSection(content, 'Acceptance', 'Acceptance Criteria');
+    if (acceptM === null || !acceptM.trim()) return { blocks: false, detail: 'No acceptance criteria — skipping review' };
 
-    const criteria = acceptM[1].trim();
-    const fileSec  = content.match(/^## Files\n([\s\S]*?)(?=^##|\s*$)/m);
+    const criteria = acceptM.trim();
+    const fileSec  = _mdSection(content, 'Files');
     const filePaths = fileSec
-        ? [...fileSec[1].matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
+        ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
         : [];
 
     let fileContents: string = '';
@@ -287,17 +310,30 @@ async function gate_acceptance_review(taskPath, content) {
         `- ? [criterion] — if cannot verify\n\n` +
         `Final line: VERDICT: PASS or VERDICT: FAIL`;
 
+    // Pass only on an explicit "VERDICT: PASS" with every criterion marked met. An empty reply, a
+    // refusal, a "?" (cannot verify) line or prose that never states a verdict leaves the task
+    // unverified. One retry for a reply with no verdict; a failed call blocks rather than waves
+    // the task through.
     try {
-        // temperature: 0 — binary PASS/FAIL verdict against criteria; deterministic is better.
-        const result = await callLLMComplete(prompt, { temperature: 0, maxTokens: 1024 });
+        let result = '';
+        for (let attempt = 0; attempt < 2; attempt++) {
+            // temperature: 0 — binary PASS/FAIL verdict against criteria; deterministic is better.
+            result = await callLLMComplete(prompt, { temperature: 0, maxTokens: 1024 });
+            if (/VERDICT:\s*(PASS|FAIL)/i.test(result)) break;
+        }
         const ts     = new Date().toISOString().slice(0, 16) + 'Z';
         await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\n${result.trim()}`);
 
-        const failed = [...result.matchAll(/^- ✗ (.+)/gm)].map(m => m[1]);
-        if (result.includes('VERDICT: FAIL') || failed.length > 0)
+        const failed     = [...result.matchAll(/^- ✗ (.+)/gm)].map(m => m[1]);
+        const unverified = [...result.matchAll(/^- \? (.+)/gm)].map(m => m[1]);
+        if (/VERDICT:\s*FAIL/i.test(result) || failed.length > 0)
             return { blocks: true, reason: `Criteria not met: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''}` };
+        if (unverified.length > 0)
+            return { blocks: true, reason: `Criteria could not be verified: ${unverified.slice(0, 2).join('; ')}${unverified.length > 2 ? ` (+${unverified.length - 2} more)` : ''}` };
+        if (!/VERDICT:\s*PASS/i.test(result))
+            return { blocks: true, reason: 'Acceptance review gave no VERDICT: PASS — task left unverified' };
     } catch (e) {
-        return { blocks: false, detail: `Acceptance review error: ${e.message}` };
+        return { blocks: true, reason: `Acceptance review could not run: ${e.message}` };
     }
     return { blocks: false };
 }
@@ -307,9 +343,9 @@ async function gate_test_runner(taskPath, content) {
     if (!getQaTestRunner()) return { blocks: false };
     if (!_hasBashOrCode())  return { blocks: false, detail: 'No sandbox — skipping tests' };
 
-    const fileSec  = content.match(/^## Files\n([\s\S]*?)(?=^##|\s*$)/m);
+    const fileSec  = _mdSection(content, 'Files');
     const filePaths = fileSec
-        ? [...fileSec[1].matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1])
+        ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1])
         : [];
 
     const testFiles = [];
@@ -325,9 +361,9 @@ async function gate_test_runner(taskPath, content) {
     let cmd: string | null = null;
     try {
         const pkg = JSON.parse(await agentReadFile('package.json'));
-        if (pkg.scripts?.test) cmd = 'npm test 2>&1 | tail -40';
+        if (pkg.scripts?.test) cmd = _tailKeepStatus('npm test', 40);
     } catch {}
-    if (!cmd) cmd = `node ${testFiles.join(' ')} 2>&1 | tail -40`;
+    if (!cmd) cmd = _tailKeepStatus(`node ${testFiles.join(' ')}`, 40);
 
     try {
         const res    = await executeToolAsync('execute_code', { language: 'bash', code: cmd }, null);
@@ -362,7 +398,7 @@ async function gate_regression_guard(taskPath) {
     if (!cmd) return { blocks: false, detail: 'No build command detected — skipping' };
 
     try {
-        const res = await executeToolAsync('execute_code', { language: 'bash', code: `${cmd} 2>&1 | tail -30` }, null);
+        const res = await executeToolAsync('execute_code', { language: 'bash', code: _tailKeepStatus(cmd, 30) }, null);
         if (res.exit_code !== 0) {
             const ts  = new Date().toISOString().slice(0, 16) + 'Z';
             const out = ((res.stdout || '') + (res.stderr || '')).slice(0, _QA_OUTPUT_MAX);
@@ -399,7 +435,8 @@ async function transitionTask(taskPath, toStatus) {
     catch { await setTaskStatus(taskPath, toStatus); return { transitioned: true }; }
 
     const fm          = parseFrontmatter(content);
-    const fromStatus  = (fm.status || 'todo').toLowerCase();
+    const fromStatus  = canonTaskStatus(fm.status);
+    toStatus          = canonTaskStatus(toStatus);
     const reworkCount = parseInt(fm.rework_count || '0', 10);
 
     if (toStatus === 'in-progress' && fromStatus === 'in-review' && reworkCount >= getQaReworkLimit()) {
@@ -437,8 +474,10 @@ async function transitionTask(taskPath, toStatus) {
 
     if (failures.length) {
         if (toStatus === 'done' || fromStatus === 'in-review') {
-            content = _setFrontmatterField(content, 'rework_count', reworkCount + 1);
-            await agentWriteFile(taskPath, content);
+            // Re-read: the gates appended their findings to the file after `content` was read, and
+            // writing the old copy back would erase them.
+            const latest = await agentReadFile(taskPath).catch(() => content);
+            await agentWriteFile(taskPath, _setFrontmatterField(latest, 'rework_count', reworkCount + 1));
         }
         const summary = failures.map(f => `Gate "${f.gate}": ${f.reason}`).join('\n');
         await writeBackgroundReport(`[Task QA failed] ${taskPath}\n${summary}\nTask held at ${fromStatus}.`);
