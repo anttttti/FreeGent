@@ -3,6 +3,7 @@
 // Note: workers.js defines setMainAgentRole(name) that takes a role-NAME string and
 // resolves it through rolesRegistry — this overrides state.js's same-named setter on window.
 // The state module's object-setter is imported under an alias for the direct-assignment sites.
+import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
 import type { ForkBase } from './llm-loops.js';
@@ -837,6 +838,21 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     let _ownRequest: ForkBase | null = null;
     if (context) context.parentRequest = () => _ownRequest;
 
+    // withRetry for this worker's model calls: endpoint rotation through the shared OAI retry
+    // handler, with the wait capped (workers must not sleep for hours). noteTag/waitTag name the
+    // log prefix; onContext* hook the context-overflow recovery for the step loop.
+    const _workerRetry = <T,>(fn: () => Promise<T>, noteTag: string, waitTag: string, extra: { onContextOverflow?: (max: number) => void; onContextTruncate?: () => boolean } = {}): Promise<T> =>
+        withRetry(fn,
+            _capWorkerRetryWait(_makeOAIRetryHandler({
+                getEp: () => endpoint ?? oaiEndpoint(),
+                setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
+                forWorker: explicitModel,
+                onNote: msg => { console.error(`[${noteTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
+                ...extra,
+            }), msg => { console.error(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
+            100,
+            () => (endpoint ?? oaiEndpoint()).provider === 'custom');
+
     const maxSteps = _WORKER_MAX_STEPS;
     // Match the main loop: keep a per-worker rotation counter and advance through the
     // active model list after the configured number of steps. The initial endpoint may
@@ -880,7 +896,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 // Pass worker session + step so callOAI can log request/header.
                 // evtSession uses a fake AgentSession shape (only _session and _evtTurn needed).
                 const _wEvtSessProxy = _wSession ? { _session: _wSession, _evtTurn: _wEvtTurn } as any : null;
-                message = await withRetry(
+                message = await _workerRetry(
                     () => { console.error(`[worker:${_wRole}:step${step}] calling callOAI attempt=${_callAttempt++} ep=${(endpoint??oaiEndpoint()).provider}|${(endpoint??oaiEndpoint()).model} histLen=${localOH.length}`); return callOAI((c, t) => taskHandle.append(c, t),
                         p => {
                             taskHandle.setRequest?.(JSON.stringify(p, null, 2));
@@ -890,11 +906,8 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                           roleOverride: localRole, toolFilterOverride: localToolFilter,
                           maxTokens: workerMaxTokens, evtSession: _wEvtSessProxy, evtStep: step,
                           forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null }); },
-                    _capWorkerRetryWait(_makeOAIRetryHandler({
-                        getEp: () => endpoint ?? oaiEndpoint(),
-                        setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
-                        forWorker: explicitModel,
-                        onNote: msg => { console.error(`[worker:${_wRole}:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
+                    `worker:${_wRole}:retry`, `worker:${_wRole}:retry`,
+                    {
                         onContextOverflow: max => { workerMaxTokens = max; taskHandle.append(`\n[context overflow: reducing max_tokens to ${max}]\n`, 'thinking'); },
                         onContextTruncate: () => {
                             // Prompt exceeds context window even at min max_tokens.
@@ -910,10 +923,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                             }
                             return false;  // only task message left; bail so caller records error
                         },
-                    }), msg => { console.error(`[worker:${_wRole}:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
-                    100,
-                    () => (endpoint ?? oaiEndpoint()).provider === 'custom'
-                );
+                    });
                 const _u = message?.usage;
                 console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
@@ -960,11 +970,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                         continue;
                     }
                     const _reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
-                    const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
-                    const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
-                        .flatMap(m => m.tool_calls).slice(-4)
-                        .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 2000)}) → ${(_results.get(tc.id) ?? '').slice(0, 4000)}`)
-                        .join('\n');
+                    const _recent = summarizeRecentToolCalls(localOH);
                     const _fallback = `${_reasoning ? `${_reasoning.slice(-4000)}\n\n` : ''}Last tool calls:\n${_recent}\n\nSTATUS: partial — the worker ended without writing a report`;
                     console.error(`[worker:${_wRole}:step${step}] empty final message after nudge, returning ${_reasoning ? 'reasoning' : 'tool-call'} fallback`);
                     _wSessionClose({ kind: 'completed' });
@@ -998,15 +1004,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             for (const c of _normCalls) _wToolCalls.push({ name: c.name, label: toolLabel(c.name, c.args) });
             const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, result: r.result }));
             // Shell sent as Python ran as bash: record the call as bash (see the main loop).
-            const _asBashIds = new Set(results.filter(r => r.result?._ranAsBash).map(r => { delete r.result._ranAsBash; return r.tc.id; }));
-            if (_asBashIds.size) {
-                const _am = [...localOH].reverse().find((m: any) => m.role === 'assistant' && m.tool_calls?.length);
-                if (_am) _am.tool_calls = _am.tool_calls.map((tc: any) => {
-                    if (!_asBashIds.has(tc.id)) return tc;
-                    try { return { ...tc, function: { ...tc.function, arguments: JSON.stringify({ ...JSON.parse(tc.function.arguments), language: 'bash' }) } }; }
-                    catch { return tc; }
-                });
-            }
+            recordCallsAsBash(localOH, collectRanAsBash(results.map(r => ({ tc: r.tc, result: r.result }))));
             const wStepBudgetChars = parseInt((typeof ls === 'function' ? ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())) : '100000'), 10);
             const wStepBudget = { remaining: wStepBudgetChars };
             for (const { tc, name, result } of results) {
@@ -1059,30 +1057,18 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 taskHandle.setModel(modelFriendlyName(nextSpec));
             }
         }
-        const _m = await withRetry(
+        const _m = await _workerRetry(
             () => callOAI(() => {}, () => {}, {
                 localHistory: _capOH, forWorker: true, endpointOverride: endpoint, roleOverride: localRole,
                 toolFilterOverride: localToolFilter, forkPrefix: isFork ? { system: forkBase!.system, tools: forkBase!.tools } : null,
             }),
-            _capWorkerRetryWait(_makeOAIRetryHandler({
-                getEp: () => endpoint ?? oaiEndpoint(),
-                setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
-                forWorker: explicitModel,
-                onNote: msg => { console.error(`[worker:${localRole?.name ?? 'anon'}:step-cap:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
-            }), msg => { console.error(`[worker:step-cap:retry] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
-            100,
-            () => (endpoint ?? oaiEndpoint()).provider === 'custom'
-        );
+            `worker:${localRole?.name ?? 'anon'}:step-cap:retry`, 'worker:step-cap:retry');
         _report = typeof _m?.content === 'string' ? _m.content.trim() : '';
     } catch (e) { console.error(`[worker:step-cap report] ${e.message}`); }
     if (!_report) {
         const _lastSaid = [...localOH].reverse().find(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim())?.content?.trim();
         // The last few calls with their (clipped) results — the labels alone ("exec(bash)") say nothing.
-        const _results = new Map(localOH.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
-        const _recent = localOH.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
-            .flatMap(m => m.tool_calls).slice(-4)
-            .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 2000)}) → ${(_results.get(tc.id) ?? '').slice(0, 4000)}`)
-            .join('\n');
+        const _recent = summarizeRecentToolCalls(localOH);
         _report = `${_lastSaid ? `${_lastSaid}\n\n` : ''}Last tool calls:\n${_recent || '- (none)'}`;
     }
     return { output: `${_report.replace(/STATUS:\s*(complete|blocked|partial).*$/im, '').trim()}\n\n${_capFooter}`, toolCalls: _wToolCalls };
@@ -1095,7 +1081,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 // protocol judging, and stays out of this to avoid misrepresenting it as "validation".
 function _isJudgeLabel(label: string | null | undefined): boolean { return label === 'completion:verify' || !!label?.startsWith('validate:'); }
 
-// Central router for single-turn text completions (no tools, no history management).
+// Central router for single-turn text completions (no tools, no history management). It is built on
+// llm-loops callLLM (shared request building, streaming decode and the OAI retry handler); what it
+// adds is judge/sub-task bookkeeping and the reasoning-room retry, so there is no second request path.
 // All background LLM calls (synthesis, conflict resolution, review, analysis) go through here.
 //
 // handle behaviour:
