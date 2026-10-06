@@ -173,6 +173,13 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
     const _rf = seenReadFiles ?? _seenReadFiles;
     const _lf = seenListFiles ?? _seenListFiles;
 
+    if (name.startsWith('browser_')) {
+        const text = JSON.stringify(result) ?? '';
+        const kept = text.length > limit ? { url: result?.url, observation: text.slice(0, limit), truncated: true } : result;
+        if (stepBudget) stepBudget.remaining = Math.max(0, stepBudget.remaining - Math.min(text.length, limit));
+        return kept;
+    }
+
     if (name === 'list_files') {
         // Deduplicate list_files: if we already listed this exact path this turn, suppress the result.
         // Use the original requested path (result.path) as key — don't normalise, since "" and "local"

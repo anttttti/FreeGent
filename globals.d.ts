@@ -5,6 +5,14 @@
 // accepting the architecture. Types are `any` until call sites import directly.
 
 declare global {
+    // ── bridged by browser-tools.ts ──
+    var BROWSER_TOOL_NAMES: string[];
+    var BROWSER_TOOLS_SPEC: any[];
+    var setBrowserBridge: (url: string) => void;
+    var browserBridgeAvailable: () => boolean;
+    var executeBrowserTool: (name: string, args: any) => Promise<any>;
+    var browserPromptGuidance: (allows: (name: string) => boolean) => string;
+
     // CDN globals loaded before the module graph (katex, hljs, DOMPurify via <script> tags)
     var DOMPurify: any;
     var katex: any;
@@ -13,6 +21,9 @@ declare global {
     var addImageAttachment: any;
     var clearImageAttachments: any;
     var addFileAttachment: any;
+    var hasPendingAttachments: () => boolean;
+    var warnAttachmentSendBusy: () => void;
+    var waitForAttachments: () => Promise<void>;
     var restoreFileAttachment: any;
     var getPendingAttachments: any;
     var setupChatDropZone: any;
@@ -78,6 +89,7 @@ declare global {
     var processImgSlots: any;
     var processFileLinks: any;
     var renderMarkdown: any;
+    var copyChatText: (text: string) => Promise<void>;
     var scrollBottom: any;
     // ── bridged by chat-state.ts ──
     var autoNameChat: any;
@@ -211,6 +223,7 @@ declare global {
     var getRoleBodyFn: any;
     var setRoleBodyFn: any;
     var getRotationStepN: any;
+    var browserBashAvailable: () => boolean;
     var getSandboxProvider: any;
     var getSamplingParams: any;
     var getSearchProvider: any;
@@ -648,6 +661,7 @@ declare global {
     var setMainAgentRole: any;
     var splitLines: any;
     // ── bridged by workspace.ts ──
+    var extractDocumentText: (name: string, content: string) => Promise<string>;
     var _base64ToUint8: any;
     var _extOf: any;
     var _fgAudioCtx: any;

@@ -25,6 +25,8 @@ export const AGENT_TOOL_NAMES = [
     'run_workers', 'update_task_status', 'fetch_url', 'web_search',
     'run_git', 'ast_query', 'generate_image', 'deep_research',
     'context7_docs', 'academic_search', 'package_search', 'check_page',
+    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
+    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
 ];
 const _PAYLOAD_TOOLNAMES = AGENT_TOOL_NAMES.join('|');
 

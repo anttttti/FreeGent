@@ -63,7 +63,7 @@
         // Promise.allSettled — Safari 13+
         if (!Promise.allSettled) {
             Promise.allSettled = function(promises) {
-                return Promise.all(Array.prototype.slice.call(promises).map(function(p) {
+                return Promise.all(Array.from(promises).map(function(p) {
                     return Promise.resolve(p).then(
                         function(v) { return { status: 'fulfilled', value: v }; },
                         function(r) { return { status: 'rejected', reason: r }; }
@@ -74,7 +74,7 @@
         // String.prototype.replaceAll — Safari 13.1+
         if (!String.prototype.replaceAll) {
             String.prototype.replaceAll = function(search, repl) {
-                if (search instanceof RegExp) return String.prototype.replace.call(this, search, repl);
+                if (search instanceof RegExp) { if (!search.global) throw new TypeError('replaceAll requires a global RegExp'); return String.prototype.replace.call(this, search, repl); }
                 // Escape special regex chars, then replace globally
                 var esc = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 return String.prototype.replace.call(this, new RegExp(esc, 'g'), repl);
@@ -88,7 +88,7 @@
                 var step;
                 while (!(step = iter.next()).done) {
                     var entry = step.value;
-                    obj[entry[0]] = entry[1];
+                    Object.defineProperty(obj, entry[0], {value:entry[1],enumerable:true,configurable:true,writable:true});
                 }
                 return obj;
             };
@@ -99,14 +99,7 @@
                 return Object.prototype.hasOwnProperty.call(obj, key);
             };
         }
-        // AbortSignal.timeout — Safari 15.4+
-        if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
-            AbortSignal.timeout = function(ms) {
-                var ctrl = new AbortController();
-                setTimeout(function() { ctrl.abort(); }, ms);
-                return ctrl.signal;
-            };
-        }
+
     })();
     </script>
     <script>
@@ -844,6 +837,7 @@
 <script type="module" src="model-caps.ts"></script>
 <script type="module" src="ast.ts"></script>
 <script type="module" src="mcp.ts"></script>
+<script type="module" src="browser-tools.ts"></script>
 <script type="module" src="fetch-blacklist.ts"></script>
 <script type="module" src="search-providers.ts"></script>
 <script type="module" src="skill-guidance.ts"></script>
@@ -887,10 +881,10 @@
 <script type="module" src="init.ts"></script>
 <!-- Document extraction: loaded async — only needed when user attaches a file.
      async prevents blocking the main thread on low-end hardware (iPad Air 1 A5 chip).
-     pdfjs-dist@3 "legacy" build: ES5-compatible, smaller than v4 for older devices. -->
-<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/legacy/build/pdf.min.js" integrity="sha384-4yF691FhcjEHOIvMawLtG8eeSDQblQ75ikYitzluB+3JNiohBa6FWD27H1s/iBoP"></script>
-<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/mammoth@1.12.3/mammoth.browser.min.js" integrity="sha384-xqNXvcKbEqifokHcBnB0H32p+OQchhD/T/xJGWCMAW5fC0c0MBf9atO3weoPCT84"></script>
-<script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"></script>
+     pdfjs-dist@2 legacy build is used for older devices. -->
+<script async onerror="this.dataset.loadFailed='1'" crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/legacy/build/pdf.min.js" integrity="sha384-4yF691FhcjEHOIvMawLtG8eeSDQblQ75ikYitzluB+3JNiohBa6FWD27H1s/iBoP"></script>
+<script async onerror="this.dataset.loadFailed='1'" crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/mammoth@1.12.3/mammoth.browser.min.js" integrity="sha384-xqNXvcKbEqifokHcBnB0H32p+OQchhD/T/xJGWCMAW5fC0c0MBf9atO3weoPCT84"></script>
+<script async onerror="this.dataset.loadFailed='1'" crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"></script>
 <!-- HTML→Markdown conversion (used for contenteditable input and clipboard paste) -->
 <script async crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/turndown@7.2.4/dist/turndown.js" integrity="sha384-VRHmZZ8b5mH5yknWcg48OJS6RmXZmlgvsqhOXJqY0rwvwirs1M12xd+49c3NpW6a"></script>
 

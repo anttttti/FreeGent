@@ -42,6 +42,8 @@ export const ALL_TOOL_NAMES = [
     'deep_research', 'academic_search', 'package_search', 'context7_docs',
     'repo_map', 'run_git', 'ast_query',
     'update_task_status',
+    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
+    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
 ];
 
 // Tools disabled by default — enabled only by explicit user action in Settings → Tools.
@@ -66,6 +68,8 @@ export const OPT_IN_TOOLS = new Set([
     // Task-status tool — useful only when the tasks skill is active; off by default
     // so agents don't wastefully call it on tasks that aren't managed via the skill.
     'update_task_status',
+    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
+    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
 ]);
 
 // Persist DISABLED tools rather than enabled ones, so tools shipped in a later version
