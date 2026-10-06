@@ -1,6 +1,6 @@
 import { workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
-import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay } from './retry.js';
+import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay, _httpErrorFromResponse } from './retry.js';
 import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName,
          firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
@@ -120,8 +120,13 @@ function _compactFetchSignal(ep: any = null) {
     return combineSignals(activeAbortController?.signal, isCustomEndpoint(ep) ? 3 * 60_000 : 90_000)!;
 }
 
-// Unified compaction retry handler — drives both Gemini and OAI paths in a single withRetry
-// loop, rotating across providers when the current one is exhausted.
+// Compaction retry handler: a deliberately smaller sibling of retry.ts _makeOAIRetryHandler.
+// Differences, all intentional: rotation walks the whole active model list (no rate-limit
+// fallback endpoint, no tool-format lock — compaction sends no tool calls); 'vllm' counts as a
+// local endpoint; no 401/404 model pausing and no truncated-response cycling (a failed summary
+// is retried or replaced by a stub, never worth pausing the user's model); no worker mode.
+// Keep the shared behaviour (context-overflow headroom, cooldown marking, delays) in step with
+// _makeOAIRetryHandler — tests/retry-consistency.test.ts pins the classifier contract.
 function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = null as any, onContextTruncate = null as any }) {
     return (n: number, e: any, d: number) => {
         // Context overflow (OAI "maximum context length" error)
@@ -244,16 +249,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
                 ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
                 : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep), body })
             ).catch(e => { throw asTransportError(e); });
-            if (!resp.ok) {
-                const text = await resp.text().catch(() => '');
-                let msg = `Compaction HTTP ${resp.status}`;
-                try {
-                    const j = JSON.parse(text);
-                    const detail = j.message || j.detail || j.error?.message || '';
-                    if (detail) msg += ': ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 300);
-                } catch { if (text) msg += ': ' + text.slice(0, 200); }
-                throw new Error(msg);
-            }
+            if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             return resp.json();
         }, _makeCompactRetryHandler({
             getEp: () => ep,
