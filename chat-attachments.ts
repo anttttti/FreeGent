@@ -1,3 +1,4 @@
+import { mimeOfExt, docKindOfExt, docKindOfMime } from './mime.js';
 // chat-attachments.ts — pending image/file attachment state and UI (thumbnails, chips, drag-drop, paste).
 // Depends on: nothing (pure DOM + state).
 
@@ -76,21 +77,7 @@ const _LANG_MAP = {
     md:'markdown', tex:'latex', graphql:'graphql', prisma:'prisma',
 };
 
-function _guessMime(ext: string): string {
-    const m = {
-        png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
-        webp:'image/webp', bmp:'image/bmp', svg:'image/svg+xml',
-        pdf:'application/pdf',
-        docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        xls:'application/vnd.ms-excel', ods:'application/vnd.oasis.opendocument.spreadsheet',
-        mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', m4a:'audio/mp4',
-        flac:'audio/flac', aac:'audio/aac', weba:'audio/webm',
-        mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime',
-        avi:'video/x-msvideo', mkv:'video/x-matroska',
-    };
-    return m[ext] || 'application/octet-stream';
-}
+function _guessMime(ext: string): string { return mimeOfExt(ext); }
 
 function _fileIcon(mimeType: string, name: string): string {
     if (mimeType === 'application/pdf')    return '📄';
@@ -211,10 +198,7 @@ async function _loadFileAttachment(file: File, generation: number): Promise<void
     const isText = mimeType.startsWith('text/')
         || ['application/json','application/xml','application/javascript','application/typescript','application/yaml','image/svg+xml'].includes(mimeType)
         || _TEXT_EXTS.has(ext);
-    const docTypes = { 'application/pdf': 'pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx', 'application/vnd.ms-excel': 'xls',
-        'application/vnd.oasis.opendocument.spreadsheet': 'ods' };
-    const docExt = ['pdf', 'docx', 'xlsx', 'xls', 'ods'].includes(ext) ? ext : (!_TEXT_EXTS.has(ext) ? docTypes[mimeType] : undefined);
+    const docExt = docKindOfExt(ext) ?? (!_TEXT_EXTS.has(ext) ? docKindOfMime(mimeType) : undefined);
     if (!isText && file.size > 25 * 1024 * 1024) throw new Error('Binary attachment exceeds the 25 MB limit');
     const current = () => generation === _attachmentGeneration;
     if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {

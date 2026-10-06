@@ -6,6 +6,7 @@ import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { isTextBytes } from './shiro/utils/bytes.js';
+import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 120_000;
@@ -1078,7 +1079,7 @@ async function _handleReadFile(args, context) {
     // Block known binary extensions before reading — avoids 4M-char dead turns on PDFs.
     if (/\.(pdf)$/i.test(args.path))
         return { error: `binary file: ${args.path} is a PDF — read_file cannot extract text`, hint: 'extract text with execute_code: pdftotext <path> - | head -200' };
-    if (/\.(so|pyc|pkl|bin|gz|zip|tar|jar|class|o|a|whl|pyd|dylib|dex|exe|dll)$/i.test(args.path))
+    if (UNREADABLE_BINARY_RE.test(args.path))
         return { error: `binary file: ${args.path} cannot be read as text`, hint: 'do not read binary files as text; use execute_code to inspect (e.g. file, strings, hexdump)' };
     // Expand narrow ranges to a 50-line minimum so one read covers the surrounding
     // function context. Prevents the search-hit→narrow-read→re-read step pattern;
@@ -2012,7 +2013,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                  note: `Received keys: ${Object.keys(args).join(', ')}` };
     }
     let execResult = null;
-    const _needsDisplay = /^\s*(?:import|from)\s+(pygame|pygame_ce|turtle|tkinter|wx|gi\.repository|PyQt[456]|PySide[26])\b/m.test(args.code);
+    const _needsDisplay = DISPLAY_LIBS_RE.test(args.code);
     // Browser JavaScript: runs in the exec sandbox frame with a virtual fs shim (not headless).
     // (/api/execute runs only bash and python, so JavaScript uses the sandbox whatever the provider.)
     const _isStaticJS = args.language === 'javascript'
