@@ -343,6 +343,10 @@ function getBraveKey()       { return ls('fg_brave_key'); }
 function getGithubToken()      { return ls('fg_github_token'); }
 function getStackExchangeKey() { return ls('fg_stackexchange_key'); }
 export function getSandboxProvider()  { return ls('fg_sandbox_provider', 'wasm'); }
+export function browserBashAvailable(): boolean {
+    return typeof BigInt === 'function' && typeof WebAssembly === 'object' && typeof Worker === 'function'
+        && typeof DataView.prototype.getBigUint64 === 'function' && typeof DataView.prototype.setBigUint64 === 'function';
+}
 
 // ── Geo / IP cache ────────────────────────────────────────────────────────
 // Fetches https://ipinfo.io/json once at startup and caches the result in
@@ -1078,7 +1082,8 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
 // reach the FreeGent workspace as they happen, through the frame's workspace channel.
 const WASM_TIMEOUT_MS = 10 * 60_000;
 async function runWithWasm(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress);
+    if (!browserBashAvailable()) throw new Error('Browser bash is unavailable: use JavaScript or configure a local execution server');
+    return sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress, typeof activeAbortController !== 'undefined' ? activeAbortController?.signal : undefined);
 }
 
 // ── Shared utilities ──────────────────────────────────────────────────────
@@ -1124,7 +1129,7 @@ Object.assign(window, {
     getTopP, getTopK, getMinP, getPresencePenalty, getRepetitionPenalty, getSamplingParams,
     getTavilyKey, getHFKey, getSearchProxy, getEffectiveProxy, getLocalApiProxy,
     getBraveKey, getGithubToken, getStackExchangeKey,
-    getSandboxProvider, getGeoCache, prefetchGeoCache,
+    getSandboxProvider, browserBashAvailable, getGeoCache, prefetchGeoCache,
     getAgentToolTruncation, getAgentMaxToolResult, getDirectorMaxToolResult,
     getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens,
     getAgentMaxSteps, getAgentLeanWorkers,

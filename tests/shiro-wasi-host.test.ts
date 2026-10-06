@@ -3,6 +3,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { nodeWorkerFactory } from './helpers/node-wasi-worker';
 import { spin, hello, trap } from './helpers/wasm-assemble';
+import { compileWasm } from '../shiro/wasm-module';
 import { execWasi, setWasiWorkerFactory, EXIT_DEADLINE } from '../shiro/wasi-host';
 import { WasiRT, FD, WASI_FILETYPE_REGULAR_FILE } from '../shiro/wasi-runtime';
 
@@ -261,5 +262,25 @@ describe('complete WASI filesystem snapshots', () => {
     await expect(rt.applyWrites({closedDirty:[],deferredOps:[{type:'write',path:'/a',data:new Uint8Array([4])},{type:'write',path:'/b',data:new Uint8Array([5])}]})).rejects.toThrow('/b');
     expect(fs.writeFile).not.toHaveBeenCalled();
     expect([...data.get('/a')!]).toEqual([1]);
+  });
+});
+
+describe('WASM module cloning compatibility', () => {
+  it('recompiles bytes in the real worker when compiled module cloning is rejected', async () => {
+    const nativeFactory = await nodeWorkerFactory();
+    let clones=0, bytes=0;
+    setWasiWorkerFactory(() => {
+      const worker=nativeFactory();const send=worker.postMessage.bind(worker);
+      worker.postMessage=(message:any)=> {
+        if(message.type==='run' && message.module) {clones++;throw new DOMException('Cannot clone module','DataCloneError');}
+        if(message.bytes) bytes++;
+        send(message);
+      };
+      return worker;
+    });
+    let stdout='';
+    const result=await execWasi({fs:{readdir:async()=>[],stat:async()=>({type:'dir',size:0,mtime:new Date(0)})} as any,cwd:'/',args:['hello'],env:{},onStdout:t=>stdout+=t},
+      await compileWasm(hello()),{deadlineMs:5000});
+    expect(result).toBe(0);expect(stdout).toBe('hi\n');expect(clones).toBe(1);expect(bytes).toBe(1);
   });
 });

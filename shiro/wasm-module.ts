@@ -12,6 +12,8 @@
 export interface MemoryImport { module: string; name: string; initial: number; maximum: number | undefined; wasShared: boolean }
 
 /** Memory a compiled module expects the host to provide (set by compileWasm). */
+// Browsers may refuse structured-cloning a compiled module into an opaque-origin worker.
+export const moduleBytes = new WeakMap<WebAssembly.Module, Uint8Array>();
 export const memoryImports = new WeakMap<WebAssembly.Module, MemoryImport>();
 
 function leb(b: Uint8Array, p: number): [number, number] {
@@ -71,6 +73,7 @@ export async function compileWasm(bytes: ArrayBuffer | Uint8Array): Promise<WebA
     u8[info.flagsPos] &= ~2;
   }
   const mod = await WebAssembly.compile(u8 as unknown as BufferSource);
+  moduleBytes.set(mod, u8.slice());
   if (info) memoryImports.set(mod, { module: info.module, name: info.name, initial: info.initial, maximum: info.maximum, wasShared: info.wasShared });
   return mod;
 }

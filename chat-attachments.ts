@@ -2,14 +2,50 @@
 // Depends on: nothing (pure DOM + state).
 
 // ── Pending attachment state ──────────────────────────────────────────────────
+let _attachmentGeneration = 0;
+const _attachmentReads = new Set<Promise<void>>();
+
+// Sending waits for file decoding/extraction rather than snapshotting an empty list.
+async function waitForAttachments(): Promise<void> {
+    while (_attachmentReads.size) await Promise.all(Array.from(_attachmentReads));
+}
+function hasPendingAttachments(): boolean { return !!(_pendingImages.length || _pendingFiles.length || _attachmentReads.size); }
+function warnAttachmentSendBusy(): void {
+    const strip = document.getElementById('img-strip');
+    if (!strip || strip.querySelector('[data-attachment-send-status]')) return;
+    const status = document.createElement('div'); status.className = 'file-chip media-warn-chip';
+    status.dataset.attachmentSendStatus = 'busy'; status.setAttribute('role', 'status');
+    status.textContent = 'Finish or stop the current response before sending attachments. Your draft and files are kept here.';
+    strip.appendChild(status); strip.style.display = 'flex';
+}
+function _attachmentError(name: string, error: any): void {
+    const strip = document.getElementById('img-strip');
+    if (!strip) return;
+    const warning = document.createElement('div');
+    warning.className = 'file-chip media-warn-chip';
+    warning.setAttribute('role', 'alert');
+    warning.textContent = `${name}: ${error?.message || 'Could not read attachment'}`;
+    strip.appendChild(warning);
+    strip.style.display = 'flex';
+}
+function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL'): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Empty file reader result'));
+        reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+        reader.onabort = () => reject(new Error('File reading cancelled'));
+        try { reader[how](file); } catch (error) { reject(error); }
+    });
+}
+
 let _pendingImages: { mimeType: string; base64: string }[] = [];
-let _pendingFiles: { name: string; mimeType: string; contentType: string; content: string; size: number }[] = [];
+let _pendingFiles: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }[] = [];
 
 // ── File attachment helpers ───────────────────────────────────────────────────
 
 const _TEXT_EXTS = new Set([
-    'txt','md','mdx','csv','tsv','json','jsonc','yaml','yml','toml','ini','cfg','conf','env',
-    'xml','html','htm','css','scss','sass','less',
+    'txt','log','md','mdx','csv','tsv','json','jsonc','yaml','yml','toml','ini','cfg','conf','env',
+    'xml','svg','html','htm','css','scss','sass','less',
     'js','mjs','cjs','ts','tsx','jsx','vue','svelte',
     'py','pyw','rb','go','rs','java','cpp','cxx','cc','c','h','hpp','cs','php','swift',
     'kt','kts','scala','groovy','lua','dart','ex','exs','clj','cljs','hs','ml','r',
@@ -33,7 +69,12 @@ const _LANG_MAP = {
 
 function _guessMime(ext: string): string {
     const m = {
+        png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
+        webp:'image/webp', bmp:'image/bmp', svg:'image/svg+xml',
         pdf:'application/pdf',
+        docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        xls:'application/vnd.ms-excel', ods:'application/vnd.oasis.opendocument.spreadsheet',
         mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', m4a:'audio/mp4',
         flac:'audio/flac', aac:'audio/aac', weba:'audio/webm',
         mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime',
@@ -72,8 +113,9 @@ function _addFileChip(att: any): void {
     chip.className = 'file-chip';
     chip.title = `${att.name} · ${_fmtSz(att.size)}`;
     const nameShort = att.name.length > 26 ? att.name.slice(0, 23) + '…' : att.name;
-    chip.innerHTML = `<span class="file-chip-icon">${_fileIcon(att.mimeType, att.name)}</span>`
-                   + `<span class="file-chip-name">${nameShort}</span>`;
+    const icon = document.createElement('span'); icon.className = 'file-chip-icon'; icon.textContent = _fileIcon(att.mimeType, att.name);
+    const label = document.createElement('span'); label.className = 'file-chip-name'; label.textContent = nameShort;
+    chip.append(icon, label);
     const rm = document.createElement('button');
     rm.className = 'img-remove-btn'; rm.textContent = '×'; rm.title = 'Remove';
     rm.onclick = () => {
@@ -113,6 +155,8 @@ function addImageAttachment(mimeType: string, base64: string): void {
 }
 
 function clearImageAttachments(): void {
+    _attachmentGeneration++;
+    _attachmentReads.clear();
     _pendingImages = [];
     _pendingFiles  = [];
     const strip = document.getElementById('img-strip');
@@ -123,66 +167,81 @@ function clearImageAttachments(): void {
 // (saveCheckpoint, agentSend) without exposing the mutable arrays directly.
 function getPendingAttachments(): {
     images: { mimeType: string; base64: string }[];
-    files: { name: string; mimeType: string; contentType: string; content: string; size: number }[];
+    files: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }[];
 } {
     return { images: [..._pendingImages], files: [..._pendingFiles] };
 }
 
 // Restores a saved attachment entry into pending state (used by rerunCheckpoint and
 // _startEditUserMsg when replaying a turn with previously-attached files).
-function restoreFileAttachment(att: { name: string; mimeType: string; contentType: string; content: string; size: number }): void {
+function restoreFileAttachment(att: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }): void {
     _pendingFiles.push(att);
     _addFileChip(att);
 }
 
-async function addFileAttachment(file: File): Promise<void> {
+function addFileAttachment(file: File): Promise<void> {
+    const generation = _attachmentGeneration;
+    const strip = document.getElementById('img-strip');
+    const loading = document.createElement('div');
+    loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
+    loading.textContent = `Reading ${file.name}…`;
+    if (strip) { strip.appendChild(loading); strip.style.display = 'flex'; }
+    const read = _loadFileAttachment(file, generation);
+    _attachmentReads.add(read);
+    // Attach a rejection handler even when the caller is an inline event handler.
+    void read.then(() => { loading.remove(); _attachmentReads.delete(read); }, error => {
+        loading.remove(); _attachmentReads.delete(read);
+        if (generation === _attachmentGeneration) _attachmentError(file.name, error);
+    });
+    return read;
+}
+async function _loadFileAttachment(file: File, generation: number): Promise<void> {
     const name = file.name;
-    const ext  = name.split('.').pop()?.toLowerCase() || '';
-    const mimeType = file.type || _guessMime(ext);
-
-    // Images → existing thumbnail path (includes SVG)
-    if (mimeType.startsWith('image/')) {
-        return new Promise<void>(resolve => {
-            const reader = new FileReader();
-            reader.onload = () => {
-                const url = reader.result as string;
-                addImageAttachment(mimeType, url.slice(url.indexOf(',') + 1));
-                resolve();
-            };
-            reader.readAsDataURL(file);
-        });
-    }
-
-    // Text files → read content, inject as formatted blocks
+    const ext = name.split('.').pop()?.toLowerCase() || '';
+    const mimeType = file.type && file.type !== 'application/octet-stream' ? file.type : _guessMime(ext);
     const isText = mimeType.startsWith('text/')
-        || ['application/json','application/xml','application/javascript',
-            'application/typescript','application/yaml'].includes(mimeType)
+        || ['application/json','application/xml','application/javascript','application/typescript','application/yaml','image/svg+xml'].includes(mimeType)
         || _TEXT_EXTS.has(ext);
-    if (isText) {
-        const MAX = 50_000;
-        const raw = await file.text();
-        const content = raw.length > MAX
-            ? raw.slice(0, MAX) + `\n…[truncated — file is ${_fmtSz(raw.length)}, showing first 50 KB]`
-            : raw;
-        const att = { name, mimeType: mimeType || 'text/plain', contentType: 'text', content, size: file.size };
-        _pendingFiles.push(att);
-        _addFileChip(att);
+    const docTypes = { 'application/pdf': 'pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx', 'application/vnd.ms-excel': 'xls',
+        'application/vnd.oasis.opendocument.spreadsheet': 'ods' };
+    const docExt = ['pdf', 'docx', 'xlsx', 'xls', 'ods'].includes(ext) ? ext : (!_TEXT_EXTS.has(ext) ? docTypes[mimeType] : undefined);
+    if (!isText && file.size > 25 * 1024 * 1024) throw new Error('Binary attachment exceeds the 25 MB limit');
+    const current = () => generation === _attachmentGeneration;
+    if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {
+        const url = await _readAttachment(file, 'readAsDataURL');
+        if (current()) addImageAttachment(mimeType, url.slice(url.indexOf(',') + 1));
         return;
     }
 
-    // Binary (PDF, audio, video, etc.) → base64
-    return new Promise<void>(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            const url = reader.result as string;
-            const att = { name, mimeType, contentType: 'binary',
-                          content: url.slice(url.indexOf(',') + 1), size: file.size };
-            _pendingFiles.push(att);
-            _addFileChip(att);
-            resolve();
-        };
-        reader.readAsDataURL(file);
-    });
+    let content: string, contentType: string, original: string | null = null;
+    if (isText) {
+        // FileReader also works on Safari versions without Blob.text().
+        content = await _readAttachment(file.size > 200_000 ? file.slice(0, 200_000, file.type) : file, 'readAsText');
+        contentType = 'text';
+    } else {
+        const url = await _readAttachment(file, 'readAsDataURL');
+        content = url.slice(url.indexOf(',') + 1);
+        original = content;
+        if (docExt) {
+            if (typeof extractDocumentText !== 'function') throw new Error('Document reader is not ready; try attaching again');
+            content = await extractDocumentText(docExt === ext ? name : `${name}.${docExt}`, content);
+            if (!content.trim()) throw new Error('No readable text in this document; image-only documents need OCR');
+            contentType = 'text';
+        } else contentType = 'binary';
+    }
+    if (!current()) return;
+    if (contentType === 'text' && content.length > 50_000) content = content.slice(0, 50_000) + '\n…[truncated — showing first 50,000 characters]';
+    let workspacePath: string | undefined;
+    if (original && typeof agentWriteFile === 'function') {
+        const basename = name.replace(/\\/g, '/').split('/').pop() || 'attachment';
+        workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
+        await agentWriteFile(workspacePath, original, 'base64');
+        if (!current()) return;
+    }
+    const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
+    _pendingFiles.push(att);
+    _addFileChip(att);
 }
 
 let _chatDropZoneSetup = false;
@@ -194,7 +253,7 @@ function setupChatDropZone(): void {
     _chatDropZoneSetup = true;
 
     chatPanel.addEventListener('dragover', e => {
-        if (!e.dataTransfer?.types.includes('Files')) return;
+        if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         overlay?.classList.add('active');
@@ -206,26 +265,25 @@ function setupChatDropZone(): void {
     chatPanel.addEventListener('drop', async e => {
         e.preventDefault();
         overlay?.classList.remove('active');
-        for (const file of [...(e.dataTransfer?.files || [])])
+        for (const file of Array.from(e.dataTransfer?.files || []))
             await addFileAttachment(file).catch(() => {});
     });
 }
 
 // Paste any file (image or otherwise) into the chat tab
 document.addEventListener('paste', e => {
-    const items = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file');
-    if (!items.length) return;
+    const items = Array.from(e.clipboardData?.items || []).filter(i => i.kind === 'file');
+    const fromItems = items.map(item => item.getAsFile()).filter((file): file is File => !!file);
+    const files = fromItems.length ? fromItems : Array.from(e.clipboardData?.files || []);
+    if (!files.length) return;
     const chatPanel = document.querySelector('#tab-content [data-panel="chat"]') as HTMLElement | null;
     if (!chatPanel?.classList.contains('active')) return;
     e.preventDefault();
-    for (const item of items) {
-        const file = item.getAsFile();
-        if (file) addFileAttachment(file).catch(() => {});
-    }
+    for (const file of files) void addFileAttachment(file).catch(() => {});
 });
 
 Object.assign(window, {
-    addImageAttachment, clearImageAttachments, addFileAttachment,
+    addImageAttachment, clearImageAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
     setupChatDropZone, restoreFileAttachment, getPendingAttachments,
     _guessMime, _fileIcon, _fmtSz, _LANG_MAP, _audioFmt,
 });

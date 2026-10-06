@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { sha256 } from './checksums';
 import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU md5sum / sha1sum / sha256sum / sha512sum: "HASH  NAME" per file ("-" for stdin), -c to check
@@ -39,6 +40,10 @@ function md5(data: Uint8Array): string {
 
 async function digest(algo: string, data: Uint8Array): Promise<string> {
   if (algo === 'MD5') return md5(data);
+  if (typeof crypto === 'undefined' || !crypto.subtle?.digest) {
+    if (algo === 'SHA-256') return Array.from(sha256(data), b => b.toString(16).padStart(2, '0')).join('');
+    throw new Error(`${algo} requires Web Crypto: use HTTPS or local execution`);
+  }
   const buf = await crypto.subtle.digest(algo, data as BufferSource);
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
@@ -113,7 +118,7 @@ function hashCommand(name: string, algo: string): Command {
           const h = await digest(algo, await readBytes(ctx, f));
           ctx.stdout += (tag ? `${TAGS[algo]} (${f}) = ${h}` : `${h} ${star ? '*' : ' '}${f}`) + (zero ? '\0' : '\n');
         }
-        catch { ctx.stderr += `${name}: ${f}: No such file or directory\n`; rc = 1; }
+        catch (error: any) { ctx.stderr += `${name}: ${f}: ${error?.message?.includes('requires Web Crypto') ? error.message : 'No such file or directory'}\n`; rc = 1; }
       }
       return rc;
     },

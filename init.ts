@@ -567,7 +567,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (action === 'copy-response') {
             const responseEl = btn.closest('.agent-msg-bubble')?.querySelector('.agent-response-text') as HTMLElement | null;
             if (!responseEl) return;
-            navigator.clipboard.writeText(responseEl.innerText ?? '').then(() => {
+            copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
                 (btn as HTMLElement).textContent = '✓';
                 setTimeout(() => { (btn as HTMLElement).textContent = '⎘'; }, 1500);
             }).catch(() => {});
@@ -579,8 +579,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const bubble = btn.closest('.agent-msg-bubble') as HTMLElement | null;
             if (!bubble) return;
             const clone = bubble.cloneNode(true) as HTMLElement;
-            clone.querySelector('[data-action="copy-user-message"]')?.remove();
-            navigator.clipboard.writeText(clone.innerText.trim()).then(() => {
+            clone.querySelectorAll('[data-action="copy-user-message"], [data-action="edit-user-message"]').forEach(el => el.remove());
+            copyChatText((clone.innerText ?? clone.textContent ?? '').trim()).then(() => {
                 (btn as HTMLElement).textContent = '✓';
                 setTimeout(() => { (btn as HTMLElement).textContent = '⎘'; }, 1500);
             }).catch(() => {});
@@ -614,7 +614,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pre = btn.previousElementSibling as HTMLElement | null;
         const code = pre?.querySelector('code') ?? pre;
         if (!code) return;
-        navigator.clipboard.writeText(code.textContent ?? '').then(() => {
+        copyChatText(code.textContent ?? '').then(() => {
             btn.textContent = '✓ Copied';
             setTimeout(() => { btn.textContent = '⎘ Copy'; }, 1500);
         }).catch(() => {
@@ -733,7 +733,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function _onAttachFiles(input: HTMLInputElement): void {
     if (!input.files) return;
     for (const file of Array.from(input.files)) {
-        if (typeof addFileAttachment === 'function') addFileAttachment(file);
+        if (typeof addFileAttachment === 'function') void addFileAttachment(file).catch(() => {});
     }
     input.value = '';
 }

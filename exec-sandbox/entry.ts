@@ -9,19 +9,50 @@
 //
 // Bundled into one classic script by dev-api.ts buildExecSandbox().
 
+import '../polyfills';
 import './storage-shim';
-import { onCall, post, pageFetch, packageCacheCall } from './channel';
-import { setPackageCacheTransport } from '../shiro/wasi-packages';
+import { onCall, post, pageFetch, packageCacheCall, workspaceCall } from './channel';
 import { sandboxFetch } from './net';
 import { runJs } from './js-run';
-import { runBash } from './bash-run';
 
 // Everything in the frame fetches through sandboxFetch: direct, with a proxied fallback for
 // plain GETs the browser refuses (net.ts).
 globalThis.fetch = sandboxFetch as typeof fetch;
-setPackageCacheTransport(packageCacheCall);
+// Separately compiled trusted bundles share this channel, including its RPC IDs.
+(globalThis as any).__fgExecChannel = { workspaceCall, pageFetch, packageCacheCall };
 
 declare const __PYODIDE_WORKER_SRC__: string;
+declare const __BASH_SANDBOX_SRC__: string;
+declare const __MODERN_JS_SRC__: string;
+
+function loadTrustedBundle(source: string, name: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+        script.src = url;
+        const cleanup = () => { URL.revokeObjectURL(url); script.remove(); };
+        script.onload = () => { const value = (globalThis as any)[name]; cleanup(); typeof value === 'function' ? resolve(value) : reject(new Error('Execution runtime did not initialize')); };
+        script.onerror = () => { cleanup(); reject(new Error('Execution runtime could not load')); };
+        document.head.appendChild(script);
+    });
+}
+let bashRuntime: Promise<any> | null = null;
+let modernJs: Promise<any> | null = null;
+function loadModernJs(): Promise<any> {
+    if (!modernJs) {
+        let supported = typeof BigInt === 'function';
+        try { new RegExp('(?<=a)b'); } catch { supported = false; }
+        modernJs = supported ? loadTrustedBundle(__MODERN_JS_SRC__, '__fgRunJsModern').catch(() => null) : Promise.resolve(null);
+    }
+    return modernJs;
+}
+async function browserBash(code: string, onProgress: (message: string) => void) {
+    if (typeof BigInt !== 'function' || typeof WebAssembly !== 'object' || typeof Worker !== 'function' || typeof DataView.prototype.getBigUint64 !== 'function' || typeof DataView.prototype.setBigUint64 !== 'function')
+        throw new Error('Browser bash requires BigInt, WebAssembly and Workers. Use JavaScript or a configured local execution server on this browser.');
+    await loadModernJs();
+    if (!bashRuntime) bashRuntime = loadTrustedBundle(__BASH_SANDBOX_SRC__, '__fgRunBash').catch(error => { bashRuntime = null; throw error; });
+    return (await bashRuntime)(code, onProgress);
+}
 
 // ── Python (Pyodide worker) ───────────────────────────────────────────────────
 
@@ -30,12 +61,15 @@ let pyWorker: Worker | null = null;
 function startPython(): void {
     if (pyWorker) return;
     const url = URL.createObjectURL(new Blob([__PYODIDE_WORKER_SRC__], { type: 'text/javascript' }));
-    pyWorker = new Worker(url);
-    pyWorker.onmessage = ({ data }) => {
+    try { pyWorker = new Worker(url); } catch (error) { URL.revokeObjectURL(url); throw error; }
+    const ownedWorker = pyWorker;
+    ownedWorker.onmessage = ({ data }) => {
+        if (pyWorker !== ownedWorker) return;
+        URL.revokeObjectURL(url);
         // The worker's fetch asks for a proxied plain GET when the browser refuses one
         // (pyodide-worker.ts); relay it to the page and the answer back.
         if (data?.type === 'net') {
-            const w = pyWorker;
+            const w = ownedWorker;
             pageFetch(String(data.url ?? '')).then(
                 value => w?.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
                 err   => w?.postMessage({ type: 'net-reply', id: data.id, error: String(err?.message ?? err) }));
@@ -43,7 +77,7 @@ function startPython(): void {
         }
         post({ fg: 'event', name: 'py', data });
     };
-    pyWorker.onerror = (ev) => { post({ fg: 'event', name: 'py-error', data: String((ev as any).message || 'worker error') }); pyWorker = null; };
+    ownedWorker.onerror = (ev) => { URL.revokeObjectURL(url); ownedWorker.terminate(); post({ fg: 'event', name: 'py-error', data: String((ev as any).message || 'worker error') }); if (pyWorker === ownedWorker) pyWorker = null; };
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -51,9 +85,9 @@ function startPython(): void {
 onCall(async (d: any) => {
     switch (d.kind) {
         case 'js':
-            return runJs(String(d.code ?? ''), d.files ?? {});
+            return (await loadModernJs() || runJs)(String(d.code ?? ''), d.files ?? {});
         case 'bash':
-            return runBash(String(d.code ?? ''), message => post({ fg: 'progress', id: d.id, message }));
+            return browserBash(String(d.code ?? ''), message => post({ fg: 'progress', id: d.id, message }));
         case 'py-start':
             startPython();
             return true;

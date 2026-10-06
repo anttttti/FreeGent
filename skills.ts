@@ -375,20 +375,13 @@ Be explicit about what you can and cannot perceive from the file.`
         trigger_on_media: 'pdf',
         body: `## PDF Input
 
-A PDF document has been attached to this message.
-
-**Gemini (current provider):** The PDF is sent as inline data — you can read its full text, tables, and structure directly.
-- Read and summarise, answer questions, or extract data as requested
-- For long documents: start with an executive summary unless the user asks otherwise
-- Preserve table structure as markdown tables where useful
-
-**Other providers:** PDF is not processed natively — it appears as a text note only.
-- Acknowledge the file: filename and size
-- Suggest the user switch to Gemini for direct PDF reading
-- Or offer to extract text via execute_code: \`execute_code(language="bash", code="pip3 install pdfplumber")\` then \`execute_code(language="python", code="import pdfplumber; pdf = pdfplumber.open('filename.pdf'); print('\\\\n'.join(p.extract_text() for p in pdf.pages))")\`
-  (requires the file to be in the workspace — ask the user to upload it there first if needed)
-
-Be explicit about what you can and cannot read from the file.`
+Attached PDFs are extracted into text blocks in the user message. Use that text
+for summaries, questions, and data extraction; preserve table structure when possible.
+An "Original file" path names the saved workspace copy if further processing is needed.
+Extracted text does not preserve scanned images, page layout, or every table boundary.
+If extraction failed or no text was found, explain the limitation rather than claiming
+that you read the document. Use the available execution tools for additional extraction,
+or ask for a readable text or image version when those tools cannot process it.`
     },
     {
         name: 'sql',
@@ -701,6 +694,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         body_fn: () => {
             const hasNative = typeof nativeExec === 'function';
             const hasLocal  = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
+            if (!hasNative && !hasLocal && !browserBashAvailable()) return `## execute_code — Bash\n\nBrowser bash is unavailable in this engine. Use the languages in the environment description and enabled file tools. ${_buildLangsDesc()}`;
             const parts = ['## execute_code — Bash\n\nCall `execute_code(language="bash", code="...")` to run shell commands.\n'];
             if (hasNative) parts.push(`### Environment (native bash process)
 - Runs in the workspace directory — relative paths work directly
@@ -712,7 +706,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - Full shell access; files written sync back automatically
 - Do NOT use \`/workspace/\` absolute paths — use relative paths or \`$PWD\``);
             // Same order as execute_code's dispatch (tools.ts): native, then Local, then WASM.
-            const hasWasm = !hasNative && !hasLocal && typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm';
+            const hasWasm = !hasNative && !hasLocal && typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm' && browserBashAvailable();
             if (hasWasm) parts.push(`### Environment (browser shell)
 - Runs in the browser, isolated from the page, starting in the workspace directory (\`/workspace\`). Use relative paths (\`src/app.js\`): the same path works in read_file, write_file, check_page and the preview. Writes sync back automatically
 - Files outside the workspace (\`/tmp\`, \`/home/user\`) exist only in this shell

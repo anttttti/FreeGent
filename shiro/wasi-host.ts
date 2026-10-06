@@ -10,7 +10,7 @@
  * execution without a deadline; browser command execution never does so.
  */
 import { WasiRT, type WasiConfig, type WasiJob } from './wasi-runtime';
-import { memoryImports } from './wasm-module';
+import { memoryImports, moduleBytes } from './wasm-module';
 import type { WorkerReply } from './wasi-worker-core';
 
 export interface WasiWorkerLike {
@@ -32,7 +32,15 @@ function createWorker(): WasiWorkerLike | null {
   if (factory) return factory();
   if (typeof __WASI_WORKER_SRC__ !== 'undefined' && typeof Worker !== 'undefined' && typeof URL !== 'undefined' && typeof Blob !== 'undefined') {
     const url = URL.createObjectURL(new Blob([__WASI_WORKER_SRC__], { type: 'text/javascript' }));
-    try { return new Worker(url) as unknown as WasiWorkerLike; } finally { URL.revokeObjectURL(url); }
+    try {
+      const worker = new Worker(url);
+      const revoke = () => URL.revokeObjectURL(url);
+      worker.addEventListener('message', revoke, {once:true});
+      worker.addEventListener('error', revoke, {once:true});
+      const terminate = worker.terminate.bind(worker);
+      worker.terminate = () => { revoke(); terminate(); };
+      return worker as unknown as WasiWorkerLike;
+    } catch (error) { URL.revokeObjectURL(url); throw error; }
   }
   return null;
 }
@@ -146,6 +154,13 @@ async function runWasi(config:WasiConfig, module:WebAssembly.Module, opts:ExecOp
     };
     w.onerror = ev => finish(() => reject(new Error(ev?.message || 'worker error')));
     try { w.postMessage({ type: 'run', module, job, trace: !!config.trace }); }
-    catch (e) { finish(() => reject(e)); }
+    catch (e: any) {
+      const bytes = moduleBytes.get(module);
+      if (e?.name === 'DataCloneError' && bytes) {
+        // Recompile in the worker; never run synchronously in the page/frame.
+        try { w.postMessage({ type: 'run', bytes, job, trace: !!config.trace }); }
+        catch (error) { finish(() => reject(error)); }
+      } else finish(() => reject(e));
+    }
   });
 }
