@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairArgEnvelope, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, EXEC_CODE_ALIASES,
+    _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, EXEC_CODE_ALIASES,
 } from '../tool-call-repair.ts';
 
 describe('_repairJsonArgs — fence strip only', () => {
@@ -252,5 +252,25 @@ describe('_repairPathArg — other names for the path argument of file tools', (
     it('runs inside repairAllToolCalls', () => {
         const { norm } = repairAllToolCalls([{ function: { name: 'read_file', arguments: '{"file_name":"memory/log.md"}' } }]);
         expect(norm[0].args).toEqual({ path: 'memory/log.md' });
+    });
+});
+
+// meituan/longcat-2.5-preview:free answered with its native markup as plain text (2026-10-06).
+describe('_repairLongcatPseudoCalls — <longcat_tool_call> markup in the reply text', () => {
+    const NAMES = ['read_file', 'list_files', 'execute_code'];
+    const r = (t) => _repairLongcatPseudoCalls(t, NAMES);
+    it('parses several calls from one reply', () => {
+        const t = '<longcat_tool_call>list_files\n<longcat_arg_key>path</longcat_arg_key>\n<longcat_arg_value>src</longcat_arg_value>\n</longcat_tool_call>\n'
+            + '<longcat_tool_call>list_files\n<longcat_arg_key>path</longcat_arg_key>\n<longcat_arg_value>fg-tasks</longcat_arg_value>\n</longcat_tool_call>';
+        expect(r(t)).toEqual([{ name: 'list_files', args: { path: 'src' } }, { name: 'list_files', args: { path: 'fg-tasks' } }]);
+    });
+    it('keeps strings as strings, converts numbers', () => {
+        const t = '<longcat_tool_call>read_file<longcat_arg_key>path</longcat_arg_key><longcat_arg_value>a.js</longcat_arg_value>'
+            + '<longcat_arg_key>start_line</longcat_arg_key><longcat_arg_value>10</longcat_arg_value></longcat_tool_call>';
+        expect(r(t)).toEqual([{ name: 'read_file', args: { path: 'a.js', start_line: 10 } }]);
+    });
+    it('skips unknown tools and plain text', () => {
+        expect(r('<longcat_tool_call>rm_rf<longcat_arg_key>p</longcat_arg_key><longcat_arg_value>/</longcat_arg_value></longcat_tool_call>')).toBeNull();
+        expect(r('just text')).toBeNull();
     });
 });

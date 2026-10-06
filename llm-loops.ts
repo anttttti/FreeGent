@@ -7,7 +7,7 @@ import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransp
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneOAIHistory, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
-import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
+import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
@@ -1944,7 +1944,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // proper tool_calls (primed by angle-bracket context injection). Parse and execute as
         // real calls; log with kind:'xml_pseudo_call_repaired' for corpus analysis.
         if (!calls.length) {
-            const _xmlCalls = _repairXmlPseudoCalls(textContent, AGENT_TOOL_NAMES);
+            const _xmlCalls = _repairXmlPseudoCalls(textContent, AGENT_TOOL_NAMES) ?? _repairLongcatPseudoCalls(textContent, AGENT_TOOL_NAMES);
             if (_xmlCalls) {
                 const _synCalls = _xmlCalls.map((c, i) => ({
                     id: `xml_${step}_${i}`, type: 'function' as const,

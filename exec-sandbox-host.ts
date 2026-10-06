@@ -127,7 +127,8 @@ function _ensureFrame(): Promise<void> {
     frame.tabIndex = -1;
     frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
     const src = sandboxScriptUrl().replace(/"/g, '&quot;');
-    frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body></body></html>`;
+    const srcdoc = (retry: boolean) => `<!DOCTYPE html><html><head><meta charset="utf-8"><script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body><!--${retry ? 'retry' : 'first'}--></body></html>`;
+    frame.srcdoc = srcdoc(false);
     const ownedFrame = frame;
     ready = new Promise<void>((resolve, reject) => {
         const onReady = (e: MessageEvent) => {
@@ -137,9 +138,21 @@ function _ensureFrame(): Promise<void> {
             if (boot?.frame === ownedFrame) boot = null;
             resolve();
         };
-        const timer = setTimeout(() => {
-            if (boot?.frame === ownedFrame) resetSandbox('The code sandbox did not load within 30 seconds');
+        // A script request that neither loads nor errors (slow, cached-stale or stalled fetch on
+        // older browsers) hung chats for the whole timeout. Reload the frame once before giving
+        // up, and say which script and browser it was so the log shows the cause.
+        let retried = false;
+        const arm = () => setTimeout(() => {
+            if (boot?.frame !== ownedFrame) return;
+            if (!retried) {
+                retried = true;
+                ownedFrame.srcdoc = srcdoc(true);
+                timer = arm(); boot.timer = timer;
+                return;
+            }
+            resetSandbox(`The code sandbox did not load within ${(LOAD_TIMEOUT_MS * 2) / 1000} seconds (tried twice; script ${sandboxScriptUrl()}; ${navigator.userAgent}). Continue without execute_code: use read_file, write_file and the other tools.`);
         }, LOAD_TIMEOUT_MS);
+        let timer = arm();
         boot = { frame: ownedFrame, reject, timer, onReady };
         window.addEventListener('message', onReady);
     });
