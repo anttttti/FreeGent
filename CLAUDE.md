@@ -34,3 +34,14 @@ Add or rotate CF Worker secrets via:
 ```
 cd cf-worker && CLOUDFLARE_API_TOKEN=... npx wrangler secret put <SECRET_NAME>
 ```
+
+## Reviewing user-sent chat logs
+
+Users can send chat logs to the Worker (stored in the `FG_LOGS` KV for 14 days). To review:
+```
+scripts/fetch-logs.sh            # download logs not yet fetched/reviewed, prints file paths
+scripts/fetch-logs.sh pending    # downloaded but not yet reviewed
+scripts/fetch-logs.sh mark <id>… # or `mark --all`, once reviewed (so they're skipped next time)
+```
+Logs and the reviewed list live outside the repo (`~/.local/share/freegent/logs/`,
+`~/.config/freegent/reviewed-logs.txt`) because they contain users' chats. Never copy them into the repo.
