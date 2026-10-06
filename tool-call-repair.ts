@@ -227,6 +227,34 @@ export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null):
     return results.length ? results : null;
 }
 
+// Parse Longcat's native tool-call markup when it arrives as plain text (meituan/longcat via nous):
+//   <longcat_tool_call>read_file
+//   <longcat_arg_key>path</longcat_arg_key>
+//   <longcat_arg_value>src/main.js</longcat_arg_value>
+//   </longcat_tool_call>
+// Values stay strings unless they are a number, boolean, null or JSON object/array.
+// Unknown tool names are skipped. Returns [{name, args}] or null.
+export function _repairLongcatPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
+    if (!toolNames?.length || !text.includes('<longcat_tool_call>')) return null;
+    const results: Array<{name: string; args: any}> = [];
+    const callRe = /<longcat_tool_call>\s*([\w.-]+)([\s\S]*?)(?:<\/longcat_tool_call>|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = callRe.exec(text)) !== null) {
+        if (!toolNames.includes(m[1])) continue;
+        const args: Record<string, any> = {};
+        const pairRe = /<longcat_arg_key>([\s\S]*?)<\/longcat_arg_key>\s*<longcat_arg_value>([\s\S]*?)<\/longcat_arg_value>/g;
+        let a: RegExpExecArray | null;
+        while ((a = pairRe.exec(m[2])) !== null) {
+            const raw = a[2];
+            let v: any = raw;
+            if (/^\s*(-?\d+(\.\d+)?|true|false|null|[\[{][\s\S]*[\]}])\s*$/.test(raw)) { try { v = JSON.parse(raw); } catch {} }
+            args[a[1].trim()] = v;
+        }
+        results.push({ name: m[1], args });
+    }
+    return results.length ? results : null;
+}
+
 // Parse [[{...}]] or [{...}] bracket-wrapped pseudo-tool-calls from plain-text responses.
 // Some models (e.g. nemotron-3-ultra-free) emit tool calls as a JSON array instead of
 // native function calls. Handles double-bracket ([[…]]) and single-bracket ([{…}])
@@ -443,6 +471,6 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
 Object.assign(window, {
     EXEC_CODE_ALIASES, EXEC_LANG_ALIASES,
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairXmlPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
+    _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
     _repairPathArg, _repairFetchBody, repairAllToolCalls,
 });
