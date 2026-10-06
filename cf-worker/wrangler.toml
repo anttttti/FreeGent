@@ -38,6 +38,6 @@ namespace_id = "1001"
 # Read logs:  npx wrangler kv key list --binding FG_LOGS --remote
 #             npx wrangler kv key get log:<id> --binding FG_LOGS --remote
 # Until the binding exists, /log answers 503.
-# [[kv_namespaces]]
-# binding = "FG_LOGS"
-# id = "<namespace id>"
+[[kv_namespaces]]
+binding = "FG_LOGS"
+id = "5cf3c4410d8c42e88c416fd7ff5e04b3"
