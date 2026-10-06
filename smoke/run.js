@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // smoke/run.js — FreeGent smoke test runner.
 //
-// Runs each case in cases.jsonl through fg-run.js (real LLM, real tools),
+// Runs each case in cases.jsonl through fg-run.ts (real LLM, real tools),
 // checks the output against pass/fail criteria, and prints a summary.
 //
 // Usage:
-//   node smoke/run.js                              # all cases, default LLM (google|gemma-4-26b-a4b-it)
-//   node smoke/run.js --llm google|gemma-4-26b-a4b-it
+//   node smoke/run.js                              # all cases, saved profile or WebUI defaults
+//   node smoke/run.js --llm 'google|gemma-4-26b-a4b-it'
 //   node smoke/run.js --id s03-write,s05-write-run  # specific cases
 //   node smoke/run.js --group basic                  # cases in a group
 //   node smoke/run.js --dry-run                      # print cases, don't run
@@ -26,7 +26,9 @@ const argv = process.argv.slice(2);
 const _arg = f => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] ?? null : null; };
 const _flag = f => argv.includes(f);
 
-const llmSpec       = _arg('--llm')           || process.env.FREEGENT_LLM || 'google|gemma-4-26b-a4b-it';
+// Without an override, fg-run loads the saved profile or config.ts WebUI defaults,
+// including the main model priority list and fallback routing.
+const llmSpec       = _arg('--llm')           || process.env.FREEGENT_LLM || '';
 const idFilter      = new Set((_arg('--id') || '').split(',').filter(Boolean));
 const groupFilter   = _arg('--group')          || '';
 const dryRun        = _flag('--dry-run');
@@ -40,6 +42,7 @@ const thinkingLevel = _arg('--thinking-level');
 const contextWindow = _arg('--context-window');
 const compactionLim = _arg('--compaction-limit');
 const disableTools  = _arg('--disable-tools');
+const enableTools   = _arg('--enable-tools');
 const retryMode     = _arg('--retry-mode');
 const retryFixedMs  = _arg('--retry-fixed-ms');
 const apiKey        = _arg('--api-key');
@@ -50,7 +53,7 @@ if (_flag('--help') || _flag('-h')) {
     console.log(`Usage: node smoke/run.js [options]
 
   Case selection:
-  --llm <provider|model>      LLM to use (default: google|gemma-4-26b-a4b-it, override with FREEGENT_LLM env)
+  --llm <provider|model>      Override the saved profile / WebUI model defaults (or set FREEGENT_LLM)
   --id <id1,id2>              Run only specific case IDs
   --group <name>              Run only cases in this group
   --dry-run                   Print cases without running
@@ -66,6 +69,7 @@ if (_flag('--help') || _flag('-h')) {
   --context-window <n>        Context window token limit
   --compaction-limit <n>      Compaction trigger limit
   --disable-tools <list>      Comma-separated tool names to disable
+  --enable-tools <list>       Comma-separated tools to enable for the headless Director
   --retry-mode <mode>         Retry mode: default | fixed | none
   --retry-fixed-ms <ms>       Fixed retry delay in ms
   --api-key <key>             API key (overrides env)
@@ -87,6 +91,7 @@ function buildFgExtras(overrides = {}) {
         ['--context-window',   overrides.context_window ?? contextWindow],
         ['--compaction-limit', overrides.compaction_limit ?? compactionLim],
         ['--disable-tools',    overrides.disable_tools  ?? disableTools],
+        ['--enable-tools',     overrides.enable_tools   ?? enableTools],
         ['--retry-mode',       overrides.retry_mode   ?? retryMode],
         ['--retry-fixed-ms',   overrides.retry_fixed_ms ?? retryFixedMs],
         ['--api-key',          overrides.api_key      ?? apiKey],
@@ -172,9 +177,9 @@ function evalChecks(c, output, logEntries) {
         info.push(`tools: [${[...calledNames].join(', ')}]`);
     }
 
-    // max_steps: count non-user non-system turns
+    // max_steps: count LLM response records, excluding timing, nudges and snapshots.
     if (ch.max_steps != null) {
-        const steps = logEntries.filter(e => e.role !== 'user' && e.role !== 'system' && e.role !== 'tool').length;
+        const steps = logEntries.filter(e => !e.type && Number.isInteger(e.step)).length;
         if (steps > ch.max_steps) failures.push(`used ${steps} steps, limit is ${ch.max_steps}`);
         info.push(`steps: ${steps}`);
     }
@@ -252,7 +257,9 @@ for (const c of cases) {
             encoding: 'utf8',
             env: { ...process.env, NODE_NO_WARNINGS: '1' },
         });
-        output = (result.stdout || '').trim();
+        // fg-run emits metrics on piped stdout alongside the user-facing answer.
+        output = (result.stdout || '').split('\n')
+            .filter(line => !line.startsWith('__FG_METRICS__:')).join('\n').trim();
         if (result.status !== 0 && !output) {
             runError = (result.stderr || '').slice(0, 300) || `exit ${result.status}`;
         }
