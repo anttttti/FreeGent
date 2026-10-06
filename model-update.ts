@@ -130,12 +130,13 @@ async function _fetchOpenRouterModels(): Promise<{ id: string; name: string; pri
 }
 
 // ── TokenHarbor ──────────────────────────────────────────────────────────────
-// Free models on TokenHarbor as listed at https://tokenharbor.ai/models (updated 2026-09-01).
-// IDs have a `:free` suffix; no provider prefix in the model ID.
-const _TOKENHARBOR_FREE = new Set([
-    'deepseek-v4-flash:free',
-    'mimo-v2.5:free',
-]);
+// https://tokenharbor.ai/models?category=free. The /v1/models list marks free models itself: an id
+// ending in `:free` with zero input and output price (no provider prefix in the id). It also
+// carries a label and tool_call flag. This used to be a hardcoded allowlist dated 2026-09-01,
+// which hid every free model added since (deepseek-v4.1-flash:free, mimo-v2.6-flash:free).
+const _isTokenHarborFree = (m: any): boolean =>
+    typeof m?.id === 'string' && m.id.endsWith(':free') &&
+    (m.pricing == null || (Number(m.pricing.input_usd_per_1m) === 0 && Number(m.pricing.output_usd_per_1m) === 0));
 
 async function _fetchTokenHarborModels(): Promise<FetchResult> {
     try {
@@ -145,11 +146,14 @@ async function _fetchTokenHarborModels(): Promise<FetchResult> {
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
         const created = _createdReader(all);
-        // Only accept models explicitly in the known-free allowlist (`:free` suffix).
-        const live: LiveModel[] = all
-            .filter((m: any) => typeof m.id === 'string' && _TOKENHARBOR_FREE.has(m.id))
-            .map((m: any) => ({ id: m.id as string, created: created(m) }));
-        return { live, rejected: [] };
+        const live: LiveModel[] = [];
+        const rejected: FetchResult['rejected'] = [];
+        for (const m of all.filter(_isTokenHarborFree)) {
+            const entry: LiveModel = { id: m.id as string, name: typeof m.label === 'string' ? m.label : undefined, created: created(m) };
+            if (m.tool_call === false) rejected.push({ model: entry, reason: 'no-tools' });
+            else live.push(entry);
+        }
+        return { live, rejected };
     } catch {
         return { live: [], rejected: [] };
     }
@@ -199,16 +203,23 @@ async function _fetchKiloModels(): Promise<FetchResult> {
 // Routing: tool-use ✓ AND not domain-specialist → live
 //          domain-specialist (InclusionAI) → rejected "domain-specific"
 //          no tool-use (Perplexity Sonar, web-search-only) → rejected "no-tools"
+// Only used when the aggregate list shows nothing free; each result is still checked for $0
+// pricing below, because ids that were free once (perplexity/sonar, ling-3.0-flash-sante) are
+// priced now and must not be accepted just for being on this list.
 const _VERCEL_FREE_IDS = [
     'poolside/laguna-s-2.1-free',
-    'perplexity/sonar',
-    'inclusionai/ling-3.0-flash-sante',
+    'inclusionai/ling-3.1-flash-free',
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
 const _VERCEL_DOMAIN_SPECIFIC = new Set([
     'inclusionai/ling-3.0-flash-fin',
     'inclusionai/ling-3.0-flash-sante',
 ]);
+
+const _isVercelFree = (m: any): boolean => {
+    const zero = (v: any) => v != null && Number(v) === 0;
+    return (Array.isArray(m?.tags) && m.tags.includes('free')) || (zero(m?.pricing?.input) && zero(m?.pricing?.output));
+};
 
 async function _fetchVercelModels(): Promise<FetchResult> {
     try {
@@ -217,13 +228,7 @@ async function _fetchVercelModels(): Promise<FetchResult> {
         const listJson = await _proxyFetch('https://ai-gateway.vercel.sh/v1/models');
         const listAll: any[] = Array.isArray(listJson?.data) ? listJson.data : [];
         // Stealth models (stealth/pixel-canary) are $0 but carry no "free" tag.
-        const _zero = (v: any) => v != null && Number(v) === 0;
-        const listFree = listAll.filter((m: any) =>
-            typeof m.id === 'string' &&
-            m.type === 'language' &&
-            ((Array.isArray(m.tags) && m.tags.includes('free')) ||
-             (_zero(m.pricing?.input) && _zero(m.pricing?.output)))
-        );
+        const listFree = listAll.filter((m: any) => typeof m.id === 'string' && m.type === 'language' && _isVercelFree(m));
 
         // Fallback: the aggregate endpoint sometimes omits free models.
         // Probe each known free ID individually and collect what's alive.
@@ -231,7 +236,7 @@ async function _fetchVercelModels(): Promise<FetchResult> {
             const results = await Promise.allSettled(
                 _VERCEL_FREE_IDS.map(id => _proxyFetch(`https://ai-gateway.vercel.sh/v1/models/${id}`))
             );
-            return results.flatMap(r => (r.status === 'fulfilled' && r.value?.id ? [r.value] : []));
+            return results.flatMap(r => (r.status === 'fulfilled' && r.value?.id && _isVercelFree(r.value) ? [r.value] : []));
         })();
 
         const created = _createdReader(listAll.length ? listAll : toProcess);
@@ -728,7 +733,9 @@ function _applyProposals(proposals: Proposal[]): void {
     if (!selected.length) return;
 
     const custom: ModelEntry[] = typeof getCustomModels === 'function' ? getCustomModels() : [];
-    const mainList: string[]   = typeof getActiveMainModelList === 'function' ? getActiveMainModelList() : [];
+    // Reconcile the saved ranking, not just currently routable models: paused entries
+    // and providers without a key must keep their positions when another model is removed.
+    const mainList: string[]   = typeof getMainModelList === 'function' ? getMainModelList() : [];
     const removedSpecs = new Set<string>();
 
     for (const p of selected) {
@@ -756,13 +763,23 @@ function _applyProposals(proposals: Proposal[]): void {
         }
     }
 
-    // Save the model list first: it throws when browser storage is full, and then nothing else changes.
+    // Persist custom entries before changing visibility/ranking; storage errors leave those intact.
     if (typeof saveCustomModels === 'function') saveCustomModels(custom);
+    for (const p of selected) {
+        // Built-ins cannot be deleted from the source catalog. Use the same exclusion
+        // set as manual deletion so they stay absent after re-rendering or resetting defaults.
+        if (p.type === 'remove' && typeof hideBuiltinModel === 'function') hideBuiltinModel(p.spec);
+        if (p.type === 'add' && typeof unhideBuiltinModel === 'function') unhideBuiltinModel(p.spec);
+    }
     if (removedSpecs.size && typeof saveMainModelList === 'function') {
         saveMainModelList(mainList.filter(k => !removedSpecs.has(k)));
+        if (typeof getPausedMainModels === 'function' && typeof savePausedMainModels === 'function') {
+            savePausedMainModels(getPausedMainModels().filter(k => !removedSpecs.has(k)));
+        }
     }
     if (typeof renderModelCatalogTable === 'function') renderModelCatalogTable();
     if (typeof renderMainModelList === 'function') renderMainModelList();
+    if (typeof updateActiveModelDisplay === 'function') updateActiveModelDisplay();
 }
 
 // Render the rows for one section (adds or removes).

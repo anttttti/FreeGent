@@ -222,7 +222,7 @@ describe('buildSystemPrompt', () => {
 describe('settings helpers — defaults', () => {
     // Default comes from _DEFAULT_MAIN_MODELS[0] which is a kilo free model (noKey:true).
     it('getProvider defaults to kilo', () => expect(W.getProvider()).toBe('kilo'));
-    it('getGeminiModel defaults to gemini-2.5-flash', () => expect(W.getGeminiModel()).toBe('gemini-2.5-flash'));
+    it('getGeminiModel defaults to gemini-3.5-flash-lite', () => expect(W.getGeminiModel()).toBe('gemini-3.5-flash-lite'));
     it('getOAIModel defaults to gpt-5.4-mini', () => expect(W.getOAIModel()).toBe('gpt-5.4-mini'));
     it('getOAIUrl defaults to openai base', () => expect(W.getOAIUrl()).toBe('https://api.openai.com/v1'));
     it('getSearchProvider defaults to auto', () => expect(W.getSearchProvider()).toBe('auto'));

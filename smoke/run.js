@@ -5,8 +5,8 @@
 // checks the output against pass/fail criteria, and prints a summary.
 //
 // Usage:
-//   node smoke/run.js                              # all cases, default LLM (google|gemma-4-31b-it)
-//   node smoke/run.js --llm google|gemma-4-31b-it
+//   node smoke/run.js                              # all cases, default LLM (google|gemma-4-26b-a4b-it)
+//   node smoke/run.js --llm google|gemma-4-26b-a4b-it
 //   node smoke/run.js --id s03-write,s05-write-run  # specific cases
 //   node smoke/run.js --group basic                  # cases in a group
 //   node smoke/run.js --dry-run                      # print cases, don't run
@@ -26,7 +26,7 @@ const argv = process.argv.slice(2);
 const _arg = f => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] ?? null : null; };
 const _flag = f => argv.includes(f);
 
-const llmSpec       = _arg('--llm')           || process.env.FREEGENT_LLM || 'google|gemma-4-31b-it';
+const llmSpec       = _arg('--llm')           || process.env.FREEGENT_LLM || 'google|gemma-4-26b-a4b-it';
 const idFilter      = new Set((_arg('--id') || '').split(',').filter(Boolean));
 const groupFilter   = _arg('--group')          || '';
 const dryRun        = _flag('--dry-run');
@@ -50,7 +50,7 @@ if (_flag('--help') || _flag('-h')) {
     console.log(`Usage: node smoke/run.js [options]
 
   Case selection:
-  --llm <provider|model>      LLM to use (default: google|gemma-4-31b-it, override with FREEGENT_LLM env)
+  --llm <provider|model>      LLM to use (default: google|gemma-4-26b-a4b-it, override with FREEGENT_LLM env)
   --id <id1,id2>              Run only specific case IDs
   --group <name>              Run only cases in this group
   --dry-run                   Print cases without running
