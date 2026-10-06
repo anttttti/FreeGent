@@ -64,6 +64,9 @@ declare global {
     var runnerStart: () => void;
     var runnerAutopilot: () => void;
     var runnerStop: () => void;
+    var runnerStartTask: (path: string) => void;
+    var runnerAbort: () => void;
+    var runnerSteer: (text: string) => void;
     var runnerToggle: () => void;
     var initRunner: () => void;
     var isRunnerRunning: () => boolean;
@@ -125,6 +128,9 @@ declare global {
     var startInlineRenameCurrentChat: any;
     var switchToChat: any;
     var toggleChatsDropdown: any;
+    var getChatStats: (chatId: string) => Promise<{ turns: number; models: { model: string; steps: number }[] }>;
+    var getChatSnapshotInfo: (chatId: string) => Promise<any>;
+    var restoreChatWorkspace: (chatId: string, ckptId: string) => Promise<boolean>;
     var updateChatMetaLastAt: any;
     var updateChatNameBar: any;
     // ── bridged by config.ts ──

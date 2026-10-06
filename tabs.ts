@@ -20,6 +20,7 @@ function activateTab(key) {
     document.body.classList.toggle('preview-mode', !!(ft?.isPreview));
     if (key === 'settings') { populateSettingsForm(); switchSettingsTab('profiles'); renderProfilesTab(); }
     if (key === 'tasks')    { refreshTasks(); initRunner?.(); }
+    if (key === 'chats')    renderChatsDropdown?.();
     if (key === 'skills')   loadSkills();
     if (key === 'workspace') pollFsaChanges?.();
     if (key === 'chat')     _updateChatEmpty?.();
@@ -753,7 +754,8 @@ function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v
 function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,4000),t:Date.now()-T0},'*')}catch(e){}}
 ['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
 addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href)+(t.integrity?' — it has integrity="'+t.integrity+'": a wrong hash blocks the file, so check it or remove the attribute':''));return}
- send('error','Uncaught '+(e.error&&e.error.name?e.error.name+': '+e.error.message:e.message)+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':''))},true);
+ var m=e.error&&e.error.name?e.error.name+': '+e.error.message:e.message;
+ send('error','Uncaught '+m+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':'')+(!e.error&&/^Script error\.?$/.test(m)?' — the browser hides the details of errors from a script loaded from another origin (a CDN <script src>, an importmap or import() URL), so the real message is unavailable here. Do not guess with more probe pages: check that the URL exists and serves a browser-ready file, that a <script src> from a CDN has crossorigin="anonymous", and that every import specifier resolves; or load the file with fetch()/import() inside try/catch and console.log the caught error, which shows the real message.':'')},true);
 addEventListener('unhandledrejection',function(e){send('error','Unhandled promise rejection: '+s(e.reason))});
 var FR=0;(function f(){FR++;requestAnimationFrame(f)})();
 function code(k){if(/^Arrow/.test(k))return k;if(k===' ')return 'Space';if(/^[a-z]$/i.test(k))return 'Key'+k.toUpperCase();if(/^[0-9]$/.test(k))return 'Digit'+k;return k}

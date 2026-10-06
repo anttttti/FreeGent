@@ -294,6 +294,12 @@ async function gate_acceptance_review(taskPath, content) {
     const filePaths = fileSec
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
         : [];
+    // No readable `## Files` list: the reviewer would only see "(no files available)" and fail
+    // every criterion ("no code provided to inspect"). Fall back to source paths named in the log.
+    if (!filePaths.length) {
+        const found = [...content.matchAll(/\b((?:[\w.-]+\/)*[\w.-]+\.(?:js|ts|mjs|css|html|json|py))\b/g)].map(m => m[1]);
+        for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && filePaths.length < 5) filePaths.push(f);
+    }
 
     let fileContents: string = '';
     for (const fp of filePaths) {
@@ -324,10 +330,16 @@ async function gate_acceptance_review(taskPath, content) {
         const ts     = new Date().toISOString().slice(0, 16) + 'Z';
         await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\n${result.trim()}`);
 
-        const failed     = [...result.matchAll(/^- ✗ (.+)/gm)].map(m => m[1]);
-        const unverified = [...result.matchAll(/^- \? (.+)/gm)].map(m => m[1]);
-        if (/VERDICT:\s*FAIL/i.test(result) || failed.length > 0)
-            return { blocks: true, reason: `Criteria not met: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''}` };
+        // The leading "- " is optional: reviewers often drop the bullet, and a strict match gave a
+        // blocking verdict with an empty reason ("Criteria not met: ") that agents could not act on.
+        const failed     = [...result.matchAll(/^\s*(?:[-*]\s*)?✗\s*(.+)/gm)].map(m => m[1]);
+        const unverified = [...result.matchAll(/^\s*(?:[-*]\s*)?\?\s+(.+)/gm)].map(m => m[1]);
+        if (/VERDICT:\s*FAIL/i.test(result) || failed.length > 0) {
+            if (failed.length > 0)
+                return { blocks: true, reason: `Criteria not met: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''}` };
+            const why = result.replace(/VERDICT:.*$/im, '').trim().replace(/\s+/g, ' ').slice(0, 300);
+            return { blocks: true, reason: `Acceptance review failed${why ? `: ${why}` : ' without naming a criterion — see the "QA: Acceptance Review" section of the task file'}` };
+        }
         if (unverified.length > 0)
             return { blocks: true, reason: `Criteria could not be verified: ${unverified.slice(0, 2).join('; ')}${unverified.length > 2 ? ` (+${unverified.length - 2} more)` : ''}` };
         if (!/VERDICT:\s*PASS/i.test(result))

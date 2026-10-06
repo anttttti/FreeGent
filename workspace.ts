@@ -367,6 +367,40 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
     return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })) };
 }
 
+// Workspace state after replaying a chat's snapshot deltas up to index `upto` (inclusive).
+function _replayCkpts(ckpts, upto) {
+    const idb = {}, local = {};
+    for (let i = 0; i <= upto && i < ckpts.length; i++) {
+        for (const f of ckpts[i].idbDelta)   { if (f.content === null) delete idb[f.name];   else idb[f.name]   = f.content; }
+        for (const f of ckpts[i].localDelta) { if (f.content === null) delete local[f.name]; else local[f.name] = f.content; }
+    }
+    return { idb, local };
+}
+
+// What a chat's first and last workspace snapshots hold, for the Chats tab: the start state is the
+// workspace as it was when the chat's first message was sent, the end state the one after its
+// last turn. Returns null for a chat with no snapshots.
+async function getChatSnapshotInfo(chatId) {
+    const ckpts = await _getCkptsForChat(chatId);
+    if (!ckpts.length) return null;
+    const summarize = (idx) => {
+        const st = _replayCkpts(ckpts, idx);
+        const all = { ...st.idb, ...Object.fromEntries(Object.entries(st.local).map(([k, v]) => ['local/' + k, v])) };
+        let bytes = 0;
+        for (const v of Object.values(all)) bytes += (v as any)?.length || 0;
+        return { ckptId: ckpts[idx].ckptId, ts: ckpts[idx].ts, files: Object.keys(all).length, bytes, all };
+    };
+    const first = summarize(0), last = summarize(ckpts.length - 1);
+    let added = 0, modified = 0, deleted = 0;
+    for (const k of Object.keys(last.all)) {
+        if (!(k in first.all)) added++;
+        else if (first.all[k] !== last.all[k]) modified++;
+    }
+    for (const k of Object.keys(first.all)) if (!(k in last.all)) deleted++;
+    const strip = ({ all, ...rest }) => rest;
+    return { count: ckpts.length, start: strip(first), end: strip(last), changes: { added, modified, deleted } };
+}
+
 async function getCheckpointDiff(chatId, ckptId) {
     const ckpts = await _getCkptsForChat(chatId);
     const ckpt = ckpts.find(c => c.ckptId === ckptId);
@@ -2699,6 +2733,7 @@ async function importProject(inputEl) {
 Object.defineProperty(window, 'fsaHandle', { get: () => fsaHandle, configurable: true });
 Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
+    getChatSnapshotInfo,
     initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile,
     // Document helpers exposed for tools.js and other classic scripts
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,

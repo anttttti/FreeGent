@@ -139,18 +139,18 @@ ${toolSection}`;
         get tools() {
             if (typeof nativeExec !== 'function')
                 return new Set([...ALL_TOOL_NAMES as string[], ...(typeof mcpToolNames === 'function' ? mcpToolNames() : [])]);
-            // Headless ceiling (benchmarks / fg-run): tools the director can call directly.
-            // Write tools (write_file, replace_in_file, apply_patch) are intentionally excluded
-            // here — the director should delegate editing work to coder workers rather than
-            // writing files inline, and excluding them from this ceiling prevents hallucinated
-            // direct calls. headless-runner.ts adds them to enabledTools so worker ceilings
-            // (coder) can pass them through.
+            // Headless ceiling (benchmarks / fg-run / TUI): tools the director can call directly.
+            // write_file is included so a one-file change doesn't need a worker round-trip; the
+            // other edit tools (replace_in_file, apply_patch) stay with the coder workers.
+            // headless-runner.ts adds the write tools to enabledTools so worker ceilings pass them
+            // through; --disable-tools still removes write_file (the ceiling is intersected with
+            // the enabled set).
             //   • web_search, fetch_url — off unless listed in fg-run --enable-tools.
             // run_git is kept so the role-dispatch guard passes; the tool handler itself gates
             // on getGitEnabled() && getSandboxProvider() === 'local' and returns a clear error.
             return new Set([
                 'read_file', 'search_workspace', 'list_files', 'run_workers', 'execute_code',
-                'run_git', 'ast_query',
+                'run_git', 'ast_query', 'write_file',
                 ..._directorHeadlessExtras,
             ]);
         },

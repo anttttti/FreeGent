@@ -1,7 +1,7 @@
 // runner.ts — FreeGent: task runner — autonomous task loop
 // Depends on: config.js, qa.js, tasks.js, chat-state.js, agent-core.js, state.js
 import { setWorkflowMode, _clearHistory, aiJob, setAiJob, aiBusy } from './state.js';
-import { enabledTools } from './config.js';
+import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus } from './task-status.js';
 
 interface Task {
@@ -28,6 +28,9 @@ let _runnerSessionLog: { time: string; taskId: string; title: string; outcome: s
 let _runnerConsecutiveFails: number = 0;
 let _runnerPriorChatId: string | null    = null;
 let _runnerChatId: string | null         = null;
+// Set by a card's play button: the loop works on this one task only.
+let _runnerOnlyPath: string | null       = null;
+const _runnerPendingSteer: string[]      = [];
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -54,7 +57,10 @@ function runnerStart() { _startRunner(false); }
 // Autopilot: keep completing tasks, one chat each, until none are left (or you stop it).
 function runnerAutopilot() { _startRunner(true); }
 
-function _startRunner(all: boolean) {
+// Manual start of one specific task (the play button on its card): one chat, then stop.
+function runnerStartTask(path: string) { _startRunner(false, path); }
+
+function _startRunner(all: boolean, onlyPath: string | null = null) {
     if (_runnerRunning || agentStreaming) return;
     if (aiBusy()) {
         const statusEl = document.getElementById('runner-status');
@@ -62,6 +68,7 @@ function _startRunner(all: boolean) {
         return;
     }
     _runnerAll         = all;
+    _runnerOnlyPath    = onlyPath;
     _runnerPriorChatId = activeChatId;
     _runnerSessionLog  = [];
     _renderRunnerLog();
@@ -91,15 +98,35 @@ function _clearRunnerProcess(showEmpty: boolean = true): void {
     if (el) el.innerHTML = showEmpty ? '<div class="runner-process-empty">No active process.</div>' : '';
 }
 
-function runnerStop() {
+// Flag the run as aborted (no stream abort). agent-core's stopNow calls this, so it must not
+// call stopNow back.
+function runnerAbort() {
     _runnerAbort  = true;
     _runnerPaused = false;
+    _runnerPendingSteer.length = 0;
     if (_runnerUnblockResolve) {
         _runnerUnblockResolve('');
         _runnerUnblockResolve = null;
     }
+}
+
+function runnerStop() {
+    runnerAbort();
     // Abort any in-flight LLM stream so the stop takes effect immediately.
     if (typeof agentStreaming !== 'undefined' && agentStreaming) stopNow?.();
+}
+
+// Steer the running task: the message is delivered as its own turn once the current step ends.
+// The step in flight is cut short (soft stop) so the message is not stuck behind a long turn.
+function runnerSteer(text: string) {
+    const msg = String(text || '').trim();
+    if (!msg || !_runnerRunning) return;
+    if (_runnerPaused && _runnerUnblockResolve) { runnerSendUnblockWith(msg); return; }
+    _runnerPendingSteer.push(msg);
+    if (typeof agentStreaming !== 'undefined' && agentStreaming) {
+        setSoftStopPending(true);
+        activeAbortController?.abort();
+    }
 }
 
 // Toggle: stop if running, start if idle.
@@ -132,6 +159,7 @@ async function _runLoop() {
     _runnerPaused        = false;
     _runnerAbort         = false;
     _runnerConsecutiveFails = 0;
+    _runnerPendingSteer.length = 0;
     _runnerDeferred.clear();
     _updateRunnerUI();
 
@@ -205,6 +233,7 @@ async function _runLoop() {
         }
     } finally {
         _runnerRunning = false;
+        _runnerOnlyPath = null;
         setAiJob('');
         _runnerPaused  = false;
         _runnerAbort   = false;
@@ -221,6 +250,7 @@ async function _runLoop() {
 }
 
 function _selectNextTask(tasks: Task[]): Task | null {
+    if (_runnerOnlyPath) return tasks.find(t => t.path === _runnerOnlyPath && !_runnerDeferred.has(t.path)) ?? null;
     const groups = [
         ['in-review', 'review'],
         ['in-progress'],
@@ -275,8 +305,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     if (typeof setMainAgentRole === 'function') setMainAgentRole('director');
     if (typeof setWorkflowMode === 'function') setWorkflowMode(true);
 
-    // update_task_status availability is governed by coworkEnabledTools (Settings → Tools, Cowork
-    // column). No temporary patch needed — isToolActive() already reads the right set in cowork mode.
+    // The runner prompts end with "call update_task_status", so the agent must have it whatever the
+    // saved Settings → Tools selection says (a saved disabled list from before the tool existed, or
+    // one that turned it off, left a run-task agent with no way to finish: chat 6f25, 2026-10-06).
+    // In-memory only — the persisted selection is untouched and applies again after a reload.
+    coworkEnabledTools.add('update_task_status');
+    enabledTools.add('update_task_status');
 
     // The agent sees the task as the start gates left it (enrichment may have added to it) but
     // with its original status, not the in-progress mark the runner just set.
@@ -300,6 +334,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         // Subsequent turns: re-read so the agent sees what it wrote in the previous turn.
         const taskContent = turn === 1 ? _initialTaskContent
             : await agentReadFile(task.path).catch(() => _initialTaskContent);
+
+        // Messages the user sent while the task ran: each is its own turn, then the task prompt resumes.
+        while (_runnerPendingSteer.length && !_runnerAbort) {
+            await _runnerTurn(_runnerPendingSteer.shift()!);
+        }
+        if (_runnerAbort) break;
 
         const taskName = task.fm.title || task.path;
         const prompt = turn === 1
@@ -422,6 +462,10 @@ function runnerSendUnblock() {
     const inp = document.getElementById('runner-unblock-input') as HTMLInputElement | null;
     const val = inp ? inp.value.trim() : '';
     if (inp) inp.value = '';
+    runnerSendUnblockWith(val);
+}
+
+function runnerSendUnblockWith(val: string) {
     _runnerPaused      = false;
     _runnerPauseReason = '';
     if (_runnerUnblockResolve) {
@@ -436,10 +480,7 @@ async function runnerInterrupt() {
     const val = inp ? inp.value.trim() : '';
     if (inp) inp.value = '';
     if (!val) return;
-
-    setSoftStopPending(true);
-    activeAbortController?.abort();
-    await _runnerTurn(val);
+    runnerSteer(val);
 }
 
 // ── UI ─────────────────────────────────────────────────────────────────────
@@ -454,7 +495,6 @@ function _updateRunnerUI() {
     const statusEl    = document.getElementById('runner-status');
     const inputBar    = document.getElementById('runner-input-bar');
     const interruptBar = document.getElementById('runner-interrupt-bar');
-    const chatSend    = document.getElementById('agent-action-btn') as HTMLButtonElement | null;
 
     const idle    = !_runnerRunning;
     const running = _runnerRunning && !_runnerPaused;
@@ -469,7 +509,6 @@ function _updateRunnerUI() {
     if (stopBtn)     stopBtn.style.display     = _runnerRunning ? 'inline-block' : 'none';
     if (inputBar)    inputBar.style.display    = paused   ? 'flex' : 'none';
     if (interruptBar) interruptBar.style.display = running ? 'flex' : 'none';
-    if (chatSend)    chatSend.disabled         = _runnerRunning;
 
     if (statusEl) {
         if (idle)         statusEl.textContent = 'Idle';
@@ -481,6 +520,8 @@ function _updateRunnerUI() {
     // Glow the Tasks rail nav button and the Runner label while the loop is active.
     const tasksRailBtn = document.querySelector('.left-rail .rail-nav-btn[data-tab="tasks"]');
     if (tasksRailBtn) tasksRailBtn.classList.toggle('runner-glow', _runnerRunning);
+    // Per-card play buttons are only offered while the runner is idle.
+    document.querySelector('.tab-panel[data-panel="tasks"]')?.classList.toggle('runner-active', _runnerRunning);
     const runnerLabel  = document.querySelector('.runner-label');
     if (runnerLabel)  runnerLabel.classList.toggle('runner-running', running);
 
@@ -561,4 +602,4 @@ function initRunner() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStop, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

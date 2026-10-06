@@ -232,6 +232,30 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
     return true;
 }
 
+// Chats tab: set the workspace to the state of one of a chat's snapshots (its start or end).
+// Unlike rewindToCheckpoint this leaves the chat's messages alone and works for any chat.
+async function restoreChatWorkspace(chatId: string, ckptId: string): Promise<boolean> {
+    if (aiBusy()) { alert('An AI task is running — stop it before restoring the workspace.'); return false; }
+    if (typeof restoreCheckpointWorkspace !== 'function') return false;
+    try {
+        const { localFiles } = await restoreCheckpointWorkspace(chatId, ckptId);
+        const _canWriteLocal = typeof writeFsaFile === 'function' && typeof hasLocalFolder === 'function' && hasLocalFolder();
+        if (localFiles.length > 0 && _canWriteLocal && await _confirmLocalRestore(localFiles.length)) {
+            await Promise.all(localFiles.map(async f => {
+                try {
+                    if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
+                    else await writeFsaFile(f.name, f.content);
+                } catch {}
+            }));
+        }
+        renderFileList?.();
+        return true;
+    } catch (e) {
+        alert('Workspace restore failed: ' + ((e as any)?.message || e));
+        return false;
+    }
+}
+
 function _confirmLocalRestore(count: number): Promise<boolean> {
     if (localStorage.getItem(KEYS.CKPT_LOCAL_WARN_OK) === '1') return Promise.resolve(true);
     return new Promise(resolve => {
@@ -1258,12 +1282,16 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
 }
 
 function stopAfterStep(): void {
+    if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
     setSoftStopPending(true);
     // A partial stop finishes the active tool. Stop-now still aborts it immediately.
     if (!sandboxBusy()) activeAbortController?.abort();
 }
 
 function stopNow(): void {
+    // Stopping while the task runner owns the chat must end the runner too; aborting only the
+    // stream let its loop carry on with the next turn / task.
+    if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
     setSoftStopPending(false);
     activeAbortController?.abort();
     setAgentStreaming(false);
@@ -1280,6 +1308,16 @@ function handleSendButton(): void {
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
     if (aiJob === 'send-preparing') return;
+    // Steer the task runner: the message goes to the running task's agent after the current step.
+    if (aiJob === 'runner' && typeof runnerSteer === 'function') {
+        const inp  = document.getElementById('agent-input') as HTMLElement | null;
+        const text = _readInputText(inp);
+        if (!text) return;
+        if (typeof hasPendingAttachments === 'function' && hasPendingAttachments()) { warnAttachmentSendBusy(); return; }
+        if (inp) { inp.innerHTML = ''; autoResizeTextarea(inp as any); }
+        runnerSteer(text);
+        return;
+    }
     if (aiJob) {
         const what = { runner: 'The task runner', init: 'The project-init agent' }[aiJob] || 'An AI task';
         appendMessage?.('model', `<em style="color:var(--muted)">${what} is running — stop it or wait for it to finish before sending.</em>`);
@@ -1449,7 +1487,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat };

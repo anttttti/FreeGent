@@ -35,6 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -42,6 +45,10 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # deploy.sh tags every deployment vBENCH.N (e.g. v0.63.12) and pushes the tag with the commit.
+      - name: Deployment version
+        run: echo "FG_VERSION=$(git tag --points-at HEAD --list 'v*.*.*' | sort -V | tail -1)" >> "$GITHUB_ENV"
 
       - name: Build
         run: npm run build
