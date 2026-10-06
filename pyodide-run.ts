@@ -5,6 +5,7 @@
 // Files cross the worker boundary as strings: text as is, binary as "\x00BIN\x00<base64>", and
 // images Python wrote as "\x00IMG\x00<mime>\x00<base64>" (shown inline in the chat).
 
+import { imageMimeOfName, DISPLAY_LIBS_RE as _DISPLAY_LIBS } from './mime.js';
 import { concatBytes, sameBytes } from './shiro/utils/bytes.js';
 import { withRuntimeLock } from './shiro/runtime-lock.js';
 import { snapshotRuntimeFiles, clearRuntimeDir } from './shiro/runtime-filesystem.js';
@@ -17,14 +18,7 @@ export type RunResult = {
     changedFiles: Record<string, string | null>;
 };
 
-const _IMAGE_MIMES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
-function _guessMime(filename: string): string {
-    return _IMAGE_MIMES[(filename.split('.').pop() || '').toLowerCase()] || '';
-}
-
-// Libraries that require a display/screen and cannot run in a Web Worker.
-const _DISPLAY_LIBS = /^\s*(?:import|from)\s+(pygame|pygame_ce|turtle|tkinter|wx|gi\.repository|PyQt[456]|PySide[26])\b/m;
+const _guessMime = imageMimeOfName;
 
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 

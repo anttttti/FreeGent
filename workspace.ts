@@ -2,6 +2,7 @@
 // IndexedDB storage + optional File System Access API
 
 import { escapeHtml } from './html-escape.js';
+import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -25,25 +26,10 @@ const HDL_STORE  = 'handles';
 const CKPT_STORE = 'checkpoints';
 const PROJ_STORE = 'projects';
 
-const DOC_EXTENSIONS    = new Set(['.pdf', '.docx', '.doc', '.odt', '.xlsx', '.xls', '.ods', '.pptx', '.ppt', '.odp']);
-const BINARY_EXTENSIONS = new Set([...DOC_EXTENSIONS, '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.mp3', '.mp4', '.wav', '.ogg', '.zip', '.gz', '.tar', '.wasm', '.bin']);
-
-function _extOf(name) { const i = name.lastIndexOf('.'); return i >= 0 ? name.slice(i).toLowerCase() : ''; }
-function _isBinaryExt(name) { return BINARY_EXTENSIONS.has(_extOf(name)); }
-function _isDocExt(name)    { return DOC_EXTENSIONS.has(_extOf(name)); }
-function _mimeOf(name) {
-    return {
-        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-        '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif',
-        '.svg': 'image/svg+xml',
-        '.pdf': 'application/pdf', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        '.mp3': 'audio/mpeg', '.mp4': 'video/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
-        '.zip': 'application/zip', '.gz': 'application/gzip', '.tar': 'application/x-tar',
-        '.wasm': 'application/wasm', '.bin': 'application/octet-stream',
-    }[_extOf(name)] || 'application/octet-stream';
-}
+const _extOf = extOf;
+const _isBinaryExt = isBinaryExt;
+const _isDocExt = isDocExt;
+const _mimeOf = mimeOfName;
 function _uint8ToBase64(u8) { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s); }
 function _base64ToUint8(b64) {
     // Strip INTERIOR '=' padding only (artifact of chunked btoa encoding) then re-pad at end.
@@ -2070,12 +2056,7 @@ async function downloadFile(name) {
         const rec = await readWorkspaceFile(name) ?? (() => { throw new Error(`File not found: ${name}`); })();
         let blob: Blob;
         if (rec.encoding === 'base64') {
-            const mime = {
-                '.pdf': 'application/pdf', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-            }[_extOf(name)] || 'application/octet-stream';
+            const mime = mimeOfName(name);
             blob = new Blob([_base64ToUint8(rec.content)], { type: mime });
         } else {
             blob = new Blob([rec.content], { type: 'text/plain;charset=utf-8' });
