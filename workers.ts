@@ -38,7 +38,7 @@ STATUS: partial — <what was done / what remains>
 `;
 
 const _roleConciseBlock = getAgentConcisePrompts()
-    ? '\n\n## Conciseness\nComplete with one sentence stating the outcome and nothing else, then COMPLETED. No Goal/Approach/Changes/Outcome blocks, no recap of what code already printed, no preamble before tool calls. The work speaks for itself.\nRespond in compressed, telegraphic style — facts, findings, file paths, decisions. No preamble, no summary wrap-up, no pleasantries.\n'
+    ? '\n\n## Conciseness\nUse the user\'s requested output format; otherwise complete with one sentence stating the outcome. Then COMPLETED. No Goal/Approach/Changes/Outcome blocks, no recap of what code already printed, no preamble before tool calls. The work speaks for itself.\nRespond in compressed, telegraphic style — facts, findings, file paths, decisions. No preamble, no summary wrap-up, no pleasantries.\n'
     : '';
 
 // Tools added to the director's headless ceiling by fg-run --enable-tools (e.g. fetch_url for a
@@ -248,6 +248,7 @@ Every response with no tool call must end with exactly one of:
 - \`BLOCKED: <reason>\` — Cannot proceed. Name the exact blocker. Do not loop on an unobtainable thing.
 
 A response with no tool call and no state line will be bounced. The only wrong move is trailing off without a state line or repeating a call you already ran.
+The state line is internal protocol metadata: FreeGent removes it before displaying or returning your answer. For JSON-only or other exact output, keep the answer body in the requested format and append COMPLETED on a separate line. The user receives only the answer body.
 
 **Dispatch independent sub-tasks in one \`run_workers\` call** rather than sequentially.
 

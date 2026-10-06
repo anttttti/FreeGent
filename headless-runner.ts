@@ -657,8 +657,12 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     // Fire a hard abort after timeoutMs so the agent doesn't hang in retry loops.
     // Guard: setTimeout(fn, undefined) is equivalent to setTimeout(fn, 0) and fires
     // on the next tick, immediately setting softStopPending before any LLM call starts.
+    let timedOut = false;
     const _abortTimer = timeoutMs != null
-        ? setTimeout(() => { try { dom.window.stopAfterStep?.(); } catch {} }, timeoutMs)
+        ? setTimeout(() => {
+            timedOut = true;
+            try { dom.window.stopNow?.(); } catch {}
+        }, timeoutMs)
         : null;
 
     const session = createSession({ workflowMode });  // §2: session owns workflowMode
@@ -750,5 +754,6 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         }
     }
 
+    if (timedOut && !error) error = new Error(`Task timed out after ${timeoutMs} ms`);
     return { output, error, metrics: _metrics };
 }

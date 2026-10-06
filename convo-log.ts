@@ -4,6 +4,8 @@
 import { chatKey, SESSION_KEYS } from './storage-keys.js';
 import { FG_VERSION } from './build-info.js';
 import { escapeHtml } from './html-escape.js';
+import { redactText } from './secrets.js';
+import { getMcpServers } from './mcp.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
 // Each entry records one LLM response turn (may include tool calls).
@@ -269,17 +271,8 @@ async function exportChat(id) {
 // ── Send a chat log to the developer (one tap, no download/upload) ────────────
 // POSTs the chat JSON to the Worker's /log endpoint (cf-worker/worker.js), which keeps it for 14 days.
 // Credentials are removed first: this chat may hold pasted keys, and the user's own saved keys.
-const _SECRET_RES = [
-    /\b(?:sk|gsk|xai|pplx|cfut|hf|nvapi)[-_][A-Za-z0-9_-]{16,}/g,
-    /\bAIza[0-9A-Za-z_-]{30,}/g,
-    /\bgh[pousr]_[A-Za-z0-9]{30,}/g,
-    /\b(Bearer\s+)[A-Za-z0-9._~+\/=-]{16,}/gi,
-];
 export function redactSecrets(text: string, extra: string[] = []): string {
-    let out = text;
-    for (const v of extra) if (v.length >= 8) out = out.split(v).join('[redacted]');
-    for (const re of _SECRET_RES) out = out.replace(re, (m, g1) => (g1 ? g1 : '') + '[redacted]');
-    return out;
+    return redactText(text, extra);
 }
 function _storedSecretValues(): string[] {
     const vals: string[] = [];
@@ -288,6 +281,8 @@ function _storedSecretValues(): string[] {
             const k = localStorage.key(i) || '';
             if (/key|token|secret|password/i.test(k)) { const v = localStorage.getItem(k) || ''; if (v) vals.push(v.replace(/^"|"$/g, '')); }
         }
+        // MCP server headers hold credentials under a key name that does not match the pattern above.
+        for (const srv of getMcpServers()) vals.push(...Object.values(srv.headers || {}).map(String));
     } catch {}
     return vals;
 }

@@ -84,6 +84,12 @@ if (_flag('--help') || _flag('-h')) {
 // Build the set of extra fg-run args from global CLI flags.
 // Per-case overrides are applied in the runner loop below.
 function buildFgExtras(overrides = {}) {
+    // A tool-coverage case must advertise the tools it requires. These additions
+    // apply only to this smoke run, not the saved profile or WebUI defaults.
+    const requiredTools = [...new Set([
+        ...String(overrides.enable_tools ?? enableTools ?? '').split(',').map(t => t.trim()).filter(Boolean),
+        ...(overrides.checks?.tool_called || []),
+    ])].join(',');
     const pairs = [
         ['--llm',              overrides.llm          ?? llmSpec],
         ['--temperature',      overrides.temperature  ?? temperature],
@@ -91,7 +97,7 @@ function buildFgExtras(overrides = {}) {
         ['--context-window',   overrides.context_window ?? contextWindow],
         ['--compaction-limit', overrides.compaction_limit ?? compactionLim],
         ['--disable-tools',    overrides.disable_tools  ?? disableTools],
-        ['--enable-tools',     overrides.enable_tools   ?? enableTools],
+        ['--enable-tools',     requiredTools],
         ['--retry-mode',       overrides.retry_mode   ?? retryMode],
         ['--retry-fixed-ms',   overrides.retry_fixed_ms ?? retryFixedMs],
         ['--api-key',          overrides.api_key      ?? apiKey],
@@ -117,8 +123,10 @@ const cases = allCases.filter(c => {
 // Ask the same CLI used by the cases to resolve profile, keys and model priority.
 // This performs no LLM request and creates no workspace/session/log files.
 const fgRun = resolve(ROOT, 'fg-run.ts');
-const tsx = resolve(ROOT, 'node_modules/.bin/tsx');
-const primaryResult = spawnSync(tsx, ['--env-file-if-exists=.env', fgRun, '--print-model', ...buildFgExtras(cases[0])], {
+// Use the supported Node source runner: no tsx IPC socket or duplicate .env loader.
+// fg-run/headless-runner load credentials through dotenv.ts themselves.
+const nodeArgs = ['--experimental-strip-types', '--loader', resolve(ROOT, 'js-to-ts-loader.mjs'), fgRun];
+const primaryResult = spawnSync(process.execPath, [...nodeArgs, '--print-model', ...buildFgExtras(cases[0])], {
     cwd: ROOT, timeout: 30_000, encoding: 'utf8',
     env: { ...process.env, NODE_NO_WARNINGS: '1' },
 });
@@ -173,6 +181,26 @@ function evalChecks(c, output, logEntries) {
     if (ch.not_contains) {
         for (const s of ch.not_contains) {
             if (output.includes(s)) failures.push(`output contains forbidden "${s}"`);
+        }
+    }
+    if (ch.matches) {
+        for (const pattern of ch.matches) {
+            if (!new RegExp(pattern, 'i').test(output)) failures.push(`output does not match /${pattern}/i`);
+        }
+    }
+    if (ch.json_workspace_listing) {
+        try {
+            const value = JSON.parse(output);
+            const expected = Object.keys(c.workspace_files || {}).sort();
+            if (!value || Array.isArray(value) || typeof value !== 'object'
+                || Object.keys(value).sort().join(',') !== 'count,files'
+                || !Number.isInteger(value.count) || value.count !== expected.length
+                || !Array.isArray(value.files) || !value.files.every(f => typeof f === 'string')
+                || JSON.stringify([...value.files].sort()) !== JSON.stringify(expected)) {
+                failures.push('JSON count/files do not match the seeded workspace');
+            }
+        } catch {
+            failures.push('output is not a JSON object');
         }
     }
     if (ch.output_nonempty && !output.trim()) {
@@ -261,9 +289,12 @@ for (const c of cases) {
     const t0 = Date.now();
     let output = '';
     let runError = null;
+    let stderr = '';
+    let exitCode = null;
+    let signal = null;
 
     try {
-        const result = spawnSync(tsx, ['--env-file-if-exists=.env', fgRun, ...fgArgs], {
+        const result = spawnSync(process.execPath, [...nodeArgs, ...fgArgs], {
             cwd: ROOT,
             timeout: caseTimeoutMs + 10_000,
             encoding: 'utf8',
@@ -272,9 +303,16 @@ for (const c of cases) {
         // fg-run emits metrics on piped stdout alongside the user-facing answer.
         output = (result.stdout || '').split('\n')
             .filter(line => !line.startsWith('__FG_METRICS__:')).join('\n').trim();
-        if (result.status !== 0 && !output) {
-            runError = (result.stderr || '').slice(0, 300) || `exit ${result.status}`;
-        }
+        stderr = result.stderr || '';
+        exitCode = result.status;
+        signal = result.signal || null;
+        // Partial output is not success: aborted streams can contain only reasoning,
+        // and crashes may print an answer before failing. Keep diagnostics in the log.
+        if (result.error) runError = result.error.code === 'ETIMEDOUT'
+            ? `process timed out after ${caseTimeoutMs + 10_000} ms` : result.error.message;
+        else if (signal) runError = `process terminated by ${signal}`;
+        else if (exitCode !== 0) runError = stderr.match(/^(?:\w*Error|\[fg-run\] Error):.*$/m)?.[0]
+            || stderr.trim().slice(0, 1000) || `exit ${exitCode}`;
     } catch (e) {
         runError = e.message;
     }
@@ -296,7 +334,8 @@ for (const c of cases) {
     }
 
     if (runError) {
-        const r = { id: c.id, status: 'error', error: runError, elapsed };
+        const r = { id: c.id, status: 'error', error: runError, elapsed,
+            exitCode, signal, stderr: stderr.slice(-16_000), output: output.slice(0, 500) };
         results.push(r);
         log({ ...r, desc: c.desc, task: c.task });
         console.log(`ERROR  ${elapsed}s  ${runError.slice(0, 60)}`);

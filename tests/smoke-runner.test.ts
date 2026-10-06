@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 // Run the real smoke CLI with a recorded fg-run response. No LLM/network calls.
-function runFixture(checks: object, entries: object[], stdout: string, llm?: string, files: Record<string, string> = {}, caseOverrides: object = {}, extraArgs: string[] = []) {
+function runFixture(checks: object, entries: object[], stdout: string, llm?: string, files: Record<string, string> = {}, caseOverrides: object = {}, extraArgs: string[] = [], childResult: object = {}) {
     const root = mkdtempSync(join(tmpdir(), 'fg-smoke-test-'));
     try {
         const smoke = join(root, 'smoke');
@@ -13,11 +13,16 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
         writeFileSync(join(smoke, 'cases.jsonl'), JSON.stringify({
             id: 'fixture', group: 'basic', desc: 'Recorded response', task: 'Answer the question.', checks, ...caseOverrides,
         }) + '\n');
-        writeFileSync(join(root, 'fixture.json'), JSON.stringify({ entries, stdout, files }));
+        writeFileSync(join(root, 'fixture.json'), JSON.stringify({ entries, stdout, files, childResult }));
         writeFileSync(join(root, 'preload.cjs'), `
             const fs = require('node:fs');
             const path = require('node:path');
             const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
+            // Record console output independently of platform pipe flushing at process.exit().
+            process.stdout.write = chunk => {
+                fs.appendFileSync(path.join(__dirname, 'stdout.txt'), chunk);
+                return true;
+            };
             require('node:child_process').spawnSync = (_command, args) => {
                 if (args.includes('--print-model')) {
                     const model = args.includes('--llm') ? args[args.indexOf('--llm') + 1] : 'test|primary-model';
@@ -27,7 +32,7 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
                 fs.writeFileSync(args[args.indexOf('--log') + 1], fixture.entries.map(e => JSON.stringify(e)).join('\\n'));
                 for (const [name, content] of Object.entries(fixture.files))
                     fs.writeFileSync(path.join(args[args.indexOf('--workspace') + 1], name), content);
-                return { status: 0, stdout: fixture.stdout, stderr: '' };
+                return { status: 0, stdout: fixture.stdout, stderr: '', ...fixture.childResult };
             };
             require('node:module').syncBuiltinESMExports();
         `);
@@ -40,7 +45,7 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
         const logName = readdirSync(logDir).find(name => name.startsWith('smoke-'))!;
         return {
             exit: result.status,
-            stdout: result.stdout,
+            stdout: readFileSync(join(root, 'stdout.txt'), 'utf8'),
             row: JSON.parse(readFileSync(join(logDir, logName), 'utf8')),
             args: JSON.parse(readFileSync(join(root, 'args.json'), 'utf8')) as string[],
         };
@@ -130,6 +135,65 @@ describe('smoke runner', () => {
     it('forwards a CLI tool override when the case has no override', () => {
         const result = runFixture({}, [], 'Done.', undefined, {}, {}, ['--enable-tools', 'replace_in_file,append_file']);
         expect(result.args[result.args.indexOf('--enable-tools') + 1]).toBe('replace_in_file,append_file');
+    });
+
+    it('enables every checked tool while retaining explicit additions and disable flags', () => {
+        const result = runFixture({ tool_called: ['replace_in_file', 'read_file'] }, [
+            { step: 0, toolCalls: [{ name: 'replace_in_file' }, { name: 'read_file' }] },
+        ], 'Done.', undefined, {}, { enable_tools: 'append_file,replace_in_file' }, ['--disable-tools', 'web_search']);
+        expect(result.exit).toBe(0);
+        expect(result.args[result.args.indexOf('--enable-tools') + 1]).toBe('append_file,replace_in_file,read_file');
+        expect(result.args[result.args.indexOf('--disable-tools') + 1]).toBe('web_search');
+        expect(result.args).toContain('--experimental-strip-types');
+        expect(result.args).not.toContain('--env-file-if-exists=.env');
+    });
+
+    it('accepts an empty-input bug explanation through either prose or the exact reproducer', () => {
+        const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const bugCase = cases.find(c => c.id === 's41-proactive-bugfind');
+        const entries = [{ step: 0, toolCalls: [{ name: 'read_file' }] }];
+        for (const answer of ['Empty input causes division by zero.', 'average([]) raises ZeroDivisionError.']) {
+            expect(runFixture(bugCase.checks, entries, answer).row.status).toBe('pass');
+        }
+        expect(runFixture(bugCase.checks, entries, 'No bugs found.').row.status).toBe('fail');
+        expect(runFixture(bugCase.checks, entries, 'average(5) raises TypeError.').row.status).toBe('fail');
+    });
+
+    it('validates JSON syntax, exact keys, count and filenames rather than key substrings', () => {
+        const caseOverrides = { workspace_files: { 'alpha.txt': 'a', 'beta.txt': 'b', 'gamma.txt': 'c' } };
+        const checks = { json_workspace_listing: true };
+        const valid = '{"count":3,"files":["gamma.txt","alpha.txt","beta.txt"]}';
+        expect(runFixture(checks, [], valid, undefined, {}, caseOverrides).row.status).toBe('pass');
+        for (const answer of [
+            'Here is the result: ' + valid, valid + '\nCOMPLETED',
+            '{"count":"3","files":["alpha.txt","beta.txt","gamma.txt"]}',
+            '{"count":3,"files":["alpha.txt","beta.txt","wrong.txt"]}',
+            '{"count":3,"files":["alpha.txt","alpha.txt","gamma.txt"]}',
+            '{"count":2,"files":["alpha.txt","beta.txt","gamma.txt"]}',
+            '{"count":3,"files":["alpha.txt","beta.txt","gamma.txt"],"extra":true}',
+        ]) expect(runFixture(checks, [], answer, undefined, {}, caseOverrides).row.status).toBe('fail');
+    });
+
+    it('reports failed processes even when their partial output satisfies the checks', () => {
+        const stderr = '.env not found. Continuing without it.\nsource.ts:1\nReferenceError: esc is not defined\n    at source.ts:1\n';
+        const result = runFixture({ contains: ['Helsinki'] }, [], 'Helsinki.', undefined, {}, {}, [], { status: 1, stderr });
+        expect(result.exit).toBe(1);
+        expect(result.row.status).toBe('error');
+        expect(result.row.error).toBe('ReferenceError: esc is not defined');
+        expect(result.row.stderr).toBe(stderr);
+        expect(result.row.output).toBe('Helsinki.');
+        expect(result.row.exitCode).toBe(1);
+    });
+
+    it('reports subprocess deadlines and signals as errors with partial output retained', () => {
+        const timeout = runFixture({}, [], 'Reasoning...', undefined, {}, {}, [],
+            { status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT', message: 'spawn ETIMEDOUT' } });
+        expect(timeout.row.status).toBe('error');
+        expect(timeout.row.error).toContain('timed out');
+        expect(timeout.row.output).toBe('Reasoning...');
+        const killed = runFixture({}, [], 'Done.', undefined, {}, {}, [], { status: null, signal: 'SIGKILL' });
+        expect(killed.row.status).toBe('error');
+        expect(killed.row.error).toContain('SIGKILL');
     });
 
     it('summarises actual primary and fallback steps while excluding non-step records', () => {
