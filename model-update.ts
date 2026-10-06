@@ -25,14 +25,7 @@ async function _proxyGet(url: string): Promise<any> {
 // GET-via-POST-proxy — for providers that require Bearer auth (blocked by CORS in browser).
 async function _proxyBearer(url: string, key: string): Promise<any> {
     if (!key) return null;
-    const resp = await fetch(_proxyBase(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, method: 'GET', headers: { 'Authorization': `Bearer ${key}`, 'Accept': 'application/json' } }),
-        signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) return null;
-    return resp.json().catch(() => null);
+    return _proxyFetch(url, key);
 }
 
 // Like _proxyBearer but works without a key (adds Bearer only when key is provided).

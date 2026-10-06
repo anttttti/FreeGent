@@ -2,8 +2,8 @@
 // Loaded first; all other modules depend on this.
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { isStaticHost } from './static-hosts.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
+import { resolveProxy } from './proxy.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -301,44 +301,11 @@ function getSearchProxy() {
     const v = ls('fg_search_proxy');
     return v && !/^https?:\/\//i.test(v) ? `https://${v}` : v;
 }
-// The default CF Worker — used when the user hasn't configured their own proxy
-// and the app is running on a static host (no local /api/proxy server available).
-// Secured by origin + domain allowlist in cf-worker/worker.js.
-const DEFAULT_CF_WORKER = 'https://proxy.freegent.ai';
-function getEffectiveProxy() {
-    const manual = getSearchProxy();
-    if (manual) return manual;
-    // Headless (fg-run, benchmarks) has no local server and no CORS: fetch directly. The
-    // same-origin fallback below would be http://freegent.internal/api/proxy there, which doesn't
-    // exist — every plain-GET fetch_url and proxied search failed with "fetch failed".
-    if ((window as any)._fgHeadless) return '';
-    try {
-        // On static hosts there is no local server — use the default CF Worker.
-        if (isStaticHost(window.location.hostname)) return DEFAULT_CF_WORKER;
-        // Always fall back to the same-origin /api/proxy so LAN-IP access
-        // (e.g. https://192.168.1.28:5000) routes fetch_url plain GETs through
-        // the local server and avoids cross-origin CORS blocks.
-        return `${window.location.origin}/api/proxy`;
-    } catch {}
-    return '';
-}
-
-// Returns the active CORS proxy URL for LLM POST calls.
-// Priority: user-configured proxy → default CF Worker (static host) → same-origin /api/proxy.
-// The same-origin fallback lets LAN-IP deployments (mobile on local network) reach the
-// backend without CORS errors. A configured CF Worker URL covers GitHub Pages deployments
-// where there is no local server — see cf-worker/ for the deployable Worker script.
-export function getLocalApiProxy() {
-    const configured = typeof getSearchProxy === 'function' ? getSearchProxy() : '';
-    if (configured) return configured.replace(/\/$/, '');
-    if ((window as any)._fgHeadless) return '';   // no local server headless (see getEffectiveProxy)
-    try {
-        // On static hosts there is no local server — use the default CF Worker.
-        if (isStaticHost(window.location.hostname)) return DEFAULT_CF_WORKER;
-        return `${window.location.origin}/api/proxy`;
-    } catch {}
-    return '';
-}
+// Proxy selection lives in proxy.ts (resolveProxy); these keep the long-standing public names.
+// Both fall back to the user-configured proxy first, then the default CF Worker on a static host,
+// then the same-origin /api/proxy (see cf-worker/ for the Worker script).
+function getEffectiveProxy() { return resolveProxy('get', getSearchProxy()); }
+export function getLocalApiProxy() { return resolveProxy('post', getSearchProxy()); }
 function getBraveKey()       { return ls('fg_brave_key'); }
 function getGithubToken()      { return ls('fg_github_token'); }
 function getStackExchangeKey() { return ls('fg_stackexchange_key'); }
