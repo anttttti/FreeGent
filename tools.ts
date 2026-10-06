@@ -917,18 +917,23 @@ async function _handleUpdateTaskStatus(args: any) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Post-write syntax check: runs after any successful file write in the non-staging path.
+// POSIX single-quoting: nothing inside is expanded, and embedded newlines stay literal.
+const _shSingleQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
 // Returns an error string on failure, null if the file is clean or the check is unavailable.
 async function _syntaxCheck(path) {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase();
     if (!ext || typeof nativeExec !== 'function') return null;
     let r = null;
+    // A leading dash would be read as an option by node and python.
+    const qp = _shSingleQuote(path.startsWith('-') ? `./${path}` : path);
     if (ext === 'py') {
         // Compiled in memory: py_compile writes __pycache__/*.pyc into the workspace (git status
         // noise), and a later edit within the same second ran the stale .pyc instead.
         const check = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
-        r = await nativeExec('bash', `python3 -c ${JSON.stringify(check)} ${JSON.stringify(path)} 2>&1`).catch(() => null);
+        r = await nativeExec('bash', `python3 -c ${_shSingleQuote(check)} ${qp} 2>&1`).catch(() => null);
     } else if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
-        r = await nativeExec('bash', `node --check ${JSON.stringify(path)} 2>&1`).catch(() => null);
+        r = await nativeExec('bash', `node --check ${qp} 2>&1`).catch(() => null);
     }
     if (!r || r.exit_code === 0) return null;
     return (r.stdout || r.stderr || '').trim().split('\n').slice(0, 5).join('\n') || null;
@@ -1163,6 +1168,12 @@ async function _handleWriteFile(args, context) {
     if (!args.path) return { error: 'write_file: "path" is required' };
     if (args.encoding === 'base64') {
         try {
+            // A worker's binary write is held back like its text writes: run_workers applies it
+            // after reconciling, reports it under `wrote`, and flags two workers writing one asset.
+            if (context?.binary) {
+                context.binary.set(args.path, args.content);
+                return { success: true, path: args.path, bytes: _base64Len(args.content), staged: true };
+            }
             await agentWriteFile(args.path, args.content, 'base64');
             return { success: true, path: args.path, bytes: _base64Len(args.content) };
         } catch (e) { return { error: e.message }; }
@@ -1920,10 +1931,25 @@ async function _handleExecuteCode(args, context, onProgress?: (message:string)=>
     // A worker's file edits are staged until run_workers commits them. The code it runs must see
     // them (a coder that wrote main.py and ran it ran the old one, or got "No such file"), and
     // what the code writes must show in the worker's own read_file / list_files.
-    const _stamps = context?.staging ? await _applyStagingForRun(context.staging) : null;
-    const result   = await _handleExecuteCodeInner(args, context, onProgress);
-    if (_stamps) await _stageRunChanges(context.staging, _stamps, context.snapshot);
+    // Staged edits are written into the one shared workspace for the run, so two workers running
+    // code at once would read each other's inputs and collect each other's changes. A worker's
+    // apply → run → collect sequence therefore holds a lock; main-agent runs (no staging) don't.
+    const result = context?.staging
+        ? await _withWorkspaceRunLock(async () => {
+            const stamps = await _applyStagingForRun(context.staging);
+            const res = await _handleExecuteCodeInner(args, context, onProgress);
+            await _stageRunChanges(context.staging, stamps, context.snapshot);
+            return res;
+        })
+        : await _handleExecuteCodeInner(args, context, onProgress);
     return _before?.size ? _annotateUnchangedInPlace(result, _before) : result;
+}
+
+let _workspaceRunLock: Promise<unknown> = Promise.resolve();
+function _withWorkspaceRunLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = _workspaceRunLock.then(fn, fn);
+    _workspaceRunLock = run.catch(() => {});
+    return run;
 }
 
 type _RunStamps = { files: Map<string, string>; t0: number };
@@ -2011,7 +2037,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             // like bash and Python (exec-sandbox/js-fs.ts). Its writes and deletions apply even
             // when it throws, as they would in the shell.
             let run;
-            try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS); }
+            try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS, undefined, activeAbortController?.signal); }
             catch (e) { return { stdout: '', stderr: `JS sandbox: ${e.message ?? e}`, exit_code: 1 }; }
             for (const path of (run.deleted ?? []) as string[]) {
                 await agentDeleteFile(path).catch(() => {});
@@ -2221,6 +2247,16 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         return { error: `Tool '${name}' is not available in the current role (${mainAgentRole.name}). ${hint}` };
     }
 
+    // Worker calls: the schemas a worker is offered are only a request to the model. A weak model
+    // can still emit a known tool it was not offered (or one repaired from pseudo-call text), so
+    // the same ceiling is enforced here. runWorkerTurn sets context.allowedTools per step.
+    if (context?.allowedTools instanceof Set) {
+        const _wTarget = _PHANTOM_ALIASES[name]?.tool;
+        if (!context.allowedTools.has(name) && !(_wTarget && context.allowedTools.has(_wTarget))) {
+            return { error: `Tool '${name}' is not available to this worker. Declare BLOCKED if the task needs it.` };
+        }
+    }
+
     if (getIntentValidation() !== 'off' && _IV_HIGH_RISK.has(name)) {
         const check = _ivCheck(name, args);
         if (check) {
@@ -2248,6 +2284,8 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         }
     }
 
+    if (name.startsWith('browser_') && typeof executeBrowserTool === 'function')
+        return executeBrowserTool(name, args);
     if (name === 'run_workers')        return _handleRunWorkers(args, context);
     if (name === 'list_files')         return _handleListFiles(args, context);
     if (name === 'read_file')          return _handleReadFile(args, context);
@@ -2286,6 +2324,7 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
 
 export function toolLabel(name, args) {
     const a = args || {};
+    if (name.startsWith('browser_')) return name + (a.ref ? ':' + a.ref : '');
     if (name === 'read_file')         return `read:${a.path}`;
     if (name === 'write_file')        return `write:${a.path}`;
     if (name === 'undo_write')        return `undo:${a.path}`;

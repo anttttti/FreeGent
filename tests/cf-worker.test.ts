@@ -36,6 +36,21 @@ describe('CF Worker', () => {
         expect(env.FG_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: 'key:203.0.113.9' });
     });
 
+    it('never forwards a shared key over http:// or to a URL with credentials', async () => {
+        const env = { GROQ_API_KEY: 'shared', FG_RATE_LIMITER: limiter(true) };
+        for (const url of ['http://api.groq.com/openai/v1/chat/completions', 'https://u:p@api.groq.com/openai/v1/chat/completions']) {
+            const r = await worker.fetch(post({ url, headers: {}, body: '{}' }), env);
+            expect(r.status).toBe(403);
+        }
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it('does not follow redirects for a request that carries the shared key', async () => {
+        await worker.fetch(post({ url: 'https://api.groq.com/openai/v1/chat/completions', headers: {}, body: '{}' }),
+            { GROQ_API_KEY: 'shared', FG_RATE_LIMITER: limiter(true) });
+        expect(upstream.mock.calls[0][1].redirect).toBe('manual');
+    });
+
     it('refuses shared-key use over the rate limit', async () => {
         const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_RATE_LIMITER: limiter(false) });
         expect(r.status).toBe(429);

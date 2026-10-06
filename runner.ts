@@ -2,6 +2,7 @@
 // Depends on: config.js, qa.js, tasks.js, chat-state.js, agent-core.js, state.js
 import { setWorkflowMode, _clearHistory, aiJob, setAiJob, aiBusy } from './state.js';
 import { enabledTools } from './config.js';
+import { canonTaskStatus } from './task-status.js';
 
 interface Task {
     path: string;
@@ -44,6 +45,10 @@ async function _runnerTurn(prompt: string): Promise<any> {
 }
 
 // Run: try to complete the next task, then stop.
+// Tasks whose start gate refused them this session (blocked dependency, rework limit): skipped by
+// _selectNextTask so Autopilot moves on instead of picking the same task again.
+const _runnerDeferred = new Set<string>();
+
 function runnerStart() { _startRunner(false); }
 
 // Autopilot: keep completing tasks, one chat each, until none are left (or you stop it).
@@ -127,6 +132,7 @@ async function _runLoop() {
     _runnerPaused        = false;
     _runnerAbort         = false;
     _runnerConsecutiveFails = 0;
+    _runnerDeferred.clear();
     _updateRunnerUI();
 
     try {
@@ -163,6 +169,18 @@ async function _runLoop() {
                 if (_runnerAbort) break;
                 if (userReply) await _runnerTurn(userReply);
                 _runnerConsecutiveFails = 0;
+                // The follow-up may have finished the task the block was about: record that, then
+                // let the Run / Autopilot rule decide whether another task starts.
+                try {
+                    const fm = parseFrontmatter(await agentReadFile(task.path));
+                    if (canonTaskStatus(fm.status) === 'done') {
+                        const last = _runnerSessionLog[_runnerSessionLog.length - 1];
+                        if (last) { last.outcome = 'done'; last.reason = ''; }
+                        _renderRunnerLog();
+                    }
+                } catch {}
+                if (!_runnerAll) break;
+                await refreshTasks();
                 continue;
             }
 
@@ -209,7 +227,7 @@ function _selectNextTask(tasks: Task[]): Task | null {
         ['todo', 'open'],
     ];
     for (const group of groups) {
-        const matched = tasks.filter(t => group.includes((t.fm.status || 'todo').toLowerCase()));
+        const matched = tasks.filter(t => !_runnerDeferred.has(t.path) && group.includes((t.fm.status || 'todo').toLowerCase()));
         if (matched.length) {
             matched.sort((a, b) => parseInt(a.fm.id || '9999', 10) - parseInt(b.fm.id || '9999', 10));
             return matched[0];
@@ -224,6 +242,22 @@ const _MAX_TURNS_PER_EPISODE = 5;
 
 async function _runEpisode(task: Task): Promise<EpisodeResult> {
     if (agentStreaming) return { success: false, blocked: false, blockedReason: '', failReason: 'Already streaming' };
+
+    // Start through the lifecycle engine, so the dependency, enrichment and rework-limit gates
+    // apply to the runner as they do to a card dragged on the board. A refusal ends the episode
+    // before any agent work (or a new chat) begins.
+    const _startStatus = canonTaskStatus((parseFrontmatter(await agentReadFile(task.path).catch(() => '')).status));
+    if (getRunnerQa()) {
+        const start = await transitionTask(task.path, 'in-progress');
+        if (!start.transitioned) {
+            _runnerDeferred.add(task.path);
+            await refreshTasks();
+            return { success: false, blocked: false, blockedReason: '', failReason: start.reason || 'Start gate refused the task' };
+        }
+    } else {
+        await setTaskStatus(task.path, 'in-progress');
+    }
+    await refreshTasks();
 
     // createNewChat does not persist the chat it replaces — save it first.
     saveHistory();
@@ -244,15 +278,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // update_task_status availability is governed by coworkEnabledTools (Settings → Tools, Cowork
     // column). No temporary patch needed — isToolActive() already reads the right set in cowork mode.
 
-    // Read task content before mutating the status field so the agent sees the original status.
-    let _initialTaskContent: string = '';
-    try { _initialTaskContent = await agentReadFile(task.path); } catch {}
-
-    // Mark in-progress so the board shows the task is running.
+    // The agent sees the task as the start gates left it (enrichment may have added to it) but
+    // with its original status, not the in-progress mark the runner just set.
     // If the runner crashes before the cleanup block runs, the task stays in-progress
     // and will be retried on the next runner start — preferable to a silent stuck state.
-    await setTaskStatus(task.path, 'in-progress');
-    await refreshTasks();
+    let _initialTaskContent: string = '';
+    try { _initialTaskContent = (await agentReadFile(task.path)).replace(/^status:.*$/m, `status: ${_startStatus}`); } catch {}
 
     let success: boolean       = false;
     let blocked: boolean       = false;

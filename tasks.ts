@@ -1,6 +1,8 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
+import { canonTaskStatus, columnOfStatus } from './task-status.js';
+
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
     if (logIdx === -1) return '';
@@ -38,21 +40,34 @@ async function previewTask(path) {
     if (!previewEl) return;
 
     previewEl.classList.add('active');
-    previewEl.innerHTML = `
-        <div class="task-preview-header">
-            <span class="task-preview-name">${path}</span>
-            <button class="ws-action-btn" onclick="document.getElementById('task-preview').classList.remove('active')" style="font-size:10px; padding:1px 6px;">✕ Close</button>
-        </div>
-        <div class="task-preview-body"></div>
-    `;
+    // Built from DOM nodes: the path comes from workspace files, which an import, the agent or the
+    // sandbox can name freely, so it must never be parsed as HTML.
+    previewEl.textContent = '';
+    const header = document.createElement('div');
+    header.className = 'task-preview-header';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'task-preview-name';
+    nameEl.textContent = path;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'ws-action-btn';
+    closeBtn.style.cssText = 'font-size:10px; padding:1px 6px;';
+    closeBtn.textContent = '✕ Close';
+    closeBtn.onclick = () => previewEl.classList.remove('active');
+    header.append(nameEl, closeBtn);
+    const body = document.createElement('div');
+    body.className = 'task-preview-body';
+    previewEl.append(header, body);
 
-    const body = previewEl.querySelector('.task-preview-body');
     try {
         const content = await agentReadFile(path);
         taskPreviewEditor?.destroy();
         taskPreviewEditor = await createEditor(body, path, content, { readOnly: true });
     } catch (e) {
-        body.innerHTML = `<div class="workspace-empty">Error loading preview: ${e.message}</div>`;
+        const err = document.createElement('div');
+        err.className = 'workspace-empty';
+        err.textContent = `Error loading preview: ${e.message}`;
+        body.textContent = '';
+        body.appendChild(err);
     }
 }
 
@@ -109,7 +124,7 @@ function makeKanbanCard(task) {
     }
 
     const status = (task.fm.status || 'todo').toLowerCase();
-    if (status === 'in-review' || status === 'review') {
+    if (canonTaskStatus(status) === 'in-review') {
         card.style.borderLeft = '3px solid #e65100';
     } else if (status === 'blocked') {
         card.style.borderLeft = '3px solid #c62828';
@@ -131,7 +146,7 @@ function openAddTaskDialog(status: string) {
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     const lbl = 'padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:80px;vertical-align:top';
     const inp = 'margin:0;width:100%';
-    const statuses = [['open', 'To Do'], ['in-progress', 'In Progress'], ['review', 'Review'], ['done', 'Done']];
+    const statuses = [['open', 'To Do'], ['in-progress', 'In Progress'], ['in-review', 'Review'], ['done', 'Done']];
     const cur = status === 'todo' ? 'open' : status;
     overlay.innerHTML = `<div class="fg-modal" style="max-width:520px;width:95%">
   <div class="fg-modal-header">
@@ -183,11 +198,11 @@ function openAddTaskDialog(status: string) {
 
 // Column drop targets. Wired once; the column elements persist across refreshes.
 async function moveTaskToColumn(path: string, colStatus: string) {
-    const newStatus = colStatus === 'todo' ? 'open' : colStatus;
+    const newStatus = colStatus === 'todo' ? 'open' : canonTaskStatus(colStatus);
     const task = (await loadTaskFiles()).find(t => t.path === path);
     if (!task) return;
     const cur = (task.fm.status || 'todo').toLowerCase();
-    const curCol = { open: 'todo', blocked: 'todo', 'in-review': 'review', completed: 'done' }[cur] || cur;
+    const curCol = columnOfStatus(cur);
     if (curCol === colStatus) return;
     try {
         const r = await transitionTask(path, newStatus);
@@ -222,21 +237,20 @@ async function refreshTasks(): Promise<void> {
     return _refreshInFlight;
 }
 async function _doRefreshTasks() {
-    const COLS = { todo: 'col-todo', open: 'col-todo', 'in-progress': 'col-in-progress', 'in-review': 'col-review', review: 'col-review', blocked: 'col-todo', done: 'col-done', completed: 'col-done' };
-    for (const id of Object.values(COLS)) {
-        const el = document.getElementById(id);
+    const COLUMNS = ['todo', 'in-progress', 'review', 'done'];
+    for (const c of COLUMNS) {
+        const el = document.getElementById(`col-${c}`);
         if (el) el.innerHTML = '';
     }
-    const counts = Object.fromEntries(Object.keys(COLS).map(k => [k, 0]));
+    const counts: Record<string, number> = Object.fromEntries(COLUMNS.map(c => [c, 0]));
     const tasks = await loadTaskFiles();
     for (const task of tasks) {
-        const status = (task.fm.status || 'todo').toLowerCase();
-        const colKey = COLS[status] ? status : 'todo';
-        const col = document.getElementById(COLS[colKey]);
-        if (col) { col.appendChild(makeKanbanCard(task)); counts[colKey]++; }
+        const column = columnOfStatus(task.fm.status);
+        const col = document.getElementById(`col-${column}`);
+        if (col) { col.appendChild(makeKanbanCard(task)); counts[column]++; }
     }
-    for (const [status, n] of Object.entries(counts)) {
-        const badge = document.querySelector(`.kanban-col[data-status="${status}"] .kanban-col-count`);
+    for (const [column, n] of Object.entries(counts)) {
+        const badge = document.querySelector(`.kanban-col[data-status="${column}"] .kanban-col-count`);
         if (badge) badge.textContent = String(n);
     }
 }

@@ -1,12 +1,14 @@
 // agent-core.js — FreeGent: checkpoints, input state, main send/abort/clear, textarea resize
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
-import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, setMainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, aiBusy } from './state.js';
+import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
 import { KEYS, chatKey, ckptKey } from './storage-keys.js';
 import * as MsgQueue from './msg-queue.js';
 import { registry } from './session-registry.js';
+import { setMainAgentRole } from './workers.js';
+import { sandboxBusy } from './exec-sandbox-host.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { getActiveMainModelList, specHasKey } from './config.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
@@ -77,7 +79,7 @@ function saveCheckpoint(userText: string): string {
     const images = _snapImages.map(img => ({ mimeType: img.mimeType, base64: img.base64 }));
     const files  = _snapFiles
         .filter(f => f.contentType === 'text' || f.size < _ATTACH_BINARY_MAX)
-        .map(f => ({ name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: f.content, size: f.size }));
+        .map(f => ({ name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: f.content, size: f.size, ...(f.workspacePath ? { workspacePath: f.workspacePath } : {}) }));
 
     const _commit = data => {
         localStorage.setItem(ckptKey(id), JSON.stringify(data));
@@ -882,6 +884,7 @@ function _pushHistoryMessage(
     const _binaryNote = [
         ..._otherBin.map((f: any) => {
             const sz = _fmtSz(f.size);
+            if (f.workspacePath) return `[Attached file: ${f.name}, ${sz}; original available at ${f.workspacePath}]`;
             if (f.mimeType === 'application/pdf') return `[PDF attached: ${f.name}, ${sz}]`;
             return `[Binary file attached: ${f.name}, ${f.mimeType}, ${sz}]`;
         }),
@@ -918,8 +921,33 @@ function _pushHistoryMessage(
 
 // ── Main send / abort / clear ──────────────────────────────────────────────
 
+let _sendPreparing = false;
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
+    // Busy turns still accept queued text. Only preparation (file reads, intent,
+    // workspace context) is serialized so a double tap cannot start two turns.
+    if (agentStreaming) return _agentSendReady(container);
+    if (_sendPreparing || aiJob) return;
+    _sendPreparing = true;
+    setAiJob('send-preparing');
+    try {
+        if (typeof waitForAttachments === 'function') await waitForAttachments();
+        await _agentSendReady(container);
+    } catch (error) {
+        console.error('[send]', error);
+        if (agentStreaming) _tearDownTurn();
+        appendMessage('model', `<em>Message was not sent: ${esc(error.message || String(error))}</em>`, container);
+    } finally {
+        if (aiJob === 'send-preparing') setAiJob('');
+        _sendPreparing = false;
+    }
+}
+async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
     if (agentStreaming) {
+        // The text-only queue cannot carry media. Preserve the complete submission
+        // in the composer rather than queuing just its text and dropping its files.
+        if (typeof hasPendingAttachments === 'function' && hasPendingAttachments()) {
+            warnAttachmentSendBusy(); return;
+        }
         // Agent busy — read text and enqueue as a pending message instead of sending now.
         const _qInput = document.getElementById('agent-input') as HTMLElement | null;
         const _qText  = _readInputText(_qInput);
@@ -969,10 +997,10 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     const _msgMedia = new Set<string>();
     if (sendImages.length) _msgMedia.add('image');
     for (const f of sendFiles) {
+        if (f.mimeType === 'application/pdf') _msgMedia.add('pdf');
         if (f.contentType === 'binary') {
             if (f.mimeType.startsWith('audio/'))  _msgMedia.add('audio');
             if (f.mimeType.startsWith('video/'))  _msgMedia.add('video');
-            if (f.mimeType === 'application/pdf') _msgMedia.add('pdf');
         }
         if (f.contentType === 'text') _msgMedia.add('file');
     }
@@ -1002,6 +1030,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
         } else if (cmd === 'compact') {
             input.innerHTML = '';
             autoResizeTextarea(input);
+            if (aiJob === 'send-preparing') setAiJob('');
             setAgentStreaming(true);
             setInputState(false);
             const _ph: RenderAdapter = workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container);
@@ -1035,6 +1064,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     lastUserMessageText = rawText;
     _currentUserIntent  = rawText; // used by intent validation in executeToolAsync
     if (rawText.trim()) _userInputHistory.push(rawText);
+    if (aiJob === 'send-preparing') setAiJob('');
     setAgentStreaming(true);
     setInputState(false);
 
@@ -1095,7 +1125,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
         .filter(f => f.contentType === 'text')
         .map(f => {
             const lang = _LANG_MAP[f.name.split('.').pop()?.toLowerCase() || ''] || '';
-            return `<file name="${f.name}">\n\`\`\`${lang}\n${f.content}\n\`\`\`\n</file>`;
+            return `<file name="${esc(f.name)}">${f.workspacePath ? `\nOriginal file: ${f.workspacePath}` : ''}\n\`\`\`${lang}\n${f.content}\n\`\`\`\n</file>`;
         }).join('\n\n');
 
     // Guidance + memory/project context blocks (turn-context.js). Attached file names
@@ -1229,7 +1259,8 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
 
 function stopAfterStep(): void {
     setSoftStopPending(true);
-    activeAbortController?.abort();
+    // A partial stop finishes the active tool. Stop-now still aborts it immediately.
+    if (!sandboxBusy()) activeAbortController?.abort();
 }
 
 function stopNow(): void {
@@ -1248,6 +1279,7 @@ function handleSendButton(): void {
 // (task runner, init agent), a user turn — or a queued message dequeued after the
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
+    if (aiJob === 'send-preparing') return;
     if (aiJob) {
         const what = { runner: 'The task runner', init: 'The project-init agent' }[aiJob] || 'An AI task';
         appendMessage?.('model', `<em style="color:var(--muted)">${what} is running — stop it or wait for it to finish before sending.</em>`);
@@ -1342,6 +1374,10 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     setActivePlaceholder(_ph);
     const _ctrl = new AbortController();
     _s.abortController = _ctrl;
+    // An isolated session (headless) keeps its controller on the session object, but request
+    // signals, retry sleeps and Stop / the run timeout all read the module-level one: publish it
+    // there too (a no-op for the default session, whose accessor does the same).
+    setActiveAbortController(_ctrl);
     setAgentStreaming(true);
     setInputState(false);
 

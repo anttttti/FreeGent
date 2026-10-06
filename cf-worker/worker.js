@@ -200,6 +200,8 @@ export default {
                 const { url: target, method = 'POST', headers = {}, body: reqBody } = body;
                 if (!target) return _err(400, 'Missing url field in body');
                 if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
+                // Shared keys must never travel in clear text or to a URL that carries credentials.
+                if (!_httpsNoCreds(target)) return _err(403, 'Only https:// URLs without embedded credentials are allowed');
 
                 // Inject shared key when client sends no / empty Authorization.
                 // Shared keys are usable by anyone who can reach this Worker — the Origin check
@@ -222,6 +224,9 @@ export default {
                     method,
                     headers,
                     body: typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody),
+                    // A redirect could carry the injected key to another host (or to http://):
+                    // hand the 3xx back to the client instead of following it.
+                    redirect: injecting ? 'manual' : 'follow',
                 });
 
             } else {
@@ -247,6 +252,13 @@ function _originOk(origin) {
     try {
         const { origin: o } = new URL(origin);
         return ALLOWED_ORIGINS.has(o);
+    } catch { return false; }
+}
+
+function _httpsNoCreds(target) {
+    try {
+        const u = new URL(target);
+        return u.protocol === 'https:' && !u.username && !u.password;
     } catch { return false; }
 }
 

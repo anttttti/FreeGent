@@ -68,8 +68,10 @@ export function knownLimitWaitMs(endpoint: any): number {
         const today = new Date().toISOString().slice(0, 10);
         const d = _rlDay.get(key);
         if (d?.day === today && d.count >= rpd) {
-            const midnight = new Date(); midnight.setHours(24, 0, 0, 0);
-            return midnight.getTime() - now;
+            // The counter's day is a UTC date (above), so it resets at the next UTC midnight —
+            // not local midnight, which is hours off outside UTC.
+            const d0 = new Date(now);
+            return Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate() + 1) - now;
         }
     }
     return 0;

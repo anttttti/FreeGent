@@ -250,7 +250,38 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
 // agent's own code raises it too ("ImportError while loading conftest"), and that is a bug to
 // fix, not an environment to give up on. "cannot import name" counts only when the source is an
 // installed package (site-/dist-packages), i.e. a version that doesn't carry the name.
-export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$|type: \w+: not found|cannot import name '[^']+' from '[^']+' \([^)]*(?:site|dist)-packages|module '[\w.]+' has no attribute|Permission denied|EACCES|mkdir: cannot create directory|Read-only file system|not in the sudoers file/m;
+export const ENV_MISSING_RE = /No module named|ModuleNotFoundError|externally-managed-environment|command not found|: not found$|type: \w+: not found|cannot import name '[^']+' from '[^']+' \([^)]*(?:site|dist)-packages|Permission denied|EACCES|mkdir: cannot create directory|Read-only file system|not in the sudoers file/m;
+
+// "module 'x' has no attribute 'y'" means the environment (an installed package that lacks the
+// name, e.g. cv2 built without a contrib module) unless `x` is a module the agent itself wrote or
+// edited: `module 'app' has no attribute 'serve'` is a bug in its own code and must count as a
+// failure. The loop reports the paths of the Python files it touches (noteAgentFiles); that is the
+// module-origin evidence, since the error text names no file.
+const _MODULE_ATTR_RE = /module '([\w.]+)' has no attribute/;
+const _agentModuleNames = new Set<string>();
+
+/** Record the files the agent wrote or edited, so their modules are not mistaken for installed ones. */
+export function noteAgentFiles(paths: Iterable<string | null | undefined>): void {
+    for (const p of paths) {
+        if (!p) continue;
+        const segs = String(p).split(/[\\/]/).filter(Boolean);
+        if (!/\.py$/i.test(segs[segs.length - 1] ?? '')) continue;
+        segs[segs.length - 1] = segs[segs.length - 1].replace(/\.py$/i, '');
+        for (const seg of segs) _agentModuleNames.add(seg);
+    }
+}
+export function resetAgentFiles(): void { _agentModuleNames.clear(); }
+
+function _moduleAttrIsEnvironment(text: string): boolean {
+    const hit = _MODULE_ATTR_RE.exec(text);
+    if (!hit) return false;
+    return !hit[1].split('.').some(part => _agentModuleNames.has(part));
+}
+
+/** True when the failure text says the environment lacks something, not that the agent's code is wrong. */
+export function isEnvMissing(text: string): boolean {
+    return ENV_MISSING_RE.test(text) || _moduleAttrIsEnvironment(text);
+}
 
 export function failStreakKind(name: string, result: any, readOnly: Set<string>): 'progress' | 'fail' | 'neutral' {
     if (readOnly.has(name)) return 'neutral';
@@ -260,7 +291,7 @@ export function failStreakKind(name: string, result: any, readOnly: Set<string>)
         const wrote = Array.isArray(result?.files_written) && result.files_written.length > 0;
         return (String(result?.stdout ?? '').trim() || wrote) ? 'progress' : 'neutral';
     }
-    return ENV_MISSING_RE.test(`${result?.stderr ?? ''}\n${result?.stdout ?? ''}`) ? 'neutral' : 'fail';
+    return isEnvMissing(`${result?.stderr ?? ''}\n${result?.stdout ?? ''}`) ? 'neutral' : 'fail';
 }
 
 // New streak value after one step's tool calls: any progress resets it, each failure adds one.

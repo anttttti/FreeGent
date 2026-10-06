@@ -14,6 +14,17 @@ function _req<T>(r: IDBRequest<T>): Promise<T> {
     });
 }
 
+// Resolves when the transaction has COMMITTED; rejects if it aborts or errors. A request's
+// onsuccess only means the write was queued: a quota failure or abort afterwards still loses it,
+// and callers (sessionSaveHistory → chat-cache eviction) treat a resolved write as durable.
+function _commit(tx: IDBTransaction): Promise<void> {
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onabort    = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
+        tx.onerror    = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
+    });
+}
+
 // Delete the rows of `store` whose chatId index matches `chatId` and for which `match` is true.
 function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (row: any) => boolean = () => true): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -62,10 +73,13 @@ export class IDBSessionAdapter {
                 archived:  ex?.archived ?? 0,
             });
         }
+        await _commit(tx);
     }
 
     async deleteChat(id: string) {
-        await _req(this._db.transaction('chats', 'readwrite').objectStore('chats').delete(id));
+        const delTx = this._db.transaction('chats', 'readwrite');
+        delTx.objectStore('chats').delete(id);
+        await _commit(delTx);
         await _deleteByChat(this._db, 'history', id);
         await _deleteByChat(this._db, 'raw_messages', id);
         await _deleteByChat(this._db, 'turn_log', id);
@@ -73,7 +87,8 @@ export class IDBSessionAdapter {
 
     async setChatRole(id: string, role: string | null) {
         const ex: any = await _req(this._db.transaction('chats', 'readonly').objectStore('chats').get(id));
-        this._db.transaction('chats', 'readwrite').objectStore('chats').put({
+        const tx = this._db.transaction('chats', 'readwrite');
+        tx.objectStore('chats').put({
             id,
             name:      ex?.name      ?? 'New Chat',
             createdAt: ex?.createdAt ?? Date.now(),
@@ -81,6 +96,7 @@ export class IDBSessionAdapter {
             archived:  ex?.archived  ?? 0,
             mainRole:  role ?? null,
         });
+        await _commit(tx);
     }
 
     // ── Messages ───────────────────────────────────────────────────────────────
@@ -93,6 +109,7 @@ export class IDBSessionAdapter {
         const tx = this._db.transaction(['chats', 'history'], 'readwrite');
         if (!ex) tx.objectStore('chats').put({ id: chatId, name: 'New Chat', createdAt: Date.now(), lastAt: Date.now(), mainRole: null, archived: 0 });
         tx.objectStore('history').put({ chatId, generation: gen, history });
+        await _commit(tx);
     }
 
     async compactHistory(chatId: string, preHistory: any[], postHistory: any[]) {
@@ -100,12 +117,13 @@ export class IDBSessionAdapter {
         const tx = this._db.transaction('history', 'readwrite');
         tx.objectStore('history').put({ chatId, generation: gen,     history: preHistory  });
         tx.objectStore('history').put({ chatId, generation: gen + 1, history: postHistory });
+        await _commit(tx);
     }
 
     async saveRawMessage(chatId: string, entry: any) {
-        await _req(this._db.transaction('raw_messages', 'readwrite')
-                .objectStore('raw_messages')
-                .add({ chatId, createdAt: Date.now(), ...entry }));
+        const tx = this._db.transaction('raw_messages', 'readwrite');
+        tx.objectStore('raw_messages').add({ chatId, createdAt: Date.now(), ...entry });
+        await _commit(tx);
     }
 
     // Same shape as the localStorage fallback in session-store.ts: { ts, ...entry }, oldest first.
@@ -122,9 +140,9 @@ export class IDBSessionAdapter {
     // ── Turn log ───────────────────────────────────────────────────────────────
 
     async logTurn(record: any) {
-        await _req(this._db.transaction('turn_log', 'readwrite')
-                .objectStore('turn_log')
-                .add({ ts: new Date().toISOString(), ...record }));
+        const tx = this._db.transaction('turn_log', 'readwrite');
+        tx.objectStore('turn_log').add({ ts: new Date().toISOString(), ...record });
+        await _commit(tx);
     }
 
     // The chat's most recent `limit` turns, oldest first.
@@ -143,8 +161,9 @@ export class IDBSessionAdapter {
     // (small metadata) stays in localStorage — see saveCheckpoint in agent-core.ts.
 
     async saveCheckpointAttachments(id: string, data: { images: any[]; files: any[] }) {
-        await _req(this._db.transaction('checkpoint_attachments', 'readwrite')
-            .objectStore('checkpoint_attachments').put({ id, images: data.images, files: data.files }));
+        const tx = this._db.transaction('checkpoint_attachments', 'readwrite');
+        tx.objectStore('checkpoint_attachments').put({ id, images: data.images, files: data.files });
+        await _commit(tx);
     }
 
     async loadCheckpointAttachments(id: string): Promise<{ images: any[]; files: any[] } | null> {
@@ -154,30 +173,32 @@ export class IDBSessionAdapter {
     }
 
     async deleteCheckpointAttachments(ids: string[]) {
-        const store = this._db.transaction('checkpoint_attachments', 'readwrite').objectStore('checkpoint_attachments');
-        await Promise.all(ids.map(id => _req(store.delete(id))));
+        const tx = this._db.transaction('checkpoint_attachments', 'readwrite');
+        const store = tx.objectStore('checkpoint_attachments');
+        for (const id of ids) store.delete(id);
+        await _commit(tx);
     }
 
     // ── Worker runs ────────────────────────────────────────────────────────────
 
     async createWorkerRun(id: string, chatId: string | null) {
-        this._db.transaction('worker_runs', 'readwrite')
-                .objectStore('worker_runs')
-                .put({ id, chatId: chatId ?? null, startedAt: Date.now(), status: 'running' });
+        const tx = this._db.transaction('worker_runs', 'readwrite');
+        tx.objectStore('worker_runs').put({ id, chatId: chatId ?? null, startedAt: Date.now(), status: 'running' });
+        await _commit(tx);
     }
 
     async finishWorkerRun(id: string, status: string | null) {
         const ex: any = await _req(this._db.transaction('worker_runs', 'readonly').objectStore('worker_runs').get(id));
         if (!ex) return;
-        this._db.transaction('worker_runs', 'readwrite')
-                .objectStore('worker_runs')
-                .put({ ...ex, status: status ?? 'complete', finishedAt: Date.now() });
+        const tx = this._db.transaction('worker_runs', 'readwrite');
+        tx.objectStore('worker_runs').put({ ...ex, status: status ?? 'complete', finishedAt: Date.now() });
+        await _commit(tx);
     }
 
     async recordWorkerAgent(runId: string, agent: any) {
-        this._db.transaction('worker_agents', 'readwrite')
-                .objectStore('worker_agents')
-                .add({ runId, ...agent });
+        const tx = this._db.transaction('worker_agents', 'readwrite');
+        tx.objectStore('worker_agents').add({ runId, ...agent });
+        await _commit(tx);
     }
 
     // ── Read methods ───────────────────────────────────────────────────────────

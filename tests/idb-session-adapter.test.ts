@@ -356,3 +356,21 @@ describe('IDBSessionAdapter — v1 → v2 upgrade', () => {
         expect(await a.loadCheckpointAttachments('x')).toBeNull();
     });
 });
+
+// ── Commit acknowledgement ────────────────────────────────────────────────────
+
+describe('IDBSessionAdapter — writes resolve on commit', () => {
+    it('replaceMessages rejects when its transaction aborts, and nothing is stored', async () => {
+        const adapter = await makeAdapter();
+        const db: any = (adapter as any)._db;
+        const realTx = db.transaction.bind(db);
+        db.transaction = (stores: any, mode?: any) => {
+            const tx = realTx(stores, mode);
+            if (mode === 'readwrite') queueMicrotask(() => { try { tx.abort(); } catch {} });
+            return tx;
+        };
+        await expect(adapter.replaceMessages('c1', [{ role: 'user', content: 'hi' }])).rejects.toBeTruthy();
+        db.transaction = realTx;
+        expect(await adapter.loadHistory('c1')).toBeNull();
+    });
+});

@@ -9,6 +9,7 @@ import {
     _switchToFreeModel,
     _isRateLimit, _isServerError,
     recordSuccess,
+    knownLimitWaitMs, recordRequest,
 } from '../model-router.ts';
 
 // getActiveMainModelList/saveMainModelList are plain globals from config.ts (loaded into
@@ -169,5 +170,21 @@ describe('specToEndpoint', () => {
         const ep = specToEndpoint('anthropic|claude-hallucinated');
         expect(ep.provider).toBe('custom');
         expect(ep.model).not.toBe('claude-hallucinated');
+    });
+});
+
+describe('knownLimitWaitMs: daily quota resets at UTC midnight (R20)', () => {
+    afterEach(() => { vi.useRealTimers(); delete globalThis.getAllModels; delete process.env.TZ; });
+    it('waits until the next UTC midnight whatever the local timezone', () => {
+        process.env.TZ = 'Pacific/Auckland';
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-06T12:00:00Z'));
+        const models = [{ provider: 'rpdprov', model: 'm', rpd: 1 }];
+        globalThis.getAllModels = () => models;
+        const ep = { provider: 'rpdprov', model: 'm' };
+        recordRequest(ep);
+        expect(knownLimitWaitMs(ep)).toBe(12 * 3600_000);
+        vi.setSystemTime(new Date('2026-10-06T23:30:00Z'));
+        expect(knownLimitWaitMs(ep)).toBe(30 * 60_000);
     });
 });
