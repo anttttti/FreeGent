@@ -1,3 +1,4 @@
+import { runtime } from './runtime.js';
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
@@ -287,7 +288,7 @@ function _toolErrorHint(name: string): string {
         replace_in_file: 'old_string must match exactly (whitespace, quotes, indentation). Read the file first to confirm.',
         write_file:      'Ensure parent directory exists. content must be a non-empty string.',
         // Pyodide-specific advice only applies when there is no native execution (browser).
-        execute_code:    typeof nativeExec === 'function'
+        execute_code:    runtime.hasNativeExec
             ? 'Fix the error above and retry.'
             : 'Fix the error above. Pyodide notes: no subprocess/os.system; install missing packages with `import micropip; await micropip.install(["pkg"])`; use the fetch_url tool for HTTP requests.',
         fetch_url:       'Confirm the URL is correctly formatted and the server is reachable.',

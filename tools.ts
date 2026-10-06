@@ -1,6 +1,7 @@
 // tools.js — FreeGent: tool specs, search implementations, tool execution, system prompt
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
+import { runtime } from './runtime.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
@@ -377,7 +378,7 @@ const _APPROVAL_HIGH_RISK = new Set(['delete_file', 'execute_code']);
 // (/api/execute or /api/git), as opposed to a browser sandbox or a headless container.
 // Mirrors the routing in _handleExecuteCode.
 function _runsOnHost(name: string, args: any): boolean {
-    if (typeof nativeExec === 'function') return false;   // headless: the runner's own sandboxing applies
+    if (runtime.hasNativeExec) return false;   // headless: the runner's own sandboxing applies
     if (name === 'run_git') return true;
     if (name !== 'execute_code' || getSandboxProvider() !== 'local') return false;
     const lang = args?.language;
@@ -851,7 +852,7 @@ async function _handleSubmitAnswer(args: any) {
 
 // Browser only: runs the page in a hidden sandboxed iframe (tabs.ts runPageCheck).
 async function _handleCheckPage(args: any) {
-    if (typeof nativeExec === 'function' || typeof runPageCheck !== 'function')
+    if (runtime.hasNativeExec || typeof runPageCheck !== 'function')
         return { error: 'check_page needs the browser app — it is not available in this environment.' };
     const path = _normToolPath(String(args?.path ?? '').trim());
     if (!/\.html?$/i.test(path)) return { error: 'check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.' };
@@ -926,7 +927,7 @@ const _shSingleQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 // Returns an error string on failure, null if the file is clean or the check is unavailable.
 async function _syntaxCheck(path) {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase();
-    if (!ext || typeof nativeExec !== 'function') return null;
+    if (!ext || !runtime.hasNativeExec) return null;
     let r = null;
     // A leading dash would be read as an option by node and python.
     const qp = _shSingleQuote(path.startsWith('-') ? `./${path}` : path);
@@ -934,9 +935,9 @@ async function _syntaxCheck(path) {
         // Compiled in memory: py_compile writes __pycache__/*.pyc into the workspace (git status
         // noise), and a later edit within the same second ran the stale .pyc instead.
         const check = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
-        r = await nativeExec('bash', `python3 -c ${_shSingleQuote(check)} ${qp} 2>&1`).catch(() => null);
+        r = await runtime.nativeExec('bash', `python3 -c ${_shSingleQuote(check)} ${qp} 2>&1`).catch(() => null);
     } else if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
-        r = await nativeExec('bash', `node --check ${qp} 2>&1`).catch(() => null);
+        r = await runtime.nativeExec('bash', `node --check ${qp} 2>&1`).catch(() => null);
     }
     if (!r || r.exit_code === 0) return null;
     return (r.stdout || r.stderr || '').trim().split('\n').slice(0, 5).join('\n') || null;
@@ -945,7 +946,7 @@ async function _syntaxCheck(path) {
 // Image / SVG inline-display helper for write_file.
 // Returns a display object for image/SVG content, or {} for all other content.
 function _writeFileImageDisplay(path, content) {
-    if (typeof nativeExec === 'function') return null; // headless: no browser UI to display images
+    if (runtime.hasNativeExec) return null; // headless: no browser UI to display images
     const imgKey = `img_${path.replace(/\W/g, '_')}`;
     _pyodideImageStore = _pyodideImageStore || {};
     if (/^data:image\//i.test(content)) {
@@ -1100,7 +1101,7 @@ async function _handleReadFile(args, context) {
         };
     };
     const _imgPreview = (path, content) => {
-        if (typeof nativeExec === 'function') return null; // headless: no browser UI to display images
+        if (runtime.hasNativeExec) return null; // headless: no browser UI to display images
         const imgKey = `img_${path.replace(/\W/g, '_')}`;
         _pyodideImageStore = _pyodideImageStore || {};
         if (/^data:image\//i.test(content)) {
@@ -1353,7 +1354,7 @@ async function _handleApplyPatch(args, context) {
     }
     // Normalize /workspace/ prefix (WASM bash mount point) to a plain relative path.
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
-    if (typeof nativeExec === 'function' && args.path && _SWE_TEST_RE.test(args.path)) {
+    if (runtime.hasNativeExec && args.path && _SWE_TEST_RE.test(args.path)) {
         return { error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${args.path}).` };
     }
     if (!context && _requireReadBack.has(args.path)) {
@@ -1725,7 +1726,7 @@ async function _handleGenerateImage(args) {
         const imgType = ct.startsWith('image/') ? ct.split(';')[0].trim() : 'image/png';
         const dataUri = `data:${imgType};base64,${b64}`;
         const imgKey  = `fg_img_${Date.now()}`;
-        if (typeof nativeExec !== 'function') {
+        if (!runtime.hasNativeExec) {
             _pyodideImageStore = _pyodideImageStore || {};
             _pyodideImageStore[imgKey] = dataUri;
         }
@@ -2015,7 +2016,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // Browser JavaScript: runs in the exec sandbox frame with a virtual fs shim (not headless).
     // (/api/execute runs only bash and python, so JavaScript uses the sandbox whatever the provider.)
     const _isStaticJS = args.language === 'javascript'
-        && typeof nativeExec !== 'function';
+        && !runtime.hasNativeExec;
     if (_isStaticJS) {
         execResult = await (async () => {
             // Copy the workspace for this run: raw records (binary files as base64, no text
@@ -2066,11 +2067,11 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const deleted = (run.deleted ?? []) as string[];
             return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.exit_code || (write_errors.length && !written_ok.length ? 1 : 0), ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}) };
         })();
-    } else if (typeof nativeExec === 'function') {
+    } else if (runtime.hasNativeExec) {
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
         // Must come before Pyodide and local-sandbox so headless runs never
         // hit localhost:5000 or the Pyodide-loading-forever path.
-        try { execResult = await nativeExec(args.language, args.code); }
+        try { execResult = await runtime.nativeExec(args.language, args.code); }
         catch (e) { return { error: `nativeExec: ${e.message}` }; }
     } else if (_needsDisplay && args.language !== 'bash' && args.language !== 'javascript') {
         // pygame / tkinter / etc. need a real canvas — execute_code can't provide one.
@@ -2138,9 +2139,9 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // ran: re-running it as bash is free of side effects. v0.55+v0.56 had 302 such SyntaxErrors
     // (python3 278, curl 13, cat 8); each counted as a failed step, and TB tree-directory-parser
     // was stopped after nine in a row.
-    if (args.language === 'python' && typeof nativeExec === 'function' && _isShellCompileError(args.code, execResult)) {
+    if (args.language === 'python' && runtime.hasNativeExec && _isShellCompileError(args.code, execResult)) {
         try {
-            const asBash = await nativeExec('bash', args.code);
+            const asBash = await runtime.nativeExec('bash', args.code);
             // No note: the main loop records the call itself as language "bash" (_ranAsBash, removed
             // before the result reaches history), so the model sees the call that ran. Any note made
             // it re-send the call still as python: v0.57 "use language bash" → 68 of 90 CTF
@@ -2291,7 +2292,7 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
     if (name === 'read_file')          return _handleReadFile(args, context);
 
     // SWE-bench test-file gate (headless only) — must precede write-tool dispatch.
-    if (typeof nativeExec === 'function' &&
+    if (runtime.hasNativeExec &&
         (name === 'write_file' || name === 'replace_in_file' || name === 'append_file' || name === 'apply_patch') &&
         args.path && _SWE_TEST_RE.test(args.path))
         return { error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${args.path}).` };

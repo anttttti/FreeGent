@@ -1,6 +1,7 @@
 // skills.js — FreeGent: skills loading, rendering, toggle, install, create form, autocomplete
 // Depends on: config.js, workspace.js
 
+import { runtime } from './runtime.js';
 const TOOL_LABELS = {
     list_files:                'List Files (list_files)',
     read_file:                 'Read File (read_file)',
@@ -620,7 +621,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         requires_tools: 'execute_code',
         body: '',
         body_fn: () => {
-            const hasNative  = typeof nativeExec === 'function';
+            const hasNative  = runtime.hasNativeExec;
             const hasPyodide = pyodideStatus === 'ready' || pyodideStatus === 'loading';
             const parts = ['## execute_code — Python\n\nCall `execute_code(language="python", code="...")` to run Python.\n'];
             if (hasNative) {
@@ -692,7 +693,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         requires_tools: 'execute_code',
         body: '',
         body_fn: () => {
-            const hasNative = typeof nativeExec === 'function';
+            const hasNative = runtime.hasNativeExec;
             const hasLocal  = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
             if (!hasNative && !hasLocal && !browserBashAvailable()) return `## execute_code — Bash\n\nBrowser bash is unavailable in this engine. Use the languages in the environment description and enabled file tools. ${_buildLangsDesc()}`;
             const parts = ['## execute_code — Bash\n\nCall `execute_code(language="bash", code="...")` to run shell commands.\n'];
@@ -750,7 +751,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         trigger_on_filetype: '.pdf, .docx, .doc, .xlsx, .xls, .odt, .pptx, .ppt, .ods',
         body: '',
         body_fn: () => {
-            const hasNative  = typeof nativeExec === 'function';
+            const hasNative  = runtime.hasNativeExec;
             const hasPyodide = pyodideStatus === 'ready' || pyodideStatus === 'loading';
             const hasLocal   = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
             const hasExec    = enabledTools.has('execute_code');

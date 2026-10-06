@@ -1,6 +1,7 @@
 // tool-schemas.js — FreeGent: tool schema definitions and the active-tool selector
 // Depends on config.js globals (enabledTools, OPT_IN_TOOLS, pyodideStatus, getSandboxProvider,
 //   getAstEnabled, getGitEnabled, getHFKey) and state.js (mainAgentRole).
+import { runtime } from './runtime.js';
 import { mainAgentRole } from './state.js';
 
 const TOOLS_SPEC = [
@@ -218,7 +219,7 @@ const TOOLS_SPEC = [
 function execToolSpec() {
     const p         = getSandboxProvider();
     const hasBash   = p === 'local';
-    const hasNative = typeof nativeExec === 'function';
+    const hasNative = runtime.hasNativeExec;
     // Build "use X or Y instead" phrase based on which file-reading tools are enabled.
     // If neither is active, omit the "don't use bash to read" instruction entirely —
     // the model has no alternative to offer.
@@ -378,7 +379,7 @@ const WORKERS_TOOL_SPEC = {
 
 export function _hasBashOrCode() {
     const p = getSandboxProvider();
-    const hasNative = typeof nativeExec === 'function';
+    const hasNative = runtime.hasNativeExec;
     // JS eval is always available in browser (no nativeExec = not headless, not 'local' = not server-backed)
     const hasBrowserEval = typeof window !== 'undefined' && !hasNative && p !== 'local' && p !== 'none';
     return p === 'local' || p === 'wasm' || pyodideStatus === 'ready' || pyodideStatus === 'loading' || hasNative || hasBrowserEval;
@@ -427,7 +428,7 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
         // generate_image works without credentials (Pollinations); no gating condition needed.
         ['generate_image', () => true,                                                () => GENERATE_IMAGE_TOOL_SPEC],
         // check_page runs pages in a browser iframe — not available headless (no nativeExec).
-        ['check_page',     () => typeof nativeExec !== 'function' && typeof runPageCheck === 'function', () => CHECK_PAGE_TOOL_SPEC],
+        ['check_page',     () => !runtime.hasNativeExec && typeof runPageCheck === 'function', () => CHECK_PAGE_TOOL_SPEC],
         // run_workers: workers may not spawn sub-workers unless their ceiling explicitly includes it.
         ['run_workers',    () => !forWorker || (_ceiling?.has('run_workers') ?? false), () => WORKERS_TOOL_SPEC],
     ];

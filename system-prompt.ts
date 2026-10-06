@@ -3,12 +3,13 @@
 //   getSearchProvider, getSandboxProvider, getAgentConcisePrompts,
 //   getAgentPlanMode, getAgentPromptTemplate, getContextThreshold,
 //   getImageModel, getAudioModel, getVideoModel) and state.js (mainAgentRole).
+import { runtime } from './runtime.js';
 import { mainAgentRole, _sessionToolFilter } from './state.js';
 
 // Shared environment detection helpers — called by buildSystemPrompt and exported for workers.ts.
 
 export function _buildWorkspaceDesc(): string {
-    const _n = typeof nativeExec === 'function';
+    const _n = runtime.hasNativeExec;
     if (_n && typeof fgTargetContainer !== 'undefined' && fgTargetContainer) {
         return `Files are in the task container filesystem. \`read_file\`, \`write_file\`, and \`execute_code\` all operate inside the container — use paths as-is (e.g. \`/testbed/file.py\`, \`repo/main.py\`). No "local/" prefix.`;
     }
@@ -35,7 +36,7 @@ export function _buildWorkspaceDesc(): string {
 
 export function _buildLangsDesc(): string {
     if (typeof _hasBashOrCode !== 'function' || !_hasBashOrCode()) return '';
-    const _n = typeof nativeExec === 'function';
+    const _n = runtime.hasNativeExec;
     const _inContainer = _n && typeof fgTargetContainer !== 'undefined' && fgTargetContainer;
     if (_inContainer) return 'Languages: **python**, **bash**, **javascript** (Node.js). All run inside a task container — execute_code bash commands and file operations (read_file, write_file) route to the container filesystem.';
     if (_n) return 'Languages: **python** (python3, pip3), **bash** (shell + npm), **javascript** (Node.js) — all run in the workspace with real filesystem access.';
@@ -50,7 +51,7 @@ export function _buildLangsDesc(): string {
 }
 
 export function _buildEnvContext(): string {
-    const _n = typeof nativeExec === 'function';
+    const _n = runtime.hasNativeExec;
     if (!_n) return '';
     const _inContainer = typeof fgTargetContainer !== 'undefined' && fgTargetContainer;
     const _langs = _buildLangsDesc();

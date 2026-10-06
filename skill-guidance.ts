@@ -2,6 +2,7 @@
 // Also owns skill trigger evaluation (R3/R5 in notes/codebase-review-2026-06.md).
 // Depends on: config.js globals (skillsRegistry, activeSkills),
 //             state.js (currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts).
+import { runtime } from './runtime.js';
 import { currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts, _toolCallHistory } from './state.js';
 
 // R5 — single role-exclusion predicate. roleName is lowercased or null.
@@ -17,7 +18,7 @@ function _skillExcludedForRole(skill, roleName) {
 function _skillExcludedForMode(skill: any): boolean {
     if (!skill.exclude_mode) return false;
     const modes = skill.exclude_mode.split(',').map((m: string) => m.trim().toLowerCase());
-    const _n = typeof nativeExec === 'function';
+    const _n = runtime.hasNativeExec;
     const _inContainer = _n && typeof fgTargetContainer !== 'undefined' && fgTargetContainer;
     if (modes.includes('container') && _inContainer) return true;
     if (modes.includes('native')    && _n && !_inContainer) return true;
