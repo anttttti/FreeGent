@@ -13,6 +13,7 @@ import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, s
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { loadDotenv } from './dotenv.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { NodeSqliteAdapter } from './node-sqlite-adapter.js';
@@ -198,35 +199,6 @@ function _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, comp
     _ls.setItem('fg_main_models', JSON.stringify([spec]));
 }
 
-// ── .env file loading ─────────────────────────────────────────────────────────
-// Mirrors vite.config.ts loadDotenv() so keys in .env are visible to _configureHeadless
-// without requiring tsx --env-file or shell sourcing.
-//
-// Precedence (shell env always wins; .env files fill in gaps):
-//   1. <cwd>/.env                    — project-local; gitignored; legacy/override path
-//   2. ~/.config/freegent/credentials — user-global; outside any repo, cannot be committed
-function _parseDotenvFile(envPath: string): void {
-    try {
-        if (!existsSync(envPath)) return;
-        for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-            const t = line.trim();
-            if (!t || t.startsWith('#') || !t.includes('=')) continue;
-            const idx = t.indexOf('=');
-            const key = t.slice(0, idx).trim();
-            let val = t.slice(idx + 1).trim();
-            if (val.length >= 2 && val[0] === val.at(-1) && (val[0] === '"' || val[0] === "'"))
-                val = val.slice(1, -1);
-            if (key && !(key in process.env)) process.env[key] = val;
-        }
-    } catch { /* unreadable — silent */ }
-}
-
-function _loadDotenv(): void {
-    _parseDotenvFile(join(process.cwd(), '.env'));
-    const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
-    _parseDotenvFile(join(xdgConfig, 'freegent', 'credentials'));
-}
-
 // ── Profile file (fg-current-profile.json in repo root) ──────────────────────
 // Shares the same JSON format as the browser's profileDownload():
 //   { name, version, savedAt, settings: { fg_*: value, ... } }
@@ -304,6 +276,18 @@ function _parseOpts(opts: any) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/** Resolve the initial model without starting an agent or writing session logs. */
+export function getHeadlessPrimaryModel(opts: Record<string, any> = {}): string | null {
+    loadDotenv();
+    loadProfile();
+    const { provider, model, apiKey, apiUrl, contextWindow, compactionLimit,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs } = _parseOpts(opts);
+    _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs);
+    const ep = dom.window.firstFreeEndpoint();
+    return ep ? `${ep.provider}|${ep.model}` : null;
+}
+
 /**
  * Bootstrap the agent environment (workspace, config, skills) without running a task.
  * Idempotent — safe to call multiple times; only executes on the first call.
@@ -313,7 +297,7 @@ let _setupDone = false;
 export async function setup(opts: Record<string, any> = {}): Promise<void> {
     if (_setupDone) return;
     _setupDone = true;
-    _loadDotenv();  // load .env keys into process.env before profile or config reads
+    loadDotenv();  // load .env keys into process.env before profile or config reads
     loadProfile();  // populate JSDOM localStorage from fg-current-profile.json before config write
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
@@ -768,4 +752,3 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
     return { output, error, metrics: _metrics };
 }
-

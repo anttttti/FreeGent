@@ -3,6 +3,7 @@
 // Loaded after chat-state.js, before agent-core.js
 import { chatKey, SESSION_KEYS } from './storage-keys.js';
 import { FG_VERSION } from './build-info.js';
+import { escapeHtml } from './html-escape.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
 // Each entry records one LLM response turn (may include tool calls).
@@ -410,7 +411,7 @@ function renderConvoLogViewer() {
         const model   = e.model ?? '?';
         const tok     = e.promptTokens ? `${e.promptTokens}→${e.responseTokens ?? '?'} tok` : '';
         const tools   = e.toolCalls?.length ? `${e.toolCalls.length} tool call${e.toolCalls.length !== 1 ? 's' : ''}` : '';
-        const preview = esc((e.response ?? '').slice(0, 120));
+        const preview = escapeHtml((e.response ?? '').slice(0, 120));
         const loops   = e.loopDetected ? '<span style="color:#e57373;font-size:10px;margin-left:4px">⚠ loop</span>' : '';
 
         return `<div class="convo-log-entry" onclick="toggleConvoLogEntry(${i})" id="cle-${i}">
@@ -442,18 +443,18 @@ function toggleConvoLogEntry(i) {
             sections.push(`<div class="cle-section-hdr">Round ${entry.round} · ${entry.provider ?? ''} · ${entry.model ?? ''}</div>`);
 
         if (entry.systemPrompt)
-            sections.push(`<div class="cle-section-hdr">System prompt</div><pre class="cle-pre">${esc(entry.systemPrompt)}</pre>`);
+            sections.push(`<div class="cle-section-hdr">System prompt</div><pre class="cle-pre">${escapeHtml(entry.systemPrompt)}</pre>`);
 
         if (entry.lastUserMessage)
-            sections.push(`<div class="cle-section-hdr">Last user message</div><pre class="cle-pre">${esc(entry.lastUserMessage)}</pre>`);
+            sections.push(`<div class="cle-section-hdr">Last user message</div><pre class="cle-pre">${escapeHtml(entry.lastUserMessage)}</pre>`);
 
         if (entry.response)
-            sections.push(`<div class="cle-section-hdr">Response</div><pre class="cle-pre">${esc(entry.response)}</pre>`);
+            sections.push(`<div class="cle-section-hdr">Response</div><pre class="cle-pre">${escapeHtml(entry.response)}</pre>`);
 
         if (entry.toolCalls?.length) {
             sections.push(`<div class="cle-section-hdr">Tool calls (${entry.toolCalls.length})</div>`);
             for (const tc of entry.toolCalls) {
-                sections.push(`<pre class="cle-pre">${esc(JSON.stringify(tc, null, 2))}</pre>`);
+                sections.push(`<pre class="cle-pre">${escapeHtml(JSON.stringify(tc, null, 2))}</pre>`);
             }
         }
 
@@ -463,9 +464,6 @@ function toggleConvoLogEntry(i) {
     }
 }
 
-function esc(s) {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc, pruneConvoLogFrom });
+Object.assign(window, { getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc: escapeHtml, pruneConvoLogFrom });

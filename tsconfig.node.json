@@ -18,6 +18,7 @@
     "secret-env.ts",
     "vitest.config.ts",
     "fg-run.ts",
+    "dotenv.ts",
     "headless-runner.ts",
     "bootstrap-jsdom.ts",
     "node-fs-adapter.ts",

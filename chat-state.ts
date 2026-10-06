@@ -3,6 +3,7 @@
 import { KEYS, chatKey } from './storage-keys.js';
 import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './storage-usage.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
+import { escapeHtml } from './html-escape.js';
 
 // ── Chat list helpers ──────────────────────────────────────────────────────
 
@@ -524,7 +525,6 @@ function renderHistoryFallback() {
             }
             // Show tool calls as a compact summary so the conversation thread is readable.
             if (msg.tool_calls?.length) {
-                const _esc = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 const summaries = msg.tool_calls.map((tc: any) => {
                     const name = tc.function?.name ?? tc.name ?? '?';
                     let args = '';
@@ -535,7 +535,7 @@ function renderHistoryFallback() {
                         args = entries.map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(', ');
                         if (Object.keys(parsed).length > 2) args += ', …';
                     } catch { args = (tc.function?.arguments ?? '').slice(0, 80); }
-                    return `<span class="agent-history-tool-call">${_esc(name)}(${_esc(args)})</span>`;
+                    return `<span class="agent-history-tool-call">${escapeHtml(name)}(${escapeHtml(args)})</span>`;
                 }).join(' ');
                 const el = document.createElement('div');
                 el.className = 'agent-msg agent-msg-model';

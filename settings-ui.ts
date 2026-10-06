@@ -1,3 +1,4 @@
+import { escapeHtml } from './html-escape.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -850,7 +851,6 @@ function openEditModelDialog(key: string) {
     const m   = all.find(x => `${x.provider}|${x.model}` === key);
     if (!m) return;
     const isCustomProvider = m.provider === 'custom' || m.provider === 'vllm';
-    const _esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     document.getElementById('fg-edit-model-dialog')?.remove();
 
@@ -861,20 +861,20 @@ function openEditModelDialog(key: string) {
 
     overlay.innerHTML = `<div class="fg-modal" style="max-width:520px;width:95%">
   <div class="fg-modal-header">
-    <span class="fg-modal-title">Edit — ${_esc(m.provider)}:${_esc(m.model)}</span>
+    <span class="fg-modal-title">Edit — ${escapeHtml(m.provider)}:${escapeHtml(m.model)}</span>
     <button class="fg-modal-close" onclick="document.getElementById('fg-edit-model-dialog')?.remove()">✕</button>
   </div>
   <div class="fg-modal-body" style="padding:12px 16px">
-    <input type="hidden" id="emd-model-key" value="${_esc(key)}">
+    <input type="hidden" id="emd-model-key" value="${escapeHtml(key)}">
     <table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:90px">Label</td>
-          <td><input class="settings-input" id="emd-label" type="text" value="${_esc(m.label)}" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-label" type="text" value="${escapeHtml(m.label)}" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Params (B)</td>
           <td><input class="settings-input" id="emd-params" type="number" min="0" step="any" value="${m.params ?? ''}" placeholder="blank = unknown" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Context (K)</td>
           <td><input class="settings-input" id="emd-ctx" type="number" min="1" value="${m.contextK || 128}" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Released</td>
-          <td><input class="settings-input" id="emd-released" type="text" value="${_esc(m.released)}" placeholder="YYYY-MM" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-released" type="text" value="${escapeHtml(m.released)}" placeholder="YYYY-MM" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">RPM limit</td>
           <td><input class="settings-input" id="emd-rpm" type="number" min="0" value="${m.rpm ?? ''}" placeholder="(no limit)" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">RPD limit</td>
@@ -885,9 +885,9 @@ function openEditModelDialog(key: string) {
           <td style="padding-top:4px"><input type="checkbox" id="emd-thinking" ${m.thinking ? 'checked' : ''}></td></tr>
       ${isCustomProvider ? `
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">URL</td>
-          <td><input class="settings-input" id="emd-url" type="url" value="${_esc(m.url)}" placeholder="http://localhost:8000/v1" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-url" type="url" value="${escapeHtml(m.url)}" placeholder="http://localhost:8000/v1" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">API key</td>
-          <td><input class="settings-input" id="emd-api-key" type="password" value="${_esc(m.key)}" placeholder="(blank = not required)" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-api-key" type="password" value="${escapeHtml(m.key)}" placeholder="(blank = not required)" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">API format</td>
           <td><select class="settings-input" id="emd-api-fmt" style="margin:0;width:100%">
             <option value="openai" ${(m.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
@@ -895,7 +895,7 @@ function openEditModelDialog(key: string) {
             <option value="ollama" ${m.apiFormat === 'ollama' ? 'selected' : ''}>Ollama</option>
           </select></td></tr>` : ''}
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Note</td>
-          <td><input class="settings-input" id="emd-note" type="text" value="${_esc(m.note)}" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-note" type="text" value="${escapeHtml(m.note)}" style="margin:0;width:100%"></td></tr>
     </tbody></table>
   </div>
   <div class="fg-modal-btns">
