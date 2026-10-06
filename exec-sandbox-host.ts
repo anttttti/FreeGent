@@ -15,6 +15,8 @@
 // Not used headless: there execute_code runs through nativeExec.
 
 import { checkFetchAllowed } from './fetch-allow.js';
+import { combineSignals } from './abort.js';
+import { activeAbortController } from './state.js';
 
 const LOAD_TIMEOUT_MS = 30_000;
 
@@ -100,7 +102,7 @@ async function _answerNet(d: any, target:Window): Promise<void> {
         if (denied) throw new Error(denied);
         const proxy = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
         if (!proxy) throw new Error('no fetch proxy is configured');
-        const resp = await fetch(`${proxy}?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(NET_TIMEOUT_MS) });
+        const resp = await fetch(`${proxy}?url=${encodeURIComponent(url)}`, { signal: combineSignals(activeAbortController?.signal, NET_TIMEOUT_MS) });
         if (resp.headers.get('X-FG-Proxy-Error')) {
             const why = await resp.json().then(j => j?.error, () => '').catch(() => '');
             throw new Error(`the proxy refused this URL${why ? ` — ${why}` : ''}`);

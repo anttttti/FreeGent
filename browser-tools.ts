@@ -1,3 +1,4 @@
+import { combineSignals } from './abort.js';
 // Text-only browser tools. The configured bridge owns Playwright and session state;
 // page modules never execute agent-supplied JavaScript or attach to arbitrary CDP servers.
 let _browserUrl = '';
@@ -49,9 +50,7 @@ export async function executeBrowserTool(name: string, args: any = {}): Promise<
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(args),
             // Stop must interrupt a hung bridge call, so the turn's signal joins the timeout.
-            signal: (globalThis as any).activeAbortController?.signal
-                ? AbortSignal.any([AbortSignal.timeout(60_000), (globalThis as any).activeAbortController.signal])
-                : AbortSignal.timeout(60_000),
+            signal: combineSignals((globalThis as any).activeAbortController?.signal, 60_000),
         });
         // A proxy or bridge error page is not JSON: read the text first so the HTTP status survives.
         const text = await res.text();

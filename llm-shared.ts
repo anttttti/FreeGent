@@ -8,6 +8,7 @@ import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payl
 import { buildOAITools } from './tool-schemas.js';
 import { estimateTokens, getOAIContextTokens, getSamplingParams, getActiveMainModelList, getLocalApiProxy, getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens } from './config.js';
 import { sessionCompactHistory } from './session-store.js';
+import { combineSignals } from './abort.js';
 // llm-shared.js — FreeGent: context compaction (and the AGENTS.md loader).
 // Depends on: config.js, state.js, payload-builder.js, retry.js, model-router.js.
 // All top-level consts/lets are module-private; public API exposed via window bridge below.
@@ -116,11 +117,7 @@ async function loadAgentsContext() {
 // Compaction fetch timeout so a hanging connection doesn't stall forever. Local endpoints get
 // longer (a ~50K-token prefill plus a ≤2K-token summary), still well inside task timeouts.
 function _compactFetchSignal(ep: any = null) {
-    const ms      = isCustomEndpoint(ep) ? 3 * 60_000 : 90_000;
-    const timeout = AbortSignal.timeout(ms);
-    const user    = activeAbortController?.signal;
-    if (!user) return timeout;
-    return typeof AbortSignal.any === 'function' ? AbortSignal.any([user, timeout]) : user;
+    return combineSignals(activeAbortController?.signal, isCustomEndpoint(ep) ? 3 * 60_000 : 90_000)!;
 }
 
 // Unified compaction retry handler — drives both Gemini and OAI paths in a single withRetry
