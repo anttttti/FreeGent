@@ -3,6 +3,7 @@
 
 import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
+import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -30,18 +31,8 @@ const _extOf = extOf;
 const _isBinaryExt = isBinaryExt;
 const _isDocExt = isDocExt;
 const _mimeOf = mimeOfName;
-function _uint8ToBase64(u8) { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s); }
-function _base64ToUint8(b64) {
-    // Strip INTERIOR '=' padding only (artifact of chunked btoa encoding) then re-pad at end.
-    // plain atob() stops at the first interior '=', silently truncating the output.
-    // /=+(?!$)/ matches one-or-more '=' NOT at end-of-string so trailing padding is preserved,
-    // then we re-normalise by stripping any trailing '=' and re-adding the correct amount.
-    const s = b64.replace(/=+(?!$)/g, '').replace(/=+$/, ''), pad = (4 - s.length % 4) % 4;
-    const raw = atob(s + '='.repeat(pad));
-    const u = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) u[i] = raw.charCodeAt(i);
-    return u;
-}
+const _uint8ToBase64 = bytesToBase64;
+const _base64ToUint8 = base64ToBytes;
 
 let db: IDBDatabase | null              = null;
 let fsaHandle: FileSystemDirectoryHandle | null       = null; // File System Access directory handle

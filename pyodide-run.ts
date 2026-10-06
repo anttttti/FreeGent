@@ -6,7 +6,7 @@
 // images Python wrote as "\x00IMG\x00<mime>\x00<base64>" (shown inline in the chat).
 
 import { imageMimeOfName, DISPLAY_LIBS_RE as _DISPLAY_LIBS } from './mime.js';
-import { concatBytes, sameBytes } from './shiro/utils/bytes.js';
+import { concatBytes, sameBytes, bytesToBase64, base64ToBytes, isTextBytes, bytesToText } from './shiro/utils/bytes.js';
 import { withRuntimeLock } from './shiro/runtime-lock.js';
 import { snapshotRuntimeFiles, clearRuntimeDir } from './shiro/runtime-filesystem.js';
 
@@ -20,34 +20,14 @@ export type RunResult = {
 
 const _guessMime = imageMimeOfName;
 
-const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-
-/** Bytes → base64 in one btoa call (chunked btoa puts '=' mid-string; atob stops there). */
-function toBase64(bytes: Uint8Array): string {
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return btoa(s);
-}
-
-/** base64 → bytes, tolerating interior '=' from legacy chunked encoding. */
-function fromBase64(b64: string): Uint8Array {
-    const s = b64.replace(/=/g, '');
-    const raw = atob(s + '='.repeat((4 - s.length % 4) % 4));
-    const out = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-    return out;
-}
-
 /** A file's bytes as they cross back to the page: images and non-text tagged, text as is. */
 export function encodeOutputFile(name: string, bytes: Uint8Array): string {
     const mime = _guessMime(name);
-    if (mime && mime !== 'image/svg+xml') return `\x00IMG\x00${mime}\x00${toBase64(bytes)}`;
+    if (mime && mime !== 'image/svg+xml') return `\x00IMG\x00${mime}\x00${bytesToBase64(bytes)}`;
     // Text only when it is valid UTF-8 without NULs: decoding anything else would replace or
     // drop bytes (Emscripten's utf8 read also stops at the first NUL), corrupting the file.
-    if (!bytes.includes(0)) {
-        try { return strictUtf8.decode(bytes); } catch { /* not UTF-8 */ }
-    }
-    return `\x00BIN\x00${toBase64(bytes)}`;
+    if (isTextBytes(bytes)) return bytesToText(bytes);
+    return `\x00BIN\x00${bytesToBase64(bytes)}`;
 }
 
 /** A workspace record as the page sends it to the worker. */
@@ -74,7 +54,7 @@ function writeInputFiles(py: any, files: Record<string, string>) {
         const dir = path.slice(0, path.lastIndexOf('/'));
         if (dir && dir !== '/workspace') py.FS.mkdirTree(dir);
         try { py.FS.unlink(path); } catch {}
-        if (typeof content === 'string' && content.startsWith('\x00BIN\x00')) py.FS.writeFile(path, fromBase64(content.slice(5)));
+        if (typeof content === 'string' && content.startsWith('\x00BIN\x00')) py.FS.writeFile(path, base64ToBytes(content.slice(5)));
         else py.FS.writeFile(path, content ?? '');   // a string is written as UTF-8
     }
 }

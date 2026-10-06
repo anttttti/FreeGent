@@ -103,6 +103,22 @@ export function byteLength(s: string): number {
   return textToBytes(s).length;
 }
 
+/** Bytes → base64 in one btoa call (chunked btoa puts '=' mid-string; atob stops there). */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** base64 → bytes, tolerating interior '=' from legacy chunked encoding (atob alone stops there). */
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+  const s = b64.replace(/=/g, '');
+  const raw = atob(s + '='.repeat((4 - s.length % 4) % 4));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
 /** True when the bytes are UTF-8 text a workspace text record can hold (valid, no NULs). */
 export function isTextBytes(b: Uint8Array): boolean {
   if (b.includes(0)) return false;
