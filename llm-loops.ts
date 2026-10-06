@@ -1,3 +1,4 @@
+import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
@@ -2170,11 +2171,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // results; v0.58), and CTF 48 re-sent a call that had printed the flag 10 times.
         const _argEdits = new Map<string, (a: any) => any>();
         for (const [id, d] of oaiDiffs) _argEdits.set(id, (a: any) => ({ ...a, content: d, _contentCompressed: true }));
-        for (const r of results) {
-            if (!r.result?._ranAsBash) continue;
-            delete r.result._ranAsBash;
-            _argEdits.set(r.tc.id, (a: any) => ({ ...a, language: 'bash' }));
-        }
+        for (const id of collectRanAsBash(results)) _argEdits.set(id, (a: any) => ({ ...a, language: 'bash' }));
         if (_argEdits.size) _patchLastAssistantArgs(_s, _histLegacy, step, _argEdits);
 
         const replaceFailNudge = await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
