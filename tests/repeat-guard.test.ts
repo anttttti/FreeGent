@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
-import { REPEAT_LIMIT, REPEAT_WINDOW, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _updateStuckDetector } from '../detectors.ts';
+import { REPEAT_LIMIT, REPEAT_WINDOW, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _updateStuckDetector, _creditProgress, PROGRESS_CREDITS_MAX, REPEAT_REFUSALS_BEFORE_STOP } from '../detectors.ts';
 
 const W = window as any;
 
@@ -177,5 +177,162 @@ describe('endpoint repeat guard', () => {
         console.log('SERVED', served, String(out).slice(0, 120).replace(/\n/g, ' '));
         expect(served).toBeGreaterThanOrEqual(5);
         expect(served).toBeLessThan(14);
+    });
+});
+
+// AutomationBench simple-3139: five empty `partnership` searches poisoned /search, and the next
+// search (`email`, the useful one) was refused before the server could answer.
+describe('untried-query escape (endpoint guard)', () => {
+    const search = (q: string) => [{ name: 'fetch_url', args: { url: `http://gw:8080/search?query=${q}` } }];
+    const sigOf = (q: string) => _callSig(search(q));
+    const EP = 'GET|http://gw:8080/search';
+    const poisoned = async (n = 5, result = '{"tools":[]}') => {
+        let g = newRepeatGuard();
+        for (let i = 0; i < n; i++) g = _updateRepeatGuard(g, sigOf(`partnership${i}`), result, EP);
+        return g;
+    };
+
+    it('lets a query not yet tried through an endpoint that is at its limit', async () => {
+        const { _pathRepeatRefused } = await import('../detectors.ts');
+        const g = await poisoned();
+        expect(_pathRepeatRefused(g, EP)).toBe(true);                       // no callSig: old behaviour
+        expect(_pathRepeatRefused(g, EP, sigOf('email'))).toBe(false);      // untried query: allowed
+    });
+
+    it('still refuses a query that was already tried', async () => {
+        const { _pathRepeatRefused } = await import('../detectors.ts');
+        const g = await poisoned();
+        expect(_pathRepeatRefused(g, EP, sigOf('partnership3'))).toBe(true);
+    });
+
+    it('allows PATH_NOVEL_ESCAPES probes per endpoint and then refuses', async () => {
+        const { _pathRepeatRefused, PATH_NOVEL_ESCAPES } = await import('../detectors.ts');
+        let g = await poisoned();
+        for (let i = 0; i < PATH_NOVEL_ESCAPES; i++) {
+            expect(_pathRepeatRefused(g, EP, sigOf(`probe${i}`))).toBe(false);
+            g = _updateRepeatGuard(g, sigOf(`probe${i}`), '{"tools":[]}', EP);       // probes return the same empty result
+        }
+        expect(_pathRepeatRefused(g, EP, sigOf('one-more'))).toBe(true);
+    });
+
+    it('a probe that returns something new restarts the endpoint', async () => {
+        const { _pathRepeatRefused, _pathRepeatCount } = await import('../detectors.ts');
+        let g = await poisoned();
+        g = _updateRepeatGuard(g, sigOf('email'), '{"tools":["email_send"]}', EP);
+        expect(_pathRepeatCount(g, EP)).toBe(1);
+        expect(_pathRepeatRefused(g, EP, sigOf('another'))).toBe(false);
+        expect(_pathRepeatRefused(g, EP)).toBe(false);
+    });
+
+    it('does not spend the allowance on calls that were never at the limit', async () => {
+        let g = newRepeatGuard();
+        for (let i = 0; i < 3; i++) g = _updateRepeatGuard(g, sigOf(`q${i}`), 'same', EP);
+        expect(g.pathEscapes ?? {}).toEqual({});
+    });
+
+    describe('in a turn', () => {
+        beforeEach(() => {
+            localStorage.clear();
+            W.mainAgentRole = null;
+            localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
+            localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
+            W._sessionToolFilter = new Set(['fetch_url']);
+            W.setOpenaiHistory([{ role: 'user', content: 'Schedule the partnership meeting.' }]);
+        });
+        const call = (q: string, i: number) => ({ tool_calls: [{ id: `s${i}`, type: 'function', function: { name: 'fetch_url', arguments: JSON.stringify({ url: `http://gw.example:8080/search?query=${q}` }) } }] });
+        const gateway = (llm: any, served: string[]) => vi.fn(async (url: any, init: any) => {
+            if (String(url).includes('gw.example')) {
+                const target = decodeURIComponent(String(url));   // the app routes fetch_url through a proxy URL
+                served.push(target);
+                const body = target.includes('query=email') ? '{"tools":["email_send"]}' : '{"tools":[]}';
+                return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+            }
+            return llm(url, init);
+        });
+
+        it('runs the useful query after five empty ones (simple-3139)', async () => {
+            const served: string[] = [];
+            const llm = makeReplayFetch([...[0, 1, 2, 3, 4].map(i => call(`partnership${i}`, i)), call('email', 5), { content: 'Found email_send.\nCOMPLETED' }]);
+            W.fetch = gateway(llm, served);
+            await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+            expect(served.some(u => u.includes('query=email'))).toBe(true);
+            expect(JSON.stringify(W.openaiHistory)).toContain('email_send');
+        });
+
+        it('still stops a turn of reworded queries that never change the result', async () => {
+            const served: string[] = [];
+            const llm = makeReplayFetch([...Array.from({ length: 14 }, (_, i) => call(`word${i}`, i)), { content: 'Done.\nCOMPLETED' }]);
+            W.fetch = gateway(llm, served);
+            await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+            // 5 to reach the limit + 2 allowed probes, then refusals until the stop.
+            expect(served.length).toBe(7);
+        });
+    });
+});
+
+// AutomationBench finance-4071 stopped at step 23 of 100 after a few refusals although later steps
+// kept producing new results.
+describe('progress credit', () => {
+    const refusedAt = (n: number) => ({ ...newRepeatGuard(), refused: n });
+
+    it('forgives one refusal for a clean step with a result the turn has not seen', () => {
+        const g = _creditProgress(refusedAt(2), 'brand new result', true);
+        expect(g.refused).toBe(1);
+        expect(g.credits).toBe(1);
+    });
+
+    it('gives nothing for a failed step, a seen result, or when nothing was refused', () => {
+        expect(_creditProgress(refusedAt(2), 'new', false).refused).toBe(2);
+        const once = _creditProgress(refusedAt(2), 'same result', true);
+        expect(_creditProgress(once, 'same result', true).refused).toBe(1);   // second time it is not new
+        expect(_creditProgress(refusedAt(0), 'new', true).refused).toBe(0);
+    });
+
+    it('a failed novel result is still remembered, so it cannot earn credit later', () => {
+        const g = _creditProgress(refusedAt(2), 'error text', false);
+        expect(_creditProgress(g, 'error text', true).refused).toBe(2);
+    });
+
+    it('forgives at most PROGRESS_CREDITS_MAX refusals per turn', () => {
+        let g = refusedAt(2);
+        for (let i = 0; i < 20; i++) g = { ..._creditProgress(g, `result ${'x'.repeat(i)}`, true), refused: 2 };   // refused topped up each time
+        expect(g.credits).toBe(PROGRESS_CREDITS_MAX);
+    });
+
+    it('does not reopen the v0.55 loophole: an interleaved variant earns credit once, not every time', () => {
+        let g = refusedAt(2);
+        for (let i = 0; i < 6; i++) g = _creditProgress(g, 'ls -ld output (always the same)', true);
+        expect(g.refused).toBe(1);   // one credit in total
+    });
+
+    describe('in a turn', () => {
+        beforeEach(() => {
+            localStorage.clear();
+            W.mainAgentRole = null;
+            localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
+            localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
+            W._sessionToolFilter = new Set(['execute_code']);
+            W.setOpenaiHistory([{ role: 'user', content: 'Wait for postgres, then load the CSV.' }]);
+        });
+        const run = (code: string, i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code }) } }] });
+
+        it('a turn with real progress between refusals is not ended by them', async () => {
+            // 8 identical runs, 2 refused repeats, 2 new commands (2 credits), 2 more refused repeats, then the answer.
+            const seq = [
+                ...Array.from({ length: 8 }, (_, i) => run('ps aux | grep postgres', i)),
+                run('ps aux | grep postgres', 8), run('ps aux | grep postgres', 9),
+                run('echo alpha', 10), run('echo beta', 11),
+                run('ps aux | grep postgres', 12), run('ps aux | grep postgres', 13),
+                { content: 'Loaded.\nCOMPLETED' },
+            ];
+            let n = 0;
+            W.nativeExec = vi.fn(async () => ({ stdout: n++ < 8 ? 'root grep postgres' : `distinct output ${'y'.repeat(n)}`, stderr: '', exit_code: 0 }));
+            W.fetch = makeReplayFetch(seq);
+            const out = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+            const refusals = W.openaiHistory.filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed'));
+            expect(refusals.length).toBe(4);
+            expect(refusals.length).toBeGreaterThan(REPEAT_REFUSALS_BEFORE_STOP);   // would have stopped at the 3rd without credit
+            expect(String(out)).toContain('Loaded');
+        });
     });
 });
