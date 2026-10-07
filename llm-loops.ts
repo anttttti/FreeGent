@@ -1535,10 +1535,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // any tool calls this turn. One bounce only (ps.blockedCheck cap).
         if (_BLOCKED_DECLARATION_RE.test(textContent)
             && _s.workflowMode
-            && step < _loopMax - 1 && !softStopPending && !(ps.blockedCheck >= 1)
-            // A task with no callable tools cannot satisfy an instruction to attempt one.
-            && buildOAITools(false, _s._toolFilter ?? toolFilterOverride)
-                .some(t => !_turnExcludedTools?.has(t.function?.name))) {
+            && step < _loopMax - 1 && !softStopPending && !(ps.blockedCheck >= 1)) {
             let _toolsThisTurn = 0;
             const _btHist = _histR(_s);
             for (let _i = _btHist.length - 1; _i >= 0; _i--) {
@@ -1547,7 +1544,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             if (_toolsThisTurn === 0) {
                 ps.blockedCheck = 1;
-                _emitNudge('premature_blocked', nudge('Before declaring BLOCKED, use a relevant available tool if it can resolve the blocker. If a required capability or external service connection is unavailable, state BLOCKED with that missing prerequisite; do not probe unrelated services.'));
+                _emitNudge('premature_blocked', nudge('You declared BLOCKED without attempting the task with available tools. Call execute_code or the relevant tool first; only declare BLOCKED: if the tool call itself fails or returns an error.'));
                 return { do: 'continue' };
             }
         }
