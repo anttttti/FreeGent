@@ -121,7 +121,9 @@ const workspaceRoot = resolve(workspacePath);
 const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
 
 if (_flag('--print-model')) {
-    console.log(getHeadlessPrimaryModel(sharedOpts) || '(no active model)');
+    // A pipe is asynchronous on some platforms; wait for it before process.exit().
+    await new Promise<void>(resolve => process.stdout.write(
+        (getHeadlessPrimaryModel(sharedOpts) || '(no active model)') + '\n', () => resolve()));
     process.exit(0);
 }
 
@@ -135,8 +137,8 @@ if (promptText) {
     console.error(`[fg-run] prompt:    ${promptText.slice(0, 120)}${promptText.length > 120 ? '…' : ''}`);
     if (logFile) console.error(`[fg-run] log:       ${logFile}`);
     const { output, error } = await llmPrompt(promptText, sharedOpts);
-    if (error) console.error(`[fg-run] Error: ${error}`);
-    console.log(output);
+    if (error) await new Promise<void>(resolve => process.stderr.write(`[fg-run] Error: ${error}\n`, () => resolve()));
+    await new Promise<void>(resolve => process.stdout.write(output + '\n', () => resolve()));
     process.exit(error ? 1 : 0);
 } else {
     console.error(`[fg-run] mode:      workflow (agent loop)`);
@@ -147,8 +149,8 @@ if (promptText) {
     const onMetrics = process.stdout.isTTY ? undefined
         : (m: unknown) => { process.stdout.write(`__FG_METRICS__:${JSON.stringify(m)}\n`); };
     const { output, error, metrics } = await run(task!, { ...sharedOpts, workflowMode: true, onMetrics });
-    if (error) console.error(`[fg-run] Error: ${error}`);
+    if (error) await new Promise<void>(resolve => process.stderr.write(`[fg-run] Error: ${error}\n`, () => resolve()));
     process.stdout.write(`__FG_METRICS__:${JSON.stringify(metrics)}\n`);
-    console.log(output);
+    await new Promise<void>(resolve => process.stdout.write(output + '\n', () => resolve()));
     process.exit(error ? 1 : 0);
 }

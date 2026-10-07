@@ -654,6 +654,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
     });
 
+    const session = createSession({ workflowMode });  // §2: session owns workflowMode
+
     // Fire a hard abort after timeoutMs so the agent doesn't hang in retry loops.
     // Guard: setTimeout(fn, undefined) is equivalent to setTimeout(fn, 0) and fires
     // on the next tick, immediately setting softStopPending before any LLM call starts.
@@ -661,11 +663,12 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     const _abortTimer = timeoutMs != null
         ? setTimeout(() => {
             timedOut = true;
+            // The Director continuation loop reads the isolated session's stop flag.
+            // stopNow aborts the current request but clears the page's soft-stop flag.
+            session.softStopPending = true;
             try { dom.window.stopNow?.(); } catch {}
         }, timeoutMs)
         : null;
-
-    const session = createSession({ workflowMode });  // §2: session owns workflowMode
 
     // create an event-log session for this task run and set it active.
     // ID is based on the activeChatId so it matches what agent-core's turn events use.

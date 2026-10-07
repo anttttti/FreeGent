@@ -131,7 +131,7 @@ const primaryResult = spawnSync(process.execPath, [...nodeArgs, '--print-model',
     env: { ...process.env, NODE_NO_WARNINGS: '1' },
 });
 console.log(`\nFreeGent smoke tests — ${cases.length} of ${allCases.length} cases`);
-console.log(`Primary model: ${primaryResult.status === 0 ? primaryResult.stdout.trim() : '(could not resolve)'}\n`);
+console.log(`Primary model: ${primaryResult.status === 0 ? primaryResult.stdout.trim() || '(no model reported)' : '(could not resolve)'}\n`);
 if (dryRun) {
     for (const c of cases) console.log(`  ${c.id.padEnd(25)} [${c.group}] ${c.desc}`);
     process.exit(0);
