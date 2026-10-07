@@ -102,10 +102,10 @@ describe('CF Worker POST /log', () => {
         expect(id).toMatch(/^[0-9a-f]{16}$/);
         expect(FG_LOGS.put).toHaveBeenCalledWith(`log:${id}`, '{"a":1}', { expirationTtl: 14 * 24 * 3600 });
     });
-    it('answers 503 without the KV binding, 413 over 2 MB, 429 when rate limited', async () => {
+    it('answers 503 without the KV binding, 413 over 5 MB, 429 when rate limited', async () => {
         expect((await worker.fetch(logReq('x'), {})).status).toBe(503);
         const FG_LOGS = kv();
-        expect((await worker.fetch(logReq('x'.repeat(2 * 1024 * 1024 + 1)), { FG_LOGS })).status).toBe(413);
+        expect((await worker.fetch(logReq('x'.repeat(5 * 1024 * 1024 + 1)), { FG_LOGS })).status).toBe(413);
         expect((await worker.fetch(logReq('x'), { FG_LOGS, FG_RATE_LIMITER: limiter(false) })).status).toBe(429);
         expect(FG_LOGS.put).not.toHaveBeenCalled();
     });

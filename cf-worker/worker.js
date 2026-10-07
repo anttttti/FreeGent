@@ -122,7 +122,7 @@ const CORS = {
 // Handled before the origin check: the app also runs from LAN-IP and plain-HTTP pages (older iPads)
 // whose origin cannot be allow-listed. Bounded instead by the size cap, the per-IP rate limit and
 // the KV expiry; the endpoint cannot read anything back.
-const LOG_MAX_BYTES = 2 * 1024 * 1024;
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
 const LOG_TTL_SECONDS = 14 * 24 * 3600;
 async function _storeLog(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -130,10 +130,10 @@ async function _storeLog(request, env) {
     if (!env || !env.FG_LOGS) return _err(503, 'Log upload is not configured on this Worker');
     if (await _rateLimited(request, env, 'log')) return _err(429, 'Rate limit exceeded — try again in a minute');
     const declared = Number(request.headers.get('Content-Length') || 0);
-    if (declared > LOG_MAX_BYTES) return _err(413, 'Log too large (max 2 MB)');
+    if (declared > LOG_MAX_BYTES) return _err(413, 'Log too large (max 5 MB)');
     const body = await request.text();
     if (!body.trim()) return _err(400, 'Empty log');
-    if (new TextEncoder().encode(body).length > LOG_MAX_BYTES) return _err(413, 'Log too large (max 2 MB)');
+    if (new TextEncoder().encode(body).length > LOG_MAX_BYTES) return _err(413, 'Log too large (max 5 MB)');
     const bytes = crypto.getRandomValues(new Uint8Array(8));
     const id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     try {
