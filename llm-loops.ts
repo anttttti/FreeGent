@@ -1,7 +1,7 @@
 import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -2082,7 +2082,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // (error result, not executed); after a few refusals the turn ends as BLOCKED below.
         const _thisCallSig = _callSig(_normCalls);
         const _thisPathSig = _pathSig(_normCalls);
-        const _pathRefused = _pathRepeatRefused(_repeatGuard, _thisPathSig);
+        const _pathRefused = _pathRepeatRefused(_repeatGuard, _thisPathSig, _thisCallSig);
         const _refused = _repeatRefused(_repeatGuard, _thisCallSig) || _pathRefused;
         // A refused call made only of workspace reads pauses those tools for the next steps instead
         // of counting toward the turn stop: v0.60 SWE runs ended on read-only repeat stops with
@@ -2118,10 +2118,15 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // taken away for the rest of the turn; after that it counts, so the turn ends cleanly instead
         // of cycling pause → re-ask → pause to the step cap (sympy-15875, scikit-learn-12471, django-15957).
         const _freeRefusal = _readOnlyRefusal && readRefusalIsFree(step, _loopMax, _normCalls.map(c => _pauseCount.get(c.name) ?? 0));
-        _repeatGuard = _refused
-            ? { ..._repeatGuard, refused: _repeatGuard.refused + (_freeRefusal ? 0 : 1) }
-            : _updateRepeatGuard(_repeatGuard, _thisCallSig, _resultSig(_exec), _thisPathSig);
         const _execOk = _exec.filter(r => !r.result?.error).length;
+        if (_refused) {
+            _repeatGuard = { ..._repeatGuard, refused: _repeatGuard.refused + (_freeRefusal ? 0 : 1) };
+        } else {
+            const _thisResSig = _resultSig(_exec);
+            // A clean step with a result this turn has never seen forgives one earlier refusal (detectors.ts).
+            _repeatGuard = _creditProgress(_updateRepeatGuard(_repeatGuard, _thisCallSig, _thisResSig, _thisPathSig),
+                _thisResSig, _execOk === _exec.length);
+        }
         // Failure streak (detectors.ts updateFailStreak): real progress resets it, real failures
         // add to it; read-only tools, silent exit-0 runs and missing-environment errors are neutral.
         // A diagnostic ls between failing attempts therefore neither masks nor extends a loop.

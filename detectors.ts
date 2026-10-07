@@ -100,7 +100,15 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
 export const REPEAT_LIMIT = 8;
 export const REPEAT_WINDOW = 12;
 // recentPaths: the same steps keyed by endpoint instead of exact call (see _pathSig).
-export type RepeatGuard = { recent: Array<[callSig: string, resSig: string]>; refused: number; recentPaths?: Array<[pathSig: string, resSig: string]> };
+// tried / seen: hashes of every call and every result of the turn (see _pathEscapeAvailable and
+// _creditProgress); pathEscapes: untried-query probes already let through per endpoint; credits:
+// refusals already forgiven for progress.
+export type RepeatGuard = {
+    recent: Array<[callSig: string, resSig: string]>; refused: number;
+    recentPaths?: Array<[pathSig: string, resSig: string]>;
+    tried?: number[]; seen?: number[]; pathEscapes?: Record<string, number>; credits?: number;
+};
+const _TURN_HISTORY = 500;   // bound on tried / seen
 export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });
 
 export function _callSig(calls: Array<{ name: string; args: any }>): string {
@@ -130,7 +138,13 @@ export function _repeatRefused(g: RepeatGuard, callSig: string): boolean {
 // After executing (not after a refusal).
 export function _updateRepeatGuard(g: RepeatGuard, callSig: string, resSig: string, pathSig: string | null = null): RepeatGuard {
     const next: RepeatGuard = { ...g, recent: [...g.recent, [callSig, resSig] as [string, string]].slice(-REPEAT_WINDOW) };
-    if (pathSig) next.recentPaths = [...(g.recentPaths ?? []), [pathSig, resSig] as [string, string]].slice(-REPEAT_WINDOW);
+    next.tried = [...(g.tried ?? []), _fpHash(callSig)].slice(-_TURN_HISTORY);
+    if (pathSig) {
+        // An endpoint already at its limit that still executed was let through as an untried-query probe.
+        if (_pathRepeatCount(g, pathSig) >= PATH_REPEAT_LIMIT)
+            next.pathEscapes = { ...(g.pathEscapes ?? {}), [pathSig]: (g.pathEscapes?.[pathSig] ?? 0) + 1 };
+        next.recentPaths = [...(g.recentPaths ?? []), [pathSig, resSig] as [string, string]].slice(-REPEAT_WINDOW);
+    }
     return next;
 }
 
@@ -155,15 +169,50 @@ export function _pathRepeatCount(g: RepeatGuard, pathSig: string | null): number
     const last = _findLast(rp, ([p]) => p === pathSig);
     return last ? rp.filter(([p, r]) => p === pathSig && r === last[1]).length : 0;
 }
-export const _pathRepeatRefused = (g: RepeatGuard, pathSig: string | null): boolean => _pathRepeatCount(g, pathSig) >= PATH_REPEAT_LIMIT;
+// Untried-query escape. The endpoint guard ignores the query, so five empty `partnership` searches
+// also blocked the first `email` search (AutomationBench simple-3139): the refusal came before the
+// server could answer. A call whose exact URL has not been tried this turn is therefore let
+// through PATH_NOVEL_ESCAPES times per endpoint. Rewordings of a query already tried, and further
+// probes once the allowance is spent, are still refused; a probe that returns something different
+// restarts the endpoint's count by itself (_pathRepeatCount compares against the latest result).
+export const PATH_NOVEL_ESCAPES = 2;
+export function _pathEscapeAvailable(g: RepeatGuard, pathSig: string, callSig: string): boolean {
+    if ((g.tried ?? []).includes(_fpHash(callSig))) return false;
+    return (g.pathEscapes?.[pathSig] ?? 0) < PATH_NOVEL_ESCAPES;
+}
+// callSig (optional) enables the escape; without it the endpoint is refused as soon as it is at the limit.
+export function _pathRepeatRefused(g: RepeatGuard, pathSig: string | null, callSig?: string): boolean {
+    if (_pathRepeatCount(g, pathSig) < PATH_REPEAT_LIMIT) return false;
+    return !(callSig !== undefined && _pathEscapeAvailable(g, pathSig!, callSig));
+}
 export function _pathRepeatRefusalResult(n: number, pathSig: string): { error: string } {
-    return { error: `Not executed: ${n} requests to ${pathSig.slice(4)} in your last ${REPEAT_WINDOW} steps returned the same result, whatever the query. Another search will not show anything new: use what it returned. If it listed a tool or endpoint for your task, call it now with the arguments its schema describes; if it has nothing for this task, declare BLOCKED: <exact reason>.` };
+    return { error: `Not executed: ${n} requests to ${pathSig.slice(4)} in your last ${REPEAT_WINDOW} steps returned the same result, and the allowance for trying a genuinely new query is used up. Another search will not show anything new: use what it returned. If it listed a tool or endpoint for your task, call it now with the arguments its schema describes; if it has nothing for this task, declare BLOCKED: <exact reason>.` };
 }
 export function _repeatRefusalResult(n: number): { error: string } {
     return { error: `Not executed: this exact call already ran ${n} times in your last ${REPEAT_WINDOW} steps with the same result. Running it again will not change the result. If the output you already have answers the task, give that answer now; otherwise change the command or arguments, find out why nothing changes, or declare BLOCKED: <exact reason>.` };
 }
 // Refusals in a turn before the loop gives up on it.
 export const REPEAT_REFUSALS_BEFORE_STOP = 3;
+
+// Progress credit. Refusals accumulate over the turn on purpose (a variant slipped between repeats
+// must not reset them, v0.55 OS 38), so a long trajectory that makes real progress between a few
+// refusals still met the stop (AutomationBench finance-4071 stopped at step 23 of 100). A step
+// that executes without error and returns a result the turn has never seen forgives one refusal.
+// "Never seen" is what keeps the v0.55 loophole closed: an interleaved variant repeats its own
+// result and earns credit once, not each time. At most PROGRESS_CREDITS_MAX refusals are forgiven
+// per turn, so the stop is delayed by a bounded number of steps, not removed.
+export const PROGRESS_CREDITS_MAX = 3;
+export function _creditProgress(g: RepeatGuard, resSig: string, ok: boolean): RepeatGuard {
+    const h = _fpHash(resSig);
+    const seen = g.seen ?? [];
+    const novel = !seen.includes(h);
+    const next: RepeatGuard = { ...g, seen: novel ? [...seen, h].slice(-_TURN_HISTORY) : seen };
+    if (ok && novel && g.refused > 0 && (g.credits ?? 0) < PROGRESS_CREDITS_MAX) {
+        next.refused = g.refused - 1;
+        next.credits = (g.credits ?? 0) + 1;
+    }
+    return next;
+}
 
 // ── Text-response quality gate ───────────────────────────────────────────────
 // Checks a no-tool-call text response for quality issues that need a nudge.
