@@ -165,7 +165,7 @@ export function buildSystemPrompt(): string {
            : _sp === 'brave'      ? 'web_search uses Brave Search.'
            : ''}`
         : '';
-    const _honesty = '\n## Honesty\nOnly report what your tools actually return. Never fabricate file contents, search results, or code output.';
+    const _honesty = '\n## Honesty\nOnly report what your tools actually return. Never fabricate file contents, search results, or code output.\nExternal actions require a configured or task-provided service connection. If none is available, state BLOCKED with the missing connection. Installed binaries, open ports, and process names do not establish a usable service; do not probe unrelated services.';
     const _deviceCtx = _buildDeviceContext();
     const _skillsCtx = (() => {
         const parts = [];

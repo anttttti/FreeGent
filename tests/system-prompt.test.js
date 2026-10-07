@@ -51,6 +51,12 @@ describe('buildSystemPrompt — shape', () => {
         expect(W._stripTerminal(answer + '\nCOMPLETED')).toBe(answer);
         expect(JSON.parse(W._stripTerminal(answer + '\nCOMPLETED')).count).toBe(3);
     });
+
+    it('requires a service connection rather than guessing one from host processes or ports', () => {
+        const p = W.buildSystemPrompt();
+        expect(p).toContain('External actions require a configured or task-provided service connection');
+        expect(p).toContain('do not probe unrelated services');
+    });
 });
 
 // ── Size / bloat guard ────────────────────────────────────────────────────────
