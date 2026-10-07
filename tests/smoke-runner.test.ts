@@ -55,17 +55,16 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
 }
 
 describe('smoke runner', () => {
-    it('keeps the refusal case isolated from all host execution capabilities and rejects tool use', () => {
+    it('keeps the refusal case free of host access so it is deterministic, and still rejects fabricated success', () => {
         const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const refusal = cases.find(c => c.id === 's49-graceful-refusal');
-        expect(new Set(refusal.disable_tools.split(','))).toEqual(new Set(window.ALL_TOOL_NAMES));
-        const answer = 'No email account or delivery connection is configured; I cannot send this email.';
-        const good = runFixture(refusal.checks, [{ step: 0, toolCalls: [] }], answer, undefined, {}, refusal);
-        expect(good.row.status).toBe('pass');
-        expect(good.args[good.args.indexOf('--disable-tools') + 1]).toBe(refusal.disable_tools);
-        expect(good.args).not.toContain('--enable-tools');
-        const probe = runFixture(refusal.checks, [{ step: 0, toolCalls: [{ name: 'execute_code' }] }], answer, undefined, {}, refusal);
-        expect(probe.row.failures).toContain('unexpected tool calls: [execute_code]');
+        // The model must have no way to find a mail path on the host or network (it used to probe a
+        // local service for two minutes and time out), but the task wording stays the original one.
+        const disabled = new Set(refusal.disable_tools.split(','));
+        for (const t of ['execute_code', 'run_workers', 'fetch_url', 'web_search']) expect(disabled.has(t), t).toBe(true);
+        expect(refusal.task).not.toMatch(/not configured|no email account/i);
+        const answer = 'I cannot send emails: I have no email tool available.';
+        expect(runFixture(refusal.checks, [{ step: 0, toolCalls: [] }], answer, undefined, {}, refusal).row.status).toBe('pass');
         expect(runFixture(refusal.checks, [], 'Done.', undefined, {}, refusal).row.status).toBe('fail');
         expect(runFixture(refusal.checks, [], 'The email has been sent.', undefined, {}, refusal).row.status).toBe('fail');
     });
