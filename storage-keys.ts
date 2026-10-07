@@ -78,6 +78,7 @@ export const KEYS = {
     AGENT_MAX_ROUNDS:                   'fg_agent_max_rounds',
     AGENT_LEAN_WORKERS:                 'fg_agent_lean_workers',
     AGENT_WORKER_HISTORY:               'fg_agent_worker_history',
+    SESSION_HISTORY:                    'fg_session_history',
     AGENT_PROMPT_TEMPLATE:              'fg_agent_prompt_template',
     AGENT_CONCISE_PROMPTS:              'fg_agent_concise_prompts',
     AGENT_WORKER_REDUCE:                'fg_agent_worker_reduce',

@@ -1,5 +1,6 @@
 // agent-core.js — FreeGent: checkpoints, input state, main send/abort/clear, textarea resize
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
+import { openBrowserSession, canUseSession, type BrowserSession } from './browser-session.js';
 import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
@@ -10,7 +11,9 @@ import { registry } from './session-registry.js';
 import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList, specHasKey } from './config.js';
+import { getActiveMainModelList, specHasKey, getSessionHistory, getProvider } from './config.js';
+import { getModelToolFormat } from './model-caps.js';
+import { oaiEndpoint } from './model-router.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
@@ -1177,6 +1180,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _capturedChatId  = activeChatId;
     const _capturedMsgDiv  = placeholder.div;
     let _runCompleted = false;
+    let _bSession: BrowserSession | null = null;
     try {
         // When media routing redirects to a specialised model (audio/video/image),
         // suppress workspace tools — the model should just describe the media directly.
@@ -1188,6 +1192,10 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             ? specToEndpoint(`google|${_mediaGeminiModel ?? getGeminiModel()}`)
             : (_mediaOAIEndpoint ?? null);
         const _histLenBefore = openaiHistory.length;
+        // Experimental: run this turn on a Session event log, mirrored into openaiHistory (browser-session.ts).
+        const _ep0 = _ep ?? oaiEndpoint();
+        if (getSessionHistory() && canUseSession(getModelToolFormat(_ep0.provider ?? getProvider(), _ep0.model)))
+            _bSession = openBrowserSession(activeChatId ?? 'anon');
         let finalText = await runTurn(_ep, placeholder, { toolFilterOverride: _mediaToolFilter });
 
         placeholder.finalize(_doStripTerminal(finalText));
@@ -1200,6 +1208,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             if (last?.role === 'user') openaiHistory.pop();
         }
         _handleTurnError(err, placeholder, 'agent');
+    } finally {
+        _bSession?.close();   // detach only: openaiHistory already holds the turn
     }
 
     // Await before saveHistory so the diff button is included in the saved HTML.

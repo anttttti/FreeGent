@@ -78,7 +78,7 @@ export class SessionRegistry {
     }
 
     /** Set the currently-active session (the main agent's session for this run). */
-    setActive(s: Session): void { this._active = s; }
+    setActive(s: Session | null): void { this._active = s; }
 
     /** Get the currently-active session. Null in the browser when no run is live. */
     active(): Session | null { return this._active; }

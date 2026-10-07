@@ -17,6 +17,34 @@ import type {
 } from './session-event.js';
 import { SURFACE_TYPES } from './session-event.js';
 
+// ── Projection of one event ────────────────────────────────────────────────
+
+/**
+ * The model-facing message one surface event stands for, or null when it stands for none
+ * (tombstones, usage-only assistant messages, non-surface events). The single rule behind
+ * deriveMessages(); the browser bridge (browser-session.ts) uses it to mirror appends.
+ */
+export function eventMessage(ev: SessionEvent): any | null {
+    switch (ev.type) {
+        case 'user/message': {
+            const d = ev.data as any;
+            // Empty-content events are tombstones (spliceFromSecondLast and other surgery).
+            if (d.content === '' || d.content === null || d.content === undefined) return null;
+            return d;
+        }
+        case 'assistant/message': {
+            const m = (ev.data as any).message;
+            // Skip bare usage-only messages (content null, no tool_calls).
+            return m.content !== null || m.tool_calls?.length ? m : null;
+        }
+        case 'tool/result': {
+            const d = ev.data as any;
+            return { role: 'tool', tool_call_id: d.callId, name: d.name, content: d.content };
+        }
+        default: return null;
+    }
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 /**
@@ -174,28 +202,8 @@ export class Session {
     }> {
         const out: any[] = [];
         for (const seq of this._surface) {
-            const ev = this._log[seq]!;
-            switch (ev.type) {
-                case 'user/message': {
-                    const _ud = ev.data as any;
-                    // Skip tombstones: empty-content events created by spliceFromSecondLast surface
-                    // replace ops (and other surgery) — they mark removed messages, not real ones.
-                    if (_ud.content === '' || _ud.content === null || _ud.content === undefined) break;
-                    out.push(_ud);
-                    break;
-                }
-                case 'assistant/message': {
-                    const m = (ev.data as any).message;
-                    // Skip bare usage-only messages (content null, no tool_calls).
-                    if (m.content !== null || m.tool_calls?.length) out.push(m);
-                    break;
-                }
-                case 'tool/result': {
-                    const d = ev.data as any;
-                    out.push({ role: 'tool', tool_call_id: d.callId, name: d.name, content: d.content });
-                    break;
-                }
-            }
+            const m = eventMessage(this._log[seq]!);
+            if (m) out.push(m);
         }
         return out;
     }
