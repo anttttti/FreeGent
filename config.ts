@@ -375,7 +375,7 @@ export function getAgentMaxSteps() {
 export function getAgentLeanWorkers()        { return ls('fg_agent_lean_workers', 'true') !== 'false'; }
 export function getAgentWorkerHistory()      { return ls('fg_agent_worker_history', 'true') !== 'false'; }
 // Run browser turns on a Session event log (browser-session.ts) instead of the legacy array path.
-export function getSessionHistory()          { return ls('fg_session_history', 'false') === 'true'; }
+export function getSessionHistory()          { return ls('fg_session_history', 'true') !== 'false'; }
 function getAgentPromptTemplate()     { return ls('fg_agent_prompt_template', ''); }
 export function getAgentConcisePrompts()     { return ls('fg_agent_concise_prompts', 'true') !== 'false'; }
 export function getAgentWorkerReduce()       { return ls('fg_agent_worker_reduce', 'true') !== 'false'; }
