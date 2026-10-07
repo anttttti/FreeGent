@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 // Boot the actual Node/JSDOM chain in its own realm. All fetches are intercepted;
 // neither provider credentials nor a live LLM are needed for these checks.
-function runFixture(mode: 'tools' | 'timeout' | 'json') {
+function runFixture(mode: 'tools' | 'timeout' | 'json' | 'refusal') {
     const root = mkdtempSync(join(tmpdir(), 'fg-headless-smoke-'));
     try {
         const fixture = join(root, 'fixture.mjs');
@@ -23,12 +23,14 @@ function runFixture(mode: 'tools' | 'timeout' | 'json') {
             globalThis.fetch = async (_url, opts = {}) => {
                 requests++;
                 const body = JSON.parse(opts.body || '{}');
-                requestStats.push({ url: String(_url), stream: body.stream, tools: body.tools?.map(t => t.function?.name) });
+                requestStats.push({ url: String(_url), stream: body.stream, toolChoice: body.tool_choice, tools: body.tools?.map(t => t.function?.name) });
                 writeFileSync(${JSON.stringify(join(root, 'requests.json'))}, JSON.stringify(requestStats));
                 if (!body.stream) return new Response('{"data":[]}', { headers: { 'Content-Type': 'application/json' } });
                 streamRequests++;
-                if (${JSON.stringify(mode)} === 'json') {
-                    const delta = streamRequests === 1
+                if (['json', 'refusal'].includes(${JSON.stringify(mode)})) {
+                    const delta = ${JSON.stringify(mode)} === 'refusal'
+                        ? { content: 'BLOCKED: No email account or delivery connection is configured; I cannot send this email.' }
+                        : streamRequests === 1
                         ? { tool_calls: [{ index: 0, id: 'call-list', type: 'function', function: { name: 'list_files', arguments: '{}' } }] }
                         : { content: '{"count":3,"files":["alpha.txt","beta.txt","gamma.txt"]}\\nCOMPLETED' };
                     return new Response('data: ' + JSON.stringify({ choices: [{ index: 0, delta }] })
@@ -48,11 +50,15 @@ function runFixture(mode: 'tools' | 'timeout' | 'json') {
                 enableTools: 'replace_in_file,append_file', timeoutMs: 100, workflowMode: true,
             };
             let result;
-            if (${JSON.stringify(mode)} === 'json') {
+            if (['json', 'refusal'].includes(${JSON.stringify(mode)})) {
                 process.env.FREEGENT_SESSION_DB = ${JSON.stringify(join(root, 'session.db'))};
-                process.argv = [process.execPath, 'fg-run.ts', '--task', 'List files using list_files and return only JSON.',
+                const smokeCase = ${JSON.stringify(mode)} === 'refusal'
+                    ? JSON.parse((await import('node:fs')).readFileSync(${JSON.stringify(resolve('smoke/cases.jsonl'))}, 'utf8')
+                        .trim().split('\\n').find(line => JSON.parse(line).id === 's49-graceful-refusal')) : null;
+                process.argv = [process.execPath, 'fg-run.ts', '--task', smokeCase?.task || 'List files using list_files and return only JSON.',
                     '--llm', 'openai|smoke-test', '--api-url', opts.apiUrl, '--api-key', 'fixture',
                     '--workspace', opts.workspaceRoot, '--context-window', '16000', '--timeout', '5000', '--log', opts.logFile];
+                if (smokeCase) process.argv.push('--disable-tools', smokeCase.disable_tools);
                 await import(${JSON.stringify(pathToFileURL(resolve('fg-run.ts')).href)});
             } else if (${JSON.stringify(mode)} === 'tools') {
                 await setup(opts);
@@ -78,7 +84,7 @@ function runFixture(mode: 'tools' | 'timeout' | 'json') {
             closeSync(stdoutFd); closeSync(stderrFd);
         }
         if (child.error || child.status !== 0) throw new Error(child.error?.message || readFileSync(stderrPath, 'utf8') || `exit ${child.status}`);
-        if (mode === 'json') return { stdout: readFileSync(stdoutPath, 'utf8'), requestStats: JSON.parse(readFileSync(join(root, 'requests.json'), 'utf8')), turns: readFileSync(join(root, 'turns.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) };
+        if (mode === 'json' || mode === 'refusal') return { stdout: readFileSync(stdoutPath, 'utf8'), requestStats: JSON.parse(readFileSync(join(root, 'requests.json'), 'utf8')), turns: readFileSync(join(root, 'turns.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) };
         return JSON.parse(readFileSync(resultPath, 'utf8'));
     } finally {
         rmSync(root, { recursive: true, force: true });
@@ -107,5 +113,17 @@ describe('headless smoke execution', () => {
         expect(JSON.parse(output)).toEqual({ count: 3, files: ['alpha.txt', 'beta.txt', 'gamma.txt'] });
         expect(result.turns.some((r: any) => r.toolCalls?.some((t: any) => (t.name || t.function?.name) === 'list_files')),
             JSON.stringify({ requests: result.requestStats, turns: result.turns.map((r: any) => ({ type: r.type, step: r.step, tools: r.toolCalls })) })).toBe(true);
+    });
+
+    it('accepts the controlled email refusal in one step without tools, bounces or continuations', () => {
+        const result = runFixture('refusal');
+        const requests = result.requestStats.filter((r: any) => r.stream);
+        expect(requests).toHaveLength(1);
+        expect(requests[0].tools || []).toHaveLength(0);
+        expect(requests[0].toolChoice).not.toBe('required');
+        expect(result.turns.filter((r: any) => !r.type && Number.isInteger(r.step))).toHaveLength(1);
+        expect(result.turns.some((r: any) => r.type === 'nudge')).toBe(false);
+        expect(result.turns.flatMap((r: any) => r.toolCalls || [])).toHaveLength(0);
+        expect(result.stdout).toContain('cannot send this email');
     });
 });

@@ -207,11 +207,12 @@ function evalChecks(c, output, logEntries) {
         failures.push('output is empty');
     }
 
-    // tool_called: check log entries for tool use
+    // Tool checks use the execution log, including tools invoked by worker steps.
+    const calledNames = new Set(
+        logEntries.flatMap(e => (e.toolCalls || []).map(tc => tc.name || tc.function?.name))
+    );
+    if (ch.no_tool_calls && calledNames.size) failures.push(`unexpected tool calls: [${[...calledNames].join(', ')}]`);
     if (ch.tool_called) {
-        const calledNames = new Set(
-            logEntries.flatMap(e => (e.toolCalls || []).map(tc => tc.name || tc.function?.name))
-        );
         for (const t of ch.tool_called) {
             if (!calledNames.has(t)) failures.push(`tool "${t}" was not called`);
         }
