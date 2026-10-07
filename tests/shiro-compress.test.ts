@@ -96,7 +96,7 @@ describe('zstd', async () => {
         expect(eq(await zstdDecompress(real), data), `we read zstd ${lvl}: ${name}`).toBe(true);
       }
     }
-  });
+  }, 120_000);   // runs the real zstd -1/-9/-19 over every input; a slow CI runner needs far more than 5 s
 });
 
 describe('xz', () => {
