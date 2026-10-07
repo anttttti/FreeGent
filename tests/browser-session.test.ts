@@ -1,7 +1,7 @@
 // Browser Session bridge (browser-session.ts, task 071): the same scripted turn run on the legacy
 // array path and on a bridged Session must leave the same openaiHistory. This is the
 // projection-equivalence gate for moving the browser onto the event log.
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
@@ -18,6 +18,8 @@ beforeAll(async () => {
     await import('../chat-state.ts');
     await import('../step-validator.ts');
 });
+
+afterEach(() => { W.workflowMode = false; });
 
 beforeEach(() => {
     localStorage.clear();
@@ -122,5 +124,43 @@ describe('equivalence: legacy path vs bridged Session', () => {
             calls: m.tool_calls?.map((t: any) => t.function.name), id: m.tool_call_id }));
         expect(legacy.length).toBeGreaterThan(2);
         expect(shape(bridged)).toEqual(shape(legacy));
+    });
+});
+
+describe('runAgentTurn (the interactive TUI entry point) uses a Session by default', () => {
+    async function turn(flag: string | null) {
+        localStorage.clear();
+        localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
+        localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
+        if (flag !== null) localStorage.setItem('fg_session_history', flag);
+        await import('../agent-core.ts');
+        W.addVoiceButtons ??= () => {};   // UI hook reached by setInputState; not loaded in this test env
+        W.clearImageAttachments ??= () => {};
+        W.workflowMode = true;            // NULL render adapter, as the TUI's placeholder factory does
+        W.newChat?.();
+        setOpenaiHistory([]);
+        W._sessionToolFilter = new Set(['list_files', 'web_search', 'execute_code']);
+        W.fetch = makeReplayFetch([
+            { content: 'Looking.', tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'list_files', arguments: '{"path":"/"}' } }] },
+            { content: 'The answer is 42.\n\nCOMPLETED' },
+        ]);
+        const sessions: any[] = [];
+        const real = registry.setActive.bind(registry);
+        registry.setActive = (s: any) => { if (s) sessions.push(s); real(s); };
+        try { await W.runAgentTurn('Do the task.', null); } finally { registry.setActive = real; }
+        return { hist: JSON.parse(JSON.stringify(history())), sessions, active: registry.active() };
+    }
+    it('runs on a Session, mirrors into the history array, and detaches afterwards', async () => {
+        const r = await turn(null);   // default: on
+        expect(r.sessions).toHaveLength(1);
+        expect(r.sessions[0].events.some((e: any) => e.type === 'tool/result')).toBe(true);
+        expect(r.active).toBeNull();
+        expect(r.hist.map((m: any) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
+    });
+    it('the setting turns it off and gives the same history on the legacy path', async () => {
+        const on = await turn(null);
+        const off = await turn('false');
+        expect(off.sessions).toHaveLength(0);
+        expect(off.hist.map((m: any) => m.role)).toEqual(on.hist.map((m: any) => m.role));
     });
 });

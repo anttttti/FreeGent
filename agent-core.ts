@@ -1414,6 +1414,14 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     try {
         if (_evtSess) _evtSess.append('user/message', { role: 'user', content: _userContent }, { surfaceOp: 'append' } as any);
     } catch {}
+    // No Session yet (the interactive TUI calls this directly; headless run() already made one):
+    // run the turn on one, mirrored into the default history array, as the browser does.
+    let _bSession: BrowserSession | null = null;
+    if (!_evtSess && _s.history === openaiHistory && getSessionHistory()) {
+        const _ep0 = oaiEndpoint();
+        if (canUseSession(getModelToolFormat(_ep0.provider ?? getProvider(), _ep0.model)))
+            _bSession = openBrowserSession(activeChatId ?? 'anon');
+    }
     repairOAIHistory();
 
     const _ph: RenderAdapter = _reusePh
@@ -1459,6 +1467,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
         try {
             if (_evtSess) _evtSess.append('turn/end', { turn: _evtTurn, reason: _turnEndReason, durationMs: Date.now() - _t0Turn });
         } catch {}
+        _bSession?.close();   // detach only: the history array already holds the turn
     }
 
     try {
