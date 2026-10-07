@@ -184,10 +184,26 @@ const _LIST_FILES_CAP   = 500;
 const _SEARCH_MAX_MATCHES    = 500;
 const _SEARCH_LINE_DISPLAY   = 500;
 
-function _shrinkError(path, oldLen, newLen) {
+// Which tools the caller can actually invoke: a worker's per-step allowlist, else the main role's
+// ceiling, else (no role restriction, e.g. the WebUI) everything. Recovery advice must only name
+// these — v0.64: the headless Director has write_file but not replace_in_file/apply_patch, and the
+// guard below told it to use them: 28 attempts in the SWE runs, all rejected, 77 shrink rejections.
+function _callerHasTool(context): (tool: string) => boolean {
+    if (context?.allowedTools instanceof Set) return t => context.allowedTools.has(t);
+    if (typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools) return t => mainAgentRole.tools.has(t);
+    return () => true;
+}
+
+function _shrinkError(path, oldLen, newLen, has: (tool: string) => boolean = () => true) {
+    const surgical = ['replace_in_file', 'apply_patch'].filter(has);
+    const advice = surgical.length
+        ? `Use ${surgical.join(' or ')} for targeted edits, or read the file first and include ALL existing sections in your write.`
+        : has('execute_code')
+            ? `Read the file first and include ALL existing sections in your write, or make the targeted change with execute_code `
+              + `(a short script that replaces the exact text) instead of rewriting the whole file.`
+            : `Read the file first and include ALL existing sections in your write.`;
     return `write_file: Content shrank from ${oldLen} to ${newLen} chars (${Math.round(newLen / oldLen * 100)}% of original) for "${path}". `
-        + `This usually means content was dropped. Use replace_in_file or apply_patch for targeted edits, `
-        + `or read the file first and include ALL existing sections in your write.`;
+        + `This usually means content was dropped. ${advice}`;
 }
 
 
@@ -1201,7 +1217,7 @@ async function _handleWriteFile(args, context) {
             ? (context.staging.get(args.path) ?? '')
             : ((await context.snapshot.get(args.path)) ?? '');
         if (old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD) {
-            return { error: _shrinkError(args.path, old.length, args.content.length) };
+            return { error: _shrinkError(args.path, old.length, args.content.length, _callerHasTool(context)) };
         }
         if (old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(old, args.content) > _EDIT_REVIEW_THRESHOLD) {
@@ -1217,7 +1233,7 @@ async function _handleWriteFile(args, context) {
         let previous = '';
         try { previous = await agentReadFile(args.path); } catch {}
         if (previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD) {
-            return { error: _shrinkError(args.path, previous.length, args.content.length) };
+            return { error: _shrinkError(args.path, previous.length, args.content.length, _callerHasTool(context)) };
         }
         if (previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(previous, args.content) > _EDIT_REVIEW_THRESHOLD) {
