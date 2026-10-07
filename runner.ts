@@ -178,7 +178,13 @@ async function _runLoop() {
             }
 
             _updateRunnerCurrentTask(task);
-            const result = await _runEpisode(task);
+            // An episode that throws (unwritable task file, gate error) fails that task; it must not
+            // end Autopilot silently with the remaining tasks untouched.
+            const result: EpisodeResult = await _runEpisode(task).catch((e: any) => {
+                console.error('[runner] episode failed:', e);
+                _runnerDeferred.add(task.path);
+                return { success: false, blocked: false, blockedReason: '', failReason: String(e?.message ?? e).slice(0, 200) };
+            });
             if (_runnerAbort) break;
 
             _runnerSessionLog.push({
@@ -399,20 +405,10 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         } catch { failReason = 'Max turns reached without completion'; }
     }
 
-    if (success && !_runnerAbort && getRunnerQa()) {
-        await setTaskStatus(task.path, 'in-progress');
-        const r1 = await transitionTask(task.path, 'in-review');
-        if (r1.transitioned) {
-            const r2 = await transitionTask(task.path, 'done');
-            success    = r2.transitioned;
-            if (!success) {
-                failReason = r2.reason || 'QA blocked at done gate';
-            }
-        } else {
-            success    = false;
-            failReason = r1.reason || 'QA blocked at in-review gate';
-        }
-    }
+    // success means the task file reads "done", which only update_task_status can have set
+    // through transitionTask — the QA gates already ran there. Re-running them here first demoted
+    // the finished task to in-progress, and a second acceptance review that failed left it out of
+    // Done (and the "terminal status" fallback below turned it into blocked).
 
     // Ensure task file always ends in a terminal status — catches all exit paths
     // (max turns, STATUS:blocked text signal, QA gate, narration-without-action).
