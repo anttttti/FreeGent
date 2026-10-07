@@ -163,7 +163,11 @@ ${toolSection}`;
 
             // ── Direct tools available to the director ──────────────────────────
             const readTools  = (['read_file', 'search_workspace', 'list_files'] as const).filter(_has);
-            const writeTools = (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'undo_write'] as const).filter(_has);
+            // The Director's own write tools: enabled AND inside its ceiling. Headless runs enable all three
+            // edit tools for the coder workers, so enabledTools alone listed tools the Director cannot call.
+            const _dirCeiling = rolesRegistry.get('director')?.tools;
+            const writeTools = (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'undo_write'] as const)
+                .filter(t => _has(t) && (!_dirCeiling || _dirCeiling.has(t)));
             const hasExec    = _has('execute_code');
             const hasGit     = _has('run_git') && getGitEnabled() && getSandboxProvider() === 'local';
             const hasAst     = _has('ast_query') && getAstEnabled();
@@ -176,7 +180,11 @@ ${toolSection}`;
             if (readTools.length)
                 toolLines.push(`- **Read** — ${readTools.join(', ')}: read a file or range, search content by keyword, list directory`);
             if (writeTools.length)
-                toolLines.push(`- **Write** — ${writeTools.join(', ')}: create, edit, patch, or delete files`);
+                // write_file alone cannot edit, patch or delete: say what it does, so the model does not
+                // look for tools the headless Director does not have (v0.64 SWE: 28 replace_in_file attempts).
+                toolLines.push(writeTools.length === 1 && writeTools[0] === 'write_file'
+                    ? `- **Write** — write_file: create a file, or rewrite one in full (a rewrite that drops much of an existing file is rejected; make a small change to an existing file with execute_code)`
+                    : `- **Write** — ${writeTools.join(', ')}: create, edit, patch, or delete files`);
             if (hasExec)
                 toolLines.push(`- **Execute** — execute_code: run shell commands or scripts`);
             if (hasGit)
