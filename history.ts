@@ -5,7 +5,7 @@
 //   - truncateResultForHistory / _historyResult / _summarizeToolResult /
 //     _extractCodeBlocks — result → history representation (size caps, dedup notes,
 //     structural code extraction for the Director)
-//   - pruneOAIHistory — masks stale duplicate reads ([pruned: …] stubs) and marks
+//   - pruneSessionHistory — masks stale duplicate reads ([pruned: …] stubs) and marks
 //     _seenReadFiles 'pruned' so the dedup gate lets legitimate re-reads through
 //   - repairOAIHistory / repairHistoryArray — removes null entries, orphaned tool
 //     blocks, and broken assistant↔tool pairings (strict providers 400 on these)
@@ -20,8 +20,9 @@
 
 import {
     _seenReadFiles, _seenListFiles, setSeenReadFiles, setSeenListFiles,
-    openaiHistory, setOpenaiHistory, activeChatId,
+    activeChatId,
 } from './state.js';
+import { getChatHistory, setChatHistory } from './chat-history.js';
 import type { Session } from './session.js';
 import { pruneSurface } from './session.js';
 
@@ -232,14 +233,14 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         }
 
         // Suppress duplicate read of the same range whose content is still in history
-        // (not yet pruned) and unchanged. pruneOAIHistory sets 'pruned' so post-prune
+        // (not yet pruned) and unchanged. pruneSessionHistory sets 'pruned' so post-prune
         // re-reads serve content again (never starve the model).
         const priorState = _rf.get(rangeKey);
         if (priorState === 'full' || priorState === 'truncated') {
             return { path: result.path, note: `Already read "${result.path}" — the full content is in your prior tool result for this file. Read a different range if you need other sections.` };
         }
 
-        // Track read state for pruneOAIHistory & dedup check above.
+        // Track read state for pruneSessionHistory & dedup check above.
         const contentLen = typeof result.content === 'string' ? result.content.length : 0;
         _rf.set(rangeKey, contentLen > limit ? 'truncated' : 'full');
         if (contentHash !== null) _rf.set(hashKey, contentHash);
@@ -362,36 +363,9 @@ function _prunedReadStub(meta: _CallMeta, cover: _CallMeta, chars: number): stri
     return `[pruned: dup read "${meta.path}" (${_rangeLabel(meta)}), ${chars} chars — these lines are in a later read_file result of the same file (${_rangeLabel(cover)}). Do not read them again; use that result.]`;
 }
 
-export function pruneOAIHistory(history: any[]): number {
-    const callMeta = _callMetaMap(history);
-    const results: Array<{ pos: number; msg: any; meta: _CallMeta; content: any }> = [];
-    for (let i = 0; i < history.length; i++) {
-        const msg = history[i]; if (msg.role !== 'tool') continue;
-        const meta = callMeta.get(msg.tool_call_id); if (meta) results.push({ pos: i, msg, meta, content: msg.content });
-    }
-    let saved = 0;
-    for (const { pos: idx, msg, meta } of results) {
-        if (!_PRUNE_READ_TOOLS.has(meta.name) || !meta.path) continue;
-        const cl = _clen(msg.content); if (cl < _PRUNE_MIN_CHARS) continue;
-        const cover = _readCovered(idx, meta, results);
-        if (cover) {
-            history[idx] = { ...msg, content: _prunedReadStub(meta, cover, cl) }; saved += cl;
-            // Mark _seenReadFiles entries for this path as 'pruned' so the dedup
-            // gate in truncateResultForHistory lets future re-reads through.
-            const pNorm = _normPath(meta.path);
-            for (const key of _seenReadFiles.keys())
-                if (key.startsWith(pNorm + ':')) _seenReadFiles.set(key, 'pruned');
-        }
-    }
-    return saved;
-}
-
 /**
- * Session-native duplicate-read pruning.
- * Equivalent to pruneOAIHistory() but operates on the session event log via
- * pruneSurface() instead of mutating a history array.
- * Called for native-format models with an active session; pruneOAIHistory is
- * still used for fn-tag / no-session paths.
+ * Duplicate-read pruning on the session event log, via pruneSurface(): an earlier read_file result
+ * that a later read of the same file covers is replaced by a stub that names the covering read.
  */
 export function pruneSessionHistory(sess: Session): number {
     const callMeta = _callMetaMap(sess.deriveMessages());
@@ -428,7 +402,7 @@ export function pruneSessionHistory(sess: Session): number {
 
 // Single implementation operating on any history array. Mutates in place where
 // possible and RETURNS the (possibly re-created) array — callers must use the
-// return value. The global-history wrapper below feeds it openaiHistory.
+// return value. The wrapper below feeds it the active chat's history.
 export function repairHistoryArray(hist: any[]): any[] {
     // Purge any null/undefined entries that can creep in via provider conversions.
     // They must be removed before the API call, not just skipped, or they serialize as null.
@@ -511,14 +485,17 @@ export function repairHistoryArray(hist: any[]): any[] {
     return hist;
 }
 
-// Repairs the global openaiHistory in place (the main loop's canonical history).
+// Repairs the active chat's history (the main loop's canonical history). The chat's Session is
+// only replaced when the repair changed something.
 export function repairOAIHistory(): void {
-    setOpenaiHistory(repairHistoryArray(openaiHistory));
+    const before = getChatHistory();
+    const after  = repairHistoryArray(before.slice());
+    if (JSON.stringify(after) !== JSON.stringify(before)) setChatHistory(after);
 }
 
 // Window bridge for free-variable access from sibling modules (house pattern).
 Object.assign(window, {
     _normPath, resetSeenReadFiles, _invalidateReadDedup,
     _historyResult, truncateResultForHistory,
-    pruneOAIHistory, pruneSessionHistory, repairHistoryArray, repairOAIHistory,
+    pruneSessionHistory, repairHistoryArray, repairOAIHistory,
 });

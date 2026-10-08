@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 describe('emitNudge — framework nudge emitter', () => {
     beforeEach(() => {
-        window.openaiHistory = [];
+        window.setChatHistory([]);
         window.convoLogTurn = vi.fn();
         window.getShowNudges = () => true;
         document.body.innerHTML = '<div id="agent-messages"></div>';
@@ -11,10 +11,10 @@ describe('emitNudge — framework nudge emitter', () => {
 
     // ── String input ──
 
-    it('pushes a string as a user-role <nudge> entry to openaiHistory', () => {
+    it('pushes a string as a user-role <nudge> entry to the chat history', () => {
         window.emitNudge('test_nudge', 'hello world');
-        expect(window.openaiHistory).toHaveLength(1);
-        expect(window.openaiHistory[0]).toEqual({ role: 'user', content: '<nudge>hello world</nudge>' });
+        expect(window.getChatHistory()).toHaveLength(1);
+        expect(window.getChatHistory()[0]).toEqual({ role: 'user', content: '<nudge>hello world</nudge>' });
     });
 
     it('logs the nudge via convoLogTurn', () => {
@@ -37,10 +37,10 @@ describe('emitNudge — framework nudge emitter', () => {
 
     // ── Entry object input ──
 
-    it('pushes an entry object as-is to openaiHistory', () => {
+    it('appends an entry object to the chat history (a system-role one as a <nudge> user turn)', () => {
         window.emitNudge('obj_nudge', { role: 'system', content: 'sys msg' });
-        expect(window.openaiHistory).toHaveLength(1);
-        expect(window.openaiHistory[0]).toEqual({ role: 'system', content: 'sys msg' });
+        expect(window.getChatHistory()).toHaveLength(1);
+        expect(window.getChatHistory()[0]).toEqual({ role: 'user', content: '<nudge>sys msg</nudge>' });
     });
 
     it('renders a user-role entry object in the DOM', () => {
@@ -58,7 +58,7 @@ describe('emitNudge — framework nudge emitter', () => {
 
     it('overrides the auto-detected role via opts.role for string input', () => {
         window.emitNudge('overridden', 'bare text', { role: 'system' });
-        expect(window.openaiHistory[0]).toEqual({ role: 'system', content: 'bare text' });
+        expect(window.getChatHistory()[0]).toEqual({ role: 'user', content: '<nudge>bare text</nudge>' });
     });
 
     // ── History target ──
@@ -68,14 +68,14 @@ describe('emitNudge — framework nudge emitter', () => {
         window.emitNudge('custom_hist', 'msg', { history: local });
         expect(local).toHaveLength(1);
         expect(local[0].content).toContain('<nudge>');
-        expect(window.openaiHistory).toHaveLength(0);
+        expect(window.getChatHistory()).toHaveLength(0);
     });
 
     // ── Suppress flags ──
 
     it('suppresses history push with suppressHistory', () => {
         window.emitNudge('sup_hist', 'msg', { suppressHistory: true });
-        expect(window.openaiHistory).toHaveLength(0);
+        expect(window.getChatHistory()).toHaveLength(0);
     });
 
     it('suppresses logging with suppressLog', () => {
@@ -106,7 +106,7 @@ describe('emitNudge — framework nudge emitter', () => {
 
     it('does not push to history when appendPartTo is set', () => {
         window.emitNudge('gemini_no_hist', 'raw', { appendPartTo: [] });
-        expect(window.openaiHistory).toHaveLength(0);
+        expect(window.getChatHistory()).toHaveLength(0);
     });
 
     it('still logs when appendPartTo is set and suppressLog is not', () => {
@@ -149,7 +149,7 @@ describe('emitNudge — framework nudge emitter', () => {
     it('still pushes to history and logs when getShowNudges returns false', () => {
         window.getShowNudges = () => false;
         window.emitNudge('gated', 'msg');
-        expect(window.openaiHistory).toHaveLength(1);
+        expect(window.getChatHistory()).toHaveLength(1);
         expect(window.convoLogTurn).toHaveBeenCalled();
     });
 
@@ -200,9 +200,9 @@ describe('emitNudge — framework nudge emitter', () => {
         expect(bubbles).toContain('(nudge) past note');
     });
 
-    it('keeps the full <active_guidance> block (including the tags) in openaiHistory and the log — only the DOM render is cleaned', () => {
+    it('keeps the full <active_guidance> block (including the tags) in the chat history and the log — only the DOM render is cleaned', () => {
         window.emitNudge('reactive_guidance', '<active_guidance>keep me</active_guidance>');
-        expect(window.openaiHistory[0].content).toBe('<nudge><active_guidance>keep me</active_guidance></nudge>');
+        expect(window.getChatHistory()[0].content).toBe('<nudge><active_guidance>keep me</active_guidance></nudge>');
         expect(window.convoLogTurn.mock.calls[0][0].text).toBe('<active_guidance>keep me</active_guidance>');
     });
 
@@ -215,13 +215,13 @@ describe('emitNudge — framework nudge emitter', () => {
         const saved = window.getProvider;
         window.getProvider = () => 'nvidia';
         window.emitNudge('nvidia_test', 'no wrap');
-        expect(window.openaiHistory[0]).toEqual({ role: 'user', content: '<nudge>no wrap</nudge>' });
+        expect(window.getChatHistory()[0]).toEqual({ role: 'user', content: '<nudge>no wrap</nudge>' });
         window.getProvider = saved;
     });
 
-    it('honours an explicit system role: unwrapped content and no DOM rendering', () => {
+    it('honours an explicit system role: stored as a <nudge> turn, no DOM rendering', () => {
         window.emitNudge('sys_test', 'no wrap', { role: 'system' });
-        expect(window.openaiHistory.at(-1)).toEqual({ role: 'system', content: 'no wrap' });
+        expect(window.getChatHistory().at(-1)).toEqual({ role: 'user', content: '<nudge>no wrap</nudge>' });
         expect(document.querySelector('.agent-msg-nudge')).toBeNull();
     });
 });

@@ -62,7 +62,7 @@ describe('runTurn failure-streak stop', () => {
         localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
         localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
         W._sessionToolFilter = new Set(['execute_code']);
-        W.setOpenaiHistory([{ role: 'user', content: 'Find Emily Zhou in the chat server.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Find Emily Zhou in the chat server.' }]);
     });
     const curl = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: `curl -s http://chat/api/users.search?q=u${i}` }) } }] });
 

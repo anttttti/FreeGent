@@ -30,7 +30,7 @@ function setupChat() {
         localStorage.setItem(KEYS.ACTIVE_CHAT, chatId);
         W.activeChatId = chatId;
     }
-    W.setOpenaiHistory?.([{ role: 'user', content: 'Do the task.' }]);
+    W.setChatHistory?.([{ role: 'user', content: 'Do the task.' }]);
     // Skip the tool classifier: it calls callLLMComplete which would consume a scripted
     // replay step. Setting a non-null _toolFilter tells runTurn to skip classification.
     W._sessionToolFilter = new Set(['list_files', 'web_search', 'execute_code']);
@@ -125,7 +125,7 @@ describe('runTurn — tool call then completion', () => {
             { content: 'Done.\nCOMPLETED' },
         ]);
         await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
-        const h = W.openaiHistory ?? [];
+        const h = W.getChatHistory() ?? [];
         const toolResult = h.find((m: any) => m.role === 'tool' || (m.role === 'user' && m.content?.includes?.('list_files')));
         expect(toolResult).toBeTruthy();
     });
@@ -228,7 +228,7 @@ describe('runTurn — empty reasoning-only response', () => {
             String(u).includes('/chat/completions'));
         expect(llmCalls).toHaveLength(2);
         // The empty assistant message was popped, not left to pollute later turns.
-        const nullAssistants = (W.openaiHistory ?? []).filter(
+        const nullAssistants = (W.getChatHistory() ?? []).filter(
             (m: any) => m.role === 'assistant' && !m.content && !m.tool_calls?.length);
         expect(nullAssistants).toHaveLength(0);
     });

@@ -1,19 +1,19 @@
 import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { openaiHistory, activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
+import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
-import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneOAIHistory, pruneSessionHistory, repairOAIHistory } from './history.js';
+import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
-import { isCustomEndpoint, buildChatPayload, buildRequestMessages } from './payload-builder.js';
+import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { streamOAICompat, nonStreamOAICompat, decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
@@ -45,12 +45,10 @@ const FETCH_TIMEOUT_CUSTOM_MS = 5 * 60_000;   // 5 min for local servers (slow m
 // the existing history path. All appends are wrapped in try/catch.
 
 /**
- * Return the Session for the given AgentSession, falling back to the global
- * registry's active session (main agent path).
- * Returns null in the browser when no session has been created yet.
+ * Return the Session whose event log is the given AgentSession's history, or null.
  */
 function _getEvtSession(s: AgentSession): Session | null {
-    return s._session ?? registry.active();
+    return s._session ?? null;
 }
 
 /** Safe wrapper: append an event to the session log, silently ignoring errors. */
@@ -70,34 +68,19 @@ function _evtAppend(
     }
 }
 
-/**
- * Dual-write helper — appends a user/message to both _s.history (fn-tag path) and the event log.
- *
- * Every user-role content injection must write to BOTH sinks:
- *   1. _s.history  — only for fn-tag and no-session paths (histLegacy=true);
- *                    native sessions read from deriveMessages(), not _s.history.
- *   2. event log   — always; deriveMessages() is the sole source of truth for
- *                    native sessions, so omitting this would silently drop the message.
- *
- * Use this helper for any "append user message" that belongs to the simple path
- * (identical guards on both sinks).  Complex cases with different shapes on each
- * sink (e.g. nudge re-injection: history receives the full entry object; event log
- * wraps system-role content in <nudge> before storing as user/message) keep their
- * inline writes.
- */
-function _dualWriteUser(s: AgentSession, content: string, histLegacy: boolean): void {
-    if (histLegacy) s.history.push({ role: 'user', content });
+/** Append a user message to the event log (the session's history). */
+function _addUserMessage(s: AgentSession, content: string): void {
     _evtAppend(s, 'user/message', { role: 'user', content }, { surfaceOp: 'append' });
 }
 
 /**
- * mirror a compaction of _s.history to the event-log surface.
- * Called after compactHistory() rebuilds _s.history so deriveMessages() stays
- * in sync with what the LLM will receive on the next callOAI() call.
+ * Shadow the surface with a compacted history (anchor, summary, tail).
+ * Called with compactHistory()'s result so deriveMessages() stays in sync with
+ * what the LLM will receive on the next callOAI() call.
  *
  * @param sess       - active Session; caller verifies it is non-null
  * @param oldSurf    - snapshot of session.surface taken BEFORE compactHistory ran
- * @param newHistory - _s.history AFTER compactHistory rebuilt it
+ * @param newHistory - the compacted history compactHistory returned
  */
 function _mirrorCompactionToSession(
     sess:       Session,
@@ -154,16 +137,9 @@ function _mirrorCompactionToSession(
     }
 }
 
-/**
- * canonical history reader.
- * For native-format models with an active session, reads from deriveMessages() so
- * control-flow logic (token estimation, task message search, nudge detection) sees
- * the live event-log state rather than the stale _s.history array.
- * For fn-tag / no-session: falls back to _s.history (unchanged path).
- */
+/** The session's history as the model sees it (native shape), read from the live event log. */
 function _histR(s: AgentSession): any[] {
-    const sess = _getEvtSession(s);
-    return sess ? sess.deriveMessages() : s.history;
+    return _getEvtSession(s)?.deriveMessages() ?? [];
 }
 
 /**
@@ -312,20 +288,15 @@ async function _readOldContent(path: string): Promise<string | null> {
 
 
 // Rewrite tool-call arguments of the last assistant message, by call id. Native sessions: the
-// event log is what the next request reads (deriveMessages), so surface-replace the event;
-// fn-tag / no-session: mutate _s.history. Must run before the step's tool results are appended.
-function _patchLastAssistantArgs(s: AgentSession, histLegacy: boolean, step: number, edits: Map<string, (a: any) => any>): void {
+// event log is what the next request reads (deriveMessages), so surface-replace the event.
+// Must run before the step's tool results are appended.
+function _patchLastAssistantArgs(s: AgentSession, step: number, edits: Map<string, (a: any) => any>): void {
     const apply = (tcs: any[]) => tcs.map((tc: any) => {
         const f = edits.get(tc.id);
         if (!f) return tc;
         try { return { ...tc, function: { ...tc.function, arguments: JSON.stringify(f(JSON.parse(tc.function.arguments))) } }; }
         catch { return tc; }
     });
-    if (histLegacy) {
-        const m = s.history[s.history.length - 1];
-        if (m?.tool_calls?.length) m.tool_calls = apply(m.tool_calls);
-        return;
-    }
     const sess = _getEvtSession(s);
     if (!sess) return;
     const seq = sess.surface[sess.surface.length - 1];
@@ -1089,20 +1060,17 @@ type StepAction =
     | { do: 'continue' }                // continue the step loop
     | { do: 'retry' };                  // step-- then continue (token-cutoff discard)
 
-// Unified turn function: always uses openaiHistory as canonical format.
+// Unified turn function: the history is the session's event log, projected to messages per request.
 // Main turn loop — dispatches through callOAI (all providers including Google via OAI-compat).
 // Cross-provider fallback is handled by changing activeEndpoint with no history conversion.
 async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOverride = null as Set<string> | null, session, forceToolCall = false, maxSteps, excludeTools }: { toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] } = {}): Promise<string> {
     const _s = session ?? defaultSession;
-    // Every nudge must land in THIS turn's history. emitNudge() defaults to the
-    // module-level openaiHistory, which is only the same array when _s is defaultSession
-    // (the browser path, where .history is a getter proxying it). Headless entry points
-    // call createSession(), which allocates a fresh array — so the default silently sent
-    // every nudge to an array the run never reads, and the model saw none of them from
-    // 8028033 (2026-07-13, AgentSession) until this fix. Bind it once here so a new call
-    // site cannot reintroduce the bug. See docs/dead-code-audit-2026-07-25.md §4.5.
+    // Every nudge must land in THIS turn's history, which is `_s`'s event log — not the default
+    // chat's (headless runs have their own session; the model saw none of their nudges from
+    // 8028033 until emitNudge was bound here). The log is the only sink: emitNudge is told to
+    // leave history alone and the nudge is appended below. See docs/dead-code-audit-2026-07-25.md §4.5.
     const _emitNudge = (name: string, entry: any, opts: any = {}) => {
-        emitNudge(name, entry, { history: _s.history, ...opts });
+        emitNudge(name, entry, { suppressHistory: true, ...opts });
         // append all nudges to the event log as user/message so
         // deriveMessages() includes them in the effective history for the next callOAI.
         // NVIDIA uses role:'system' nudges (mid-turn system role) — stored in the event
@@ -1118,7 +1086,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 { surfaceOp: 'append' });
         }
     };
-    repairOAIHistory();
+    if (!_getEvtSession(_s)) _s._session = registry.create({ chatId: activeChatId ?? 'anon' });
+    if (_s === defaultSession) repairOAIHistory();
     resetSeenReadFiles();
     _lastMainRequest = null;   // set by this turn's first request; never another chat's
     setLastTurnDoneToken(false);
@@ -1161,12 +1130,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const _oaiAdapter = {
         pushNudge: text => _emitNudge('turn_state', _nudgeFn(text)),
         spliceFromSecondLast: count => {
-            // only splice _s.history for fn-tag / no-session; session handles native via surface replace.
-            // Guard: only splice when history.length >= count + 2, so the first user message
-            // (anchor at history[0]) is never removed — same invariant as the session surface guard.
-            const _splSessCheck = _getEvtSession(_s);
-            if (!_splSessCheck && _s.history.length >= count + 2) _s.history.splice(_s.history.length - 2, count);
-            // mirror the splice to the session surface via a tombstone replace.
+            // Drop the splice from the session surface via a tombstone replace.
             // Splices always start at history[length-2] and remove 'count' items.
             // In the session surface the same items are at surf[surfLen-2] .. surf[surfLen-2+(count-1)].
             // An empty-content user/message is the tombstone; deriveMessages() filters those.
@@ -1233,52 +1197,34 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             || (_lastPre?.role === 'system' && typeof _lastPre.content === 'string')
             ? _lastPre : null;
         convoLogTurn({ type: 'history_snapshot', history: _histR(_s).slice() });
-        // snapshot session surface BEFORE compactHistory wipes _s.history,
-        // so we can mirror the compaction to the event log afterwards.
-        // pass session's deriveMessages() as effectiveHistory so compactHistory
-        // reads from the live event log instead of the stale _s.history array.
+        // Snapshot the session surface BEFORE compaction, so the compacted history can shadow it.
         const _evtSessC = _getEvtSession(_s);
         const _preSurfC = _evtSessC ? [..._evtSessC.surface] : null;
         const _effectiveForCompact = _evtSessC ? _evtSessC.deriveMessages() : undefined;
         // Main loop's last request (system prompt + tools as sent) → compaction request shares its prefix.
-        await compactHistory(placeholder, activeEndpoint, _s, _effectiveForCompact, _lastMainRequest);
-        // Mirror compaction: shadow old surface events with summary + tail items.
+        const _compacted = await compactHistory(placeholder, activeEndpoint, _s, _effectiveForCompact, _lastMainRequest);
+        // Shadow the old surface events with the summary + tail items.
         if (_evtSessC && _preSurfC && _preSurfC.length > 1) {
-            _mirrorCompactionToSession(_evtSessC, _preSurfC, _s.history);
+            _mirrorCompactionToSession(_evtSessC, _preSurfC, _compacted);
         }
         ps._lastCompactionStep = step;
         ps._postCompactionTurns = 2;
         // Re-inject the nudge if compaction dropped it from the tail (rare safety net —
         // pending nudge is always the last message and thus always in the tail, so the
         // mirror already handles it in the common case; this fires only on unusual tail gaps).
-        // push to _s.history only for fn-tag (callOAI reads _s.history for fn-tag).
+        // deriveMessages() returns new objects on every call, so compare by content.
         if (_pendingNudge) {
             const _lastAfter = _histR(_s).at(-1);
-            // Native sessions: deriveMessages() returns new objects on every call so
-            // identity always mismatches even when the nudge is already present (mirror
-            // already re-appended it). Use content equality for native sessions to avoid
-            // a duplicate event-log entry; keep identity for fn-tag where the same
-            // _s.history array object is read back.
-            const _nudgeStillPresent = _evtSessC
-                ? (typeof _lastAfter?.content === 'string' &&
-                   typeof _pendingNudge.content === 'string' &&
-                   _lastAfter.content === _pendingNudge.content)
-                : _lastAfter === _pendingNudge;
-            if (!_nudgeStillPresent) {
-                const _isFnTagC = getModelToolFormat(
-                    (activeEndpoint ?? _defaultEndpoint()).provider ?? getProvider(),
-                    (activeEndpoint ?? _defaultEndpoint()).model) === 'fn-tag';
-                if (!_evtSessC || _isFnTagC) _s.history.push(_pendingNudge);
+            const _nudgeStillPresent = typeof _lastAfter?.content === 'string' &&
+                typeof _pendingNudge.content === 'string' &&
+                _lastAfter.content === _pendingNudge.content;
+            if (!_nudgeStillPresent && typeof _pendingNudge.content === 'string') {
                 // System-role nudges (NVIDIA) must be wrapped in <nudge> before storing
-                // as user/message — matches the _emitNudge dual-write pattern.
-                if (typeof _pendingNudge.content === 'string') {
-                    const _reInjectContent = _pendingNudge.role === 'user'
-                        ? _pendingNudge.content
-                        : `<nudge>${_pendingNudge.content}</nudge>`;
-                    _evtAppend(_s, 'user/message',
-                        { role: 'user', content: _reInjectContent },
-                        { surfaceOp: 'append' });
-                }
+                // as user/message — matches the _emitNudge pattern.
+                const _reInjectContent = _pendingNudge.role === 'user'
+                    ? _pendingNudge.content
+                    : `<nudge>${_pendingNudge.content}</nudge>`;
+                _addUserMessage(_s, _reInjectContent);
             }
         }
         oaiMaxTokens = null;
@@ -1310,10 +1256,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 return `${label} — only its last ${max} characters are shown:\n${snippet.slice(-max)}`;
             }).join('\n\n');
             const _flsContent = `[Files read before compaction — last-read content retained so you can verify fix state without re-reading:\n\n${body}]`;
-            const _isFnTagC2 = getModelToolFormat(
-                (activeEndpoint ?? _defaultEndpoint()).provider ?? getProvider(),
-                (activeEndpoint ?? _defaultEndpoint()).model) === 'fn-tag';
-            _dualWriteUser(_s, _flsContent, !_evtSessC || _isFnTagC2);
+            _addUserMessage(_s, _flsContent);
         }
         // Mark all files from _repeatCache as 'pruned' in _seenReadFiles before
         // clearing the cache. After compaction the history no longer contains those
@@ -1344,18 +1287,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // Called when the model returns text with no tool calls.
     // All control-flow exits (return / continue / step--+continue) are returned
     // as StepAction sentinels so the caller can drive the outer for-loop.
-    // histLegacy is a per-iteration local (re-derived inside the loop); passed explicitly
-    // because this function is defined before the for-loop.
     async function _handleTextOnlyStep(
         textContent: string, usage: any, step: number,
-        thinkTask: any, histLegacy: boolean,
+        thinkTask: any,
         nudge: (text: string) => any,
     ): Promise<StepAction> {
         // Output at the max_tokens callOAI actually sent (set on every response) → truncated.
         if (_lastMaxTokensSent > 0 && (usage?.completion_tokens ?? 0) >= _lastMaxTokensSent * _TOKEN_FILL_RATIO && step < _loopMax - 1) {
             thinkTask.append('\n[output cut off at token limit — discarding response, compacting before retry]\n', 'error');
-            // only pop from _s.history for fn-tag / no-session.
-            if (histLegacy) _s.history.pop();
             // tombstone the last assistant event so deriveMessages() excludes it.
             _replaceLastAssistantSurface(_s, step, _m => ({ role: 'assistant', content: null }), 'pop-tombstone');
             _forceCompact = true;
@@ -1368,7 +1307,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (_BROKEN_CALL_RE.test(textContent) && (ps.brokenCallRetries ?? 0) < 3 && step < _loopMax - 1 && !softStopPending) {
             ps.brokenCallRetries = (ps.brokenCallRetries ?? 0) + 1;
             thinkTask.append('\n[tool call arrived as unparseable text — asking again]\n', 'warn');
-            if (histLegacy) _s.history.pop();
             _replaceLastAssistantSurface(_s, step, _m => ({ role: 'assistant', content: null }), 'pop-tombstone');
             _emitNudge('broken_tool_call', nudge('Your last reply was a tool call written as text (tool-call markup in the message), so nothing ran. Send it again as a proper tool call.'));
             _forceToolCall = true;
@@ -1377,11 +1315,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Quality gate before turn-state checks
         const qc = _checkTextResponse(textContent, step, _loopMax, _garbledState);
         if (qc) {
-            // only mutate _s.history for fn-tag / no-session; native sessions use surface replace.
-            if (histLegacy) {
-                const lastMsg = _s.history[_s.history.length - 1];
-                _s.history[_s.history.length - 1] = { ...lastMsg, content: qc.truncated };
-            }
             // Surface-replace the last assistant event with truncated content.
             _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: qc.truncated, ...(m?.tool_calls?.length ? { tool_calls: m.tool_calls } : {}) }), 'truncation');
             // Re-inject original task so the agent doesn't lose context on
@@ -1565,23 +1498,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             const vcPost = await _validateStepOutput(textContent, ps, 'post-state', _taskGoal);
             if (vcPost) {
                 thinkTask.append(`\n[validation: ${vcPost.name} — nudging]\n`, 'warn');
-                if (_isEmptyReasoning) {
-                    // Remove the null-content assistant entry so it does not accumulate.
-                    // fn-tag/no-session: pop from _s.history (_histR returns the live array).
-                    // Native sessions: _histR returns a new deriveMessages() array each call,
-                    // so _h.pop() would be a no-op AND at(-1) returns the previous non-null
-                    // message (content:null is already filtered by deriveMessages()), making
-                    // the guard fail too. Skip entirely — deriveMessages() already excludes
-                    // content:null assistant entries (session.ts:191), so the entry is
-                    // invisible to callOAI without any explicit removal.
-                    if (histLegacy) {
-                        const _h = _histR(_s);
-                        const _last = _h.at(-1);
-                        if (_last?.role === 'assistant' && !_last?.content && !_last?.tool_calls?.length) {
-                            _h.pop();
-                        }
-                    }
-                }
+                // An empty-reasoning reply (null content) needs no removal: deriveMessages() already
+                // excludes content:null assistant entries (session.ts), so callOAI never sees it.
                 _emitNudge('step_validation', nudge(vcPost.nudge));
                 // Narration announcing its next action ("Let me write the game.js file now.")
                 // means the model intends a tool call but keeps emitting text — the reminder
@@ -1609,11 +1527,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         _stepPausedTools = _paused.length ? new Set(_paused) : null;
 
         // ── history pruning ────────────────────────────────────────────────────
-        // Native sessions prune directly on the event-log surface;
-        // fn-tag/no-session uses the array-based pruner on _s.history directly.
+        // Prune directly on the event-log surface.
         const _pruSess = _getEvtSession(_s);
-        if (_pruSess) { pruneSessionHistory(_pruSess); }
-        else          { pruneOAIHistory(_s.history); }
+        if (_pruSess) pruneSessionHistory(_pruSess);
 
         // ── Token estimation and compaction ─────────────────────────────────────────────
         const _tokEst = _lastInputTokens > 0
@@ -1680,7 +1596,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 async () => {
                     const msg = await callOAI((c, t) => thinkTask.append(c, t),
                         p => thinkTask.setRequest(JSON.stringify(p, null, 2)),
-                        { localHistory: _s.history, endpointOverride: activeEndpoint, maxTokens: oaiMaxTokens, inputTokensHint: _lastInputTokens, toolFilterOverride: _s._toolFilter ?? toolFilterOverride, evtSession: _s, evtStep: step });
+                        { endpointOverride: activeEndpoint, maxTokens: oaiMaxTokens, inputTokensHint: _lastInputTokens, toolFilterOverride: _s._toolFilter ?? toolFilterOverride, evtSession: _s, evtStep: step });
                     // Detect responses that need a retry — four triggers, all throw isTruncated
                     // so _makeOAIRetryHandler cycles the model pool (same path as 429s/server errors).
                     const _text = (typeof msg.content === 'string' ? msg.content : '').trim();
@@ -1891,21 +1807,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Capture raw content for hallucinated-call detection before _stripThinking removes it.
         const _rawMsgContent = typeof msg.content === 'string' ? msg.content : '';
         if (typeof msg.content === 'string') msg.content = _stripThinking(msg.content) || null;
-        const _isFnTag = getModelToolFormat(ep.provider ?? getProvider(), ep.model) === 'fn-tag';
-        const _evtSessActive = !!_getEvtSession(_s);
-        // _histLegacy: true when _s.history must be mutated directly — fn-tag (callOAI reads from
-        // it) or no active event-log session (pre-Phase-4 path). False for native sessions where
-        // the event log is the sole source of truth and _s.history mutations are skipped.
-        const _histLegacy = _isFnTag || !_evtSessActive;
-        // Dual-write: assistant/message.  Cannot use _dualWriteUser — this variant has
-        // fn-tag-specific shape differences (tool_calls stripped from the history copy so
-        // callOAI doesn't see them twice) and carries usage metadata in the event payload.
-        // Native sessions: the event log append below IS the sole write.
-        if (_histLegacy) {
-            if (_isFnTag && msg.tool_calls?.length) { const { tool_calls: _tc, ...msgNoTC } = msg; _s.history.push(msgNoTC); }
-            else _s.history.push(msg);
-        }
-        // Event log append (sole write for native sessions).
+        // Event log append: the sole write of the assistant message (a fn-tag model's request
+        // projection drops tool_calls, see fnTagMessages).
         _evtAppend(_s, 'assistant/message', {
             turn: _s._evtTurn ?? 0,
             step,
@@ -1955,8 +1858,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }));
                 sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'xml_pseudo_call_repaired', tool_calls: _synCalls });
                 thinkTask.append(`\n[repair: xml_pseudo_call → ${_xmlCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                // only mutate _s.history for fn-tag / no-session; native sessions use surface replace below.
-                if (_histLegacy) _s.history[_s.history.length - 1] = { ..._s.history[_s.history.length - 1], tool_calls: _synCalls };
                 _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: m?.content ?? null, tool_calls: _synCalls }), 'xml-repair');
                 calls = _synCalls;
             }
@@ -1975,8 +1876,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }));
                 sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'bracket_pseudo_call_repaired', tool_calls: _synCalls });
                 thinkTask.append(`\n[repair: bracket_pseudo_call → ${_brCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                // only mutate _s.history for fn-tag / no-session; native sessions use surface replace below.
-                if (_histLegacy) _s.history[_s.history.length - 1] = { ..._s.history[_s.history.length - 1], tool_calls: _synCalls };
                 _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: m?.content ?? null, tool_calls: _synCalls }), 'bracket-repair');
                 calls = _synCalls;
             }
@@ -1996,7 +1895,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }));
                 sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'inline_pseudo_call_repaired', tool_calls: _synCalls });
                 thinkTask.append(`\n[repair: inline_pseudo_call → ${_inCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                if (_histLegacy) _s.history[_s.history.length - 1] = { ..._s.history[_s.history.length - 1], content: null, tool_calls: _synCalls };
                 _replaceLastAssistantSurface(_s, step, () => ({ role: 'assistant', content: null, tool_calls: _synCalls }), 'inline-repair');
                 calls = _synCalls;
             }
@@ -2015,7 +1913,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
 
         if (!calls.length) {
-            const _sa = await _handleTextOnlyStep(textContent, usage, step, thinkTask, _histLegacy, _nudge);
+            const _sa = await _handleTextOnlyStep(textContent, usage, step, thinkTask, _nudge);
             if (_sa.do === 'return') return _sa.value;
             if (_sa.do === 'retry') { step--; }
             continue;
@@ -2177,7 +2075,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const _argEdits = new Map<string, (a: any) => any>();
         for (const [id, d] of oaiDiffs) _argEdits.set(id, (a: any) => ({ ...a, content: d, _contentCompressed: true }));
         for (const id of collectRanAsBash(results)) _argEdits.set(id, (a: any) => ({ ...a, language: 'bash' }));
-        if (_argEdits.size) _patchLastAssistantArgs(_s, _histLegacy, step, _argEdits);
+        if (_argEdits.size) _patchLastAssistantArgs(_s, step, _argEdits);
 
         const replaceFailNudge = await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
 
@@ -2233,25 +2131,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (r?.exit_code != null && r.exit_code !== 0) return `[EXIT CODE ${r.exit_code}]\n`;
             return '';
         };
-        // Dual-write: tool/result.  Cannot use _dualWriteUser — this variant has different
-        // history shapes for fn-tag (all results merged into one user message) vs native
-        // (individual role:'tool' entries), and the event log always gets one event per call.
-        if (_histLegacy) {
-            if (_isFnTag) {
-                const parts = results.map(({ tc, name, result }) => {
-                    const _pfx = _errPrefix(result);
-                    return `<tool_response>\n<tool_name>${name}</tool_name>\n<result>\n${_pfx}${JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget))}\n</result>\n</tool_response>`;
-                });
-                if (parts.length) _s.history.push({ role: 'user', content: parts.join('\n\n') });
-            } else {
-                for (const { tc, name, result } of results) {
-                    const _pfx = _errPrefix(result);
-                    _s.history.push({ role: 'tool', tool_call_id: tc.id, name, content: _pfx + JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget)) });
-                }
-            }
-        }
-        // Append one tool/result event per tool call to the event log (sole write for native sessions;
-        // always individual regardless of fn-tag vs. native — the event log captures semantic truth).
+        // Append one tool/result event per tool call to the event log — the only write of tool results.
+        // Always individual; a fn-tag request merges them per step (fnTagMessages).
         for (const { tc, name, result } of results) {
             const _pfx = _errPrefix(result);
             const _histContent = _pfx + JSON.stringify(_historyResult(name, _forHist(tc, result), false, stepBudget));
@@ -2363,7 +2244,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                                   : JSON.stringify(lsResult);
                         } catch (e) { lsOut = `(error: ${(e as Error).message})`; }
                         const _lsContent = `No results from "ls", results from "ls -la":\n${lsOut}`;
-                        _dualWriteUser(_s, _lsContent, _histLegacy);
+                        _addUserMessage(_s, _lsContent);
                         break;
                     }
                 }
@@ -2488,15 +2369,13 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const thinkBudget = isNvidia && !endpointOverride && modelSupportsThinking(provider, model)
         ? (forWorker ? getWorkerThinkingBudget() : thinkingLevelBudget('nvidia')) : 0;
     const customThinkBudget = isCustom ? thinkingLevelBudget('custom') : 0; // 0 = off
-    // when an event-log session is active and we're NOT in fn-tag format,
-    // derive the LLM history from deriveMessages() instead of the mutable _s.history array.
-    // fn-tag is excluded because it merges N tool results into one user message in _s.history —
-    // deriveMessages() produces native 1:1 format which would change the message structure.
-    // Workers are excluded: their localOH is the authoritative history (it includes the task
-    // message which is never added to the worker's event session). On step 0 deriveMessages()
-    // returns [] (only turn/start is logged) and the task would be silently lost.
-    const _evtSessOAI = (evtSession && !forWorker && toolFormat !== 'fn-tag') ? _getEvtSession(evtSession) : null;
-    const _effectiveHist: any[] = _evtSessOAI ? _evtSessOAI.deriveMessages() : (localHistory ?? openaiHistory);
+    // The history is the event log's projection (deriveMessages). A fn-tag model gets the text-tag
+    // shape of it (fnTagMessages). Workers are excluded: their localOH is the authoritative history
+    // (it includes the task message which is never added to the worker's event session). On step 0
+    // deriveMessages() returns [] (only turn/start is logged) and the task would be silently lost.
+    const _evtSessOAI = (evtSession && !forWorker) ? _getEvtSession(evtSession) : null;
+    let _effectiveHist: any[] = _evtSessOAI ? _evtSessOAI.deriveMessages() : (localHistory ?? []);
+    if (_evtSessOAI && toolFormat === 'fn-tag') _effectiveHist = fnTagMessages(_effectiveHist);
     // For custom endpoints, clamp max_tokens so prompt + output fits within the configured context window.
     // Prefer exact prompt_tokens from the previous response (inputTokensHint) + estimate of new messages
     // added since then; fall back to estimateTokens * 1.25 when no prior call exists.
@@ -2532,14 +2411,14 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // Guard: vLLM (Qwen3 Jinja2 template) raises "No user query found in messages." when
     // the messages array contains no user-role entry. This should never happen — the
     // invariant is that the first event appended to a session is the task's user message.
-    // If it is violated (e.g. by surface corruption), fall back to the _s.history anchor
+    // If it is violated (e.g. by surface corruption), fall back to the local-history anchor
     // so the request remains valid and a warning is logged for diagnosis.
     if (isCustom && !_hist.some((m: any) => m.role === 'user')) {
         console.warn('[callOAI] invariant: no user message in effective history —',
             'surface.length=', _evtSessOAI?.surface?.length ?? -1,
             'hist.length=', _hist.length,
             'last surface seqs=', JSON.stringify(_evtSessOAI?.surface?.slice(-5) ?? []));
-        const _anchor = (localHistory ?? openaiHistory ?? []).find((m: any) => m.role === 'user');
+        const _anchor = (localHistory ?? []).find((m: any) => m.role === 'user');
         if (_anchor) _hist = [_anchor, ..._hist];
     }
     // All provider quirks (thinking kwargs, cache keys, tool_choice suppression, top_p)

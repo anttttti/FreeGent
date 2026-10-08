@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 const W = window as any;
 let origNative: any;
@@ -26,7 +27,7 @@ afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; })
 describe('duplicate-output stubs', () => {
     it('calls 1–3 are served in full, the 4th and 5th are stubbed, none is refused', async () => {
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Why does sudo ignore the rule?' });
+        pushHistory(s, { role: 'user', content: 'Why does sudo ignore the rule?' });
         const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: 'cat /etc/sudoers.d/root_fix' }) } }] });
         const bodies: any[] = [];
         W.fetch = makeReplayFetch([call(1), call(2), call(3), call(4), call(5), { content: 'Found it.\nCOMPLETED' }], { onRequest: b => bodies.push(b) });
@@ -45,12 +46,12 @@ describe('duplicate-output stubs', () => {
     it('a cycle of stubbed steps gets one dup_cycle nudge', async () => {
         (globalThis as any).nativeExec = W.nativeExec = async (_l: string, code: string) => ({ stdout: `out of ${code}`, stderr: '', exit_code: 0 });
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Find the keyword config.' });
+        pushHistory(s, { role: 'user', content: 'Find the keyword config.' });
         const cmds = ['ls -R /workspace', 'ls -la /workspace', 'ls /data'];
         const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: cmds[i % 3] }) } }] });
         W.fetch = makeReplayFetch([...Array.from({ length: 16 }, (_, i) => call(i)), { content: 'Not found.\nCOMPLETED' }]);
         await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s });
-        const nudges = s.history.filter((m: any) => m.role === 'user' && /you are cycling through the same few commands/.test(String(m.content)));
+        const nudges = historyOf(s).filter((m: any) => m.role === 'user' && /you are cycling through the same few commands/.test(String(m.content)));
         expect(nudges).toHaveLength(1);
     });
 });

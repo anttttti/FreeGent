@@ -282,7 +282,7 @@ async function main() {
 
     // Fresh session (no history loaded from SQLite): classify tools from project
     // context in the background, exactly as createNewChat() does for WebUI.
-    if (!(dom.window as any).openaiHistory?.length) {
+    if (!(dom.window as any).getChatHistory?.().length) {
         (dom.window as any).classifyTools?.()
             .then(() => _t('main:classifyTools:done'))
             .catch(() => {});

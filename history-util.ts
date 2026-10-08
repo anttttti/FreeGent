@@ -1,9 +1,10 @@
 // history-util.js — FreeGent: shared helpers for reading the active conversation history
-import { lastProvider, openaiHistory } from './state.js';
+import { lastProvider } from './state.js';
+import { getChatHistory } from './chat-history.js';
 
 // The active conversation history in OAI format.
 export function activeHistory(): { hist: any[] } {
-    return { hist: openaiHistory as any[] };
+    return { hist: getChatHistory() };
 }
 
 // Plain visible text of a message (thoughts excluded). '' if none.

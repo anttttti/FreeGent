@@ -1,7 +1,7 @@
 // Tests for the shared history-walk helpers in history-util.ts.
 import { describe, it, expect, beforeEach } from 'vitest';
 
-// history-util.ts reads openaiHistory and lastProvider from state.ts via live bindings.
+// history-util.ts reads the chat history and lastProvider from state.ts via live bindings.
 // setup.js has already loaded state.ts (via workers.ts) before this file runs, so the
 // module-cache entries are real — vi.mock can't replace cached bindings at test time.
 // Use the window-bridged setters instead: they update the module-level variables directly
@@ -12,18 +12,17 @@ const { activeHistory, msgText, stripInjected, isRealUserMessage, lastExchange }
     await import('../history-util.ts');
 
 beforeEach(() => {
-    W.setOpenaiHistory([]);
+    W.setChatHistory([]);
     W.setLastProvider(undefined);
 });
 
 // ── activeHistory ─────────────────────────────────────────────────────────────
 
 describe('activeHistory', () => {
-    it('returns openaiHistory as hist', () => {
-        W.setOpenaiHistory([{ role: 'user', content: 'hi' }]);
+    it('returns the chat history as hist', () => {
+        W.setChatHistory([{ role: 'user', content: 'hi' }]);
         const { hist } = activeHistory();
-        // Use toEqual (value equality) — the hist reference is the module-level
-        // openaiHistory binding, not the array we passed to setOpenaiHistory.
+        // Value equality: hist is a projection of the chat's event log, not the array passed in.
         expect(hist).toEqual([{ role: 'user', content: 'hi' }]);
     });
 });
@@ -65,7 +64,7 @@ describe('stripInjected', () => {
 describe('lastExchange', () => {
     it('pulls the last assistant response and preceding real user message (OAI)', () => {
         W.setLastProvider('groq');
-        W.setOpenaiHistory([
+        W.setChatHistory([
             { role: 'user', content: 'first request' },
             { role: 'assistant', content: 'first answer' },
             { role: 'user', content: 'second request' },
@@ -76,7 +75,7 @@ describe('lastExchange', () => {
 
     it('skips <nudge> nudges and strips injected blocks from the user message', () => {
         W.setLastProvider('groq');
-        W.setOpenaiHistory([
+        W.setChatHistory([
             { role: 'user', content: '<active_guidance>g</active_guidance>\nthe real request' },
             { role: 'assistant', content: 'partial' },
             { role: 'user', content: '<nudge>continue</nudge>' },
@@ -87,7 +86,7 @@ describe('lastExchange', () => {
 
     it('returns empties on an empty history', () => {
         W.setLastProvider('groq');
-        W.setOpenaiHistory([]);
+        W.setChatHistory([]);
         expect(lastExchange()).toEqual({ userMsg: '', response: '' });
     });
 });

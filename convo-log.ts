@@ -6,6 +6,7 @@ import { FG_VERSION } from './build-info.js';
 import { escapeHtml } from './html-escape.js';
 import { redactText } from './secrets.js';
 import { getMcpServers } from './mcp.js';
+import { getChatHistory, setChatHistory } from './chat-history.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
 // Each entry records one LLM response turn (may include tool calls).
@@ -157,7 +158,7 @@ function pruneConvoLogFrom(chatId: string, sinceMs: number): void {
 // A chat's LLM history: in memory for the active chat, else its localStorage cache, else the
 // session store (localStorage keeps only the most recent chats — see saveHistory).
 async function _chatHistoryFor(id: string): Promise<any[] | null> {
-    if (id === activeChatId && openaiHistory.length) return openaiHistory;
+    if (id === activeChatId) { const live = getChatHistory(); if (live.length) return live; }
     let cached: any[] | null = null;
     try { const oh = localStorage.getItem(chatKey.oh(id)); if (oh) cached = JSON.parse(oh); } catch {}
     // The localStorage copy can be a trimmed snapshot (first message + recent tail) of a history
@@ -253,7 +254,7 @@ async function _buildChatPayload(id) {
         openaiHistory: oai,
         sessionLogTurns: turns,
         // fn-tag strips, tool-result truncations, and failed requests — content that never
-        // enters openaiHistory/sessionLogTurns at all (see session-store.js). Without this,
+        // enters the exported history/sessionLogTurns at all (see session-store.js). Without this,
         // a failure cascade with no successful turn in between is a silent gap in every export.
         rawCaptures: typeof sessionLoadRawMessages === 'function' ? await sessionLoadRawMessages(id) : [],
     };
@@ -363,7 +364,7 @@ async function importChat() {
         }
         // Create a new chat, populate it, and persist.
         createNewChat?.();
-        setOpenaiHistory?.(data.openaiHistory);
+        setChatHistory(data.openaiHistory);
 
         // Restore the chat name from the export.
         if (data.name) {

@@ -1,6 +1,9 @@
-// Tests for pruneOAIHistory, pruneGeminiHistory, repairOAIHistory, and _historyResult.
+// Tests for pruneSessionHistory, repairOAIHistory, and _historyResult.
 // Functions are on window via tests/setup.js (imported from history.ts).
 import { describe, it, expect, beforeEach } from 'vitest';
+import { Session } from '../session.ts';
+import { seedSessionFromHistory } from '../chat-history.ts';
+import { pruneSessionHistory } from '../history.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -20,16 +23,26 @@ function oaiTool(id, content) { return { role: 'tool', tool_call_id: id, content
 function oaiUser(text)        { return { role: 'user', content: text }; }
 function oaiAsstText(text)    { return { role: 'assistant', content: text }; }
 
-// ── pruneOAIHistory ───────────────────────────────────────────────────────────
+// ── pruneSessionHistory ───────────────────────────────────────────────────────
 
-describe('pruneOAIHistory', () => {
+// Prune `history` on a Session seeded from it, then write the projection back in place so the
+// assertions can index the messages as before.
+function prune(history) {
+    const sess = new Session({ id: `p${++_tcId}`, chatId: 'c' });
+    seedSessionFromHistory(sess, history);
+    const saved = pruneSessionHistory(sess);
+    history.splice(0, history.length, ...sess.deriveMessages());
+    return saved;
+}
+
+describe('pruneSessionHistory', () => {
     it('returns 0 and leaves history unchanged for a single read', () => {
         const id1 = tcId();
         const history = [
             oaiAssistant([[id1, 'read_file', { path: 'a.txt' }]]),
             oaiTool(id1, BIG),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(0);
         expect(history[1].content).toBe(BIG);
     });
@@ -42,7 +55,7 @@ describe('pruneOAIHistory', () => {
             oaiAssistant([[id2, 'read_file', { path: 'a.txt' }]]),
             oaiTool(id2, BIG),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(BIG.length);
         expect(history[1].content).toMatch(/^\[pruned:/);
         expect(history[3].content).toBe(BIG); // most recent read kept
@@ -58,7 +71,7 @@ describe('pruneOAIHistory', () => {
             oaiAssistant([[id3, 'read_file',  { path: 'a.txt' }]]),
             oaiTool(id3, BIG),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(0);
         expect(history[1].content).toBe(BIG);
     });
@@ -71,7 +84,7 @@ describe('pruneOAIHistory', () => {
             oaiAssistant([[id2, 'read_file', { path: 'tiny.txt' }]]),
             oaiTool(id2, SMALL),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(0);
     });
 
@@ -85,7 +98,7 @@ describe('pruneOAIHistory', () => {
             oaiAssistant([[id3, 'read_file', { path: 'f.txt' }]]),
             oaiTool(id3, BIG),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(BIG.length * 2);
         expect(history[1].content).toMatch(/^\[pruned:/);
         expect(history[3].content).toMatch(/^\[pruned:/);
@@ -102,7 +115,7 @@ describe('pruneOAIHistory', () => {
             oaiAssistant([[a2, 'read_file', { path: 'a.txt' }]]),
             oaiTool(a2, BIG),
         ];
-        const saved = window.pruneOAIHistory(history);
+        const saved = prune(history);
         expect(saved).toBe(BIG.length); // only first read of a.txt pruned
         expect(history[1].content).toMatch(/^\[pruned:/);
         expect(history[3].content).toBe(BIG); // b.txt only read once — kept
@@ -113,72 +126,72 @@ describe('pruneOAIHistory', () => {
 // ── repairOAIHistory ──────────────────────────────────────────────────────────
 
 describe('repairOAIHistory', () => {
-    beforeEach(() => { window.openaiHistory = []; });
+    beforeEach(() => { window.setChatHistory([]); });
 
     it('leaves a clean conversation untouched', () => {
         const id1 = tcId();
-        window.openaiHistory = [
+        window.setChatHistory([
             oaiUser('hello'),
             oaiAssistant([[id1, 'read_file', { path: 'f.txt' }]]),
             oaiTool(id1, 'content'),
             oaiAsstText('Done.'),
-        ];
+        ]);
         window.repairOAIHistory();
-        expect(window.openaiHistory).toHaveLength(4);
+        expect(window.getChatHistory()).toHaveLength(4);
     });
 
     it('removes null entries', () => {
-        window.openaiHistory = [oaiUser('hi'), null, oaiAsstText('ok'), null];
+        window.setChatHistory([oaiUser('hi'), null, oaiAsstText('ok'), null]);
         window.repairOAIHistory();
-        expect(window.openaiHistory).toHaveLength(2);
-        expect(window.openaiHistory.every(m => m != null)).toBe(true);
+        expect(window.getChatHistory()).toHaveLength(2);
+        expect(window.getChatHistory().every(m => m != null)).toBe(true);
     });
 
     it('strips trailing orphaned tool messages', () => {
         const id1 = tcId();
-        window.openaiHistory = [
+        window.setChatHistory([
             oaiUser('go'),
             oaiTool(id1, 'orphan'), // no preceding assistant with this id
-        ];
+        ]);
         window.repairOAIHistory();
-        expect(window.openaiHistory.some(m => m.role === 'tool')).toBe(false);
+        expect(window.getChatHistory().some(m => m.role === 'tool')).toBe(false);
     });
 
     it('removes trailing assistant message that declared tool_calls with no responses', () => {
         const id1 = tcId();
-        window.openaiHistory = [
+        window.setChatHistory([
             oaiUser('go'),
             oaiAssistant([[id1, 'read_file', { path: 'f.txt' }]]),
             // no tool response follows
-        ];
+        ]);
         window.repairOAIHistory();
-        expect(window.openaiHistory).toHaveLength(1);
-        expect(window.openaiHistory[0].role).toBe('user');
+        expect(window.getChatHistory()).toHaveLength(1);
+        expect(window.getChatHistory()[0].role).toBe('user');
     });
 
     it('removes an assistant+tool turn where a tool_call_id has no matching response', () => {
         const id1 = tcId(), id2 = tcId();
-        window.openaiHistory = [
+        window.setChatHistory([
             oaiUser('go'),
             oaiAssistant([[id1, 'read_file', { path: 'a.txt' }], [id2, 'read_file', { path: 'b.txt' }]]),
             oaiTool(id1, 'content-a'), // id2 has no response
-        ];
+        ]);
         window.repairOAIHistory();
         // The broken assistant+tool block is removed, only user remains
-        expect(window.openaiHistory).toHaveLength(1);
-        expect(window.openaiHistory[0].role).toBe('user');
+        expect(window.getChatHistory()).toHaveLength(1);
+        expect(window.getChatHistory()[0].role).toBe('user');
     });
 
     it('removes orphaned tool messages not declared by any assistant', () => {
         const id1 = tcId(), id2 = tcId();
-        window.openaiHistory = [
+        window.setChatHistory([
             oaiAssistant([[id1, 'read_file', { path: 'f.txt' }]]),
             oaiTool(id1, 'content'),   // valid — id1 is declared above
             oaiUser('nudge'),
             oaiTool(id2, 'orphan'),    // id2 declared nowhere
-        ];
+        ]);
         window.repairOAIHistory();
-        const roles = window.openaiHistory.map(m => m.role);
+        const roles = window.getChatHistory().map(m => m.role);
         // The orphaned tool after user must be removed; the valid tool(id1) may be kept
         const userIdx = roles.indexOf('user');
         expect(userIdx).toBeGreaterThan(-1);

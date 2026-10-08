@@ -3,7 +3,7 @@
 // Structure:
 //   Section A — Session unit tests (append, deriveMessages, fork, surface ops, freeze)
 //   Section B — SessionRegistry (create, active, fork, flush/load)
-//   Section C — Phase 2 dual-write: deriveMessages() must deep-equal openaiHistory
+//   Section C — the event log holds the turn: deriveMessages() has its assistant and tool entries
 //   Section D — Phase 3 flip: deriveMessages() is the LLM source of truth
 
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
@@ -351,9 +351,8 @@ describe('SessionRegistry', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 //
 // Asserts that after a runTurn() replay, session.deriveMessages() matches the
-// assistant and tool entries in openaiHistory.  The initial user message is pushed
-// directly to the session before the turn, matching the setupChat() call that
-// pre-populates openaiHistory.
+// the turn's assistant and tool entries. The initial user message is appended
+// directly to the session before the turn.
 
 const W = window as any;
 
@@ -372,7 +371,7 @@ function setupDualWriteChat() {
     }
     localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
     localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
-    W.setOpenaiHistory?.([{ role: 'user', content: 'Do the task.' }]);
+    W.setChatHistory?.([{ role: 'user', content: 'Do the task.' }]);
     W._sessionToolFilter = new Set(['list_files', 'web_search', 'execute_code']);
     return chatId;
 }
@@ -383,7 +382,7 @@ function makeDualWriteSession(chatId: string) {
     const reg = new SessionRegistry();
     const sess = reg.create({ id: `dw-${chatId}`, chatId });
     reg.setActive(sess);
-    // Pre-seed with the same initial user message setupDualWriteChat() put in openaiHistory.
+    // Pre-seed with the initial user message.
     sess.append('user/message', { role: 'user', content: 'Do the task.' }, { surfaceOp: 'append' });
     // Wire registry.active() on the real global registry so _getEvtSession() picks it up.
     // Import the module-level singleton (not the fresh reg above — that's for isolation).
@@ -393,7 +392,7 @@ function makeDualWriteSession(chatId: string) {
 describe('Phase 2 dual-write — single-step COMPLETED', () => {
     beforeEach(() => { localStorage.clear(); });
 
-    it('deriveMessages() matches openaiHistory after a one-step turn', async () => {
+    it('deriveMessages() holds the assistant reply after a one-step turn', async () => {
         const chatId = setupDualWriteChat();
 
         // Wire a fresh session as the active session in the global registry
@@ -404,22 +403,14 @@ describe('Phase 2 dual-write — single-step COMPLETED', () => {
         sess.append('user/message', { role: 'user', content: 'Do the task.' }, { surfaceOp: 'append' });
 
         W.fetch = makeReplayFetch([{ content: 'The answer is 42.\nCOMPLETED' }]);
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         const derived = sess.deriveMessages();
-        const history: any[] = W.openaiHistory ?? [];
-
-        // Phase 4: _s.history is no longer maintained for native sessions —
-        // event log is the sole source of truth.
-        const histAssistants = history.filter((m: any) => m.role === 'assistant');
         const derivedAssistants = derived.filter((m: any) => m.role === 'assistant');
 
         // Event log must have the assistant response
         expect(derivedAssistants.length).toBeGreaterThanOrEqual(1);
         expect(derivedAssistants[0]!.content).toContain('42');
-
-        // _s.history is empty (Phase 4 removed the dual-write)
-        expect(histAssistants.length).toBe(0);
     });
 });
 
@@ -438,20 +429,13 @@ describe('Phase 2 dual-write — tool call then COMPLETED', () => {
             { tool_calls: [{ id: 'tc0', type: 'function', function: { name: 'list_files', arguments: '{"path":"/"}' } }] },
             { content: 'All done.\nCOMPLETED' },
         ]);
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         const derived = sess.deriveMessages();
-        const history: any[] = W.openaiHistory ?? [];
-
-        // Phase 4: _s.history no longer maintained for native sessions.
-        const histToolMessages   = history.filter(
-            (m: any) => m.role === 'tool' || (m.role === 'user' && m.content?.includes?.('list_files')));
         const derivedToolResults = derived.filter((m: any) => m.role === 'tool');
 
         // Event log must have at least one tool result
         expect(derivedToolResults.length).toBeGreaterThanOrEqual(1);
-        // _s.history has no tool messages (Phase 4 removed dual-write)
-        expect(histToolMessages.length).toBe(0);
 
         // Event log has the assistant message with tool_calls
         const derivedAssistantWithTools = derived.filter(
@@ -471,7 +455,7 @@ describe('Phase 2 dual-write — tool call then COMPLETED', () => {
             { tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'list_files', arguments: '{"path":"/"}' } }] },
             { content: 'Done.\nCOMPLETED' },
         ]);
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         const derived = sess.deriveMessages();
         // Expected: [user] + [assistant w/ tool_calls] + [tool/result] + [assistant(final)]
@@ -496,14 +480,14 @@ describe('Phase 2 dual-write — event log completeness', () => {
             { tool_calls: [{ id: 'tc2', type: 'function', function: { name: 'list_files', arguments: '{"path":"/"}' } }] },
             { content: 'Done.\nCOMPLETED' },
         ]);
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         const headers = sess.events.filter(e => e.type === 'request/header');
         // Two LLM calls → two request/header events
         expect(headers.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('assistant/message events have matching content to openaiHistory', async () => {
+    it('assistant/message events carry the reply text', async () => {
         setupDualWriteChat();
 
         const { registry } = await import('../session-registry.ts');
@@ -512,20 +496,12 @@ describe('Phase 2 dual-write — event log completeness', () => {
         sess.append('user/message', { role: 'user', content: 'Do the task.' }, { surfaceOp: 'append' });
 
         W.fetch = makeReplayFetch([{ content: 'Specific answer here.\nCOMPLETED' }]);
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         const assistantEvt = sess.events.find(
             e => e.type === 'assistant/message' && (e.data as any).message?.content?.includes('Specific answer')
         );
         expect(assistantEvt).toBeDefined();
-
-        // Phase 4: _s.history is no longer maintained for native sessions.
-        // The event log is the sole source of truth — _s.history stays empty.
-        const history: any[] = W.openaiHistory ?? [];
-        const histAssistant  = history.find(
-            (m: any) => m.role === 'assistant' && m.content?.includes('Specific answer')
-        );
-        expect(histAssistant).toBeUndefined();
     });
 });
 
@@ -553,7 +529,7 @@ describe('Phase 3 flip — callOAI uses deriveMessages() for native-format model
             [{ content: 'Answer.\nCOMPLETED' }],
             { onRequest: (body: any) => capturedPayloads.push(body) },
         );
-        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
+        await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: W.createSession({ _session: sess }) });
 
         // The payload messages (minus the system prompt) should match deriveMessages()
         // taken at the point before callOAI ran (i.e., the initial user message).

@@ -45,7 +45,7 @@ after touching bridges or load order.
   constructor parameter properties) in files on that path.
 - **No raw `fetch(...)` to LLM APIs** — use `callLLMComplete` or the streaming loops (see below).
 - **`buildSystemPrompt()` runs on every LLM request** — keep it cheap; don't cache its output.
-- **All history uses OAI format.** `openaiHistory` is the single canonical format: `{role: 'user'|'assistant'|'system'|'tool', content}`. Gemini requests are converted from OAI format at call time. Workers get their own local history; they never share the module-level array.
+- **All history uses OAI format.** The chat's history is a Session event log (`chat-history.ts`); `getChatHistory()` projects it to `{role: 'user'|'assistant'|'tool', content}` messages, and that plain array is also the persisted and exported format (the export key is still `openaiHistory`). Gemini requests are converted from OAI format at call time; fn-tag models get a text-tag projection per request (`fnTagMessages`). Workers get their own local history (`localOH`); they never touch the chat's.
 - **Tool results go through `truncateResultForHistory()` before history storage** (`llm-loops.js`). Add a truncation case there for any new tool that can return large results.
 
 ## Key global mutable state (state.ts)
@@ -55,7 +55,7 @@ a `globalThis` bridge (unused since all files are modules). Highlights:
 
 | Variable | Purpose |
 |---|---|
-| `openaiHistory` | Director conversation history (OAI format; converted for Gemini at call time) |
+| `getChatHistory()` / `setChatHistory()` (`chat-history.ts`) | Director conversation history: a projection of the chat's Session (OAI format; converted for Gemini at call time) |
 | `activePlaceholder` | Current chat response container; null between turns |
 | `activeAbortController` | Stop-button AbortController; null between turns |
 | `agentBreaking` | True while a break (partial stop) is in progress |

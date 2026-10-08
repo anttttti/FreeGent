@@ -3,6 +3,7 @@
 // All framework guidance injected mid-conversation (agent nudges, skill guidance, etc.)
 // goes through emitNudge so history, JSONL log, and DOM render are always in sync.
 // Follows the step-validator pattern: ES module, exports, window bridge.
+import { appendChatMessage } from './chat-history.js';
 
 // Framework-injected wrapper tags that should never reach a human reader as literal text —
 // the model needs these XML markers, but a person reading the nudge bubble just needs the
@@ -45,10 +46,8 @@ export function emitNudge(
         const raw = typeof textOrEntry === 'string' ? textOrEntry : textOrEntry.content.replace(/<\/?nudge>/g, '');
         opts.appendPartTo.push({ text: raw });
     } else if (!opts?.suppressHistory) {
-        const hist =
-            opts?.history ??
-            (typeof openaiHistory !== 'undefined' ? openaiHistory : null);
-        if (hist && Array.isArray(hist)) hist.push(entry);
+        if (opts?.history) { if (Array.isArray(opts.history)) opts.history.push(entry); }
+        else appendChatMessage(entry);
     }
 
     if (!opts?.suppressLog && typeof convoLogTurn === 'function') {

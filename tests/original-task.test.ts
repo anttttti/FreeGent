@@ -38,13 +38,13 @@ describe('graded-test gate', () => {
     });
 
     it('asks for the task\'s graded test, not the guidance example', async () => {
-        W.setOpenaiHistory([{ role: 'user', content: GUIDANCE + TASK }]);
+        W.setChatHistory([{ role: 'user', content: GUIDANCE + TASK }]);
         W.fetch = makeReplayFetch([
             { tool_calls: [{ id: 'e1', type: 'function', function: { name: 'execute_code', arguments: '{"language":"bash","code":"patch"}' } }] },
             { content: 'Fixed.\nCOMPLETED' },
         ]);
         await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
-        const gate = W.openaiHistory.map((m: any) => m.content).find((c: any) => typeof c === 'string' && c.includes('Run the graded test now'));
+        const gate = W.getChatHistory().map((m: any) => m.content).find((c: any) => typeof c === 'string' && c.includes('Run the graded test now'));
         expect(gate).toBeDefined();
         expect(gate).toContain('astropy/wcs/tests/test_wcs.py::test_zero_size_input');
         expect(gate).not.toContain('test_foo.py');

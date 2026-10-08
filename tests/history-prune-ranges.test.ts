@@ -3,7 +3,7 @@
 // between. Pruning every earlier read of a path left the model one range at a time, and it
 // re-read two ranges alternately until the step limit (v0.55 SWE-bench Lite).
 import { describe, it, expect } from 'vitest';
-import { pruneOAIHistory, pruneSessionHistory } from '../history.ts';
+import { pruneSessionHistory } from '../history.ts';
 import { Session } from '../session.ts';
 
 const BIG = 'x'.repeat(900);   // above the 800-char pruning minimum
@@ -19,12 +19,7 @@ function oaiHistory(calls: Call[]): any[] {
         ];
     });
 }
-const prunedOAI = (calls: Call[]) => {
-    const h = oaiHistory(calls);
-    pruneOAIHistory(h);
-    return h.filter(m => m.role === 'tool').map(m => m.content.startsWith('[pruned:'));
-};
-const prunedSession = (calls: Call[]) => {
+const pruned = (calls: Call[]) => {
     const sess = new Session({ id: `s${++_n}`, chatId: 'c' });
     sess.append('user/message', { role: 'user', content: 'task' }, { surfaceOp: 'append' });
     for (const m of oaiHistory(calls)) {
@@ -38,7 +33,7 @@ const prunedSession = (calls: Call[]) => {
 const A = { path: 'f.py', start_line: 514, end_line: 572 };
 const B = { path: 'f.py', start_line: 450, end_line: 513 };
 
-describe.each([['pruneOAIHistory', prunedOAI], ['pruneSessionHistory', prunedSession]])('%s', (_name, pruned) => {
+describe('pruneSessionHistory', () => {
     // v0.59 xarray-6744: full copies were pruned in favour of later "Already read" notes, so the
     // lines were in no result at all and the model re-read the window ~40 times.
     it('a later read whose result holds no lines (a note or refusal) does not cover', () => {
@@ -78,9 +73,14 @@ describe.each([['pruneOAIHistory', prunedOAI], ['pruneSessionHistory', prunedSes
 // range. The stub now names the later read that holds the lines.
 describe('pruned read stub', () => {
     it('names the pruned range and the later read that covers it', () => {
-        const h = oaiHistory([['read_file', { path: 'f.py', start_line: 280, end_line: 350 }], ['read_file', { path: 'f.py', start_line: 200, end_line: 350 }]]);
-        pruneOAIHistory(h);
-        const stub = h.filter(m => m.role === 'tool')[0].content;
+        const sess = new Session({ id: `s${++_n}`, chatId: 'c' });
+        sess.append('user/message', { role: 'user', content: 'task' }, { surfaceOp: 'append' });
+        for (const m of oaiHistory([['read_file', { path: 'f.py', start_line: 280, end_line: 350 }], ['read_file', { path: 'f.py', start_line: 200, end_line: 350 }]])) {
+            if (m.role === 'assistant') sess.append('assistant/message', { turn: 0, step: 0, message: m }, { surfaceOp: 'append' });
+            else sess.append('tool/result', { turn: 0, step: 0, callId: m.tool_call_id, name: m.name, content: m.content }, { surfaceOp: 'append' });
+        }
+        pruneSessionHistory(sess);
+        const stub = sess.deriveMessages().filter((m: any) => m.role === 'tool')[0].content;
         expect(stub).toMatch(/^\[pruned: dup read "f\.py" \(lines 280–350\)/);
         expect(stub).toContain('later read_file result of the same file (lines 200–350)');
         expect(stub).toContain('Do not read them again');

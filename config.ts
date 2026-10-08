@@ -1,5 +1,6 @@
 // config.js — FreeGent: global state, settings helpers, model catalog, pyodide, utilities
 // Loaded first; all other modules depend on this.
+import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
@@ -374,8 +375,6 @@ export function getAgentMaxSteps() {
 }
 export function getAgentLeanWorkers()        { return ls('fg_agent_lean_workers', 'true') !== 'false'; }
 export function getAgentWorkerHistory()      { return ls('fg_agent_worker_history', 'true') !== 'false'; }
-// Run browser turns on a Session event log (browser-session.ts) instead of the legacy array path.
-export function getSessionHistory()          { return ls('fg_session_history', 'true') !== 'false'; }
 function getAgentPromptTemplate()     { return ls('fg_agent_prompt_template', ''); }
 export function getAgentConcisePrompts()     { return ls('fg_agent_concise_prompts', 'true') !== 'false'; }
 export function getAgentWorkerReduce()       { return ls('fg_agent_worker_reduce', 'true') !== 'false'; }
@@ -917,11 +916,11 @@ function _kFmt(n: number): string {
     return String(n);
 }
 // No-arg accessor for TUI status bar — returns live estimate of current history
-// token usage and the configured context limit without exposing openaiHistory directly.
+// token usage and the configured context limit without exposing the chat history directly.
 // Tool schemas are sent as a separate `tools` param in callOAI and are not part of
-// openaiHistory, so we add their estimate explicitly via the window-bridged buildOAITools.
+// the chat history, so we add their estimate explicitly via the window-bridged buildOAITools.
 export function getContextUsage(): { used: number; limit: number } {
-    const histTokens  = estimateTokens(openaiHistory);
+    const histTokens  = estimateTokens(getChatHistory());
     const toolSchemas = typeof buildOAITools === 'function'
         ? buildOAITools() : [];
     const toolTokens  = toolSchemas.length ? estimateTokens(toolSchemas) : 0;
@@ -931,7 +930,7 @@ function updateTokenLabel() {
     const toolSchemas = typeof buildOAITools === 'function'
         ? buildOAITools() : [];
     const toolTokens  = toolSchemas.length ? estimateTokens(toolSchemas) : 0;
-    const t         = estimateTokens(openaiHistory) + toolTokens;
+    const t         = estimateTokens(getChatHistory()) + toolTokens;
     const threshold = getContextThreshold();
     const pct       = threshold > 0 ? t / threshold : 0;
     // Show "4.2k / 128k"; hide below 100 tokens (empty chat)
@@ -1123,7 +1122,7 @@ Object.assign(window, {
     getSandboxProvider, browserBashAvailable, getGeoCache, prefetchGeoCache,
     getAgentToolTruncation, getAgentMaxToolResult, getDirectorMaxToolResult,
     getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens,
-    getAgentMaxSteps, getAgentLeanWorkers, getSessionHistory,
+    getAgentMaxSteps, getAgentLeanWorkers,
     getAgentWorkerHistory, getAgentPromptTemplate, getAgentConcisePrompts,
     getAgentWorkerReduce, getAgentRoleModelRouting,
     getEndpointRotation, getRotationStepN, getAgentMaxDelegationDepth,

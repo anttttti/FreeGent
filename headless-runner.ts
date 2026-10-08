@@ -531,8 +531,8 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         if (resumeSessionId && !workflowMode) {
             const history = await adapter.loadHistory(chatId);
             _t('setup:sqlite_loadHistory_done');
-            if (history?.length && typeof dom.window.setOpenaiHistory === 'function')
-                dom.window.setOpenaiHistory(history);
+            if (history?.length && typeof dom.window.setChatHistory === 'function')
+                dom.window.setChatHistory(history);
         }
     } catch (e: any) {
         console.warn('[headless] session store init failed:', e?.message);
@@ -593,8 +593,8 @@ export async function resumeSession(chatId: string): Promise<boolean> {
         if (!history?.length) return false;
         if (typeof dom.window.setActiveChatId === 'function')
             dom.window.setActiveChatId(chatId);
-        if (typeof dom.window.setOpenaiHistory === 'function')
-            dom.window.setOpenaiHistory(history);
+        if (typeof dom.window.setChatHistory === 'function')
+            dom.window.setChatHistory(history);
         // Update lastAt so this session sorts first next time.
         const all = await _sessionAdapter.loadChatList();
         const entry = all.find(c => c.id === chatId);
@@ -684,9 +684,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
     const _flushFinalHistory = () => {
         try {
-            // _s.history is empty for native sessions; read from event log instead.
             const _evtSess = session._session ?? null;
-            const _finalHist = _evtSess ? _evtSess.deriveMessages() : session.history.slice();
+            const _finalHist = _evtSess ? _evtSess.deriveMessages() : [];
             convoLogTurn({ type: 'history_final', history: _finalHist });
         } catch {}
     };
@@ -740,9 +739,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     if (output === '*(break)*') {
         const _strip: (t: string) => string =
             typeof _stripTerminal === 'function' ? _stripTerminal : (t: string) => t;
-        // _s.history is empty for native sessions; read from event log instead.
         const _evtSess = session._session ?? null;
-        const _hist: any[] = _evtSess ? _evtSess.deriveMessages() : (session?.history ?? []);
+        const _hist: any[] = _evtSess ? _evtSess.deriveMessages() : [];
         for (let _i = _hist.length - 1; _i >= 0; _i--) {
             const _m = _hist[_i];
             if (_m?.role !== 'assistant') continue;
