@@ -449,6 +449,7 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'nvidia/nemotron-3-ultra-550b-a55b:free',             label:'Nemotron Ultra 550B (free)',    released:'2026-06', contextK:1000, params:550,  media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'550B MoE (55B active); 1M context; highest-capability Nemotron reasoning; fn-tag tool calls; free via OpenRouter' },
     { provider:'openrouter', model:'nvidia/nemotron-3.5-lightning:free',                 label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'30B MoE (3B active); 1M context; fast tool-capable model; free via OpenRouter' },
     { provider:'openrouter', model:'apodex/apodex-1.1-mini:free',                       label:'Apodex 1.1 Mini (free)',       released:'2026-10', contextK:262,  params:null, media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'Reasoning-first model for long-horizon research; 262K context; free via OpenRouter' },
+    { provider:'openrouter', model:'inclusionai/ling-3.1-flash',                          label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:262,  params:560,  media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'560B MoE (25B active); 262K ctx; hybrid reasoning; $0 on OpenRouter (listed free, no :free suffix)' },
     { provider:'openrouter', model:'nvidia/nemotron-3-super-120b-a12b:free',              label:'Nemotron Super 120B (free)',    released:'2026-03', contextK:262,  params:120,  media:['text'],                        tools:true, thinking:true,  rpm:20,  rpd:50,   note:'High-capability reasoning; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron Nano Omni 30B (free)',released:'2026-04', contextK:256,  params:30,   media:['text','image'],                tools:true, thinking:true,  rpm:20,  rpd:50,   note:'Multimodal reasoning; 256K context; free via OpenRouter' },
     { provider:'openrouter', model:'google/gemma-4-31b-it:free',                         label:'Gemma 4 31B (free)',           released:'2026-04', contextK:262,  params:31,   media:['text','image'],                tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Google Gemma 4 31B; 262K context; free via OpenRouter' },
@@ -467,6 +468,8 @@ const MODEL_CATALOG = [
     { provider:'nous', model:'poolside/laguna-s-2.1:free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:262, params:118, media:['text'],                 tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent, 70.2% Terminal-Bench; free via Nous Portal. Kilo lists it as retiring 2026-10-31' },
     { provider:'nous', model:'poolside/laguna-xs-2.1:free',          label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262, params:33,  media:['text'],                 tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Nous Portal' },
     { provider:'nous', model:'meituan/longcat-2.5-preview:free',     label:'LongCat 2.5 Preview (free)',   released:'2026-09', contextK:1048, params:null,media:['text','image'],        tools:true, thinking:true,  note:'Meituan LongCat 2.5 preview; 1M ctx; $0 on Nous Portal; tool calls verified through Nous 2026-10-06 (longcat-2.0:free now returns 404 "no longer free")' },
+    { provider:'nous', model:'inclusionai/ling-3.1-flash',      label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:262, params:560, media:['text'],                 tools:true, thinking:true,  note:'560B MoE (25B active); 262K ctx; hybrid reasoning; $0 on Nous Portal (no :free suffix)' },
+    { provider:'nous', model:'upstage/solar-mini4:free',      label:'Solar Mini 4 (free)',          released:'2026-09', contextK:524, params:35,  media:['text'],                 tools:true, thinking:true,  note:'35B MoE (3B active); 524K ctx; built for agentic use; free via Nous Portal' },
     { provider:'nous', model:'inclusionai/ling-3.0-flash-fin:free',   label:'Ling 3.0 Flash Fin (free)',   released:'2026-08', contextK:262, params:124, media:['text'],                 tools:true, thinking:true,  note:'124B MoE (5.1B active); 262K ctx; finance-focused; real-world investment research; free via Nous Portal' },
     { provider:'nous', model:'inclusionai/ling-3.0-flash-sante:free', label:'Ling 3.0 Flash Sante (free)', released:'2026-09', contextK:262, params:124, media:['text'],                 tools:true, thinking:true,  note:'124B MoE (5.1B active); 262K ctx; health/medicine-focused; free via Nous Portal' },
     // ── TokenHarbor ───────────────────────────────────────────────────────────
@@ -481,7 +484,6 @@ const MODEL_CATALOG = [
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
     { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  noKey:true, note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
     { provider:'kilo', model:'inclusionai/ling-3.1-flash',                      label:'Ling 3.1 Flash (free)',            released:'2026-10', contextK:262,  params:560, media:['text'],        tools:true, thinking:true,  noKey:true, note:'560B MoE (25B active); 262K ctx; hybrid reasoning; free via Kilo (listed free, no :free suffix); 30B tokens/day on the Kilo leaderboard in its first days' },
-    { provider:'kilo', model:'apodex/apodex-1.1-mini:free',                     label:'Apodex 1.1 Mini (free)',           released:'2026-10', contextK:262,  params:null, media:['text'],       tools:true, thinking:true,  noKey:true, note:'Reasoning-first; long-horizon research and forecasting; 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  noKey:true, note:'120B MoE (12B active); 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
@@ -494,9 +496,12 @@ const MODEL_CATALOG = [
 
     // ── Vercel AI Gateway ──────────────────────────────────────────────────────
     // https://vercel.com/ai-gateway — OAI-compatible gateway; API key required for inference.
-    // Free ($0/token) models available without credits; /models list may omit them — probed individually.
+    // Free ($0/token) models; the public /models list tags them "free" (the updater probes known ids if it omits them).
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token). Kilo lists it as retiring 2026-10-31' },
+    { provider:'vercel', model:'inclusionai/ling-3.1-flash-free',      label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:262,  params:560,  media:['text'],        tools:true,  thinking:true,  note:'560B MoE (25B active); hybrid reasoning; free via Vercel AI Gateway ($0/token)' },
+    { provider:'vercel', model:'inclusionai/ling-3.1-flash',           label:'Ling 3.1 Flash',               released:'2026-10', contextK:262,  params:560,  media:['text'],        tools:true,  thinking:true,  note:'Same model as ling-3.1-flash-free; also listed at $0/token on Vercel AI Gateway' },
+    { provider:'vercel', model:'stealth/glyph-cluster',                label:'Glyph Cluster (stealth)',      released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true,  thinking:true,  note:'Anonymous early-access reasoning model, $0/token on Vercel AI Gateway; the provider may retain prompts and outputs' },
 ];
 
 function getEnabledModels() {
@@ -624,17 +629,17 @@ const _DEFAULT_MAIN_MODELS = [
     // Ultra, Dots 3 and Step 3.7 entries are the free models developers use most on the Kilo
     // leaderboard (https://kilo.ai/leaderboard/llm.txt, 2026-10-06).
     'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
+    'kilo|inclusionai/ling-3.1-flash',                 // 560B MoE (25B active); new 2026-10
+    'nous|inclusionai/ling-3.1-flash',                 // same model on Nous Portal; separate quota
     'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota
     'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
     'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
     // Large reasoning models
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; weekly quota
-    'kilo|inclusionai/ling-3.1-flash',                 // 560B MoE (25B active); new 2026-10
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
     'kilo|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
     'nous|stepfun/step-3.7-flash:free',
-    'kilo|apodex/apodex-1.1-mini:free',                // reasoning-first; new 2026-10
     'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
 ];
 
