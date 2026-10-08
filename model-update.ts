@@ -24,8 +24,8 @@ async function _proxyGet(url: string): Promise<any> {
 
 // GET-via-POST-proxy — for providers that require Bearer auth (blocked by CORS in browser).
 async function _proxyBearer(url: string, key: string): Promise<any> {
-    if (!key) return null;
-    return _proxyFetch(url, key);
+    // With no key the Worker injects its shared key where it has one; the public lists need none.
+    return _proxyFetch(url, key || undefined);
 }
 
 // Like _proxyBearer but works without a key (adds Bearer only when key is provided).
@@ -135,7 +135,6 @@ const _isTokenHarborFree = (m: any): boolean =>
 async function _fetchTokenHarborModels(): Promise<FetchResult> {
     try {
         const key = typeof getTokenHarborKey === 'function' ? getTokenHarborKey() : (localStorage.getItem('fg_tokenharbor_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
         const json = await _proxyBearer('https://tokenharbor.ai/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
@@ -320,7 +319,6 @@ const _GROQ_EXCL = /^whisper|prompt-guard|canopylabs\/orpheus|^groq\/compound|sa
 async function _fetchGroqModels(): Promise<FetchResult> {
     try {
         const key = typeof getGroqKey === 'function' ? getGroqKey() : (localStorage.getItem('fg_groq_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
         const json = await _proxyBearer('https://api.groq.com/openai/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const data: any[] = json?.data ?? [];
@@ -373,7 +371,6 @@ const _NVIDIA_EXCL = new RegExp(
 async function _fetchNvidiaModels(): Promise<FetchResult> {
     try {
         const key = typeof getNvidiaKey === 'function' ? getNvidiaKey() : (localStorage.getItem('fg_nvidia_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
         const json = await _proxyBearer('https://integrate.api.nvidia.com/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const data: any[] = json?.data ?? [];
@@ -404,7 +401,6 @@ const _NOUS_EXCL_PREVIEW = /\bpreview\b|\bexperimental\b|\balpha\b|\bbeta\b/i;
 async function _fetchNousModels(): Promise<FetchResult> {
     try {
         const key = typeof getNousKey === 'function' ? getNousKey() : (localStorage.getItem('fg_nous_key') ?? '');
-        if (!key) return { live: [], rejected: [] };
         const json = await _proxyBearer('https://inference-api.nousresearch.com/v1/models', key);
         if (!json) return { live: [], rejected: [] };
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
@@ -618,8 +614,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     {
         const total = nvidiaResult.live.length + nvidiaResult.rejected.length;
         if (!total) {
-            const hasKey = !!(typeof getNvidiaKey === 'function' ? getNvidiaKey() : localStorage.getItem('fg_nvidia_key'));
-            if (hasKey) errors.push('NVIDIA: could not fetch model list (network error or timeout)');
+            errors.push('NVIDIA: could not fetch model list (network error or timeout)');
         } else {
             proposals.push(..._diffProvider(
                 'nvidia', nvidiaResult, catalog, catalogKeys,
@@ -662,26 +657,20 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     // ── Vercel AI Gateway ─────────────────────────────────────────────────────
     {
         const total = vercelResult.live.length + vercelResult.rejected.length;
-        const hasKey = !!(typeof getVercelKey === 'function' ? getVercelKey() : localStorage.getItem('fg_vercel_key'));
-        if (!total) {
-            if (hasKey) errors.push('Vercel AI Gateway: could not fetch model list (network error or timeout)');
-            // else: no key configured — silently skip (key required for inference)
-        } else if (hasKey) {
-            proposals.push(..._diffProvider(
-                'vercel', vercelResult, catalog, catalogKeys,
-                'Free ($0/token) via Vercel AI Gateway; API key required',
-            ));
-        }
-        // If we fetched models but have no key, don't propose — user can't use them yet.
+        // The model list is public, so propose the free models even before a key is saved
+        // (inference still needs one). Gating on the key hid them from users who had not added it yet.
+        if (!total) errors.push('Vercel AI Gateway: could not fetch model list (network error or timeout)');
+        else proposals.push(..._diffProvider(
+            'vercel', vercelResult, catalog, catalogKeys,
+            'Free ($0/token) via Vercel AI Gateway; API key required',
+        ));
     }
 
     // ── Nous Portal ────────────────────────────────────────────────────────────
     {
         const total = nousResult.live.length + nousResult.rejected.length;
         if (!total) {
-            const hasKey = !!(typeof getNousKey === 'function' ? getNousKey() : localStorage.getItem('fg_nous_key'));
-            if (hasKey) errors.push('Nous Portal: could not fetch model list (network error or timeout)');
-            // else: no key configured — silently skip
+            errors.push('Nous Portal: could not fetch model list (network error or timeout)');
         } else {
             proposals.push(..._diffProvider(
                 'nous', nousResult, catalog, catalogKeys,
