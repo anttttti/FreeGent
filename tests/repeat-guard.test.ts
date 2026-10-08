@@ -76,7 +76,7 @@ describe('runTurn with a looping call', () => {
         localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
         localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
         W._sessionToolFilter = new Set(['execute_code']);
-        W.setOpenaiHistory([{ role: 'user', content: 'Wait for postgres, then load the CSV.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Wait for postgres, then load the CSV.' }]);
     });
     const psCall = (i: number) => ({ tool_calls: [{ id: `p${i}`, type: 'function', function: { name: 'execute_code', arguments: '{"language":"bash","code":"ps aux | grep postgres"}' } }] });
 
@@ -88,7 +88,7 @@ describe('runTurn with a looping call', () => {
         const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
         expect(exec).toHaveBeenCalledTimes(REPEAT_LIMIT);
         expect(result).toMatch(/stopped|BLOCKED/);
-        const refusals = W.openaiHistory.filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed: this exact call already ran'));
+        const refusals = W.getChatHistory().filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed: this exact call already ran'));
         expect(refusals.length).toBeGreaterThan(0);
         // A model that already has the answer is told to give it, not only to declare BLOCKED.
         expect(refusals[0].content).toContain('If the output you already have answers the task, give that answer now');
@@ -111,7 +111,7 @@ describe('runTurn with a looping call', () => {
             { onRequest: b => bodies.push(b) });
         const ep = { provider: 'vllm', url: 'http://vllm.test/v1/chat/completions', model: 'm', key: '' };
         await W.runTurn(ep, NULL_RENDER_ADAPTER);
-        const stuckAt = W.openaiHistory.findIndex((m: any) => m.role === 'user' && String(m.content).includes('produced identical results'));
+        const stuckAt = W.getChatHistory().findIndex((m: any) => m.role === 'user' && String(m.content).includes('produced identical results'));
         expect(stuckAt).toBeGreaterThan(-1);
         expect(bodies[3].tool_choice).not.toBe('required');
     });
@@ -237,7 +237,7 @@ describe('untried-query escape (endpoint guard)', () => {
             localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
             localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
             W._sessionToolFilter = new Set(['fetch_url']);
-            W.setOpenaiHistory([{ role: 'user', content: 'Schedule the partnership meeting.' }]);
+            W.setChatHistory([{ role: 'user', content: 'Schedule the partnership meeting.' }]);
         });
         const call = (q: string, i: number) => ({ tool_calls: [{ id: `s${i}`, type: 'function', function: { name: 'fetch_url', arguments: JSON.stringify({ url: `http://gw.example:8080/search?query=${q}` }) } }] });
         const gateway = (llm: any, served: string[]) => vi.fn(async (url: any, init: any) => {
@@ -256,7 +256,7 @@ describe('untried-query escape (endpoint guard)', () => {
             W.fetch = gateway(llm, served);
             await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
             expect(served.some(u => u.includes('query=email'))).toBe(true);
-            expect(JSON.stringify(W.openaiHistory)).toContain('email_send');
+            expect(JSON.stringify(W.getChatHistory())).toContain('email_send');
         });
 
         it('still stops a turn of reworded queries that never change the result', async () => {
@@ -312,7 +312,7 @@ describe('progress credit', () => {
             localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
             localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
             W._sessionToolFilter = new Set(['execute_code']);
-            W.setOpenaiHistory([{ role: 'user', content: 'Wait for postgres, then load the CSV.' }]);
+            W.setChatHistory([{ role: 'user', content: 'Wait for postgres, then load the CSV.' }]);
         });
         const run = (code: string, i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code }) } }] });
 
@@ -329,7 +329,7 @@ describe('progress credit', () => {
             W.nativeExec = vi.fn(async () => ({ stdout: n++ < 8 ? 'root grep postgres' : `distinct output ${'y'.repeat(n)}`, stderr: '', exit_code: 0 }));
             W.fetch = makeReplayFetch(seq);
             const out = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
-            const refusals = W.openaiHistory.filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed'));
+            const refusals = W.getChatHistory().filter((m: any) => m.role === 'tool' && String(m.content).includes('Not executed'));
             expect(refusals.length).toBe(4);
             expect(refusals.length).toBeGreaterThan(REPEAT_REFUSALS_BEFORE_STOP);   // would have stopped at the 3rd without credit
             expect(String(out)).toContain('Loaded');

@@ -1,6 +1,7 @@
 import '../chat-attachments.ts';
 import * as postTurn from '../post-turn.ts';
-import { setMainAgentRole as setRoleObject, setOpenaiHistory } from '../state.ts';
+import { setMainAgentRole as setRoleObject } from '../state.ts';
+import { setChatHistory } from '../chat-history.ts';
 import { buildRequestMessages } from '../payload-builder.ts';
 const W: any = window;
 beforeAll(async()=>{W.matchMedia ??= ()=>({matches:false,addEventListener(){},removeEventListener(){}});await import('../settings-ui.ts');await import('../agent-core.ts');});
@@ -85,10 +86,10 @@ describe('attachment delivery', () => {
         vi.spyOn(postTurn,'runPostTurnAgents').mockResolvedValue(undefined);
         W.addVoiceButtons=()=>{};W.saveHistory=()=>{};W.updateChatMetaLastAt=()=>{};
         W._updateLogBadge=()=>{};W.generateAndShowSuggestion=()=>{};
-        setRoleObject(null);setOpenaiHistory([]);
+        setRoleObject(null);setChatHistory([]);
         localStorage.setItem('fg_main_models',JSON.stringify(['kilo|stepfun/step-3.7-flash:free']));
         let captured:any;
-        W.runTurn=vi.fn(async()=>{captured={messages:buildRequestMessages(W.openaiHistory,'kilo'),role:W.mainAgentRole};return 'Summary delivered.';});
+        W.runTurn=vi.fn(async()=>{captured={messages:buildRequestMessages(W.getChatHistory(),'kilo'),role:W.mainAgentRole};return 'Summary delivered.';});
         await W.addFileAttachment(new File(['pdf'],'report.pdf',{type:'application/pdf'}));
         document.getElementById('agent-input')!.innerHTML='Summarize this document';
         await W.agentSend();

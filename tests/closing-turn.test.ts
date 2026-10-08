@@ -6,6 +6,7 @@ import { directorLoop, STEP_LIMIT_PROMPT } from '../loop-director.ts';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 const W = window as any;
 
@@ -61,7 +62,7 @@ describe('runTurn per-turn budget and excluded tools', () => {
 
     function session() {
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Do the task.' });
+        pushHistory(s, { role: 'user', content: 'Do the task.' });
         W._sessionToolFilter = new Set(['list_files', 'execute_code']);
         return s;
     }
@@ -74,13 +75,13 @@ describe('runTurn per-turn budget and excluded tools', () => {
         expect(bodies.filter(b => b.tools?.length).length).toBe(4);   // + the stop-summary request
         expect(W.getTurnStopInfo().reason).toBe('step budget exhausted');
         expect(text).toMatch(/^BLOCKED:/m);
-        const notes = s.history.filter((m: any) => m.role === 'user' && /steps left in this turn/.test(String(m.content)));
+        const notes = historyOf(s).filter((m: any) => m.role === 'user' && /steps left in this turn/.test(String(m.content)));
         expect(notes).toHaveLength(1);
     });
 
     it('interactive chat gets the softer note, then the pause message', async () => {
         const s = W.createSession({ workflowMode: false });
-        s.history.push({ role: 'user', content: 'Do the task.' });
+        pushHistory(s, { role: 'user', content: 'Do the task.' });
         W._sessionToolFilter = new Set(['list_files', 'execute_code']);
         const bodies: any[] = [];
         W.fetch = makeReplayFetch(Array.from({ length: 10 }, (_, i) => listCall(i)), { onRequest: b => bodies.push(b) });
@@ -97,7 +98,7 @@ describe('runTurn per-turn budget and excluded tools', () => {
         W.fetch = makeReplayFetch([listCall(0), { content: 'Done.\nCOMPLETED' }], { onRequest: b => bodies.push(b) });
         await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s, excludeTools: ['list_files'] });
         for (const b of bodies) expect((b.tools ?? []).map((t: any) => t.function.name)).not.toContain('list_files');
-        const toolMsg = s.history.find((m: any) => m.role === 'tool');
+        const toolMsg = historyOf(s).find((m: any) => m.role === 'tool');
         expect(String(toolMsg?.content)).toMatch(/list_files is not available in this turn/);
     });
 });

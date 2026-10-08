@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 const W = window as any;
 let origNative: any;
@@ -25,7 +26,7 @@ afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; de
 
 async function run(task: string) {
     const s = W.createSession({ workflowMode: true });
-    s.history.push({ role: 'user', content: task });
+    pushHistory(s, { role: 'user', content: task });
     const bodies: any[] = [];
     W.fetch = makeReplayFetch([
         { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: 'cat > conftest.py <<EOF\nimport pandas\nEOF' }) } }] },
@@ -62,7 +63,7 @@ describe('env_config_edits', () => {
     // v0.59 flask-4045: restored conftest.py after the bounce, then rewrote it to make a test run.
     it('bounces again after new edits, but not a COMPLETED repeated without edits', async () => {
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Fix the blueprint name check.' });
+        pushHistory(s, { role: 'user', content: 'Fix the blueprint name check.' });
         const edit = (id: string) => ({ tool_calls: [{ id, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: `echo ${id} > conftest.py` }) } }] });
         const bodies: any[] = [];
         W.fetch = makeReplayFetch([
@@ -71,7 +72,7 @@ describe('env_config_edits', () => {
             { content: 'Done.\nCOMPLETED' },
         ], { onRequest: b => bodies.push(b) });
         await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER, { session: s });
-        const nudges = s.history.filter((m: any) => m.role === 'user' && /You changed test or packaging configuration/.test(String(m.content)));
+        const nudges = historyOf(s).filter((m: any) => m.role === 'user' && /You changed test or packaging configuration/.test(String(m.content)));
         expect(nudges).toHaveLength(2);
         expect(bodies).toHaveLength(5);
     });

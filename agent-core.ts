@@ -1,6 +1,6 @@
 // agent-core.js — FreeGent: checkpoints, input state, main send/abort/clear, textarea resize
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
-import { openBrowserSession, canUseSession, type BrowserSession } from './browser-session.js';
+import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
 import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
@@ -11,9 +11,7 @@ import { registry } from './session-registry.js';
 import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList, specHasKey, getSessionHistory, getProvider } from './config.js';
-import { getModelToolFormat } from './model-caps.js';
-import { oaiEndpoint } from './model-router.js';
+import { getActiveMainModelList, specHasKey, getProvider } from './config.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
@@ -25,7 +23,7 @@ const _ATTACH_BINARY_MAX = 500_000;
 
 // ── Input history for ↑/↓ recall ─────────────────────────────────────────
 // Captures every rawText the user actually sends (never cleared by compaction).
-// init.js reads this via window._userInputHistory instead of filtering openaiHistory,
+// init.js reads this via window._userInputHistory instead of filtering the chat history,
 // so recalled entries are always real user turns, not compact summaries.
 const _userInputHistory: string[] = [];
 
@@ -71,7 +69,7 @@ function saveCheckpoint(userText: string): string {
     const id   = Date.now().toString();
     const base = {
         chatId:      activeChatId,
-        openaiLen:   openaiHistory.length,
+        openaiLen:   chatHistoryLength(),
         provider:    getProvider(),
         model:       getActiveModel(),
         roleName:    (typeof mainAgentRole !== 'undefined') ? (mainAgentRole?.name ?? null) : null,
@@ -200,7 +198,7 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
         return false;
     }
     const { openaiLen, roleName } = JSON.parse(raw);
-    openaiHistory.length = openaiLen;
+    setChatHistory(getChatHistory().slice(0, openaiLen));
     lastUserMessageText  = '';
     // Checkpoint id is a Date.now() timestamp — see saveCheckpoint.
     _pruneLogsFrom(parseInt(ckptId, 10));
@@ -772,8 +770,8 @@ async function _processQueue(): Promise<void> {
 // ── Per-turn helpers ────────────────────────────────────────────────────────
 
 // Reset per-turn bookkeeping. history is the conversation array for this session
-// (openaiHistory for the default session, _s.history for isolated ones).
-function _resetPerTurnState(history: any[]): void {
+// (the chat's history for the default session, the session's own for isolated ones).
+function _resetPerTurnState(history: readonly any[]): void {
     if (history.length === 0) setReactiveFired(new Set());
     setFailureCounts({});
     setToolCallHistory([]);
@@ -867,7 +865,7 @@ function _resolveMediaRouting(
 }
 
 /**
- * Build and push the user turn's history message to `openaiHistory`.
+ * Build and append the user turn's message to the chat's history.
  * Selects a multimodal content array when the active model supports audio/video/image,
  * or falls back to a plain text message annotating unsupported attachments.
  */
@@ -939,9 +937,9 @@ function _pushHistoryMessage(
             type: 'video_url', video_url: { url: `data:${f.mimeType};base64,${f.content}` }
         }));
         content.push({ type: 'text', text: msgText || 'Describe the attached content.' });
-        openaiHistory.push({ role: 'user', content });
+        appendChatMessage({ role: 'user', content });
     } else {
-        openaiHistory.push({ role: 'user', content: msgText || historyText });
+        appendChatMessage({ role: 'user', content: msgText || historyText });
     }
 }
 
@@ -1017,7 +1015,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     // (resets only when history is empty, i.e. at task/session start).  Once a skill fires as
     // either a turn-start prelude or a reactive nudge it won't re-inject in the same session —
     // the guidance is already in context.  Other counters reset each turn (per-turn health).
-    _resetPerTurnState(openaiHistory);
+    _resetPerTurnState(getChatHistory());
 
     // Media attachment types present this turn (before clearImageAttachments()).
     const _msgMedia = new Set<string>();
@@ -1033,12 +1031,12 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
 
     // Skill triggers + tool-group gating — shared with runAgentTurn via turn-context.js so
     // headless runs evaluate exactly what the UI does.
-    const _isFirstTurn = openaiHistory.length === 0;
+    const _isFirstTurn = chatHistoryLength() === 0;
     applyTurnTriggers({
         rawText,
         // Interactive turn: three-band task-intent check (a model call only for ambiguous task wording).
         isTaskCompletion: workflowMode ? null : await isTaskCompletionRequest(rawText),
-        history:  openaiHistory,
+        history:  getChatHistory(),
         wsPaths:  await collectWorkspacePaths(),
         msgMedia: _msgMedia,
     });
@@ -1064,7 +1062,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             setActiveAbortController(new AbortController());
             const ph = activePlaceholder;
             try {
-                await compactHistory(ph);
+                setChatHistory(await compactHistory(ph));
                 ph.finalize('Compacted.');
             } catch (e) {
                 ph.finalize(`**Compaction error:** ${e.message}`);
@@ -1082,7 +1080,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
 
     // Name the chat now, in parallel with the turn (utility model, fire-and-forget) — waiting
     // for the turn left a long Cowork run labeled "New Chat" until it finished.
-    if (openaiHistory.length === 0 && activeChatId) autoNameChat(activeChatId, text).catch(() => {});
+    if (chatHistoryLength() === 0 && activeChatId) autoNameChat(activeChatId, text).catch(() => {});
 
     input.innerHTML = '';
     autoResizeTextarea(input);
@@ -1180,7 +1178,6 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _capturedChatId  = activeChatId;
     const _capturedMsgDiv  = placeholder.div;
     let _runCompleted = false;
-    let _bSession: BrowserSession | null = null;
     try {
         // When media routing redirects to a specialised model (audio/video/image),
         // suppress workspace tools — the model should just describe the media directly.
@@ -1191,11 +1188,6 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         const _ep = provider === 'google'
             ? specToEndpoint(`google|${_mediaGeminiModel ?? getGeminiModel()}`)
             : (_mediaOAIEndpoint ?? null);
-        const _histLenBefore = openaiHistory.length;
-        // Experimental: run this turn on a Session event log, mirrored into openaiHistory (browser-session.ts).
-        const _ep0 = _ep ?? oaiEndpoint();
-        if (getSessionHistory() && canUseSession(getModelToolFormat(_ep0.provider ?? getProvider(), _ep0.model)))
-            _bSession = openBrowserSession(activeChatId ?? 'anon');
         let finalText = await runTurn(_ep, placeholder, { toolFilterOverride: _mediaToolFilter });
 
         placeholder.finalize(_doStripTerminal(finalText));
@@ -1203,13 +1195,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     } catch (err) {
         // Roll back the user message pushed before the turn — failed/aborted turns
         // must leave no trace in history so the next attempt starts clean.
-        {
-            const last = openaiHistory[openaiHistory.length - 1];
-            if (last?.role === 'user') openaiHistory.pop();
-        }
+        dropTrailingUserMessage();
         _handleTurnError(err, placeholder, 'agent');
-    } finally {
-        _bSession?.close();   // detach only: openaiHistory already holds the turn
     }
 
     // Await before saveHistory so the diff button is included in the saved HTML.
@@ -1243,9 +1230,10 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
 
     // Truncate to just after the last real user message
     {
-        let i: number = openaiHistory.length - 1;
-        while (i >= 0 && openaiHistory[i].role !== 'user') i--;
-        if (i >= 0) openaiHistory.splice(i + 1);
+        const h = getChatHistory();
+        let i: number = h.length - 1;
+        while (i >= 0 && h[i].role !== 'user') i--;
+        if (i >= 0) setChatHistory(h.slice(0, i + 1));
     }
     // retryLastTurn has no checkpoint of its own, but agentSend() already created one
     // for the message being regenerated (saveCheckpoint, id = send timestamp) — the most
@@ -1343,7 +1331,7 @@ function createNewChat(): void {
     saveChatList(list);
     setActiveChatId(id);
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
-    setOpenaiHistory([]);
+    setChatHistory([]);
     setLastProvider('');
     lastUserMessageText = '';
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
@@ -1368,7 +1356,7 @@ function createNewChat(): void {
 
 function newChat(): void {
     if (aiBusy()) return;
-    const hasHistory = openaiHistory.length > 0;
+    const hasHistory = chatHistoryLength() > 0;
     if (!hasHistory) {
         const msgs = getMessagesEl();
         if (msgs) msgs.innerHTML = '';
@@ -1390,39 +1378,33 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
                               maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {}): Promise<TurnResult> {
     const _s = session ?? defaultSession;
 
+    // An isolated session without an event log gets one; the default session's is the chat's.
+    if (_s === defaultSession) repairOAIHistory();
+    if (!_s._session) _s._session = registry.create({ chatId: activeChatId ?? 'anon' });
+    const _evtSess = _s._session;
+    const _histBefore = _evtSess.deriveMessages();
+
     // Reset reactive-trigger bookkeeping — see agentSend for rationale.
-    _resetPerTurnState(_s.history);
-    const _isFirstTurn = _s.history.length === 0;
+    _resetPerTurnState(_histBefore);
+    const _isFirstTurn = _histBefore.length === 0;
     // Headless / runner turns (workflowMode) keep the regex: their prompts routinely say "your task
     // is…", and a model call per turn would slow runs and change benchmark behaviour.
-    applyTurnTriggers({ rawText: prompt, history: _s.history, wsPaths: await collectWorkspacePaths(),
+    applyTurnTriggers({ rawText: prompt, history: _histBefore, wsPaths: await collectWorkspacePaths(),
         isTaskCompletion: _s.workflowMode ? null : await isTaskCompletionRequest(prompt) });
     const _prelude = await buildTurnPrelude({ text: prompt, isFirstTurn: _isFirstTurn });
 
     // increment turn counter and emit turn/start.
-    const _evtSess = (_s as any)._session ?? registry.active();
-    const _evtTurn = ((_s as any)._evtTurn ?? -1) + 1;
-    (_s as any)._evtTurn = _evtTurn;
+    const _evtTurn = (_s._evtTurn ?? -1) + 1;
+    _s._evtTurn = _evtTurn;
     const _t0Turn = Date.now();
     try {
-        if (_evtSess) _evtSess.append('turn/start', { turn: _evtTurn, chatId: activeChatId ?? 'unknown' });
+        _evtSess.append('turn/start', { turn: _evtTurn, chatId: activeChatId ?? 'unknown' });
     } catch {}
 
     const _userContent = _prelude ? `${_prelude}\n\n${prompt}` : prompt;
-    _s.history.push({ role: 'user', content: _userContent });
-    // user/message event (after history push to match seq ordering).
     try {
-        if (_evtSess) _evtSess.append('user/message', { role: 'user', content: _userContent }, { surfaceOp: 'append' } as any);
+        _evtSess.append('user/message', { role: 'user', content: _userContent }, { surfaceOp: 'append' } as any);
     } catch {}
-    // No Session yet (the interactive TUI calls this directly; headless run() already made one):
-    // run the turn on one, mirrored into the default history array, as the browser does.
-    let _bSession: BrowserSession | null = null;
-    if (!_evtSess && _s.history === openaiHistory && getSessionHistory()) {
-        const _ep0 = oaiEndpoint();
-        if (canUseSession(getModelToolFormat(_ep0.provider ?? getProvider(), _ep0.model)))
-            _bSession = openBrowserSession(activeChatId ?? 'anon');
-    }
-    repairOAIHistory();
 
     const _ph: RenderAdapter = _reusePh
         ?? (_s.workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container));
@@ -1445,29 +1427,18 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
         if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
         placeholder.finalize(_doStripTerminal(finalText));
     } catch (err) {
-        const last = _s.history[_s.history.length - 1];
-        if (last?.role === 'user') _s.history.pop();
-        // also roll back the event-log user/message so the stale entry does
-        // not create consecutive user messages in deriveMessages() on retry.
-        // Mirrors the pop-tombstone pattern used by _replaceLastAssistantSurface —
-        // content:null causes deriveMessages() to skip the event (session.ts:184).
-        try {
-            const _errLastSeq = _evtSess?.surface[_evtSess.surface.length - 1];
-            if (_errLastSeq !== undefined && _evtSess?.events[_errLastSeq]?.type === 'user/message') {
-                (_evtSess.append as any)('user/message',
-                    { role: 'user', content: null },
-                    { surfaceOp: { op: 'replace', start: _errLastSeq, end: _errLastSeq } });
-            }
-        } catch {}
+        // Roll back the user message so the stale entry does not create consecutive user messages
+        // in deriveMessages() on retry (a tombstone: content:null makes the projection skip it).
+        // The session is re-read: a repair at the start of the turn may have replaced the chat's.
+        try { dropTrailingUserMessage(_s._session ?? _evtSess); } catch {}
         _turnEndReason = { kind: 'error', message: String((err as any)?.message ?? err) };
         _errored = true;
         finalText = _handleTurnError(err, placeholder, 'runAgentTurn');
     } finally {
         // emit turn/end regardless of how the turn finished.
         try {
-            if (_evtSess) _evtSess.append('turn/end', { turn: _evtTurn, reason: _turnEndReason, durationMs: Date.now() - _t0Turn });
+            (_s._session ?? _evtSess).append('turn/end', { turn: _evtTurn, reason: _turnEndReason, durationMs: Date.now() - _t0Turn });
         } catch {}
-        _bSession?.close();   // detach only: the history array already holds the turn
     }
 
     try {

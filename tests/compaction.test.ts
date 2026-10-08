@@ -80,13 +80,12 @@ describe('compactHistory result', () => {
         const h = history();
         const s = W.createSession({ workflowMode: true });
         const ret = await W.compactHistory(NULL_RENDER_ADAPTER, EP, s, h, PREFIX);
-        expect(ret).toBeUndefined();
-        expect(s.history[0].role).toBe('user');
-        expect(s.history[0].content).toContain('Fix the bug in calc.py.');   // anchor (pinned outside workflow mode)
-        expect(s.history[1].content).toMatch(/^\[SYSTEM: The conversation history above has been compacted/);
-        expect(s.history[1].content).toContain('GOAL: fix calc.py');
-        expect(s.history[1].content).toContain('Files written this session: calc.py');
-        const tail = s.history.slice(2);
+        expect(ret[0].role).toBe('user');
+        expect(ret[0].content).toContain('Fix the bug in calc.py.');   // anchor (pinned outside workflow mode)
+        expect(ret[1].content).toMatch(/^\[SYSTEM: The conversation history above has been compacted/);
+        expect(ret[1].content).toContain('GOAL: fix calc.py');
+        expect(ret[1].content).toContain('Files written this session: calc.py');
+        const tail = ret.slice(2);
         expect(tail.length).toBeGreaterThan(0);
         expect(tail[0].role).toBe('assistant');                  // starts at a tool call, not an orphan result
         expect(tail).toEqual(h.slice(h.length - tail.length));    // verbatim
@@ -96,18 +95,17 @@ describe('compactHistory result', () => {
         serve([ok('TASK_COMPLETE:\nThe fix is done.')]);
         const s = W.createSession({ workflowMode: true });
         const ret = await W.compactHistory(NULL_RENDER_ADAPTER, EP, s, history(), PREFIX);
-        expect(ret).toBeUndefined();
-        expect(s.history[1].content).toContain('The fix is done.');
+        expect(ret[1].content).toContain('The fix is done.');
     });
 
     it('a failed summary still shrinks history to anchor + stub + tail (no throw)', async () => {
         serve([ok('<tool_call>{"name":"execute_code"}</tool_call>')]);
         const h = history();
         const s = W.createSession({ workflowMode: true });
-        await W.compactHistory(NULL_RENDER_ADAPTER, EP, s, h, PREFIX);
-        expect(s.history.length).toBeLessThan(h.length);
-        expect(s.history[1].content).toMatch(/summarizer failed/);
-        expect(s.history[1].content).toContain('Files written this session: calc.py');
+        const ret = await W.compactHistory(NULL_RENDER_ADAPTER, EP, s, h, PREFIX);
+        expect(ret.length).toBeLessThan(h.length);
+        expect(ret[1].content).toMatch(/summarizer failed/);
+        expect(ret[1].content).toContain('Files written this session: calc.py');
     });
 });
 

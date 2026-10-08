@@ -1,3 +1,5 @@
+import { chatSession, clearChatHistory, setChatHistory, getChatHistory } from './chat-history.js';
+
 // state.js — shared mutable state (ES module).
 // READS: import { X } — live bindings, no change at call sites.
 // WRITES: call setX(v) — updates the module binding.
@@ -8,15 +10,12 @@
 // proxies the module-level globals so all existing call sites work without changes.
 //
 // Session event log fields (see docs/session-event-log-migration.md):
-//   _session:  the Session instance for this agent run; set by registry.create() in
-//              headless-runner / workers, or by agentSend() in the browser.
+//   _session:  the Session whose event log is this agent's history; set by registry.create() in
+//              headless-runner / workers. For defaultSession it is the active chat's Session
+//              (chat-history.ts), which also holds the chat between turns.
 //   _evtTurn:  monotonic turn counter incremented at each runAgentTurn() call;
 //              threaded through runTurn() so step events carry the right turn number.
 export type AgentSession = {
-    // The model's input is this array only for fn-tag models and sessions without an event log.
-    // With an event-log session (_session) the input is _session.deriveMessages(); here this array
-    // holds only user prompts, nudges and compaction output, so it is not a full transcript.
-    history: any[];
     abortController: AbortController | null;
     role: any;
     _toolFilter?: Set<string> | null;
@@ -44,7 +43,7 @@ export type AgentSession = {
 
 export function createSession(init: Partial<AgentSession> = {}): AgentSession {
     return {
-        history:             init.history             ?? [],
+        _session:            init._session            ?? null,
         abortController:     init.abortController     ?? null,
         role:                init.role                ?? null,
         _toolFilter:         init._toolFilter         ?? null,
@@ -67,7 +66,6 @@ export function createSession(init: Partial<AgentSession> = {}): AgentSession {
     };
 }
 
-export let openaiHistory: any[]         = [];
 export let agentStreaming: boolean         = false;
 export let activePlaceholder: any     = null;
 export let activeAbortController: AbortController | null = null;
@@ -92,7 +90,6 @@ export let _sessionToolFilter: Set<string> | null = null; // classifier output; 
 // One AI job at a time — aiBusy() gates every entry point that would start another.
 export let aiJob: string = '';
 
-export function setOpenaiHistory(v: any): void         { openaiHistory         = v; }
 // Keep the screen on while a turn streams: on mobile, screen-off freezes the page and kills the
 // SSE connection ("Network error"). The lock is released by the browser when the page is hidden,
 // so re-acquire on return to visible while a turn is still running.
@@ -124,7 +121,7 @@ export function setSoftStopPending(v: any): void        { softStopPending       
 // state operation over two vars in this module. It previously lived in autopilot.ts, which
 // left the live Agent-tab loop (agent-loop.ts) depending on a module that had no UI entry
 // point — deleting autopilot would have broken the loop that actually runs.
-export function _clearHistory(): void { setOpenaiHistory([]); setLastProvider(''); setSessionToolFilter(null); }
+export function _clearHistory(): void { clearChatHistory(); setLastProvider(''); setSessionToolFilter(null); }
 export function setPendingAgentsContextInject(v: any): void { pendingAgentsContextInject = v; }
 export function setCurrentTurnSkills(v: any): void     { currentTurnSkills     = v; }
 export function setReactiveFired(v: any): void         { _reactiveFired        = v; }
@@ -146,8 +143,9 @@ export function aiBusy(): boolean                      { return agentStreaming |
 // defaultSession proxies the module-level globals — existing call sites that pass no
 // session get exactly the same behaviour as before A2.
 export const defaultSession: AgentSession = {
-    get history()              { return openaiHistory; },
-    set history(v)             { setOpenaiHistory(v); },
+    // The default session's event log is the active chat's history (chat-history.ts).
+    get _session()             { return chatSession(); },
+    set _session(_v)           { /* the chat owns its Session; replaced via setChatHistory() */ },
     get abortController()      { return activeAbortController; },
     set abortController(v)     { setActiveAbortController(v); },
     get role()                 { return mainAgentRole; },
@@ -196,7 +194,7 @@ export const defaultSession: AgentSession = {
 // AND to window (for classic scripts eval'd in dom.window context in Node.js headless).
 // In-browser window === globalThis so the second round is a no-op on the same object.
 const _setters = {
-    setOpenaiHistory, setAgentStreaming, setActivePlaceholder,
+    setChatHistory, getChatHistory, setAgentStreaming, setActivePlaceholder,
     setActiveAbortController, setLastProvider, setSoftStopPending, setPendingAgentsContextInject,
     setCurrentTurnSkills, setReactiveFired, setFailureCounts,
     setActiveChatId, setSeenReadFiles, setSeenListFiles, setMainAgentRole, setWorkflowMode, setToolCallHistory,
@@ -206,7 +204,6 @@ const _setters = {
     createSession,
 };
 const _reactiveProps: Array<[string, () => any, (v: any) => void]> = [
-    ['openaiHistory',         () => openaiHistory,         setOpenaiHistory],
     ['agentStreaming',        () => agentStreaming,         setAgentStreaming],
     ['activePlaceholder',     () => activePlaceholder,     setActivePlaceholder],
     ['activeAbortController', () => activeAbortController, setActiveAbortController],

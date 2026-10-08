@@ -1,6 +1,7 @@
 // chat-state.js — FreeGent: chat list, history persistence, chat management UI
 // Depends on: config.js, chat-render.js
 import { KEYS, chatKey } from './storage-keys.js';
+import { getChatHistory, setChatHistory } from './chat-history.js';
 import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './storage-usage.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { escapeHtml } from './html-escape.js';
@@ -126,7 +127,7 @@ async function _deleteHtml(chatId) {
 
 // ── History persistence ────────────────────────────────────────────────────
 
-// Chat whose history switchToChat is still loading. Until the load lands, openaiHistory is []
+// Chat whose history switchToChat is still loading. Until the load lands, the chat history is empty
 // and the messages view is blank, so a save in that window (e.g. a turn finishing after
 // stopNow released agentStreaming) would overwrite the chat's stored history with nothing.
 let _loadingChatId: string | null = null;
@@ -194,26 +195,27 @@ function saveHistory() {
     if (activeChatId === _loadingChatId) return;
     const _wfMode = typeof workflowMode !== 'undefined' && workflowMode;
     // A8 (updated): in headless/bench mode, SQLite is authoritative; the localStorage
-    // openaiHistory write is kept so browser-runner chats (workflowMode=true in a real
+    // history write is kept so browser-runner chats (workflowMode=true in a real
     // browser) are readable when the user opens the chat tab. Only the DOM HTML snapshot
     // is skipped in workflowMode — rendering goes to runner-process, not the messages div.
+    const _hist: any[] = getChatHistory();
     if (_wfMode) {
-        try { _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, openaiHistory)); } catch {}
-        // fall through to save openaiHistory to localStorage
+        try { _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist)); } catch {}
+        // fall through to save the history to localStorage
     }
     // Browser UI path: write localStorage for fast reload access.
     try {
-        let oh: string = JSON.stringify(openaiHistory);
+        let oh: string = JSON.stringify(_hist);
         if (oh.length >= _OH_CACHE_MAX) {
             // Too large to persist whole. Persist a trimmed snapshot (first message +
             // recent tail starting on a user turn) instead of silently skipping the
             // save — skipping left a STALE history that restored as mysterious context
             // loss after reload. In-memory history is untouched.
-            let tail: any[] = openaiHistory.slice(-Math.max(20, Math.floor(openaiHistory.length / 2)));
+            let tail: any[] = _hist.slice(-Math.max(20, Math.floor(_hist.length / 2)));
             while (tail.length && tail[0].role !== 'user') tail = tail.slice(1);
-            const head = tail[0] === openaiHistory[0] ? [] : [openaiHistory[0]];
+            const head = tail[0] === _hist[0] ? [] : [_hist[0]];
             oh = JSON.stringify([...head, ...tail]);
-            console.warn(`[saveHistory] history exceeds the localStorage cache cap — cached a trimmed snapshot (${head.length + tail.length}/${openaiHistory.length} msgs); the full history goes to IndexedDB`);
+            console.warn(`[saveHistory] history exceeds the localStorage cache cap — cached a trimmed snapshot (${head.length + tail.length}/${_hist.length} msgs); the full history goes to IndexedDB`);
         }
         _pruneChatCaches().catch(() => {});
         // Try to write; if quota exceeded, evict the oldest OTHER chat's history and retry once.
@@ -224,13 +226,13 @@ function saveHistory() {
             evictOldChatCaches(() => _lsSet(chatKey.oh(activeChatId), oh));
             // Last resort: save an even smaller snapshot (last 10 messages only)
             if (!localStorage.getItem(chatKey.oh(activeChatId))) {
-                const _mini = openaiHistory.slice(-10);
+                const _mini = _hist.slice(-10);
                 try { localStorage.setItem(chatKey.oh(activeChatId), JSON.stringify(_mini)); } catch {}
             }
         }
         // Additive: also persist the full (untrimmed) history to the session-store adapter
         // (skipped when _wfMode since it was already called above).
-        if (!_wfMode) _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, openaiHistory));
+        if (!_wfMode) _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist));
     } catch (e) { console.warn('[saveHistory] LLM history persist failed:', (e as any)?.message); }
     // Messages HTML — browser only (requires a real DOM element).
     // In workflowMode, save it only when something was rendered: headless runs use the NULL
@@ -241,7 +243,7 @@ function saveHistory() {
         if (el && !(_wfMode && !el.childElementCount)) {
             const id   = activeChatId;
             const html = el.innerHTML;
-            // Write to localStorage synchronously — same pattern as openaiHistory above.
+            // Write to localStorage synchronously — same pattern as the history above.
             // This ensures the snapshot survives a screen-lock/browser-suspension that kills
             // the async server/IDB saves before they complete.
             // Too large to cache: drop the older cached snapshot too, or _loadHtml would
@@ -265,12 +267,12 @@ async function loadChatHistory(id: string): Promise<boolean> {
         // now would put this chat's history into that one.
         if (activeChatId !== id) return false;
         if (sqliteHistory && sqliteHistory.length > 0) {
-            openaiHistory = sqliteHistory;
+            setChatHistory(sqliteHistory);
             return true;
         }
         // Fall back to localStorage (always written alongside SQLite via saveHistory()).
         const oh = localStorage.getItem(chatKey.oh(id));
-        if (oh) { openaiHistory = JSON.parse(oh); return openaiHistory.length > 0; }
+        if (oh) { const parsed = JSON.parse(oh); setChatHistory(parsed); return getChatHistory().length > 0; }
     } catch (e) { console.warn('[loadChatHistory] restore failed:', e?.message); }
     return false;
 }
@@ -493,7 +495,7 @@ function renderHistoryFallback() {
     notice.className = 'agent-history-notice';
     notice.textContent = '↩ Reconstructed from saved context.';
     msgs.appendChild(notice);
-    const history = openaiHistory;
+    const history = getChatHistory();
     for (const msg of history) {
         const role = msg.role === 'model' ? 'model' : msg.role;
         if (role === 'user' && typeof msg.content === 'string') {
@@ -796,7 +798,7 @@ async function switchToChat(id) {
     activeChatId        = id;
     _loadingChatId      = id;
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
-    openaiHistory       = [];
+    setChatHistory([]);
     lastProvider        = '';
     lastUserMessageText = '';
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
@@ -907,7 +909,7 @@ function focusChatSearch() {
 // A chat's history for search: in memory for the active chat, else the localStorage cache,
 // else IndexedDB (only recent chats are cached — see _CACHED_CHATS).
 async function _historyForSearch(id: string): Promise<any[] | null> {
-    if (id === activeChatId && openaiHistory.length) return openaiHistory;
+    if (id === activeChatId) { const live = getChatHistory(); if (live.length) return live; }
     const raw = localStorage.getItem(chatKey.oh(id));
     if (raw) { try { return JSON.parse(raw); } catch {} }
     return (await sessionLoadHistory?.(id)) ?? null;

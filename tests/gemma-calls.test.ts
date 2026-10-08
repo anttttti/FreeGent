@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 const W = window as any;
 beforeAll(async () => {
@@ -63,7 +64,7 @@ describe('runTurn: unparseable native call markup is retried, not the answer', (
         [`…python3 tests/test_config_toml_standalone_v2.py${Q},language:${Q}bash${Q}}<tool_call|>`, 40],
     ])('%s gets a retry and the turn goes on', async (reply, tokens) => {
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Do the task.' });
+        pushHistory(s, { role: 'user', content: 'Do the task.' });
         const bodies: any[] = [];
         W.fetch = makeReplayFetch([
             { content: reply, usage: { prompt_tokens: 50, completion_tokens: tokens } },

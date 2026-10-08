@@ -469,7 +469,6 @@ declare global {
     var _extractCodeBlocks: any;
     var _historyResult: any;
     var _summarizeToolResult: any;
-    var pruneOAIHistory: any;
     var repairHistoryArray: any;
     var resetSeenReadFiles: any;
     // ── bridged by tool-call-repair.ts ──
@@ -608,7 +607,6 @@ declare global {
     var _userInputHistory: string[];
     var mainAgentRole: any;
     var memoryContext: any;
-    var openaiHistory: any;
     var pendingAgentsContextInject: any;
     var pendingMemoryInject: any;
     var setActiveAbortController: any;
@@ -623,7 +621,6 @@ declare global {
     var setLastTurnDoneToken: any;
     var setLastUserMessageText: any;
     var setMemoryContext: any;
-    var setOpenaiHistory: any;
     var setPendingAgentsContextInject: any;
     var setPendingMemoryInject: any;
     var setReactiveFired: any;

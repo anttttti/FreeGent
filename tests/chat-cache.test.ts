@@ -8,7 +8,7 @@ afterEach(() => {
     window.setSessionStore(null);
     localStorage.clear();
     window.activeChatId = null;
-    window.openaiHistory = [];
+    window.setChatHistory([]);
 });
 
 function seedChats(n: number, p = 'c') {
@@ -36,7 +36,7 @@ describe('saveHistory — localStorage chat cache', () => {
         seedChats(6);                      // c5 is most recent
         storeWith(['c0', 'c1', 'c2', 'c3', 'c4', 'c5']);
         window.activeChatId = 'c0';        // oldest chat is the active one
-        window.openaiHistory = [{ role: 'user', content: 'hi' }];
+        window.setChatHistory([{ role: 'user', content: 'hi' }]);
         window.saveHistory();
         await settle();
         const cached = [0, 1, 2, 3, 4, 5].filter(i => localStorage.getItem(`fg_chat_c${i}_oh`) !== null);
@@ -48,7 +48,7 @@ describe('saveHistory — localStorage chat cache', () => {
         seedChats(5, 'n');
         window.setSessionStore(null);
         window.activeChatId = 'n4';
-        window.openaiHistory = [{ role: 'user', content: 'hi' }];
+        window.setChatHistory([{ role: 'user', content: 'hi' }]);
         window.saveHistory();
         await settle();
         expect([0, 1, 2, 3].every(i => localStorage.getItem(`fg_chat_n${i}_oh`) !== null)).toBe(true);
@@ -67,7 +67,7 @@ describe('saveHistory — localStorage chat cache', () => {
         localStorage.setItem('fg_chat_c0_log', '[1]');
         localStorage.setItem('fg_chat_c0_raw', '[1]');
         window.activeChatId = 'c2';
-        window.openaiHistory = [{ role: 'user', content: 'hi' }];
+        window.setChatHistory([{ role: 'user', content: 'hi' }]);
         window.saveHistory();              // verifies the stored copies
         await settle();
         localStorage.setItem('fg_chat_c0_oh', JSON.stringify([{ role: 'user', content: 'hello from c0' }]));

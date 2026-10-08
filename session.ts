@@ -22,7 +22,7 @@ import { SURFACE_TYPES } from './session-event.js';
 /**
  * The model-facing message one surface event stands for, or null when it stands for none
  * (tombstones, usage-only assistant messages, non-surface events). The single rule behind
- * deriveMessages(); the browser bridge (browser-session.ts) uses it to mirror appends.
+ * deriveMessages(); chat-history.ts uses it to read the chat's surface.
  */
 export function eventMessage(ev: SessionEvent): any | null {
     switch (ev.type) {
@@ -188,7 +188,7 @@ export class Session {
      * Project the surface to an OAI-format message array.
      *
      * This is the single projection rule — the only function that produces LLM history.
-     * Returns the canonical message sequence — the sole source of truth for native sessions; replaces openaiHistory for all reads.
+     * Returns the canonical message sequence — the sole source of truth for native sessions; the history behind every read.
      *
      * The returned array is a fresh snapshot each call. The Message objects are the
      * deep-frozen data from the log — callers cannot mutate history.

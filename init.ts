@@ -302,8 +302,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             // ↑ / ↓ to walk through previous user messages (only when input is empty).
-            // Uses _userInputHistory (filled at send time) instead of openaiHistory so that
-            // compaction — which rebuilds openaiHistory from scratch — never erases recall.
+            // Uses _userInputHistory (filled at send time) instead of the chat history so that
+            // compaction — which rebuilds the history from scratch — never erases recall.
             if (e.key === 'ArrowUp' && !(input.textContent?.trim())) {
                 e.preventDefault();
                 const hist: string[] = (_userInputHistory ?? []);

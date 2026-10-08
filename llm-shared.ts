@@ -176,12 +176,13 @@ function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = nu
 // main loop's last request (system + tools as sent); without it they are rebuilt.
 // Never throws: when the summarizer fails, the history is still reduced to anchor + a stub
 // summary (harness facts only) + tail, so the context shrinks and the task can continue.
-export async function compactHistory(placeholder: RenderAdapter, activeEndpoint: any = null, session?: AgentSession, effectiveHistory?: any[], prefix: { system: string; tools: any[] | null } | null = null): Promise<void> {
+export async function compactHistory(placeholder: RenderAdapter, activeEndpoint: any = null, session?: AgentSession, effectiveHistory?: any[], prefix: { system: string; tools: any[] | null } | null = null): Promise<any[]> {
     const task = placeholder.addCompactStep();
     const _s = session ?? defaultSession;
-    // When a session-derived effectiveHistory is provided, use it for ALL reads. Writes rebuild
-    // _s.history so _mirrorCompactionToSession in llm-loops can sync the session surface.
-    const _hR = effectiveHistory ?? _s.history;
+    // Reads come from effectiveHistory, else the session's event log. The compacted history is
+    // returned, not written: the caller applies it (the loop shadows the surface with it, the
+    // manual /compact replaces the chat's history).
+    const _hR = effectiveHistory ?? _s._session?.deriveMessages() ?? [];
     const _PIN = '[TASK — do not lose track of this]\n';
     const _origFirst = _hR.find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
     const _firstMsgContent = _origFirst ? _origFirst.content.replace(/^\[TASK[^\]]*\]\n/, '') : null;
@@ -275,28 +276,29 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     }
 
     // Rebuild: anchor + summary (or failure stub) + verbatim tail.
-    const _preCompactHistory = [..._s.history];
-    _s.history.length = 0;
+    const _preCompactHistory = [..._hR];
+    const _newHistory: any[] = [];
     const _anchor = _origFirst
         ? (workflowMode
             ? _firstMsgContent
             : (_origFirst.content.startsWith(_PIN) ? _origFirst.content : _PIN + _origFirst.content))
         : null;
-    if (_anchor) _s.history.push({ role: 'user', content: _anchor });
+    if (_anchor) _newHistory.push({ role: 'user', content: _anchor });
     const body = summary ?? `(The summarizer failed: ${failReason.slice(0, 200)}. Older messages were removed; the facts below and the recent messages that follow are what remains.)`;
-    _s.history.push({ role: 'user', content: _compactSummaryText(body, facts) });
-    _s.history.push(...tail);
+    _newHistory.push({ role: 'user', content: _compactSummaryText(body, facts) });
+    _newHistory.push(...tail);
     // History must not end with an assistant message.
-    if (_s.history[_s.history.length - 1]?.role === 'assistant') {
-        _s.history.push({ role: 'user', content: '[SYSTEM: Continue where you left off.]' });
+    if (_newHistory[_newHistory.length - 1]?.role === 'assistant') {
+        _newHistory.push({ role: 'user', content: '[SYSTEM: Continue where you left off.]' });
     }
-    sessionCompactHistory?.(activeChatId, _preCompactHistory, _s.history);
-    const afterTokens = estimateTokens(_s.history);
+    sessionCompactHistory?.(activeChatId, _preCompactHistory, _newHistory);
+    const afterTokens = estimateTokens(_newHistory);
     task.setPrompt(summary
         ? `~${_fmtK(beforeTokens)} → ~${_fmtK(afterTokens)} tokens`
         : `Summary failed (${failReason.slice(0, 80)}) — kept facts + recent messages, ~${_fmtK(afterTokens)} tokens`);
     task.setOutput(body);
     task.complete();
+    return _newHistory;
 }
 
 

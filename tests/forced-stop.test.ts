@@ -4,6 +4,7 @@
 // 100-step turns after repeat / failure-streak / step-limit stops (1,102 SWE steps).
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { directorLoop, STEP_LIMIT_PROMPT } from '../loop-director.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 let L: any;
 beforeAll(async () => { L = await import('../llm-loops.ts'); });
@@ -50,7 +51,7 @@ describe('_gracefulSynthesis keeps an answer on the last line (v0.58 CTF 48)', (
         (window as any).mainAgentRole = null;
         (window as any)._sessionToolFilter = new Set(['list_files']);
         const s = (window as any).createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Decode the flag in flag.txt.' });
+        pushHistory(s, { role: 'user', content: 'Decode the flag in flag.txt.' });
         const prompts: string[] = [];
         (globalThis as any).callLLMComplete = vi.fn(async (p: string) => { prompts.push(p); return 'FLAG-VALUE'; });
         const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({ path: `d${i}` }) } }] });

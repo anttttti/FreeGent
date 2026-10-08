@@ -67,6 +67,30 @@ function _thinkingFields(provider: string, isCustom: boolean, budget: number, pr
 //   1. drop bare assistant messages (content null, no tool_calls) — strict providers 400 on them
 //   2. sanitize tool names to [a-zA-Z0-9_-]
 //   3. non-NVIDIA: mid-conversation system messages (nudges) become <nudge> user messages
+// The text-tag tool format ('fn-tag'): the model never sees tool_calls or role:'tool' messages.
+// An assistant message keeps only its text, and the results of one step become one user message
+// of <tool_response> blocks. The event log holds the native shape (one tool/result per call), so
+// this is a projection applied to a request, not a second copy of the history.
+export function fnTagMessages(hist: any[]): any[] {
+    const out: any[] = [];
+    let results: string[] = [];
+    const flush = () => {
+        if (results.length) out.push({ role: 'user', content: results.join('\n\n') });
+        results = [];
+    };
+    for (const m of hist) {
+        if (m.role === 'tool') {
+            results.push(`<tool_response>\n<tool_name>${m.name}</tool_name>\n<result>\n${m.content}\n</result>\n</tool_response>`);
+            continue;
+        }
+        flush();
+        if (m.role === 'assistant' && m.tool_calls?.length) { const { tool_calls: _tc, ...rest } = m; out.push(rest); }
+        else out.push(m);
+    }
+    flush();
+    return out;
+}
+
 export function buildRequestMessages(hist: any[], provider: string): any[] {
     const _clean = (n: string) => (n || '').replace(/[^a-zA-Z0-9_-]/g, '_');
     const raw = hist

@@ -1084,7 +1084,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 
 // Labels used by the two protocol-compliance judge mechanisms (step-validator.js's generic
 // checks, turn-protocol.js's post-COMPLETED verify) — logged to turn_log below since neither
-// ever touches openaiHistory. Everything else callLLMComplete is used for (research:*,
+// ever touches the chat history. Everything else callLLMComplete is used for (research:*,
 // skill:*, worker:review/locate/analyze/resolve) is the agent's own sub-task work, not
 // protocol judging, and stays out of this to avoid misrepresenting it as "validation".
 function _isJudgeLabel(label: string | null | undefined): boolean { return label === 'completion:verify' || !!label?.startsWith('validate:'); }
@@ -1185,7 +1185,7 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
         result = data.content || '';
         handle.setOutput(result || '(empty)');
         if (_own) result.trim() ? handle.complete() : handle.abort();
-        // Judge calls never touch openaiHistory and aren't otherwise logged — this is
+        // Judge calls never touch the chat history and aren't otherwise logged — this is
         // their only durable record once the live UI step box is gone.
         if (_isJudgeLabel(label) && typeof convoLogTurn === 'function') {
             convoLogTurn({

@@ -17,7 +17,7 @@ vi.stubGlobal('fetch', vi.fn());
 
 // All source files are ES modules now (ESM migration complete) — vitest transforms
 // them and their Object.assign(window, …) bridges run automatically on import.
-// state.ts must come first: it sets up reactive window properties for openaiHistory,
+// state.ts must come first: it sets up reactive window properties,
 // _seenReadFiles, setSeenReadFiles, softStopPending, mainAgentRole, etc.
 await import('../state.ts');
 // config.ts: enabledTools, skillsRegistry, activeSkills, all get*() functions
@@ -50,7 +50,7 @@ await import('../payload-builder.ts');
 await import('../detectors.ts');
 // tool-call-repair.ts: _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, aliases
 await import('../tool-call-repair.ts');
-// history.ts: truncateResultForHistory, pruneOAIHistory, repairHistoryArray, _normPath
+// history.ts: truncateResultForHistory, pruneSessionHistory, repairHistoryArray, _normPath
 await import('../history.ts');
 // model-router.ts: specToEndpoint, cooldowns, modelFriendlyName, resolveWorkerModelSpec
 await import('../model-router.ts');

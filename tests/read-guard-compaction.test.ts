@@ -29,7 +29,7 @@ describe('overlapping-read guard across compaction', () => {
         localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${FAKE_EP.provider}|${FAKE_EP.model}`]));
         localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
         W._sessionToolFilter = new Set(['read_file']);
-        W.setOpenaiHistory([{ role: 'user', content: 'Fix the bug in f.py.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Fix the bug in f.py.' }]);
         await W.agentWriteFile('f.py', Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'));
     });
 

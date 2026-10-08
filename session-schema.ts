@@ -91,7 +91,7 @@ END;
 -- 'validation' = a step-validator judge call (name = check name, e.g. 'missing_state_line').
 -- prompt is only meaningful for 'validation' rows (what was actually asked to the judge) —
 -- these calls are otherwise invisible once their live UI step box scrolls away or the page
--- reloads: not in openaiHistory (see llm-loops.js/callLLMComplete), so this is their only
+-- reloads: not in the chat history (see llm-loops.js/callLLMComplete), so this is their only
 -- durable record.
 CREATE TABLE IF NOT EXISTS turn_log (
   id                     INTEGER PRIMARY KEY AUTOINCREMENT,

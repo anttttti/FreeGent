@@ -39,7 +39,7 @@ describe('tool call cut off at max_tokens', () => {
     it('is discarded and the model is told why, even without finish_reason "length"', async () => {
         const exec = vi.fn(async () => ({ stdout: 'ran', stderr: '', exit_code: 0 }));
         W.nativeExec = exec;
-        W.setOpenaiHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
         W.fetch = makeReplayFetch([
             // Runaway: completion_tokens at the cap; the replay sends no finish_reason at all.
             { tool_calls: [{ id: 'run1', type: 'function', function: { name: 'execute_code', arguments: '{"language":"python","code":"# Let\'s try...\\n# Let\'s try..."}' } }],
@@ -48,7 +48,7 @@ describe('tool call cut off at max_tokens', () => {
         ]);
         const result = await W.runTurn(FAKE_EP, NULL_RENDER_ADAPTER);
         expect(exec).not.toHaveBeenCalled();
-        const hist = W.openaiHistory;
+        const hist = W.getChatHistory();
         expect(hist.some((m: any) => m.tool_calls?.some((tc: any) => tc.id === 'run1'))).toBe(false);
         expect(hist.some((m: any) => typeof m.content === 'string' && m.content.includes('cut off at 999999 tokens while writing tool-call arguments'))).toBe(true);
         expect(result).toContain('The answer is 7.');
@@ -57,7 +57,7 @@ describe('tool call cut off at max_tokens', () => {
     it('a normal-size tool call still runs', async () => {
         const exec = vi.fn(async () => ({ stdout: 'ran', stderr: '', exit_code: 0 }));
         W.nativeExec = exec;
-        W.setOpenaiHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
         W.fetch = makeReplayFetch([
             { tool_calls: [{ id: 'ok1', type: 'function', function: { name: 'execute_code', arguments: '{"language":"bash","code":"echo hi"}' } }],
               usage: { completion_tokens: 40 } },
@@ -78,7 +78,7 @@ describe('tool call cut off by the context clamp', () => {
         localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify([`${LOCAL_EP.provider}|${LOCAL_EP.model}`]));
         localStorage.setItem('fg_openai_context', contextTokens);
         W.nativeExec = vi.fn(async () => ({ stdout: '', stderr: '', exit_code: 0 }));
-        W.setOpenaiHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
+        W.setChatHistory([{ role: 'user', content: 'Solve the puzzle.' }]);
         const bodies: any[] = [];
         W.fetch = makeReplayFetch([cutCall, { content: 'Summary of the work so far.' }, { content: 'The answer is 7.\nCOMPLETED' }],
             { onRequest: b => bodies.push(b) });

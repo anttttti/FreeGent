@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
+import { pushHistory, historyOf } from './history-helpers.ts';
 
 const W = window as any;
 let origNative: any;
@@ -29,7 +30,7 @@ afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; })
 describe('shell-as-Python re-run', () => {
     it('the next request shows the call as bash, with the output and no marker or note', async () => {
         const s = W.createSession({ workflowMode: true });
-        s.history.push({ role: 'user', content: 'Print 42.' });
+        pushHistory(s, { role: 'user', content: 'Print 42.' });
         const bodies: any[] = [];
         W.fetch = makeReplayFetch([
             { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'python', code: 'python3 -c "print(42)"' }) } }] },
