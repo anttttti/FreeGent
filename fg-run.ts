@@ -6,8 +6,8 @@
 // module caching means it only executes once — the first time (here).
 import './bootstrap-jsdom.js';
 import { run, prompt as llmPrompt, getHeadlessPrimaryModel } from './headless-runner.js';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadDotenv } from './dotenv.js';
 
 // ── .env loader ───────────────────────────────────────────────────────────────

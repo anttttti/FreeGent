@@ -547,10 +547,6 @@ declare global {
     var _handleDrop: any;
     var _settingsPopulating: any;
     var _togglePauseItem: any;
-    var applyHdrRetryMode: any;
-    var applyHdrTemperature: any;
-    var applyHdrTopK: any;
-    var applyHdrTopP: any;
     var hideModelCooldownPopup: any;
     var initHdrPicker: any;
     var onPyodideAutoloadChange: any;

@@ -1,6 +1,6 @@
 // runner.ts — FreeGent: task runner — autonomous task loop
 // Depends on: config.js, qa.js, tasks.js, chat-state.js, agent-core.js, state.js
-import { setWorkflowMode, _clearHistory, aiJob, setAiJob, aiBusy } from './state.js';
+import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus } from './task-status.js';
 

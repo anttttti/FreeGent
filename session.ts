@@ -13,7 +13,7 @@
 
 import type {
     SessionEventMap, SessionEvent, SessionEventType,
-    SurfaceEventType, SurfaceOp, SurfaceIntent, TurnEndReason,
+    SurfaceEventType, SurfaceOp, SurfaceIntent,
 } from './session-event.js';
 import { SURFACE_TYPES } from './session-event.js';
 

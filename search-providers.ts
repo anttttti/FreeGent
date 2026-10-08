@@ -11,7 +11,6 @@ function _searchSignal(): AbortSignal { return combineSignals(activeAbortControl
 
 export async function tavilySearch(query: any): Promise<{ error: string; authFailed?: boolean; source?: undefined; results?: undefined; } | { source: string; results: any; error?: undefined; }> {
     const localKey  = getTavilyKey();
-    const cfHasKey  = typeof hasCfTavilyKey === 'function' && hasCfTavilyKey();
     const cfProxy   = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
 
     // Use CF Worker POST proxy when the Worker has a shared key or when the user's

@@ -32,7 +32,6 @@
     "native-exec.ts",
     "bootstrap-jsdom.ts",
     "node-fs-adapter.ts",
-    "node-sqlite-adapter.ts",
-    "coi-serviceworker.ts"
+    "node-sqlite-adapter.ts"
   ]
 }

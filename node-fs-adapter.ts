@@ -75,6 +75,11 @@ async function _walkFiles(root: string, { skipNoise = true, maxDepth = Infinity,
 }
 
 export class NodeFsAdapter implements WorkspaceAdapter {
+    _root: string;
+    root: string;
+    _sidecarRoot: string | null;
+    _sidecarPrefixes: string[];
+
     constructor(root, { sidecarRoot = null, sidecarPrefixes = [] } = {}) {
         this._root = resolve(root);
         this.root = this._root;

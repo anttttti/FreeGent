@@ -1,5 +1,4 @@
 // history-util.js — FreeGent: shared helpers for reading the active conversation history
-import { lastProvider } from './state.js';
 import { getChatHistory } from './chat-history.js';
 
 // The active conversation history in OAI format.

@@ -161,11 +161,6 @@ export function toggleTurnCollapse(turn: TurnState): void {
     _notify();
 }
 
-export function toggleStepCollapse(step: StepState): void {
-    step.collapsed = !step.collapsed;
-    _notify();
-}
-
 export function toggleStepSection(step: StepState, section: StepSection): void {
     step.openSection = step.openSection === section ? null : section;
     step.collapsed   = false;

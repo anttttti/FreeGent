@@ -6,12 +6,6 @@ import { _stripTerminal } from './turn-protocol.js';
 
 const _noop = (..._args: any[]) => {};
 
-const _noopHandle = {
-    setModel: _noop, setTokens: _noop, setPrompt: _noop, setRequest: _noop,
-    append: _noop, setOutput: _noop, complete: _noop, abort: _noop,
-    markCompact: _noop, markTruncated: _noop,
-};
-
 function _makeStepHandle(step: Store.StepState) {
     let done = false;
     const timer = setInterval(() => {

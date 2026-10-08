@@ -1,6 +1,6 @@
 import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, lastUserMessageText, type AgentSession, defaultSession, setReactiveFired, _reactiveFired, currentTurnSkills, setSessionToolFilter, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
+import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
@@ -15,10 +15,10 @@ import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.
 import { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
 import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
-import { streamOAICompat, nonStreamOAICompat, decodeOAIResponse } from './stream-decode.js';
+import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
-import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
+import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel } from './tools.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
@@ -1522,7 +1522,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
     for (let step = 0; step < _loopMax; step++) {
         if (softStopPending || activeAbortController?.signal.aborted) return '*(break)*';
-        let _taskDoneCalledThisStep = false;
         const _paused = [..._toolPauses].filter(([, until]) => step <= until).map(([t]) => t);
         _stepPausedTools = _paused.length ? new Set(_paused) : null;
 
@@ -2007,7 +2006,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 pausedTools: _stepPausedTools,
                 onPause: (t) => _pauseTool(t, step),
                 repeatCache: _repeatCache,
-                onTaskDone: () => { _taskDoneCalledThisStep = true; },
                 onRepeat: (name) => _repeatedNames.push(name),
                 replFails: _s._replaceFailures,
                 replNudge: _s._replaceNudgeSent,

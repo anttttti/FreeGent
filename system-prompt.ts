@@ -72,9 +72,8 @@ export function _buildDeviceContext(): string {
     const _hasTouch = (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
         || _mq('(pointer: coarse)');
 
-    // Primary pointer type: fine = mouse/trackpad/stylus; coarse = finger touch.
+    // Primary pointer type: fine = mouse/trackpad/stylus (otherwise finger touch).
     const _pointerFine   = _mq('(pointer: fine)');
-    const _pointerCoarse = _mq('(pointer: coarse)');
 
     // Hover capability: hover = mouse/trackpad present; none = touch-only.
     const _canHover = _mq('(hover: hover)');

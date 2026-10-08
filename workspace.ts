@@ -888,36 +888,6 @@ function updateSelectionUI() {
     }
 }
 
-function _buildPyOutputHtml(filename, result) {
-    const { stdout = '', stderr = '', exit_code = 0 } = result;
-    const parts = [];
-    if (stdout) {
-        const lines = stdout.split('\n').map(line => {
-            const m = line.match(/^\[IMAGE:(.+)\]$/);
-            if (m) {
-                const img = _pyodideImageStore?.[m[1]];
-                if (img && typeof img === 'string') return `<img src="${escapeHtml(img)}" style="max-width:100%;margin:6px 0;display:block;">`;
-                if (img?.type === 'svg') return `<div style="margin:6px 0;">${img.content}</div>`;
-            }
-            return escapeHtml(line);
-        });
-        parts.push(`<pre class="out">${lines.join('\n')}</pre>`);
-    }
-    if (stderr) parts.push(`<pre class="err">${escapeHtml(stderr)}</pre>`);
-    if (!stdout && !stderr) parts.push('<span class="empty">No output</span>');
-    if (exit_code) parts.push(`<div class="exit">exit code ${exit_code}</div>`);
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-body{margin:0;background:#1e1e1e;color:#d4d4d4;font:13px/1.5 monospace;padding:12px;}
-.hdr{color:#888;font-size:11px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #333;}
-pre{margin:0;white-space:pre-wrap;word-break:break-all;}
-.err{color:#f48;}
-.exit{color:#f48;font-size:11px;margin-top:8px;}
-.empty{color:#666;font-style:italic;}
-</style></head><body>
-<div class="hdr">${escapeHtml(filename)}</div>${parts.join('\n')}
-</body></html>`;
-}
-
 function _buildPyRunnerHtml(filename, code, files) {
     const sj = v => JSON.stringify(v).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
