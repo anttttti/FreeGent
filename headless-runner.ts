@@ -9,7 +9,7 @@
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { KEYS } from './storage-keys.js';
-import { readFileSync, appendFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync, renameSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -29,7 +29,6 @@ import './ast.js';
 import './history-util.js';
 import './fetch-blacklist.js';
 import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
-import { scrubEnv } from './secret-env.js';
 import { createNativeExec } from './native-exec.js';
 import './search-providers.js';
 import './skill-guidance.js';
@@ -257,7 +256,7 @@ function _parseOpts(opts: any) {
         compactionLimit : opts.compactionLimit ?? (parseInt(e.FREEGENT_COMPACTION_LIMIT ?? '') || 0),
         disabledTools   : opts.disabledTools   ?? e.FREEGENT_DISABLED_TOOLS ?? '',
         mainRole        : opts.mainRole        ?? e.FREEGENT_MAIN_ROLE       ?? '',
-        workflowMode    : opts.workflowMode    ?? (e.FREEGENT_WORKFLOW_MODE === '1') ?? false,
+        workflowMode    : opts.workflowMode    ?? e.FREEGENT_WORKFLOW_MODE === '1',
         resumeSessionId : opts.resumeSessionId ?? '',
         sessionDbPath   : opts.sessionDbPath   ?? e.FREEGENT_SESSION_DB ?? join(homedir(), '.freegent', 'sessions.db'),
         temperature     : opts.temperature     ?? (e.FREEGENT_TEMPERATURE != null ? parseFloat(e.FREEGENT_TEMPERATURE) : null),

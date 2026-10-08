@@ -1126,21 +1126,6 @@ html, body {
 ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #aaa; }
 
-/* ── Conversation log viewer ── */
-.convo-log-entry { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
-.cle-header { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 7px 11px; cursor: pointer; font-size: 12px; user-select: none; }
-.cle-header:hover { background: rgba(74,124,247,0.05); }
-.cle-idx   { color: var(--muted); font-size: 11px; min-width: 28px; }
-.cle-time  { color: var(--muted); font-size: 11px; }
-.cle-model { color: var(--accent); font-weight: 600; }
-.cle-tok   { color: var(--muted); font-size: 11px; }
-.cle-tools { background: rgba(74,124,247,0.12); color: var(--accent); border-radius: 3px; padding: 1px 5px; font-size: 10px; }
-.cle-preview { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cle-detail { padding: 8px 12px 10px; border-top: 1px solid var(--border); background: rgba(0,0,0,0.03); }
-.cle-section-hdr { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 8px 0 4px; }
-.cle-section-hdr:first-child { margin-top: 0; }
-.cle-pre { font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; background: var(--code-bg, rgba(0,0,0,0.06)); border-radius: 4px; padding: 6px 8px; margin: 0 0 4px; max-height: 300px; overflow-y: auto; }
-
 /* ── v86 Terminal tab ── */
 .v86-terminal-wrap { display: flex; flex-direction: column; height: 100%; background: #0d1117; }
 

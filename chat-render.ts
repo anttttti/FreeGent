@@ -1192,8 +1192,6 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         return handle;
     }
 
-    let lastStepEl: Element | null = null;
-
     const _noopTaskHandle = { setModel: ()=>{}, setPrompt: ()=>{}, setRequest: ()=>{},
                                setOutput: ()=>{}, setTokens: ()=>{}, append: ()=>{},
                                complete: ()=>{}, abort: ()=>{}, markCompact: ()=>{}, markTruncated: ()=>{} };
@@ -1218,7 +1216,6 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         stepCount++;
         const stepEl = document.createElement('div'); stepEl.className = 'seq-step';
         graphEl.appendChild(stepEl);
-        lastStepEl = stepEl;
         scrollBottom(msgs);
         return labels.map(l => createTask(stepEl, l));
     }
@@ -1343,7 +1340,6 @@ export function createResponsePlaceholder(container: null | undefined = null): R
             el.textContent = label;
             el.title = label;
             graphEl.appendChild(el);
-            lastStepEl = el;
             scrollBottom(msgs);
         },
         finalize,

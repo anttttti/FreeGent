@@ -15,7 +15,7 @@
 
 import { runtime } from './runtime.js';
 import {
-    currentTurnSkills, setCurrentTurnSkills,
+    setCurrentTurnSkills,
     mainAgentRole, pendingAgentsContextInject,
     setPendingAgentsContextInject,
 } from './state.js';

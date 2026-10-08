@@ -1,4 +1,5 @@
 // voice.js — FreeGent: speech input (STT) and speech output (TTS)
+import { voiceApivKey } from './storage-keys.js';
 
 let _mediaRecorder: MediaRecorder | null = null;
 let _audioChunks: Blob[]   = [];
@@ -176,7 +177,7 @@ function _webSpeechSpeak(text) {
 async function _apiSpeak(text, key, provider, model, entryKey) {
     const url = _speechUrl(provider);
     if (!url) return;
-    const voiceId = localStorage.getItem(`fg_voice_apiv_${entryKey}`)
+    const voiceId = localStorage.getItem(voiceApivKey(entryKey))
                  || _TTS_VOICE_DEFAULTS[entryKey]
                  || 'alloy';
     try {

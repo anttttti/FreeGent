@@ -615,7 +615,6 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
 function setInputState(enabled: boolean): void {
     const btn      = document.getElementById('agent-action-btn') as HTMLElement | null;
     const breakBtn = document.getElementById('agent-break-btn');
-    const input    = document.getElementById('agent-input');
     if (btn) {
         btn.innerHTML = enabled
             ? `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m0 0L5 12m7-7l7 7"/></svg>`
@@ -1226,7 +1225,6 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
 
 async function retryLastTurn(container: HTMLElement | null = null): Promise<void> {
     if (aiBusy() || !lastUserMessageText) return;
-    const provider = getProvider();
 
     // Truncate to just after the last real user message
     {

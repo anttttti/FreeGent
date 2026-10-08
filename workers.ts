@@ -14,12 +14,12 @@ import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
-import { parseArgs, isRealUserMessage, stripInjected } from './history-util.js';
+import { isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
-import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn, getLocalApiProxy } from './config.js';
+import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
@@ -870,7 +870,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     const _wSeen = { rf: localSeenRF, lf: localSeenLF };
     const _workerRepeatCache = new Map();
     let _wRepeatGuard = newRepeatGuard();
-    let workerFallback: any = null;
 
     const _garbledState = { count: 0 };
     let _wEnvFailSig = '', _wEnvFailCount = 0, _wEnvFailTotal = 0;
@@ -899,7 +898,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             let workerMaxTokens: number | null = null;
             const _wRole = localRole?.name ?? 'anon'; // used in the catch/post blocks too — must outlive the try scope
             try {
-                const _wEp = (endpoint ?? oaiEndpoint());
                 let _callAttempt = 0;
                 // Pass worker session + step so callOAI can log request/header.
                 // evtSession uses a fake AgentSession shape (only _session and _evtTurn needed).
@@ -1428,10 +1426,7 @@ async function executeWorkers(args: any): Promise<any> {
         const pickedThisRound = new Set<string>();
         for (let i = 0; i < agents.length; i++) {
             if (agents[i].model) continue; // explicit model → skip
-            const role = agents[i].role ? ((isRoleEnabled(agents[i].role) ? rolesRegistry.get(agents[i].role) : null) || null) : null;
-            const baseSpec = resolveWorkerModelSpec(null, role);
-            // Only rotate if the worker would otherwise use the primary pool
-            // (i.e., baseSpec resolves to the main model or worker model, not a forced override)
+            // Workers without an explicit model each take the next free model from the rotation pool.
             const spec = _pickFreeRotationSpec(pickedThisRound);
             if (spec) {
                 workerAssignedSpecs.set(i, spec);

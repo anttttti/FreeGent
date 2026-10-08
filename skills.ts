@@ -548,7 +548,6 @@ Task files live in \`fg-tasks/NNN-slug.md\`; \`fg-tasks/ledger.md\` indexes them
         trigger_on_history_tool: 'run_workers',
         body_fn: () => {
             const webTools = [enabledTools.has('web_search') ? 'web_search' : '', enabledTools.has('fetch_url') ? 'fetch_url' : ''].filter(Boolean);
-            const researcherTools = ['read_file', 'repo_map', 'search_workspace', ...(webTools.length ? ['web/academic search'] : [])].join(', ');
             return `## Workers
 
 **Spawn a worker when the subtask meets one or more of these:**
@@ -1168,13 +1167,6 @@ const _TRIGGER_FIELDS = [
 
 function _getSkillTriggerOverrides() {
     try { return JSON.parse(localStorage.getItem('fg_skill_triggers') || '{}'); } catch { return {}; }
-}
-
-function _saveSkillTriggerOverride(skillName, fieldKey, value) {
-    const all = _getSkillTriggerOverrides();
-    if (!all[skillName]) all[skillName] = {};
-    all[skillName][fieldKey] = value;
-    localStorage.setItem('fg_skill_triggers', JSON.stringify(all));
 }
 
 function _resetSkillTriggerOverrides(skillName) {

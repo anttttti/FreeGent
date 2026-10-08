@@ -126,13 +126,6 @@ async function getChatStats(chatId: string): Promise<{ turns: number; models: { 
     return { turns, models: [...counts].map(([model, steps]) => ({ model, steps })).sort((a, b) => b.steps - a.steps) };
 }
 
-function clearConvoLog() {
-    conversationLog = [];
-    window.conversationLog = conversationLog; // Object.assign below only copied the reference once
-    try { sessionStorage.removeItem(SESSION_KEYS.CONVO_LOG); } catch {}
-    _updateLogBadge();
-}
-
 // Drops turns logged for this chat at/after a checkpoint's creation time. Called on
 // Rewind/Rerun so a superseded run's log entries don't linger alongside the replacement —
 // without this, conversationLog only ever grows, and a single export can show the same
@@ -190,49 +183,6 @@ function _downloadBlob(blob, filename) {
 
 function _slugDate() {
     return new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-}
-
-// ── Export session log ────────────────────────────────────────────────────
-
-function exportConvoLog() {
-    if (!conversationLog.length) { alert('No turns logged in this session yet.'); return; }
-    const lines = conversationLog.map(e => JSON.stringify(e)).join('\n');
-    _downloadBlob(new Blob([lines], { type: 'application/jsonl' }), `fg-session-log-${_slugDate()}.jsonl`);
-}
-
-function exportConvoLogJson() {
-    if (!conversationLog.length) { alert('No turns logged in this session yet.'); return; }
-    const data = JSON.stringify(conversationLog, null, 2);
-    _downloadBlob(new Blob([data], { type: 'application/json' }), `fg-session-log-${_slugDate()}.json`);
-}
-
-// ── Export all chats ──────────────────────────────────────────────────────
-
-async function exportAllChats() {
-    const list = getChatList();
-    if (!list.length) { alert('No saved chats found.'); return; }
-
-    const chats = await Promise.all(list.map(async meta => {
-        const oai = await _chatHistoryFor(meta.id);
-        return {
-            id:        meta.id,
-            name:      meta.name,
-            createdAt: meta.createdAt ? new Date(meta.createdAt).toISOString() : null,
-            lastAt:    meta.lastAt    ? new Date(meta.lastAt).toISOString()    : null,
-            geminiHistory: null,
-            openaiHistory: oai,
-        };
-    }));
-
-    const payload = {
-        exportedAt: new Date().toISOString(),
-        chatCount:  chats.length,
-        chats,
-    };
-    _downloadBlob(
-        new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
-        `fg-all-chats-${_slugDate()}.json`
-    );
 }
 
 async function _buildChatPayload(id) {
@@ -299,10 +249,6 @@ async function sendChatLog(id) {
     } catch (e) {
         alert(`Could not send the log: ${(e as any)?.message ?? e}. Use the ⬇ download instead.`);
     }
-}
-
-function exportCurrentChat() {
-    exportChat(activeChatId);
 }
 
 // ── Markdown export ───────────────────────────────────────────────────────
@@ -391,75 +337,6 @@ async function importChat() {
     };
     input.click();
 }
-
-// ── Render log viewer ─────────────────────────────────────────────────────
-
-function renderConvoLogViewer() {
-    const el = document.getElementById('convo-log-viewer');
-    if (!el) return;
-    if (!conversationLog.length) {
-        el.innerHTML = '<p style="color:var(--muted);font-size:13px;margin:0">No turns logged yet. Start a conversation to see entries here.</p>';
-        return;
-    }
-    const rows = conversationLog.slice().reverse().map((e, ri) => {
-        const i       = conversationLog.length - 1 - ri;
-        const time    = e.ts ? e.ts.slice(11, 19) : '?';
-        const model   = e.model ?? '?';
-        const tok     = e.promptTokens ? `${e.promptTokens}→${e.responseTokens ?? '?'} tok` : '';
-        const tools   = e.toolCalls?.length ? `${e.toolCalls.length} tool call${e.toolCalls.length !== 1 ? 's' : ''}` : '';
-        const preview = escapeHtml((e.response ?? '').slice(0, 120));
-        const loops   = e.loopDetected ? '<span style="color:#e57373;font-size:10px;margin-left:4px">⚠ loop</span>' : '';
-
-        return `<div class="convo-log-entry" onclick="toggleConvoLogEntry(${i})" id="cle-${i}">
-            <div class="cle-header">
-                <span class="cle-idx">#${i + 1}</span>
-                <span class="cle-time">${time}</span>
-                <span class="cle-model">${model}</span>
-                ${tok ? `<span class="cle-tok">${tok}</span>` : ''}
-                ${tools ? `<span class="cle-tools">${tools}</span>` : ''}
-                ${loops}
-                <span class="cle-preview">${preview}${e.response?.length > 120 ? '…' : ''}</span>
-            </div>
-            <div class="cle-detail" id="cle-detail-${i}" style="display:none"></div>
-        </div>`;
-    }).join('');
-    el.innerHTML = rows;
-    _updateLogBadge();
-}
-
-function toggleConvoLogEntry(i) {
-    const entry  = conversationLog[i];
-    const detail = document.getElementById(`cle-detail-${i}`);
-    if (!detail) return;
-    if (detail.style.display === 'none') {
-        detail.style.display = 'block';
-        const sections = [];
-
-        if (entry.round !== undefined)
-            sections.push(`<div class="cle-section-hdr">Round ${entry.round} · ${entry.provider ?? ''} · ${entry.model ?? ''}</div>`);
-
-        if (entry.systemPrompt)
-            sections.push(`<div class="cle-section-hdr">System prompt</div><pre class="cle-pre">${escapeHtml(entry.systemPrompt)}</pre>`);
-
-        if (entry.lastUserMessage)
-            sections.push(`<div class="cle-section-hdr">Last user message</div><pre class="cle-pre">${escapeHtml(entry.lastUserMessage)}</pre>`);
-
-        if (entry.response)
-            sections.push(`<div class="cle-section-hdr">Response</div><pre class="cle-pre">${escapeHtml(entry.response)}</pre>`);
-
-        if (entry.toolCalls?.length) {
-            sections.push(`<div class="cle-section-hdr">Tool calls (${entry.toolCalls.length})</div>`);
-            for (const tc of entry.toolCalls) {
-                sections.push(`<pre class="cle-pre">${escapeHtml(JSON.stringify(tc, null, 2))}</pre>`);
-            }
-        }
-
-        detail.innerHTML = sections.join('');
-    } else {
-        detail.style.display = 'none';
-    }
-}
-
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
 Object.assign(window, { getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc: escapeHtml, pruneConvoLogFrom });

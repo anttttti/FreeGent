@@ -2,7 +2,7 @@
 //
 // The dev server and the headless runner load API keys into process.env. Commands the agent runs
 // (execute_code on the host) inherit the environment, so without this a single `env` prints every
-// key. Imported by dev-api.ts and headless-runner.ts; no Node or DOM dependencies.
+// key. Imported by dev-api.ts and native-exec.ts; no Node or DOM dependencies.
 //
 // This removes keys from the environment only. A command running on the host as the user can
 // still read files the user can read, including ~/.config/freegent/credentials — host execution

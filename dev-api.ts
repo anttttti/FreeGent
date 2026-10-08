@@ -17,10 +17,10 @@
 //   as the user; see the approval defaults in config.ts.
 
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile, readFile, mkdir, readdir, open } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readdir, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { configDir, loadDotenv } from './dotenv.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, realpathSync } from 'node:fs';
 import { join, dirname, basename, normalize, relative, sep } from 'node:path';
 import { tmpdir, networkInterfaces, homedir } from 'node:os';
 import { promisify } from 'node:util';

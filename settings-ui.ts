@@ -304,7 +304,6 @@ let _keyPasteLen = 0;
 };
 
 function saveSettings() {
-    const get = id => ((document.getElementById(id) as HTMLInputElement)?.value || '').trim();
     // Guard: only write API key fields when the input has a value OR was explicitly
     // populated by populateSettingsForm (data-fg-loaded="1") and then cleared.
     // An empty field without data-fg-loaded means the form opened before the keys
@@ -472,29 +471,6 @@ function hideModelCooldownPopup() {
     _cooldownPopupTimer = null;
 }
 
-function applyHdrRetryMode() {
-    const val = (document.getElementById('hdr-retry-mode') as HTMLInputElement)?.value || 'exponential';
-    if (val === 'exponential') {
-        localStorage.setItem('fg_retry_mode', 'exponential');
-        localStorage.removeItem('fg_retry_fixed_ms');
-    } else {
-        const msMap = { 'fixed-30s': 30_000, 'fixed-2m': 120_000, 'fixed-5m': 300_000 };
-        localStorage.setItem('fg_retry_mode', 'fixed');
-        localStorage.setItem('fg_retry_fixed_ms', String(msMap[val] ?? 120_000));
-    }
-}
-
-function updateRetryModeSelect() {
-    const sel = (document.getElementById('hdr-retry-mode') as HTMLInputElement);
-    if (!sel) return;
-    const mode    = localStorage.getItem('fg_retry_mode') || 'exponential';
-    const fixedMs = parseInt(localStorage.getItem('fg_retry_fixed_ms') || '0');
-    if (mode !== 'fixed') { sel.value = 'exponential'; return; }
-    if (fixedMs <= 30_000)       sel.value = 'fixed-30s';
-    else if (fixedMs <= 120_000) sel.value = 'fixed-2m';
-    else                         sel.value = 'fixed-5m';
-}
-
 function applyHdrCompactTokens() {
     const val = (document.getElementById('hdr-compact-tokens') as HTMLSelectElement)?.value ?? '20000';
     localStorage.setItem('fg_agent_compact_tokens', val);
@@ -508,72 +484,6 @@ function applyHdrReasoning() {
     if (sel) localStorage.setItem('fg_thinking_level', sel.value);
 }
 
-function applyHdrTemperature() {
-    const sel = (document.getElementById('hdr-temperature') as HTMLInputElement);
-    if (!sel) return;
-    if (sel.value === '') localStorage.removeItem('fg_temperature');
-    else localStorage.setItem('fg_temperature', sel.value);
-}
-
-function updateTemperatureSelect() {
-    const sel = (document.getElementById('hdr-temperature') as HTMLInputElement);
-    if (!sel) return;
-    const current = localStorage.getItem('fg_temperature') ?? '';
-    const opts = [
-        { label: 'Temp: Default', value: '' },
-        { label: 'Temp: 0',       value: '0' },
-        { label: 'Temp: 0.2',     value: '0.2' },
-        { label: 'Temp: 0.6',     value: '0.6' },
-        { label: 'Temp: 1',       value: '1' },
-        { label: 'Temp: 1.5',     value: '1.5' },
-    ];
-    sel.innerHTML = opts.map(o =>
-        `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`
-    ).join('');
-}
-
-function applyHdrTopP() {
-    const sel = (document.getElementById('hdr-top-p') as HTMLInputElement);
-    if (!sel) return;
-    if (sel.value === '') localStorage.removeItem('fg_top_p');
-    else localStorage.setItem('fg_top_p', sel.value);
-}
-function updateTopPSelect() {
-    const sel = (document.getElementById('hdr-top-p') as HTMLInputElement);
-    if (!sel) return;
-    const current = localStorage.getItem('fg_top_p') ?? '';
-    const opts = [
-        { label: 'Top P: Default', value: '' },
-        { label: 'Top P: 0.8',     value: '0.8' },
-        { label: 'Top P: 0.9',     value: '0.9' },
-        { label: 'Top P: 0.95',    value: '0.95' },
-        { label: 'Top P: 1',       value: '1' },
-    ];
-    sel.innerHTML = opts.map(o =>
-        `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`
-    ).join('');
-}
-function applyHdrTopK() {
-    const sel = (document.getElementById('hdr-top-k') as HTMLInputElement);
-    if (!sel) return;
-    if (sel.value === '') localStorage.removeItem('fg_top_k');
-    else localStorage.setItem('fg_top_k', sel.value);
-}
-function updateTopKSelect() {
-    const sel = (document.getElementById('hdr-top-k') as HTMLInputElement);
-    if (!sel) return;
-    const current = localStorage.getItem('fg_top_k') ?? '';
-    const opts = [
-        { label: 'Top K: Default', value: '' },
-        { label: 'Top K: 20',      value: '20' },
-        { label: 'Top K: 40',      value: '40' },
-        { label: 'Top K: 50',      value: '50' },
-        { label: 'Top K: 100',     value: '100' },
-    ];
-    sel.innerHTML = opts.map(o =>
-        `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`
-    ).join('');
-}
 function saveSamplingSetting(key, value) {
     const v = value.trim();
     if (v === '') localStorage.removeItem(key);
@@ -592,13 +502,6 @@ function populateSamplingSettings() {
     set('smp-min-p', 'fg_min_p', getMinP);
     set('smp-presence-penalty', 'fg_presence_penalty', getPresencePenalty);
     set('smp-repetition-penalty', 'fg_repetition_penalty', getRepetitionPenalty);
-}
-
-function _supportsThinking() {
-    const provider = getProvider();
-    const model    = getActiveModel();
-    // custom endpoints always show the thinking UI (we can't know their capabilities)
-    return provider === 'custom' || modelSupportsThinking(provider, model);
 }
 
 function getReasoningOptions() {
@@ -1011,7 +914,7 @@ function _priorityTouchMove(event: TouchEvent): void {
 
 function _priorityTouchEnd(event: TouchEvent): void {
     if (!_touchDrag) return;
-    const { containerId, srcIdx, srcEl } = _touchDrag;
+    const { srcIdx, srcEl } = _touchDrag;
     _touchDrag = null;
     srcEl.classList.remove('model-priority-dragging');
     document.querySelectorAll('.model-priority-drag-over')

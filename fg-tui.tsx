@@ -6,7 +6,7 @@
 
 // bootstrap-jsdom MUST be the first import: it sets globalThis.window = dom.window
 // before any other module body runs. headless-runner re-exports dom for us.
-import { setup, dom, saveProfile, PROFILE_PATH, listWorkspaceSessions, resumeSession } from './headless-runner.js';
+import { setup, dom, saveProfile, listWorkspaceSessions, resumeSession } from './headless-runner.js';
 import { isCacheCapable, oaiEndpoint, _markFlatCooldown } from './model-router.js';
 export { listWorkspaceSessions, resumeSession };
 import { makeTuiPlaceholder } from './tui-placeholder.js';
