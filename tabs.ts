@@ -770,7 +770,9 @@ function run(d){
  return{error:'unknown command'}}
 addEventListener('message',function(e){var d=e.data;if(e.source!==P||!d||d.type!=='fg-check-cmd')return;var r;try{r=run(d)}catch(x){r={error:String(x&&x.message||x)}}
  P.postMessage({type:'fg-check-reply',id:d.id,result:r},'*')});
-addEventListener('load',function(){P.postMessage({type:'fg-check-ready'},'*')});
+try{P.postMessage({type:'fg-check-alive'},'*')}catch(e){}
+var RDY=0;function ready(w){if(RDY)return;RDY=1;try{P.postMessage({type:'fg-check-ready',via:w},'*')}catch(e){}}
+addEventListener('DOMContentLoaded',function(){ready('dom')});addEventListener('load',function(){ready('load')});
 })();<\/script>`;
 
 const _sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -811,13 +813,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
 
     const logs: Array<{ level: string; text: string; t: number }> = [];
     const pending = new Map<number, (r: any) => void>();
-    let seq = 0, readyResolve: (v: boolean) => void = () => {};
+    let seq = 0, alive = false, readyResolve: (v: boolean) => void = () => {};
     const ready = new Promise<boolean>(r => { readyResolve = r; });
     const onMsg = (e: MessageEvent) => {
         if (e.source !== iframe.contentWindow) return;
         const d = e.data;
         if (!d || typeof d !== 'object') return;
         if (d.type === 'fg-check-log' && logs.length < 500) logs.push({ level: d.level, text: d.text, t: d.t });
+        else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
     };
@@ -835,6 +838,8 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         iframe.srcdoc = content;
         document.body.appendChild(wrap);
         loaded = await Promise.race([ready, _sleep(8000).then(() => false)]);
+        // Slow device: scripts that start are given longer before the page is called not-loaded.
+        if (!loaded && alive) loaded = await Promise.race([ready, _sleep(12000).then(() => false)]);
         await _sleep(300);
         const probeAll = async (when: string) => {
             if (!probes.length) return;
@@ -885,7 +890,9 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const warnings = collapse(logs.filter(l => l.level === 'warn'), 10);
     const consoleOut = collapse(logs.filter(l => l.level !== 'error' && l.level !== 'warn'), 30);
     const notes: string[] = [];
-    if (!loaded) notes.push('The page did not finish loading within 8 s.');
+    if (!loaded) notes.push(alive
+        ? 'The check script started in the page, but the page did not finish parsing its scripts within 20 s. Heavy synchronous start-up work (building sprite atlases, decoding large inlined images, long loops) on a slow device is the usual cause: defer it (requestAnimationFrame / setTimeout chunks) or shrink it, and compare with the errors above.'
+        : 'Nothing in the page ran, not even the check script, within 8 s: the browser blocked or never rendered the frame (page too large to build, fatal parse failure of the document).');
     if (fps !== null && fps < 20) notes.push(`Animation frames ran at only ~${fps} fps (browser throttling), so game time advanced far slower than real time — treat movement and timing results as unreliable.`);
     // Old engines (iPadOS ≤ 15 Safari) reject newer syntax in the page's own scripts and lack newer
     // library methods; the AI otherwise reads those errors as bugs in the app or a broken tool.
@@ -899,14 +906,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // The page never ran: nothing was checked, and "Loaded partially; no errors" read as a mostly
     // good result (uploaded chat logs, 2026-10-08: 34 such calls in 9 chats on an older iPad browser;
     // one chat made 11, another concluded the checker could not see the file at all).
-    const _neverRan = !loaded && !logs.length;
+    const _neverRan = !loaded && !logs.length && !alive;
     _checkPageNeverRan = _neverRan ? _checkPageNeverRan + 1 : 0;
     if (_neverRan && _checkPageNeverRan >= 2)
         notes.push(`This is the ${_checkPageNeverRan}${_checkPageNeverRan === 2 ? 'nd' : _checkPageNeverRan === 3 ? 'rd' : 'th'} check_page call in a row where the page did not run. Calling it again will not change that. Check the code another way instead: read it, and syntax-check each script with execute_code (JavaScript: new Function(source)). Say in your final answer that the page could not be run in this browser.`);
     const summary = _neverRan
         ? 'The page did not run, so nothing was checked (no script in it reported back).'
         : !errors.length
-        ? `Loaded ${loaded ? 'fine' : 'partially'}; no errors.`
+        ? (loaded ? 'Loaded fine; no errors.' : 'The page started but never finished loading, so nothing was verified (no errors were reported).')
         : `${errors.reduce((n, e) => n + e.count, 0)} error(s): ${errors[0].text}`;
     return {
         path, loaded, summary, ...(fps !== null ? { fps } : {}),
@@ -953,7 +960,34 @@ async function openArtifactTab(title, html, { isPreview = true } = {}) {
 }
 window.openArtifactTab = openArtifactTab;
 
+// A preview tab is a srcdoc snapshot built when it was opened, so edits made afterwards (by the AI
+// or the shell) never showed in it: the user kept seeing the old build and concluded nothing was
+// fixed. Workspace writes call this; open ▶ page tabs are rebuilt from the current files, debounced
+// so a burst of edits reloads once.
+let _artifactRefreshTimer: any = 0;
+function scheduleArtifactRefresh(changedName = '') {
+    if (/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName)) return;
+    if (!fileTabs.size) return;
+    clearTimeout(_artifactRefreshTimer);
+    _artifactRefreshTimer = setTimeout(async () => {
+        for (const [key, ft] of [...fileTabs]) {
+            if (!key.startsWith('artifact:') || !ft.isPreview) continue;
+            const title = key.slice('artifact:'.length);
+            if (!/\.html?$/i.test(title)) continue;
+            const iframe = ft.panel.querySelector('.artifact-iframe') as HTMLIFrameElement | null;
+            if (!iframe) continue;
+            try {
+                const html = await agentReadFile(title);
+                if (typeof html !== 'string' || !html.trim()) continue;
+                ft.savedContent = html;
+                iframe.srcdoc = _wrapArtifact(await _inlineWorkspaceRefs(html, title));
+            } catch {}
+        }
+    }, 800);
+}
+
 function notifyLocalFileChanged(fullPath, content) {
+    scheduleArtifactRefresh(fullPath.replace(/^local\//, ''));
     const ft = fileTabs.get(fullPath);
     if (!ft) return;
     if (ft.editor) {
@@ -1007,4 +1041,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, notifyLocalFileChanged, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });

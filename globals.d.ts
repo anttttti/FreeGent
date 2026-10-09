@@ -327,6 +327,7 @@ declare global {
     var installSkillFromFiles: any;
     var loadSkills: any;
     var notifyLocalFileChanged: any;
+    var scheduleArtifactRefresh: any;
     var openFileTab: any;
     var populateVoiceTab: any;
     var profileDelete: any;

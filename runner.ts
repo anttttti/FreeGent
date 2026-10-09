@@ -3,6 +3,7 @@
 import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus } from './task-status.js';
+import * as MsgQueue from './msg-queue.js';
 
 interface Task {
     path: string;
@@ -168,6 +169,8 @@ async function _runLoop() {
             await _waitWhilePaused();
             if (_runnerAbort) break;
 
+            await _waitUntilQuiet();
+            if (_runnerAbort) break;
             const tasks = await loadTaskFiles();
             refreshTasks?.();   // keep kanban in sync with task-file state
 
@@ -274,9 +277,30 @@ function _selectNextTask(tasks: Task[]): Task | null {
 
 // ── Task execution ─────────────────────────────────────────────────────────
 
+// Wait until the previous task's chat has really finished before another starts: no stream, no
+// queued message about to be sent, and that stays true for a moment. A task file reading "done" is
+// not that — the agent may still be writing its summary, and the turn's teardown (history save,
+// queue processing) runs after it. Without this, a new task's chat began while the old one was live.
+const _sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
+async function _waitUntilQuiet(settleMs = 0, maxMs = 300_000): Promise<void> {
+    const t0 = Date.now();
+    let quietSince = 0;
+    while (!_runnerAbort && Date.now() - t0 < maxMs) {
+        const busy = agentStreaming || (MsgQueue.getAll?.().length ?? 0) > 0;
+        if (busy) quietSince = 0;
+        else if (!quietSince) { quietSince = Date.now(); if (settleMs <= 0) return; }
+        else if (Date.now() - quietSince >= settleMs) return;
+        await _sleepMs(80);
+    }
+}
+
 const _MAX_TURNS_PER_EPISODE = 5;
 
 async function _runEpisode(task: Task): Promise<EpisodeResult> {
+    // Something is still streaming (a previous chat winding down, a message the user sent): wait for
+    // it instead of failing this task for it.
+    await _waitUntilQuiet();
+    if (_runnerAbort) return { success: false, blocked: false, blockedReason: '', failReason: 'Stopped' };
     if (agentStreaming) return { success: false, blocked: false, blockedReason: '', failReason: 'Already streaming' };
 
     // Start through the lifecycle engine, so the dependency, enrichment and rework-limit gates
@@ -357,6 +381,16 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
 
         if (!_runnerRunning || _runnerAbort) break;
 
+        // A turn that died on an error (network lost while the tablet slept) came back at once;
+        // re-prompting immediately burned the episode's turns in seconds and moved on to the next
+        // task. Wait for the network and back off before the next attempt.
+        if (typeof _lastResult === 'object' && _lastResult?.finishSignal === 'error') {
+            const t0 = Date.now();
+            while (!_runnerAbort && typeof navigator !== 'undefined' && navigator.onLine === false && Date.now() - t0 < 600_000) await _sleepMs(1000);
+            await _sleepMs(Math.min(30_000, 3_000 * turn));
+            if (_runnerAbort) break;
+        }
+
         // The runner's agent (director) declares "BLOCKED: <reason>", which _stripTerminal removes
         // from the returned text — so a text match for "STATUS: blocked" (the worker footer) never
         // saw it and blocked tasks were retried/replanned instead of pausing for the user.
@@ -395,6 +429,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             `update_task_status("${task.path}", "failed", "<reason>") if it cannot be done.\n\n` +
             `Current task file:\n${taskContent.slice(0, 1200)}`;
         await _runnerTurn(replanPrompt);
+        await _waitUntilQuiet();
         try {
             const content = await agentReadFile(task.path);
             const fm = parseFrontmatter(content);
@@ -437,6 +472,9 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // Restore Director role for any follow-up (e.g. post-task chat).
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
 
+    // The episode is over when its chat is, not when the task file says done.
+    if (!blocked) await _waitUntilQuiet(250);   // a blocked task pauses for the user at once
+    await refreshTasks();
 
     return { success, blocked, blockedReason, failReason };
 }

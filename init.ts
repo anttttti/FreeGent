@@ -748,7 +748,7 @@ Object.assign(window, {
     renderModelCatalogTable, renderMainModelList,
     showAddCustomModelForm, addCustomModel, deleteCustomModel,
     _movePriorityItem, _removePriorityItem, _addPriorityItem,
-    activateTab, openFileTab, closeFileTab, notifyLocalFileChanged,
+    activateTab, openFileTab, closeFileTab, notifyLocalFileChanged, scheduleArtifactRefresh,
     toggleChatsDropdown, startInlineRenameCurrentChat, deleteCurrentChat,
     refreshTasks,
     loadSkills, toggleSkill, installSkillFromFiles, renderSkillsChecklist, renderToolsChecklist,

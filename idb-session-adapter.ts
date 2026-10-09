@@ -39,8 +39,46 @@ function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (r
     });
 }
 
+// A handle the browser has closed (iOS Safari does this to backgrounded or memory-pressured tabs)
+// throws InvalidStateError on every transaction until reopened.
+const _isClosedDbError = (e: any) => e?.name === 'InvalidStateError' || /connection is closing|database.*closed/i.test(String(e?.message ?? ''));
+
 export class IDBSessionAdapter {
-    constructor(private _db: IDBDatabase) {}
+    private _reopening: Promise<void> | null = null;
+    constructor(private _db: IDBDatabase, private _reopen: (() => Promise<IDBDatabase>) | null = null) {
+        this._watch(_db);
+        if (!_reopen) return;
+        // Every public async method retries once on a closed connection, after reopening it.
+        const proto = IDBSessionAdapter.prototype as any;
+        for (const name of Object.getOwnPropertyNames(proto)) {
+            if (name === 'constructor' || name.startsWith('_') || name === 'revive' || typeof proto[name] !== 'function') continue;
+            const orig = proto[name];
+            (this as any)[name] = async (...a: any[]) => {
+                try { return await orig.apply(this, a); }
+                catch (e) {
+                    if (!_isClosedDbError(e)) throw e;
+                    await this.revive(true);
+                    return await orig.apply(this, a);
+                }
+            };
+        }
+    }
+
+    private _watch(db: IDBDatabase) {
+        db.onclose = () => { if (this._db === db) this.revive(true).catch(() => {}); };
+        db.onversionchange = () => { try { db.close(); } catch {} if (this._db === db) this.revive(true).catch(() => {}); };
+    }
+
+    /** Reopen the connection if the browser closed it (or `force`). Safe to call often. */
+    async revive(force = false): Promise<void> {
+        if (!this._reopen) return;
+        if (!force) { try { this._db.transaction('chats', 'readonly').abort(); return; } catch {} }
+        if (!this._reopening) {
+            this._reopening = (async () => { const d = await this._reopen!(); this._db = d; this._watch(d); })()
+                .finally(() => { this._reopening = null; });
+        }
+        await this._reopening;
+    }
 
     // Compute current generation from the max generation stored in the history store.
     // Avoids storing generation on the chat record (which would require read-modify-write on every sync).
@@ -226,7 +264,7 @@ export class IDBSessionAdapter {
 
 // Exported so tests can pass a fake-indexeddb IDBFactory and an isolated DB name.
 export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_NAME): Promise<IDBSessionAdapter> {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const open = () => new Promise<IDBDatabase>((resolve, reject) => {
         const req = idb.open(dbName, _DB_VERSION);
         req.onupgradeneeded = () => {
             const d = req.result;
@@ -257,13 +295,16 @@ export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_N
         req.onsuccess = () => resolve(req.result);
         req.onerror   = () => reject(req.error);
     });
-    return new IDBSessionAdapter(db);
+    return new IDBSessionAdapter(await open(), open);
 }
 
 async function initIDBSession(): Promise<void> {
     if (typeof indexedDB === 'undefined') return;
     try {
-        setSessionStore(await openIDBSession());
+        const adapter = await openIDBSession();
+        setSessionStore(adapter);
+        // Coming back to the tab is when a closed connection is noticed first.
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) adapter.revive().catch(() => {}); });
     } catch (e) {
         console.warn('[idb-session] init failed:', (e as any)?.message);
     }
