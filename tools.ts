@@ -2323,7 +2323,9 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         const hint = mainAgentRole.name !== 'director'
             ? `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`
             : _isWrite && mainAgentRole.tools.has('execute_code')
-                ? 'Edit files with execute_code instead (e.g. a short Python script that reads the file, replaces the exact text and writes it back), or delegate the edit via run_workers.'
+                ? (mainAgentRole.tools.has('replace_in_file') && _target !== 'replace_in_file'
+                    ? 'Edit an existing file with replace_in_file (exact old_string from read_file), or delegate the edit via run_workers.'
+                    : 'Edit files with execute_code instead (e.g. a short Python script that reads the file, replaces the exact text and writes it back), or delegate the edit via run_workers.')
                 : !_known
                     ? `'${name}' is not one of your tools; yours are: ${[...mainAgentRole.tools].join(', ')}. If it is an operation of an external service, call that service's API with the tools you have.`
                     : 'Delegate this via run_workers if needed.';

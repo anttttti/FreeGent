@@ -19,7 +19,7 @@ import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
-import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
+import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
@@ -61,7 +61,7 @@ const BUILTIN_ROLES = [
                         'write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file',
                         'undo_write', 'ast_query', 'check_page']),
         body_fn(): string {
-            const _has = (t: string) => enabledTools.has(t);
+            const _has = (t: string) => isToolActive(t);   // mode-aware: Cowork keeps its own enabled set
 
             const toolLines: string[] = [];
             if (_has('list_files'))
@@ -142,8 +142,10 @@ ${toolSection}`;
             if (!runtime.hasNativeExec)
                 return new Set([...ALL_TOOL_NAMES as string[], ...(typeof mcpToolNames === 'function' ? mcpToolNames() : [])]);
             // Headless ceiling (benchmarks / fg-run / TUI): tools the director can call directly.
-            // write_file is included so a one-file change doesn't need a worker round-trip; the
-            // other edit tools (replace_in_file, apply_patch) stay with the coder workers.
+            // write_file and replace_in_file are included so a one-file change doesn't need a worker
+            // round-trip and a small edit is one call, not a sed or Python script through execute_code
+            // (v0.66 SWE-bench: 77% of calls were execute_code, replace_in_file 1). apply_patch stays
+            // with the coder workers: a small model gets unified-diff headers wrong.
             // headless-runner.ts adds the write tools to enabledTools so worker ceilings pass them
             // through; --disable-tools still removes write_file (the ceiling is intersected with
             // the enabled set).
@@ -152,14 +154,14 @@ ${toolSection}`;
             // on getGitEnabled() && getSandboxProvider() === 'local' and returns a clear error.
             return new Set([
                 'read_file', 'search_workspace', 'list_files', 'run_workers', 'execute_code',
-                'run_git', 'ast_query', 'write_file',
+                'run_git', 'ast_query', 'write_file', 'replace_in_file',
                 ..._directorHeadlessExtras,
             ]);
         },
         // body_fn: called at prompt-build time so the Available tools section reflects
         // the tools actually in enabledTools at that moment, rather than a static snapshot.
         body_fn(): string {
-            const _has = (t: string) => enabledTools.has(t);
+            const _has = (t: string) => isToolActive(t);   // mode-aware: Cowork keeps its own enabled set
 
             // ── Direct tools available to the director ──────────────────────────
             const readTools  = (['read_file', 'search_workspace', 'list_files'] as const).filter(_has);
@@ -184,7 +186,9 @@ ${toolSection}`;
                 // look for tools the headless Director does not have (v0.64 SWE: 28 replace_in_file attempts).
                 toolLines.push(writeTools.length === 1 && writeTools[0] === 'write_file'
                     ? `- **Write** — write_file: create a file, or rewrite one in full (a rewrite that drops much of an existing file is rejected; make a small change to an existing file with execute_code)`
-                    : `- **Write** — ${writeTools.join(', ')}: create, edit, patch, or delete files`);
+                    : writeTools.length === 2 && writeTools.includes('write_file') && writeTools.includes('replace_in_file')
+                        ? `- **Write** — write_file: create a file, or rewrite one in full (a rewrite that drops much of an existing file is rejected). replace_in_file: edit an existing file by replacing exact text (copy old_string from a read_file result); use it for every change to an existing file instead of sed or a script`
+                        : `- **Write** — ${writeTools.join(', ')}: create, edit, patch, or delete files`);
             if (hasExec)
                 toolLines.push(`- **Execute** — execute_code: run shell commands or scripts`);
             if (hasGit)
@@ -237,7 +241,7 @@ ${toolSection}`;
                 toolLines.push(
 `- **Delegate** — run_workers(agents): spawn parallel workers; choose the role that matches the sub-task:
   - role "director" — a fork of you with your full context and tools. Use it when the subtask depends on what you've learned. Just state the subtask.
-  - role "coder" — ${coderDesc}. Use coder for file edits. Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
+  - role "coder" — ${coderDesc}. Use coder for edits spanning several files. Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
   - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')}). Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
 Delegate to workers for: ${delegateCases}.`
                 );

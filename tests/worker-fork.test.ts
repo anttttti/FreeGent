@@ -124,8 +124,9 @@ describe('director prompt lists coder', () => {
             W.setMainAgentRole('director');
             const sp = W.buildSystemPrompt();
             expect(sp).toContain('role "coder"');
-            expect(sp).toContain('Use coder for file edits');
-            expect(sp).not.toMatch(/replace_in_file|apply_patch/);   // the director itself cannot call them
+            expect(sp).toContain('Use coder for edits spanning several files');
+            expect(sp).toContain('replace_in_file: edit an existing file');   // the director edits with it directly
+            expect(sp).not.toMatch(/apply_patch/);                            // apply_patch stays with the coder workers
         } finally { W.nativeExec = prevExec; W.mainAgentRole = null; }
     });
 });
