@@ -91,8 +91,10 @@ export const enabledTools = (() => {
 
 // Cowork-mode tool enablement. Same persistence pattern as enabledTools.
 // Default: all tools enabled in chat are also enabled in cowork, plus update_task_status
-// and write_file (required for the tasks skill) which are cowork-only defaults.
-const COWORK_ONLY_DEFAULTS = new Set(['update_task_status', 'write_file']);
+// and write_file (required for the tasks skill) which are cowork-only defaults, and
+// replace_in_file (cowork edits files; a targeted replace beats rewriting or scripting a change).
+// Saved preferences win: a user whose saved list already disables it keeps it off until they enable it.
+const COWORK_ONLY_DEFAULTS = new Set(['update_task_status', 'write_file', 'replace_in_file']);
 export const coworkEnabledTools = (() => {
     const disabled = JSON.parse(localStorage.getItem(KEYS.DISABLED_TOOLS_COWORK) || 'null');
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));

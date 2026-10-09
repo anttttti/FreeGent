@@ -91,24 +91,33 @@ describe('Director prompt Write line', () => {
     let origExec: any, added: string[];
     beforeEach(() => {
         origExec = W.nativeExec; W.nativeExec = () => {};                          // headless branch
-        // headless-runner enables the edit tools for the coder workers; the Director's ceiling still has only write_file
+        // headless-runner enables the edit tools for the coder workers; the Director's ceiling has write_file and replace_in_file
         added = ['write_file', 'replace_in_file', 'apply_patch'].filter(t => !W.enabledTools.has(t));
         added.forEach(t => W.enabledTools.add(t));
     });
     afterEach(() => { W.nativeExec = origExec; setDirectorHeadlessTools([]); added.forEach(t => W.enabledTools.delete(t)); });
 
     it('does not promise edit/patch/delete when write_file is the only write tool', () => {
+        W.enabledTools.delete('replace_in_file');   // e.g. --disable-tools replace_in_file
         const line = W.rolesRegistry.get('director').body_fn().split('\n').find((l: string) => l.includes('**Write**'));
         expect(line).toBeDefined();
         expect(line).toContain('write_file');
         expect(line).not.toMatch(/edit, patch, or delete/);
+        expect(line).not.toContain('replace_in_file');
         expect(line).toContain('execute_code');
     });
 
-    it('keeps the general wording when the Director has more write tools', () => {
-        setDirectorHeadlessTools(['replace_in_file']);
+    it('tells the Director to edit existing files with replace_in_file, not sed or a script', () => {
         const line = W.rolesRegistry.get('director').body_fn().split('\n').find((l: string) => l.includes('**Write**'));
-        expect(line).toContain('replace_in_file');
+        expect(line).toContain('replace_in_file: edit an existing file');
+        expect(line).toMatch(/instead of sed or a script/);
+        expect(line).not.toContain('apply_patch');
+    });
+
+    it('keeps the general wording when the Director has more write tools', () => {
+        setDirectorHeadlessTools(['apply_patch']);
+        const line = W.rolesRegistry.get('director').body_fn().split('\n').find((l: string) => l.includes('**Write**'));
+        expect(line).toContain('apply_patch');
         expect(line).toMatch(/create, edit, patch, or delete files/);
     });
 });
