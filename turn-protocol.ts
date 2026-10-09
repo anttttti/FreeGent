@@ -15,6 +15,7 @@
 
 import { workflowMode, setLastTurnDoneToken } from './state.js';
 import { getAgentMaxSteps } from './config.js';
+import { getReplyChannelHint } from './reply-channel.js';
 
 // The configured step limit (fg_agent_max_rounds / --max-rounds) — the same one runTurn loops on.
 // The constant MAX_STEPS (the setting's ceiling) made the "not on the last step" guards wrong for other limits.
@@ -143,6 +144,20 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
         }
         if (adapter.histLen() >= 2) adapter.spliceFromSecondLast(2);
         return { kind: 'return', text: _stripTerminal(ps.saved ?? textContent) };
+    }
+    // A task whose counterpart is reached through a tool (tau2: POST /message to the customer). Chat
+    // output goes nowhere there, so a text-only reply that is not a finished task is a message that was
+    // never sent. Say how to send it; the generic redirection below ("you cannot ask the user") would
+    // tell the model to stop talking to the very person the task is about. In the uploaded v0.62 tau2
+    // run, 16 of 45 conversations got that redirection and 24 ended on a text-only step.
+    const _replyHint = getReplyChannelHint();
+    if (_isAutonomous && _replyHint && (ps.replyHints ?? 0) < 3 && step < _maxSteps() - 1 && !_BLOCKED_DECLARATION_RE.test(textContent)) {
+        const _finished = _isComplete(textContent) && !/\?/.test(_stripTerminal(textContent));
+        if (!_finished) {
+            ps.replyHints = (ps.replyHints ?? 0) + 1;
+            adapter.pushNudge(_replyHint);
+            return { kind: 'continue' };
+        }
     }
     // Declared COMPLETED — validate before accepting.
     // Pathologies caught here (one-shot nudge via ps.substCheck, accepted on second attempt):

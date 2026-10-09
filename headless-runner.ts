@@ -69,6 +69,7 @@ import './agent-core.js';
 import './skills.js'; // populates BUILTIN_RULES/BUILTIN_SKILLS; loadSkills() called in run()
 
 import { NodeFsAdapter, DockerFsAdapter } from './node-fs-adapter.js';
+import { setReplyChannelHint } from './reply-channel.js';
 import { registry, initPersistence } from './session-registry.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { directorLoop } from './loop-director.js';
@@ -269,6 +270,7 @@ function _parseOpts(opts: any) {
         fetchAllow:      opts.fetchAllow      ?? e.FREEGENT_FETCH_ALLOW      ?? '',
         enableTools:     opts.enableTools     ?? e.FREEGENT_ENABLE_TOOLS     ?? '',
         browserUrl: opts.browserUrl ?? '',
+        replyChannelHint: opts.replyChannelHint ?? e.FREEGENT_REPLY_CHANNEL_HINT ?? '',
         mcpServers: opts.mcpServers ?? null,
     };
 }
@@ -301,7 +303,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
         contextWindow, compactionLimit, disabledTools, mainRole, workflowMode, resumeSessionId, sessionDbPath,
-        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools, browserUrl, mcpServers,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools, browserUrl, replyChannelHint, mcpServers,
     } = _parseOpts(opts);
 
     // ── Startup timing instrumentation ────────────────────────────────────────
@@ -479,6 +481,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     }
     if (typeof dom.window.setWorkflowMode === 'function')
         dom.window.setWorkflowMode(workflowMode);
+    setReplyChannelHint(replyChannelHint);
 
     // Session persistence: wire NodeSqliteAdapter so chat history, turn logs, and
     // compaction lineage are persisted to SQLite — same behaviour as the browser's

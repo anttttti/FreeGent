@@ -58,6 +58,8 @@ Options:
                             http://fg-gw:41234) and disable web_search and other
                             outbound-request tools. Request policy, not containment.
   --browser-url <url>       Text-only Playwright bridge URL (explicit opt-in)
+  --reply-channel-hint <t>  The task's counterpart is reached through a tool, not chat output: text
+                            to show the model when it answers in chat instead (benchmark runners)
   --mcp-config <path>       JSON array of per-run MCP servers; replaces saved servers
   --temperature   <n>       Sampling temperature 0–2 (default: 0.2)
   --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
@@ -94,6 +96,7 @@ const disabledTools   = _arg('--disable-tools') || '';
 const fetchAllow      = _arg('--fetch-allow') || '';
 const enableTools     = _arg('--enable-tools') || '';
 const browserUrl      = _arg('--browser-url') || '';
+const replyChannelHint = _arg('--reply-channel-hint') || '';
 const mcpConfigFile   = _arg('--mcp-config');
 let mcpServers = null;
 if (mcpConfigFile) {
@@ -118,7 +121,7 @@ if (!task && taskFile) {
 if (!task && !promptText && !_flag('--print-model')) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 
 const workspaceRoot = resolve(workspacePath);
-const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
+const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, replyChannelHint, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
 
 if (_flag('--print-model')) {
     // A pipe is asynchronous on some platforms; wait for it before process.exit().
