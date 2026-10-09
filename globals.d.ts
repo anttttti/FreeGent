@@ -681,6 +681,7 @@ declare global {
     var agentListFilesNoStat: () => Promise<Array<{name: string}>>;
     var agentReadFile: any;
     var agentWriteFile: any;
+    var agentReadFileBytes: any;
     var buildPyRunnerHtml: any;
     var cleanupDanglingCheckpoints: any;
     var clearProject: any;

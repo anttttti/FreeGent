@@ -641,7 +641,25 @@ html, body {
     background: none;
 }
 .input-attach-btn:hover { background: var(--surface2); color: var(--text); }
-.input-attach-btn input[type="file"] { display: none; }
+.attach-wrap { position: relative; flex-shrink: 0; }
+.attach-wrap input[type="file"] { display: none; }
+.attach-menu { display: none; position: absolute; bottom: 48px; left: 0; z-index: 50; min-width: 220px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+.attach-menu.open { display: block; }
+.attach-menu button { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+    color: var(--text); padding: 9px 10px; border-radius: 7px; cursor: pointer; font: inherit; }
+.attach-menu button:hover { background: var(--surface2); }
+.attach-menu-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+.ws-pick-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.ws-pick-box { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+    width: min(560px, 100%); max-height: 80vh; display: flex; flex-direction: column; gap: 8px; }
+.ws-pick-title { font-weight: 600; }
+.ws-pick-list { overflow-y: auto; min-height: 120px; border: 1px solid var(--border); border-radius: 8px; }
+.ws-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; word-break: break-all; }
+.ws-pick-row:hover { background: var(--surface2); }
+.ws-pick-size { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ws-pick-footer { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ── Model quick-select ── */
 .send-btn-model:hover { background: var(--surface3); }
@@ -1692,7 +1710,7 @@ html, body {
         min-height: 44px;
     }
     /* Buttons row: attach | model(flex) | mic pause stop (bunched right) */
-    .input-attach-btn { order: 1; }
+    .attach-wrap { order: 1; }
     /* Model name expands to fill available space */
     #input-model-btn {
         order: 2;

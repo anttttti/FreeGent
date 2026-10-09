@@ -48,7 +48,8 @@ function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL'): Promi
     });
 }
 
-let _pendingImages: { mimeType: string; base64: string }[] = [];
+type _Img = { mimeType: string; base64: string; name?: string; workspacePath?: string };
+let _pendingImages: _Img[] = [];
 let _pendingFiles: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }[] = [];
 
 // ── File attachment helpers ───────────────────────────────────────────────────
@@ -127,8 +128,8 @@ function _addFileChip(att: any): void {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function addImageAttachment(mimeType: string, base64: string): void {
-    const imgObj = { mimeType, base64 };
+function addImageAttachment(mimeType: string, base64: string, extra: { name?: string; workspacePath?: string } = {}): void {
+    const imgObj: _Img = { mimeType, base64, ...extra };
     _pendingImages.push(imgObj);
     const strip = document.getElementById('img-strip');
     if (!strip) return;
@@ -162,7 +163,7 @@ function clearImageAttachments(): void {
 // Returns snapshots of the pending arrays for callers that need to read state
 // (saveCheckpoint, agentSend) without exposing the mutable arrays directly.
 function getPendingAttachments(): {
-    images: { mimeType: string; base64: string }[];
+    images: _Img[];
     files: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }[];
 } {
     return { images: [..._pendingImages], files: [..._pendingFiles] };
@@ -175,14 +176,14 @@ function restoreFileAttachment(att: { name: string; mimeType: string; contentTyp
     _addFileChip(att);
 }
 
-function addFileAttachment(file: File): Promise<void> {
+function addFileAttachment(file: File, existingPath?: string): Promise<void> {
     const generation = _attachmentGeneration;
     const strip = document.getElementById('img-strip');
     const loading = document.createElement('div');
     loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
     loading.textContent = `Reading ${file.name}…`;
     if (strip) { strip.appendChild(loading); strip.style.display = 'flex'; }
-    const read = _loadFileAttachment(file, generation);
+    const read = _loadFileAttachment(file, generation, existingPath);
     _attachmentReads.add(read);
     // Attach a rejection handler even when the caller is an inline event handler.
     void read.then(() => { loading.remove(); _attachmentReads.delete(read); }, error => {
@@ -191,7 +192,8 @@ function addFileAttachment(file: File): Promise<void> {
     });
     return read;
 }
-async function _loadFileAttachment(file: File, generation: number): Promise<void> {
+// existingPath: the file already lives in the workspace there (Select mode), so no copy is written.
+async function _loadFileAttachment(file: File, generation: number, existingPath?: string): Promise<void> {
     const name = file.name;
     const ext = name.split('.').pop()?.toLowerCase() || '';
     const mimeType = file.type && file.type !== 'application/octet-stream' ? file.type : _guessMime(ext);
@@ -203,7 +205,20 @@ async function _loadFileAttachment(file: File, generation: number): Promise<void
     const current = () => generation === _attachmentGeneration;
     if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {
         const url = await _readAttachment(file, 'readAsDataURL');
-        if (current()) addImageAttachment(mimeType, url.slice(url.indexOf(',') + 1));
+        if (!current()) return;
+        const base64 = url.slice(url.indexOf(',') + 1);
+        // Also store the image in the workspace, so tools can open it and the agent can move or
+        // save it (as for other binary attachments); the model sees the pixels via the message.
+        let workspacePath: string | undefined = existingPath;
+        if (!existingPath && typeof agentWriteFile === 'function') {
+            const basename = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'image';
+            workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
+            try {
+                await agentWriteFile(workspacePath, base64, 'base64');
+                if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
+            } catch { workspacePath = undefined; }
+        }
+        addImageAttachment(mimeType, base64, { name, ...(workspacePath ? { workspacePath } : {}) });
         return;
     }
 
@@ -225,8 +240,8 @@ async function _loadFileAttachment(file: File, generation: number): Promise<void
     }
     if (!current()) return;
     if (contentType === 'text' && content.length > 50_000) content = content.slice(0, 50_000) + '\n…[truncated — showing first 50,000 characters]';
-    let workspacePath: string | undefined;
-    if (original && typeof agentWriteFile === 'function') {
+    let workspacePath: string | undefined = existingPath;
+    if (!existingPath && original && typeof agentWriteFile === 'function') {
         // Last path segment only, with dot-segments dropped, so a hostile name cannot leave attachments/.
         const basename = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'attachment';
         workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
@@ -275,6 +290,96 @@ document.addEventListener('paste', e => {
     if (!chatPanel?.classList.contains('active')) return;
     e.preventDefault();
     for (const file of files) void addFileAttachment(file).catch(() => {});
+});
+
+// ── Attach menu: Attach (device camera / photos) · Upload (any file) · Select (workspace file) ──
+function toggleAttachMenu(ev?: Event): void {
+    ev?.stopPropagation();
+    document.getElementById('attach-menu')?.classList.toggle('open');
+}
+function closeAttachMenu(): void { document.getElementById('attach-menu')?.classList.remove('open'); }
+document.addEventListener('click', e => {
+    if (!(e.target as HTMLElement | null)?.closest?.('.attach-wrap')) closeAttachMenu();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAttachMenu(); });
+
+// "Attach": the device's own attachment sheet (Photo Library / Take Photo / Files on phones).
+function attachFromDevice(): void { closeAttachMenu(); (document.getElementById('attach-device-input') as HTMLInputElement | null)?.click(); }
+// "Upload": the plain file picker, every file type.
+function attachUpload(): void { closeAttachMenu(); (document.getElementById('attach-file-input') as HTMLInputElement | null)?.click(); }
+
+// "Select": pick files that are already in the workspace (or the synced local folder).
+async function attachFromWorkspace(): Promise<void> {
+    closeAttachMenu();
+    if (typeof agentListFiles !== 'function') return;
+    let files: { name: string; size?: number }[] = [];
+    try { files = await agentListFiles(); } catch { return; }
+    files = files.filter(f => !f.name.split('/').some(seg => seg.startsWith('.'))).sort((a, b) => a.name.localeCompare(b.name));
+
+    const overlay = document.createElement('div');
+    overlay.className = 'ws-pick-overlay';
+    const box = document.createElement('div');
+    box.className = 'ws-pick-box';
+    const title = document.createElement('div');
+    title.className = 'ws-pick-title'; title.textContent = 'Attach files from the workspace';
+    const filter = document.createElement('input');
+    filter.className = 'settings-input'; filter.placeholder = 'Filter…'; filter.style.width = '100%';
+    const list = document.createElement('div');
+    list.className = 'ws-pick-list';
+    const footer = document.createElement('div');
+    footer.className = 'ws-pick-footer';
+    const cancel = document.createElement('button');
+    cancel.className = 'ws-action-btn'; cancel.textContent = 'Cancel';
+    const ok = document.createElement('button');
+    ok.className = 'ws-action-btn'; ok.textContent = 'Attach';
+    footer.append(cancel, ok);
+    box.append(title, filter, list, footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    const chosen = new Set<string>();
+    const render = () => {
+        const q = filter.value.trim().toLowerCase();
+        list.innerHTML = '';
+        const shown = files.filter(f => !q || f.name.toLowerCase().includes(q)).slice(0, 300);
+        if (!shown.length) { list.textContent = files.length ? 'No matching files.' : 'The workspace has no files.'; return; }
+        for (const f of shown) {
+            const row = document.createElement('label');
+            row.className = 'ws-pick-row';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = chosen.has(f.name);
+            cb.onchange = () => { cb.checked ? chosen.add(f.name) : chosen.delete(f.name); ok.textContent = chosen.size ? `Attach (${chosen.size})` : 'Attach'; };
+            const nm = document.createElement('span');
+            nm.textContent = f.name;
+            row.append(cb, nm);
+            if (typeof f.size === 'number') { const sz = document.createElement('span'); sz.className = 'ws-pick-size'; sz.textContent = _fmtSz(f.size); row.appendChild(sz); }
+            list.appendChild(row);
+        }
+    };
+    filter.oninput = render;
+    render();
+    const close = () => overlay.remove();
+    cancel.onclick = close;
+    overlay.onclick = e => { if (e.target === overlay) close(); };
+    ok.onclick = async () => {
+        close();
+        for (const path of chosen) await addWorkspaceAttachment(path).catch(e => _attachmentError(path, e));
+    };
+    filter.focus();
+}
+
+// Attach a file that is already in the workspace: same pipeline as an upload, no extra copy.
+function addWorkspaceAttachment(path: string): Promise<void> {
+    return (async () => {
+        const bytes = await agentReadFileBytes(path);
+        const name = path.split('/').pop() || path;
+        const file = new File([bytes as BlobPart], name, { type: _guessMime(name.split('.').pop()?.toLowerCase() || '') });
+        await addFileAttachment(file, path);
+    })();
+}
+
+Object.assign(window, {
+    toggleAttachMenu, attachFromDevice, attachUpload, attachFromWorkspace, addWorkspaceAttachment,
 });
 
 Object.assign(window, {

@@ -806,6 +806,19 @@ export async function agentReadFile(path) {
     throw new Error(`File not found: ${path}`);
 }
 
+/** Raw bytes of a workspace file (binary-safe; used to attach workspace files to a chat message). */
+export async function agentReadFileBytes(path: string): Promise<Uint8Array> {
+    if (_wa) return new TextEncoder().encode(await agentReadFile(path));
+    path = workspaceName(path);
+    if (path.startsWith('local/') && fsaHandle) {
+        try { return _base64ToUint8(await readFsaFile(path.slice(6), true)); } catch {}
+    }
+    const rec = await readWorkspaceFile(path);
+    if (rec) return rec.encoding === 'base64' ? _base64ToUint8(rec.content) : new TextEncoder().encode(rec.content);
+    if (fsaHandle) { try { return _base64ToUint8(await readFsaFile(path, true)); } catch {} }
+    throw new Error(`File not found: ${path}`);
+}
+
 // Git metadata is off limits to agent writes: a hook (.git/hooks/*) or repo config (.git/config:
 // core.pager, core.fsmonitor, aliases, filters) written into a granted local folder is executed by
 // the next git command — run_git, or yours. Browser workspace only; headless runs are contained
@@ -2090,6 +2103,8 @@ function uploadFiles(folder = false, asLocal = false) {
     if (folder) {
         input.webkitdirectory = true;
     }
+    // No `accept` filter: with none, phones and tablets offer their full attachment sheet (Photo
+    // Library, Take Photo, Files) and desktops show every file type.
     // Must be in the DOM before .click() — mobile browsers ignore detached inputs
     document.body.appendChild(input);
     input.onchange = async () => {
@@ -2103,8 +2118,6 @@ function uploadFiles(folder = false, asLocal = false) {
             // Any directory segment in the skip-list → drop the file.
             if (segs.slice(0, -1).some(s => UPLOAD_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
             if (f.size > UPLOAD_MAX_BYTES) {
-    // No `accept` filter: with none, phones and tablets offer their full attachment sheet (Photo
-    // Library, Take Photo, Files) and desktops show every file type.
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);
                 return false;
             }
@@ -2711,7 +2724,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // Document helpers exposed for tools.js and other classic scripts
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,
     // Agent file ops (called via window.X in tools.js)
-    agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentWriteFile, agentDeleteFile, agentFileMtime,
+    agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentReadFileBytes, agentWriteFile, agentDeleteFile, agentFileMtime,
     setWorkspaceAdapter, workspaceUsesAbsolutePaths, workspaceRootDir, workspaceName,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {
