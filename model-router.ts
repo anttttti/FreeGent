@@ -342,7 +342,9 @@ export function _switchToFreeModel(): boolean {
     if (!list.length) return false;
     const key = list.find(k => getCooldownRemaining(k) === 0);
     if (!key) return false;
-    saveMainModelList([key, ...list.filter(k => k !== key)]);
+    // Reorder the saved list, not the active subset: saving only `list` would silently drop
+    // paused and keyless models from the user's priority list.
+    saveMainModelList([key, ...getMainModelList().filter(k => k !== key)]);
     updateModelLabel?.();
     updateActiveModelDisplay?.();
     return true;
