@@ -497,6 +497,7 @@ const MODEL_CATALOG = [
     { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  noKey:true, note:'120B MoE (12B active); 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
+    { provider:'kilo', model:'stepfun/step-5-preview-free',                     label:'Step 5 Preview (free)',            released:'2026-10', contextK:1000, params:600, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'600B MoE (27B active); 1M ctx, 64K output; StepFun flagship for agentic work (software engineering, knowledge work, finance); selectable reasoning effort; free via Kilo' },
     { provider:'kilo', model:'stepfun/step-3.7-flash:free',                     label:'Step 3.7 Flash (free)',            released:'2026-05', contextK:262,  params:196, media:['text'],        tools:true, thinking:true,  noKey:true, note:'198B MoE (11B active); 262K ctx; fast reasoning; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  noKey:true, note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
     { provider:'kilo', model:'poolside/laguna-xs-2.1:free',                     label:'Laguna XS 2.1 (free)',             released:'2026-07', contextK:262,  params:33,  media:['text'],        tools:true, thinking:true,  noKey:true, note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Kilo' },
@@ -712,6 +713,7 @@ const _DEFAULT_MAIN_MODELS = [
     // Top tier. KiloBench (Terminal Bench 2.0): DeepSeek V4.1 Flash 75.3% (S tier); the Nemotron
     // Ultra, Dots 3 and Step 3.7 entries are the free models developers use most on the Kilo
     // leaderboard (https://kilo.ai/leaderboard/llm.txt, 2026-10-06).
+    'kilo|stepfun/step-5-preview-free',                // StepFun flagship, 1M ctx; new 2026-10
     'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
     'kilo|inclusionai/ling-3.1-flash',                 // 560B MoE (25B active); new 2026-10
     'nous|inclusionai/ling-3.1-flash',                 // same model on Nous Portal; separate quota

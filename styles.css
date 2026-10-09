@@ -749,9 +749,9 @@ html, body {
 .seq-live-detail, .seq-selected-detail { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .seq-detail-col { background: #f7f9fc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 200px; max-width: 400px; flex: 1; font-size: 12px; }
 .seq-col-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.seq-col-header > span:first-child { font-weight: 600; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.seq-col-header > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
 .step-toggle { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: #bbb; flex-shrink: 0; }
-.step-tabs { display: flex; gap: 1px; align-items: center; margin-left: auto; }
+.step-tabs { display: flex; gap: 1px; align-items: center; margin-left: auto; flex-shrink: 0; }
 .step-tab-btn { background: none; border: none; padding: 1px 6px; cursor: pointer; font-size: 10px; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: 0.4px; border-radius: 3px; transition: color 0.1s, background 0.1s; }
 .step-tab-btn:hover { color: #555; background: rgba(0,0,0,0.06); }
 .step-tab-btn.step-tab-active { color: var(--accent, #4a7cf7); background: rgba(74,124,247,0.1); }
@@ -762,10 +762,10 @@ html, body {
 .seq-agg-label { font-size: 10px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
 .seq-agg-content { border-top: 1px solid #b0b8cc; margin-top: 4px; padding-top: 6px; }
 .seq-agg-entry + .seq-agg-entry { border-top: 1px solid #b0b8cc; margin-top: 8px; padding-top: 8px; }
-.seq-agg-entry-row { display: flex; align-items: center; gap: 6px; }
+.seq-agg-entry-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .seq-agg-entry-time { margin-left: 4px; font-size: 10px; color: #aaa; font-family: 'SF Mono','Fira Code',monospace; font-weight: normal; }
 .seq-agg-entry-model { font-size: 10px; color: #6a7a9b; font-weight: normal; }
-.seq-agg-step-header { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: #1a3a6b; white-space: nowrap; }
+.seq-agg-step-header { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: #1a3a6b; white-space: nowrap; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .seq-stream-latest { background: rgba(255,213,79,0.35); border-radius: 2px; }
 .step-err { color: #e53935; background: none; }
 
