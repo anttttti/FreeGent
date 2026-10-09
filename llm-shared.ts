@@ -108,6 +108,19 @@ function _trimTailToTokenBudget(tail, budget: number = COMPACT_TAIL_TOKEN_BUDGET
     return tail;
 }
 
+// One tool result may take at most half the tail budget. The budget is checked with a chars/4
+// estimate, and a path-heavy result tokenizes far denser than that: a 129K-char worker result
+// passed as ~32K tokens, was really more than the 60K window, and every request after the
+// compaction overflowed again — 119 compactions in a row (TerminalBench v0.66 sanitize-git-repo).
+export function _capTailToolResults(tail: any[], budget: number): any[] {
+    const maxChars = Math.max(4000, Math.floor(budget * 4 / 2 / 1.5));   // /1.5: dense-tokenizing content
+    return tail.map((m: any) => {
+        if (m?.role !== 'tool' || typeof m.content !== 'string' || m.content.length <= maxChars) return m;
+        const head = Math.floor(maxChars * 0.7), end = maxChars - head;
+        return { ...m, content: `${m.content.slice(0, head)}\n[… ${m.content.length - maxChars} chars removed when the conversation was compacted — run the call again with a narrower request if you need them …]\n${m.content.slice(-end)}` };
+    });
+}
+
 async function loadAgentsContext() {
     try { agentsContext = await agentReadFile('AGENTS.md'); }
     catch { agentsContext = ''; }
@@ -191,7 +204,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
 
     const tail = (() => {
         let t = _hR.slice(-COMPACT_TAIL).filter((m: any) => m !== _origFirst);
-        return _trimTailToTokenBudget(t, _tailTokenBudget());
+        return _trimTailToTokenBudget(_capTailToolResults(t, _tailTokenBudget()), _tailTokenBudget());
     })();
     const facts = _harnessFacts(_hR);
 

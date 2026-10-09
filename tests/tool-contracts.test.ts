@@ -48,7 +48,49 @@ describe('write_file', () => {
     });
 
     it('asks for a path when there is none', async () => {
-        expect((await tool('write_file', { content: 'x' })).error).toMatch(/"path" is required/);
+        const r = await tool('write_file', { content: 'x' });
+        expect(r.error).toMatch(/"path" is required/);
+        expect(r.error).not.toMatch(/execute_code/);
+        expect(r.note).toBe('Received keys: content');
+    });
+
+    // Uploaded chat 2026-10-08: the model sent history's abbreviated form of its own earlier writes
+    // back as new calls, believed the file damaged, and tried to "restore" it 30 times.
+    it.each([
+        ['a diff', { path: 'a.js', content: '--- a.js\n+++ a.js\n@@ -1,3 +1,4 @@\n+// header\n var a = 1;', _contentCompressed: true }],
+        ['the flag without an underscore', { path: 'a.js', content: 'var b = 2;', contentCompressed: true }],
+        ['the stub', { path: 'a.js', content: '[write_file: a.js — no changes]' }],
+        ['a bare diff', { path: 'a.js', content: '--- a.js\n+++ a.js\n@@ -1 +1 @@\n-x\n+y\n' }],
+    ])('refuses %s as new content and says the file is untouched', async (_n, args) => {
+        await W.agentWriteFile('a.js', 'var a = 1;\n'.repeat(40));
+        const r = await tool('write_file', args);
+        expect(r.error).toMatch(/was NOT changed/);
+        expect(r.error).toMatch(/nothing to restore/);
+        expect(r.error).toMatch(/\(440 characters\)/);
+        expect(await stored('a.js')).toBe('var a = 1;\n'.repeat(40));
+    });
+
+    it('lets a patch file hold a diff', async () => {
+        const diff = '--- a.js\n+++ a.js\n@@ -1 +1 @@\n-x\n+y\n';
+        expect((await tool('write_file', { path: 'fix.patch', content: diff })).success).toBe(true);
+        expect(await stored('fix.patch')).toBe(diff);
+    });
+
+    it('refuses text with NUL characters and says where', async () => {
+        const r = await tool('write_file', { path: 'n.js', content: 'const a = [0, 1,\0 0];\nlet b;\n' });
+        expect(r.error).toMatch(/1 NUL character.*line 1 near "const a = \[0, 1,␀ 0\];/);
+        expect(await stored('n.js')).toBeNull();
+        await W.agentWriteFile('r.txt', 'one two\n');
+        const e = await tool('replace_in_file', { path: 'r.txt', old_string: 'two', new_string: 'x\0y' });
+        expect(e.error).toMatch(/new_string: .*1 NUL character/);
+        expect(await stored('r.txt')).toBe('one two\n');
+    });
+
+    // v0.66: 24 of 47 pathless write_file calls carried `language` — code meant to be run.
+    it('points a pathless call that carries a language to execute_code', async () => {
+        const r = await tool('write_file', { content: 'print(1)', language: 'python' });
+        expect(r.error).toMatch(/"path" is required/);
+        expect(r.error).toMatch(/execute_code/);
     });
 });
 
@@ -130,6 +172,22 @@ describe('replace_in_file', () => {
         await W.agentWriteFile('r.txt', 'alpha\n');
         expect((await tool('replace_in_file', { path: 'r.txt', old_string: 'zeta', new_string: 'x' })).error).toBeTruthy();
         expect(await stored('r.txt')).toBe('alpha\n');
+    });
+
+    // v0.66 SWE workers: 41 "not found within lines X–Y" failures, the range a few lines off.
+    it('applies a unique match that lies outside the given line range, and says where', async () => {
+        await W.agentWriteFile('r.txt', 'one\ntwo\nthree\nfour\nfive\n');
+        const r = await tool('replace_in_file', { path: 'r.txt', old_string: 'two', new_string: 'TWO', start_line: 4, end_line: 5 });
+        expect(r.success).toBe(true);
+        expect(r.note).toMatch(/applied at line 2/);
+        expect(await stored('r.txt')).toBe('one\nTWO\nthree\nfour\nfive\n');
+    });
+
+    it('does not guess when the text outside the range occurs more than once', async () => {
+        await W.agentWriteFile('r.txt', 'dup\ndup\nthree\nfour\n');
+        const r = await tool('replace_in_file', { path: 'r.txt', old_string: 'dup', new_string: 'x', start_line: 3, end_line: 4 });
+        expect(r.error).toMatch(/not found/);
+        expect(await stored('r.txt')).toBe('dup\ndup\nthree\nfour\n');
     });
 });
 

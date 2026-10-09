@@ -137,6 +137,41 @@ function _summarizeToolResult(name: string, originalResult: any, truncatedResult
     return truncatedResult;
 }
 
+// A run_workers result had no size limit in history: its path lists (each worker's `wrote`, and
+// `applied`, which repeats them) reached 128K chars in one result, more than the context window,
+// and compaction could not drop it (TerminalBench v0.66 sanitize-git-repo). Long path lists keep
+// their first entries and a count; if the result is still over the limit, the per-worker tool-call
+// lists go, then the longest texts are cut.
+const _WORKER_PATHS_SHOWN = 30;
+function _capWorkerResult(result: any, limit: number): any {
+    const size = (v: any) => { try { return JSON.stringify(v)?.length ?? 0; } catch { return 0; } };
+    if (!result || typeof result !== 'object' || size(result) <= Math.min(limit, 8000)) return result;
+    const capList = (v: any) => Array.isArray(v) && v.length > _WORKER_PATHS_SHOWN
+        ? [...v.slice(0, _WORKER_PATHS_SHOWN), `… and ${v.length - _WORKER_PATHS_SHOWN} more (${v.length} in total)`] : v;
+    let out: any = { ...result };
+    for (const k of ['applied', 'incomplete', 'conflictsFound', 'conflictsResolved', 'blocked']) if (k in out) out[k] = capList(out[k]);
+    if (Array.isArray(out.agents)) out.agents = out.agents.map((a: any) => a && typeof a === 'object' ? { ...a, wrote: capList(a.wrote) } : a);
+    if (size(out) <= limit) return out;
+    if (Array.isArray(out.agents)) out.agents = out.agents.map((a: any) => { if (!a?.toolCalls) return a; const { toolCalls, ...rest } = a; return rest; });
+    for (let i = 0; i < 20 && size(out) > limit; i++) {
+        // Cut the longest remaining string (a worker note, the output, an incomplete file's content) by half.
+        let best: { o: any; k: string; n: number } | null = null;
+        const walk = (o: any, depth: number) => {
+            if (!o || typeof o !== 'object' || depth > 4) return;
+            for (const k of Object.keys(o)) {
+                const v = o[k];
+                if (typeof v === 'string') { if (!best || v.length > best.n) best = { o, k, n: v.length }; }
+                else if (v && typeof v === 'object') { o[k] = Array.isArray(v) ? [...v] : { ...v }; walk(o[k], depth + 1); }
+            }
+        };
+        walk(out, 0);
+        if (!best || (best as any).n < 400) break;
+        const b = best as { o: any; k: string; n: number };
+        b.o[b.k] = `${b.o[b.k].slice(0, Math.floor(b.n / 2))}\n[…${b.n - Math.floor(b.n / 2)} chars not shown]`;
+    }
+    return out;
+}
+
 // The history-result computation for a main-loop tool result.
 // Director (main agent) gets summarize-on-top-of-truncate with the tighter isDirector
 // limit; workers get plain truncation (worker loops pass their own local dedup maps).
@@ -284,9 +319,9 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         }
     }
 
-    if (name === 'run_workers' && result.warning && !(result.incomplete?.length)) {
-        const { warning, ...rest } = result;
-        return rest;
+    if (name === 'run_workers') {
+        if (result.warning && !(result.incomplete?.length)) { const { warning, ...rest } = result; result = rest; }
+        return _capWorkerResult(result, limit);
     }
 
     if (name === 'repo_map' && typeof result.map === 'string' && result.map.length > limit) {

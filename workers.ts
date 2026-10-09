@@ -944,6 +944,19 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             }
             delete (msg as any).degenerate;
             localOH.push(msg);
+            // The worker's own message goes in its session log too. Only results were logged, so a
+            // failed call could not be examined: v0.66 SWE workers failed 115 of 134 replace_in_file
+            // calls and the old_string values they sent were in no log.
+            if (_wSession) {
+                try {
+                    _wSession.append('assistant/message', {
+                        turn: _wEvtTurn, step,
+                        message: { role: 'assistant', content: typeof msg.content === 'string' ? msg.content : null,
+                                   ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) },
+                        ...(usage ? { usage } : {}),
+                    }, { surfaceOp: 'append' } as any);
+                } catch {}
+            }
             const text  = typeof message.content === 'string' ? message.content : '';
             const calls = message.tool_calls || [];
             if (!calls.length) {

@@ -26,3 +26,29 @@ describe('runJs mixed string and byte writes (R12)', () => {
         expect(r.stdout).toBe('�x\n');
     });
 });
+
+// WebKit's Error.stack has frames only, no "Name: message" line.
+import { formatThrown } from '../exec-sandbox/js-run';
+describe('formatThrown', () => {
+    const webkit = (name: string, message: string, stack: string) => Object.assign(new Error(message), { name, stack });
+    it('puts the message in front of a stack that has none (Safari)', () => {
+        const e = webkit('TypeError', "undefined is not an object (evaluating 'a.b')",
+            'anonymous\nhttps://freegent.ai/fg-exec-sandbox.js:834:15\nasyncFunctionResume@[native code]\nrunJs@https://freegent.ai/fg-exec-sandbox.js:784:26\npromiseReactionJob@[native code]');
+        expect(formatThrown(e)).toBe("TypeError: undefined is not an object (evaluating 'a.b')");
+    });
+    it('keeps frames of the code itself', () => {
+        const e = webkit('ReferenceError', 'x is not defined', 'foo@eval code:3:9\nasyncFunctionResume@[native code]');
+        expect(formatThrown(e)).toBe('ReferenceError: x is not defined\nfoo@eval code:3:9');
+    });
+    it('does not repeat the message when the stack (V8) starts with it', () => {
+        const e = webkit('Error', 'boom', 'Error: boom\n    at <anonymous>:1:7');
+        expect(formatThrown(e)).toBe('Error: boom\n    at <anonymous>:1:7');
+    });
+    it('formats thrown non-errors and runJs reports a thrown error', async () => {
+        expect(formatThrown('plain')).toBe('plain');
+        expect(formatThrown(42)).toBe('42');
+        const r = await runJs(`throw new RangeError('too big')`, {});
+        expect(r.exit_code).toBe(1);
+        expect(r.stderr).toMatch(/^RangeError: too big/);
+    });
+});

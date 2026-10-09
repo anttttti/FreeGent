@@ -776,6 +776,9 @@ addEventListener('load',function(){P.postMessage({type:'fg-check-ready'},'*')});
 const _sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const _clampMs = (v: any, dflt: number, max: number) => Math.max(0, Math.min(Number.isFinite(Number(v)) ? Number(v) : dflt, max));
 
+// check_page calls in a row where the page never ran (reset by any call where it did).
+let _checkPageNeverRan = 0;
+
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500 } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
@@ -893,7 +896,16 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     }
     if (!loaded && !logs.length) notes.push('The check script never reported from the page, so the browser blocked or could not run it (very old engine, or a fatal syntax error before any code ran). Simplify the page and retry; do not conclude the HTML itself is wrong.');
     if (document.hidden) notes.push('The FreeGent tab was in the background, so the browser paused animation frames — movement and timers may look frozen; re-run with the tab visible.');
-    const summary = !errors.length
+    // The page never ran: nothing was checked, and "Loaded partially; no errors" read as a mostly
+    // good result (uploaded chat logs, 2026-10-08: 34 such calls in 9 chats on an older iPad browser;
+    // one chat made 11, another concluded the checker could not see the file at all).
+    const _neverRan = !loaded && !logs.length;
+    _checkPageNeverRan = _neverRan ? _checkPageNeverRan + 1 : 0;
+    if (_neverRan && _checkPageNeverRan >= 2)
+        notes.push(`This is the ${_checkPageNeverRan}${_checkPageNeverRan === 2 ? 'nd' : _checkPageNeverRan === 3 ? 'rd' : 'th'} check_page call in a row where the page did not run. Calling it again will not change that. Check the code another way instead: read it, and syntax-check each script with execute_code (JavaScript: new Function(source)). Say in your final answer that the page could not be run in this browser.`);
+    const summary = _neverRan
+        ? 'The page did not run, so nothing was checked (no script in it reported back).'
+        : !errors.length
         ? `Loaded ${loaded ? 'fine' : 'partially'}; no errors.`
         : `${errors.reduce((n, e) => n + e.count, 0)} error(s): ${errors[0].text}`;
     return {

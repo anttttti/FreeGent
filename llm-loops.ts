@@ -251,6 +251,8 @@ const _REPEAT_CACHE_MAX = 150;
 
 // Consecutive all-failing tool turns before the loop bails with a graceful synthesis.
 const _MAX_CONSEC_TOOL_FAILS = 10;
+const _MAX_COMPACT_STREAK = 4;   // compactions in a row with no model response between them before the turn stops
+const _MAX_CUT_OFF_STREAK = 4;   // consecutive responses discarded at the output cap before the turn stops
 
 // Role-mode step cap — tighter than the main-agent budget; emits BLOCKED rather than synthesising.
 const _ROLE_STEP_CAP = 60;
@@ -738,6 +740,44 @@ function _noteStopOutputs(results: Array<{ name: string; result: any }>): void {
     if (_stopRecent.length > 3) _stopRecent = _stopRecent.slice(-3);
 }
 
+/** Graded test IDs the benchmark runner listed in the task text. */
+export function _gradedTestIds(taskText: string): string[] {
+    const ids = new Set<string>();
+    // Collect graded test IDs from two formats the runner emits:
+    //   1. backtick-quoted `pytest -xvs path.py::name …` — runner always wraps in
+    //      backticks and may include flags and multiple paths on one line; parse
+    //      the full arg string and filter for *.py tokens (fixes dead regex — T1.3)
+    //   2. bare lines in "Graded tests:" block — tests without '::' are emitted as-is
+    for (const m of taskText.matchAll(/pytest\s+(.*?)(?=`|$)/gm))
+        for (const tok of m[1].split(/\s+/))
+            if (/^[\w/.+-]+\.py(?:::\S+)?$/.test(tok)) ids.add(tok);
+    const block = taskText.match(/Graded tests[^\n]*\n([\s\S]*?)(?:\n\n|$)/);
+    if (block) {
+        for (const line of block[1].split('\n')) {
+            const t = line.trim();
+            if (t && !t.startsWith('#')) ids.add(t.startsWith('pytest ') ? t.slice(7).trim() : t);
+        }
+    }
+    return [...ids];
+}
+
+/**
+ * True when this test output shows a graded test that ran and failed (or source that does not
+ * parse). False for output the model cannot act on: a collection or import error, a listing, or
+ * failures only in tests that are not graded.
+ */
+export function _gradedTestFailed(output: string, gradedIds: string[]): boolean {
+    if (/SyntaxError|IndentationError|TabError/.test(output)) return true;
+    if (/errors? during collection|Interrupted: \d+ errors?|no tests ran|ERROR: (?:not found|file or directory not found)|INTERNALERROR/.test(output)) return false;
+    if (!/\b\d+ failed\b/.test(output)) return false;
+    // FAILED lines name the tests; the output is a JSON-encoded tool result, so a line ends at "\n".
+    const failed = [...output.matchAll(/FAILED\s+([^\s\\]+)/g)].map(m => m[1]);
+    if (!failed.length || !gradedIds.length) return true;
+    // Compare test names, not substrings: test_diophantine.py::test_fail_holzer is not test_diophantine.
+    const nameOf = (id: string) => id.split('::').pop()!.replace(/\[.*$/, '');
+    return failed.some(f => gradedIds.some(g => g.includes('::') ? nameOf(f) === nameOf(g) : f.includes(g)));
+}
+
 export async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
     // A forced stop is otherwise invisible in the step log: the run just ends on a tool call
     // (v0.56: 12 failure-streak stops and 13 step-cap stops read as "completed").
@@ -1113,7 +1153,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     if (forceToolCall) _forceToolCall = true;
     const _failSigs: string[] = [];   // error signature of each failure in the current streak
     let _sameErrorGraceUsed = false;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0;
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _compactStreak = 0;
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -1407,22 +1447,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 //      backticks and may include flags and multiple paths on one line; parse
                 //      the full arg string and filter for *.py tokens (fixes dead regex — T1.3)
                 //   2. bare lines in "Graded tests:" block — tests without '::' are emitted as-is
-                const _ftpSet = new Set<string>();
-                for (const _cmdM of _taskText.matchAll(/pytest\s+(.*?)(?=`|$)/gm))
-                    for (const _tok of _cmdM[1].split(/\s+/))
-                        if (/^[\w/.+-]+\.py(?:::\S+)?$/.test(_tok)) _ftpSet.add(_tok);
-                const _blockM = _taskText.match(/Graded tests[^\n]*\n([\s\S]*?)(?:\n\n|$)/);
-                if (_blockM) {
-                    for (const _line of _blockM[1].split('\n')) {
-                        const _t = _line.trim();
-                        if (_t && !_t.startsWith('#')) _ftpSet.add(_t.startsWith('pytest ') ? _t.slice(7).trim() : _t);
-                    }
-                }
-                const _ftpIds = [..._ftpSet];
+                const _ftpIds = _gradedTestIds(_taskText);
                 if (_ftpIds.length) {
                     _hasGradedTest = true;
                     _reactiveFired.add('graded_test');
-                    const _ftpMsg = `Run the graded test now: \`pytest ${_ftpIds.join(' ')}\` — it must exit 0 before you declare COMPLETED.`;
+                    const _ftpMsg = `Run the graded test now: \`pytest ${_ftpIds.join(' ')}\` — it must exit 0 before you declare COMPLETED. If it cannot be collected or imported in this environment (a missing module, an unbuilt extension, a test that does not exist yet), do not change test or packaging configuration to make it run: check your fix another way and declare COMPLETED.`;
                     _gate = _gate ? `${_gate}\n\n${_ftpMsg}` : `~~~guidance\n${_ftpMsg}\n~~~`;
                 }
             }
@@ -1449,7 +1478,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             // Pass: at least one "N passed" with no "N failed" / "N error"
             const _testPassed = !!_testOutput && /\d+ passed/.test(_testOutput) && !/\d+ (failed|error)/.test(_testOutput);
-            if (!_testPassed) {
+            // Bounce again only when no test was run, or a graded test ran and failed. Anything else
+            // cannot be fixed by the model: v0.66 SWE sent "still failed" 32 times, 4 of them for a
+            // test that ran and failed; the rest were collection or import errors from the image
+            // (old pytest internals, unbuilt C extensions), a `--collect-only` listing, or failures
+            // of tests that are not graded. 17 of 31 gated tasks never got a runnable pytest, and 7
+            // of those were resolved by the grader anyway.
+            if (!_testPassed && (!_testOutput || _gradedTestFailed(_testOutput, _gradedTestIds(_task)))) {
                 const _retryMsg = _testOutput
                     ? `The graded test still failed — fix the failure then run it again: it must exit 0 before you declare COMPLETED.`
                     : `You declared COMPLETED without running the graded test. Run it now — it must exit 0.`;
@@ -1542,6 +1577,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 return _lastEstTokens;
             })();
         if (_forceCompact || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
+            // Compaction after compaction with no response in between: the context is not getting
+            // smaller, and each round spends a step (v0.66 sanitize-git-repo: 119 rounds, then the
+            // step limit). Stop with what there is.
+            if (++_compactStreak > _MAX_COMPACT_STREAK) return await _gracefulSynthesis(`the conversation no longer fits the model's context after ${_MAX_COMPACT_STREAK} compactions in a row`, '');
             await _doCompact(step);
         }
 
@@ -1716,9 +1755,16 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     // Below the step cap, the limit came from the context clamp: the context is
                     // nearly full, so an unchanged retry is cut off again (v0.55: 46 in a row).
                     if (!degenerate && maxTokens > 0 && maxTokens < _STEP_OUTPUT_CAP) _forceCompact = true;
+                    // The same runaway repeated: each retry costs a full generation and the nudge is
+                    // not changing it (v0.66 InterCode Python apps_43: 13 cut-offs of 8,192 tokens used
+                    // the whole 600 s task timeout). Stop the turn instead.
+                    if (++_cutOffStreak >= _MAX_CUT_OFF_STREAK) return await _gracefulSynthesis(`the response was cut off at the output limit ${_MAX_CUT_OFF_STREAK} times in a row`, '');
                     _emitNudge('output_cut_off', _nudge(degenerate
                         ? `Your last response was stopped after about ${tokens} tokens because it had fallen into a loop (${degenerate}${toolCall ? ', in tool-call arguments' : ''}) and was discarded — nothing was executed. Write the next call short and specific: one command or request, no repeated terms, and your reasoning in the reply text, not in code comments.`
-                        : `Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.`));
+                        : `Your last response was cut off at ${tokens} tokens${toolCall ? ' while writing tool-call arguments' : ''} and was discarded — nothing was executed. ${toolCall
+                            ? 'Keep code short and put your reasoning in the reply text, not in code comments. Split large outputs across several calls.'
+                            // A plain-text answer has no calls to split across (a code-only task has no tools at all).
+                            : 'Write the answer again as one complete, much shorter reply: only what was asked for, with no step-by-step reasoning and no comments inside code.'}`));
                 }
                 // Stalled mid-response: typically a very large tool call (a whole app in one
                 // write_file) that the provider buffers until done. Ask for smaller pieces.
@@ -1790,6 +1836,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             throw e;
         }
+        _cutOffStreak = 0; _compactStreak = 0;   // a response came back whole
         if (!message) throw new Error('No response from model');
         _endpointNeedsProbe.delete(_epKey);
         recordSuccess(activeEndpoint ?? _defaultEndpoint());

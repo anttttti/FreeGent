@@ -230,18 +230,30 @@ export class DockerFsAdapter implements WorkspaceAdapter {
         });
     }
 
+    // Files only, with their real size and mtime. Every entry used to carry size 0 and
+    // lastModified = now, so a worker's before/after listing comparison saw every file as changed
+    // by every run: a read-only scan staged and "wrote" 462 files (TerminalBench v0.66
+    // sanitize-git-repo). `find -printf` is GNU; busybox images take the `stat` loop.
     async agentListFiles(): Promise<Array<{name: string, size: number, lastModified: number}>> {
+        const roots = '/app /home /root /workspace /opt';
+        const script =
+            `out=$(find ${roots} \\( -type f -o -type l \\) -printf '%s\\t%T@\\t%p\\n' 2>/dev/null | head -500); `
+            + `if [ -n "$out" ]; then printf '%s\\n' "$out"; else `
+            + `find ${roots} \\( -type f -o -type l \\) 2>/dev/null | head -500 | while IFS= read -r f; do `
+            + `m=$(stat -c '%s\t%Y' "$f" 2>/dev/null) && printf '%s\\t%s\\n' "$m" "$f"; done; fi`;
         return new Promise((resolve) => {
-            execFile('docker', ['exec', this._ctr, 'bash', '-c',
-                'find /app /home /root /workspace /opt 2>/dev/null | head -500'],
+            execFile('docker', ['exec', this._ctr, 'bash', '-c', script], { maxBuffer: 10_000_000 },
                 (err, stdout) => {
                     if (err) { resolve([]); return; }
-                    const names = stdout.split('\n').filter(Boolean);
-                    const files = names.map(f => ({ name: f, size: 0, lastModified: Date.now() }));
+                    const files: Array<{name: string, size: number, lastModified: number}> = [];
+                    for (const line of stdout.split('\n')) {
+                        const m = line.match(/^(\d+)\t([\d.]+)\t(.+)$/);
+                        if (m) files.push({ name: m[3], size: parseInt(m[1], 10), lastModified: Math.round(parseFloat(m[2]) * 1000) });
+                    }
                     // The listing only covers fixed roots and caps at 500 entries — tell
                     // the agent instead of letting it assume the listing is complete.
-                    if (names.length >= 500)
-                        files.push({ name: '[listing truncated at 500 entries — use execute_code bash `find` or `ls` for full coverage]', size: 0, lastModified: Date.now() });
+                    if (files.length >= 500)
+                        files.push({ name: '[listing truncated at 500 entries — use execute_code bash `find` or `ls` for full coverage]', size: 0, lastModified: 0 });
                     resolve(files);
                 });
         });

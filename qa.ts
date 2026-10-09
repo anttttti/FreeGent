@@ -205,9 +205,13 @@ async function gate_dependency_check(taskPath, content) {
 
 
 async function gate_completeness_check(taskPath, content) {
-    const unchecked = [...content.matchAll(/^-\s+\[ \]/gm)];
-    if (unchecked.length)
-        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''}` };
+    const unchecked = [...content.matchAll(/^-\s+\[ \][ \t]*(.*)$/gm)];
+    if (unchecked.length) {
+        // Name them: the bare count was answered by trying `done` again (uploaded chat logs of
+        // 2026-10-08: five tries in a row with 3 boxes never ticked).
+        const items = unchecked.slice(0, 3).map(m => `"${m[1].trim().slice(0, 70)}"`).join(', ');
+        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''} in ${taskPath}: ${items}${unchecked.length > 3 ? ', …' : ''}. Mark each one that is done as "- [x]" in the task file (replace_in_file), then set the status again.` };
+    }
 
     const fileSec = _mdSection(content, 'Files');
     if (fileSec) {
@@ -239,6 +243,42 @@ async function gate_scope_check(taskPath, content) {
 const _QA_TEXT_MAX   = 20_000;
 const _QA_FILE_MAX   = 20_000;
 const _QA_OUTPUT_MAX = 10_000;
+
+// What the acceptance reviewer is shown. It used to get only the files named in the task's
+// `## Files` section, or paths mentioned in the task text, at most five. Tasks written by the
+// agent usually have no Files section, so the reviewer saw one or two files or none and answered
+// "js/game.js is referenced and not provided" / "no code provided" for code that existed: in the
+// uploaded chat logs of 2026-10-06 to 2026-10-08, 21 `done` attempts in four chats were blocked
+// that way, each costing the agent several steps (one chat ended at its step cap). Named files come
+// first; then the project's source files, most recently changed first, until the size budget is used.
+const _QA_REVIEW_TOTAL = 60_000;
+const _QA_REVIEW_FILES = 12;
+const _QA_SOURCE_RE = /\.(?:js|mjs|cjs|jsx|ts|tsx|css|html?|py|rb|go|rs|java|c|cc|cpp|h|hpp|sh|glsl|vert|frag)$/i;
+const _QA_NOT_SOURCE_RE = /^(?:fg-tasks|memory|node_modules|dist|build|\.git)\/|(?:^|\/)(?:_t-|_probe)[^/]*$|\.min\.(?:js|css)$/;
+
+export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: string; shown: string[]; omitted: string[] }> {
+    let all: Array<{ name: string; lastModified?: number; isLocal?: boolean }> = [];
+    try { all = (await agentListFiles()) || []; } catch {}
+    const recent = all
+        .filter(f => f?.name && !f.isLocal && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.name))
+        .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0) || a.name.localeCompare(b.name))
+        .map(f => f.name);
+    const order = [...new Set([...namedPaths, ...recent])];
+    let text = '', total = 0;
+    const shown: string[] = [], omitted: string[] = [];
+    for (const fp of order) {
+        if (shown.length >= _QA_REVIEW_FILES || total >= _QA_REVIEW_TOTAL) { if (recent.includes(fp)) omitted.push(fp); continue; }
+        let body: string;
+        try { body = await agentReadFile(fp); } catch { continue; }
+        if (typeof body !== 'string') continue;
+        const room = Math.min(_QA_FILE_MAX, Math.max(2_000, _QA_REVIEW_TOTAL - total));
+        const cut = body.length > room;
+        text += `\n### ${fp}\n\`\`\`\n${body.slice(0, room)}${cut ? `\n[… cut at ${room} of ${body.length} characters]` : ''}\n\`\`\`\n`;
+        total += Math.min(body.length, room);
+        shown.push(fp);
+    }
+    return { text, shown, omitted };
+}
 
 async function gate_task_enrichment(taskPath, content) {
     if (/^## Acceptance/m.test(content)) return { blocks: false };
@@ -301,15 +341,15 @@ async function gate_acceptance_review(taskPath, content) {
         for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && filePaths.length < 5) filePaths.push(f);
     }
 
-    let fileContents: string = '';
-    for (const fp of filePaths) {
-        try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, _QA_FILE_MAX)}\n\`\`\`\n`; }
-        catch {}
-    }
+    const { text: fileContents, shown, omitted } = await gatherReviewCode(filePaths);
 
     const prompt =
         `Check whether each acceptance criterion is met in the provided code.\n\n` +
         `Criteria:\n${criteria}\n\nCode:${fileContents || '\n(no files available)'}\n\n` +
+        (omitted.length ? `Source files that exist in the project but are not shown here: ${omitted.join(', ')}. Do not treat a file as missing because it is not shown.\n\n` : '') +
+        `Judge each criterion from the code: ✓ when the code implements it, ✗ when the code lacks it or is clearly wrong` +
+        (shown.length ? ` (a behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it)` : '') +
+        `; use ? only when the code needed to decide is not shown.\n\n` +
         `For EACH criterion output exactly one line:\n` +
         `- ✓ [criterion] — if clearly met\n` +
         `- ✗ [criterion] — [reason] — if not met\n` +
