@@ -275,6 +275,7 @@ declare global {
     var setRoleBody: any;
     var skillsRegistry: any;
     var startPyodide: any;
+    var autoloadPyodideIfEnabled: any;
     var thinkingLevelBudget: any;
     var updateModelLabel: any;
     var updatePyodideStatusEl: any;
