@@ -194,6 +194,15 @@ const _lsCache = new Map();
         _StorageProto.setItem    = function (k, v) { _lsCache.delete(String(k)); return _origSetItem.call(this, k, v); };
         _StorageProto.removeItem = function (k)    { _lsCache.delete(String(k)); return _origRemoveItem.call(this, k); };
         _StorageProto.clear      = function ()     { _lsCache.clear(); return _origClear.call(this); };
+        // Writes from another tab or window bypass the wrappers above (they patch this window's
+        // Storage only), so without this a tab keeps routing chat turns by a model priority
+        // list that was changed elsewhere. `key` is null when the other tab called clear().
+        if (typeof window !== 'undefined' && window.addEventListener) {
+            window.addEventListener('storage', (e: StorageEvent) => {
+                if (e.storageArea && e.storageArea !== localStorage) return;
+                if (e.key == null) _lsCache.clear(); else _lsCache.delete(e.key);
+            });
+        }
     }
 }
 export const ls = (k, def = '') => {
