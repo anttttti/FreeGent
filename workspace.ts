@@ -1706,8 +1706,8 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
 }
 
 // The ▶ / ↓ / × buttons of a workspace file row. Shared by the Project files list and the
-// sidebar Preview entry so both offer exactly the same actions.
-export function buildFileActions(name: string): HTMLDivElement {
+// sidebar Preview entry (playOnly: just the ▶ button, no download / delete).
+export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}): HTMLDivElement {
     const actions = document.createElement('div');
     actions.className = 'workspace-file-actions';
 
@@ -1750,6 +1750,8 @@ export function buildFileActions(name: string): HTMLDivElement {
         };
         actions.appendChild(play);
     }
+
+    if (opts.playOnly) return actions;
 
     const dl = document.createElement('button');
     dl.className = 'ws-btn'; dl.title = 'Download'; dl.textContent = '↓';
