@@ -4,6 +4,7 @@
 const MIME_BY_EXT: Record<string, string> = {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
     bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif', svg: 'image/svg+xml',
+    heic: 'image/heic', heif: 'image/heif', tif: 'image/tiff', tiff: 'image/tiff',
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -19,6 +20,7 @@ const MIME_BY_EXT: Record<string, string> = {
 
 const DOC_EXTS = new Set(['pdf', 'docx', 'doc', 'odt', 'xlsx', 'xls', 'ods', 'pptx', 'ppt', 'odp']);
 const BINARY_EXTS = new Set([...DOC_EXTS, 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp',
+    'avif', 'heic', 'heif', 'tif', 'tiff', 'm4a', 'flac', 'aac', 'weba', 'webm', 'mov', 'avi', 'mkv',
     'mp3', 'mp4', 'wav', 'ogg', 'zip', 'gz', 'tar', 'wasm', 'bin']);
 
 // MIME type → document kind that extractDocumentText understands.
