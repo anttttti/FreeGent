@@ -105,3 +105,11 @@ describe('priority list display', () => {
         el.remove(); localStorage.removeItem('fg_main_models');
     });
 });
+
+describe('sortModelRankGroupsNewestFirst', () => {
+    it('orders by release month, newest first, undated last, ties keep catalog order', () => {
+        const g = (id: string, released: string | null) => ({ id, released });
+        const out = M.sortModelRankGroupsNewestFirst([g('a', '2026-04'), g('b', null), g('c', '2026-10'), g('d', '2026-04')]);
+        expect(out.map((x: any) => x.id)).toEqual(['c', 'a', 'd', 'b']);
+    });
+});
