@@ -6,7 +6,7 @@ const ORIGIN = 'https://freegent.ai';
 const limiter = (success: boolean) => ({ limit: vi.fn().mockResolvedValue({ success }) });
 
 function post(body: any, origin: string | null = ORIGIN) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', 'X-FG-Pass': 'pw' };
     if (origin) headers.Origin = origin;
     return new Request('https://fg-proxy.example.workers.dev/', { method: 'POST', headers, body: JSON.stringify(body) });
 }
@@ -23,21 +23,27 @@ describe('CF Worker', () => {
     });
 
     it('rejects requests without an Origin header', async () => {
-        const r = await worker.fetch(post(LLM, null), { OPENROUTER_API_KEY: 'shared' });
+        const r = await worker.fetch(post(LLM, null), { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw' });
         expect(r.status).toBe(403);
         expect(upstream).not.toHaveBeenCalled();
     });
 
     it('injects the shared key while under the rate limit', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_RATE_LIMITER: limiter(true) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
         const r = await worker.fetch(post(LLM), env);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer shared');
         expect(env.FG_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: 'key:203.0.113.9' });
     });
 
+    it('uses no shared key without the matching passphrase', async () => {
+        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'other', FG_RATE_LIMITER: limiter(true) };
+        await worker.fetch(post(LLM), env);
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
+    });
+
     it('never forwards a shared key over http:// or to a URL with credentials', async () => {
-        const env = { GROQ_API_KEY: 'shared', FG_RATE_LIMITER: limiter(true) };
+        const env = { GROQ_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const url of ['http://api.groq.com/openai/v1/chat/completions', 'https://u:p@api.groq.com/openai/v1/chat/completions']) {
             const r = await worker.fetch(post({ url, headers: {}, body: '{}' }), env);
             expect(r.status).toBe(403);
@@ -47,19 +53,19 @@ describe('CF Worker', () => {
 
     it('does not follow redirects for a request that carries the shared key', async () => {
         await worker.fetch(post({ url: 'https://api.groq.com/openai/v1/chat/completions', headers: {}, body: '{}' }),
-            { GROQ_API_KEY: 'shared', FG_RATE_LIMITER: limiter(true) });
+            { GROQ_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) });
         expect(upstream.mock.calls[0][1].redirect).toBe('manual');
     });
 
     it('refuses shared-key use over the rate limit', async () => {
-        const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_RATE_LIMITER: limiter(false) });
+        const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(false) });
         expect(r.status).toBe(429);
         expect(r.headers.get('X-FG-Proxy-Error')).toBe('1');
         expect(upstream).not.toHaveBeenCalled();
     });
 
     it('never rate-limits a request that brings its own key', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_RATE_LIMITER: limiter(false) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(false) };
         const r = await worker.fetch(post({ ...LLM, headers: { Authorization: 'Bearer user-own' } }), env);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer user-own');
