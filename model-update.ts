@@ -239,7 +239,9 @@ async function _fetchVercelModels(): Promise<FetchResult> {
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
         for (const m of toProcess) {
             if (!m.id || m.type !== 'language') continue;
-            const lm: LiveModel = { id: m.id as string, name: m.name as string | undefined, created: created(m) };
+            // Vercel's `created` is a placeholder (2025-08-2x on every model); `released` is the real date.
+            const lm: LiveModel = { id: m.id as string, name: m.name as string | undefined,
+                                    created: typeof m.released === 'number' && m.released > 0 ? m.released : created(m) };
             const hasTool = Array.isArray(m.tags) && m.tags.includes('tool-use');
             if (_VERCEL_DOMAIN_SPECIFIC.has(m.id)) {
                 rejected.push({ model: lm, reason: 'non-chat' }); // narrow-domain specialists → treat as non-chat
