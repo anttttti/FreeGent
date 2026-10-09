@@ -86,3 +86,43 @@ describe('compaction tail', () => {
         expect(tail[1].content).toHaveLength(130_200);
     });
 });
+
+// A task whose counterpart is reached through a tool (tau2's /message): chat output goes nowhere.
+import { setWorkflowMode } from '../state.ts';
+import { setReplyChannelHint } from '../reply-channel.ts';
+import { _handleTurnState } from '../turn-protocol.ts';
+
+describe('reply-channel hint', () => {
+    const pushed: string[] = [];
+    const adapter = () => ({ pushNudge: (t: string) => { pushed.push(t); }, spliceFromSecondLast: () => {}, histLen: () => 2 });
+    const ps = () => ({ finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} } as any);
+    const HINT = 'Send it with POST /message.';
+    beforeEach(() => { pushed.length = 0; setWorkflowMode(true); setReplyChannelHint(HINT); });
+    afterEach(() => { setReplyChannelHint(''); setWorkflowMode(false); });
+
+    it('answers a question typed in chat with the hint, not the "cannot ask the user" redirection', async () => {
+        const r = await _handleTurnState('Could you give me your email address?', 3, ps(), adapter());
+        expect(r.kind).toBe('continue');
+        expect(pushed).toEqual([HINT]);
+        const r2 = await _handleTurnState('Please provide your zip code? COMPLETED', 3, ps(), adapter());
+        expect(r2.kind).toBe('continue');
+        expect(pushed[1]).toBe(HINT);
+        expect(pushed.join(' ')).not.toMatch(/autonomous mode/);
+    });
+    it('lets a finished task through, and a BLOCKED declaration', async () => {
+        expect((await _handleTurnState('I have cancelled the order and refunded it.\nCOMPLETED', 3, ps(), adapter())).kind).toBe('return');
+        expect((await _handleTurnState('BLOCKED: no way to authenticate the user', 3, ps(), adapter())).kind).not.toBe('continue');
+        expect(pushed).toEqual([]);
+    });
+    it('gives up after three hints so a model that only chats still ends', async () => {
+        const state = ps();
+        for (let i = 0; i < 3; i++) expect((await _handleTurnState('What is your order number?', 3, state, adapter())).kind).toBe('continue');
+        expect((await _handleTurnState('What is your order number?', 3, state, adapter())).kind).not.toBe('continue');
+        expect(pushed).toHaveLength(3);
+    });
+    it('does nothing without a hint', async () => {
+        setReplyChannelHint('');
+        await _handleTurnState('Could you give me your email address?', 3, ps(), adapter());
+        expect(pushed).not.toContain(HINT);
+    });
+});
