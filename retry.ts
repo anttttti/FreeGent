@@ -285,6 +285,17 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         const ep = getEp();
         // 401 / 404 from a cloud provider = auth rejected or model ID invalid/discontinued.
         // Pause the model (not remove) so it stays visible in the table for user review.
+        // "No endpoints found that support image input" is a 404 about this request (an image
+        // attachment), not a dead model: rotate away for a while without pausing it for good.
+        if (/HTTP 404/.test(e.message || '') && /support image input/i.test(e.message || '')
+                && ep.provider !== 'custom' && !forWorker) {
+            const noVisionKey = `${ep.provider}|${ep.model}`;
+            _markExactCooldown(ep, 30 * 60_000);
+            onNote(`[${noVisionKey}][no image input — skipped for 30 min]`);
+            const next = _anyFreeSpec(noVisionKey);
+            if (next) { setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next); return 0; }
+            return false;
+        }
         const isGone = /HTTP 40[14]/.test(e.message || '');
         if (isGone && ep.provider !== 'custom' && !forWorker) {
             const goneKey = `${ep.provider}|${ep.model}`;

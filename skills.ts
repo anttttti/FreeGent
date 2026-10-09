@@ -157,7 +157,7 @@ After the worker returns, use its findings to proceed with the task. Do not foll
         exclude_mode: 'container',
         trigger_on_file_present: 'fg-tasks/',
         body: `**Direct task path** (first message is a concrete request): THAT is your task. Missing fg-tasks/ledger.md is not a blocker. Before your first code edit, write the task to fg-tasks/current.md:
-1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section
+1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section. Overwrite it without reading it first: an existing current.md is left over from an earlier chat. Never touch the status of a task that is not yours.
 2. Work: read, edit, verify
 3. After each edit attempt, append_file under ## Attempts: what changed (file:line), whether resolved
 

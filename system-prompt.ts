@@ -164,7 +164,7 @@ export function buildSystemPrompt(): string {
            : _sp === 'brave'      ? 'web_search uses Brave Search.'
            : ''}`
         : '';
-    const _honesty = '\n## Honesty\nOnly report what your tools actually return. Never fabricate file contents, search results, or code output.';
+    const _honesty = '\n## Honesty\nOnly report what your tools actually return. Never fabricate file contents, search results, or code output.\nThink and reason in the language of the user\'s request (English unless they write otherwise) — never switch languages mid-task.';
     const _deviceCtx = _buildDeviceContext();
     const _skillsCtx = (() => {
         const parts = [];

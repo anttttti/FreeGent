@@ -725,10 +725,11 @@ const _DEFAULT_MAIN_MODELS = [
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
     // Large reasoning models
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; weekly quota
-    'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
     'kilo|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
     'nous|stepfun/step-3.7-flash:free',
     'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
+    // Last: it writes tool calls as <dots_function_call> text (repaired, but often garbled).
+    'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
 
 function getMainModelList() {
