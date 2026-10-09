@@ -25,7 +25,7 @@ async function sendOpensSettings(): Promise<boolean> {
 
 describe('send key guard', () => {
     it('does not open Settings for a keyless Kilo model', async () => {
-        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|stepfun/step-3.7-flash:free']));
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|dots-studio/dots-3-note-preview:free']));
         expect(await sendOpensSettings()).toBe(false);
     });
     it('opens Settings when no listed model has a key', async () => {

@@ -526,6 +526,79 @@ function saveCustomModels(arr) {
     throw new Error('Browser storage is full — could not save the model list. Delete some old chats and try again.');
 }
 
+// ── Release dates for custom models ────────────────────────────────────────
+// Built-in entries carry a hand-checked `released`. Custom ones (added by the model update or by
+// hand) may not, so fillMissingReleased() gives each a date, in this order:
+//   1. the provider-reported timestamp remembered from the last model update (a real date);
+//   2. a newer version of the same family that has a real date, minus 3 months;
+//   3. the month the model was first seen.
+// 2 and 3 set `releasedEstimated`, which the catalog table shows in gray.
+const _CREATED_CACHE_KEY = 'fg_model_created';
+function _readCreatedCache(): Record<string, number> {
+    try { return JSON.parse(localStorage.getItem(_CREATED_CACHE_KEY) || '{}') || {}; } catch { return {}; }
+}
+// map: "provider|model" → Unix seconds, only for dates a provider really reported.
+function rememberModelCreated(map: Record<string, number>) {
+    try { localStorage.setItem(_CREATED_CACHE_KEY, JSON.stringify({ ..._readCreatedCache(), ...map })); } catch { /* best effort */ }
+}
+const _monthOf = (secs: number) => new Date(secs * 1000).toISOString().slice(0, 7);
+function _monthMinus(ym: string, n: number): string {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1 - n, 1));
+    return d.toISOString().slice(0, 7);
+}
+// "google/gemini-3.5-flash-lite:free" → { family: "gemini flash lite", ver: [3, 5] }
+function _modelFamily(model: string): { family: string; ver: number[] } {
+    const id = model.split('/').pop()!.toLowerCase()
+        .replace(/:free$|-free$|-instruct$|-it$|-preview$|-latest$|-\d{4}-\d{2}-\d{2}$/g, '');
+    const ver: number[] = [];
+    const words: string[] = [];
+    for (const t of id.split(/[-_ ]/)) {
+        const m = t.match(/^v?(\d+(?:\.\d+)*)$/);
+        if (m) ver.push(...m[1].split('.').map(Number)); else if (!/^\d+[bk]$|^a\d+b$/.test(t)) words.push(t);
+    }
+    return { family: words.join(' '), ver };
+}
+const _verNewer = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] ?? 0) - (b[i] ?? 0); if (d) return d > 0; }
+    return false;
+};
+// Fills `released` on custom models that lack one (or have only an estimate) and saves the list.
+// Returns true when anything changed.
+function fillMissingReleased(): boolean {
+    const custom = getCustomModels();
+    if (!custom.some((m: any) => !m.released || m.releasedEstimated)) return false;
+    const cache = _readCreatedCache();
+    const known: { family: string; ver: number[]; released: string }[] = [];
+    for (const m of getAllModels() as any[]) {
+        if (!m.released || m.releasedEstimated) continue;
+        const f = _modelFamily(m.model);
+        if (f.ver.length) known.push({ ...f, released: m.released });
+    }
+    let changed = false;
+    for (const m of custom as any[]) {
+        if (m.released && !m.releasedEstimated) continue;
+        const real = cache[`${m.provider}|${m.model}`];
+        let released: string, estimated: boolean;
+        if (real) { released = _monthOf(real); estimated = false; }
+        else {
+            const f = _modelFamily(m.model);
+            const newer = f.ver.length && f.family
+                ? known.filter(k => k.family === f.family && _verNewer(k.ver, f.ver)).map(k => k.released).sort()[0]
+                : undefined;
+            if (newer) { released = _monthMinus(newer, 3); estimated = true; }
+            else if (m.released) continue;                       // keep the earlier first-seen month
+            else { released = _monthOf(Date.now() / 1000); estimated = true; }
+        }
+        if (m.released === released && !!m.releasedEstimated === estimated) continue;
+        m.released = released;
+        if (estimated) m.releasedEstimated = true; else delete m.releasedEstimated;
+        changed = true;
+    }
+    if (changed) { try { saveCustomModels(custom); } catch { /* storage full: dates stay unsaved */ } }
+    return changed;
+}
+
 // ── Hidden built-in models (user-removed) ─────────────────────────────────
 function getHiddenModels(): Set<string> {
     try { return new Set(JSON.parse(ls(KEYS.HIDDEN_MODELS, '[]'))); } catch { return new Set(); }
@@ -587,6 +660,7 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'kilo|thinkingmachines/inkling:free',        // HTTP 404 "currently unavailable"; dropped from Kilo's list (2026-09-27)
     'nous|meituan/longcat-2.0:free',             // HTTP 404 "no longer free" (2026-09-27)
     'nvidia|stepfun-ai/step-3.7-flash',          // HTTP 410 Gone: end of life 2026-08-28 on NVIDIA (still on Nous/Kilo)
+    'kilo|stepfun/step-3.7-flash:free',          // HTTP 404 "model does not exist" (2026-10-10)
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
@@ -1135,7 +1209,7 @@ Object.assign(window, {
     getQaEnabled, getQaTestRunner, getQaAcceptanceReview, getQaRegressionGuard, getQaReworkLimit,
     getShowNudges,
     getEditReviewEnabled, getWorkerThinkingBudget, getPreserveThinking,
-    getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels,
+    getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels, fillMissingReleased, rememberModelCreated,
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,

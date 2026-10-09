@@ -258,6 +258,8 @@ declare global {
     var runWithWasm: any;
     var saveAudioModel: any;
     var saveCustomModels: any;
+    var fillMissingReleased: any;
+    var rememberModelCreated: any;
     var saveEnabledModels: any;
     var saveImageModel: any;
     var saveMainModelList: any;
