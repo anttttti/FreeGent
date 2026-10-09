@@ -194,6 +194,34 @@ function _callerHasTool(context): (tool: string) => boolean {
     return () => true;
 }
 
+/**
+ * A text file never holds NUL characters. Some free models emit one inside code, in place of or
+ * next to a real character (`c[1\0 * f`, `'normal\0'`, `y\0, z`): a project's source files carried
+ * 20 to 50 each, read_file then refused them as binary ("contains null bytes"), and a chat spent its
+ * 60 steps finding and re-deriving them (uploaded chats of 2026-10-08). Refuse the write and say where.
+ */
+function _nulReport(text: any): string | null {
+    if (typeof text !== 'string') return null;
+    const at = text.indexOf('\0');
+    if (at < 0) return null;
+    const count = text.split('\0').length - 1;
+    const line = text.slice(0, at).split('\n').length;
+    const near = text.slice(Math.max(0, at - 30), at + 30).replace(/\0/g, '␀').replace(/\n/g, '⏎');
+    return `The text has ${count} NUL character${count > 1 ? 's' : ''} (U+0000), the first on line ${line} near "${near}" (shown as ␀). `
+        + `That is corrupted output, not source. Write the text again without them.`;
+}
+
+/** What a write_file call copied from how history abbreviates earlier writes, or null. */
+function _historyLookalike(args): string | null {
+    if (Object.keys(args).some(k => /^_?content_?compressed$/i.test(k))) return 'the history abbreviation of an earlier write (a "_contentCompressed" call)';
+    const text = String(args.content ?? '').trimStart();
+    if (/^\[write_file:\s/.test(text)) return 'the placeholder that stands for an earlier write';
+    // A unified diff as the whole new file content (a .diff/.patch/.md file may legitimately hold one).
+    if (/^---\s+\S[^\n]*\n\+\+\+\s+\S[^\n]*\n@@ /.test(text) && !/\.(?:diff|patch|md|txt)$/i.test(String(args.path ?? '')))
+        return 'a diff (the form in which history shows an earlier write)';
+    return null;
+}
+
 function _shrinkError(path, oldLen, newLen, has: (tool: string) => boolean = () => true) {
     const surgical = ['replace_in_file', 'apply_patch'].filter(has);
     const advice = surgical.length
@@ -1185,7 +1213,14 @@ async function _handleWriteFile(args, context) {
         content: args.content ?? args.text     ?? args.body ?? args.data    ?? '',
     };
     args.path = await _rootRelativeToolPath(args.path);
-    if (!args.path) return { error: 'write_file: "path" is required' };
+    if (!args.path) {
+        // v0.66: 47 calls had content and no path, 24 of them with a `language` argument — code
+        // meant to be run, sent to the wrong tool. The bare message got the same call re-sent.
+        const meantToRun = args.language != null || args.code != null || args.command != null;
+        return { error: 'write_file: "path" is required — the file to write, e.g. {"path": "src/app.py", "content": "…"}.'
+            + (meantToRun ? ' To run code instead of saving it, call execute_code with "code" and "language".' : ''),
+            note: `Received keys: ${Object.keys(args).filter(k => k !== 'path' && args[k] != null && args[k] !== '').join(', ') || 'none'}` };
+    }
     if (args.encoding === 'base64') {
         try {
             // A worker's binary write is held back like its text writes: run_workers applies it
@@ -1201,14 +1236,25 @@ async function _handleWriteFile(args, context) {
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `write_file: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
     }
-    // Reject calls where the model faked the history-compression format instead of writing real content.
-    // _contentCompressed is added by _patchOAIWriteArgs to stored history only — never a valid live argument.
-    if (args._contentCompressed) {
-        return { error: `write_file: Do not use "_contentCompressed" in your tool calls — that flag is added by the system to compress history and is not valid here. Write the actual file content.` };
+    // Reject calls where the model copied the way history shows an earlier write instead of
+    // writing real content. After a write, history keeps it as a diff, a "[write_file: …]" stub and
+    // a `_contentCompressed` flag, and weaker models send those back as new calls. They then
+    // believe the file is damaged and "restore" it, which history again shows as a diff
+    // (uploaded chat 2026-10-08: 30 of 47 write_file calls, the chat ended on "10 consecutive tool
+    // failures"). Say that the file is untouched; the size guard alone only said "content dropped".
+    const copied = _historyLookalike(args);
+    if (copied) {
+        let current = '';
+        try { current = await agentReadFile(args.path); } catch {}
+        const has = _callerHasTool(context);
+        const surgical = ['replace_in_file', 'apply_patch'].filter(has);
+        return { error: `write_file: "${args.path}" was NOT changed. The content you sent is ${copied}, copied from the conversation: `
+            + `to save space, earlier write_file calls are shown there abbreviated (as a diff, a "[write_file: …]" line and a "_contentCompressed" flag). `
+            + `Those calls did write the whole file${current ? `, and the file is complete (${current.length} characters), so there is nothing to restore` : ''}. `
+            + `${surgical.length ? `To change it use ${surgical.join(' or ')}. ` : ''}To rewrite it, send the complete new text as "content", with no flag.` };
     }
-    if (/^\[write_file:\s/.test((args.content || '').trimStart())) {
-        return { error: `write_file: Content looks like a history-compression placeholder, not real file content. Write the actual content of the file.` };
-    }
+    const nul = _nulReport(args.content);
+    if (nul) return { error: `write_file: "${args.path}" was NOT changed. ${nul}` };
     if (_hasTruncationMarkers(args.content)) {
         return { error: `write_file: Truncation placeholder detected in content (e.g. "// ... rest of code", "[existing code]"). Write the COMPLETE file — never use ellipsis or placeholder comments to stand in for omitted content.` };
     }
@@ -1267,6 +1313,8 @@ async function _handleReplaceInFile(args, context) {
     if (args.old_string === args.new_string) {
         return { error: `replace_in_file: old_string and new_string are identical — this would change nothing. Provide different text.` };
     }
+    const nulNew = _nulReport(args.new_string);
+    if (nulNew) return { error: `replace_in_file: "${args.path}" was NOT changed. new_string: ${nulNew}` };
     if (_hasTruncationMarkers(args.new_string || '')) {
         return { error: `replace_in_file: Truncation placeholder detected in new_string (e.g. "// ... rest of code"). Provide the complete replacement text — no ellipsis or omission placeholders.` };
     }
@@ -1294,6 +1342,16 @@ async function _handleReplaceInFile(args, context) {
                 if (hits.length === 1) { idx = hits[0].index; matchLen = hits[0][0].length; }
             } catch {}
         }
+        // Not in the given line range, but exactly once in the file: the range was off. v0.66 SWE
+        // workers: 41 of 83 "old_string not found" failures were range misses like lines 42–45 for
+        // text on line 41. An exact, unique match needs no range to be unambiguous.
+        let outsideRange = false;
+        if (idx === -1 && (args.start_line != null || args.end_line != null)) {
+            const at = original.indexOf(args.old_string);
+            if (at !== -1 && original.indexOf(args.old_string, at + 1) === -1) {
+                idx = at - searchOffset; matchLen = args.old_string.length; outsideRange = true;
+            }
+        }
         if (idx === -1) {
             let hint = '';
             if (args.start_line != null || args.end_line != null) {
@@ -1320,7 +1378,11 @@ async function _handleReplaceInFile(args, context) {
         const absIdx = searchOffset + idx;
         const updated = original.slice(0, absIdx) + args.new_string + original.slice(absIdx + matchLen);
         await write(updated);
-        return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(updated), note: 'Change applied. No need to re-read the file to verify.' };
+        const _line = outsideRange ? original.slice(0, absIdx).split('\n').length : 0;
+        return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(updated),
+            note: outsideRange
+                ? `Change applied at line ${_line}: old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length} but occurs exactly once in the file. No need to re-read the file to verify.`
+                : 'Change applied. No need to re-read the file to verify.' };
     };
     if (context) {
         return doReplace(
@@ -1992,8 +2054,12 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
     let after: any[];
     try { after = (await agentListFiles()).filter((f: any) => !f.isLocal); } catch { return; }
     const seen = new Set<string>();
+    // An adapter note ("[listing truncated at 500 entries — …]") is not a file. With a truncated
+    // listing a file missing from it may only have fallen past the cap, so nothing is read as deleted.
+    const truncated = after.some((f: any) => String(f.name).startsWith('['));
     for (const f of after) {
         seen.add(f.name);
+        if (String(f.name).startsWith('[')) continue;
         const changed = before.files.get(f.name) !== _stamp(f) || (f.lastModified ?? 0) >= before.t0;
         if (!changed) continue;
         _invalidateReadDedup(f.name);
@@ -2005,7 +2071,7 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
         if (text !== null) staging.set(f.name, text);
         else { staging.delete(f.name); context_snapshot_note(f.name, f.size ?? 0); }
     }
-    for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
+    if (!truncated) for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
 }
 
 async function _handleExecuteCodeInner(args, context, onProgress?: (message:string)=>void) {

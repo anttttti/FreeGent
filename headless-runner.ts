@@ -625,6 +625,9 @@ export interface RunMetrics {
     input_tokens:  number;
     output_tokens: number;
     compactions:   number;
+    /** Generations cut off at the output cap and discarded; their tokens are not in output_tokens. */
+    discarded_generations:   number;
+    discarded_output_tokens: number;
 }
 
 /**
@@ -632,7 +635,7 @@ export interface RunMetrics {
  */
 export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics }> {
     if (typeof task !== 'string' || task.trim().length < 8)
-        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0 } };
+        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0 } };
     const { timeoutMs } = _parseOpts(opts);
     await setup(opts);
 
@@ -643,9 +646,17 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
     // Per-task metrics accumulator — installed before runAgentTurn, cleared in finally.
     const _t0 = Date.now();
-    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0 };
+    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0 };
     setMetricsWriter((record: any) => {
         if (record.type === 'history_snapshot') { _metrics.compactions++; return; }
+        // A discarded generation still ran: v0.66 lost 181 of them (apps_43: 13 full generations,
+        // recorded as 0 steps and 0 tokens). Kept apart from output_tokens so that stays comparable.
+        if (record.type === 'cut_off') {
+            _metrics.discarded_generations++;
+            _metrics.discarded_output_tokens += record.responseTokens || 0;
+            opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
+            return;
+        }
         if (record.type) return; // skip history_final, validation, etc.
         _metrics.steps++;
         if (record.promptTokens)   _metrics.input_tokens  += record.promptTokens;
