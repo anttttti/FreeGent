@@ -1,5 +1,5 @@
 // preview-pane.ts — the sidebar "Preview" entry: one workspace file, shown with the same
-// ▶ / ↓ / × buttons as a row in the Project files list.
+// ▶ button of a row in the Project files list (no download / delete).
 //
 // Which file: the root index.html when there is one; otherwise the utility model picks the most
 // presentable file among the workspace files that are not scratch / task / tooling files.
@@ -88,7 +88,7 @@ export async function updateRailPreview(): Promise<void> {
     nameEl.className = 'workspace-file-name';
     nameEl.textContent = choice.split('/').pop() ?? choice;
     nameEl.title = choice;
-    row.append(nameEl, buildFileActions(choice));
+    row.append(nameEl, buildFileActions(choice, { playOnly: true }));
     el.append(hdr, row);
     if (choice !== _shown) row.classList.add('rail-preview-flash');
     _shown = choice;
