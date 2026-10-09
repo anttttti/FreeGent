@@ -128,12 +128,30 @@ async function initDB() {
             if (!d.objectStoreNames.contains(PROJ_STORE))
                 d.createObjectStore(PROJ_STORE, { keyPath: 'id' });
         };
-        req.onsuccess = () => { db = req.result; resolve(db); };
+        req.onsuccess = () => {
+            db = req.result;
+            // iOS Safari closes IndexedDB connections of a backgrounded or memory-pressured tab. The
+            // cached handle then throws InvalidStateError on every transaction until a reload, so
+            // task status writes (and every file write) failed over and over. Drop it so the next
+            // call reopens.
+            const d = db;
+            d.onclose = () => { if (db === d) db = null; };
+            d.onversionchange = () => { try { d.close(); } catch {} if (db === d) db = null; };
+            resolve(db);
+        };
         req.onerror   = () => reject(req.error);
     });
 }
 
-async function ensureDB() { if (!db) await initDB(); }
+let _dbOpening: Promise<any> | null = null;
+async function ensureDB() {
+    if (db) {
+        try { db.transaction(STORE, 'readonly').abort(); return; }   // cheap liveness probe
+        catch { db = null; }
+    }
+    if (!_dbOpening) _dbOpening = initDB().finally(() => { _dbOpening = null; });
+    await _dbOpening;
+}
 
 async function listWorkspaceFiles() {
     await ensureDB();
@@ -162,9 +180,13 @@ async function writeWorkspaceFile(name, content, lastModified = null, encoding =
             : new TextEncoder().encode(content || '').length;
         const record: any = { name, content, lastModified: lastModified || Date.now(), size };
         if (encoding) record.encoding = encoding;
-        const req = db.transaction(STORE, 'readwrite').objectStore(STORE).put(record);
-        req.onsuccess = () => resolve();
-        req.onerror   = () => reject(req.error);
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(record);
+        // Resolve on COMMIT, not when the request is queued: a quota failure surfaces as an abort
+        // afterwards, and a write reported as done that never landed left task files unchanged.
+        tx.oncomplete = () => { try { scheduleArtifactRefresh?.(name); } catch {} resolve(); };
+        tx.onabort    = () => reject(tx.error ?? new Error('IndexedDB write aborted (storage full?)'));
+        tx.onerror    = () => reject(tx.error ?? new Error('IndexedDB write failed'));
     });
 }
 

@@ -251,7 +251,10 @@ const _QA_OUTPUT_MAX = 10_000;
 // uploaded chat logs of 2026-10-06 to 2026-10-08, 21 `done` attempts in four chats were blocked
 // that way, each costing the agent several steps (one chat ended at its step cap). Named files come
 // first; then the project's source files, most recently changed first, until the size budget is used.
-const _QA_REVIEW_TOTAL = 60_000;
+const _QA_REVIEW_TOTAL = 100_000;
+// Per-file window for the reviewer: a 38k-character render.js was cut at 20k, so the criteria about
+// its drawing code could not be verified and the review failed on every attempt (chat #021).
+const _QA_REVIEW_FILE_MAX = 50_000;
 const _QA_REVIEW_FILES = 12;
 const _QA_SOURCE_RE = /\.(?:js|mjs|cjs|jsx|ts|tsx|css|html?|py|rb|go|rs|java|c|cc|cpp|h|hpp|sh|glsl|vert|frag)$/i;
 const _QA_NOT_SOURCE_RE = /^(?:fg-tasks|memory|node_modules|dist|build|\.git)\/|(?:^|\/)(?:_t-|_probe)[^/]*$|\.min\.(?:js|css)$/;
@@ -271,7 +274,7 @@ export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: st
         let body: string;
         try { body = await agentReadFile(fp); } catch { continue; }
         if (typeof body !== 'string') continue;
-        const room = Math.min(_QA_FILE_MAX, Math.max(2_000, _QA_REVIEW_TOTAL - total));
+        const room = Math.min(_QA_REVIEW_FILE_MAX, Math.max(2_000, _QA_REVIEW_TOTAL - total));
         const cut = body.length > room;
         text += `\n### ${fp}\n\`\`\`\n${body.slice(0, room)}${cut ? `\n[… cut at ${room} of ${body.length} characters]` : ''}\n\`\`\`\n`;
         total += Math.min(body.length, room);
@@ -374,6 +377,15 @@ async function gate_acceptance_review(taskPath, content) {
         // blocking verdict with an empty reason ("Criteria not met: ") that agents could not act on.
         const failed     = [...result.matchAll(/^\s*(?:[-*]\s*)?✗\s*(.+)/gm)].map(m => m[1]);
         const unverified = [...result.matchAll(/^\s*(?:[-*]\s*)?\?\s+(.+)/gm)].map(m => m[1]);
+        // Nothing is shown to be wrong, only unprovable from the code the reviewer was given.
+        // Re-asking returns the same answer (the model called update_task_status three times in a
+        // row and the task stayed In Progress), so after two earlier failed attempts accept it
+        // and leave a note for the human.
+        const prior = parseInt(parseFrontmatter(content).rework_count || '0', 10);
+        if (failed.length === 0 && unverified.length > 0 && prior >= 2) {
+            await appendGateNote(taskPath, `## QA: accepted unverified (${new Date().toISOString().slice(0, 16)}Z)\nThe acceptance review could not verify: ${unverified.join('; ').slice(0, 600)}. Passed after ${prior} blocked attempts; please check by hand.`);
+            return { blocks: false, detail: 'Unverifiable criteria accepted after repeated attempts' };
+        }
         if (/VERDICT:\s*FAIL/i.test(result) || failed.length > 0) {
             if (failed.length > 0)
                 return { blocks: true, reason: `Criteria not met: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''}` };

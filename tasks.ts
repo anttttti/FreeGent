@@ -20,7 +20,9 @@ async function loadTaskFiles() {
                 .filter(f => (f.name.startsWith('fg-tasks/') || f.name.startsWith('tasks/') || f.name.startsWith('local/tasks/')) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
                 .map(async f => {
                     try {
-                        const content = await agentReadFile(f.name);
+                        // One retry: a transient read failure (IndexedDB hiccup on a low-memory device)
+                        // otherwise drops the task from the board and from the runner's selection.
+                        const content = await agentReadFile(f.name).catch(() => agentReadFile(f.name));
                         const fm = parseFrontmatter(content);
                         // Accept any file that has id, title, or matches the NNN-slug.md naming
                         // convention — an AI-created task may lack frontmatter keys but is still valid.
@@ -262,26 +264,36 @@ function initKanbanDnD() {
 }
 initKanbanDnD();
 
+// Coalesce concurrent refreshes, but never drop one: a call that arrives while a render is running
+// (it may already have read the task files) queues exactly one more pass. Returning the running
+// render's promise instead left the board showing the old state — a task finished while the previous
+// render was loading stayed under In Progress until the next refresh.
 let _refreshInFlight: Promise<void> | null = null;
+let _refreshAgain = false;
 async function refreshTasks(): Promise<void> {
-    // Coalesce concurrent calls: if a render is already in progress, return its promise so
-    // callers that await us still resolve at the right time but no duplicate render runs.
-    if (_refreshInFlight) return _refreshInFlight;
-    _refreshInFlight = _doRefreshTasks().finally(() => { _refreshInFlight = null; });
+    if (_refreshInFlight) { _refreshAgain = true; return _refreshInFlight; }
+    _refreshInFlight = (async () => {
+        try {
+            do { _refreshAgain = false; await _doRefreshTasks(); } while (_refreshAgain);
+        } finally { _refreshInFlight = null; }
+    })();
     return _refreshInFlight;
 }
 async function _doRefreshTasks() {
     const COLUMNS = ['todo', 'in-progress', 'review', 'done'];
-    for (const c of COLUMNS) {
-        const el = document.getElementById(`col-${c}`);
-        if (el) el.innerHTML = '';
-    }
     const counts: Record<string, number> = Object.fromEntries(COLUMNS.map(c => [c, 0]));
     const tasks = await loadTaskFiles();
+    // Build off-screen and swap in once loaded: the columns used to be emptied first, so a failed or
+    // slow load (low-memory iPad) left the board blank or half-drawn.
+    const frags: Record<string, DocumentFragment> = {};
     for (const task of tasks) {
         const column = columnOfStatus(task.fm.status);
-        const col = document.getElementById(`col-${column}`);
-        if (col) { col.appendChild(makeKanbanCard(task)); counts[column]++; }
+        (frags[column] ??= document.createDocumentFragment()).appendChild(makeKanbanCard(task));
+        counts[column]++;
+    }
+    for (const c of COLUMNS) {
+        const el = document.getElementById(`col-${c}`);
+        if (el) { el.innerHTML = ''; if (frags[c]) el.appendChild(frags[c]); }
     }
     for (const [column, n] of Object.entries(counts)) {
         const badge = document.querySelector(`.kanban-col[data-status="${column}"] .kanban-col-count`);

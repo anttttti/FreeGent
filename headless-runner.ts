@@ -83,7 +83,7 @@ dom.window._fgHeadless = true;
 // Stub UI functions that agent-core.js or skills.js may call but don't matter headlessly.
 const _noop = () => {};
 for (const fn of ['showSettings', 'renderModelCatalogTable', 'loadRoles',
-                   'loadAgentsContext', 'refreshTasks', 'notifyLocalFileChanged',
+                   'loadAgentsContext', 'refreshTasks', 'notifyLocalFileChanged', 'scheduleArtifactRefresh',
                    'maybeRunInitAgent', 'openArtifactTab',
                    'renderSkillsList', 'renderSkillsChecklist', 'addVoiceButtons']) {
     // Assign through globalThis (not dom.window directly) so ES-module code that
@@ -408,11 +408,11 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     }
     setDirectorHeadlessTools([..._enableList, ..._mcpNames]);
     // Enable file-write tools for worker roles. setDisabledTools() skips OPT_IN_TOOLS
-    // (write_file, replace_in_file, apply_patch) by design, but workers need them to make
-    // code edits without falling back to error-prone bash redirection. The director's
-    // headless ceiling ({read_file, search_workspace, list_files, run_workers, execute_code,
-    // run_git, ast_query}) still excludes write tools — so enabling them here only benefits
-    // workers whose ceiling includes them (coder). Explicit --disable-tools entries win.
+    // (write_file, replace_in_file, apply_patch) by design, but code edits need them: the
+    // alternative is error-prone bash redirection. The director's headless ceiling
+    // ({read_file, search_workspace, list_files, run_workers, execute_code, run_git, ast_query,
+    // write_file, replace_in_file}) includes write_file and replace_in_file; apply_patch only
+    // reaches workers whose ceiling includes it (coder). Explicit --disable-tools entries win.
     ['write_file', 'replace_in_file', 'apply_patch']
         .filter(t => !_disabledList.includes(t))
         .forEach(t => dom.window.enabledTools.add(t));

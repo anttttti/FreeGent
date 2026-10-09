@@ -59,11 +59,19 @@ const _IDB_STORE = 'html';
 let   _idb       = null;
 
 function _openIDB() {
-    if (_idb) return Promise.resolve(_idb);
+    if (_idb) {
+        try { _idb.transaction(_IDB_STORE, 'readonly').abort(); return Promise.resolve(_idb); }
+        catch { _idb = null; }   // closed by the browser (iOS backgrounding): reopen
+    }
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(_IDB_NAME, 1);
         req.onupgradeneeded = () => req.result.createObjectStore(_IDB_STORE);
-        req.onsuccess  = () => { _idb = req.result; resolve(_idb); };
+        req.onsuccess  = () => {
+            const d = req.result; _idb = d;
+            d.onclose = () => { if (_idb === d) _idb = null; };
+            d.onversionchange = () => { try { d.close(); } catch {} if (_idb === d) _idb = null; };
+            resolve(d);
+        };
         req.onerror    = () => reject(req.error);
     });
 }
@@ -788,12 +796,35 @@ function toggleChatsDropdown() {
 
 function closeChatsDropdown() {}
 
+// Tell the user why a chat click did nothing; the guards below used to return in silence, which on
+// a tablet looked like the other chats were dead.
+function _chatSwitchRefused(why: string) {
+    console.info('[chats] switch refused:', why);
+    try {
+        const el = document.getElementById('runner-status');
+        if (el) el.textContent = why;
+        // Non-blocking toast (alert() would stall a task run on a tablet).
+        document.getElementById('fg-chat-toast')?.remove();
+        const t = document.createElement('div');
+        t.id = 'fg-chat-toast';
+        t.textContent = why;
+        t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:90vw;padding:10px 14px;'
+            + 'background:#222;color:#fff;border-radius:8px;font:14px/1.3 system-ui,sans-serif;z-index:2147483000;box-shadow:0 2px 12px rgba(0,0,0,.4)';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 4000);
+    } catch {}
+}
+
 async function switchToChat(id) {
-    if (id === activeChatId || agentStreaming) return;
+    if (id === activeChatId) return;
+    if (agentStreaming) { _chatSwitchRefused('A reply is still streaming in this chat. Press Stop (or wait for it to finish), then open the other chat.'); return; }
     // The task runner drives the active chat's global history; leaving its chat mid-run would
     // put the runner's next turn (or the tail of a stopped one) into the chat switched to.
     if (typeof isRunnerRunning === 'function' && isRunnerRunning()
-        && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null)) return;
+        && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null)) {
+        _chatSwitchRefused('The task runner is running and owns the active chat. Stop or pause the runner to open other chats.');
+        return;
+    }
     saveHistory();
     activeChatId        = id;
     _loadingChatId      = id;
@@ -810,8 +841,10 @@ async function switchToChat(id) {
         loaded   = await loadChatHistory(id);
         // Restore the per-chat turn log alongside the LLM history so the log viewer and exports
         // reflect the exact session history, not just what survived in the ephemeral sessionStorage.
-        await loadChatLog?.(id);
-        restored = await restoreChatMessages(id);
+        // A storage failure here must not abandon the switch half-done (chat id changed, view blank,
+        // composer left disabled): the chat opens with whatever loaded.
+        try { await loadChatLog?.(id); } catch (e) { console.warn('[switchToChat] log restore failed:', (e as any)?.message); }
+        try { restored = await restoreChatMessages(id); } catch (e) { console.warn('[switchToChat] message restore failed:', (e as any)?.message); }
     } finally {
         if (_loadingChatId === id) _loadingChatId = null;
     }

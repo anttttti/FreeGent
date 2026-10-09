@@ -62,7 +62,7 @@ describe('acceptance review input', () => {
     it('stays within the size budget and says which source files were left out', async () => {
         for (let i = 0; i < 14; i++) { files[`src/m${i}.js`] = `// m${i}\n` + 'x'.repeat(15_000); mtimes[`src/m${i}.js`] = 1000 - i; }
         const { prompt } = await review();
-        expect(prompt.length).toBeLessThan(90_000);
+        expect(prompt.length).toBeLessThan(110_000);
         expect(prompt).toContain('### src/m0.js');
         expect(prompt).not.toContain('### src/m13.js');
         expect(prompt).toMatch(/exist in the project but are not shown here: .*src\/m13\.js/);
