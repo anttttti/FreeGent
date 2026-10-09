@@ -1309,6 +1309,11 @@ export function buildModelRankGroups(available: any[], orModels: any[] = [], suc
     return [...byId.values()];
 }
 
+// Release month "YYYY-MM" descending; groups without a date go last.
+export function sortModelRankGroupsNewestFirst(groups: ModelRankGroup[]): ModelRankGroup[] {
+    return [...groups].sort((a, b) => (b.released ?? '').localeCompare(a.released ?? ''));
+}
+
 export function formatModelRankLine(n: number, g: ModelRankGroup): string {
     const params = g.paramsB != null ? `${g.paramsB}B${g.activeB != null ? ` (${g.activeB}B active)` : ''}` : 'size unknown';
     const caps = [g.tools ? 'tools' : 'no tools', g.thinking && 'reasoning'].filter(Boolean).join(', ');
@@ -1363,8 +1368,10 @@ async function autoPopulateModelPriority() {
         } catch { /* network error — catalog data only */ }
 
         // One entry per model, whichever providers serve it; the ranking sees model ids only.
-        const groups = buildModelRankGroups(available, orModels,
-            typeof getModelSuccessCounts === 'function' ? getModelSuccessCounts() : {});
+        // Newest release first (undated last; the sort is stable), so the ranker's attention goes to
+        // the latest models. The list numbers below follow this order.
+        const groups = sortModelRankGroupsNewestFirst(buildModelRankGroups(available, orModels,
+            typeof getModelSuccessCounts === 'function' ? getModelSuccessCounts() : {}));
 
         // Reference scale: top Artificial Analysis intelligence scores across all OpenRouter models
         // (paid ones included), by canonical id, so the ranker can place the free models on it.
@@ -1386,7 +1393,7 @@ async function autoPopulateModelPriority() {
             : '';
 
         const userMsg =
-`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. A model without tool support is unsuitable for agent work — rank it last.
+`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. A model without tool support is unsuitable for agent work — rank it last. The models are listed newest release first, so the latest ones come first; concentrate on those, and favour a recent model over an older one of similar capability.
 ${refSection}
 ${modelLines}
 
