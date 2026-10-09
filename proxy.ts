@@ -22,3 +22,20 @@ export function resolveProxy(kind: ProxyKind, manual = ''): string {
         return `${window.location.origin}/api/proxy`;
     } catch { return ''; }
 }
+
+// Requests to the CF Worker carry the saved passphrase, if any.
+export function installPassHeader(): void {
+    const _origFetch = window.fetch;
+    window.fetch = function (input: any, init?: any) {
+        try {
+            const url = typeof input === 'string' ? input : input?.url ?? String(input);
+            const pass = localStorage.getItem('fg_pass');
+            if (pass && typeof url === 'string' && url.startsWith(DEFAULT_CF_WORKER)) {
+                const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input.headers : undefined));
+                headers.set('X-FG-Pass', pass);
+                return _origFetch.call(window, input, { ...init, headers });
+            }
+        } catch {}
+        return _origFetch.call(window, input, init);
+    } as typeof fetch;
+}

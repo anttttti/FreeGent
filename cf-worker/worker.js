@@ -102,7 +102,12 @@ const PROVIDER_KEY_MAP = {
     'tokenharbor.ai':                    'TOKENHARBOR_API_KEY',
     'api.tokenharbor.ai':                'TOKENHARBOR_API_KEY',
     'api.tavily.com':                    'TAVILY_API_KEY',
+    'integrate.api.nvidia.com':          'NVIDIA_API_KEY',
+    'ai-gateway.vercel.sh':              'VERCEL_API_KEY',
 };
+
+// Secrets that are only used for clients presenting the X-FG-Pass header (see _unlocked).
+const GATED_ENV = new Set(['NVIDIA_API_KEY', 'VERCEL_API_KEY']);
 
 // Search providers that use non-standard auth headers (not Authorization: Bearer).
 // Injected after the standard PROVIDER_KEY_MAP pass.
@@ -113,7 +118,7 @@ const SEARCH_HEADER_MAP = {
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Pass',
     'Access-Control-Max-Age':       '86400',
     'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
 };
@@ -168,8 +173,9 @@ export default {
         // ── GET /keys — which provider secrets are configured ─────────────────
         if (request.method === 'GET' && workerUrl.pathname === '/keys') {
             const available = {};
+            const unlocked = await _unlocked(request, env);
             for (const envKey of Object.values(PROVIDER_KEY_MAP)) {
-                available[envKey] = !!(env && env[envKey]);
+                available[envKey] = !!(env && env[envKey]) && (unlocked || !GATED_ENV.has(envKey));
             }
             for (const { envKey } of Object.values(SEARCH_HEADER_MAP)) {
                 available[envKey] = !!(env && env[envKey]);
@@ -243,7 +249,8 @@ export default {
                 const auth = headers['Authorization'] || headers['authorization'] || '';
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 const { hostname } = new URL(target);
-                const envKey = isEmpty && env ? PROVIDER_KEY_MAP[hostname] : null;
+                let envKey = isEmpty && env ? PROVIDER_KEY_MAP[hostname] : null;
+                if (envKey && GATED_ENV.has(envKey) && !(await _unlocked(request, env))) envKey = null;
                 const search = env ? SEARCH_HEADER_MAP[hostname] : null;
                 const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
                 const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
@@ -301,6 +308,18 @@ function _hostOk(target) {
         if (ALLOWED_HOSTS.has(hostname)) return true;
         return [...ALLOWED_HOSTS].some(h => hostname === h || hostname.endsWith('.' + h));
     } catch { return false; }
+}
+
+async function _unlocked(request, env) {
+    const want = env && env.FG_PASS;
+    const got = request.headers.get('X-FG-Pass');
+    if (!want || !got) return false;
+    const enc = new TextEncoder();
+    const [a, b] = await Promise.all([want, got].map(v => crypto.subtle.digest('SHA-256', enc.encode(v))));
+    const x = new Uint8Array(a), y = new Uint8Array(b);
+    let d = 0;
+    for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+    return d === 0;
 }
 
 // Per-client-IP limit via the Workers Rate Limiting binding. Without the binding (e.g. a fork

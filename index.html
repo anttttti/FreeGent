@@ -427,7 +427,7 @@
                     <!-- API credentials -->
                     <div class="settings-section">
                         <span class="settings-label" style="margin-bottom:0">API Credentials</span>
-                        <textarea class="settings-input" id="key-paste" rows="2" autocomplete="off" spellcheck="false" style="margin-top:6px;margin-bottom:4px;resize:vertical;font-family:var(--mono,monospace)" placeholder="Paste keys here — one or many, bare or as .env lines. Each is matched to its provider by prefix (AIza, gsk_, sk-or-, nvapi-, hf_, tvly-, ghp_ …)." oninput="onKeyPasteInput(this)"></textarea>
+                        <textarea class="settings-input" id="key-paste" rows="2" autocomplete="off" spellcheck="false" style="margin-top:6px;margin-bottom:4px;resize:vertical;font-family:var(--mono,monospace)" placeholder="Paste keys here — one or many, bare or as .env lines. Each is matched to its provider by prefix (AIza, gsk_, sk-or-, nvapi-, hf_, tvly-, ghp_ …)." oninput="onKeyPasteInput(this)" onchange="fillKeysFromBox(this)"></textarea>
                         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                             <button class="ws-action-btn" onclick="pasteKeysFromClipboard()" title="Read the clipboard and fill every recognised key">&#128203; Paste from clipboard</button>
                             <button class="ws-action-btn" onclick="document.getElementById('env-file-input').click()" title="Extract keys from any text file (.env, notes, JSON …) by prefix — processed entirely in the browser, never uploaded">&#8679; Extract from file</button>

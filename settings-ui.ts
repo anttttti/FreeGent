@@ -259,19 +259,28 @@ function fillKeysFromText(text: string) {
     const box = document.getElementById('key-paste') as HTMLTextAreaElement | null;
     const found = findKeysInText(text);
     const labels = Object.keys(found).map(env => ENV_KEY_MAP[env].label);
+    const pass = text.trim();
+    if (!labels.length && pass.length >= 4 && pass.length <= 200 && !pass.includes('\n')) {
+        localStorage.setItem('fg_pass', pass);
+        if (box) { box.value = pass; _keyPasteLen = pass.length; }
+        if (status) status.textContent = 'Saved.';
+        (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
+        (window as any).renderMainModelList?.();
+        return;
+    }
     // Filling an empty field needs no question; replacing a working key with a different one does
     // (a log excerpt or another project's .env pasted by mistake would otherwise overwrite it).
     const replaced = Object.entries(found)
         .filter(([env, val]) => { const old = localStorage.getItem(ENV_KEY_MAP[env].ls); return !!old && old !== val; })
         .map(([env]) => ENV_KEY_MAP[env].label);
     if (replaced.length && !confirm(`This replaces the saved key for: ${replaced.join(', ')}. Continue?`)) {
-        if (box) { box.value = ''; _keyPasteLen = 0; }
+        if (box) { box.value = localStorage.getItem('fg_pass') ?? ''; _keyPasteLen = box.value.length; }
         if (status) status.textContent = 'Cancelled — no keys changed.';
         return;
     }
     if (labels.length) {
         applyFoundKeys(found);
-        if (box) { box.value = ''; _keyPasteLen = 0; }  // don't leave keys sitting in plain text
+        if (box) { box.value = localStorage.getItem('fg_pass') ?? ''; _keyPasteLen = box.value.length; }  // don't leave keys sitting in plain text
     }
     if (status) status.textContent = labels.length
         ? `✓ Filled ${labels.length}: ${labels.join(', ')}${replaced.length ? ` (replaced: ${replaced.join(', ')})` : ''}`
@@ -285,6 +294,14 @@ let _keyPasteLen = 0;
     const grew = box.value.length - _keyPasteLen;
     if (grew >= 20) fillKeysFromText(box.value);
     _keyPasteLen = box.value.length;
+};
+(window as any).fillKeysFromBox = function(box: HTMLTextAreaElement) {
+    if (box.value.trim()) return fillKeysFromText(box.value);
+    if (localStorage.getItem('fg_pass') === null) return;
+    localStorage.removeItem('fg_pass');
+    _keyPasteLen = 0;
+    (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
+    (window as any).renderMainModelList?.();
 };
 // Clipboard reads need a secure context (https or localhost), browser support and
 // permission. On failure, say which and focus the box so a manual paste is one keystroke.
@@ -363,6 +380,8 @@ function populateSettingsForm() {
         el.value = val;
         if (val) el.dataset.fgLoaded = '1';
     };
+    set('key-paste',      localStorage.getItem('fg_pass') ?? '');
+    _keyPasteLen = (localStorage.getItem('fg_pass') ?? '').length;
     set('gemini-key',     getGeminiKey());
     set('groq-key',       getGroqKey());
     set('nvidia-key',     getNvidiaKey());
@@ -1109,7 +1128,7 @@ function _renderPriorityList(containerId, list) {
         }
     }
     const _addModels = getAllModels()
-        .filter(m => !list.includes(`${m.provider}|${m.model}`) && _modelHasKey(m))
+        .filter(m => !list.includes(`${m.provider}|${m.model}`) && (!!localStorage.getItem('fg_pass') || _modelHasKey(m)))
         .sort((a, b) => `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`))
         .map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     html += `</div>
