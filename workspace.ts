@@ -2089,8 +2089,6 @@ function uploadFiles(folder = false, asLocal = false) {
     input.style.display = 'none';
     if (folder) {
         input.webkitdirectory = true;
-    } else {
-        input.accept = '.txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.toml,.sh,.log,.rst,.tex,.sql,.r,.c,.cpp,.h,.java,.go,.rs,.rb,.php,.pdf,.docx,.doc,.odt,.xlsx,.xls,.ods,.pptx,.ppt';
     }
     // Must be in the DOM before .click() — mobile browsers ignore detached inputs
     document.body.appendChild(input);
@@ -2105,6 +2103,8 @@ function uploadFiles(folder = false, asLocal = false) {
             // Any directory segment in the skip-list → drop the file.
             if (segs.slice(0, -1).some(s => UPLOAD_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
             if (f.size > UPLOAD_MAX_BYTES) {
+    // No `accept` filter: with none, phones and tablets offer their full attachment sheet (Photo
+    // Library, Take Photo, Files) and desktops show every file type.
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);
                 return false;
             }
@@ -2130,7 +2130,9 @@ function uploadFiles(folder = false, asLocal = false) {
             // Prefix with "local/" so files appear in the Local Folder column
             const path = asLocal ? 'local/' + rel : rel;
             try {
-                if (_isBinaryExt(path)) {
+                // Photos, audio and video from a device picker can carry an extension the binary list
+                // lacks (.heic, .m4a …): reading those as text would corrupt them.
+                if (_isBinaryExt(path) || (/^(image|audio|video)\//.test(file.type) && file.type !== 'image/svg+xml')) {
                     const buf     = await file.arrayBuffer();
                     const content = _uint8ToBase64(new Uint8Array(buf));
                     await writeWorkspaceFile(path, content, null, 'base64');
