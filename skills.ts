@@ -611,7 +611,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
         name: 'python',
         type: 'rule',
         description: 'Run Python via execute_code. Body adapts to the active runtime (native subprocess or Pyodide).',
-        trigger: 'python, pyodide, pandas, numpy, matplotlib, scipy, micropip',
+        trigger: 'python, pyodide, pandas, numpy, matplotlib, scipy, micropip, image, resize, crop, thumbnail, convert image, photo, png, jpg, pillow, PIL',
         trigger_on_filetype: '.py, .ipynb',
         // Not on every execute_code: it fired on the first bash call of 375 of 578 v0.56 tasks,
         // and its "use language python" advice led models to send `python3 -c "…"` as Python.
@@ -677,6 +677,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 '**Comments**: add one only when the WHY is non-obvious (a hidden constraint, a workaround, a subtle invariant). Do not comment what the code does — well-named identifiers already say that.',
                 '**Libraries (native)**: when writing code for an existing project, check `requirements.txt` or existing imports before adding a new package — don\'t assume it\'s installed in the project environment.',
             );
+            pyRules.push('**Images** (resize, crop, rotate, convert, filter): `from PIL import Image` (Pillow).' + (hasNative ? '' : ' ImageMagick (`convert` / `magick`) is not available in the browser shell.'));
             parts.push(`### Rules\n${pyRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
         },
