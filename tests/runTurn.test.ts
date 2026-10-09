@@ -216,7 +216,7 @@ describe('runTurn — empty reasoning-only response', () => {
         // must exist in MODEL_CATALOG — getMainModelList prunes unknown entries.
         // Use models from _DEFAULT_MAIN_MODELS (kilo provider, no key needed) which are always valid.
         localStorage.setItem(KEYS.MAIN_MODELS,
-            JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|stepfun/step-3.7-flash:free']));
+            JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|dots-studio/dots-3-note-preview:free']));
         const mock = makeReplayFetch([
             { content: '', usage: { completion_tokens: 90 } },
             { content: 'Here is the fix.\nCOMPLETED' },

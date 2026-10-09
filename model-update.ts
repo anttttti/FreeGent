@@ -45,11 +45,11 @@ async function _proxyFetch(url: string, key?: string): Promise<any> {
 
 // ── Types and filter definitions ──────────────────────────────────────────
 
-type ModelEntry = { provider: string; model: string; label: string; note?: string; contextK?: number };
+type ModelEntry = { provider: string; model: string; label: string; note?: string; contextK?: number; released?: string; releasedEstimated?: boolean };
 type LiveModel   = { id: string; name?: string; created?: number };  // created = Unix seconds
 
 // Reasons a model can be hidden by a filter. Each maps to one toggle chip in the modal.
-type FilterKey = 'non-chat' | 'preview' | 'low-quota' | 'too-old' | 'no-tools';
+type FilterKey = 'non-chat' | 'low-quota' | 'too-old' | 'no-tools';
 
 // Result from each fetcher: models that pass all filters, and models that were rejected with a reason.
 type FetchResult = {
@@ -68,12 +68,12 @@ type Proposal = {
     selected:   boolean;
     filteredBy?: FilterKey;       // undefined = visible by default; set = hidden when that filter is active
     cooldownMs?: number;          // per-model cooldown override (e.g. 604800000 for weekly-quota free tiers)
+    created?:   number;           // provider-reported release timestamp (seconds); undefined = unknown
 };
 
 // Metadata for the filter toggle chips shown in the modal — order is display order.
 const _FILTER_META: { key: FilterKey; label: string; title: string }[] = [
     { key: 'low-quota', label: 'Low quota',   title: 'Models with near-zero free-tier quota (e.g. rpm:10, rpd:500) — usable only on paid plans' },
-    { key: 'preview',   label: 'Preview',     title: 'Unstable preview and experimental variants' },
     { key: 'too-old',   label: '>1 yr old',   title: 'Models released more than a year ago' },
     { key: 'non-chat',  label: 'Non-chat',    title: 'Embedding, TTS, image-gen, audio, and other non-conversation models' },
 ];
@@ -83,8 +83,9 @@ const _FILTER_META: { key: FilterKey; label: string; title: string }[] = [
 // Some /models endpoints put one constant in `created` for every model instead of a release
 // date (seen 2026-09-29: NVIDIA 735790403 = 1993-04-26, TokenHarbor 1700000000 = 2023-11-14,
 // Vercel 2025-08-21), which made the '>1 yr old' filter hide new models. Returns a reader for
-// one provider's full model list: a value shared by more than half the models, or older than
-// 2020, reads as undefined (unknown age).
+// one provider's full model list: a value shared by three or more models (Kilo/Vercel stamp
+// 2025-08-27/22 on unrelated and brand-new models, e.g. Step 5 Preview), or older than 2020,
+// reads as undefined (unknown age).
 const _MIN_REAL_CREATED = Date.UTC(2020, 0, 1) / 1000;
 function _createdReader(all: any[]): (m: any) => number | undefined {
     const counts = new Map<number, number>();
@@ -92,7 +93,8 @@ function _createdReader(all: any[]): (m: any) => number | undefined {
     return (m: any) => {
         const c = m?.created;
         if (typeof c !== 'number' || c < _MIN_REAL_CREATED) return undefined;
-        return all.length >= 3 && counts.get(c)! > all.length / 2 ? undefined : c;
+        if (all.length >= 3 && counts.get(c)! > all.length / 2) return undefined;
+        return counts.get(c)! >= 3 ? undefined : c;   // 3+ models on one timestamp = placeholder, not a release date
     };
 }
 
@@ -255,8 +257,6 @@ async function _fetchVercelModels(): Promise<FetchResult> {
 
 // Non-chat Google patterns (TTS, image-gen, music, robotics, research agents, omni/audio, custom-tools)
 const _GOOGLE_EXCL_NONCHAT = /tts|transcrib|[-/]image\b|-image$|^lyria|robotics|deep[_-]research|computer[_-]use|antigravity|[-/]omni|embed|-customtools/i;
-// Unstable preview / experimental variants (separate so it toggles independently)
-const _GOOGLE_EXCL_PREVIEW  = /-preview\b/i;
 
 // Google models explicitly removed from the catalog and must not be re-proposed.
 // Key: removed because free-tier quota is near-zero (rpm:10, rpd:500 — effectively unusable).
@@ -299,8 +299,6 @@ async function _fetchGoogleModels(): Promise<FetchResult> {
 
             if (_GOOGLE_SKIP.has(id)) {
                 rejected.push({ model: lm, reason: 'low-quota' });
-            } else if (_GOOGLE_EXCL_PREVIEW.test(id)) {
-                rejected.push({ model: lm, reason: 'preview' });
             } else if (_GOOGLE_EXCL_NONCHAT.test(id)) {
                 rejected.push({ model: lm, reason: 'non-chat' });
             } else {
@@ -395,8 +393,6 @@ async function _fetchNvidiaModels(): Promise<FetchResult> {
 
 // Non-chat Nous Portal patterns — embeddings, image-gen, TTS, video, multimodal-gen outputs
 const _NOUS_EXCL_NONCHAT = /embed|rerank|tts|speech|image.gen|video.gen|->image|->audio|->video/i;
-// Preview / experimental variants
-const _NOUS_EXCL_PREVIEW = /\bpreview\b|\bexperimental\b|\balpha\b|\bbeta\b/i;
 
 async function _fetchNousModels(): Promise<FetchResult> {
     try {
@@ -418,9 +414,6 @@ async function _fetchNousModels(): Promise<FetchResult> {
             const modality: string = m.architecture?.modality ?? '';
             if (_NOUS_EXCL_NONCHAT.test(id) || (modality && !modality.includes('->text'))) {
                 rejected.push({ model: lm, reason: 'non-chat' });
-            } else if (_NOUS_EXCL_PREVIEW.test(id) && !id.startsWith('stealth/')) {
-                // Stealth models are named "-alpha" by convention, not because they are unstable variants.
-                rejected.push({ model: lm, reason: 'preview' });
             } else {
                 live.push(lm);
             }
@@ -493,6 +486,7 @@ function _diffProvider(
             url: _modelPageUrl(provider, m.id), spec,
             selected: tooOld ? false : addSelected,
             filteredBy: tooOld ? 'too-old' : undefined,
+            created: m.created,
         });
     }
 
@@ -504,7 +498,7 @@ function _diffProvider(
             type: 'add', provider, model: m.id,
             label: m.name ?? m.id, note: addNote,
             url: _modelPageUrl(provider, m.id), spec,
-            selected: false, filteredBy: reason,
+            selected: false, filteredBy: reason, created: m.created,
         });
     }
 
@@ -544,6 +538,18 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             _fetchNousModels(),
         ]);
 
+    // Remember real provider release dates so custom models can show them in the catalog table.
+    if (typeof rememberModelCreated === 'function') {
+        const seen: Record<string, number> = {};
+        const orCreatedAll = _createdReader(orModels);
+        for (const m of orModels) { const c = orCreatedAll(m); if (c) seen[`openrouter|${m.id}`] = c; }
+        for (const [prov, r] of [['google', googleResult], ['groq', groqResult], ['nvidia', nvidiaResult], ['tokenharbor', thResult],
+                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult]] as [string, FetchResult][]) {
+            for (const m of [...r.live, ...r.rejected.map(x => x.model)]) if (m.created) seen[`${prov}|${m.id}`] = m.created;
+        }
+        rememberModelCreated(seen);
+    }
+
     // ── OpenRouter ────────────────────────────────────────────────────────
     if (!orModels.length) {
         errors.push('OpenRouter: could not fetch model list (network error or timeout)');
@@ -566,7 +572,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
                     label: m.name ?? m.id, note: 'Free via OpenRouter',
                     url: _modelPageUrl('openrouter', m.id),
                     spec: `openrouter|${m.id}`, selected: !tooOld,
-                    filteredBy: tooOld ? 'too-old' : undefined,
+                    filteredBy: tooOld ? 'too-old' : undefined, created: m.created,
                 });
             }
         }
@@ -730,6 +736,10 @@ function _applyProposals(proposals: Proposal[]): void {
                     label:    p.label,
                     contextK: 128,
                     note:     p.note,
+                    // Provider date when it gave a real one; otherwise the day the update first saw
+                    // the model (flagged so the catalog table shows it in gray).
+                    released: p.created ? new Date(p.created * 1000).toISOString().slice(0, 7) : new Date().toISOString().slice(0, 7),
+                    ...(p.created ? {} : { releasedEstimated: true }),
                     ...(p.cooldownMs != null ? { cooldownMs: p.cooldownMs } : {}),
                     // Kilo proposals are all isFree models, which work without a key. Not all carry
                     // a ":free" suffix (stealth/space-bunny-alpha does not).
@@ -757,6 +767,7 @@ function _applyProposals(proposals: Proposal[]): void {
             savePausedMainModels(getPausedMainModels().filter(k => !removedSpecs.has(k)));
         }
     }
+    if (typeof fillMissingReleased === 'function') fillMissingReleased();
     if (typeof renderModelCatalogTable === 'function') renderModelCatalogTable();
     if (typeof renderMainModelList === 'function') renderMainModelList();
     if (typeof updateActiveModelDisplay === 'function') updateActiveModelDisplay();
@@ -822,7 +833,7 @@ export function showModelUpdateModal(): void {
         if (!body) return;
 
         // All filters start active (all filtering is on by default)
-        const activeFilters = new Set<FilterKey>(['non-chat', 'preview', 'low-quota', 'too-old']);
+        const activeFilters = new Set<FilterKey>(['non-chat', 'low-quota', 'too-old']);
 
         const adds    = proposals.filter(p => p.type === 'add');
         const removes = proposals.filter(p => p.type === 'remove');
@@ -854,7 +865,7 @@ export function showModelUpdateModal(): void {
 
         // ── Filter chips ────────────────────────────────────────────────
         const filterCounts: Record<FilterKey, number> = {
-            'non-chat': 0, 'preview': 0, 'low-quota': 0, 'too-old': 0, 'no-tools': 0,
+            'non-chat': 0, 'low-quota': 0, 'too-old': 0, 'no-tools': 0,
         };
         for (const p of adds) {
             if (p.filteredBy) filterCounts[p.filteredBy]++;

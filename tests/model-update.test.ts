@@ -3,7 +3,7 @@ import { showModelUpdateModal } from '../model-update.ts';
 
 const W = window as any;
 const removed = 'openrouter|poolside/laguna-xs-2.1:free';
-const kept = 'kilo|stepfun/step-3.7-flash:free';
+const kept = 'kilo|dots-studio/dots-3-note-preview:free';
 const paused = 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free';
 const noKey = 'nvidia|nvidia/nemotron-3-ultra-550b-a55b';
 const custom = 'openrouter|test/retired:free';

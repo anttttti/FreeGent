@@ -577,6 +577,7 @@ function renderModelCatalogTable() {
     const container = (document.getElementById('model-catalog-table') as HTMLInputElement);
     if (!container) return;
 
+    if (typeof fillMissingReleased === 'function') fillMissingReleased();
     const all = getAllModels();
 
     const _fmtParams = p => p == null ? '—' : p >= 1000 ? `${(p/1000).toFixed(0)}T` : `${p}B`;
@@ -631,7 +632,7 @@ function renderModelCatalogTable() {
   <td>${m.label}</td>
   <td class="model-table-params">${_fmtParams(m.params ?? null)}</td>
   <td>${m.contextK}K</td>
-  <td>${m.released || ''}</td>
+  <td${m.releasedEstimated ? ' style="color:var(--muted)" title="Estimated: the provider gave no release date, so this is when the model was first found"' : ''}>${m.released || ''}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
   <td>${m.noKey ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
@@ -838,7 +839,7 @@ function saveEditModel() {
         params:    paramsRaw ? parseFloat(paramsRaw) : null,
         rpm:       rpmRaw   ? parseInt(rpmRaw, 10)  : null,
         rpd:       rpdRaw   ? parseInt(rpdRaw, 10)  : null,
-        ...(released ? { released } : {}),
+        ...(released ? { released, releasedEstimated: false } : {}),
     };
     if (urlEl)    { const v = urlEl.value.trim();    if (v) updates.url       = v; }
     if (apiKeyEl) { const v = apiKeyEl.value.trim(); if (v) updates.key       = v; }
