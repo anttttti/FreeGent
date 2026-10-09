@@ -78,7 +78,7 @@ function saveCheckpoint(userText: string): string {
     // Capture attachments. Binary files >500 KB are omitted; they will show as missing chips
     // on rerun and need to be re-attached manually.
     const { images: _snapImages, files: _snapFiles } = getPendingAttachments();
-    const images = _snapImages.map(img => ({ mimeType: img.mimeType, base64: img.base64 }));
+    const images = _snapImages.map(img => ({ mimeType: img.mimeType, base64: img.base64, ...(img.name ? { name: img.name } : {}), ...(img.workspacePath ? { workspacePath: img.workspacePath } : {}) }));
     const files  = _snapFiles
         .filter(f => f.contentType === 'text' || f.size < _ATTACH_BINARY_MAX)
         .map(f => ({ name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: f.content, size: f.size, ...(f.workspacePath ? { workspacePath: f.workspacePath } : {}) }));
@@ -437,7 +437,7 @@ async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Prom
     setInputState(true);
     // Restore attachments into the pending arrays so agentSend() picks them up
     clearImageAttachments();
-    for (const img of images) addImageAttachment(img.mimeType, img.base64);
+    for (const img of images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
     for (const f of files)   restoreFileAttachment(f);
     const input = document.getElementById('agent-input') as HTMLTextAreaElement | null;
     if (input) { _setInputText(input, userText || ''); autoResizeTextarea(input); }
@@ -595,7 +595,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
             const d2 = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
             const { images, files } = await _checkpointAttachments(ckptId, d2);
             clearImageAttachments();
-            for (const img of images) addImageAttachment(img.mimeType, img.base64);
+            for (const img of images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
             for (const f of files) restoreFileAttachment(f);
         } catch {}
         const inp = document.getElementById('agent-input') as HTMLTextAreaElement | null;
@@ -903,20 +903,25 @@ function _pushHistoryMessage(
         _supportsVideo = _oaiMedia.includes('video') && _OAI_MEDIA_PROVIDERS.has(_oaiProvider);
     }
 
+    // Audio / video: native parts when the model takes them; either way the note names the workspace copy.
+    const _mediaNote = (Kind: string, kind: string, f: any, native: boolean) => {
+        const where = f.workspacePath ? `; original available at ${f.workspacePath}` : '';
+        return native
+            ? `[Attached ${kind}: ${f.name}, ${_fmtSz(f.size)}${where}]`
+            : `[${Kind} attached: ${f.name}, ${_fmtSz(f.size)} — ${kind} not supported by ${_modelLabel}${where}]`;
+    };
     const _modelLabel = provider === 'google' ? (mediaGeminiModel || getGeminiModel()) : provider;
     const _binaryNote = [
+        ...sendImages.filter((img: any) => img.workspacePath).map((img: any) =>
+            `[Attached image: ${img.name || 'image'}, ${_fmtSz(Math.floor(img.base64.length * 3 / 4))}; original available at ${img.workspacePath}]`),
         ..._otherBin.map((f: any) => {
             const sz = _fmtSz(f.size);
             if (f.workspacePath) return `[Attached file: ${f.name}, ${sz}; original available at ${f.workspacePath}]`;
             if (f.mimeType === 'application/pdf') return `[PDF attached: ${f.name}, ${sz}]`;
             return `[Binary file attached: ${f.name}, ${f.mimeType}, ${sz}]`;
         }),
-        ...(!_supportsAudio ? _audioFiles.map((f: any) =>
-            `[Audio attached: ${f.name}, ${_fmtSz(f.size)} — audio not supported by ${_modelLabel}]`
-        ) : []),
-        ...(!_supportsVideo ? _videoFiles.map((f: any) =>
-            `[Video attached: ${f.name}, ${_fmtSz(f.size)} — video not supported by ${_modelLabel}]`
-        ) : []),
+        ..._audioFiles.map((f: any) => _mediaNote('Audio', 'audio', f, _supportsAudio)),
+        ..._videoFiles.map((f: any) => _mediaNote('Video', 'video', f, _supportsVideo)),
     ].join('\n');
 
     const msgText = [_binaryNote, historyText].filter(Boolean).join('\n\n');
@@ -1376,13 +1381,13 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
                               maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {}): Promise<TurnResult> {
     const _s = session ?? defaultSession;
 
+    autoloadPyodideIfEnabled?.();
+
     // An isolated session without an event log gets one; the default session's is the chat's.
     if (_s === defaultSession) repairOAIHistory();
     if (!_s._session) _s._session = registry.create({ chatId: activeChatId ?? 'anon' });
     const _evtSess = _s._session;
     const _histBefore = _evtSess.deriveMessages();
-    autoloadPyodideIfEnabled?.();
-
 
     // Reset reactive-trigger bookkeeping — see agentSend for rationale.
     _resetPerTurnState(_histBefore);

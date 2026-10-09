@@ -224,10 +224,18 @@
         <div id="img-strip" class="img-strip" style="display:none"></div>
         <div class="chat-input-area">
             <div id="input-model-picker"></div>
-            <label class="input-attach-btn" title="Attach file">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <div class="attach-wrap">
+                <button type="button" class="input-attach-btn" id="attach-menu-btn" title="Attach" aria-haspopup="true" onclick="toggleAttachMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <div id="attach-menu" class="attach-menu" role="menu">
+                    <button type="button" role="menuitem" onclick="attachFromDevice()" title="Use the device's attachment sheet: camera, photo library, files">&#128247; Attach <span class="attach-menu-hint">camera / photos</span></button>
+                    <button type="button" role="menuitem" onclick="attachUpload()" title="Upload any file from this device">&#8679; Upload <span class="attach-menu-hint">any file</span></button>
+                    <button type="button" role="menuitem" onclick="attachFromWorkspace()" title="Pick files already in the workspace or synced folder">&#128193; Select <span class="attach-menu-hint">from workspace</span></button>
+                </div>
+                <input type="file" id="attach-device-input" multiple accept="image/*,audio/*,video/*" onchange="_onAttachFiles(this)">
                 <input type="file" id="attach-file-input" multiple onchange="_onAttachFiles(this)">
-            </label>
+            </div>
             <div
                 id="agent-input"
                 contenteditable="true"
