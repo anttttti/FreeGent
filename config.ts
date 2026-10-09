@@ -806,6 +806,8 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     openrouter:  'OPENROUTER_API_KEY',
     nous:        'NOUS_API_KEY',
     tokenharbor: 'TOKENHARBOR_API_KEY',
+    nvidia:      'NVIDIA_API_KEY',
+    vercel:      'VERCEL_API_KEY',
     tavily:      'TAVILY_API_KEY',
     brave:       'BRAVE_API_KEY',
 };
@@ -853,11 +855,11 @@ export function specHasKey(spec: string): boolean {
     if (provider === 'google')      return _k(getGeminiKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.google];
     if (provider === 'groq')        return _k(getGroqKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.groq];
     if (provider === 'openrouter')  return _k(getOpenRouterKey)|| !!_cfWorkerKeys[_CF_PROVIDER_ENV.openrouter];
-    if (provider === 'nvidia')      return _k(getNvidiaKey);
+    if (provider === 'nvidia')      return _k(getNvidiaKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nvidia];
     if (provider === 'nous')        return _k(getNousKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nous];
     if (provider === 'tokenharbor') return _k(getTokenHarborKey) || !!_cfWorkerKeys[_CF_PROVIDER_ENV.tokenharbor];
     if (provider === 'kilo')        return _k(getKiloKey);
-    if (provider === 'vercel')      return _k(getVercelKey);
+    if (provider === 'vercel')      return _k(getVercelKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.vercel];
     if (provider === 'openai')      return _k(getOAIKey);
     return true; // unknown provider — don't filter
 }

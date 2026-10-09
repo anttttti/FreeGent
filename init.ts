@@ -1,5 +1,6 @@
 // init.js — FreeGent: DOMContentLoaded bootstrap, wires all modules together
 // Depends on: all other modules (loaded last)
+import { installPassHeader } from './proxy.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
 
@@ -115,6 +116,7 @@ async function _doModelWarmup(): Promise<void> {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    installPassHeader();
     await loadServerKeys(); // load env-var keys from Python server before anything else
     // Query the CF Worker for shared provider keys (non-blocking — re-renders model lists when done)
     loadCfWorkerKeys?.().catch(() => {});
