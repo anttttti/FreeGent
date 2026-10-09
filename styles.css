@@ -263,6 +263,17 @@ html, body {
 /* Chats dropdown — fills remaining sidebar height and scrolls */
 #chats-dropdown { flex: 1; overflow-y: auto; }
 
+/* Preview: one workspace file with its Project-files buttons; only in the expanded rail */
+#rail-preview { display: none; }
+.left-rail.expanded #rail-preview:not(:empty) { display: block; width: 100%; padding: 4px 0 2px; border-top: 1px solid var(--border); margin-top: 4px; }
+.rail-preview-hdr { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 2px 10px; }
+.rail-preview-row { padding: 4px 10px; }
+@keyframes rail-preview-flash {
+    0%, 100% { background: transparent; }
+    35%      { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+}
+.rail-preview-row.rail-preview-flash { animation: rail-preview-flash 1s ease-in-out 1; }
+
 /* Recent chat titles shown inline in the rail, below the Chats button */
 /* Collapsed: hidden entirely; spacer fills the gap as before */
 #rail-recent-chats { display: none; }
