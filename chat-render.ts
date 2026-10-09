@@ -847,6 +847,16 @@ export function createResponsePlaceholder(container: null | undefined = null): R
     // should accumulate into _previewText. Workers use addToolStep() handles and must
     // NOT feed the preview (their output is shown in step columns, not the main bubble).
     let _mainThinkHandle: any = null;
+    // True once the main thinking step has completed. A tool step that starts after that means the
+    // step ended in tool calls, so what it streamed (narration, or a call written as text such as
+    // `read_file("x")`) was not the answer: drop it from the preview instead of leaving it on screen
+    // until finalize(). Tool steps that start while the main step is still streaming (workers) leave it alone.
+    let _mainThinkDone = false;
+    function _dropStreamPreview() {
+        if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+        if (_previewEl) { _previewEl.remove(); _previewEl = null; }
+        _previewText = '';
+    }
     function _refreshStreamPreview() {
         if (_finalized || !_previewText.trim()) return;
         if (!_previewEl) {
@@ -1315,9 +1325,15 @@ export function createResponsePlaceholder(container: null | undefined = null): R
             // consecutive step outputs ("Sentence one.Sentence two.") don't run together.
             if (_previewText && !_previewText.endsWith('\n\n')) _previewText += '\n\n';
             _mainThinkHandle = handle; // only this handle's output tokens feed _previewText
+            _mainThinkDone = false;
+            const _complete = handle.complete;
+            handle.complete = (...a: any[]) => { _mainThinkDone = true; return _complete.apply(handle, a); };
             return handle;
         },
-        addToolStep:     labels => addStep(labels),
+        addToolStep:     labels => {
+            if (_mainThinkDone && !_finalized) _dropStreamPreview();
+            return addStep(labels);
+        },
         addCompactStep:  () => { const t = addStep(['compacting…'])[0]; t.markCompact(); return t; },
         addSystemStep: label => {
             if (_finalized) return;
