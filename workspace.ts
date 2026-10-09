@@ -1705,6 +1705,64 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
     }
 }
 
+// The ▶ / ↓ / × buttons of a workspace file row. Shared by the Project files list and the
+// sidebar Preview entry so both offer exactly the same actions.
+export function buildFileActions(name: string): HTMLDivElement {
+    const actions = document.createElement('div');
+    actions.className = 'workspace-file-actions';
+
+    if (/\.html?$/i.test(name)) {
+        const play = document.createElement('button');
+        play.className = 'ws-btn ws-btn-play'; play.title = 'Open as HTML tab'; play.textContent = '▶';
+        play.onclick = async e => {
+            e.stopPropagation();
+            try { const content = await agentReadFile(name); openArtifactTab(name, content); }
+            catch (err) { alert(`Could not open: ${err.message}`); }
+        };
+        actions.appendChild(play);
+    }
+    if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(name)) {
+        const play = document.createElement('button');
+        play.className = 'ws-btn ws-btn-play'; play.title = 'Preview image'; play.textContent = '▶';
+        play.onclick = e => { e.stopPropagation(); openFileTab(name); };
+        actions.appendChild(play);
+    }
+    if (/\.pdf$/i.test(name)) {
+        const play = document.createElement('button');
+        play.className = 'ws-btn ws-btn-play'; play.title = 'Preview PDF'; play.textContent = '▶';
+        play.onclick = e => { e.stopPropagation(); openFileTab(name); };
+        actions.appendChild(play);
+    }
+    if (/\.py$/i.test(name)) {
+        const play = document.createElement('button');
+        play.className = 'ws-btn ws-btn-play'; play.title = 'Run Python'; play.textContent = '▶';
+        play.onclick = async e => {
+            e.stopPropagation();
+            play.textContent = '…'; play.disabled = true;
+            try {
+                const code = await agentReadFile(name);
+                const idbRecs = await listWorkspaceFiles();
+                const filesDict = {};
+                for (const rec of idbRecs) filesDict[rec.name] = rec.content;
+                openArtifactTab(name, _buildPyRunnerHtml(name, code, filesDict), { isPreview: false });
+            } catch (err) { alert(`Run failed: ${err.message}`); }
+            finally { play.textContent = '▶'; play.disabled = false; }
+        };
+        actions.appendChild(play);
+    }
+
+    const dl = document.createElement('button');
+    dl.className = 'ws-btn'; dl.title = 'Download'; dl.textContent = '↓';
+    dl.onclick = e => { e.stopPropagation(); downloadFile(name); };
+
+    const del = document.createElement('button');
+    del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
+    del.onclick = e => { e.stopPropagation(); confirmDeleteFile(name); };
+
+    actions.append(dl, del);
+    return actions;
+}
+
 function buildIdbFileTree(idbFiles) {
     const root = { dirs: new Map(), files: [] };
     for (const f of idbFiles) {
@@ -1787,58 +1845,7 @@ function renderIdbTree(parentEl, node, depth, pathPrefix, fileOrder) {
         nameEl.dataset.fullname = f.name;
         nameEl.title = f.name;
 
-        const actions = document.createElement('div');
-        actions.className = 'workspace-file-actions';
-
-        if (/\.html?$/i.test(f.name)) {
-            const play = document.createElement('button');
-            play.className = 'ws-btn ws-btn-play'; play.title = 'Open as HTML tab'; play.textContent = '▶';
-            play.onclick = async e => {
-                e.stopPropagation();
-                try { const content = await agentReadFile(f.name); openArtifactTab(f.name, content); }
-                catch (err) { alert(`Could not open: ${err.message}`); }
-            };
-            actions.appendChild(play);
-        }
-        if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(f.name)) {
-            const play = document.createElement('button');
-            play.className = 'ws-btn ws-btn-play'; play.title = 'Preview image'; play.textContent = '▶';
-            play.onclick = e => { e.stopPropagation(); openFileTab(f.name); };
-            actions.appendChild(play);
-        }
-        if (/\.pdf$/i.test(f.name)) {
-            const play = document.createElement('button');
-            play.className = 'ws-btn ws-btn-play'; play.title = 'Preview PDF'; play.textContent = '▶';
-            play.onclick = e => { e.stopPropagation(); openFileTab(f.name); };
-            actions.appendChild(play);
-        }
-        if (/\.py$/i.test(f.name)) {
-            const play = document.createElement('button');
-            play.className = 'ws-btn ws-btn-play'; play.title = 'Run Python'; play.textContent = '▶';
-            play.onclick = async e => {
-                e.stopPropagation();
-                play.textContent = '…'; play.disabled = true;
-                try {
-                    const code = await agentReadFile(f.name);
-                    const idbRecs = await listWorkspaceFiles();
-                    const filesDict = {};
-                    for (const rec of idbRecs) filesDict[rec.name] = rec.content;
-                    openArtifactTab(f.name, _buildPyRunnerHtml(f.name, code, filesDict), { isPreview: false });
-                } catch (err) { alert(`Run failed: ${err.message}`); }
-                finally { play.textContent = '▶'; play.disabled = false; }
-            };
-            actions.appendChild(play);
-        }
-
-        const dl = document.createElement('button');
-        dl.className = 'ws-btn'; dl.title = 'Download'; dl.textContent = '↓';
-        dl.onclick = e => { e.stopPropagation(); downloadFile(f.name); };
-
-        const del = document.createElement('button');
-        del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
-        del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
-
-        actions.append(dl, del);
+        const actions = buildFileActions(f.name);
         _attachFileTooltip(row, { name: f.name, size: f.size, lastModified: f.lastModified });
         row.append(nameEl, actions);
         parentEl.appendChild(row);
@@ -2032,6 +2039,7 @@ export async function renderFileList() {
     listEl.appendChild(trashZone);
 
     updateSelectionUI();
+    (window as any).updateRailPreview?.();
 }
 
 async function downloadFile(name) {
