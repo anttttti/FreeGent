@@ -219,18 +219,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Geo cache: fetch once at startup, fire-and-forget (location skill uses the result).
     prefetchGeoCache?.().catch(() => {});
 
-    // Pyodide: start unless user explicitly disabled it, OR the device is touch-only
-    // (phone/tablet without mouse/keyboard).  On constrained hardware like iPad Air 1
-    // (A5 chip, 512 MB RAM, iOS 12), loading a 52 MB Python/WASM runtime causes severe
-    // memory pressure and triggers Safari's "Time limit" script-timeout dialog.
-    // Touch-only check: has touch AND no hover capability (rules out hybrid laptops).
-    // NOTE: navigator.maxTouchPoints is undefined on iOS ≤12 (Safari 13+ only),
-    // so we intentionally omit it and rely solely on ontouchstart + hover media query.
-    const _isTouchOnly = 'ontouchstart' in window
-        && !window.matchMedia('(hover: hover)').matches;
-    if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) !== '0' && !_isTouchOnly) {
-        try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
-    }
+    // Pyodide: start unless the user disabled auto-load (or the device is touch-only; see config.ts).
+    // runAgentTurn repeats this check before each turn.
+    autoloadPyodideIfEnabled?.();
 
     // Local bash: auto-detect the dev server's /api/execute on localhost. Only probe when on localhost and not
     // already configured, so we don't clobber a deliberate 'none' choice from a previous session.

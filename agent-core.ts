@@ -1381,6 +1381,8 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     if (!_s._session) _s._session = registry.create({ chatId: activeChatId ?? 'anon' });
     const _evtSess = _s._session;
     const _histBefore = _evtSess.deriveMessages();
+    autoloadPyodideIfEnabled?.();
+
 
     // Reset reactive-trigger bookkeeping — see agentSend for rationale.
     _resetPerTurnState(_histBefore);
