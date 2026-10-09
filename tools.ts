@@ -968,6 +968,8 @@ async function _handleUpdateTaskStatus(args: any) {
 // POSIX single-quoting: nothing inside is expanded, and embedded newlines stay literal.
 const _shSingleQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
+const _SYNTAX_HINT = 'The file no longer parses. If the fix is not obvious, call undo_write on this path to restore the previous version instead of patching braces repeatedly.';
+
 // Returns an error string on failure, null if the file is clean or the check is unavailable.
 async function _syntaxCheck(path) {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase();
@@ -1292,7 +1294,7 @@ async function _handleWriteFile(args, context) {
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path);
         const wfResult = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
-        return synErr ? { ...wfResult, syntax_error: synErr } : wfResult;
+        return synErr ? { ...wfResult, syntax_error: synErr, syntax_hint: _SYNTAX_HINT } : wfResult;
     } catch (e) { return { error: e.message }; }
 }
 
@@ -1402,7 +1404,7 @@ async function _handleReplaceInFile(args, context) {
         );
         if (rif.success) {
             const synErr = await _syntaxCheck(args.path);
-            if (synErr) return { ...rif, syntax_error: synErr };
+            if (synErr) return { ...rif, syntax_error: synErr, syntax_hint: _SYNTAX_HINT };
         }
         return rif;
     } catch (e) { return { error: e.message }; }

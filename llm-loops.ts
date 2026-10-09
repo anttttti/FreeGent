@@ -2371,6 +2371,11 @@ async function callLLM(
     return decodeOAIResponse(resp, onChunk);
 }
 
+// Per-model count of text tool calls rescued by parseFnTagCalls (see callOAI).
+const _fnTagStrips = new Map<string, number>();
+const FN_TAG_STRIP_BENCH_AT = 6;
+const FN_TAG_STRIP_BENCH_MS = 15 * 60_000;
+
 async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null } = {}): Promise<any> {
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;
@@ -2524,6 +2529,18 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
             sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: result.content, kind: 'fn_tag_strip' });
             result.content    = cleaned || null;
             result.tool_calls = tool_calls;
+            // A model that keeps needing this repair (dots-3 wrote <dots_function_call>, then
+            // typo'd tags until nothing parsed) is unreliable: bench it so rotation moves on.
+            if (!forWorker && toolFormat === 'openai' && !isCustomEndpoint(ep)) {
+                const key = `${provider}|${model}`;
+                const n = (_fnTagStrips.get(key) ?? 0) + 1;
+                _fnTagStrips.set(key, n);
+                if (n >= FN_TAG_STRIP_BENCH_AT) {
+                    _fnTagStrips.set(key, 0);
+                    _markExactCooldown(ep, FN_TAG_STRIP_BENCH_MS);
+                    console.warn(`[tool-format] ${key}: ${n} text tool calls repaired — benched for 15 min`);
+                }
+            }
         }
     }
     // The max_tokens actually sent: truncation checks compare completion_tokens against it,
