@@ -106,9 +106,6 @@ const PROVIDER_KEY_MAP = {
     'ai-gateway.vercel.sh':              'VERCEL_API_KEY',
 };
 
-// Secrets that are only used for clients presenting the X-FG-Pass header (see _unlocked).
-const GATED_ENV = new Set(['NVIDIA_API_KEY', 'VERCEL_API_KEY']);
-
 // Search providers that use non-standard auth headers (not Authorization: Bearer).
 // Injected after the standard PROVIDER_KEY_MAP pass.
 const SEARCH_HEADER_MAP = {
@@ -174,11 +171,8 @@ export default {
         if (request.method === 'GET' && workerUrl.pathname === '/keys') {
             const available = {};
             const unlocked = await _unlocked(request, env);
-            for (const envKey of Object.values(PROVIDER_KEY_MAP)) {
-                available[envKey] = !!(env && env[envKey]) && (unlocked || !GATED_ENV.has(envKey));
-            }
-            for (const { envKey } of Object.values(SEARCH_HEADER_MAP)) {
-                available[envKey] = !!(env && env[envKey]);
+            for (const envKey of [...Object.values(PROVIDER_KEY_MAP), ...Object.values(SEARCH_HEADER_MAP).map(v => v.envKey)]) {
+                available[envKey] = unlocked && !!(env && env[envKey]);
             }
             return new Response(JSON.stringify(available), {
                 headers: { ...CORS, 'Content-Type': 'application/json' },
@@ -249,9 +243,9 @@ export default {
                 const auth = headers['Authorization'] || headers['authorization'] || '';
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 const { hostname } = new URL(target);
-                let envKey = isEmpty && env ? PROVIDER_KEY_MAP[hostname] : null;
-                if (envKey && GATED_ENV.has(envKey) && !(await _unlocked(request, env))) envKey = null;
-                const search = env ? SEARCH_HEADER_MAP[hostname] : null;
+                const unlocked = await _unlocked(request, env);
+                const envKey = isEmpty && unlocked ? PROVIDER_KEY_MAP[hostname] : null;
+                const search = unlocked ? SEARCH_HEADER_MAP[hostname] : null;
                 const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
                 const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
                 if (injecting && await _rateLimited(request, env, 'key'))
