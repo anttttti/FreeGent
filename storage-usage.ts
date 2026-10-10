@@ -86,7 +86,7 @@ function _renderStorageUsage(): void {
     }
     const proj = document.getElementById('project-storage-usage');
     if (proj) {
-        proj.textContent = `localStorage used by this project: ${fmtStorageSize(projectUsage(u))}`
+        proj.textContent = `localStorage used: ${fmtStorageSize(projectUsage(u))}`
             + ` (checkpoints ${fmtStorageSize(u.checkpoints)}) · total ${fmtStorageSize(u.total)} of ~${fmtStorageSize(LS_QUOTA)}`;
     }
 }
