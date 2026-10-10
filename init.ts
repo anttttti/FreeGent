@@ -586,6 +586,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         else rewindToCheckpoint(ckptId, row as HTMLElement);
     });
 
+    // Each turn's changed-file list refits to its width (see fitChangedFiles), also after a reload.
+    if (typeof ResizeObserver === 'function' && typeof MutationObserver === 'function') {
+        const msgsEl = getMessagesEl();
+        const ro = new ResizeObserver(entries => entries.forEach(en => (window as any).fitChangedFiles?.(en.target)));
+        const watch = (root: Element) => root.querySelectorAll('.agent-turn-files').forEach(l => ro.observe(l));
+        if (msgsEl) {
+            watch(msgsEl);
+            new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => {
+                if (!(n instanceof Element)) return;
+                if (n.matches('.agent-turn-files')) ro.observe(n);
+                watch(n);
+            }))).observe(msgsEl, { childList: true, subtree: true });
+        }
+    }
+
     // A file in a turn's changed-file list: modified opens its diff, added opens the file. Delegated
     // because the list is plain saved HTML after a reload.
     getMessagesEl()?.addEventListener('click', e => {
