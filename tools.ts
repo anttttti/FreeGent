@@ -1501,6 +1501,8 @@ async function _handleApplyPatch(args, context) {
 async function _handleWebSearch(args) {
     const src = (args.source || 'web').toLowerCase();
     if (src === 'wikipedia') return wikipediaSearch(args.query);
+    if (src === 'tavily') return tavilySearch(args.query);
+    if (src === 'brave') return braveSearch(args.query);
     if (src === 'hackernews') {
         try {
             const q = encodeURIComponent(args.query || '');
@@ -1528,7 +1530,7 @@ async function _handleWebSearch(args) {
         try {
             const q = encodeURIComponent(args.query || '');
             const key = getStackExchangeKey();
-            const resp = await fetch(`https://api.stackexchange.com/2.3/search/advanced?q=${q}&site=stackoverflow&filter=!9YdnSM67&pagesize=10${key ? '&key=' + encodeURIComponent(key) : ''}`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://api.stackexchange.com/2.3/search/advanced?q=${q}&site=stackoverflow&pagesize=10${key ? '&key=' + encodeURIComponent(key) : ''}`, { signal: activeAbortController?.signal });
             if (!resp.ok) return { error: `Stack Overflow HTTP ${resp.status}` };
             const data = await resp.json();
             const _an = annotateUrl;

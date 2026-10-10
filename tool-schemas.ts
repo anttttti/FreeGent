@@ -117,8 +117,8 @@ const TOOLS_SPEC = [
             type: 'object',
             properties: {
                 query:  { type: 'string', description: 'Search query.' },
-                source: { type: 'string', enum: ['web', 'wikipedia', 'hackernews', 'github', 'stackoverflow', 'reddit', 'devto', 'gdelt', 'duckduckgo'],
-                          description: 'Source to search (default: web = configured provider). wikipedia=article summaries; hackernews=community tech discussion; github=repos by stars; stackoverflow=Q&A; reddit=community; devto=developer articles; gdelt=current news; duckduckgo=instant answers.' }
+                source: { type: 'string', enum: ['web', 'tavily', 'brave', 'wikipedia', 'hackernews', 'github', 'stackoverflow', 'reddit', 'devto', 'gdelt', 'duckduckgo'],
+                          description: 'Source to search (default: web = configured provider, normally Tavily or Brave; tavily/brave force that provider, e.g. to test it). wikipedia=article summaries; hackernews=community tech discussion; github=repos by stars; stackoverflow=Q&A; reddit=community; devto=developer articles; gdelt=current news; duckduckgo=instant answers.' }
             },
             required: ['query']
         }
