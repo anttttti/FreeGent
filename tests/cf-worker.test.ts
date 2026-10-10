@@ -83,6 +83,30 @@ describe('CF Worker', () => {
         expect(upstream).toHaveBeenCalledTimes(1);
     });
 
+    it('replays cookies set during a redirect chain to the same host only', async () => {
+        const redirect = (loc: string, cookie?: string) => {
+            const h = new Headers({ Location: loc });
+            if (cookie) h.append('Set-Cookie', cookie);
+            return new Response(null, { status: 302, headers: h });
+        };
+        upstream.mockResolvedValueOnce(redirect('https://example.com/auth', 'signin=1; Path=/; Secure'))
+                .mockResolvedValueOnce(redirect('https://other.example.org/x'))
+                .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+        const r = await worker.fetch(get('https://example.com/page'), {});
+        expect(r.status).toBe(200);
+        expect(upstream.mock.calls[0][1].headers.Cookie).toBeUndefined();
+        expect(upstream.mock.calls[1][1].headers.Cookie).toBe('signin=1');
+        expect(upstream.mock.calls[2][1].headers.Cookie).toBeUndefined();
+        expect(r.headers.get('Set-Cookie')).toBeNull();
+    });
+
+    it('retries an https -> http redirect over https', async () => {
+        upstream.mockResolvedValueOnce(new Response(null, { status: 301, headers: { Location: 'http://example.com/events/' } }));
+        const r = await worker.fetch(get('https://www.example.com/events/'), {});
+        expect(r.status).toBe(200);
+        expect(upstream.mock.calls[1][0]).toBe('https://example.com/events/');
+    });
+
     it('blocks private and reserved targets on the fetch path', async () => {
         for (const t of ['https://169.254.169.254/latest/meta-data/', 'https://127.0.0.2/', 'https://0.0.0.0/',
                          'https://100.64.1.1/', 'https://[::1]/', 'https://[fd00::1]/', 'https://[::ffff:127.0.0.1]/',

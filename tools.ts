@@ -1537,16 +1537,6 @@ async function _handleWebSearch(args) {
             return { results: (data.items || []).map(i => `\n1. [${i.title}] — ${_an(i.link)}\n   Score: ${i.score} | Answers: ${i.answer_count}`).join('') };
         } catch (e) { return { error: `web_search/stackoverflow: ${e.message}` }; }
     }
-    if (src === 'reddit') {
-        try {
-            const q = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://www.reddit.com/search.json?q=${q}&sort=relevance&t=year&limit=10`, { signal: activeAbortController?.signal });
-            if (!resp.ok) return { error: `Reddit HTTP ${resp.status}` };
-            const data = await resp.json();
-            const _an = annotateUrl;
-            return { results: (data.data?.children || []).map(c => `\n1. [${c.data.title}] — ${_an(c.data.url)}\n   ${c.data.selftext?.slice(0, 150) || ''} | r/${c.data.subreddit}`).join('') };
-        } catch (e) { return { error: `web_search/reddit: ${e.message}` }; }
-    }
     if (src === 'devto') {
         try {
             const tag = (args.query || '').replace(/\s+/g, '').toLowerCase();
@@ -1560,9 +1550,14 @@ async function _handleWebSearch(args) {
     if (src === 'gdelt') {
         try {
             const q = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=artlist&maxrecords=10&format=json`, { signal: activeAbortController?.signal });
+            // GDELT sends no CORS headers, so a browser call needs the proxy.
+            const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=artlist&maxrecords=10&format=json`;
+            const proxy = getEffectiveProxy();
+            const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: activeAbortController?.signal });
+            if (resp.status === 429) return { error: 'GDELT allows one request per 5 seconds — wait a few seconds and retry once, or use another source.' };
             if (!resp.ok) return { error: `GDELT HTTP ${resp.status}` };
-            const data = await resp.json();
+            const data = await resp.json().catch(() => null);
+            if (!data) return { error: 'GDELT returned a non-JSON reply (usually a rate-limit or no-match message) — retry once or use another source.' };
             const _an = annotateUrl;
             return { results: (data.articles || []).map(a => `\n1. [${a.title}] — ${_an(a.url)}\n   ${a.seendate}`).join('') };
         } catch (e) { return { error: `web_search/gdelt: ${e.message}` }; }

@@ -214,13 +214,30 @@ export default {
                 }
 
                 // Follow redirects here so every hop gets the same public-URL check.
+                // Cookies set along the chain are replayed to the same host on later hops (never to
+                // the client or other hosts): sites like ai.google.dev bounce through a sign-in
+                // redirect that only ends once the cookie it just set comes back.
+                const jar = new Map();   // hostname -> Map(name -> value)
                 let cur = target;
                 for (let hop = 0; ; hop++) {
-                    upstream = await fetch(cur, { headers: fwdHeaders, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+                    const host = new URL(cur).hostname;
+                    const hopHeaders = { ...fwdHeaders };
+                    const mine = jar.get(host);
+                    if (mine && mine.size) hopHeaders['Cookie'] = [...mine].map(([k, v]) => `${k}=${v}`).join('; ');
+                    upstream = await fetch(cur, { headers: hopHeaders, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
                     const loc = upstream.headers.get('Location');
                     if (![301, 302, 303, 307, 308].includes(upstream.status) || !loc) break;
-                    if (hop >= 5) return _err(502, 'Too many redirects');
+                    if (hop >= 8) return _err(502, 'Too many redirects');
+                    for (const sc of (upstream.headers.getSetCookie?.() ?? [])) {
+                        const m = /^\s*([^=;\s]+)=([^;]*)/.exec(sc);
+                        if (!m) continue;
+                        const jarHost = jar.get(host) ?? jar.set(host, new Map()).get(host);
+                        if (m[2] === '' || /max-age=0/i.test(sc)) jarHost.delete(m[1]); else jarHost.set(m[1], m[2]);
+                    }
                     cur = new URL(loc, cur).toString();
+                    // A site redirecting https -> http (e.g. www.christchurchcitylibraries.com ->
+                    // http://christchurchcitylibraries.com) is retried over https instead of refused.
+                    if (cur.startsWith('http://')) cur = 'https://' + cur.slice(7);
                     if (!_publicUrlOk(cur)) return _err(403, 'Redirect to a private address or non-HTTPS URL blocked');
                 }
 

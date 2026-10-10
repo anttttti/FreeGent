@@ -39,7 +39,7 @@ const TOOL_DESCRIPTIONS = {
     append_file:               'Append text to a file',
     update_task_status:        'Update task status and optionally log a note',
 
-    web_search:                'Search the internet; source param selects engine (web/wikipedia/hackernews/github/stackoverflow/reddit/devto/gdelt/duckduckgo)',
+    web_search:                'Search the internet; source param selects engine (web/wikipedia/hackernews/github/stackoverflow/devto/gdelt/duckduckgo)',
     deep_research:             'Multi-round research: plan, search, read sources, synthesize a cited report',
     academic_search:           'Search academic papers; source param selects database (arxiv/semantic_scholar/crossref/pubmed)',
     package_search:            'Search package registries; registry param selects npm or pypi',
