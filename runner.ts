@@ -4,6 +4,7 @@ import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus } from './task-status.js';
 import * as MsgQueue from './msg-queue.js';
+import { isStepLimitStop } from './loop-director.js';
 
 interface Task {
     path: string;
@@ -296,6 +297,16 @@ async function _waitUntilQuiet(settleMs = 0, maxMs = 300_000): Promise<void> {
 
 const _MAX_TURNS_PER_EPISODE = 5;
 
+// A turn that reaches its step limit is stopped as BLOCKED, which pauses Autopilot for the user. Work that merely ran out of
+// steps is not blocked: the next turn is a plain "Continue" (a fresh step budget, the chat history kept) until the task is
+// marked done or failed. Such turns do not count toward _MAX_TURNS_PER_EPISODE. The cap bounds a task that never converges
+// (this many full step budgets); past it the stop is handled as before, as a block.
+export const STEP_LIMIT_CONTINUE_PROMPT = 'Continue';
+export const MAX_STEP_LIMIT_CONTINUES = 25;
+export function shouldContinueAfterStepLimit(result: any, continuesSoFar: number): boolean {
+    return !!result && typeof result === 'object' && isStepLimitStop(result.stop?.reason) && continuesSoFar < MAX_STEP_LIMIT_CONTINUES;
+}
+
 async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // Something is still streaming (a previous chat winding down, a message the user sent): wait for
     // it instead of failing this task for it.
@@ -354,6 +365,8 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     let blockedReason: string = '';
     let failReason: string    = '';
     let turn: number          = 0;
+    let stepLimitContinues: number = 0;
+    let continueNext: boolean = false;   // the last turn stopped at its step limit: the next one is "Continue"
 
     while (_runnerRunning && !_runnerAbort && !blocked && turn < _MAX_TURNS_PER_EPISODE) {
         turn++;
@@ -372,7 +385,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         if (_runnerAbort) break;
 
         const taskName = task.fm.title || task.path;
-        const prompt = turn === 1
+        const isContinuation = continueNext;
+        continueNext = false;
+        // A step-limit continuation is not a re-prompt of an unfinished task: it leaves the turn count where it was.
+        if (isContinuation) turn--;
+        const prompt = isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
+            : turn === 1
             ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\nWhen done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
@@ -397,7 +415,9 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         // runAgentTurn reports the declaration as finishSignal 'blocked'; the text is the reason.
         const _signal = typeof _lastResult === 'object' ? _lastResult?.finishSignal : null;
         const _statusBlocked = lastMsg.match(/STATUS:\s*blocked(?:[:\s-]+([^\n]+))?/i);
-        if (_signal === 'blocked' || _statusBlocked) {
+        // Out of steps, not blocked: keep going (the status check below still ends the episode if the task got marked).
+        const _stepLimited = shouldContinueAfterStepLimit(_lastResult, stepLimitContinues);
+        if (!_stepLimited && (_signal === 'blocked' || _statusBlocked)) {
             blocked       = true;
             blockedReason = (_statusBlocked?.[1] ?? lastMsg.trim().split('\n').find(l => l.trim()) ?? '').trim().slice(0, 200)
                 || 'Task blocked — needs user input';
@@ -416,6 +436,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             if (s === 'done' || s === 'completed')    { success    = true;                          break; }
             if (s === 'failed' || s === 'impossible') { failReason = 'Task marked failed/impossible'; break; }
         } catch {}
+
+        if (_stepLimited) {
+            stepLimitContinues++;
+            continueNext = true;
+            _appendRunnerLog(task.fm.id || '', `${task.fm.title || task.path}`, 'info', `step limit reached: continuing (${stepLimitContinues})`);
+        }
     }
 
     if (!success && !blocked && !failReason && turn >= _MAX_TURNS_PER_EPISODE) {
