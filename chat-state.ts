@@ -816,16 +816,62 @@ function _chatSwitchRefused(why: string) {
     } catch {}
 }
 
-async function switchToChat(id) {
-    if (id === activeChatId) return;
-    if (agentStreaming) { _chatSwitchRefused('A reply is still streaming in this chat. Press Stop (or wait for it to finish), then open the other chat.'); return; }
-    // The task runner drives the active chat's global history; leaving its chat mid-run would
-    // put the runner's next turn (or the tail of a stopped one) into the chat switched to.
-    if (typeof isRunnerRunning === 'function' && isRunnerRunning()
-        && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null)) {
-        _chatSwitchRefused('The task runner is running and owns the active chat. Stop or pause the runner to open other chats.');
-        return;
+// Read-only view of another chat while a turn runs. The running chat keeps the live history, the
+// message list and the composer (all hidden meanwhile, still updating), so only that chat can start
+// or steer a turn; this view renders the other chat's saved messages and sends nothing.
+let _viewingChatId: string | null = null;
+
+function closeChatViewer() {
+    _viewingChatId = null;
+    document.body.classList.remove('fg-viewing-other');
+    document.getElementById('fg-chat-viewer')?.remove();
+}
+
+async function viewChatReadOnly(id: string) {
+    const chat = getChatList().find((c: any) => c.id === id);
+    const active = getChatList().find((c: any) => c.id === activeChatId);
+    const msgs = getMessagesEl();
+    if (!msgs?.parentElement) { _chatSwitchRefused('Can\'t open this chat while a reply is running.'); return; }
+    closeChatViewer();
+    _viewingChatId = id;
+    const viewer = document.createElement('div');
+    viewer.id = 'fg-chat-viewer';
+    const bar = document.createElement('div');
+    bar.className = 'fg-chat-viewer-bar';
+    const label = document.createElement('span');
+    label.textContent = `Viewing "${chat?.name || 'Untitled Chat'}" (read-only) — a turn is running in "${active?.name || 'the current chat'}", so no new turn can start here.`;
+    const back = document.createElement('button');
+    back.className = 'ws-action-btn';
+    back.textContent = 'Back to running chat';
+    back.title = 'Close this read-only view and return to the chat that is running';
+    back.onclick = closeChatViewer;
+    bar.append(label, back);
+    const body = document.createElement('div');
+    body.className = 'fg-chat-viewer-body';
+    viewer.append(bar, body);
+    msgs.parentElement.insertBefore(viewer, msgs.nextSibling);
+    document.body.classList.add('fg-viewing-other');
+    let saved: any = null;
+    try { saved = await _loadHtml(id); } catch {}
+    if (_viewingChatId !== id) return;   // closed or another chat opened meanwhile
+    if (saved) {
+        body.innerHTML = saved;
+        // Saved markup is inert: drop live-state leftovers and the interactive hooks it can't carry.
+        body.querySelectorAll('.seq-selected-detail, .seq-live-detail').forEach(el => { el.innerHTML = ''; });
+        body.querySelectorAll('.agent-ckpt-row, .agent-ckpt-group').forEach(el => el.remove());
+        body.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    } else {
+        body.textContent = 'No saved messages in this chat.';
     }
+    body.scrollTop = body.scrollHeight;
+}
+
+async function switchToChat(id) {
+    if (id === activeChatId) { closeChatViewer(); return; }
+    const runnerOther = typeof isRunnerRunning === 'function' && isRunnerRunning()
+        && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null);
+    if (agentStreaming || runnerOther) { await viewChatReadOnly(id); return; }
+    closeChatViewer();
     saveHistory();
     activeChatId        = id;
     _loadingChatId      = id;
@@ -987,7 +1033,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.
