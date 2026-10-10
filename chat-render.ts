@@ -1264,13 +1264,15 @@ export function createResponsePlaceholder(container: null | undefined = null, op
                 if (aggDetail.style.display !== 'none') { aggDetail.style.display = 'none'; aggToggle.textContent = '▶'; }
             }
         }
+        const stepEl = document.createElement('div'); stepEl.className = 'seq-step';
         if (stepCount > 0) {
+            // Inside the step, in its own grid column, so it lines up with the step's top-most box
+            // and not with the middle of a tall parallel step.
             const arrow = document.createElement('div');
             arrow.className = 'seq-arrow'; arrow.textContent = '→';
-            graphEl.appendChild(arrow);
+            stepEl.appendChild(arrow);
         }
         stepCount++;
-        const stepEl = document.createElement('div'); stepEl.className = 'seq-step';
         graphEl.appendChild(stepEl);
         scrollBottom(msgs);
         return labels.map(l => createTask(stepEl, l, rerunnable, isThink));
