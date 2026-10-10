@@ -825,11 +825,29 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
     };
     const cmd = (c: any): Promise<any> => new Promise(res => {
+        if (aborted) return res({ error: 'stopped' });
         const id = ++seq;
         pending.set(id, res);
         iframe.contentWindow?.postMessage({ type: 'fg-check-cmd', id, ...c }, '*');
         setTimeout(() => { if (pending.has(id)) { pending.delete(id); res({ error: 'no reply — the page script is not running or is stuck' }); } }, 3000);
     });
+
+    // Stop: the AI turn's abort signal closes the preview at once and ends the check.
+    let aborted = false;
+    let wake: () => void = () => {};
+    const abortedP = new Promise<void>(r => { wake = r; });
+    const sleep = (ms: number) => Promise.race([_sleep(ms), abortedP]);
+    const stopCheck = () => {
+        aborted = true;
+        wrap.remove();
+        for (const res of pending.values()) res({ error: 'stopped' });
+        pending.clear();
+        readyResolve(false);
+        wake();
+    };
+    const signal: AbortSignal | undefined = activeAbortController?.signal;
+    if (signal?.aborted) return { error: 'check_page stopped' };
+    signal?.addEventListener('abort', stopCheck);
 
     const steps: any[] = [];
     let loaded = false, fps: number | null = null;
@@ -837,10 +855,10 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     try {
         iframe.srcdoc = content;
         document.body.appendChild(wrap);
-        loaded = await Promise.race([ready, _sleep(8000).then(() => false)]);
+        loaded = await Promise.race([ready, sleep(8000).then(() => false)]);
         // Slow device: scripts that start are given longer before the page is called not-loaded.
-        if (!loaded && alive) loaded = await Promise.race([ready, _sleep(12000).then(() => false)]);
-        await _sleep(300);
+        if (!loaded && alive) loaded = await Promise.race([ready, sleep(12000).then(() => false)]);
+        await sleep(300);
         const probeAll = async (when: string) => {
             if (!probes.length) return;
             const values: Record<string, string> = {};
@@ -849,30 +867,33 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         };
         await probeAll('after load');
         for (const a of actions.slice(0, 20)) {
+            if (aborted) break;
             if (!a || typeof a !== 'object') continue;
             if (typeof a.click === 'string') {
                 steps.push({ click: a.click, ...(await cmd({ cmd: 'click', selector: a.click })) });
             } else if (typeof a.key === 'string') {
                 const hold = _clampMs(a.hold_ms, 0, 5000);
                 const down = await cmd({ cmd: 'key', kind: 'keydown', key: a.key });
-                if (hold) await _sleep(hold);
+                if (hold) await sleep(hold);
                 await cmd({ cmd: 'key', kind: 'keyup', key: a.key });
                 steps.push({ key: a.key, held_ms: hold, ...(down.error ? { error: down.error } : {}) });
             } else if (a.wait_ms != null) {
                 const w = _clampMs(a.wait_ms, 0, 5000);
-                await _sleep(w);
+                await sleep(w);
                 steps.push({ waited_ms: w });
             }
-            await _sleep(100);   // let handlers and a frame or two run
+            await sleep(100);   // let handlers and a frame or two run
         }
-        await _sleep(_clampMs(waitMs, 1500, 10000));
+        await sleep(_clampMs(waitMs, 1500, 10000));
         await probeAll('at end');
         const st = await cmd({ cmd: 'stats' });
         if (typeof st?.frames === 'number' && st.ms > 0) fps = Math.round(st.frames / (st.ms / 1000));
     } finally {
         window.removeEventListener('message', onMsg);
+        signal?.removeEventListener('abort', stopCheck);
         wrap.remove();
     }
+    if (aborted) return { error: 'check_page stopped' };
 
     // Collapse repeats (an error thrown every frame shows once, with a count).
     const collapse = (items: typeof logs, max: number) => {
