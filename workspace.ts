@@ -2485,7 +2485,7 @@ async function _collectProjectData(name) {
         }
     }
     return {
-        fwproject: '1.0',
+        fg_project: '1.0',
         id: _projectSlug(name),
         name: name || 'Project',
         savedAt: new Date().toISOString(),
@@ -2677,6 +2677,8 @@ async function _restoreProjectData(data) {
     if (typeof updateTokenLabel   === 'function') updateTokenLabel();
     loadAgentsContext?.();
     loadSkills?.();
+    // The board still showed the replaced workspace's tasks until something else refreshed it.
+    try { await (window as any).syncLedgerWithTaskFiles?.(); } catch { try { await (window as any).refreshTasks?.(); } catch {} }
 
     // Restore settings unconditionally — project operations must never alter them.
     _applySettingsSnapshot(_settingsSnap);
@@ -2839,7 +2841,7 @@ async function exportProject() {
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url;
-        a.download = buf ? `${slug}.fwproject.gz` : `${slug}.fwproject.json`;
+        a.download = buf ? `${slug}.fg_project.gz` : `${slug}.fg_project.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -2861,7 +2863,7 @@ async function importProject(inputEl) {
         } else {
             data = JSON.parse(await file.text());
         }
-        if (!data?.fwproject) throw new Error('Not a valid FreeGent project file.');
+        if (!(data?.fg_project || data?.fwproject)) throw new Error('Not a valid FreeGent project file.');
         if (!confirm(`Import project "${data.name}"? Current workspace and chat history will be replaced.`)) return;
         await _restoreProjectData(data);
         if (data.localFolderName) _showFolderPrompt(data.name, data.localFolderName, data.id || _projectSlug(data.name));
