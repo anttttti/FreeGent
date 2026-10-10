@@ -188,25 +188,8 @@ function _pruneLogsFrom(sinceMs: number): void {
     sessionPruneRawFrom?.(activeChatId, sinceMs);
 }
 
-async function applyCheckpoint(ckptId: string): Promise<boolean> {
-    const raw = localStorage.getItem(ckptKey(ckptId));
-    if (!raw) {
-        // Checkpoint metadata was cleared (e.g. browser storage cleared, or >50 turns).
-        // Show an in-chat notice rather than alert() which browsers may suppress silently.
-        console.warn('[checkpoint] not found in localStorage:', ckptId);
-        appendMessage?.('model', '<em style="color:var(--muted)">Checkpoint data no longer available — history context was cleared. You can still read the conversation above.</em>');
-        return false;
-    }
-    const { openaiLen, roleName } = JSON.parse(raw);
-    setChatHistory(getChatHistory().slice(0, openaiLen));
-    lastUserMessageText  = '';
-    // Checkpoint id is a Date.now() timestamp — see saveCheckpoint.
-    _pruneLogsFrom(parseInt(ckptId, 10));
-    // Restore the role active at checkpoint time so rerun starts from the right role.
-    // roleName is null for pre-Agent-role checkpoints → fall back to Agent default.
-    if (roleName) setMainAgentRole(roleName);
-    else if (typeof clearMainAgentRole === 'function') clearMainAgentRole(); // restores Agent
-
+// Puts the workspace back to a checkpoint's snapshot; local-folder files are restored only after the user agrees.
+async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<void> {
     if (activeChatId && typeof restoreCheckpointWorkspace === 'function') {
         try {
             const { localFiles } = await restoreCheckpointWorkspace(activeChatId, ckptId);
@@ -231,6 +214,28 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
             renderFileList?.();
         } catch (e) { console.warn('[checkpoint] workspace restore failed:', e); }
     }
+}
+
+async function applyCheckpoint(ckptId: string): Promise<boolean> {
+    const raw = localStorage.getItem(ckptKey(ckptId));
+    if (!raw) {
+        // Checkpoint metadata was cleared (e.g. browser storage cleared, or >50 turns).
+        // Show an in-chat notice rather than alert() which browsers may suppress silently.
+        console.warn('[checkpoint] not found in localStorage:', ckptId);
+        appendMessage?.('model', '<em style="color:var(--muted)">Checkpoint data no longer available — history context was cleared. You can still read the conversation above.</em>');
+        return false;
+    }
+    const { openaiLen, roleName } = JSON.parse(raw);
+    setChatHistory(getChatHistory().slice(0, openaiLen));
+    lastUserMessageText  = '';
+    // Checkpoint id is a Date.now() timestamp — see saveCheckpoint.
+    _pruneLogsFrom(parseInt(ckptId, 10));
+    // Restore the role active at checkpoint time so rerun starts from the right role.
+    // roleName is null for pre-Agent-role checkpoints → fall back to Agent default.
+    if (roleName) setMainAgentRole(roleName);
+    else if (typeof clearMainAgentRole === 'function') clearMainAgentRole(); // restores Agent
+
+    await _restoreCheckpointWorkspaceUI(ckptId);
     return true;
 }
 
@@ -468,6 +473,103 @@ function deleteChatCheckpoints(chatId: string): void {
         if (typeof sessionDeleteCheckpointAttachments === 'function') sessionDeleteCheckpointAttachments(dropped);
     } catch {}
 }
+
+// ── Rerun the AI turn from a step box ─────────────────────────────────────
+// The ↺ Rerun button on step boxes (step graph + event log) carries data-hist-len: the length of
+// the chat history that step's model call started from. Rerun cuts the history back to that
+// length and continues the turn loop from there, in a bubble that keeps the earlier steps.
+function _confirmRerunStep(): Promise<{ resetWorkspace: boolean } | null> {
+    return new Promise(resolve => {
+        const ov = document.createElement('div');
+        ov.className = 'fg-modal-overlay';
+        ov.innerHTML = `<div class="fg-modal fg-modal-sm">
+            <div class="fg-modal-header"><span class="fg-modal-title">Rerun from this step?</span></div>
+            <div class="fg-modal-body"><p>Rerun the turn from this step. <span id="fg-rerun-ws-note">Workspace is not reset.</span> This step and everything after it are removed.</p>
+            <label class="fg-modal-check-label"><input type="checkbox" id="fg-rerun-ws"> Reset Turn-initial Workspace</label></div>
+            <div class="fg-modal-btns">
+                <button class="fg-modal-btn fg-modal-btn-cancel">Cancel</button>
+                <button class="fg-modal-btn fg-modal-btn-ok">Rerun</button>
+            </div></div>`;
+        document.body.appendChild(ov);
+        const wsCb = ov.querySelector('#fg-rerun-ws') as HTMLInputElement;
+        const wsNote = ov.querySelector('#fg-rerun-ws-note') as HTMLElement;
+        wsCb.onchange = () => { wsNote.textContent = wsCb.checked ? 'Workspace is reset to the start of the turn.' : 'Workspace is not reset.'; };
+        const done = (v: { resetWorkspace: boolean } | null) => { ov.remove(); resolve(v); };
+        (ov.querySelector('.fg-modal-btn-cancel') as HTMLElement).onclick = () => done(null);
+        (ov.querySelector('.fg-modal-btn-ok') as HTMLElement).onclick = () =>
+            done({ resetWorkspace: (ov.querySelector('#fg-rerun-ws') as HTMLInputElement).checked });
+        ov.addEventListener('click', e => { if (e.target === ov) done(null); });
+    });
+}
+
+// The checkpoint id of the user message that started the turn this element belongs to.
+function _turnCheckpointId(el: Element): string | null {
+    const msgs = getMessagesEl();
+    let top: Element | null = el;
+    while (top && top.parentElement !== msgs) top = top.parentElement;
+    for (let n: Element | null = top; n; n = n.previousElementSibling) {
+        const id = (n as HTMLElement).dataset?.checkpointId;
+        if (id) return id;
+    }
+    return null;
+}
+
+async function rerunFromStep(btn: HTMLElement): Promise<void> {
+    if (aiBusy()) { alert('An AI task is running — stop it before rerunning.'); return; }
+    const histLen = Number(btn.dataset.histLen);
+    const hist = getChatHistory();
+    if (!Number.isInteger(histLen) || histLen < 1 || histLen > hist.length) {
+        alert('This step can no longer be rerun: the conversation history it started from is gone (compacted, rewound or cleared).');
+        return;
+    }
+    const choice = await _confirmRerunStep();
+    if (!choice) return;
+    const oldDiv = btn.closest('.agent-msg') as HTMLElement | null;
+    if (!oldDiv) return;
+    const ckptId = oldDiv.dataset.checkpointId || _turnCheckpointId(btn);
+    setChatHistory(hist.slice(0, histLen));
+    if (choice.resetWorkspace) {
+        if (ckptId) await _restoreCheckpointWorkspaceUI(ckptId);
+        else alert('The turn-initial workspace snapshot is no longer available; the workspace was left as it is.');
+    }
+    updateTokenLabel();
+    // Later messages belong to a history that no longer exists.
+    while (oldDiv.nextElementSibling) oldDiv.nextElementSibling.remove();
+
+    // Same run as the tail of _agentSendReady, minus the user message (already in history).
+    setSoftStopPending(false);
+    _resetModelWarmup?.();
+    setAgentStreaming(true);
+    setInputState(false);
+    repairOAIHistory();
+    // The new bubble takes over the steps before this one and continues the graph; the old one goes.
+    const _ph: RenderAdapter = createResponsePlaceholder(null, { continueFrom: { oldDiv, cutSeq: Number(btn.dataset.seq) } });
+    oldDiv.remove();
+    setActivePlaceholder(_ph);
+    setActiveAbortController(new AbortController());
+    const placeholder = activePlaceholder;
+    if (!mainAgentRole) setMainAgentRole('director');
+    try {
+        const finalText = await runTurn(null, placeholder, { toolFilterOverride: null });
+        placeholder.finalize(_doStripTerminal(finalText));
+    } catch (err) {
+        _handleTurnError(err, placeholder, 'agent');
+    }
+    try {
+        updateChatMetaLastAt(activeChatId);
+        saveHistory();
+    } finally {
+        _tearDownTurn();
+    }
+    runPostTurnAgents().catch(() => {});
+    setTimeout(() => _processQueue(), 0);
+}
+
+// Buttons are rebuilt from saved HTML after a reload, so handlers are bound by a function, not inline.
+function bindRerunButton(btn: HTMLElement): void {
+    btn.onclick = (e: MouseEvent) => { e.stopPropagation(); void rerunFromStep(btn); };
+}
+Object.assign(window, { rerunFromStep, bindRerunButton });
 
 window.rewindToCheckpoint  = rewindToCheckpoint;
 window.rerunCheckpoint   = rerunCheckpoint;

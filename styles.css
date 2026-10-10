@@ -771,6 +771,10 @@ html, body {
 .seq-task-tokens { font-size: 10px; color: #aaa; }
 .seq-task-time-row { display: flex; justify-content: space-between; align-items: baseline; }
 .seq-task-start { font-size: 10px; color: #aaa; }
+.seq-rerun-btn { align-self: flex-start; margin-top: 3px; padding: 1px 6px; font-size: 10px; line-height: 1.4; background: none; color: inherit;
+    border: 1px solid currentColor; border-radius: 4px; opacity: .65; cursor: pointer; font-family: inherit; }
+.seq-rerun-btn:hover { opacity: 1; }
+.seq-agg-entry-row .seq-rerun-btn { margin: 0; flex-shrink: 0; align-self: center; }
 .seq-task-timer { font-size: 10px; color: #aaa; }
 .seq-task-model { font-size: 9px; color: #bbb; font-family: 'SF Mono','Fira Code',monospace; display: block; }
 .seq-task-model s, .seq-agg-entry-model s { color: #666; text-decoration-color: #555; }

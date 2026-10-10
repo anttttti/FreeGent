@@ -288,6 +288,7 @@ async function loadChatHistory(id: string): Promise<boolean> {
 // Re-attach step-graph interactive handlers lost when HTML is serialised / deserialised.
 // addEventListener listeners are never preserved in innerHTML; this restores them.
 function _reattachStepGraphHandlers(msgs: HTMLElement) {
+    msgs.querySelectorAll<HTMLButtonElement>('.seq-rerun-btn').forEach(b => (window as any).bindRerunButton?.(b));
     // Re-attach tab button click handlers within any container that has .step-tabs /
     // .step-tab-content siblings (covers both .seq-agg-entry and .seq-detail-col shapes).
     function _reattachTabs(root: Element) {

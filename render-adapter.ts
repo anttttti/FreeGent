@@ -17,8 +17,10 @@ export interface TaskHandle {
 }
 
 export interface RenderAdapter {
-    addThinkingTask(): TaskHandle;
-    addToolStep(labels: string[]): TaskHandle[];
+    // ctx.histLen: length of the chat history this step's model call starts from (the Rerun button's anchor).
+    addThinkingTask(ctx?: { histLen?: number }): TaskHandle;
+    // opts.main: the calls of the main loop's step; only a lone main call can be rerun from (not parallel ones).
+    addToolStep(labels: string[], opts?: { main?: boolean }): TaskHandle[];
     addCompactStep(): TaskHandle;
     addSystemStep(label: string): void;
     finalize(text: string): void;
