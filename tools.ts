@@ -2210,9 +2210,11 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             try { execResult = await runWithWasm(args.code, onProgress); }
             catch (e) { return { error: `WASM: ${e.message}` }; }
         } else {
-            return { error: args.language === 'bash'
-                ? 'Bash requires a sandbox — enable WASM or Local in Settings → Code Execution.'
-                : 'Load Pyodide in Settings → Code Execution to run Python in the browser.' };
+            if (args.language === 'bash') return { error: 'Bash requires a sandbox — enable WASM or Local in Settings → Code Execution.' };
+            // The browser shell has python3 (pip install works), so the model can carry on without Pyodide.
+            const viaBash = provider === 'wasm' && typeof runWithWasm === 'function'
+                ? ' Run it with language "bash" instead: python3 script.py or python3 -c "…" (pip install <pkg> works; files are under /workspace).' : '';
+            return { error: `Pyodide is ${pyodideStatus === 'error' ? 'unavailable (it failed to load)' : `not loaded (${pyodideStatus})`}, so language "python" cannot run.${viaBash} The user can load Pyodide in Settings → Code Execution.` };
         }
     }
     // Shell sent as Python (`python3 -c "…"`, `curl … | python3`, `cat << EOF > x.py`) fails to
