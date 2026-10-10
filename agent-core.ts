@@ -148,6 +148,33 @@ async function _saveCheckpointSnapshot(ckptId: string): Promise<void> {
     catch (e) { console.warn('[checkpoint] snapshot failed:', e); }
 }
 
+// The turn's changed files, last edited first, as a one-line list at the left of the action row:
+// + added (green), / changed (yellow), - deleted (red). CSS truncates it to the row's width.
+// Static spans, so the list survives the chat being saved and reloaded.
+async function _prependChangedFiles(row: HTMLElement, diff: { idbDelta: any[]; localDelta: any[] }): Promise<void> {
+    const items = [
+        ...diff.idbDelta.map(f => ({ name: f.name as string, op: f.op as string })),
+        ...diff.localDelta.map(f => ({ name: 'local/' + f.name, op: f.op as string })),
+    ];
+    if (!items.length) return;
+    const mtime = new Map<string, number>();
+    try { for (const f of await agentListFiles()) mtime.set(f.name, f.lastModified || 0); } catch {}
+    // Deleted files have no timestamp any more: they go last.
+    items.sort((a, b) => (mtime.get(b.name) ?? -1) - (mtime.get(a.name) ?? -1) || a.name.localeCompare(b.name));
+    const list = document.createElement('div');
+    list.className = 'agent-turn-files';
+    const mark: Record<string, [string, string]> = { add: ['+', 'df-add'], delete: ['-', 'df-del'], modify: ['/', 'df-mod'] };
+    for (const it of items) {
+        const [sym, cls] = mark[it.op] ?? mark.modify;
+        const span = document.createElement('span');
+        span.className = cls;
+        span.textContent = sym + it.name;
+        list.appendChild(span);
+    }
+    list.title = items.map(it => `${(mark[it.op] ?? mark.modify)[0]} ${it.name}`).join('\n');
+    row.prepend(list);
+}
+
 // Takes a post-turn snapshot and, if files changed, appends a Diff button to the AI message.
 async function _appendDiffButton(msgDiv: HTMLElement, chatId: string): Promise<void> {
     if (!chatId || typeof saveCheckpointSnapshot !== 'function' || typeof getCheckpointDiff !== 'function') return;
@@ -175,6 +202,7 @@ async function _appendDiffButton(msgDiv: HTMLElement, chatId: string): Promise<v
         btn.title = 'Show file changes made this turn (workspace + local filesystem)';
         btn.onclick = () => showCheckpointDiff(postCkptId, chatId);
         row.appendChild(btn);
+        await _prependChangedFiles(row, diff);
     } catch {}
 }
 
