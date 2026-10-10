@@ -4,6 +4,7 @@
 import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
+import { gunzipSync } from './inflate.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -2532,6 +2533,7 @@ async function _idbDeleteProject(id) {
 
 async function _gzipJson(obj) {
     const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    if (typeof CompressionStream === 'undefined') return null;
     const cs = new CompressionStream('gzip');
     const writer = cs.writable.getWriter();
     // Start draining the readable side before writing — avoids backpressure deadlock on large payloads
@@ -2542,6 +2544,10 @@ async function _gzipJson(obj) {
 }
 
 async function _gunzipToJson(buffer) {
+    if (typeof DecompressionStream === 'undefined') {
+        // Older Safari/iPad: no native streams, decode in JS.
+        return JSON.parse(new TextDecoder().decode(gunzipSync(new Uint8Array(buffer))));
+    }
     const ds = new DecompressionStream('gzip');
     const writer = ds.writable.getWriter();
     const textPromise = new Response(ds.readable).text();
@@ -2828,11 +2834,12 @@ async function exportProject() {
         const data = await _collectProjectData(name);
         const buf  = await _gzipJson(data);
         const slug = _projectSlug(name);
-        const blob = new Blob([buf], { type: 'application/gzip' });
+        // No CompressionStream (older Safari): export plain JSON; import accepts it.
+        const blob = buf ? new Blob([buf], { type: 'application/gzip' }) : new Blob([JSON.stringify(data)], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url;
-        a.download = `${slug}.fwproject.gz`;
+        a.download = buf ? `${slug}.fwproject.gz` : `${slug}.fwproject.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
