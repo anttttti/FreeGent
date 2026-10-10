@@ -2047,8 +2047,21 @@ export async function renderFileList() {
     uploadFolderBtn.textContent = '↑ Folder';
     uploadFolderBtn.title = 'Upload a folder';
     uploadFolderBtn.onclick = () => uploadFiles(true);
-    idbHdr.append(idbTitle, uploadBtn, uploadFolderBtn);
+    const attachBtn = document.createElement('button');
+    attachBtn.className = 'ws-col-hdr-btn';
+    attachBtn.textContent = '↑ Attachment';
+    attachBtn.title = "Upload from the device's attachment sheet (camera, photos, audio, video)";
+    attachBtn.onclick = () => uploadFiles(false, false, true);
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'ws-col-hdr-btn';
+    downloadBtn.textContent = '↓ Download';
+    downloadBtn.title = 'Download the whole workspace as a folder (zip)';
+    downloadBtn.onclick = () => downloadWorkspaceFolder(downloadBtn);
+    uploadBtn.style.marginLeft = 'auto';   // title on the left, the four buttons right-aligned
+    idbHdr.append(idbTitle, uploadBtn, uploadFolderBtn, attachBtn, downloadBtn);
     idbCol.appendChild(idbHdr);
+
+    idbCol.appendChild(_wsSortHeader());
 
     const idbBody = document.createElement('div');
     idbBody.className = 'workspace-col-body';
@@ -2061,8 +2074,6 @@ export async function renderFileList() {
         empty.textContent = 'No files yet. Upload files or ask the agent to create some.';
         idbBody.appendChild(empty);
     } else {
-    idbCol.appendChild(_wsSortHeader());
-
         renderIdbTree(idbBody, buildIdbFileTree(idbFiles), 0, 'ws/', []);
     }
 
@@ -2136,6 +2147,7 @@ export async function renderFileList() {
     }
 
     localCol.appendChild(localHdr);
+    localCol.appendChild(_wsSortHeader());
 
     const localBody = document.createElement('div');
     localBody.className = 'workspace-col-body';
@@ -2147,7 +2159,6 @@ export async function renderFileList() {
         localBody.appendChild(ph);
     } else {
         setupDropZone(localBody, false); // accepts drops from IDB (live sync or imported snapshot)
-    localCol.appendChild(_wsSortHeader());
         setupRubberBand(localBody);
         if (!localFiles.length) {
             const empty = document.createElement('div');
@@ -2167,6 +2178,29 @@ export async function renderFileList() {
 
     updateSelectionUI();
     (window as any).updateRailPreview?.();
+}
+
+// The whole Workspace column (not the Local Folder) as one zip; extracting it gives the folder.
+async function downloadWorkspaceFolder(btn?: HTMLButtonElement): Promise<void> {
+    const label = btn?.textContent ?? '';
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+        const names = (await agentListFiles()).filter(f => !f.isLocal && !f.name.endsWith('/'));
+        if (!names.length) { alert('The workspace has no files to download.'); return; }
+        const files: { name: string; data: Uint8Array; mtime?: number }[] = [];
+        for (const f of names) files.push({ name: f.name, data: await agentReadFileBytes(f.name), mtime: f.lastModified });
+        const { zipFiles } = await import('./workspace-zip.js');
+        const zip = await zipFiles(files);
+        const base = (document.getElementById('project-name-input') as HTMLInputElement | null)?.value.trim().replace(/[\\/:*?"<>|]+/g, '_') || 'workspace';
+        const url = URL.createObjectURL(new Blob([zip as BlobPart], { type: 'application/zip' }));
+        const a = Object.assign(document.createElement('a'), { href: url, download: `${base}.zip` });
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e: any) {
+        alert(`Download failed: ${e.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
 }
 
 async function downloadFile(name) {
@@ -2207,13 +2241,16 @@ const UPLOAD_MAX_FILES  = 500;
 const UPLOAD_MAX_BYTES  = 10 * 1024 * 1024; // 10 MB per file
 
 // asLocal=true: write files under "local/" prefix so they appear in the Local Folder column.
-function uploadFiles(folder = false, asLocal = false) {
+// deviceAttach: offer only what a phone's attachment sheet is for (camera, photos, audio, video).
+function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
     const input = document.createElement('input');
     input.type     = 'file';
     input.multiple = true;
     input.style.display = 'none';
     if (folder) {
         input.webkitdirectory = true;
+    } else if (deviceAttach) {
+        input.accept = 'image/*,audio/*,video/*';
     }
     // No `accept` filter: with none, phones and tablets offer their full attachment sheet (Photo
     // Library, Take Photo, Files) and desktops show every file type.
