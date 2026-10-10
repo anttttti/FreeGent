@@ -41,6 +41,7 @@ let pendingFsaHandle: FileSystemDirectoryHandle | null = null; // stored handle 
 
 let fsaSyncTimer: number | null  = null;
 let fsaSyncMtimes: Map<string, number> = new Map(); // relative path → lastModified timestamp
+let fsaSyncSizes: Map<string, number> = new Map();  // relative path → size in bytes (filled by getFsaMtime)
 
 async function startFsaSync() {
     stopFsaSync();
@@ -51,17 +52,20 @@ async function startFsaSync() {
         try { fsaSyncMtimes.set(name, await getFsaMtime(name)); } catch {}
     }));
     fsaSyncTimer = setInterval(pollFsaChanges, 1500);
+    renderFileList();   // sizes and timestamps are known now
 }
 
 function stopFsaSync() {
     if (fsaSyncTimer) { clearInterval(fsaSyncTimer); fsaSyncTimer = null; }
     fsaSyncMtimes = new Map();
+    fsaSyncSizes = new Map();
 }
 
 async function getFsaMtime(name) {
     const { dir, filename } = await fsaNavigate(name);
     const fh   = await dir.getFileHandle(filename);
     const file = await fh.getFile();
+    fsaSyncSizes.set(name, file.size);
     return file.lastModified;
 }
 
@@ -92,7 +96,7 @@ async function pollFsaChanges() {
             if (!nameSet.has(name)) { listChanged = true; fsaSyncMtimes.delete(name); }
 
         if (!changed.length && !listChanged) return;
-        if (listChanged) await renderFileList();
+        if (listChanged || changed.length) await renderFileList();   // changed files: new size / timestamp
 
         let taskFileChanged  = false;
         let skillFileChanged = false;
@@ -691,7 +695,7 @@ export async function agentListFiles() {
         // IDB files with local/ prefix (imported snapshot) → shown in Local Folder column when no FSA
         ...(!fsaHandle ? wsFiles.filter(f => f.name.startsWith('local/')).map(f => ({ name: f.name, size: f.size, lastModified: f.lastModified, isLocal: true })) : []),
         // Live-synced FSA files → shown in Local Folder column
-        ...fsaNames.map(n => ({ name: 'local/' + n, isLocal: true })),
+        ...fsaNames.map(n => ({ name: 'local/' + n, isLocal: true, size: fsaSyncSizes.get(n), lastModified: fsaSyncMtimes.get(n) || undefined })),
     ];
 }
 
@@ -1638,83 +1642,86 @@ function buildFileTree(localFiles) {
 }
 
 function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
-    for (const [dirName, subtree] of [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-        const fullPath    = pathPrefix + dirName;
-        const isCollapsed = collapsedDirs.has(fullPath);
+    for (const _e of _wsOrder(node, pathPrefix)) {
+        if (_e.kind === 'dir') {
+            const dirName = _e.name, subtree = _e.node;
+            const fullPath    = pathPrefix + dirName;
+            const isCollapsed = collapsedDirs.has(fullPath);
 
-        const dirRow = document.createElement('div');
-        dirRow.className = 'workspace-dir-row';
-        dirRow.style.paddingLeft = (20 + depth * 16) + 'px';
+            const dirRow = document.createElement('div');
+            dirRow.className = 'workspace-dir-row';
+            dirRow.style.paddingLeft = (20 + depth * 16) + 'px';
 
-        const toggle = document.createElement('span');
-        toggle.className = 'ws-dir-toggle';
-        toggle.textContent = isCollapsed ? '▶' : '▼';
+            const toggle = document.createElement('span');
+            toggle.className = 'ws-dir-toggle';
+            toggle.textContent = isCollapsed ? '▶' : '▼';
 
-        const nameEl = document.createElement('span');
-        nameEl.className = 'ws-dir-name';
-        nameEl.textContent = dirName;
+            const nameEl = document.createElement('span');
+            nameEl.className = 'ws-dir-name';
+            nameEl.textContent = dirName;
 
-        dirRow.append(toggle, nameEl);
-        dirRow.onclick = () => {
-            if (collapsedDirs.has(fullPath)) collapsedDirs.delete(fullPath);
-            else collapsedDirs.add(fullPath);
-            renderFileList();
-        };
-        _makeDirRow(dirRow, subtree, 'Copy to workspace');
+            const _agg = _wsAgg(subtree);
+            dirRow.append(toggle, nameEl, ..._wsInfoCols(_agg.size, _agg.lastModified));
+            dirRow.onclick = () => {
+                if (collapsedDirs.has(fullPath)) collapsedDirs.delete(fullPath);
+                else collapsedDirs.add(fullPath);
+                renderFileList();
+            };
+            _makeDirRow(dirRow, subtree, 'Copy to workspace');
 
-        parentEl.appendChild(dirRow);
-        if (!isCollapsed) renderTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
-    }
+            parentEl.appendChild(dirRow);
+            if (!isCollapsed) renderTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
+        } else {
+            const f = _e.f;
+            const basename = f.name.split('/').pop();
+            fileOrder.push(f.name);
+            const idx = fileOrder.length - 1;
 
-    for (const f of [...node.files].sort((a, b) => a.name.localeCompare(b.name))) {
-        const basename = f.name.split('/').pop();
-        fileOrder.push(f.name);
-        const idx = fileOrder.length - 1;
+            const row = document.createElement('div');
+            row.className = 'workspace-file-row' + (selectedFiles.has(f.name) ? ' ws-selected' : '');
+            row.style.paddingLeft = (20 + depth * 16) + 'px';
+            row.dataset.filename = f.name;
 
-        const row = document.createElement('div');
-        row.className = 'workspace-file-row' + (selectedFiles.has(f.name) ? ' ws-selected' : '');
-        row.style.paddingLeft = (20 + depth * 16) + 'px';
-        row.dataset.filename = f.name;
+            const nameEl = document.createElement('span');
+            nameEl.className = 'workspace-file-name';
+            nameEl.textContent = basename;
+            nameEl.dataset.fullname = f.name;
+            nameEl.title = f.name;
 
-        const nameEl = document.createElement('span');
-        nameEl.className = 'workspace-file-name';
-        nameEl.textContent = basename;
-        nameEl.dataset.fullname = f.name;
-        nameEl.title = f.name;
+            row.addEventListener('click', e => {
+                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
+                if (e.shiftKey && _localClickAnchorName !== null) {
+                    const anchorIdx = fileOrder.indexOf(_localClickAnchorName);
+                    const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
+                    const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
+                    for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
+                } else if (e.ctrlKey || e.metaKey) {
+                    selectedFiles.has(f.name) ? selectedFiles.delete(f.name) : selectedFiles.add(f.name);
+                } else {
+                    selectedFiles.clear();
+                    selectedFiles.add(f.name);
+                }
+                _localClickAnchorName = f.name;
+                updateSelectionUI();
+            });
+            row.addEventListener('dblclick', e => {
+                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
+                openFileTab(f.name);
+            });
 
-        row.addEventListener('click', e => {
-            if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-            if (e.shiftKey && _localClickAnchorName !== null) {
-                const anchorIdx = fileOrder.indexOf(_localClickAnchorName);
-                const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
-            } else if (e.ctrlKey || e.metaKey) {
-                selectedFiles.has(f.name) ? selectedFiles.delete(f.name) : selectedFiles.add(f.name);
-            } else {
-                selectedFiles.clear();
-                selectedFiles.add(f.name);
-            }
-            _localClickAnchorName = f.name;
-            updateSelectionUI();
-        });
-        row.addEventListener('dblclick', e => {
-            if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-            openFileTab(f.name);
-        });
+            const actions = document.createElement('div');
+            actions.className = 'workspace-file-actions';
 
-        const actions = document.createElement('div');
-        actions.className = 'workspace-file-actions';
+            const del = document.createElement('button');
+            del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
+            del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
+            actions.appendChild(del);
 
-        const del = document.createElement('button');
-        del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
-        del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
-        actions.appendChild(del);
-
-        makeDraggable(row, f.name);
-        _attachFileTooltip(row, { name: f.name });
-        row.append(nameEl, actions);
-        parentEl.appendChild(row);
+            makeDraggable(row, f.name);
+            _attachFileTooltip(row, { name: f.name });
+            row.append(nameEl, ..._wsInfoCols(f.size, f.lastModified), actions);
+            parentEl.appendChild(row);
+        }
     }
 }
 
@@ -1778,6 +1785,105 @@ export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}
     return actions;
 }
 
+// ── Size / modified columns and sorting (Workspace and Local Folder lists) ──
+type _WsSortKey = 'name' | 'size' | 'time';
+let _wsSort: { key: _WsSortKey; dir: 1 | -1 } = (() => {
+    try { const v = JSON.parse(localStorage.getItem('fg_ws_sort') || ''); if (['name', 'size', 'time'].includes(v?.key)) return { key: v.key, dir: v.dir === -1 ? -1 : 1 }; } catch {}
+    return { key: 'name', dir: 1 };
+})();
+
+function _wsSetSort(key: _WsSortKey): void {
+    // Name starts ascending; size and modified start with the biggest / newest first.
+    _wsSort = _wsSort.key === key ? { key, dir: (_wsSort.dir * -1) as 1 | -1 } : { key, dir: key === 'name' ? 1 : -1 };
+    try { localStorage.setItem('fg_ws_sort', JSON.stringify(_wsSort)); } catch {}
+    renderFileList();
+}
+
+function _fmtWsSize(n?: number): string {
+    if (typeof n !== 'number') return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1048576) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+    if (n < 1073741824) return `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+    return `${(n / 1073741824).toFixed(1)} GB`;
+}
+function _fmtWsTime(ms?: number): string {
+    if (!ms) return '';
+    const d = new Date(ms), now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    const opts: Intl.DateTimeFormatOptions = sameYear
+        ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+        : { year: 'numeric', month: 'short', day: 'numeric' };
+    return d.toLocaleString([], opts);
+}
+
+// A folder's size is the total of its contents; its timestamp is the newest change inside it.
+function _wsAgg(node): { size: number; lastModified: number } {
+    if (node._agg) return node._agg;
+    let size = 0, lastModified = 0;
+    for (const f of node.files) { size += f.size || 0; lastModified = Math.max(lastModified, f.lastModified || 0); }
+    for (const sub of node.dirs.values()) { const a = _wsAgg(sub); size += a.size; lastModified = Math.max(lastModified, a.lastModified); }
+    return (node._agg = { size, lastModified });
+}
+
+// Rank of every entry in the directory order last computed. Ties in a sort keep that order, so
+// switching sorts (or re-rendering after a file change) never reshuffles entries that compare equal.
+const _wsRank = new Map<string, number>();
+
+type _WsEntry = { kind: 'dir'; name: string; node: any; key: string } | { kind: 'file'; f: any; key: string };
+
+// The entries of one directory in display order. Name sorts keep folders first; size and modified
+// rank folders and files together, a folder counting by its contents (see _wsAgg).
+function _wsOrder(node, pathPrefix: string): _WsEntry[] {
+    const entries: _WsEntry[] = [
+        ...[...node.dirs.entries()].map(([name, n]: [string, any]) => ({ kind: 'dir' as const, name, node: n, key: 'd:' + pathPrefix + name })),
+        ...node.files.map((f: any) => ({ kind: 'file' as const, f, key: 'f:' + f.name })),
+    ];
+    const label = (e: _WsEntry) => e.kind === 'dir' ? e.name : e.f.name.split('/').pop() as string;
+    const value = (e: _WsEntry) => {
+        const a = e.kind === 'dir' ? _wsAgg(e.node) : { size: e.f.size || 0, lastModified: e.f.lastModified || 0 };
+        return _wsSort.key === 'size' ? a.size : a.lastModified;
+    };
+    entries.sort((a, b) => {
+        if (_wsSort.key === 'name') {
+            if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
+            return label(a).localeCompare(label(b)) * _wsSort.dir;
+        }
+        const d = (value(a) - value(b)) * _wsSort.dir;
+        if (d) return d;
+        const ra = _wsRank.get(a.key), rb = _wsRank.get(b.key);
+        if (ra !== undefined && rb !== undefined && ra !== rb) return ra - rb;
+        if ((ra === undefined) !== (rb === undefined)) return ra === undefined ? 1 : -1;
+        return label(a).localeCompare(label(b));
+    });
+    entries.forEach((e, i) => _wsRank.set(e.key, i));
+    return entries;
+}
+
+function _wsInfoCols(size?: number, lastModified?: number): HTMLElement[] {
+    const sz = document.createElement('span');
+    sz.className = 'ws-col-size'; sz.textContent = _fmtWsSize(size);
+    const tm = document.createElement('span');
+    tm.className = 'ws-col-time'; tm.textContent = _fmtWsTime(lastModified);
+    if (lastModified) tm.title = new Date(lastModified).toLocaleString();
+    return [sz, tm];
+}
+
+// Column header row: click Name / Size / Modified to sort; click again to reverse.
+function _wsSortHeader(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'ws-sort-hdr';
+    for (const [key, label, cls] of [['name', 'Name', 'ws-sort-name'], ['size', 'Size', 'ws-col-size'], ['time', 'Modified', 'ws-col-time']] as [_WsSortKey, string, string][]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `ws-sort-btn ${cls}` + (_wsSort.key === key ? ' active' : '');
+        b.textContent = label + (_wsSort.key === key ? (_wsSort.dir === 1 ? ' ▲' : ' ▼') : '');
+        b.title = `Sort by ${label.toLowerCase()}`;
+        b.onclick = () => _wsSetSort(key);
+        row.appendChild(b);
+    }
+    return row;
+}
+
 function buildIdbFileTree(idbFiles) {
     const root = { dirs: new Map(), files: [] };
     for (const f of idbFiles) {
@@ -1794,76 +1900,79 @@ function buildIdbFileTree(idbFiles) {
 }
 
 function renderIdbTree(parentEl, node, depth, pathPrefix, fileOrder) {
-    for (const [dirName, subtree] of [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-        const fullPath    = pathPrefix + dirName;
-        const isCollapsed = collapsedDirs.has(fullPath);
+    for (const _e of _wsOrder(node, pathPrefix)) {
+        if (_e.kind === 'dir') {
+            const dirName = _e.name, subtree = _e.node;
+            const fullPath    = pathPrefix + dirName;
+            const isCollapsed = collapsedDirs.has(fullPath);
 
-        const dirRow = document.createElement('div');
-        dirRow.className = 'workspace-dir-row';
-        dirRow.style.paddingLeft = (20 + depth * 16) + 'px';
+            const dirRow = document.createElement('div');
+            dirRow.className = 'workspace-dir-row';
+            dirRow.style.paddingLeft = (20 + depth * 16) + 'px';
 
-        const toggle = document.createElement('span');
-        toggle.className = 'ws-dir-toggle';
-        toggle.textContent = isCollapsed ? '▶' : '▼';
+            const toggle = document.createElement('span');
+            toggle.className = 'ws-dir-toggle';
+            toggle.textContent = isCollapsed ? '▶' : '▼';
 
-        const nameEl = document.createElement('span');
-        nameEl.className = 'ws-dir-name';
-        nameEl.textContent = dirName;
+            const nameEl = document.createElement('span');
+            nameEl.className = 'ws-dir-name';
+            nameEl.textContent = dirName;
 
-        dirRow.append(toggle, nameEl);
-        dirRow.onclick = () => {
-            if (collapsedDirs.has(fullPath)) collapsedDirs.delete(fullPath);
-            else collapsedDirs.add(fullPath);
-            renderFileList();
-        };
-        _makeDirRow(dirRow, subtree, 'Copy to local');
+            const _agg = _wsAgg(subtree);
+            dirRow.append(toggle, nameEl, ..._wsInfoCols(_agg.size, _agg.lastModified));
+            dirRow.onclick = () => {
+                if (collapsedDirs.has(fullPath)) collapsedDirs.delete(fullPath);
+                else collapsedDirs.add(fullPath);
+                renderFileList();
+            };
+            _makeDirRow(dirRow, subtree, 'Copy to local');
 
-        parentEl.appendChild(dirRow);
-        if (!isCollapsed) renderIdbTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
-    }
+            parentEl.appendChild(dirRow);
+            if (!isCollapsed) renderIdbTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
+        } else {
+            const f = _e.f;
+            const basename = f.name.split('/').pop();
+            fileOrder.push(f.name);
+            const idx = fileOrder.length - 1;
 
-    for (const f of [...node.files].sort((a, b) => a.name.localeCompare(b.name))) {
-        const basename = f.name.split('/').pop();
-        fileOrder.push(f.name);
-        const idx = fileOrder.length - 1;
+            const row = document.createElement('div');
+            row.className = 'workspace-file-row' + (selectedFiles.has(f.name) ? ' ws-selected' : '');
+            row.style.paddingLeft = (20 + depth * 16) + 'px';
+            row.dataset.filename = f.name;
+            makeDraggable(row, f.name);
 
-        const row = document.createElement('div');
-        row.className = 'workspace-file-row' + (selectedFiles.has(f.name) ? ' ws-selected' : '');
-        row.style.paddingLeft = (20 + depth * 16) + 'px';
-        row.dataset.filename = f.name;
-        makeDraggable(row, f.name);
+            row.addEventListener('click', e => {
+                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
+                if (e.shiftKey && _idbClickAnchorName !== null) {
+                    const anchorIdx = fileOrder.indexOf(_idbClickAnchorName);
+                    const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
+                    const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
+                    for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
+                } else if (e.ctrlKey || e.metaKey) {
+                    selectedFiles.has(f.name) ? selectedFiles.delete(f.name) : selectedFiles.add(f.name);
+                } else {
+                    selectedFiles.clear();
+                    selectedFiles.add(f.name);
+                }
+                _idbClickAnchorName = f.name;
+                updateSelectionUI();
+            });
+            row.addEventListener('dblclick', e => {
+                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
+                openFileTab(f.name);
+            });
 
-        row.addEventListener('click', e => {
-            if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-            if (e.shiftKey && _idbClickAnchorName !== null) {
-                const anchorIdx = fileOrder.indexOf(_idbClickAnchorName);
-                const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
-            } else if (e.ctrlKey || e.metaKey) {
-                selectedFiles.has(f.name) ? selectedFiles.delete(f.name) : selectedFiles.add(f.name);
-            } else {
-                selectedFiles.clear();
-                selectedFiles.add(f.name);
-            }
-            _idbClickAnchorName = f.name;
-            updateSelectionUI();
-        });
-        row.addEventListener('dblclick', e => {
-            if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-            openFileTab(f.name);
-        });
+            const nameEl = document.createElement('span');
+            nameEl.className = 'workspace-file-name';
+            nameEl.textContent = basename;
+            nameEl.dataset.fullname = f.name;
+            nameEl.title = f.name;
 
-        const nameEl = document.createElement('span');
-        nameEl.className = 'workspace-file-name';
-        nameEl.textContent = basename;
-        nameEl.dataset.fullname = f.name;
-        nameEl.title = f.name;
-
-        const actions = buildFileActions(f.name);
-        _attachFileTooltip(row, { name: f.name, size: f.size, lastModified: f.lastModified });
-        row.append(nameEl, actions);
-        parentEl.appendChild(row);
+            const actions = buildFileActions(f.name);
+            _attachFileTooltip(row, { name: f.name, size: f.size, lastModified: f.lastModified });
+            row.append(nameEl, ..._wsInfoCols(f.size, f.lastModified), actions);
+            parentEl.appendChild(row);
+        }
     }
 }
 
@@ -1952,6 +2061,8 @@ export async function renderFileList() {
         empty.textContent = 'No files yet. Upload files or ask the agent to create some.';
         idbBody.appendChild(empty);
     } else {
+    idbCol.appendChild(_wsSortHeader());
+
         renderIdbTree(idbBody, buildIdbFileTree(idbFiles), 0, 'ws/', []);
     }
 
@@ -2036,6 +2147,7 @@ export async function renderFileList() {
         localBody.appendChild(ph);
     } else {
         setupDropZone(localBody, false); // accepts drops from IDB (live sync or imported snapshot)
+    localCol.appendChild(_wsSortHeader());
         setupRubberBand(localBody);
         if (!localFiles.length) {
             const empty = document.createElement('div');
