@@ -219,7 +219,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Geo cache: fetch once at startup, fire-and-forget (location skill uses the result).
     prefetchGeoCache?.().catch(() => {});
 
-    // Pyodide: start unless the user disabled auto-load (or the device is touch-only; see config.ts).
+    // Pyodide: start unless the user disabled auto-load.
     // runAgentTurn repeats this check before each turn.
     autoloadPyodideIfEnabled?.();
 
