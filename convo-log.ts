@@ -196,6 +196,7 @@ async function _buildChatPayload(id) {
     const payload = {
         exportedAt: new Date().toISOString(),
         deployVersion: FG_VERSION,
+        cfKeys: typeof getCfKeysDiagnostics === 'function' ? getCfKeysDiagnostics() : null,
         id,
         name:       meta?.name ?? 'Untitled',
         createdAt:  meta?.createdAt ? new Date(meta.createdAt).toISOString() : null,

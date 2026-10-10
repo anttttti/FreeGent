@@ -814,17 +814,27 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
 
 // Query the CF Worker /keys endpoint and cache which provider keys it has.
 // Called once on startup when a CF Worker URL is configured.
+let _cfKeysDiag: Record<string, any> = { loaded: false };
+// What the last /keys lookup saw, for exported chat logs (never includes the passphrase itself).
+export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKeysDiag }; }
+
 export async function loadCfWorkerKeys(): Promise<void> {
     const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
+    let passSet = false;
+    try { passSet = !!localStorage.getItem('fg_pass'); } catch {}
+    _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
     if (!proxy) return;
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
-    try { if (new URL(proxy).hostname === window.location.hostname) return; } catch { return; }
+    try { if (new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; return; } } catch { return; }
     try {
         const resp = await fetch(`${proxy}/keys`, { signal: AbortSignal.timeout(5_000) });
+        _cfKeysDiag.status = resp.status;
         if (resp.ok) {
             const data = await resp.json();
             if (data && typeof data === 'object') {
                 _cfWorkerKeys = data;
+                _cfKeysDiag.loaded = true;
+                _cfKeysDiag.keys = Object.keys(data).filter(k => data[k]);
                 // Re-render model lists so newly-available providers appear
                 if (typeof (window as any).renderMainModelList === 'function')
                     (window as any).renderMainModelList();
@@ -832,7 +842,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
                     (window as any).renderModelCatalogTable();
             }
         }
-    } catch {}
+    } catch (e: any) { _cfKeysDiag.error = String(e?.message || e); }
 }
 
 // Returns true if the CF Worker has a shared Tavily API key configured.
@@ -1236,7 +1246,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, loadCfWorkerKeys, hasCfTavilyKey, hasCfBraveKey,
+    getActiveMainModelList, specHasKey, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,

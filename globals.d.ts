@@ -248,6 +248,7 @@ declare global {
     var isRoleEnabled: any;
     var loadServerKeys: any;
     var isServerKeyPlaceholder: (v: any) => boolean;
+    var getCfKeysDiagnostics: (() => Record<string, any>) | undefined;
     var loadCfWorkerKeys: (() => Promise<void>) | undefined;
     var hasCfTavilyKey: (() => boolean) | undefined;
     var hasCfBraveKey:  (() => boolean) | undefined;
