@@ -805,7 +805,15 @@ html, body {
 /* ── Checkpoint rows ── */
 .agent-ckpt-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin: -4px 0 4px; justify-content: flex-end; }
 .agent-ckpt-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.agent-turn-diff-row { display: flex; justify-content: flex-end; padding: 4px 0 0; }
+.agent-turn-diff-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 4px 0 0; }
+.agent-turn-files { flex: 1 1 0; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; }
+.agent-turn-files > span { margin-left: 10px; }
+.df-add { color: #2a8f4f; }
+.df-del { color: #c4384a; }
+.df-mod { color: #a67c00; }
+[data-theme="dark"] .df-add { color: #4ec97f; }
+[data-theme="dark"] .df-del { color: #f07178; }
+[data-theme="dark"] .df-mod { color: #e5c07b; }
 .agent-ckpt-btn { background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 11px; padding: 2px 9px; cursor: pointer; transition: all 0.15s; }
 .agent-ckpt-btn:hover { background: #f0f4ff; color: var(--accent); border-color: var(--accent); }
 .agent-ckpt-model { font-size: 10px; color: var(--muted); margin-left: 4px; }
