@@ -149,3 +149,61 @@ describe('start gates and unblock (v0.62 review R14, R15)', () => {
         expect(files['fg-tasks/002-b.md']).toMatch(/^status: todo$/m);
     });
 });
+
+describe('a turn that stops at its step limit', () => {
+    const limited = (reason = 'step budget exhausted') => ({
+        text: `BLOCKED: ${reason}`, finishSignal: 'blocked', stop: { reason, edited: true },
+    });
+
+    it('is continued with a plain "Continue" turn until the task is done, not paused for the user', async () => {
+        const prompts = [];
+        W.runAgentTurn = async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length < 3) return limited();                       // two budgets spent
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');            // the third finishes it
+            return { text: 'done', finishSignal: 'completed' };
+        };
+        W.runnerStart();
+        await idle();
+        expect(prompts).toHaveLength(3);
+        expect(prompts[0]).toMatch(/Process this task file completely/);
+        expect(prompts.slice(1)).toEqual(['Continue', 'Continue']);
+        expect(files['fg-tasks/001-a.md']).toMatch(/^status: done$/m);
+    });
+
+    it('does not use up the episode\'s five re-prompt turns', async () => {
+        const prompts = [];
+        W.runAgentTurn = async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length <= 8) return limited('role step cap (60 steps) reached');
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');
+            return { text: 'done', finishSignal: 'completed' };
+        };
+        W.runnerStart();
+        await idle();
+        expect(prompts).toHaveLength(9);
+        expect(files['fg-tasks/001-a.md']).toMatch(/^status: done$/m);
+    });
+
+    it('still pauses for the user on a stop that is not the step limit', async () => {
+        let n = 0;
+        W.runAgentTurn = async () => { n++; return { text: 'BLOCKED: it kept repeating calls', finishSignal: 'blocked', stop: { reason: 'it kept repeating calls', edited: false } }; };
+        W.runnerStart();
+        await new Promise(r => setTimeout(r, 30));
+        expect(n).toBe(1);                       // not continued
+        W.runnerStop();
+        await idle();
+    });
+
+    it('gives up after MAX_STEP_LIMIT_CONTINUES continuations and treats the stop as a block', async () => {
+        const { MAX_STEP_LIMIT_CONTINUES } = await import('../runner.ts');
+        let n = 0;
+        W.runAgentTurn = async () => { n++; return limited(); };
+        W.runnerStart();
+        for (let i = 0; i < 3000 && n < MAX_STEP_LIMIT_CONTINUES + 1; i++) await new Promise(r => setTimeout(r, 1));
+        await new Promise(r => setTimeout(r, 30));
+        expect(n).toBe(MAX_STEP_LIMIT_CONTINUES + 1);
+        W.runnerStop();
+        await idle();
+    });
+});

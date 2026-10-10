@@ -46,6 +46,8 @@ export interface DirectorOpts {
 // a step-limit stop in a run that had already edited files (Lite xarray-4094, Verified
 // requests-1142): that case gets one explicit closing turn.
 const _STEP_LIMIT_RE = /step budget exhausted|maximum step limit reached|role step cap/;
+/** True when a turn's forced-stop reason (TurnResult.stop.reason) is the step limit, not a repeat/failure-streak stop. */
+export function isStepLimitStop(reason: string | null | undefined): boolean { return _STEP_LIMIT_RE.test(reason ?? ''); }
 export const STEP_LIMIT_PROMPT = (steps?: number, envFiles: string[] = []): string =>
     `You reached the step limit for this turn. Your work so far is kept. Use this closing turn${steps ? ` (${steps} steps)` : ''} to finish: `
     + (envFiles.length ? `first restore these test/packaging configuration edits or stub packages, which ship with your change and can break the graded tests (\`git checkout -- <file>\`, or delete a file or folder you created): ${envFiles.slice(0, 6).join(', ')}. Then ` : '')
@@ -99,7 +101,7 @@ export async function directorLoop(
     let n = 0, closing = 0;
     let edited = !!result.stop?.edited;
     const _closingTurn = (r: TurnResult) => r.finishSignal === 'blocked' && edited
-        && _STEP_LIMIT_RE.test(r.stop?.reason ?? '') && closing < stepLimitContinuations;
+        && isStepLimitStop(r.stop?.reason) && closing < stepLimitContinuations;
     while (
         (result.finishSignal === 'running' || _closingTurn(result)) &&
         !session.softStopPending &&
