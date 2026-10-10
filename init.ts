@@ -586,6 +586,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         else rewindToCheckpoint(ckptId, row as HTMLElement);
     });
 
+    // A file in a turn's changed-file list: modified opens its diff, added opens the file. Delegated
+    // because the list is plain saved HTML after a reload.
+    getMessagesEl()?.addEventListener('click', e => {
+        const span = (e.target as Element).closest('.agent-turn-files > span[data-name]') as HTMLElement | null;
+        if (!span || span.dataset.op === 'delete') return;
+        const ckptId = (span.closest('.agent-turn-diff-row') as HTMLElement | null)?.dataset.checkpointId;
+        if (ckptId) (window as any).showCheckpointFileDiff?.(ckptId, span.dataset.name);
+    });
+
     // User-message edit button delegation — handles clicks after page reload.
     // The addEventListener attached in agent-core.ts is lost when the page is restored
     // from saved HTML; data-action="edit-user-message" on the button survives, so this
