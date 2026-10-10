@@ -331,7 +331,7 @@ ${_roleConciseBlock}`;
             if (hasDeep)
                 toolLines.push(`**deep_research** — multi-round web research: plans sub-questions, searches and reads sources, synthesizes a cited report. Use for any broad or multi-source question.`);
             if (hasWeb)
-                toolLines.push(`**web_search** — find pages by keyword; source param selects: web (default), wikipedia, hackernews, github, stackoverflow, reddit, gdelt.`);
+                toolLines.push(`**web_search** — find pages by keyword; source param selects: web (default), wikipedia, hackernews, github, stackoverflow, gdelt.`);
             if (hasFetch)
                 toolLines.push(`**fetch_url** — retrieve a specific URL; set extract to pull only relevant passages from large pages.`);
             if (hasAcademic)
