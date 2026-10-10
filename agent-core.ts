@@ -176,6 +176,33 @@ async function _prependChangedFiles(row: HTMLElement, diff: { idbDelta: any[]; l
     }
     list.title = items.map(it => `${(mark[it.op] ?? mark.modify)[0]} ${it.name}`).join('\n');
     row.prepend(list);
+    fitChangedFiles(list);
+}
+
+// Shows as many of the list's files as fit its width, newest first. When some are left out, the list
+// ends with "..." so it is clear that not all changes are shown (the tooltip has them all). Run again
+// whenever the width changes; init.ts watches every list with a ResizeObserver.
+function fitChangedFiles(list: HTMLElement): void {
+    list.querySelector('.df-more')?.remove();
+    const items = [...list.children] as HTMLElement[];
+    for (const it of items) {
+        it.hidden = false;
+        if (it.dataset.full) it.textContent = it.dataset.full;
+    }
+    if (!items.length || list.scrollWidth <= list.clientWidth) return;
+    const more = document.createElement('span');
+    more.className = 'df-more';
+    more.textContent = '...';
+    list.appendChild(more);
+    let shown = items.length;
+    while (shown > 1 && list.scrollWidth > list.clientWidth) items[--shown].hidden = true;
+    // Even the first name is too long: cut it down, keeping its marker.
+    const first = items[0];
+    if (list.scrollWidth > list.clientWidth) {
+        const full = first.dataset.full = first.dataset.full ?? first.textContent ?? '';
+        let n = full.length;
+        while (n > 2 && list.scrollWidth > list.clientWidth) first.textContent = full.slice(0, --n) + '...';
+    }
 }
 
 // Takes a post-turn snapshot and, if files changed, appends a Diff button to the AI message.
@@ -624,6 +651,7 @@ window.rewindToCheckpoint  = rewindToCheckpoint;
 window.rerunCheckpoint   = rerunCheckpoint;
 window.showCheckpointDiff = showCheckpointDiff;
 (window as any).showCheckpointFileDiff = showCheckpointFileDiff;
+(window as any).fitChangedFiles = fitChangedFiles;
 
 function appendCheckpointRow(ckptId: string, container: HTMLElement | null = null): HTMLElement {
     const row = document.createElement('div');

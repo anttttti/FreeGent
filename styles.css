@@ -810,8 +810,10 @@ html, body {
 .agent-ckpt-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin: -4px 0 4px; justify-content: flex-end; }
 .agent-ckpt-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .agent-turn-diff-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 4px 0 0; }
-.agent-turn-files { flex: 1 1 0; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; }
+.agent-turn-files { flex: 1 1 0; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; }
 .agent-turn-files > span { margin-left: 10px; }
+.agent-turn-files > span[hidden] { display: none; }
+.agent-turn-files > .df-more { color: var(--muted); }
 .agent-turn-files > span[data-op="modify"], .agent-turn-files > span[data-op="add"] { cursor: pointer; }
 .agent-turn-files > span[data-op="modify"]:hover, .agent-turn-files > span[data-op="add"]:hover { text-decoration: underline; }
 .df-add { color: #2a8f4f; }
