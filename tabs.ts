@@ -802,7 +802,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const wrap = document.createElement('div');
     wrap.className = 'fg-check-preview';
     wrap.setAttribute('aria-hidden', 'true');
-    wrap.style.cssText = `position:fixed;right:12px;bottom:12px;width:${Math.round(_W * _SCALE)}px;height:${Math.round(_H * _SCALE) + 18}px;`
+    wrap.style.cssText = `position:fixed;right:12px;top:12px;width:${Math.round(_W * _SCALE)}px;height:${Math.round(_H * _SCALE) + 18}px;`
         + 'z-index:2147483000;pointer-events:none;border-radius:6px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.35);'
         + 'background:#111;font:11px/18px system-ui,sans-serif;color:#ddd';
     const label = document.createElement('div');
