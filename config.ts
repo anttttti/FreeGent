@@ -1075,13 +1075,11 @@ function startPyodide() {
     };
     return pyodideReadyPromise;
 }
-// Starts Pyodide when "Auto-load on startup" is on, it is not loaded yet, and this is a WebUI session.
-// Touch-only devices (phone/tablet without hover) are skipped: loading the ~52 MB Python/WASM runtime
-// there causes memory pressure and Safari's script-timeout dialog.
+// Starts Pyodide when "Auto-load on startup" is on (the default), it is not loaded yet, and this is
+// a WebUI session.
 function autoloadPyodideIfEnabled() {
     if (pyodideStatus !== 'idle' || (window as any)._fgHeadless) return;
     if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) === '0') return;
-    if ('ontouchstart' in window && window.matchMedia && !window.matchMedia('(hover: hover)').matches) return;
     try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
 }
 async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
