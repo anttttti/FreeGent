@@ -149,7 +149,7 @@ async function _saveCheckpointSnapshot(ckptId: string): Promise<void> {
 }
 
 // The turn's changed files, last edited first, as a one-line list at the left of the action row:
-// + added (green), / changed (yellow), - deleted (red). CSS truncates it to the row's width.
+// + added (green), ~ changed (yellow), - deleted (red). CSS truncates it to the row's width.
 // Static spans, so the list survives the chat being saved and reloaded.
 async function _prependChangedFiles(row: HTMLElement, diff: { idbDelta: any[]; localDelta: any[] }): Promise<void> {
     const items = [
@@ -163,11 +163,14 @@ async function _prependChangedFiles(row: HTMLElement, diff: { idbDelta: any[]; l
     items.sort((a, b) => (mtime.get(b.name) ?? -1) - (mtime.get(a.name) ?? -1) || a.name.localeCompare(b.name));
     const list = document.createElement('div');
     list.className = 'agent-turn-files';
-    const mark: Record<string, [string, string]> = { add: ['+', 'df-add'], delete: ['-', 'df-del'], modify: ['/', 'df-mod'] };
+    const mark: Record<string, [string, string]> = { add: ['+', 'df-add'], delete: ['-', 'df-del'], modify: ['~', 'df-mod'] };
     for (const it of items) {
         const [sym, cls] = mark[it.op] ?? mark.modify;
         const span = document.createElement('span');
         span.className = cls;
+        span.dataset.op = it.op;
+        span.dataset.name = it.name;
+        if (it.op !== 'delete') span.title = it.op === 'modify' ? 'Click to view the diff' : 'Click to open the file';
         span.textContent = sym + it.name;
         list.appendChild(span);
     }
@@ -354,6 +357,30 @@ function _showSideBySideDiff(filename: string, oldContent: string, newContent: s
     document.body.appendChild(ov2);
 }
 
+// What a click on one changed file does, in the Diff window and in the turn's file list: a modified
+// file opens the side-by-side diff, an added file opens in a tab, a deleted file has nothing to show.
+// Returns true when a file tab was opened.
+function _openChangedFile(f: { name: string; op: string; content?: string | null; oldContent?: string }): boolean {
+    if (f.op === 'modify') { _showSideBySideDiff(f.name, f.oldContent ?? '', f.content ?? ''); return false; }
+    if (f.op === 'add') {
+        const fname = f.name.startsWith('local/') ? f.name.slice(6) : f.name;
+        if (typeof openFileTab === 'function') openFileTab(fname);
+        return true;
+    }
+    return false;
+}
+
+// The turn's file list: one changed file, by its name as shown in the list.
+async function showCheckpointFileDiff(ckptId: string, name: string, forChatId: string | null = null): Promise<void> {
+    const chatId = forChatId ?? activeChatId;
+    if (!chatId || typeof getCheckpointDiff !== 'function') return;
+    const diff = await getCheckpointDiff(chatId, ckptId);
+    if (!diff) return;
+    const all = [...diff.idbDelta, ...diff.localDelta.map((f: any) => ({ ...f, name: 'local/' + f.name }))];
+    const f = all.find((x: any) => x.name === name);
+    if (f) _openChangedFile(f);
+}
+
 async function showCheckpointDiff(ckptId: string, forChatId: string | null = null): Promise<void> {
     const chatId = forChatId ?? activeChatId;
     if (!chatId || typeof getCheckpointDiff !== 'function') return;
@@ -397,13 +424,7 @@ async function showCheckpointDiff(ckptId: string, forChatId: string | null = nul
         if (!f) return;
         el.addEventListener('dblclick', e => {
             e.stopPropagation();
-            if (f.op === 'modify') {
-                _showSideBySideDiff(f.name, f.oldContent ?? '', f.content ?? '');
-            } else if (f.op === 'add') {
-                const fname = f.name.startsWith('local/') ? f.name.slice(6) : f.name;
-                if (typeof openFileTab === 'function') openFileTab(fname);
-                ov.remove();
-            }
+            if (_openChangedFile(f)) ov.remove();
         });
     });
     document.body.appendChild(ov);
@@ -602,6 +623,7 @@ Object.assign(window, { rerunFromStep, bindRerunButton });
 window.rewindToCheckpoint  = rewindToCheckpoint;
 window.rerunCheckpoint   = rerunCheckpoint;
 window.showCheckpointDiff = showCheckpointDiff;
+(window as any).showCheckpointFileDiff = showCheckpointFileDiff;
 
 function appendCheckpointRow(ckptId: string, container: HTMLElement | null = null): HTMLElement {
     const row = document.createElement('div');

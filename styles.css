@@ -808,6 +808,8 @@ html, body {
 .agent-turn-diff-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 4px 0 0; }
 .agent-turn-files { flex: 1 1 0; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; }
 .agent-turn-files > span { margin-left: 10px; }
+.agent-turn-files > span[data-op="modify"], .agent-turn-files > span[data-op="add"] { cursor: pointer; }
+.agent-turn-files > span[data-op="modify"]:hover, .agent-turn-files > span[data-op="add"]:hover { text-decoration: underline; }
 .df-add { color: #2a8f4f; }
 .df-del { color: #c4384a; }
 .df-mod { color: #a67c00; }
