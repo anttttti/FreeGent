@@ -1,7 +1,7 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
-import { canonTaskStatus, columnOfStatus } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -33,7 +33,8 @@ async function loadTaskFiles() {
         );
     } catch {}
     tasks.sort((a, b) => (Number(a.fm.id) || 0) - (Number(b.fm.id) || 0));
-    return tasks;
+    // A copy of a task (same title) is not a second task: Autopilot once wrote one while working.
+    return dedupeTasksByTitle(tasks);
 }
 
 let taskPreviewEditor: any = null;
