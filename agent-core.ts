@@ -1507,6 +1507,7 @@ function userSend(): void {
 }
 
 function createNewChat(): void {
+    (window as any).closeChatViewer?.();
     const id  = 'chat_' + Date.now();
     const now = Date.now();
     const list = getChatList();

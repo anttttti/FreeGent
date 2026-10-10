@@ -1948,3 +1948,13 @@ select:focus:not(:focus-visible) { outline: none; }
 .chat-card-snaps { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .chat-snap-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .chat-snap-changes { font-size: 11px; }
+
+/* Read-only view of another chat while a turn runs (chat-state.ts viewChatReadOnly) */
+body.fg-viewing-other #agent-messages,
+body.fg-viewing-other .chat-input-area,
+body.fg-viewing-other #msg-queue-panel,
+body.fg-viewing-other #img-strip,
+body.fg-viewing-other #chat-welcome { display: none !important; }
+#fg-chat-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.fg-chat-viewer-bar { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 10px; font-size: 12px; background: var(--surface2, #2a2a2a); border-bottom: 1px solid var(--border, #444); }
+.fg-chat-viewer-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 8px; }
