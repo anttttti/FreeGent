@@ -756,8 +756,12 @@ html, body {
 .seq-graph-label { font-size: 10px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
 .seq-graph-detail { padding-left: 4px; margin-top: 4px; }
 .seq-graph { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 3px; padding: 8px; background: #f7f9fc; border-radius: 6px; min-height: 30px; }
-.seq-arrow { display: flex; align-items: center; color: #bbb; padding: 0 1px; font-size: 13px; align-self: center; }
-.seq-step { display: flex; flex-direction: column; gap: 2px; }
+.seq-arrow { display: flex; align-items: center; color: #bbb; padding: 0 1px; font-size: 13px; }
+/* Arrow before a system step, and arrows saved by older versions, sit between steps: top-aligned. */
+.seq-graph > .seq-arrow { align-self: flex-start; margin-top: 2px; }
+.seq-step > .seq-arrow { grid-column: 1; grid-row: 1; align-self: center; padding-right: 4px; }
+.seq-step > .seq-task { grid-column: 2; }
+.seq-step { display: grid; grid-template-columns: auto 1fr; gap: 2px 0; align-content: start; }
 .seq-step-system { display: flex; align-items: center; padding: 3px 10px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; background: #f0f0f0; border: 1px solid #d8d8d8; color: #888; font-style: italic; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: default; }
 .seq-task { position: relative; display: flex; flex-direction: column; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; cursor: pointer; min-width: 70px; max-width: 220px; border: 1px solid transparent; transition: all 0.15s; user-select: none; }
 .seq-task-id { position: absolute; top: 2px; right: 4px; font-size: 9px; color: #bbb; font-weight: 600; line-height: 1; }
