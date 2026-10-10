@@ -301,7 +301,8 @@ async function _doRefreshTasks() {
     }
 }
 async function syncLedgerWithTaskFiles() {
-    await rebuildLedger();
+    // A ledger failure (e.g. a write error on a low-memory device) must not stop the board refresh.
+    try { await rebuildLedger(); } catch (e) { console.warn('[ledger] rebuild failed:', e); }
     // Always refresh the board — rebuildLedger() returns early when there are no task
     // files and won't trigger refreshTasks() via agentWriteFile. The in-flight guard in
     // refreshTasks() collapses this into one render when agentWriteFile already fired one.
