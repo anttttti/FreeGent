@@ -5,6 +5,7 @@ import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
+import { taskTitleKey } from './task-status.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -833,10 +834,22 @@ function _refuseGitMetadata(path: string, op: string): void {
         throw new Error(`${op}: ${path} is inside a .git directory — git metadata can't be changed by the agent`);
 }
 
+// A new task file whose title is already on the board is a copy (Autopilot once wrote one while
+// working a task): refuse it and point at the original so the agent continues that one.
+async function _refuseDuplicateTask(path: string, content: any): Promise<void> {
+    if (typeof content !== 'string' || !/^(?:fg-|local\/)?tasks\/\d+-.+\.md$/i.test(path) || path.endsWith('/ledger.md')) return;
+    if (typeof loadTaskFiles !== 'function' || typeof parseFrontmatter !== 'function') return;
+    const key = taskTitleKey(parseFrontmatter(content).title);
+    if (!key) return;
+    const twin = (await loadTaskFiles().catch(() => [])).find((t: any) => t.path !== path && taskTitleKey(t.fm.title) === key);
+    if (twin) throw new Error(`write: ${path} duplicates task "${twin.fm.title}" (${twin.path}) — continue that task instead of creating a copy`);
+}
+
 export async function agentWriteFile(path, content, encoding = null) {
     if (_wa) return _wa.agentWriteFile(path, content, encoding);
     path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
+    await _refuseDuplicateTask(path, content);
     if (path.startsWith('local/')) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
