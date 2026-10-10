@@ -1586,7 +1586,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
         if ((ps._postCompactionTurns ?? 0) > 0) ps._postCompactionTurns!--;
 
-        let thinkTask = placeholder.addThinkingTask();
+        let thinkTask = placeholder.addThinkingTask({ histLen: _histR(_s).length });
 
         // Revert fallback when primary recovered
         if (!endpoint && activeEndpoint && _sessionFallback && !getEndpointRotation()) {
@@ -1738,7 +1738,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Genuine browser/network abort with a live signal — mobile radio sleep, iOS
                 // backgrounding, network interface change. withRetry already retries these but
                 // if one escapes the race, re-enter the turn loop without surfacing *(stopped)*.
-                thinkTask = placeholder.addThinkingTask();
+                thinkTask = placeholder.addThinkingTask({ histLen: _histR(_s).length });
                 await sleepInterruptible(2_000);
                 continue;
             }
@@ -2015,7 +2015,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // repairAllToolCalls owns the ordering: raw repair → normalize → name/envelope/execcode.
         const { bad: _badArgCalls, norm: _normCalls, hasEmptyCode: _hasEmptyCode } = repairAllToolCalls(calls);
         const labels    = calls.map(tc => toolLabel(tc.function.name, parseArgs(tc.function.arguments)));
-        const toolTasks = placeholder.addToolStep(labels);
+        const toolTasks = placeholder.addToolStep(labels, { main: true });
 
         const oaiOldContents = await Promise.all(_normCalls.map((nc, i) => {
             const { name, args } = nc;

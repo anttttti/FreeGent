@@ -692,7 +692,9 @@ function _parseStepRole(label: string): { role: string; jobName: string } {
     return { role, jobName };
 }
 
-export function createResponsePlaceholder(container: null | undefined = null): RenderAdapter & { div: HTMLDivElement } {
+// continueFrom: rerun from a step box — the graph of `oldDiv` up to (not including) the step holding
+// the box with data-seq `cutSeq` is moved into this new bubble, which then continues it.
+export function createResponsePlaceholder(container: null | undefined = null, opts: { continueFrom?: { oldDiv: HTMLElement; cutSeq: number } } = {}): RenderAdapter & { div: HTMLDivElement } {
     const msgs = container || getMessagesEl();
     // Close previous AI turn detail sections when a new response starts.
     msgs?.querySelectorAll('.agent-msg-model').forEach((prevDiv: any) => {
@@ -832,6 +834,26 @@ export function createResponsePlaceholder(container: null | undefined = null): R
     let stepCount: number     = 0;
     let taskId: number        = 0;
     let selectedBadge: Element | null = null;
+
+    if (opts.continueFrom) {
+        const { oldDiv, cutSeq } = opts.continueFrom;
+        const oldGraph = oldDiv.querySelector('.seq-graph');
+        const cutBadge = oldGraph?.querySelector(`.seq-task[data-seq="${cutSeq}"]`);
+        const cutStep  = cutBadge?.closest('.seq-step') ?? null;
+        const kids = oldGraph ? [...oldGraph.children] : [];
+        let keep = cutStep ? kids.slice(0, kids.indexOf(cutStep)) : kids;
+        if (keep.length && keep[keep.length - 1].classList.contains('seq-arrow')) keep = keep.slice(0, -1);
+        keep.forEach(n => { graphEl.appendChild(n); if (!n.classList.contains('seq-arrow')) stepCount++; });
+        graphEl.querySelectorAll<HTMLElement>('.seq-task').forEach(b => { taskId = Math.max(taskId, Number(b.dataset.seq) || 0); });
+        oldDiv.querySelectorAll<HTMLElement>('.seq-agg-entry').forEach(en => {
+            const q = Number(en.dataset.seq);
+            if (q > 0 && q <= taskId) aggContent.appendChild(en);
+        });
+        if (stepCount) { graphRowEl.style.display = ''; graphDetailEl.style.display = ''; graphToggle.textContent = '▼'; }
+        if (aggContent.children.length) aggRowEl.style.display = '';
+        const group = oldDiv.querySelector('.agent-ckpt-group');
+        if (group) { turnCollapseRow.appendChild(group); if (oldDiv.dataset.checkpointId) div.dataset.checkpointId = oldDiv.dataset.checkpointId; }
+    }
     const timers      = new Set<any>();
     let _finalized: boolean    = false;
     let _ghostCol: Element | null      = null; // last completed colEl kept visible until a newer step produces output
@@ -847,6 +869,10 @@ export function createResponsePlaceholder(container: null | undefined = null): R
     // should accumulate into _previewText. Workers use addToolStep() handles and must
     // NOT feed the preview (their output is shown in step columns, not the main bubble).
     let _mainThinkHandle: any = null;
+    // History length the current main-loop step started from; stamped on every step box made after it.
+    let _curHistLen: number | null = null;
+    // seq of the main-loop step that is current; tool boxes cut the graph there (the model call that made them reruns too).
+    let _curThinkSeq: number | null = null;
     // True once the main thinking step has completed. A tool step that starts after that means the
     // step ended in tool calls, so what it streamed (narration, or a call written as text such as
     // `read_file("x")`) was not the answer: drop it from the preview instead of leaving it on screen
@@ -915,13 +941,26 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         };
     }
 
-    function createTask(stepEl, label) {
+    function createTask(stepEl, label, rerunnable = false, isThink = false) {
         const stepId   = ++taskId;
         const badge    = document.createElement('div'); badge.className = 'seq-task seq-running';
 
         const { role, jobName } = _parseStepRole(label);
         const stepTitle = role === jobName ? `[${stepId}] ${role}` : `[${stepId}] ${role} · ${jobName}`;
 
+        const histLenAtStep = _curHistLen;
+        badge.dataset.seq = String(stepId);
+        if (isThink) _curThinkSeq = stepId;
+        const _makeRerunBtn = (): HTMLButtonElement | null => {
+            if (!rerunnable || histLenAtStep === null) return null;
+            const b = document.createElement('button');
+            b.type = 'button'; b.className = 'seq-rerun-btn'; b.textContent = '↺ Rerun';
+            b.title = 'Rerun the AI turn from this step';
+            b.dataset.histLen = String(histLenAtStep);
+            b.dataset.seq = String(isThink ? stepId : (_curThinkSeq ?? stepId));
+            (window as any).bindRerunButton?.(b);
+            return b;
+        };
         const labelEl     = document.createElement('span'); labelEl.className     = 'seq-task-label'; labelEl.textContent = stepTitle;
         const modelEl     = document.createElement('span'); modelEl.className     = 'seq-task-model';
         const tokenEl     = document.createElement('span'); tokenEl.className     = 'seq-task-tokens';
@@ -931,6 +970,8 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         const timeRowEl   = document.createElement('div');  timeRowEl.className   = 'seq-task-time-row';
         timeRowEl.append(startTimeEl, timerEl);
         badge.append(labelEl, modelEl, tokenEl, timeRowEl);
+        const _badgeRerun = _makeRerunBtn();
+        if (_badgeRerun) badge.appendChild(_badgeRerun);
         stepEl.appendChild(badge);
 
         let aggEntry: HTMLElement | null = null, aggTabs: ReturnType<typeof _makeTabs> | null = null, entryTimeEl: HTMLElement | null = null, hdrModelEl: HTMLElement | null = null;
@@ -959,7 +1000,7 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         function _ensureAggEntry() {
             if (aggEntry) return;
             if (aggRowEl.style.display === 'none') aggRowEl.style.display = '';
-            aggEntry = document.createElement('div'); aggEntry.className = 'seq-agg-entry';
+            aggEntry = document.createElement('div'); aggEntry.className = 'seq-agg-entry'; aggEntry.dataset.seq = String(stepId);
 
             const entryRow = document.createElement('div'); entryRow.className = 'seq-agg-entry-row';
             const hdr      = document.createElement('div'); hdr.className = 'seq-agg-step-header';
@@ -971,7 +1012,9 @@ export function createResponsePlaceholder(container: null | undefined = null): R
             entryTimeEl.textContent = _fmtTime();
             hdr.appendChild(entryTimeEl);
             aggTabs = _makeTabs();
-            entryRow.append(hdr, aggTabs.tabsEl);
+            const _entryRerun = _makeRerunBtn();
+            if (_entryRerun) entryRow.append(hdr, _entryRerun, aggTabs.tabsEl);
+            else entryRow.append(hdr, aggTabs.tabsEl);
             aggEntry.appendChild(entryRow);
             aggEntry.appendChild(aggTabs.contentEl);
             aggContent.appendChild(aggEntry);
@@ -994,15 +1037,18 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         function commit(ref, set) { if (ref) ref.classList.remove('seq-stream-latest'); set(null); }
 
         function _attachClickInspect() {
+            // The bubble's detail pane is looked up at click time: this box may have been moved
+            // into a new bubble by a rerun.
             badge.addEventListener('click', () => {
-                if (selectedBadge === badge) {
-                    badge.classList.remove('seq-selected'); selectedEl.innerHTML = ''; selectedBadge = null;
+                const pane = badge.closest('.agent-msg')?.querySelector<HTMLElement>('.seq-selected-detail') ?? selectedEl;
+                if (badge.classList.contains('seq-selected')) {
+                    badge.classList.remove('seq-selected'); pane.innerHTML = ''; selectedBadge = null;
                 } else {
-                    if (selectedBadge) selectedBadge.classList.remove('seq-selected');
-                    selectedEl.innerHTML = '';
-                    selectedEl.appendChild(colEl);
+                    badge.closest('.agent-msg')?.querySelectorAll('.seq-task.seq-selected').forEach(b => b.classList.remove('seq-selected'));
+                    pane.innerHTML = '';
+                    pane.appendChild(colEl);
                     badge.classList.add('seq-selected'); selectedBadge = badge;
-                    requestAnimationFrame(() => selectedEl.scrollIntoView({ block: 'nearest' }));
+                    requestAnimationFrame(() => pane.scrollIntoView({ block: 'nearest' }));
                 }
             });
         }
@@ -1206,7 +1252,7 @@ export function createResponsePlaceholder(container: null | undefined = null): R
                                setOutput: ()=>{}, setTokens: ()=>{}, append: ()=>{},
                                complete: ()=>{}, abort: ()=>{}, markCompact: ()=>{}, markTruncated: ()=>{} };
 
-    function addStep(labels) {
+    function addStep(labels, rerunnable = false, isThink = false) {
         if (_finalized) return labels.map(() => _noopTaskHandle);
         if (graphRowEl.style.display === 'none') {
             graphRowEl.style.display = '';
@@ -1227,7 +1273,7 @@ export function createResponsePlaceholder(container: null | undefined = null): R
         const stepEl = document.createElement('div'); stepEl.className = 'seq-step';
         graphEl.appendChild(stepEl);
         scrollBottom(msgs);
-        return labels.map(l => createTask(stepEl, l));
+        return labels.map(l => createTask(stepEl, l, rerunnable, isThink));
     }
 
     function stopAll() {
@@ -1317,10 +1363,11 @@ export function createResponsePlaceholder(container: null | undefined = null): R
 
     return {
         div,
-        addThinkingTask: () => {
+        addThinkingTask: (ctx?: { histLen?: number }) => {
+            _curHistLen = typeof ctx?.histLen === 'number' ? ctx.histLen : _curHistLen;
             const roleName = mainAgentRole?.name ?? null;
             const label = roleName ? `Thinking:${roleName}` : 'Thinking…';
-            const handle = addStep([label])[0];
+            const handle = addStep([label], true, true)[0];
             // If a previous step already wrote preview text, separate with a blank line so
             // consecutive step outputs ("Sentence one.Sentence two.") don't run together.
             if (_previewText && !_previewText.endsWith('\n\n')) _previewText += '\n\n';
@@ -1330,9 +1377,9 @@ export function createResponsePlaceholder(container: null | undefined = null): R
             handle.complete = (...a: any[]) => { _mainThinkDone = true; return _complete.apply(handle, a); };
             return handle;
         },
-        addToolStep:     labels => {
+        addToolStep:     (labels, o) => {
             if (_mainThinkDone && !_finalized) _dropStreamPreview();
-            return addStep(labels);
+            return addStep(labels, !!o?.main && labels.length === 1);
         },
         addCompactStep:  () => { const t = addStep(['compacting…'])[0]; t.markCompact(); return t; },
         addSystemStep: label => {
