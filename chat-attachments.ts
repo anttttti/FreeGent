@@ -309,63 +309,76 @@ function attachFromDevice(): void { closeAttachMenu(); (document.getElementById(
 function attachUpload(): void { closeAttachMenu(); (document.getElementById('attach-file-input') as HTMLInputElement | null)?.click(); }
 
 // "Select": pick files that are already in the workspace (or the synced local folder).
-async function attachFromWorkspace(): Promise<void> {
-    closeAttachMenu();
-    if (typeof agentListFiles !== 'function') return;
+// Resolves with the chosen paths, or [] when cancelled. Shared by the chat and the task dialog.
+async function pickWorkspaceFiles(heading = 'Attach files from the workspace'): Promise<string[]> {
+    if (typeof agentListFiles !== 'function') return [];
     let files: { name: string; size?: number }[] = [];
-    try { files = await agentListFiles(); } catch { return; }
+    try { files = await agentListFiles(); } catch { return []; }
     files = files.filter(f => !f.name.split('/').some(seg => seg.startsWith('.'))).sort((a, b) => a.name.localeCompare(b.name));
 
-    const overlay = document.createElement('div');
-    overlay.className = 'ws-pick-overlay';
-    const box = document.createElement('div');
-    box.className = 'ws-pick-box';
-    const title = document.createElement('div');
-    title.className = 'ws-pick-title'; title.textContent = 'Attach files from the workspace';
-    const filter = document.createElement('input');
-    filter.className = 'settings-input'; filter.placeholder = 'Filter…'; filter.style.width = '100%';
-    const list = document.createElement('div');
-    list.className = 'ws-pick-list';
-    const footer = document.createElement('div');
-    footer.className = 'ws-pick-footer';
-    const cancel = document.createElement('button');
-    cancel.className = 'ws-action-btn'; cancel.textContent = 'Cancel';
-    const ok = document.createElement('button');
-    ok.className = 'ws-action-btn'; ok.textContent = 'Attach';
-    footer.append(cancel, ok);
-    box.append(title, filter, list, footer);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
+    return new Promise<string[]>(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'ws-pick-overlay';
+        const box = document.createElement('div');
+        box.className = 'ws-pick-box';
+        const title = document.createElement('div');
+        title.className = 'ws-pick-title'; title.textContent = heading;
+        const filter = document.createElement('input');
+        filter.className = 'settings-input'; filter.placeholder = 'Filter…'; filter.style.width = '100%';
+        const list = document.createElement('div');
+        list.className = 'ws-pick-list';
+        const footer = document.createElement('div');
+        footer.className = 'ws-pick-footer';
+        const cancel = document.createElement('button');
+        cancel.className = 'ws-action-btn'; cancel.textContent = 'Cancel';
+        const ok = document.createElement('button');
+        ok.className = 'ws-action-btn'; ok.textContent = 'Attach';
+        footer.append(cancel, ok);
+        box.append(title, filter, list, footer);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
 
-    const chosen = new Set<string>();
-    const render = () => {
-        const q = filter.value.trim().toLowerCase();
-        list.innerHTML = '';
-        const shown = files.filter(f => !q || f.name.toLowerCase().includes(q)).slice(0, 300);
-        if (!shown.length) { list.textContent = files.length ? 'No matching files.' : 'The workspace has no files.'; return; }
-        for (const f of shown) {
-            const row = document.createElement('label');
-            row.className = 'ws-pick-row';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox'; cb.checked = chosen.has(f.name);
-            cb.onchange = () => { cb.checked ? chosen.add(f.name) : chosen.delete(f.name); ok.textContent = chosen.size ? `Attach (${chosen.size})` : 'Attach'; };
-            const nm = document.createElement('span');
-            nm.textContent = f.name;
-            row.append(cb, nm);
-            if (typeof f.size === 'number') { const sz = document.createElement('span'); sz.className = 'ws-pick-size'; sz.textContent = _fmtSz(f.size); row.appendChild(sz); }
-            list.appendChild(row);
-        }
-    };
-    filter.oninput = render;
-    render();
-    const close = () => overlay.remove();
-    cancel.onclick = close;
-    overlay.onclick = e => { if (e.target === overlay) close(); };
-    ok.onclick = async () => {
-        close();
-        for (const path of chosen) await addWorkspaceAttachment(path).catch(e => _attachmentError(path, e));
-    };
-    filter.focus();
+        const chosen = new Set<string>();
+        const render = () => {
+            const q = filter.value.trim().toLowerCase();
+            list.innerHTML = '';
+            const shown = files.filter(f => !q || f.name.toLowerCase().includes(q)).slice(0, 300);
+            if (!shown.length) { list.textContent = files.length ? 'No matching files.' : 'The workspace has no files.'; return; }
+            for (const f of shown) {
+                const row = document.createElement('label');
+                row.className = 'ws-pick-row';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox'; cb.checked = chosen.has(f.name);
+                cb.onchange = () => { cb.checked ? chosen.add(f.name) : chosen.delete(f.name); ok.textContent = chosen.size ? `Attach (${chosen.size})` : 'Attach'; };
+                const nm = document.createElement('span');
+                nm.textContent = f.name;
+                row.append(cb, nm);
+                if (typeof f.size === 'number') { const sz = document.createElement('span'); sz.className = 'ws-pick-size'; sz.textContent = _fmtSz(f.size); row.appendChild(sz); }
+                list.appendChild(row);
+            }
+        };
+        filter.oninput = render;
+        render();
+        const close = (result: string[]) => { overlay.remove(); resolve(result); };
+        cancel.onclick = () => close([]);
+        overlay.onclick = e => { if (e.target === overlay) close([]); };
+        ok.onclick = () => close([...chosen]);
+        filter.focus();
+    });
+}
+
+async function attachFromWorkspace(): Promise<void> {
+    closeAttachMenu();
+    for (const path of await pickWorkspaceFiles()) await addWorkspaceAttachment(path).catch(e => _attachmentError(path, e));
+}
+
+// Store an uploaded file in the workspace under attachments/ (as chat attachments are) and return its path.
+async function saveFileToWorkspace(file: File): Promise<string> {
+    const url = await _readAttachment(file, 'readAsDataURL');
+    const basename = file.name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'attachment';
+    const path = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
+    await agentWriteFile(path, url.slice(url.indexOf(',') + 1), 'base64');
+    return path;
 }
 
 // Attach a file that is already in the workspace: same pipeline as an upload, no extra copy.
@@ -380,6 +393,7 @@ function addWorkspaceAttachment(path: string): Promise<void> {
 
 Object.assign(window, {
     toggleAttachMenu, attachFromDevice, attachUpload, attachFromWorkspace, addWorkspaceAttachment,
+    pickWorkspaceFiles, saveFileToWorkspace,
 });
 
 Object.assign(window, {
