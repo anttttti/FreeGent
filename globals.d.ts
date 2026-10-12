@@ -39,7 +39,7 @@ declare global {
     var _updateSendBtnVisibility: () => void;
     var agentSend: (container?: HTMLElement | null) => Promise<void>;
     var turnsInFlight: () => number;
-    var runAgentTurn: (prompt: string, container?: HTMLElement | null, session?: any, opts?: { placeholder?: any }) => Promise<string>;
+    var runAgentTurn: (prompt: string, container?: HTMLElement | null, session?: any, opts?: { placeholder?: any; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] }) => Promise<import('./types.js').TurnResult>;
     var autoResizeTextarea: any;
     var clearCheckpoints: any;
     var deleteChatCheckpoints: any;
@@ -462,6 +462,7 @@ declare global {
     // ── bridged by payload-builder.ts ──
     var buildChatPayload: any;
     var isCustomEndpoint: any;
+    var metricsNote: any;
     var _stripThinking: any; // llm-loops.ts — consumed by history.ts repair
     // ── bridged by retry.ts ──
     var _isTimeoutError: any;

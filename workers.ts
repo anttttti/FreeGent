@@ -863,7 +863,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 ...extra,
             }), msg => { console.error(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
             100,
-            () => (endpoint ?? oaiEndpoint()).provider === 'custom');
+            () => isCustomEndpoint(endpoint ?? oaiEndpoint()));
 
     const maxSteps = _WORKER_MAX_STEPS;
     // Match the main loop: keep a per-worker rotation counter and advance through the
@@ -1031,7 +1031,8 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
             const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, result: r.result }));
             // Shell sent as Python ran as bash: record the call as bash (see the main loop).
             recordCallsAsBash(localOH, collectRanAsBash(results.map(r => ({ tc: r.tc, result: r.result }))));
-            const wStepBudgetChars = parseInt((typeof ls === 'function' ? ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())) : '100000'), 10);
+            const _wsbc = parseInt((typeof ls === 'function' ? ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())) : '100000'), 10);
+            const wStepBudgetChars = Number.isFinite(_wsbc) && _wsbc > 0 ? _wsbc : 100000;
             const wStepBudget = { remaining: wStepBudgetChars };
             for (const { tc, name, result } of results) {
                 const histResult = truncateResultForHistory(name, result, { seenReadFiles: localSeenRF, seenListFiles: localSeenLF, stepBudget: wStepBudget });

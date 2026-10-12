@@ -636,11 +636,12 @@ export interface RunMetrics {
     worker_steps:         number;
     worker_input_tokens:  number;
     worker_output_tokens: number;
-    /** Judge and validator requests (logged as 'validation'). Compaction summaries and failed or
-     *  retried requests are still not counted anywhere. */
+    /** Judge and validator requests (logged as 'validation') and compaction summaries. */
     aux_requests:      number;
     aux_input_tokens:  number;
     aux_output_tokens: number;
+    /** Request attempts that failed (and were retried or given up on). Their tokens are unknown. */
+    failed_requests:   number;
     /** How the run ended; set once the run has returned (absent from the running totals). */
     finish?: RunFinish;
 }
@@ -664,7 +665,7 @@ export interface RunFinish {
  */
 export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics; finish?: RunFinish }> {
     if (typeof task !== 'string' || task.trim().length < 8)
-        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0 } };
+        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 } };
     const { timeoutMs } = _parseOpts(opts);
     await setup(opts);
 
@@ -675,7 +676,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
     // Per-task metrics accumulator — installed before runAgentTurn, cleared in finally.
     const _t0 = Date.now();
-    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0 };
+    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 };
     setMetricsWriter((record: any) => {
         if (record.type === 'history_snapshot') { _metrics.compactions++; return; }
         // A discarded generation still ran: v0.66 lost 181 of them (apps_43: 13 full generations,
@@ -686,7 +687,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
             return;
         }
-        if (record.type === 'worker_step' || record.type === 'validation') {
+        if (record.type === 'request_failed') { _metrics.failed_requests++; return; }
+        if (record.type === 'worker_step' || record.type === 'validation' || record.type === 'compaction') {
             const w = record.type === 'worker_step';
             if (w) _metrics.worker_steps++; else _metrics.aux_requests++;
             _metrics[w ? 'worker_input_tokens' : 'aux_input_tokens']   += record.promptTokens   || 0;

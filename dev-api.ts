@@ -605,19 +605,20 @@ export function createDevApi(opts: DevApiOptions) {
 
             let stdout = '', stderr = '', exitCode = 0;
             try {
-                const env = { ...scrubEnv(process.env), HOME: tmpDir };
+                const env: Record<string, string> = { ...scrubEnv(process.env), HOME: tmpDir };
                 const [bin, binArgs] = execIsolation() === 'bwrap'
                     ? ['bwrap', [...bwrapArgs(tmpDir, env.PATH ?? '', homedir()), '--', cmd[0], ...cmd[1]]]
                     : cmd;
                 const r = await execFileAsync(bin, binArgs, {
-                    cwd: tmpDir, timeout: 60_000, env,
+                    cwd: tmpDir, timeout: EXECUTE_TIMEOUT_MS, env,
                     maxBuffer: 10 * 1024 * 1024,
                 });
                 stdout = r.stdout; stderr = r.stderr;
             } catch (err: any) {
-                if (err.code === 'ETIMEDOUT') { jsonSend(res, { stdout: '', stderr: 'Timeout (60s)', exit_code: 124 }); return; }
                 stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
-                exitCode = typeof err.code === 'number' ? err.code : 1;
+                const failure = execFailure(err);
+                exitCode = failure.exit_code;
+                if (failure.note) stderr = stderr ? `${stderr}\n${failure.note}` : failure.note;
             }
 
             const filesWritten: Record<string, string> = {};
@@ -826,6 +827,20 @@ export function createDevApi(opts: DevApiOptions) {
     }
 
     return { middleware };
+}
+
+// How a failed execFile ended. A timeout rejects with { code: null, killed: true, signal } — not
+// code 'ETIMEDOUT', which the handler used to test, so a timed-out command came back as a plain
+// exit 1 — and output past maxBuffer rejects with a string code.
+export const EXECUTE_TIMEOUT_MS = 120_000;   // same limit as native-exec.ts
+export function execFailure(err: any): { exit_code: number; note: string } {
+    if (err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+        return { exit_code: 1, note: 'Stopped: the command printed more than 10 MB. Redirect its output to a file and read part of it.' };
+    if (err?.killed && err?.signal)
+        return { exit_code: 124, note: `Command timed out after ${EXECUTE_TIMEOUT_MS / 1000}s. Run long jobs in the background, or in smaller steps.` };
+    if (typeof err?.code === 'number') return { exit_code: err.code, note: '' };
+    if (err?.signal) return { exit_code: 1, note: `Ended by signal ${err.signal}.` };
+    return { exit_code: 1, note: typeof err?.code === 'string' ? `Could not run: ${err.code}` : '' };
 }
 
 // ── Page script ───────────────────────────────────────────────────────────────

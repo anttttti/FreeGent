@@ -18,11 +18,19 @@ export function isSecretEnvName(name: string): boolean {
 
 // FG_EXEC_KEEP_ENV=HF_TOKEN,GH_TOKEN passes the named variables through anyway, for tasks that
 // genuinely need one (and whose runs you trust with it).
+// A value that carries a password in a URL: scheme://user:password@host (DATABASE_URL, REDIS_URL,
+// a DSN). The name says nothing, so these passed the name filter with their passwords.
+// The user name may be empty (redis://:password@host).
+const _URL_CREDENTIAL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:[^\s/@]+@/i;
+export function hasUrlCredential(value: string): boolean {
+    return _URL_CREDENTIAL_RE.test(value);
+}
+
 export function scrubEnv(env: Record<string, string | undefined>): Record<string, string> {
     const keep = new Set((env.FG_EXEC_KEEP_ENV ?? '').split(',').map(s => s.trim()).filter(Boolean));
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(env)) {
-        if (v === undefined || (isSecretEnvName(k) && !keep.has(k))) continue;
+        if (v === undefined || ((isSecretEnvName(k) || hasUrlCredential(v)) && !keep.has(k))) continue;
         out[k] = v;
     }
     return out;

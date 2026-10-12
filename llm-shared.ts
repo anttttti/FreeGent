@@ -183,6 +183,13 @@ function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = nu
     };
 }
 
+/** The text of a user message: its string content, or the text parts of array (multimodal) content. */
+export function _userText(m: any): string {
+    if (typeof m?.content === 'string') return m.content;
+    if (Array.isArray(m?.content)) return m.content.filter((p: any) => p?.type === 'text' && typeof p.text === 'string').map((p: any) => p.text).join('\n');
+    return '';
+}
+
 // Compact the session history into anchor + summary + verbatim tail.
 // The request is the main loop's own request — same system prompt, tools and messages, so the
 // endpoint's prefix cache covers the history — plus one compaction instruction. `prefix` is the
@@ -197,8 +204,15 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     // manual /compact replaces the chat's history).
     const _hR = effectiveHistory ?? _s._session?.deriveMessages() ?? [];
     const _PIN = '[TASK — do not lose track of this]\n';
-    const _origFirst = _hR.find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
-    const _firstMsgContent = _origFirst ? _origFirst.content.replace(/^\[TASK[^\]]*\]\n/, '') : null;
+    // The task is the first user message with text, whatever its shape. Only string content was
+    // accepted, so a first message sent with an attachment (array content) was skipped and the next
+    // string message — a later request, or a harness <nudge> — was pinned as the task instead.
+    const _origFirst = _hR.find((m: any) => m.role === 'user' && _userText(m).trim() && !/^\s*<nudge>/.test(_userText(m)));
+    const _origText: string | null = _origFirst
+        ? _userText(_origFirst) + (Array.isArray(_origFirst.content) && _origFirst.content.some((p: any) => p?.type && p.type !== 'text')
+            ? '\n[The attachments sent with this message are not repeated here.]' : '')
+        : null;
+    const _firstMsgContent = _origText !== null ? _origText.replace(/^\[TASK[^\]]*\]\n/, '') : null;
     const beforeTokens = estimateTokens(_hR);
     task.setPrompt(`~${_fmtK(beforeTokens)} tokens → Compacting…`);
 
@@ -281,6 +295,8 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             },
         }), 20, _compactIsTransient);
 
+        // The summary request is a model request like any other; it was in no token total.
+        try { if (typeof metricsNote === 'function') metricsNote({ type: 'compaction', promptTokens: data.usage?.prompt_tokens, responseTokens: data.usage?.completion_tokens }); } catch {}
         const raw = (data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '').trim();
         if (_degenerateSummary(raw)) throw new Error('no usable summary (tool-call or empty output)');
         summary = raw;
@@ -294,7 +310,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     const _anchor = _origFirst
         ? (workflowMode
             ? _firstMsgContent
-            : (_origFirst.content.startsWith(_PIN) ? _origFirst.content : _PIN + _origFirst.content))
+            : (_origText!.startsWith(_PIN) ? _origText : _PIN + _origText))
         : null;
     if (_anchor) _newHistory.push({ role: 'user', content: _anchor });
     const body = summary ?? `(The summarizer failed: ${failReason.slice(0, 200)}. Older messages were removed; the facts below and the recent messages that follow are what remains.)`;

@@ -52,7 +52,7 @@ export async function* readSSE(resp: any) {
     let gotData = false;
     try {
         while (true) {
-            let timerId: number;
+            let timerId: ReturnType<typeof setTimeout>;
             const { done, value } = await Promise.race([
                 reader.read().catch(e => { throw asTransportError(e); }), // a broken stream, not a bug
                 new Promise((_, reject) => {

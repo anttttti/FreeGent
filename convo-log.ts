@@ -345,4 +345,4 @@ async function importChat() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc: escapeHtml, pruneConvoLogFrom });
+Object.assign(window, { metricsNote, getChatStats, conversationLog, convoLogTurn, loadChatLog, _updateLogBadge, exportChat, sendChatLog, exportChatMarkdown, importChat, esc: escapeHtml, pruneConvoLogFrom });

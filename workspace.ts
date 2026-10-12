@@ -5,7 +5,7 @@ import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
-import { taskTitleKey } from './task-status.js';
+import { taskTitleKey, isTaskPath } from './task-status.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -41,7 +41,7 @@ let fsaHandle: FileSystemDirectoryHandle | null       = null; // File System Acc
 let pendingFsaHandle: FileSystemDirectoryHandle | null = null; // stored handle awaiting user permission gesture
 
 
-let fsaSyncTimer: number | null  = null;
+let fsaSyncTimer: ReturnType<typeof setInterval> | null = null;
 let fsaSyncMtimes: Map<string, number> = new Map(); // relative path → lastModified timestamp
 let fsaSyncSizes: Map<string, number> = new Map();  // relative path → size in bytes (filled by getFsaMtime)
 
@@ -107,7 +107,7 @@ async function pollFsaChanges() {
             try {
                 const content = await readFsaFile(name);
                 notifyLocalFileChanged?.('local/' + name, content);
-                if (name.startsWith('fg-tasks/') || name.startsWith('tasks/'))  taskFileChanged  = true;
+                if (isTaskPath(name))  taskFileChanged  = true;
                 if (name.startsWith('skills/') || name.startsWith('rules/')) skillFileChanged = true;
                 if (name.startsWith('roles/'))  roleFileChanged  = true;
             } catch {}
@@ -882,7 +882,7 @@ export async function agentWriteFile(path, content, encoding = null) {
     if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
     // Keep the Kanban board in sync when the AI writes a task file directly.
     // The FSA sync loop handles live-synced folders; IDB writes (no FSA) need this call.
-    if (path.startsWith('fg-tasks/') || path.startsWith('tasks/') || path.startsWith('local/tasks/')) refreshTasks?.();
+    if (isTaskPath(path)) refreshTasks?.();
 }
 
 export async function agentDeleteFile(path) {

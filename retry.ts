@@ -184,6 +184,8 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
     for (let attempt = 0; ; attempt++) {
         try { return await fn(); }
         catch (e) {
+            // Every failed attempt is a request that ran and is in no token total: count it.
+            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed' }); } catch {}
             try { onFailure?.(e); } catch {}
             // Soft-stop is active (timeout or UI stop button): never retry — the caller will
             // see the error and return *(break)* or propagate it cleanly.
@@ -209,6 +211,12 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
         }
     }
 }
+
+// A local server the user runs: provider 'custom' or 'vllm' (same rule as isCustomEndpoint in
+// payload-builder.ts). The retry paths tested 'custom' alone, so a vLLM endpoint — every benchmark
+// run — was handled as a cloud provider: a 401/404 paused the model, and the local-server retry
+// rules did not apply.
+export function _isLocalEp(ep: any): boolean { return !!ep && (ep.provider === 'custom' || ep.provider === 'vllm'); }
 
 // HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
 const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b/;
@@ -293,7 +301,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // "No endpoints found that support image input" is a 404 about this request (an image
         // attachment), not a dead model: rotate away for a while without pausing it for good.
         if (/HTTP 404/.test(e.message || '') && /support image input/i.test(e.message || '')
-                && ep.provider !== 'custom' && !forWorker) {
+                && !_isLocalEp(ep) && !forWorker) {
             const noVisionKey = `${ep.provider}|${ep.model}`;
             _markExactCooldown(ep, 30 * 60_000);
             onNote(`[${noVisionKey}][no image input — skipped for 30 min]`);
@@ -302,7 +310,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             return false;
         }
         const isGone = /HTTP 40[14]/.test(e.message || '');
-        if (isGone && ep.provider !== 'custom' && !forWorker) {
+        if (isGone && !_isLocalEp(ep) && !forWorker) {
             const goneKey = `${ep.provider}|${ep.model}`;
             if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {
                 const _paused = getPausedMainModels();
@@ -315,7 +323,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         // Custom (local) endpoints: treat any non-abort error as retryable server error.
         // This covers OOM, CUDA errors, context-overflow messages, etc. from SGLang/vLLM.
-        const isCustom = ep.provider === 'custom';
+        const isCustom = _isLocalEp(ep);
         // …except a request the server refuses as such (bad request, auth, unknown model or route):
         // the same request gets the same answer, and callers pass no attempt limit for custom
         // endpoints, so it was re-sent every 5 s until the run's time limit. A few attempts cover a

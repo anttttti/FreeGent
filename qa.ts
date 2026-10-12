@@ -2,7 +2,7 @@
 // Depends on: config.js, tools.js, workers.js, tasks.js
 
 
-import { canonTaskStatus } from './task-status.js';
+import { canonTaskStatus, TASK_DIRS } from './task-status.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -126,7 +126,7 @@ async function _updateLedgerRow(taskPath, newStatus) {
     const idMatch = taskPath.match(/[/\\](\d+)-/);
     if (!idMatch) return;
     const id = idMatch[1];
-    const ledgerCandidates = ['fg-tasks/ledger.md', 'tasks/ledger.md', 'local/tasks/ledger.md'];
+    const ledgerCandidates = TASK_DIRS.map(d => `${d}ledger.md`);
     for (const ledgerPath of ledgerCandidates) {
         let ledger: string;
         try { ledger = await agentReadFile(ledgerPath); } catch { continue; }
