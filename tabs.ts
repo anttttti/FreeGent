@@ -749,14 +749,14 @@ window.addEventListener('message', _relayPreviewFetch);
 // 2026-09-27 a syntax error (`const ring-count`) broke the whole script, and a later "nothing
 // moves" turn spent 100 steps guessing. The sandbox has no allow-same-origin and no allow-modals
 // (alert/confirm are ignored rather than blocking the run).
-const _CHECK_CAPTURE = `<script>(function(){
+export const _CHECK_CAPTURE = `<script>(function(){
 var P=parent,T0=Date.now();
 function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v.name+': '+v.message;if(v===undefined)return 'undefined';if(typeof v==='function')return 'function';return JSON.stringify(v)}catch(e){return String(v)}}
 function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,4000),t:Date.now()-T0},'*')}catch(e){}}
 ['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
 addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href)+(t.integrity?' — it has integrity="'+t.integrity+'": a wrong hash blocks the file, so check it or remove the attribute':''));return}
  var m=e.error&&e.error.name?e.error.name+': '+e.error.message:e.message;
- send('error','Uncaught '+m+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':'')+(!e.error&&/^Script error\.?$/.test(m)?' — the browser hides the details of errors from a script loaded from another origin (a CDN <script src>, an importmap or import() URL), so the real message is unavailable here. Do not guess with more probe pages: check that the URL exists and serves a browser-ready file, that a <script src> from a CDN has crossorigin="anonymous", and that every import specifier resolves; or load the file with fetch()/import() inside try/catch and console.log the caught error, which shows the real message.':'')},true);
+ send('error','Uncaught '+m+(e.lineno?' (line '+e.lineno+':'+e.colno+' of the inlined page)':'')+(!e.error&&/^Script error\.?$/.test(m)?' — the browser hides the details of errors from a script loaded from another origin (a CDN <script src>, an importmap or import() URL), so the real message is unavailable here. Do not guess with more probe pages: check that the URL exists and serves a browser-ready file, that a <script src> from a CDN has crossorigin="anonymous", and that every import specifier resolves; or load the file with fetch()/import() inside try/catch and console.log the caught error, which shows the real message.':''))},true);
 addEventListener('unhandledrejection',function(e){send('error','Unhandled promise rejection: '+s(e.reason))});
 var FR=0;(function f(){FR++;requestAnimationFrame(f)})();
 function code(k){if(/^Arrow/.test(k))return k;if(k===' ')return 'Space';if(/^[a-z]$/i.test(k))return 'Key'+k.toUpperCase();if(/^[0-9]$/.test(k))return 'Digit'+k;return k}

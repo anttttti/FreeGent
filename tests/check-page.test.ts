@@ -35,6 +35,17 @@ describe('check_page', () => {
     });
 });
 
+describe('check_page capture script', () => {
+    // A missing ")" in this injected script (v0.66-v0.70.25) made every check_page report "the page
+    // did not run", in every browser; jsdom never runs the iframe, so parse it here.
+    it('is syntactically valid JavaScript', async () => {
+        const { _CHECK_CAPTURE } = await import('../tabs.ts');
+        const m = _CHECK_CAPTURE.match(/^<script>([\s\S]*)<\/script>$/);
+        expect(m).not.toBeNull();
+        expect(() => new Function(m![1])).not.toThrow();
+    });
+});
+
 describe('page references resolve from the page\'s folder', () => {
     it('resolvePageRef works like a browser URL resolver on workspace names', async () => {
         const { resolvePageRef } = await import('../tabs.ts');

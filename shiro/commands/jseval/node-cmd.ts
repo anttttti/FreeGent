@@ -36,6 +36,12 @@ export const nodeCmd: Command = {
       } else if (ctx.args[i] === '-p' || ctx.args[i] === '--print') {
         code = ctx.args[++i] || '';
         printResult = true;
+      } else if (ctx.args[i] === '-v' || ctx.args[i] === '--version') {
+        ctx.stdout += 'v20.0.0\n';   // process.version
+        return 0;
+      } else if (ctx.args[i].startsWith('--input-type=') || ctx.args[i] === '--input-type') {
+        // Scripts are already evaluated as modules or CommonJS by their content; the flag's value is ignored.
+        if (ctx.args[i] === '--input-type') i++;
       } else if (ctx.args[i] === '--help' || ctx.args[i] === '-h') {
         ctx.stdout += 'Usage: node [options] [script.js] [arguments]\n';
         ctx.stdout += '  -e, --eval <code>   Evaluate code\n';
