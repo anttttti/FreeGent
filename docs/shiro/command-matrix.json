@@ -10120,7 +10120,7 @@
     "shiro/commands/jseval/crypto.ts": "2c1c9f34d38e588f577cedb3e8f86efdc4d35ec881a8d2093cb547fb9a296aae",
     "shiro/commands/jseval/js-eval-cmd.ts": "28cb4768d576a6092134f6358a921deb1b86717b5f817bf1776a71db32fe7fdf",
     "shiro/commands/jseval/module-transform.ts": "bc2df409ce8a3e0995d0dbde30cb3927baf7a1e81dabf974c870c154d121621e",
-    "shiro/commands/jseval/node-cmd.ts": "414c6f478f5614b78024619ae3691fcaecff0430a4041e99dd7b7c8c732940fc",
+    "shiro/commands/jseval/node-cmd.ts": "c644464c071227fce8efb34139637d12287cb2e7e64839bdf885f6b97493caa5",
     "shiro/commands/jseval/utils.ts": "4340992716db44337c018b4084496e5f5071064efa6f9fcd3c93e2c52b9d0063",
     "shiro/commands/less.ts": "cfd0c25fa50d5d3d2f43092e4048192573f0f521393928953142d04d271cdca0",
     "shiro/commands/line-endings.ts": "42b05a9297bfff99827a233e4bd9974028f20d6e40942df3587de7b1502ef8c4",
