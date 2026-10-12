@@ -631,14 +631,40 @@ export interface RunMetrics {
     /** Generations cut off at the output cap and discarded; their tokens are not in output_tokens. */
     discarded_generations:   number;
     discarded_output_tokens: number;
+    /** Worker (run_workers) requests. Not in steps/input_tokens/output_tokens, which stay the main
+     *  loop's own so they compare with earlier versions; add them for the run's total. */
+    worker_steps:         number;
+    worker_input_tokens:  number;
+    worker_output_tokens: number;
+    /** Judge and validator requests (logged as 'validation'). Compaction summaries and failed or
+     *  retried requests are still not counted anywhere. */
+    aux_requests:      number;
+    aux_input_tokens:  number;
+    aux_output_tokens: number;
+    /** How the run ended; set once the run has returned (absent from the running totals). */
+    finish?: RunFinish;
+}
+
+/** How a headless run ended, as the harness decided it — callers must not re-derive this from the
+ *  answer text, whose COMPLETED/BLOCKED markers are stripped. */
+export interface RunFinish {
+    /** complete: the agent declared the task done. blocked: it declared BLOCKED or the loop stopped it
+     *  (stopReason says which). stopped: stop request or run timeout. error: the turn threw. */
+    signal:     'complete' | 'blocked' | 'running' | 'stopped' | 'error';
+    /** The loop's forced-stop reason (step limit, repeated calls, failure streak…); null when the
+     *  agent ended the turn itself. */
+    stopReason: string | null;
+    timedOut:   boolean;
+    /** The error message when the run threw or timed out, else null. */
+    error:      string | null;
 }
 
 /**
  * Run the FreeGent agent on a task.
  */
-export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics }> {
+export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics; finish?: RunFinish }> {
     if (typeof task !== 'string' || task.trim().length < 8)
-        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0 } };
+        return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0 } };
     const { timeoutMs } = _parseOpts(opts);
     await setup(opts);
 
@@ -649,7 +675,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
     // Per-task metrics accumulator — installed before runAgentTurn, cleared in finally.
     const _t0 = Date.now();
-    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0 };
+    const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0 };
     setMetricsWriter((record: any) => {
         if (record.type === 'history_snapshot') { _metrics.compactions++; return; }
         // A discarded generation still ran: v0.66 lost 181 of them (apps_43: 13 full generations,
@@ -660,7 +686,14 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
             return;
         }
-        if (record.type) return; // skip history_final, validation, etc.
+        if (record.type === 'worker_step' || record.type === 'validation') {
+            const w = record.type === 'worker_step';
+            if (w) _metrics.worker_steps++; else _metrics.aux_requests++;
+            _metrics[w ? 'worker_input_tokens' : 'aux_input_tokens']   += record.promptTokens   || 0;
+            _metrics[w ? 'worker_output_tokens' : 'aux_output_tokens'] += record.responseTokens || 0;
+            return;   // reported with the next main step's running total
+        }
+        if (record.type) return; // skip history_final etc.
         _metrics.steps++;
         if (record.promptTokens)   _metrics.input_tokens  += record.promptTokens;
         if (record.responseTokens) _metrics.output_tokens += record.responseTokens;
@@ -702,11 +735,20 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             convoLogTurn({ type: 'history_final', history: _finalHist });
         } catch {}
     };
-    const _sigtermHandler = () => { _flushFinalHistory(); void registry.flush(); process.exit(1); };
+    // Wait for the event log before exiting (it used to be dropped: exit ran before the write), but
+    // not for long: the sender follows SIGTERM with SIGKILL.
+    const _sigtermHandler = () => {
+        _flushFinalHistory();
+        const _exit = () => process.exit(1);
+        const _t = setTimeout(_exit, 2000);
+        registry.flush().catch(() => {}).then(() => { clearTimeout(_t); _exit(); });
+    };
     process.once('SIGTERM', _sigtermHandler);
 
     let output = '';
     let error: Error | null = null;
+    let _finishSignal: RunFinish['signal'] | null = null;
+    let _stopReason: string | null = null;
     try {
         // §3: Director loop is now delegated to loop-director.ts directorLoop().
         // runAgentTurn returns TurnResult; directorLoop drives continuations.
@@ -730,6 +772,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
 
         output = typeof _stripTerminal === 'function'
             ? _stripTerminal(_dirResult.text) : _dirResult.text;
+        _finishSignal = _dirResult.finishSignal ?? null;
+        _stopReason   = _dirResult.stop?.reason ?? null;
     } catch (e) {
         if (process.env.FG_DEBUG_STACK) console.error('[debug stack]', e.stack);
         error = e?.message || String(e);
@@ -769,5 +813,12 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     }
 
     if (timedOut && !error) error = new Error(`Task timed out after ${timeoutMs} ms`);
-    return { output, error, metrics: _metrics };
+    const finish: RunFinish = {
+        signal:     timedOut ? 'stopped' : _finishSignal ?? 'error',
+        stopReason: _stopReason,
+        timedOut,
+        error:      error ? String((error as any)?.message ?? error).slice(0, 300) : null,
+    };
+    _metrics.finish = finish;
+    return { output, error, metrics: _metrics, finish };
 }

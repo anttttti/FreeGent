@@ -152,8 +152,14 @@ describe('server registry', () => {
     it('classifies risk from annotations (unannotated = destructive)', async () => {
         mockServer(standardHandler);
         const s = await W.addMcpServer({ name: 'maps', url: 'https://r.example.com/mcp' });
+        // A custom server's labels are its own claim: shown, but not used for approval until trusted.
+        expect(W.mcpToolClaim(W.mcpToolName(s.id, 'search_places'))).toBe('read');
+        expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('destructive');
+        W.setMcpServerTrust(s.id, true);
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('read');
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'delete.everything'))).toBe('destructive');
+        W.setMcpServerTrust(s.id, false);
+        expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('destructive');
     });
 
     it('follows tools/list pagination', async () => {

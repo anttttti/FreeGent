@@ -148,7 +148,7 @@ Skills live in `skills/<name>/SKILL.md` (workspace or `local/`) or as entries in
 ---
 name: my-skill          # required — unique slug, matches the directory name
 description: One-liner shown in the UI skills list and in the ## Skills section of the system prompt.
-trigger: keyword, another phrase   # optional — substring match against user message (case-insensitive)
+trigger: keyword, another phrase   # optional — whole-word match against user message (case-insensitive): `sql` does not fire on `mysql`
 trigger_on_filetype: .py, .ipynb   # optional — fire when message mentions OR workspace contains a file with this extension; append :msg to restrict to message only (e.g. ".py:msg")
 trigger_on_tool: execute_code, write_file=>needle  # optional — fire after a tool ran; "tool=>needle" fires only if result contains `needle` (string) or satisfies a comparison: "tool=>field!=0", "tool=>field==value", "tool=>field>n"
 trigger_on_failure: http_error x3  # optional — fire after N classified failures in a turn (http_error, tool_error); default threshold is 2
@@ -180,7 +180,7 @@ Everything after the frontmatter is the skill body — injected verbatim into th
 | `currentTurnSkills` | `activeSkills` ∪ keyword-triggered matches | Rebuilt at start of each turn in `agent-core.js` |
 
 **Trigger matching** (`agent-core.js`): five passes run at the start of each turn, in order:
-1. **keyword (`trigger`)** — substring match against lower-cased user message
+1. **keyword (`trigger`)** — whole-word (`\b…\b`) match against the lower-cased user message
 2. **filetype (`trigger_on_filetype`)** — checks message text for the extension string AND (unless `:msg` suffix) checks workspace file extensions from the DOM (`.workspace-file-row[data-filename]`). Multi-part extensions like `.test.js` are matched against both the last and second-to-last dot segments.
 3. **lifecycle (`trigger_on_event`)** — `session-start` fires on the first message of a session; `task-start` fires when `_isTaskCompletionRequest()` returns true.
 4. **media (`trigger_on_media`)** — fires when the user's message includes an attachment of the specified type. Values: `image` (any image), `audio`, `video`, `pdf`, `file` (text file attachment). Checked before `clearImageAttachments()` so attachment state is still live.

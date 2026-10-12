@@ -32,6 +32,14 @@ function _skillMissingTools(skill) {
     if (!skill.requires_tools) return false;
     return skill.requires_tools.split(',').some(t => !isToolActive(t.trim()));
 }
+// `requires: fg_<key>` frontmatter: the skill is off unless that setting is 'true'. The parser used
+// to drop the field, so the gate never applied; skills without it are unaffected.
+export function _skillRequiresUnmet(skill): boolean {
+    if (!skill.requires) return false;
+    try { return localStorage.getItem(String(skill.requires).trim()) !== 'true'; } catch { return true; }
+}
+// Not usable this turn: a required setting is off or a required tool is inactive.
+function _skillUnavailable(skill) { return _skillRequiresUnmet(skill) || _skillMissingTools(skill); }
 
 // R3 — table-driven skill trigger evaluation.
 // inputs is precomputed by the caller; this stays pure + testable.
@@ -90,7 +98,7 @@ export function evaluateSkillTriggers(registry: any, seed: any, inputs: any): Se
     for (const rule of _SKILL_TRIGGER_RULES) {
         for (const s of registry.values()) {
             if (!s[rule.field] || fired.has(s.name) || _skillExcludedForRole(s, inputs.roleName)) continue;
-            if (_skillMissingTools(s)) continue;
+            if (_skillUnavailable(s)) continue;
             if (_skillExcludedForMode(s)) continue;
             if (rule.match(s, inputs)) fired.add(s.name);
         }
@@ -189,7 +197,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
     const parts  = [];
     const _role  = mainAgentRole?.name?.toLowerCase() ?? null;
     const _eligible = s => s && !fired.has(s.name) &&
-        !_skillExcludedForRole(s, _role) && !_skillMissingTools(s) && !_skillExcludedForMode(s);
+        !_skillExcludedForRole(s, _role) && !_skillUnavailable(s) && !_skillExcludedForMode(s);
     const _emit = s => {
         const body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) return; // body_fn may return '' when tools/env conditions aren't met
@@ -284,7 +292,7 @@ export function completionGateGuidance(editsHappened: boolean, blocked: boolean 
         // stable through the turn, so this correctly captures whether the trigger fired.
         if (cond === 'triggered' && !currentTurnSkills.has(s.name)) continue;
         if (cond === 'blocked' && !blocked) continue;
-        if (_skillExcludedForRole(s, _role) || _skillMissingTools(s) || _skillExcludedForMode(s)) continue;
+        if (_skillExcludedForRole(s, _role) || _skillUnavailable(s) || _skillExcludedForMode(s)) continue;
         const body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) continue; // body_fn may return '' when tools/env conditions aren't met
         parts.push(`### ${s.name}\n${body}`);

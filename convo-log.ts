@@ -58,6 +58,11 @@ export function setConvoLogWriter(fn: ((record: object) => void) | null): void {
 // (steps, tokens, compactions). Installed before runAgentTurn, cleared in finally.
 let _metricsWriter: ((record: object) => void) | null = null;
 export function setMetricsWriter(fn: ((record: object) => void) | null): void { _metricsWriter = fn; }
+/** Report a model request that is not a main-loop step (a worker's request) to the run's metrics
+ *  only: it is counted, not added to the conversation log. No-op outside a headless run. */
+export function metricsNote(record: { type: string; promptTokens?: number; responseTokens?: number }): void {
+    try { _metricsWriter?.(record); } catch {}
+}
 
 export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
     const record = {

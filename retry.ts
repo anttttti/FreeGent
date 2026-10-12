@@ -210,6 +210,10 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
     }
 }
 
+// HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
+const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b/;
+export const CUSTOM_CLIENT_ERROR_ATTEMPTS = 3;
+
 // Returns an onRetry callback for withRetry() in OAI-compatible contexts.
 // Handles 429s, server errors, and context overflow; rotates endpoints across all providers.
 // getEp/setEp: read and write the current endpoint object.
@@ -243,6 +247,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         return null;
     };
+    let _clientErrors = 0;
     return (n, e, d) => {
         // Truncated/empty response: cycle through the model pool, same as for 429s.
         // Use a short exact cooldown (30s) so each provider is skipped in turn while
@@ -311,6 +316,14 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // Custom (local) endpoints: treat any non-abort error as retryable server error.
         // This covers OOM, CUDA errors, context-overflow messages, etc. from SGLang/vLLM.
         const isCustom = ep.provider === 'custom';
+        // …except a request the server refuses as such (bad request, auth, unknown model or route):
+        // the same request gets the same answer, and callers pass no attempt limit for custom
+        // endpoints, so it was re-sent every 5 s until the run's time limit. A few attempts cover a
+        // server that is still loading its model; after that the error is reported.
+        if (isCustom && _CLIENT_ERROR_RE.test(e.message || '') && ++_clientErrors >= CUSTOM_CLIENT_ERROR_ATTEMPTS) {
+            onNote(`[${ep.provider}|${ep.model}][not retrying: the server rejected the request ${_clientErrors} times: ${String(e.message || '').slice(0, 120)}]`);
+            return false;
+        }
         const effectiveErr = isErr || (isCustom && !is429);
         // Stream timeout means the local model was slow, not that the server is broken.
         // Don't mark it on cooldown and don't fall back to a remote provider — just retry locally.

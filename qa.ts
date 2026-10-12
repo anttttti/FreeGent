@@ -259,18 +259,31 @@ const _QA_REVIEW_FILES = 12;
 const _QA_SOURCE_RE = /\.(?:js|mjs|cjs|jsx|ts|tsx|css|html?|py|rb|go|rs|java|c|cc|cpp|h|hpp|sh|glsl|vert|frag)$/i;
 const _QA_NOT_SOURCE_RE = /^(?:fg-tasks|memory|node_modules|dist|build|\.git)\/|(?:^|\/)(?:_t-|_probe)[^/]*$|\.min\.(?:js|css)$/;
 
-export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: string; shown: string[]; omitted: string[] }> {
+// Paths of source files left out of the prompt are listed as a sample and a count: a repository of thousands of files
+// would otherwise put every path in the prompt, far past the 100K the file bodies are held to.
+const _QA_OMITTED_LISTED = 20;
+const _QA_PATH_MAX = 200;
+
+export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: string; shown: string[]; omitted: string[]; omittedCount: number }> {
     let all: Array<{ name: string; lastModified?: number; isLocal?: boolean }> = [];
     try { all = (await agentListFiles()) || []; } catch {}
+    // A project kept in the Local Folder (or an imported local/ snapshot) is listed with isLocal and a local/ prefix;
+    // it is the project, so it is reviewed too. The noise filter looks at the path inside the folder.
+    const inProject = (name: string) => name.replace(/^local\//, '');
     const recent = all
-        .filter(f => f?.name && !f.isLocal && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.name))
+        .filter(f => f?.name && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.isLocal ? inProject(f.name) : f.name))
         .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0) || a.name.localeCompare(b.name))
         .map(f => f.name);
     const order = [...new Set([...namedPaths, ...recent])];
     let text = '', total = 0;
     const shown: string[] = [], omitted: string[] = [];
+    let omittedCount = 0;
+    const recentSet = new Set(recent);
     for (const fp of order) {
-        if (shown.length >= _QA_REVIEW_FILES || total >= _QA_REVIEW_TOTAL) { if (recent.includes(fp)) omitted.push(fp); continue; }
+        if (shown.length >= _QA_REVIEW_FILES || total >= _QA_REVIEW_TOTAL) {
+            if (recentSet.has(fp)) { omittedCount++; if (omitted.length < _QA_OMITTED_LISTED) omitted.push(fp.slice(0, _QA_PATH_MAX)); }
+            continue;
+        }
         let body: string;
         try { body = await agentReadFile(fp); } catch { continue; }
         if (typeof body !== 'string') continue;
@@ -280,7 +293,7 @@ export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: st
         total += Math.min(body.length, room);
         shown.push(fp);
     }
-    return { text, shown, omitted };
+    return { text, shown, omitted, omittedCount };
 }
 
 async function gate_task_enrichment(taskPath, content) {
@@ -344,12 +357,12 @@ async function gate_acceptance_review(taskPath, content) {
         for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && filePaths.length < 5) filePaths.push(f);
     }
 
-    const { text: fileContents, shown, omitted } = await gatherReviewCode(filePaths);
+    const { text: fileContents, shown, omitted, omittedCount } = await gatherReviewCode(filePaths);
 
     const prompt =
         `Check whether each acceptance criterion is met in the provided code.\n\n` +
         `Criteria:\n${criteria}\n\nCode:${fileContents || '\n(no files available)'}\n\n` +
-        (omitted.length ? `Source files that exist in the project but are not shown here: ${omitted.join(', ')}. Do not treat a file as missing because it is not shown.\n\n` : '') +
+        (omitted.length ? `Source files that exist in the project but are not shown here: ${omitted.join(', ')}${omittedCount > omitted.length ? ` (and ${omittedCount - omitted.length} more)` : ''}. Do not treat a file as missing because it is not shown.\n\n` : '') +
         `Judge each criterion from the code: ✓ when the code implements it, ✗ when the code lacks it or is clearly wrong` +
         (shown.length ? ` (a behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it)` : '') +
         `; use ? only when the code needed to decide is not shown.\n\n` +
@@ -488,7 +501,19 @@ const GATES = {
 };
 
 
+// Tasks whose "done" went through the completion gates (or needed none), so a runner can tell that from a
+// status an agent wrote straight into the task file with write_file / replace_in_file / the shell.
+const _gatesPassedDone = new Set<string>();
+export const forgetGatePass = (taskPath: string): void => { _gatesPassedDone.delete(taskPath); };
+export const gatesPassedDone = (taskPath: string): boolean => _gatesPassedDone.has(taskPath);
+
 async function transitionTask(taskPath, toStatus) {
+    const r = await _transitionTask(taskPath, toStatus);
+    if (r.transitioned && canonTaskStatus(toStatus) === 'done') _gatesPassedDone.add(taskPath);
+    return r;
+}
+
+async function _transitionTask(taskPath, toStatus) {
     if (!getQaEnabled()) {
         await setTaskStatus(taskPath, toStatus);
         return { transitioned: true };
@@ -555,4 +580,4 @@ async function transitionTask(taskPath, toStatus) {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { setTaskStatus, _updateLedgerRow, transitionTask });
+Object.assign(window, { setTaskStatus, _updateLedgerRow, transitionTask, forgetGatePass, gatesPassedDone });

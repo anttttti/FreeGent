@@ -441,6 +441,9 @@ async function cleanupDanglingCheckpoints(validChatIds) {
         req.onerror   = () => reject(req.error);
     });
     const valid    = new Set(validChatIds);
+    // An empty id list means the chat list was not loaded (or failed to load), not that every chat
+    // was deleted: there is always at least the current chat. Never purge on it.
+    if (!valid.size) return;
     const dangling = all.filter(r => !valid.has(r.chatId));
     if (!dangling.length) return;
     console.error(`[checkpoints] Removing ${dangling.length} dangling snapshot record(s) from deleted chats`);

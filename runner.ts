@@ -283,16 +283,19 @@ function _selectNextTask(tasks: Task[]): Task | null {
 // not that — the agent may still be writing its summary, and the turn's teardown (history save,
 // queue processing) runs after it. Without this, a new task's chat began while the old one was live.
 const _sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
-async function _waitUntilQuiet(settleMs = 0, maxMs = 300_000): Promise<void> {
+// Resolves true once quiet, false if the chat is still busy after maxMs (callers must not treat that as quiet).
+export async function _waitUntilQuiet(settleMs = 0, maxMs = 300_000): Promise<boolean> {
     const t0 = Date.now();
     let quietSince = 0;
     while (!_runnerAbort && Date.now() - t0 < maxMs) {
-        const busy = agentStreaming || (MsgQueue.getAll?.().length ?? 0) > 0;
+        // turnsInFlight covers a dequeued turn's preparation, before agentStreaming is set; the settle delay is no boundary.
+        const busy = agentStreaming || (typeof turnsInFlight === 'function' && turnsInFlight() > 0) || (MsgQueue.getAll?.().length ?? 0) > 0;
         if (busy) quietSince = 0;
-        else if (!quietSince) { quietSince = Date.now(); if (settleMs <= 0) return; }
-        else if (Date.now() - quietSince >= settleMs) return;
+        else if (!quietSince) { quietSince = Date.now(); if (settleMs <= 0) return true; }
+        else if (Date.now() - quietSince >= settleMs) return true;
         await _sleepMs(80);
     }
+    return _runnerAbort;
 }
 
 const _MAX_TURNS_PER_EPISODE = 5;
@@ -310,14 +313,16 @@ export function shouldContinueAfterStepLimit(result: any, continuesSoFar: number
 async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // Something is still streaming (a previous chat winding down, a message the user sent): wait for
     // it instead of failing this task for it.
-    await _waitUntilQuiet();
+    const _quiet = await _waitUntilQuiet();
     if (_runnerAbort) return { success: false, blocked: false, blockedReason: '', failReason: 'Stopped' };
+    if (!_quiet) return { success: false, blocked: false, blockedReason: '', failReason: 'The previous chat is still busy' };
     if (agentStreaming) return { success: false, blocked: false, blockedReason: '', failReason: 'Already streaming' };
 
     // Start through the lifecycle engine, so the dependency, enrichment and rework-limit gates
     // apply to the runner as they do to a card dragged on the board. A refusal ends the episode
     // before any agent work (or a new chat) begins.
     const _startStatus = canonTaskStatus((parseFrontmatter(await agentReadFile(task.path).catch(() => '')).status));
+    forgetGatePass(task.path);
     if (getRunnerQa()) {
         const start = await transitionTask(task.path, 'in-progress');
         if (!start.transitioned) {
@@ -466,10 +471,17 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         } catch { failReason = 'Max turns reached without completion'; }
     }
 
-    // success means the task file reads "done", which only update_task_status can have set
-    // through transitionTask — the QA gates already ran there. Re-running them here first demoted
-    // the finished task to in-progress, and a second acceptance review that failed left it out of
-    // Done (and the "terminal status" fallback below turned it into blocked).
+    // success means the task file reads "done". When that came through update_task_status the QA gates
+    // already ran in transitionTask, and re-running them demoted the finished task to in-progress (a second
+    // acceptance review that failed left it out of Done). But an agent can also write "status: done" straight
+    // into the file (write_file, replace_in_file, the shell), which skips every gate: only that case is
+    // reviewed here, through the same in-progress -> done transition.
+    if (success && !_runnerAbort && getQaEnabled() && !gatesPassedDone(task.path)) {
+        _appendRunnerLog(task.fm.id || '', `${task.fm.title || task.path}`, 'info', 'task file was marked done without update_task_status: running the completion gates');
+        await setTaskStatus(task.path, 'in-progress');
+        const r = await transitionTask(task.path, 'done');
+        if (!r.transitioned) { success = false; failReason = r.reason || 'QA blocked at done gate'; }
+    }
 
     // Ensure task file always ends in a terminal status — catches all exit paths
     // (max turns, STATUS:blocked text signal, QA gate, narration-without-action).
@@ -625,16 +637,28 @@ function _renderRunnerLog() {
         el.innerHTML = '<span class="runner-log-empty">No tasks completed this session.</span>';
         return;
     }
-    el.innerHTML = _runnerSessionLog.slice().reverse().map(e => {
-        const icon = e.outcome === 'done' ? '&#10003;' : e.outcome === 'info' ? '&#9679;' : '&#10007;';
+    // Built with DOM methods: titles, ids and reasons come from task files and model output, so they
+    // must never be parsed as HTML (same rule as _updateRunnerCurrentTask).
+    const span = (cls: string, text: string) => {
+        const s = document.createElement('span');
+        s.className = cls;
+        s.textContent = text;
+        return s;
+    };
+    el.replaceChildren(..._runnerSessionLog.slice().reverse().map(e => {
+        const icon = e.outcome === 'done' ? '\u2713' : e.outcome === 'info' ? '\u25CF' : '\u2717';
         const cls  = e.outcome === 'done' ? 'runner-log-done' : e.outcome === 'info' ? 'runner-log-info' : 'runner-log-fail';
         const id   = e.taskId ? `#${e.taskId} ` : '';
-        const rsn  = e.reason ? ` <span class="runner-log-reason">— ${e.reason}</span>` : '';
-        return `<div class="runner-log-entry ${cls}"><span class="runner-log-icon">${icon}</span> <span class="runner-log-time">${e.time}</span> <span class="runner-log-title">${id}${e.title}</span>${rsn}</div>`;
-    }).join('');
+        const row  = document.createElement('div');
+        row.className = `runner-log-entry ${cls}`;
+        row.append(span('runner-log-icon', icon), ' ', span('runner-log-time', String(e.time ?? '')), ' ',
+                   span('runner-log-title', `${id}${e.title ?? ''}`));
+        if (e.reason) row.append(' ', span('runner-log-reason', `— ${e.reason}`));
+        return row;
+    }));
 }
 
-function _appendRunnerLog(taskId: string | null, title: string, outcome: string, reason: string): void {
+export function _appendRunnerLog(taskId: string | null, title: string, outcome: string, reason: string): void {
     _runnerSessionLog.push({
         time:    new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
         taskId:  taskId || '',

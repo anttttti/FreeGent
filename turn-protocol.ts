@@ -13,7 +13,7 @@
 // Follows the step-validator/nudge-emitter/payload-builder/detectors pattern:
 // ES module, exports, window bridge.
 
-import { workflowMode, setLastTurnDoneToken } from './state.js';
+import { workflowMode, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { getAgentMaxSteps } from './config.js';
 import { getReplyChannelHint } from './reply-channel.js';
 
@@ -150,9 +150,15 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
     // never sent. Say how to send it; the generic redirection below ("you cannot ask the user") would
     // tell the model to stop talking to the very person the task is about. In the uploaded v0.62 tau2
     // run, 16 of 45 conversations got that redirection and 24 ended on a text-only step.
+    let _askedCache: boolean | undefined;   // _asksUser's verdict for this reply, once it has been asked
     const _replyHint = getReplyChannelHint();
     if (_isAutonomous && _replyHint && (ps.replyHints ?? 0) < 3 && step < _maxSteps() - 1 && !_BLOCKED_DECLARATION_RE.test(textContent)) {
-        const _finished = _isComplete(textContent) && !/\?/.test(_stripTerminal(textContent));
+        // A completed-looking reply is a finished task unless it asks the counterpart for something. Requests do not need a
+        // question mark ("Please provide your order number. COMPLETED"), so a reply without one is classified like any
+        // other COMPLETED; the verdict is kept for the completion check below, which would otherwise ask again.
+        const _bodyText = _stripTerminal(textContent).trim();
+        let _finished = _isComplete(textContent) && !/\?/.test(_bodyText);
+        if (_finished) { _askedCache = await _asksUser(_bodyText, ps); _finished = !_askedCache; }
         if (!_finished) {
             ps.replyHints = (ps.replyHints ?? 0) + 1;
             adapter.pushNudge(_replyHint);
@@ -192,7 +198,7 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
             return { kind: 'continue' };
         }
         if (ps.substCheck < 1 && step < _maxSteps() - 1) {
-            const isQuestionDone = _isAutonomous && await _asksUser(bodyText, ps);
+            const isQuestionDone = _isAutonomous && (_askedCache ?? await _asksUser(bodyText, ps));
             if (isQuestionDone) {
                 ps.substCheck++;
                 adapter.pushNudge('You cannot ask the user for information in autonomous mode. Complete the task with available information, or end with BLOCKED: <specific reason>.');
@@ -206,6 +212,10 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
             }
         }
         setLastTurnDoneToken(true);
+        // An accepted "BLOCKED: <reason>" ends the turn here, before the loop's own check for the
+        // declaration: without this the turn's finish signal read 'complete'. A reply that ends
+        // with COMPLETED is a finished task even if a line of its report starts with "BLOCKED:".
+        if (_BLOCKED_DECLARATION_RE.test(textContent) && !_TERMINAL_RE.test(textContent)) setLastTurnBlockedToken(true);
         // When accepting a bounce-retry COMPLETED, prefer the saved pre-bounce answer over an
         // empty body (the model often ends a retry with bare "COMPLETED" — use ps.saved so the
         // actual result isn't lost).

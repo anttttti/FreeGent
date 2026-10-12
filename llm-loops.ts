@@ -20,7 +20,7 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore } from './tools.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
@@ -411,7 +411,17 @@ function _nudgeRole(provider: string | null): 'system' | 'user' {
 //   opts.onStart    : (name, args, i) before execution — workers render their own inline UI here
 //   opts.onTaskDone : called when an update_task_status("done") runs this step
 //   opts.onResult   : (name, args, result) side-effect at completion time (e.g. convo-log)
-const _WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'replace_in_file', 'delete_file', 'execute_code']);
+// Tools that change (or may change) workspace files: after one runs, cached results and the read
+// ledger are stale, and its own result is not served from the cache on an identical repeat.
+// append_file was missing: a read after an append returned the old content, and a second identical
+// append was answered from the cache without running.
+// run_workers is handled apart (see _workersChangedFiles): it changes files only through its workers.
+export const _WRITE_TOOLS = new Set(['write_file', 'append_file', 'apply_patch', 'replace_in_file', 'delete_file', 'undo_write', 'execute_code']);
+export function _workersChangedFiles(result: any): boolean {
+    if (!result || typeof result !== 'object') return false;
+    return ['applied', 'incomplete', 'conflictsResolved'].some(k => Array.isArray(result[k]) && result[k].length > 0)
+        || !!result.conflictsNotMerged;
+}
 // Read-only tools whose success should NOT reset the consecutiveToolFails counter.
 // An ls or read_file between failing attempts would otherwise mask a repeated-failure
 // loop (flask-4992: hit 7 consecutive fails but ls resets kept it running for 5.7M tokens).
@@ -502,7 +512,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
     if (_ledger) _ledgerTicks.set(_ledger, (_ledgerTicks.get(_ledger) ?? 0) + 1);
-    return Promise.all(normCalls.map(async ({ name, args }, i) => {
+    const _runOne = async ({ name, args }: { name: string; args: any }, i: number) => {
         const task = toolTasks?.[i];
         task?.setPrompt(JSON.stringify({ tool: name, args }, null, 2));
         onStart?.(name, args, i);
@@ -612,7 +622,9 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // reads such as AutomationBench's /execute) are stale now. Its own entry is still
             // cached below, so an identical repeat (a duplicate send) is not executed twice.
             // v0.56: 5 reads after a write were answered from the pre-write cache (v0.55: 10).
-            if (name === 'fetch_url' && !/^(GET|HEAD)$/i.test(String(args?.method ?? 'GET'))) repeatCache.clear();
+            // A response marked no-store counts the same way whatever its method: the server says not
+            // to reuse it (a gateway that runs operations from a GET URL marks them so).
+            if (name === 'fetch_url' && (!/^(GET|HEAD)$/i.test(String(args?.method ?? 'GET')) || fetchSaidNoStore(result))) repeatCache.clear();
             if (!result?.error) {
                 // Only cache successful results. Error results are retryable — caching them
                 // would fire a spurious 'tool_repeat' nudge on retry and hand the model the
@@ -625,7 +637,18 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // Eviction for side-effecting tools (including execute_code, which may change the
             // environment) runs regardless of success/error: a write may have partially mutated
             // state even if it returned an error.
-            if (_WRITE_TOOLS.has(name)) {
+            if (name === 'run_workers') {
+                // Workers' file edits make earlier cached reads stale. The call's own entry is kept:
+                // an identical delegation is answered from the cache, as before, not run again
+                // (worker requests are a large share of a run's tokens). A run that changed no
+                // file (researchers) leaves the cache and read tracking alone.
+                if (_workersChangedFiles(result)) {
+                    repeatCache.clear();
+                    if (!result?.error) repeatCache.set(key, result);
+                    _ledger?.clear();
+                }
+            }
+            else if (_WRITE_TOOLS.has(name)) {
                 repeatCache.clear();
                 // execute_code is in _WRITE_TOOLS because it *may* change files; running a repro or
                 // a grep between reads must not reset read tracking, or the loop above never ends.
@@ -639,7 +662,24 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         task?.complete();
         onResult?.(name, args, result);
         return { name, args, result };
-    }));
+    };
+    // Calls in one response run together only when all of them are reads. With a write, a command
+    // or a delegation among them they run one after another in the order written: run together, a
+    // read listed after a write returned the old content, and "write the file, then run it" raced.
+    if (normCalls.length > 1 && !normCalls.every(_isReadOnlyCall)) {
+        const out: Array<{ name: string; args: any; result: any }> = [];
+        for (let i = 0; i < normCalls.length; i++) out.push(await _runOne(normCalls[i], i));
+        return out;
+    }
+    return Promise.all(normCalls.map(_runOne));
+}
+// Tools that only read, whatever their arguments. Anything else (file writes, execute_code,
+// run_workers, MCP and browser tools, task and memory updates, a non-GET fetch_url) may change state.
+const _PARALLEL_SAFE_TOOLS = new Set(['read_file', 'list_files', 'search_workspace', 'repo_map', 'ast_query', 'web_search',
+    'academic_search', 'package_search', 'context7_docs', 'deep_research']);
+export function _isReadOnlyCall(c: { name: string; args: any }): boolean {
+    if (c.name === 'fetch_url') return /^(GET|HEAD)$/i.test(String(c.args?.method ?? 'GET'));
+    return _PARALLEL_SAFE_TOOLS.has(c.name);
 }
 
 // Synthesises a short termination summary when the agent is force-stopped by a hard limit.

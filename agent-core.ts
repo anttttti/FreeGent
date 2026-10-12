@@ -1557,7 +1557,18 @@ function newChat(): void {
 // input reading, attachments, and checkpoints. Both run the same per-turn evaluation via
 // turn-context.js — see that module for why it has to be shared.
 // `placeholder` lets a caller that already owns a render target reuse it across turns.
+// Turns that have started and not yet finished teardown. agentStreaming is only set once a turn's preparation (workspace
+// scan, prelude) is done, so on its own it reads "idle" for that whole window — the runner then opened the next task's chat
+// under a turn that was still starting. A turn is counted from its first line.
+let _turnsActive = 0;
+const turnsInFlight = (): number => _turnsActive;
 async function runAgentTurn(prompt: string, container: HTMLElement | null = null, session?: AgentSession,
+                            opts: { placeholder?: RenderAdapter | null; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] } = {}): Promise<TurnResult> {
+    _turnsActive++;
+    try { return await _runAgentTurn(prompt, container, session, opts); }
+    finally { _turnsActive--; }
+}
+async function _runAgentTurn(prompt: string, container: HTMLElement | null = null, session?: AgentSession,
                             { placeholder: _reusePh = null as RenderAdapter | null, forceToolCall = false,
                               maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {}): Promise<TurnResult> {
     const _s = session ?? defaultSession;
@@ -1608,6 +1619,22 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     let finalText = '';
     let _turnEndReason: import('./session-event.ts').TurnEndReason = { kind: 'completed' };
     let _errored = false;
+    // §4: how the turn's work ended. Read from module-level globals (the canonical source post-turn
+    // for both defaultSession and dedicated sessions, since setLastTurnDoneToken updates the global
+    // which defaultSession proxies, and dedicated sessions are single-threaded).
+    const _finish = (): FinishSignal =>
+        softStopPending              ? 'stopped'  :
+        // The prompt is rolled back on error, so a continuation turn would run without it.
+        _errored                     ? 'error'    :
+        // _lastTurnBlockedToken: set in llm-loops before _stripTerminal removes "BLOCKED:" —
+        // the only reliable way to detect a genuine model BLOCKED declaration at this point.
+        // Checked before the done token: an accepted "BLOCKED: <reason>" is a terminal reply, so
+        // _handleTurnState sets the done token for it too, and the turn used to read 'complete'.
+        _lastTurnBlockedToken        ? 'blocked'  :
+        _lastTurnDoneToken           ? 'complete' :
+        // _BLOCKED_DECLARATION_RE on finalText catches _gracefulSynthesis returns (not stripped).
+        _BLOCKED_DECLARATION_RE.test(finalText) ? 'blocked' :
+        'running';
     try {
         finalText = await runTurn(null, placeholder, { session: _s, forceToolCall, maxSteps, excludeTools });
         if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
@@ -1621,9 +1648,13 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
         _errored = true;
         finalText = _handleTurnError(err, placeholder, 'runAgentTurn');
     } finally {
-        // emit turn/end regardless of how the turn finished.
+        // emit turn/end regardless of how the turn finished. `reason` is the lifecycle; finish and
+        // stopReason record how the work ended, so a blocked or loop-stopped turn is not logged as
+        // an ordinary completion.
         try {
-            (_s._session ?? _evtSess).append('turn/end', { turn: _evtTurn, reason: _turnEndReason, durationMs: Date.now() - _t0Turn });
+            const _stopNow = typeof getTurnStopInfo === 'function' ? getTurnStopInfo() : null;
+            (_s._session ?? _evtSess).append('turn/end', { turn: _evtTurn, reason: _turnEndReason, durationMs: Date.now() - _t0Turn,
+                finish: _finish(), stopReason: _stopNow?.reason ?? null });
         } catch {}
     }
 
@@ -1636,20 +1667,8 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     // Process next queued message after the turn fully tears down.
     setTimeout(() => _processQueue(), 0);
 
-    // §4: build structured TurnResult. Read signal from module-level globals (the canonical
-    // source post-turn for both defaultSession and dedicated sessions, since setLastTurnDoneToken
-    // updates the global which defaultSession proxies, and dedicated sessions are single-threaded).
-    const _finishSignal: FinishSignal =
-        softStopPending              ? 'stopped'  :
-        // The prompt was rolled back above, so a continuation turn would run without it.
-        _errored                     ? 'error'    :
-        _lastTurnDoneToken           ? 'complete' :
-        // _lastTurnBlockedToken: set in llm-loops before _stripTerminal removes "BLOCKED:" —
-        // the only reliable way to detect a genuine model BLOCKED declaration at this point.
-        // _BLOCKED_DECLARATION_RE on finalText catches _gracefulSynthesis returns (not stripped).
-        _lastTurnBlockedToken        ? 'blocked'  :
-        _BLOCKED_DECLARATION_RE.test(finalText) ? 'blocked' :
-        'running';
+    // §4: build structured TurnResult.
+    const _finishSignal: FinishSignal = _finish();
 
     const _stop = typeof getTurnStopInfo === 'function' ? getTurnStopInfo() : null;
     return {
@@ -1662,7 +1681,7 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
-export { runAgentTurn, stopNow, createNewChat };
+export { runAgentTurn, stopNow, createNewChat, turnsInFlight };

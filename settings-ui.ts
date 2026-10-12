@@ -1,4 +1,4 @@
-import { escapeHtml } from './html-escape.js';
+import { escapeHtml, jsArg } from './html-escape.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -55,9 +55,9 @@ function _renderVoicePriorityList(containerId, catalog, storageKey, defaultList)
         const rankCls = i === 0 ? ' model-priority-rank-1' : '';
         html += `<div class="model-priority-row${rankCls}">
   <span class="model-priority-rank">${i + 1}</span>
-  <span class="model-priority-label">${entry.label}</span>
+  <span class="model-priority-label">${escapeHtml(entry.label)}</span>
   <span class="model-priority-provider">${_providerLabel(entry.provider)}</span>
-  <span class="model-priority-cool" style="font-size:10px;color:var(--muted)">${entry.note}</span>
+  <span class="model-priority-cool" style="font-size:10px;color:var(--muted)">${escapeHtml(entry.note)}</span>
   <span class="model-priority-actions">
     ${i > 0 ? `<button class="model-table-btn" onclick="_moveVoiceItem('${storageKey}',${i},-1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
     ${i < list.length - 1 ? `<button class="model-table-btn" onclick="_moveVoiceItem('${storageKey}',${i},1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
@@ -471,7 +471,7 @@ function _renderCooldownPopup() {
         const label = modelFriendlyName(k) || k.split('|').pop();
         const isActive = i === (activeIdx === -1 ? 0 : activeIdx);
         const badge = rem > 0 ? `<span class="mcp-cooling">${rem}s</span>` : `<span class="mcp-ok">✓</span>`;
-        rows.push(`<div class="mcp-row"><span class="mcp-name${isActive ? ' mcp-active' : ''}">${label}</span>${badge}</div>`);
+        rows.push(`<div class="mcp-row"><span class="mcp-name${isActive ? ' mcp-active' : ''}">${escapeHtml(label)}</span>${badge}</div>`);
     });
     popup.innerHTML = rows.join('');
 }
@@ -639,23 +639,23 @@ function renderModelCatalogTable() {
 
     for (const m of rows) {
         const key      = `${m.provider}|${m.model}`;
-        const editBtn = `<button class="model-table-btn model-table-btn-edit" title="Edit model" onclick="openEditModelDialog('${key}')">⚙</button>`;
-        const delBtn  = `<button class="model-table-btn" onclick="deleteModel('${key}')">✕</button>`;
+        const editBtn = `<button class="model-table-btn model-table-btn-edit" title="Edit model" onclick="openEditModelDialog(${jsArg(key)})">⚙</button>`;
+        const delBtn  = `<button class="model-table-btn" onclick="deleteModel(${jsArg(key)})">✕</button>`;
         const _pageUrl = _modelPageUrl(m.provider, m.model);
         const _idText  = m.model.length > 30 ? m.model.slice(0, 28) + '…' : m.model;
         const _lnk = (text: string, url: string, ttl = url) =>
-            url ? `<a href="${url}" target="_blank" rel="noopener" title="${ttl}" class="model-table-link">${text}</a>` : text;
-        html += `<tr data-key="${key}">
+            url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(ttl)}" class="model-table-link">${escapeHtml(text)}</a>` : escapeHtml(text);
+        html += `<tr data-key="${escapeHtml(key)}">
   <td>${_lnk(_providerLabel(m.provider), _pageUrl)}</td>
   <td class="model-table-id">${_lnk(_idText, _pageUrl, m.model)}</td>
-  <td>${m.label}</td>
+  <td>${escapeHtml(m.label)}</td>
   <td class="model-table-params">${_fmtParams(m.params ?? null)}</td>
   <td>${m.contextK}K</td>
-  <td${m.releasedEstimated ? ' style="color:var(--muted)" title="Estimated: the provider gave no release date, so this is when the model was first found"' : ''}>${m.released || ''}</td>
+  <td${m.releasedEstimated ? ' style="color:var(--muted)" title="Estimated: the provider gave no release date, so this is when the model was first found"' : ''}>${escapeHtml(m.released || '')}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
   <td>${m.noKey ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
-  <td class="model-table-note">${m.note || ''}</td>
+  <td class="model-table-note">${escapeHtml(m.note || '')}</td>
   <td style="white-space:nowrap">${editBtn}${delBtn}</td>
 </tr>`;
     }
@@ -1091,7 +1091,7 @@ function _renderPriorityList(containerId, list) {
         // Instead: omit draggable and use a touch-drag handle with touchstart/touchmove/touchend.
         if (_isTouchDevice) {
             html += `<div class="model-priority-row${rankCls}${pausedCls}${selectedCls}" data-idx="${i}"
-            onclick="_priorityRowClick(event,'${key.replace(/'/g, "\\'")}')"
+            onclick="_priorityRowClick(event,${jsArg(key)})"
             ontouchmove="_priorityTouchMove(event)"
             ontouchend="_priorityTouchEnd(event)">
   <span class="model-priority-drag-handle" title="Drag to reorder"
@@ -1099,29 +1099,29 @@ function _renderPriorityList(containerId, list) {
         ontouchmove="_priorityTouchMove(event)"
         ontouchend="_priorityTouchEnd(event)">⠿</span>
   <span class="model-priority-rank">${_inactive(key) ? '–' : i + 1 - [...list.slice(0, i)].filter(_inactive).length}</span>
-  <span class="model-priority-label">${lbl}${coolTag}${keyTag}</span>
+  <span class="model-priority-label">${escapeHtml(lbl)}${coolTag}${keyTag}</span>
   <span class="model-priority-actions">
     ${i > 0 ? `<button class="model-table-btn" title="${upTitle}" onclick="_movePriorityItem('${containerId}',${i},-1)">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
     ${i < list.length - 1 ? `<button class="model-table-btn" title="${downTitle}" onclick="_movePriorityItem('${containerId}',${i},1)">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
-    <button class="model-table-btn model-table-btn-pause${paused ? ' active' : ''}" title="${paused ? 'Resume' : 'Pause'}" onclick="_togglePauseItem('${key}')">${paused ? '+' : '–'}</button>
+    <button class="model-table-btn model-table-btn-pause${paused ? ' active' : ''}" title="${paused ? 'Resume' : 'Pause'}" onclick="_togglePauseItem(${jsArg(key)})">${paused ? '+' : '–'}</button>
     <button class="model-table-btn" title="Remove" onclick="_removePriorityItem('${containerId}',${i})">✕</button>
   </span>
 </div>`;
         } else {
             html += `<div class="model-priority-row${rankCls}${pausedCls}${selectedCls}" data-idx="${i}"
             draggable="true"
-            onclick="_priorityRowClick(event,'${key.replace(/'/g, "\\'")}')"
+            onclick="_priorityRowClick(event,${jsArg(key)})"
             ondragstart="_handleDragStart(event, '${containerId}', ${i})"
             ondragover="_handleDragOver(event)"
             ondragleave="_handleDragLeave(event)"
             ondragend="_handleDragEnd(event)"
             ondrop="_handleDrop(event, '${containerId}', ${i})">
   <span class="model-priority-rank">${_inactive(key) ? '–' : i + 1 - [...list.slice(0, i)].filter(_inactive).length}</span>
-  <span class="model-priority-label">${lbl}${coolTag}${keyTag}</span>
+  <span class="model-priority-label">${escapeHtml(lbl)}${coolTag}${keyTag}</span>
   <span class="model-priority-actions">
     ${i > 0 ? `<button class="model-table-btn" title="${upTitle}" onclick="_movePriorityItem('${containerId}',${i},-1)">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
     ${i < list.length - 1 ? `<button class="model-table-btn" title="${downTitle}" onclick="_movePriorityItem('${containerId}',${i},1)">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
-    <button class="model-table-btn model-table-btn-pause${paused ? ' active' : ''}" title="${paused ? 'Resume' : 'Pause'}" onclick="_togglePauseItem('${key}')">${paused ? '+' : '–'}</button>
+    <button class="model-table-btn model-table-btn-pause${paused ? ' active' : ''}" title="${paused ? 'Resume' : 'Pause'}" onclick="_togglePauseItem(${jsArg(key)})">${paused ? '+' : '–'}</button>
     <button class="model-table-btn" title="Remove" onclick="_removePriorityItem('${containerId}',${i})">✕</button>
   </span>
 </div>`;
@@ -1212,8 +1212,8 @@ function _renderInputModelPicker(picker: HTMLElement): void {
     }
     picker.innerHTML = items.map(it =>
         `<div class="picker-model-item${it.spec === active ? ' picker-active' : ''}"
-              onclick="_selectInputModel('${it.spec.replace(/'/g, "\\'")}')">
-            <span>${it.label}</span>
+              onclick="_selectInputModel(${jsArg(it.spec)})">
+            <span>${escapeHtml(it.label)}</span>
          </div>`
     ).join('') +
     `<div class="picker-model-item picker-all-link" onclick="activateTab('settings');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
@@ -1588,7 +1588,7 @@ function renderMediaModelSelectors() {
             .concat(models.map(m => {
                 const spec = `${m.provider}|${m.model}`;
                 const sel  = current === spec ? ' selected' : '';
-                return `<option value="${spec}"${sel}>${m.provider}/${m.model}</option>`;
+                return `<option value="${escapeHtml(spec)}"${sel}>${escapeHtml(`${m.provider}/${m.model}`)}</option>`;
             })).join('');
         return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             <span style="width:56px;font-size:12px;color:var(--muted);flex-shrink:0">${label}</span>
@@ -2026,19 +2026,19 @@ function _comboRenderDropdown(comboId: string, q: string): void {
         dd.innerHTML = sections.map((sec, si) =>
             (si > 0 ? '<div class="model-combo-sep"></div>' : '') +
             sec.map(o => {
+                // Escaped after the matches are marked, so a label from a provider's model list is text.
                 const hl = re
-                    ? o.label.replace(re, m => `<mark>${m}</mark>`)
-                    : o.label;
-                const safeVal = o.value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    ? escapeHtml(o.label.replace(re, m => `\u0001${m}\u0002`)).replace(/\u0001/g, '<mark>').replace(/\u0002/g, '</mark>')
+                    : escapeHtml(o.label);
                 if (addMode) {
                     // Inline-add mode: clicking anywhere on the row adds the model.
                     // onmousedown fires before onblur so the click is captured before
                     // the dropdown closes; preventDefault keeps focus on the input.
-                    return `<div class="model-combo-option model-combo-option-add" data-value="${o.value}"` +
-                        ` onmousedown="event.preventDefault();_comboAddItem('${comboId}','${safeVal}')">${hl}</div>`;
+                    return `<div class="model-combo-option model-combo-option-add" data-value="${escapeHtml(o.value)}"` +
+                        ` onmousedown="event.preventDefault();_comboAddItem('${comboId}',${jsArg(o.value)})">${hl}</div>`;
                 }
-                return `<div class="model-combo-option" data-value="${o.value}"
-                    onmousedown="_comboSelect('${comboId}','${safeVal}')">${hl}</div>`;
+                return `<div class="model-combo-option" data-value="${escapeHtml(o.value)}"
+                    onmousedown="_comboSelect('${comboId}',${jsArg(o.value)})">${hl}</div>`;
             }).join('')
         ).join('');
     }
@@ -2282,7 +2282,16 @@ function renderMcpTab() {
             removeMcpServer(s.id);
             renderMcpTab();
         });
-        head.append(cb, info, refresh, remove);
+        // Library servers have been checked; for any other server the read-only/destructive labels
+        // are its own claim, used for approval only when the user says so.
+        const trust = _mcpEl('label', 'mcps-trust');
+        const tcbx = document.createElement('input');
+        tcbx.type = 'checkbox';
+        tcbx.checked = mcpAnnotationsTrusted(s);
+        tcbx.addEventListener('change', () => { setMcpServerTrust(s.id, tcbx.checked); renderMcpTab(); });
+        trust.title = 'Use this server\'s own "read-only" and "non-destructive" tool labels when deciding whether a call needs approval. Off: its tools are treated as able to change or delete data.';
+        trust.append(tcbx, ' Trust labels');
+        head.append(cb, info, trust, refresh, remove);
         box.appendChild(head);
 
         if (tools.length) {
@@ -2301,10 +2310,15 @@ function renderMcpTab() {
                 });
                 const ti = _mcpEl('div', 'model-item-info');
                 const nm = _mcpEl('div', 'model-item-name', t.name);
-                const risk = mcpToolRisk(mcpToolName(s.id, t.name));
-                const riskLabel = risk === 'read' ? 'read-only' : risk === 'write' ? 'writes' : 'may modify';
+                const risk  = mcpToolRisk(mcpToolName(s.id, t.name));
+                const claim = mcpToolClaim(mcpToolName(s.id, t.name));
+                // The server's label is shown either way; when it is not trusted it does not lower approval.
+                const unused = claim !== risk;
+                const claimLabel = claim === 'read' ? 'read-only' : claim === 'write' ? 'writes' : 'may modify';
+                const riskLabel = unused ? `${claimLabel} (server's label, not used)` : risk === 'read' ? 'read-only' : risk === 'write' ? 'writes' : 'may modify';
                 const badge = _mcpEl('span', `mcps-risk${risk === 'destructive' ? ' mcps-risk-destructive' : ''}`, riskLabel);
-                badge.title = risk === 'read' ? 'The server marks this tool read-only'
+                badge.title = unused ? 'The server gives this label itself. It is not used until you tick "Trust labels" for this server, so the tool asks for approval when tool approval is on.'
+                    : risk === 'read' ? 'Marked read-only'
                     : risk === 'write' ? 'The server marks this tool as changing data, non-destructively'
                     : 'Not marked read-only: may change or delete data. Asks for approval when tool approval is on.';
                 nm.appendChild(badge);

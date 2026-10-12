@@ -357,7 +357,8 @@ const WORKERS_TOOL_SPEC = {
         properties: {
             agents: {
                 type: 'array',
-                description: 'Workers to run in parallel. Must be an array even for a single worker: agents:[{id,task,role}].',
+                description: 'Workers to run in parallel (at most 8). Must be an array even for a single worker: agents:[{id,task,role}].',
+                maxItems: 8,
                 items: {
                     type: 'object',
                     properties: {
