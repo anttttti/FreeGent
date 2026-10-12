@@ -1,7 +1,7 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
-import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -17,7 +17,7 @@ async function loadTaskFiles() {
         const files = await agentListFiles();
         await Promise.all(
             files
-                .filter(f => (f.name.startsWith('fg-tasks/') || f.name.startsWith('tasks/') || f.name.startsWith('local/tasks/')) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
+                .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
                 .map(async f => {
                     try {
                         // One retry: a transient read failure (IndexedDB hiccup on a low-memory device)

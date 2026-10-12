@@ -1,5 +1,6 @@
 import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
+import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
@@ -416,7 +417,7 @@ function _nudgeRole(provider: string | null): 'system' | 'user' {
 // append_file was missing: a read after an append returned the old content, and a second identical
 // append was answered from the cache without running.
 // run_workers is handled apart (see _workersChangedFiles): it changes files only through its workers.
-export const _WRITE_TOOLS = new Set(['write_file', 'append_file', 'apply_patch', 'replace_in_file', 'delete_file', 'undo_write', 'execute_code']);
+export const _WRITE_TOOLS = new Set<string>(MAY_WRITE_TOOLS);
 export function _workersChangedFiles(result: any): boolean {
     if (!result || typeof result !== 'object') return false;
     return ['applied', 'incomplete', 'conflictsResolved'].some(k => Array.isArray(result[k]) && result[k].length > 0)
@@ -1199,7 +1200,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
     let _stuckCallSigs: string[] = [];     // calls of the last 3 steps, for the stuck nudge's wording
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; blockedCheck?: number; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
@@ -1539,23 +1540,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (_ts.kind === 'return')   return { do: 'return', value: _ts.text };
         if (_ts.kind === 'continue') return { do: 'continue' };
 
-        // Premature BLOCKED: autonomous mode, model declared blocked without making
-        // any tool calls this turn. One bounce only (ps.blockedCheck cap).
-        if (_BLOCKED_DECLARATION_RE.test(textContent)
-            && _s.workflowMode
-            && step < _loopMax - 1 && !softStopPending && !(ps.blockedCheck >= 1)) {
-            let _toolsThisTurn = 0;
-            const _btHist = _histR(_s);
-            for (let _i = _btHist.length - 1; _i >= 0; _i--) {
-                if (_btHist[_i].role === 'user') break;
-                if (_btHist[_i].role === 'tool') _toolsThisTurn++;
-            }
-            if (_toolsThisTurn === 0) {
-                ps.blockedCheck = 1;
-                _emitNudge('premature_blocked', nudge('You declared BLOCKED without attempting the task with available tools. Call execute_code or the relevant tool first; only declare BLOCKED: if the tool call itself fails or returns an error.'));
-                return { do: 'continue' };
-            }
-        }
+        // (A "premature BLOCKED" bounce used to sit here. It could not run: _handleTurnState accepts a
+        // "BLOCKED: <reason>" line as a terminal reply and returns above. It was removed rather than
+        // moved ahead of that call: no v0.70 run ended on a declared BLOCKED without a tool call.)
         // Post-state validation: in workflowMode (no user to ask), any non-terminal text
         // reply is a stall — nudge the model to declare COMPLETED/BLOCKED.
         // Also fires in agentic mode (_stepCount > 0: at least one tool call has already
@@ -1755,7 +1742,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     }
                 }),
                 Infinity,
-                e => e.isTruncated || (activeEndpoint ?? oaiEndpoint()).provider === 'custom',
+                e => e.isTruncated || isCustomEndpoint(activeEndpoint ?? oaiEndpoint()),
                 e => {
                     const ep = activeEndpoint ?? oaiEndpoint();
                     sessionSaveRawMessage?.(activeChatId, {
@@ -2174,7 +2161,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         let envFailNudge: string | null;
         ({ envFailSig: _envFailSig, envFailCount: _envFailCount, envFailTotal: _envFailTotal, envFailMsg: envFailNudge } = _updateEnvFailureDetector(results, _envFailSig, _envFailCount, _envFailTotal));
 
-        const _stepBudgetChars = parseInt(ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())), 10);
+        const _sbc = parseInt(ls(KEYS.AGENT_STEP_BUDGET, String(getAgentMaxToolResult())), 10);
+        const _stepBudgetChars = Number.isFinite(_sbc) && _sbc > 0 ? _sbc : getAgentMaxToolResult();
         const stepBudget = { remaining: _stepBudgetChars };
 
         // The same call returning the same result for the 4th time within the repeat guard's window:

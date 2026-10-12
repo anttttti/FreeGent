@@ -23,6 +23,7 @@ import {
     activeChatId,
 } from './state.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
+import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 import type { Session } from './session.js';
 import { pruneSurface } from './session.js';
 
@@ -412,7 +413,8 @@ export function _capAnyResult(result: any, limit: number): any {
 // the file in between → stub this one. Reads separated by a write are kept (pre-edit state).
 
 const _PRUNE_READ_TOOLS  = new Set(['read_file']);
-const _PRUNE_WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'delete_file', 'append_file']);
+// undo_write changes the file too: a read before it is not a copy of what is there now.
+const _PRUNE_WRITE_TOOLS = new Set<string>(WORKSPACE_WRITE_TOOLS);
 const _PRUNE_MIN_CHARS   = 800;
 
 function _clen(c: any): number { return typeof c === 'string' ? c.length : JSON.stringify(c).length; }

@@ -158,7 +158,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
             const isServer = /HTTP 5\d\d|service unavailable|bad gateway/i.test(msg);
             // 429 — rate limited; apply cooldown rather than removing permanently
             const is429    = /HTTP 429|rate.?limit|too many requests/i.test(msg);
-            if (isGone && ep.provider !== 'custom') {
+            if (isGone && ep.provider !== 'custom' && ep.provider !== 'vllm') {
                 // Pause the model so it is skipped in future turns but stays visible in the
                 // model table for the user to manage (resume / remove themselves).
                 if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {
@@ -168,7 +168,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
                     }
                 }
                 console.log('[suggest] paused (401/404/410):', spec, msg.slice(0, 60));
-            } else if ((isServer || is429) && ep.provider !== 'custom') {
+            } else if ((isServer || is429) && ep.provider !== 'custom' && ep.provider !== 'vllm') {
                 // Transient: mark cooldown so subsequent suggest runs skip this model
                 // until the rate-limit window clears.
                 const markCooldown = _markCooldown;

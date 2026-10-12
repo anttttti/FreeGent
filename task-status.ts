@@ -30,3 +30,11 @@ export function dedupeTasksByTitle<T extends { path: string; fm: any }>(tasks: T
     }
     return tasks.filter(t => { const k = taskTitleKey(t.fm?.title); return !k || keep.get(k) === t; });
 }
+
+// Folders that hold task files: the workspace's fg-tasks/ (or the older tasks/), and the same two
+// inside an attached Local Folder. `local/fg-tasks/` was missing from every check, so a Local
+// Folder project's tasks did not reach the board.
+export const TASK_DIRS = ['fg-tasks/', 'tasks/', 'local/fg-tasks/', 'local/tasks/'];
+export function isTaskPath(path: unknown): boolean {
+    return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d));
+}

@@ -229,7 +229,7 @@ export function getGeminiModel()    {
 function getOAIUrl()         { return ls('fg_openai_url', 'https://api.openai.com/v1').replace(/\/$/, ''); }
 function getOAIKey()         { return ls('fg_openai_key'); }
 function getOAIModel()       { return ls('fg_openai_model', 'gpt-5.4-mini'); }
-export function getOAIContextTokens()   { return parseInt(ls('fg_openai_context',  '50000'), 10); }
+export function getOAIContextTokens()   { const n = parseInt(ls('fg_openai_context',  '50000'), 10); return Number.isFinite(n) && n > 0 ? n : 50000; }
 function getGroqKey()        { return ls('fg_groq_key'); }
 function getNvidiaKey()      { return ls('fg_nvidia_key'); }
 function getNvidiaModel()    { return ls(KEYS.NVIDIA_MODEL, 'nvidia/nemotron-3-super-120b-a12b'); }
@@ -372,11 +372,18 @@ export async function prefetchGeoCache(): Promise<void> {
 
 // ── Agent loop settings ────────────────────────────────────────────────────
 function getAgentToolTruncation()   { return ls('fg_agent_tool_result_truncation', 'true') !== 'false'; }
-function getAgentMaxToolResult()    { return parseInt(ls('fg_agent_max_tool_result', '100000'), 10); }
-function getDirectorMaxToolResult() { return parseInt(ls('fg_director_max_tool_result', '100000'), 10); } // 0 = disabled
+// A whole-number setting. A stored value that is not a number (a hand-edited or imported profile:
+// "80k", "") gives the default, never NaN: with NaN every `> limit` test is false, so results
+// were never truncated and compaction never started.
+export function intSetting(key: string, def: number, min = 0, max = Number.MAX_SAFE_INTEGER): number {
+    const n = parseInt(ls(key, String(def)), 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+}
+function getAgentMaxToolResult()    { return intSetting('fg_agent_max_tool_result', 100000, 1); }
+function getDirectorMaxToolResult() { return intSetting('fg_director_max_tool_result', 100000); } // 0 = disabled
 export function getAgentProactiveCompact() { return ls('fg_agent_proactive_compact', 'true') !== 'false'; }
-export function getAgentCompactAt()        { return parseFloat(ls('fg_agent_compact_at', '0.75')); }
-export function getAgentCompactTokens()    { return parseInt(ls('fg_agent_compact_tokens', '80000'), 10); }
+export function getAgentCompactAt()        { const v = parseFloat(ls('fg_agent_compact_at', '0.75')); return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.75; }
+export function getAgentCompactTokens()    { return intSetting('fg_agent_compact_tokens', 80000); } // 0 = disabled
 
 // Steps per turn: default 100, settable 1–MAX_STEPS. A cleared or invalid field falls back to
 // the default rather than NaN (which ended every turn after its first step).
@@ -391,8 +398,8 @@ export function getAgentConcisePrompts()     { return ls('fg_agent_concise_promp
 export function getAgentWorkerReduce()       { return ls('fg_agent_worker_reduce', 'true') !== 'false'; }
 function getAgentRoleModelRouting()   { return ls('fg_agent_role_model_routing', 'true') !== 'false'; }
 export function getEndpointRotation()        { return ls('fg_endpoint_rotation', 'false') !== 'false'; }
-function getRotationStepN()           { return Math.max(1, parseInt(ls('fg_rotation_step_n', '5'), 10)); }
-function getAgentMaxDelegationDepth() { return parseInt(ls('fg_agent_max_delegation_depth', '1'), 10); }
+function getRotationStepN()           { return intSetting('fg_rotation_step_n', 5, 1); }
+function getAgentMaxDelegationDepth() { return intSetting('fg_agent_max_delegation_depth', 1); }
 function getAgentLedger()             { return ls('fg_agent_ledger', 'true') !== 'false'; }
 function getAgentReviewLogs()         { return ls('fg_agent_review_logs', 'false') !== 'false'; }
 // (entity memory removed)
@@ -408,8 +415,8 @@ function getToolApproval() {
 }
 
 
-function getRunnerMaxConsecutiveFails() { return parseInt(ls('fg_agent_loop_max_consecutive_failures', '5'), 10); }
-function getRateLimitCooldownMs()             { return parseInt(ls('fg_rate_limit_cooldown_min', '2'), 10) * 60_000; }
+function getRunnerMaxConsecutiveFails() { return intSetting('fg_agent_loop_max_consecutive_failures', 5, 1); }
+function getRateLimitCooldownMs()             { return intSetting('fg_rate_limit_cooldown_min', 2) * 60_000; }
 function getRunnerQa()        { return ls('fg_agent_loop_qa',        'true')  !== 'false'; }
 function getGitEnabled()         { return ls('fg_git_enabled',           'false') !== 'false'; }
 function getAstEnabled()         { return ls('fg_ast_enabled',            'false') !== 'false'; }
@@ -417,13 +424,13 @@ function getQaEnabled()          { return ls('fg_qa_enabled',          'true')  
 function getQaTestRunner()       { return ls('fg_qa_test_runner',       'true')  !== 'false'; }
 function getQaAcceptanceReview() { return ls('fg_qa_acceptance_review', 'true')  !== 'false'; }
 function getQaRegressionGuard()  { return ls('fg_qa_regression_guard',  'false') !== 'false'; }
-function getQaReworkLimit()      { return parseInt(ls('fg_qa_rework_limit', '3'), 10); }
+function getQaReworkLimit()      { return intSetting('fg_qa_rework_limit', 3); }
 function getShowNudges()     { return ls('fg_show_nudges', 'false') !== 'false'; }
 function getEditReviewEnabled()  { return ls('fg_edit_review_enabled', 'false') !== 'false'; }
 // Worker thinking budget: token count, or -1 to inherit from main model setting. Default: 24576 (high).
 export function getWorkerThinkingBudget()  {
     const v = parseInt(ls('fg_worker_thinking_budget', '24576'), 10);
-    return v === -1 ? thinkingLevelBudget('google') : v;
+    return v === -1 ? thinkingLevelBudget('google') : Number.isFinite(v) ? v : 24576;
 }
 // preserve_thinking: pass reasoning_content back to vLLM so the chat template re-inserts
 // <think> blocks in subsequent turns (multi-turn reasoning continuity). Default on.

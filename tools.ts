@@ -2,6 +2,7 @@
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
 import { runtime } from './runtime.js';
+import { FILE_WRITE_TOOLS, MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
@@ -447,7 +448,6 @@ function _runsOnHost(name: string, args: any): boolean {
 // browser_* tools that change what a page does or holds (click, type, select, navigate) act on an external site.
 // Every tool that changes workspace files belongs here ("All writes"): append_file and undo_write were
 // missing and wrote without a prompt. run_workers is decided by _workersMayWrite.
-const _FILE_WRITE_TOOLS = ['write_file', 'append_file', 'apply_patch', 'replace_in_file', 'delete_file'];
 // Worker file tools are not gated one by one (their edits are staged and applied when the run ends), so
 // under "All writes" the delegation itself is approved — but only when a requested worker's role can
 // edit files. A read-only researcher run needs no prompt.
@@ -459,10 +459,10 @@ export function _workersMayWrite(args: any): boolean {
         const role = typeof a?.role === 'string' ? a.role.replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase() : '';
         const ceiling = role && typeof rolesRegistry !== 'undefined' ? rolesRegistry.get(role)?.tools : null;
         if (!ceiling || typeof ceiling.has !== 'function') return true;   // unknown role or no tool ceiling
-        return _FILE_WRITE_TOOLS.some(t => ceiling.has(t));
+        return FILE_WRITE_TOOLS.some(t => ceiling.has(t));
     });
 }
-const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'append_file', 'apply_patch', 'replace_in_file', 'undo_write', 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
+const _APPROVAL_ALL_WRITE = new Set<string>([...MAY_WRITE_TOOLS, 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
 
 // ── apply_patch helpers: fuzzy offset correction + LLM disambiguation ────────
 
@@ -2386,7 +2386,7 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         // replace_in_file), and AutomationBench runs called service operations
         // (google_drive_find_multiple_files ×11) as if they were tools. Say what works instead.
         const _target = _PHANTOM_ALIASES[name]?.tool ?? name;
-        const _isWrite = ['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'create_file'].includes(_target);
+        const _isWrite = isFileWriteTool(_target) || _target === 'create_file';
         const _known = typeof ALL_TOOL_NAMES !== 'undefined' && (ALL_TOOL_NAMES as string[]).includes(_target);
         const hint = mainAgentRole.name !== 'director'
             ? `Declare BLOCKED: '${name}' is not available in this role — the Director will handle it.`

@@ -186,7 +186,7 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null): voi
 export function _markFlatCooldown(endpoint: any, exactMs: number | null = null): void {
     if (!endpoint) return;
     const key = `${endpoint.provider}|${endpoint.model}`;
-    const base = endpoint.provider === 'custom' ? 5_000 : RATE_LIMIT_COOLDOWN_MS();
+    const base = (endpoint.provider === 'custom' || endpoint.provider === 'vllm') ? 5_000 : RATE_LIMIT_COOLDOWN_MS();
     _endpointCooldown.set(key, Date.now() + (exactMs != null ? Math.max(exactMs, base) : base));
 }
 // Like _markFlatCooldown but sets exactly `ms` with no rate-limit-cooldown floor.

@@ -3,26 +3,27 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["node"],
-    "sourceMap": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "strict": false,
     "noImplicitAny": false,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    "moduleDetection": "force",
     "skipLibCheck": true
   },
   "include": [
-    "vite.config.ts",
+    "globals.d.ts",
     "dev-api.ts",
     "secret-env.ts",
-    "vitest.config.ts",
     "fg-run.ts",
     "dotenv.ts",
     "headless-runner.ts",
+    "native-exec.ts",
     "bootstrap-jsdom.ts",
     "node-fs-adapter.ts",
-    "node-sqlite-adapter.ts",
-    "tests/**/*.ts"
+    "node-sqlite-adapter.ts"
   ]
 }

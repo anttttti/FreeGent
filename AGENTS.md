@@ -22,10 +22,10 @@ history, model-router, stream-decode, retry, history-convert, step-validator,
 nudge-emitter. Per-turn state (rotation counters, seen-maps, protocol counters) is owned
 by the loop and injected as a parameter object; domain modules hold no per-turn state.
 
-**Registering a new module — four places, always:**
-1. `index.html` — `<script type="module" src="foo.ts">` tag
-2. `headless-runner.ts` — `import './foo.js';`
-3. `tests/setup.js` — `await import('../foo.ts');`
+**Registering a new module — wherever it runs, and always `globals.d.ts`:**
+1. `index.html` — `<script type="module" src="foo.ts">` tag (modules the browser app uses)
+2. `headless-runner.ts` — `import './foo.js';` (modules headless runs use; browser-only UI modules are not imported there)
+3. `tests/setup.js` — `await import('../foo.ts');` (modules most tests need; a test may import others itself)
 4. `globals.d.ts` — a `// ── bridged by foo.ts ──` section for its bridge names
 
 **Headless (benchmarks)**: `headless-runner.ts` imports the same modules into a JSDOM
@@ -39,8 +39,9 @@ after touching bridges or load order.
 - **Module kind is per-file** — ES modules import each other; classic scripts use the window
   bridge. Do NOT add bare `import` to a classic script or free-variable reassignments of
   state vars to a module (use the `state.ts` setters). New files should be ES modules.
-- **No bundle step** — the app is served by the Vite dev server (`vite.config.ts`), which
-  transpiles `.ts` on the fly; there is no production bundling. Docker/headless runs source
+- **No bundle step in development** — the Vite dev server (`vite.config.ts`) transpiles `.ts`
+  on the fly. The deployed site is a production bundle (`npm run build` → `dist/`, run by the
+  deploy workflow), so code must also survive bundling. Docker/headless runs source
   `.ts` via Node `--experimental-strip-types` — no TypeScript-only runtime syntax (e.g.
   constructor parameter properties) in files on that path.
 - **No raw `fetch(...)` to LLM APIs** — use `callLLMComplete` or the streaming loops (see below).
@@ -66,7 +67,7 @@ a `globalThis` bridge (unused since all files are modules). Highlights:
 
 ### One-shot text completions — `callLLMComplete` (workers.js)
 
-**All background LLM calls must go through `callLLMComplete`.** It handles provider routing, retry logic via `withRetry` + `_makeOAIRetryHandler`, model fallback, proxy support, and stepbox UI visibility.
+**Background LLM calls go through `callLLMComplete`** (the one exception is `compactHistory` in `llm-shared.ts`, which sends the main loop's own request so the endpoint's prefix cache is reused, with its own retry handler)**.** It handles provider routing, retry logic via `withRetry` + `_makeOAIRetryHandler`, model fallback, proxy support, and stepbox UI visibility.
 
 ```js
 callLLMComplete(prompt, { temperature, maxTokens, endpoint, label }, handle)

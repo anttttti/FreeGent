@@ -3,7 +3,8 @@
 // globalThis.nativeExec; tests/headless-tools.test.ts runs the tool tests on it.
 import { readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { constants as osConstants } from 'node:os';
 import { scrubEnv } from './secret-env.js';
 import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
 
@@ -15,7 +16,7 @@ function _snapWorkspace(dir: string): Map<string, number> {
         if (depth > 8) return; // guard against deeply nested repos
         try {
             for (const ent of readdirSync(d, { withFileTypes: true })) {
-                if (ent.name.startsWith('.git')) continue; // skip git internals (large + uninteresting)
+                if (ent.name === '.git') continue; // skip git internals (large + uninteresting); .github, .gitignore are files of the project
                 const full = join(d, ent.name);
                 if (ent.isFile()) {
                     try { snap.set(full, statSync(full).mtimeMs); } catch {}
@@ -27,19 +28,32 @@ function _snapWorkspace(dir: string): Map<string, number> {
     return snap;
 }
 
+// What test runners and type checkers leave behind. Not the command's work: a pytest run that
+// changed nothing else used to count as having written files.
+export const TOOL_CACHE_PATH_RE = /(?:^|\/)(?:\.pytest_cache|__pycache__|\.mypy_cache|\.ruff_cache|\.hypothesis|\.tox|\.nox|\.cache|node_modules\/\.cache)\/|(?:^|\/)\.coverage(?:\.[\w.-]+)?$/;
+export const EXEC_TIMEOUT_MS = 120_000;
+// Exit code for a process ended by a signal, as a shell reports it (128 + signal number).
+export function signalExitCode(signal: string | null | undefined): number {
+    const n = signal ? (osConstants.signals as Record<string, number>)[signal] : undefined;
+    return 128 + (n ?? 0) || 1;
+}
+
 export function createNativeExec({ workspaceRoot, targetContainer }: { workspaceRoot?: string | null; targetContainer?: string | null }) {
+    const MAX_OUTPUT = 200_000, TIMEOUT_MS = EXEC_TIMEOUT_MS;
     return (language: string, code: string): Promise<any> => new Promise((resolve) => {
         // JavaScript runs as the body of an async function, as in the browser (exec-sandbox/js-run.ts):
         // top-level await and return work the same in both.
         const js = `(async () => {\n${code}\n})().catch(e => { console.error(e); process.exitCode = 1; });`;
-        const _dc = (bin: string, flag: string, src = code) => ['docker', ['exec', '-i', targetContainer, bin, flag, src]] as const;
+        // In a task container the local timeout only kills the `docker exec` client; the process inside
+        // kept running. `timeout` inside the container ends it too (skipped where the image has none).
+        const _dc = (bin: string, flag: string, src = code) => ['docker', ['exec', '-i', targetContainer, 'sh', '-c',
+            `if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL ${Math.ceil(TIMEOUT_MS / 1000) + 5} "$@"; else exec "$@"; fi`, 'sh', bin, flag, src]] as const;
         const LANG_CMD: Record<string, readonly [string, readonly string[]]> = targetContainer
             ? { bash: _dc('bash', '-c'), python: _dc('python3', '-c'), javascript: _dc('node', '-e', js) }
             : { bash: ['bash', ['-c', code]], python: ['python3', ['-c', code]], javascript: ['node', ['-e', js]] };
         const entry = LANG_CMD[language];
         if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
         const [cmd, cmdArgs] = entry;
-        const MAX_OUTPUT = 200_000, TIMEOUT_MS = 120_000;
         // Snapshot workspace before execution (local only — Docker workspace is on the container).
         const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
         // Snapshot .git/hooks to detect hook-injection attempts (non-.sample files planted by the agent).
@@ -55,7 +69,10 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
         // The runner's environment holds the provider keys (loaded from the credentials file);
         // agent commands get it without them. (docker exec doesn't forward it either way.)
-        const child = execFile(cmd, cmdArgs, { cwd: workspaceRoot, maxBuffer: MAX_OUTPUT, detached: true,
+        // spawn, not execFile: execFile kills the child once stdout passes its maxBuffer, and the
+        // kill read as exit code 0 — a command that printed more than 200 KB stopped there and was
+        // reported as a success (v0.70: 85 results in 26 tasks). The buffers below are bounded already.
+        const child = spawn(cmd, cmdArgs as string[], { cwd: workspaceRoot ?? undefined, detached: true,
             // No __pycache__ in the workspace: it shows in git status, and CPython takes a .pyc for
             // a module edited within the same second (same size) over the edit.
             env: { ...scrubEnv(process.env), PYTHONDONTWRITEBYTECODE: '1' } });
@@ -65,17 +82,22 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         child.stdin?.end();
         child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
         child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
-        child.on('close', (exitCode) => {
-            const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? 0 };
+        child.on('close', (exitCode, signal) => {
+            // Ended by a signal (OOM killer, kill, a crash): never a success.
+            const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
+                ...(exitCode == null && signal ? { signal } : {}) };
             // Detect files written/modified during execution via post-snapshot diff.
             // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
-            if (preSnap && (exitCode ?? 0) === 0 && workspaceRoot) {
+            // Whatever the exit code: a failing command can have changed files too.
+            if (preSnap && workspaceRoot) {
                 const written: string[] = [];
                 try {
                     const postSnap = _snapWorkspace(workspaceRoot);
                     for (const [p, mtime] of postSnap) {
-                        if (!preSnap.has(p) || preSnap.get(p) !== mtime)
-                            written.push(p.startsWith(workspaceRoot + '/') ? p.slice(workspaceRoot.length + 1) : p);
+                        if (!preSnap.has(p) || preSnap.get(p) !== mtime) {
+                            const rel = p.startsWith(workspaceRoot + '/') ? p.slice(workspaceRoot.length + 1) : p;
+                            if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
+                        }
                     }
                 } catch {}
                 if (written.length > 0) result.files_written = written;

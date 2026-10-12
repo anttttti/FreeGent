@@ -32,6 +32,16 @@ function _skillMissingTools(skill) {
     if (!skill.requires_tools) return false;
     return skill.requires_tools.split(',').some(t => !isToolActive(t.trim()));
 }
+// Values of `trigger_on_completion`: always (every completion), edit / always_on_edit (when files
+// were edited this run), triggered (when the skill's own turn-start trigger matched), blocked.
+export const COMPLETION_TRIGGERS = new Set(['always', 'true', 'edit', 'always_on_edit', 'triggered', 'blocked']);
+const _warnedCompletion = new Set<string>();
+function _warnCompletionTrigger(name: string, cond: string): void {
+    if (_warnedCompletion.has(name)) return;
+    _warnedCompletion.add(name);
+    console.warn(`[skills] "${name}": unknown trigger_on_completion "${cond}" — ignored. Use one of: ${[...COMPLETION_TRIGGERS].join(', ')}.`);
+}
+
 // `requires: fg_<key>` frontmatter: the skill is off unless that setting is 'true'. The parser used
 // to drop the field, so the gate never applied; skills without it are unaffected.
 export function _skillRequiresUnmet(skill): boolean {
@@ -285,6 +295,8 @@ export function completionGateGuidance(editsHappened: boolean, blocked: boolean 
     for (const s of skillsRegistry.values()) {
         if (!s.trigger_on_completion) continue;
         const cond = s.trigger_on_completion.trim();
+        // An unknown value (a typo) used to fall through and fire on every completion.
+        if (!COMPLETION_TRIGGERS.has(cond)) { _warnCompletionTrigger(s.name, cond); continue; }
         if (cond === 'edit' && !editsHappened) continue;
         if (cond === 'always_on_edit' && !editsHappened) continue;
         // 'triggered': fire when this skill's own turn-start triggers already matched.

@@ -7,6 +7,27 @@ import type { WorkspaceAdapter } from './workspace.js';
 
 const _LOCAL = 'local/';
 const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__']);
+// Dot-entries are not listed (tool state, caches, credentials: .git, .venv, .ssh, .env), with these
+// exceptions, which are part of a project and which an agent is asked to edit. Hiding them too left
+// CI workflows and ignore files invisible to list_files and to the check for what a worker's code
+// run had written.
+const _SHOWN_DOT_DIRS = new Set(['.github', '.gitlab', '.circleci', '.husky', '.devcontainer', '.storybook']);
+const _SHOWN_DOT_FILE_RE = /^\.(?:gitignore|gitattributes|gitmodules|dockerignore|editorconfig|nvmrc|node-version|python-version|ruby-version|tool-versions|env\.(?:example|sample|template)|gitlab-ci\.yml|travis\.yml|pre-commit-config\.ya?ml|eslintrc(?:\.\w+)?|eslintignore|prettierrc(?:\.\w+)?|prettierignore|babelrc(?:\.\w+)?|stylelintrc(?:\.\w+)?|flake8|pylintrc|coveragerc|clang-format|clang-tidy|rubocop\.yml|mocharc(?:\.\w+)?|browserslistrc)$/;
+export function isListedDotEntry(name: string, isDirectory: boolean): boolean {
+    return isDirectory ? _SHOWN_DOT_DIRS.has(name) : _SHOWN_DOT_FILE_RE.test(name);
+}
+
+/** What a failed read means, for the model: not every failure is a missing file. */
+export function readFailureMessage(err: any, path: string): string {
+    switch (err?.code) {
+        case 'EISDIR':  return `"${path}" is a directory — use list_files to see what is in it.`;
+        case 'EACCES': case 'EPERM': return `Permission denied reading "${path}".`;
+        case 'ENOENT': case 'ENOTDIR': return `File not found: ${path}`;
+        case 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER': case 'ERR_FS_FILE_TOO_LARGE':
+            return `"${path}" is too large to read whole — read a range with start_line/end_line, or use execute_code (head, tail, grep).`;
+        default: return `File not found: ${path}`;
+    }
+}
 
 // ── Shared by NodeFsAdapter and DockerFsAdapter ──────────────────────────────
 
@@ -55,7 +76,7 @@ async function _walkFiles(root: string, { skipNoise = true, maxDepth = Infinity,
         try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
         const pending: Promise<void>[] = [];
         for (const e of entries) {
-            if ((skipNoise && _SKIP.has(e.name)) || e.name.startsWith('.')) continue;
+            if ((skipNoise && _SKIP.has(e.name)) || (e.name.startsWith('.') && !isListedDotEntry(e.name, e.isDirectory()))) continue;
             const rel = prefix ? `${prefix}/${e.name}` : e.name;
             const abs = join(dir, e.name);
             if (e.isDirectory()) {
@@ -153,8 +174,8 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         let buf: Buffer;
         try {
             buf = await readFile(abs);
-        } catch {
-            throw new Error(`File not found: ${path}`);
+        } catch (e) {
+            throw new Error(readFailureMessage(e, path));
         }
         return _decodeTextOrThrow(buf, path);
     }
@@ -207,7 +228,13 @@ export class DockerFsAdapter implements WorkspaceAdapter {
             execFile('docker', ['exec', this._ctr, 'bash', '-c', `cat '${esc}'`],
                 { maxBuffer: 10_000_000, encoding: 'buffer' },
                 (err, stdout) => {
-                    if (err) { reject(new Error(`File not found in container: ${path}`)); return; }
+                    if (err) {
+                        const big = (err as any).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+                        const dir = /Is a directory/i.test(String((err as any).stderr ?? err.message));
+                        reject(new Error(big || dir ? readFailureMessage({ code: big ? 'ERR_FS_FILE_TOO_LARGE' : 'EISDIR' }, path)
+                                                    : `File not found in container: ${path}`));
+                        return;
+                    }
                     try { resolve(_decodeTextOrThrow(stdout as unknown as Buffer, path)); } catch (e) { reject(e); }
                 });
         });
@@ -235,7 +262,9 @@ export class DockerFsAdapter implements WorkspaceAdapter {
     // by every run: a read-only scan staged and "wrote" 462 files (TerminalBench v0.66
     // sanitize-git-repo). `find -printf` is GNU; busybox images take the `stat` loop.
     async agentListFiles(): Promise<Array<{name: string, size: number, lastModified: number}>> {
-        const roots = '/app /home /root /workspace /opt';
+        // The container's working directory first (a task that lives in /srv or /data was not
+        // listed at all), then the usual places.
+        const roots = `$(case "$PWD" in /|/app|/app/*|/home|/home/*|/root|/root/*|/workspace|/workspace/*|/opt|/opt/*|/proc*|/sys*|/dev*) ;; *) printf '%s' "$PWD";; esac) /app /home /root /workspace /opt`;
         const script =
             `out=$(find ${roots} \\( -type f -o -type l \\) -printf '%s\\t%T@\\t%p\\n' 2>/dev/null | head -500); `
             + `if [ -n "$out" ]; then printf '%s\\n' "$out"; else `
@@ -262,8 +291,9 @@ export class DockerFsAdapter implements WorkspaceAdapter {
     async agentDeleteFile(path: string): Promise<void> {
         const esc = path.replace(/'/g, "'\\''");
         return new Promise((resolve, reject) => {
-            execFile('docker', ['exec', this._ctr, 'bash', '-c', `rm -f '${esc}'`],
-                (err) => err ? reject(err) : resolve());
+            // Without -f, as the local adapter: deleting a file that is not there is an error to report.
+            execFile('docker', ['exec', this._ctr, 'bash', '-c', `rm '${esc}'`],
+                (err) => err ? reject(new Error(`Cannot delete: ${path}`)) : resolve());
         });
     }
 
