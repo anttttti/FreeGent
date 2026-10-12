@@ -107,6 +107,17 @@ function makeKanbanCard(task) {
     };
     card.appendChild(trash);
 
+    const editBtn = document.createElement('button');
+    editBtn.className = 'kanban-card-edit';
+    editBtn.title = 'Edit this task: title, status, priority, description and acceptance criteria';
+    editBtn.textContent = '✎';
+    editBtn.draggable = false;
+    editBtn.onclick = e => {
+        e.stopPropagation();
+        openEditTaskDialog(task.path);
+    };
+    card.appendChild(editBtn);
+
     // Manual block / unblock: a plain status flip (no QA gates). Unblocking returns the task to To Do.
     const isBlocked = canonTaskStatus(task.fm.status) === 'blocked';
     const blockBtn = document.createElement('button');
@@ -176,44 +187,222 @@ function makeKanbanCard(task) {
 }
 
 function openAddTaskDialog(status: string) {
+    openTaskDialog({ status });
+}
+
+async function openEditTaskDialog(path: string) {
+    let content: string;
+    try {
+        content = await agentReadFile(path);
+    } catch (e: any) {
+        alert('Failed to open task: ' + (e?.message || e));
+        return;
+    }
+    openTaskDialog({ path, content });
+}
+
+// Split a task file into the parts the dialog edits and the rest, which is written back untouched.
+function parseTaskForEdit(content: string) {
+    const norm = content.replace(/\r\n/g, '\n');
+    const m = norm.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/);
+    const fmLines = m ? m[1].split('\n') : [];
+    const body = m ? norm.slice(m[0].length) : norm;
+    const fm: Record<string, string> = {};
+    for (const l of fmLines) {
+        const i = l.indexOf(':');
+        if (i > 0) fm[l.slice(0, i).trim()] = l.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+    }
+    const critIdx = body.search(/^## Acceptance Criteria[ \t]*$/im);
+    const head = critIdx === -1 ? body : body.slice(0, critIdx);
+    let rest = '';
+    const criteria: { text: string; checked: boolean }[] = [];
+    if (critIdx !== -1) {
+        const after = body.slice(critIdx).replace(/^.*\n?/, '');
+        const next = after.search(/^## /m);
+        const block = next === -1 ? after : after.slice(0, next);
+        rest = next === -1 ? '' : after.slice(next);
+        for (const l of block.split('\n')) {
+            const cm = l.match(/^\s*[-*]\s*(?:\[([ xX])\]\s*)?(.*\S)\s*$/);
+            if (cm) criteria.push({ text: cm[2], checked: /x/i.test(cm[1] || '') });
+        }
+    }
+    // "## Attachments": one workspace path per list item; pulled out of `rest` so it is written back
+    // from the dialog's list.
+    const attachments: string[] = [];
+    const am = rest.match(/^## Attachments[ \t]*\n/m);
+    if (am && am.index !== undefined) {
+        const from = am.index + am[0].length;
+        const nx = rest.slice(from).search(/^## /m);
+        const block = nx === -1 ? rest.slice(from) : rest.slice(from, from + nx);
+        for (const l of block.split('\n')) {
+            const t = l.match(/^\s*[-*]\s+(.*\S)\s*$/);
+            if (t) attachments.push(t[1].replace(/^`|`$/g, ''));
+        }
+        rest = rest.slice(0, am.index) + (nx === -1 ? '' : rest.slice(from + nx));
+    }
+    const h = head.match(/^# (.*)$/m);
+    const desc = head.replace(/^# .*\n?/m, '').trim();
+    return { fmLines, fm, heading: h ? h[1] : '', desc, criteria, attachments, rest };
+}
+
+function attachmentsBlock(paths: string[]): string {
+    return paths.length ? `## Attachments\n${paths.map(p => `- ${p}`).join('\n')}\n` : '';
+}
+
+function openTaskDialog(opts: { status?: string; path?: string; content?: string }) {
+    const editing = opts.path !== undefined;
+    const parsed = editing ? parseTaskForEdit(opts.content || '') : null;
+    const status = opts.status || 'todo';
     document.getElementById('fg-add-task-dialog')?.remove();
     const overlay = document.createElement('div');
     overlay.id = 'fg-add-task-dialog';
     overlay.className = 'fg-modal-overlay';
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    // Attachments: workspace paths listed in the task file. Uploads made in this dialog are written to
+    // the workspace at once, so they are deleted again when the dialog closes without saving.
+    const attached: string[] = parsed ? [...parsed.attachments] : [];
+    const uploaded = new Set<string>();
+    let saved = false;
+    const dismiss = () => {
+        overlay.remove();
+        if (!saved) for (const p of uploaded) void agentDeleteFile?.(p).catch(() => {});
+    };
+    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
     const lbl = 'padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:80px;vertical-align:top';
     const inp = 'margin:0;width:100%';
     const statuses = [['open', 'To Do'], ['in-progress', 'In Progress'], ['in-review', 'Review'], ['done', 'Done']];
-    const cur = status === 'todo' ? 'open' : status;
+    let cur = status === 'todo' ? 'open' : status;
+    if (parsed) {
+        const col = columnOfStatus(parsed.fm.status);
+        cur = col === 'todo' ? 'open' : col === 'review' ? 'in-review' : col;
+    }
+    const priorities = ['High', 'Medium', 'Low'];
+    const curPrio = parsed ? (priorities.find(p => p.toLowerCase() === (parsed.fm.priority || '').toLowerCase()) || 'Medium') : 'Medium';
+    const verb = editing ? 'Save task' : 'Add task';
     overlay.innerHTML = `<div class="fg-modal" style="max-width:520px;width:95%">
   <div class="fg-modal-header">
-    <span class="fg-modal-title">Add task</span>
-    <button class="fg-modal-close" id="atd-close" title="Close without adding a task">✕</button>
+    <span class="fg-modal-title">${editing ? 'Edit task' : 'Add task'}</span>
+    <button class="fg-modal-close" id="atd-close" title="Close without ${editing ? 'saving' : 'adding a task'}">✕</button>
   </div>
   <div class="fg-modal-body">
     <table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>
       <tr><td style="${lbl}">Title</td><td><input class="settings-input" id="atd-title" type="text" style="${inp}" placeholder="Short imperative title"></td></tr>
       <tr><td style="${lbl}">Status</td><td><select class="settings-input" id="atd-status" style="${inp}">${statuses.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>
-      <tr><td style="${lbl}">Priority</td><td><select class="settings-input" id="atd-priority" style="${inp}"><option>High</option><option selected>Medium</option><option>Low</option></select></td></tr>
+      <tr><td style="${lbl}">Priority</td><td><select class="settings-input" id="atd-priority" style="${inp}">${priorities.map(p => `<option ${p === curPrio ? 'selected' : ''}>${p}</option>`).join('')}</select></td></tr>
       <tr><td style="${lbl}">Description</td><td><textarea class="settings-input" id="atd-desc" rows="4" style="${inp};resize:vertical" placeholder="What to do and what done looks like"></textarea></td></tr>
+      <tr><td style="${lbl}">Files</td><td>
+        <div class="attach-wrap" style="display:inline-block">
+          <button type="button" class="fg-modal-btn" id="atd-attach-btn" aria-haspopup="true" title="Attach files to this task: from the device, an upload, or the workspace" style="display:inline-flex;align-items:center;gap:6px">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attachments</button>
+          <div class="attach-menu down" id="atd-attach-menu" role="menu">
+            <button type="button" role="menuitem" id="atd-attach-device" title="Use the device's attachment sheet: camera, photo library, files">&#128247; Attach <span class="attach-menu-hint">camera / photos</span></button>
+            <button type="button" role="menuitem" id="atd-attach-upload" title="Upload any file from this device">&#8679; Upload <span class="attach-menu-hint">any file</span></button>
+            <button type="button" role="menuitem" id="atd-attach-ws" title="Pick files already in the workspace or synced folder">&#128193; Select <span class="attach-menu-hint">from workspace</span></button>
+          </div>
+          <input type="file" id="atd-file-device" multiple accept="image/*,audio/*,video/*">
+          <input type="file" id="atd-file-any" multiple>
+        </div>
+        <div id="atd-attached" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px"></div>
+      </td></tr>
       <tr><td style="${lbl}">Criteria</td><td><textarea class="settings-input" id="atd-criteria" rows="3" style="${inp};resize:vertical" placeholder="Acceptance criteria, one per line"></textarea></td></tr>
     </tbody></table>
     <div id="atd-err" style="color:#c62828;font-size:11px;min-height:14px"></div>
   </div>
   <div class="fg-modal-btns">
-    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel" title="Close without adding a task">Cancel</button>
-    <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok" title="Create the task file with these details and add it to the board">Add task</button>
+    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel" title="Close without ${editing ? 'saving' : 'adding a task'}">Cancel</button>
+    <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok" title="${editing ? 'Write these changes to the task file' : 'Create the task file with these details and add it to the board'}">${verb}</button>
   </div>
 </div>`;
     document.body.appendChild(overlay);
     const $ = (id: string) => overlay.querySelector('#' + id) as any;
-    $('atd-close').onclick = $('atd-cancel').onclick = () => overlay.remove();
+    $('atd-close').onclick = $('atd-cancel').onclick = dismiss;
+    const menu = $('atd-attach-menu');
+    const renderAttached = () => {
+        const box = $('atd-attached');
+        box.textContent = '';
+        for (const path of attached) {
+            const chip = document.createElement('span');
+            chip.className = 'file-chip';
+            chip.title = path;
+            chip.append((path.split('/').pop() || path) + ' ');
+            const x = document.createElement('button');
+            x.type = 'button'; x.textContent = '✕'; x.title = 'Remove this file from the task (the file itself is kept)';
+            x.style.cssText = 'background:none;border:0;cursor:pointer;color:inherit;padding:0 2px';
+            x.onclick = () => { attached.splice(attached.indexOf(path), 1); renderAttached(); };
+            chip.appendChild(x);
+            box.appendChild(chip);
+        }
+    };
+    const addPaths = (paths: string[]) => { for (const p of paths) if (!attached.includes(p)) attached.push(p); renderAttached(); };
+    const upload = async (input: HTMLInputElement) => {
+        const files = [...(input.files || [])];
+        input.value = '';
+        for (const f of files) {
+            try {
+                const path = await (window as any).saveFileToWorkspace(f);
+                uploaded.add(path);
+                addPaths([path]);
+            } catch (e: any) {
+                $('atd-err').textContent = `Failed to attach ${f.name}: ${e?.message || e}`;
+            }
+        }
+    };
+    $('atd-attach-btn').onclick = (e: Event) => { e.stopPropagation(); menu.classList.toggle('open'); };
+    overlay.addEventListener('click', e => {
+        if (!(e.target as HTMLElement).closest?.('.attach-wrap')) menu.classList.remove('open');
+    });
+    $('atd-attach-device').onclick = () => { menu.classList.remove('open'); $('atd-file-device').click(); };
+    $('atd-attach-upload').onclick = () => { menu.classList.remove('open'); $('atd-file-any').click(); };
+    $('atd-attach-ws').onclick = async () => {
+        menu.classList.remove('open');
+        addPaths(await (window as any).pickWorkspaceFiles('Attach files to the task'));
+    };
+    $('atd-file-device').onchange = (e: Event) => upload(e.target as HTMLInputElement);
+    $('atd-file-any').onchange = (e: Event) => upload(e.target as HTMLInputElement);
+    renderAttached();
+    if (parsed) {
+        $('atd-title').value = parsed.fm.title || parsed.heading;
+        $('atd-desc').value = parsed.desc;
+        $('atd-criteria').value = parsed.criteria.map(c => c.text).join('\n');
+    }
     $('atd-title').focus();
     $('atd-ok').onclick = async () => {
         const title = $('atd-title').value.trim().replace(/\s+/g, ' ');
         if (!title) { $('atd-err').textContent = 'Title is required.'; return; }
         $('atd-ok').disabled = true;
         try {
+            if (parsed && opts.path) {
+                const stripBullet = (l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '');
+                const crit = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
+                const checked = new Set(parsed.criteria.filter(c => c.checked).map(c => c.text));
+                const set: Record<string, string> = {
+                    title: title.replace(/:/g, ' -'),
+                    priority: $('atd-priority').value,
+                    updated: new Date().toISOString().slice(0, 10),
+                };
+                const seen = new Set<string>();
+                const lines: string[] = [];
+                for (const l of parsed.fmLines) {
+                    const k = l.slice(0, Math.max(l.indexOf(':'), 0)).trim();
+                    if (k in set) { if (!seen.has(k)) { lines.push(`${k}: ${set[k]}`); seen.add(k); } }
+                    else lines.push(l);
+                }
+                for (const k of Object.keys(set)) if (!seen.has(k)) lines.push(`${k}: ${set[k]}`);
+                const out = `---\n${lines.join('\n')}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n`
+                    + crit.map(c => `- [${checked.has(c) ? 'x' : ' '}] ${c}`).join('\n') + (crit.length ? '\n' : '')
+                    + attachmentsBlock(attached)
+                    + (parsed.rest || '## Log\n');
+                await agentWriteFile(opts.path, out);
+                saved = true;
+                // A status change goes through the same gates as dragging the card to another column.
+                const newStatus = $('atd-status').value;
+                if (newStatus !== cur) {
+                    const r = await transitionTask(opts.path, newStatus);
+                    if (!r.transitioned) alert('Status change blocked: ' + (r.reason || 'QA gate blocked transition'));
+                }
+                overlay.remove();
+                await syncLedgerWithTaskFiles();
+                return;
+            }
             const existing = await loadTaskFiles();
             const nextId = Math.max(0, ...existing.map(t => Number(t.fm.id) || 0),
                 ...existing.map(t => Number((t.path.match(/\/(\d+)-/) || [])[1]) || 0)) + 1;
@@ -221,16 +410,17 @@ function openAddTaskDialog(status: string) {
             const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
             const criteria = $('atd-criteria').value.split('\n').map((l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '')).filter(Boolean);
             const today = new Date().toISOString().slice(0, 10);
-            const content = `---\nid: ${id}\ntitle: ${title.replace(/:/g, ' -')}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n## Log\n`;
+            const content = `---\nid: ${id}\ntitle: ${title.replace(/:/g, ' -')}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
             await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
+            saved = true;
             overlay.remove();
             await syncLedgerWithTaskFiles();   // new row in the ledger, then refresh the board
         } catch (e: any) {
-            $('atd-err').textContent = 'Failed to add task: ' + (e?.message || e);
+            $('atd-err').textContent = `Failed to ${editing ? 'save' : 'add'} task: ` + (e?.message || e);
             $('atd-ok').disabled = false;
         }
     };
-    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
 }
 
 // Column drop targets. Wired once; the column elements persist across refreshes.
@@ -311,4 +501,4 @@ async function syncLedgerWithTaskFiles() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { openAddTaskDialog, moveTaskToColumn, loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });
+Object.assign(window, { openAddTaskDialog, openEditTaskDialog, moveTaskToColumn, loadTaskFiles, refreshTasks, syncLedgerWithTaskFiles });

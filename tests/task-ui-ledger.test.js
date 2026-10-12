@@ -42,6 +42,47 @@ describe('ledger follows the Tasks tab', () => {
         expect(files['fg-tasks/ledger.md']).toContain('## Archive\nold stuff');
     });
 
+    it('editing a task rewrites its file in place and updates its row', async () => {
+        files['fg-tasks/001-first.md'] = '---\nid: 001\ntitle: First\nstatus: open\npriority: High\ncreated: 2026-01-01\n---\n# First\nOld desc\n## Acceptance Criteria\n- [x] kept\n- [ ] dropped\n## Log\n### 2026-01-02 — did a thing\n';
+        await W.refreshTasks();
+        document.querySelector('.kanban-card-edit').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-title')).toBeTruthy());
+        expect(document.getElementById('atd-title').value).toBe('First');
+        expect(document.getElementById('atd-desc').value).toBe('Old desc');
+        document.getElementById('atd-title').value = 'Renamed';
+        document.getElementById('atd-priority').value = 'Low';
+        document.getElementById('atd-criteria').value = 'kept\nnew one';
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(ledgerRows()).toEqual([['001', 'open', 'Low', 'Renamed']]));
+        const out = files['fg-tasks/001-first.md'];
+        expect(out).toContain('id: 001');
+        expect(out).toContain('created: 2026-01-01');
+        expect(out).toContain('- [x] kept\n- [ ] new one');
+        expect(out).toContain('### 2026-01-02 — did a thing');
+        expect(Object.keys(files).filter(k => /^fg-tasks\/\d/.test(k))).toEqual(['fg-tasks/001-first.md']);
+    });
+
+    it('attachments are listed in the task file and survive an edit', async () => {
+        W.saveFileToWorkspace = async f => { const p = `attachments/1-x/${f.name}`; files[p] = 'bytes'; return p; };
+        W.pickWorkspaceFiles = async () => ['docs/spec.md'];
+        W.openAddTaskDialog('todo');
+        document.getElementById('atd-title').value = 'With files';
+        document.getElementById('atd-attach-ws').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-attached').textContent).toContain('spec.md'));
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(files['fg-tasks/002-with-files.md']).toBeDefined());
+        expect(files['fg-tasks/002-with-files.md']).toContain('## Attachments\n- docs/spec.md\n## Log');
+        await W.refreshTasks();
+        await W.openEditTaskDialog('fg-tasks/002-with-files.md');
+        expect(document.getElementById('atd-attached').textContent).toContain('spec.md');
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());
+        const out = files['fg-tasks/002-with-files.md'];
+        expect(out.match(/## Attachments/g)).toHaveLength(1);
+        expect(out).toContain('- docs/spec.md');
+        delete W.saveFileToWorkspace; delete W.pickWorkspaceFiles;
+    });
+
     it('moving a task updates its row', async () => {
         await W.refreshTasks();
         await W.moveTaskToColumn('fg-tasks/001-first.md', 'done');

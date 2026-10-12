@@ -647,11 +647,12 @@ html, body {
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px;
     box-shadow: 0 4px 16px rgba(0,0,0,.25); }
 .attach-menu.open { display: block; }
+.attach-menu.down { bottom: auto; top: 100%; margin-top: 4px; }
 .attach-menu button { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
     color: var(--text); padding: 9px 10px; border-radius: 7px; cursor: pointer; font: inherit; }
 .attach-menu button:hover { background: var(--surface2); }
 .attach-menu-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
-.ws-pick-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.ws-pick-overlay { position: fixed; inset: 0; z-index: 9500; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .ws-pick-box { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
     width: min(560px, 100%); max-height: 80vh; display: flex; flex-direction: column; gap: 8px; }
 .ws-pick-title { font-weight: 600; }
@@ -1154,6 +1155,9 @@ html, body {
 .kanban-card-block { position: absolute; top: 4px; right: 24px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; }
 .kanban-card:hover .kanban-card-block { opacity: 0.6; }
 .kanban-card-block:hover { opacity: 1 !important; }
+.kanban-card-edit { position: absolute; top: 4px; right: 64px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; }
+.kanban-card:hover .kanban-card-edit { opacity: 0.6; }
+.kanban-card-edit:hover { opacity: 1 !important; }
 .kanban-card-play { position: absolute; top: 4px; right: 44px; background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; opacity: 0; transition: opacity 0.15s; color: var(--accent); }
 .kanban-card:hover .kanban-card-play { opacity: 0.8; }
 .kanban-card-play:hover { opacity: 1 !important; }

@@ -1134,16 +1134,11 @@ export function createResponsePlaceholder(container: null | undefined = null, op
                     if (isError) {
                         const es = document.createElement('span'); es.className = 'step-err'; es.textContent = text;
                         aggTabs.pres.Output.appendChild(es);
-                        // Auto-expand the event log so errors are immediately visible.
-                        // Enforce mutual exclusion — close Step Graph and set preference to Event Log.
+                        // Never switch the open view on the user's behalf: an error used to close the Step
+                        // graph and open the Event log mid-turn. Flag the Event log row instead.
                         if (aggDetail.style.display === 'none') {
-                            aggDetail.style.display = '';
-                            aggToggle.textContent = '▼';
-                            _userPreferEventLog = true;
-                            if (graphDetailEl.style.display !== 'none') {
-                                graphDetailEl.style.display = 'none';
-                                graphToggle.textContent = '▶';
-                            }
+                            aggLabel.textContent = 'Event log ⚠';
+                            aggRowEl.title = 'The event log has errors';
                         }
                         aggRowEl.style.display = '';
                     } else {
