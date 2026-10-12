@@ -123,6 +123,7 @@ export async function directorLoop(
     // a blocked result so callers never see finishSignal='running' after the loop exits.
     if (result.finishSignal === 'running' && !session.softStopPending) {
         result = { ...result, finishSignal: 'blocked',
+            stop: { reason: result.stop?.reason ?? 'reached max continuations', edited },
             text: result.text + '\n\nBLOCKED: reached max continuations without completing the task.' };
     }
 

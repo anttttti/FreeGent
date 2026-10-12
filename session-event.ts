@@ -32,8 +32,12 @@ export interface SessionEventMap {
     // ── Structural / turn lifecycle ──────────────────────────────────────────
     // Open a turn before any user input is committed to history.
     'turn/start':        { turn: number; chatId: string };
-    // Close a turn; carries reason and wall-clock duration.
-    'turn/end':          { turn: number; reason: TurnEndReason; durationMs?: number };
+    // Close a turn; carries reason and wall-clock duration. `reason` is the lifecycle (did the turn
+    // return, throw, or get stopped); `finish` and `stopReason` say how the work ended: a turn that
+    // returns normally has reason 'completed' whether the agent finished, declared BLOCKED, or was
+    // stopped by the loop (repeated calls, step limit — then stopReason names it).
+    'turn/end':          { turn: number; reason: TurnEndReason; durationMs?: number;
+                           finish?: 'complete' | 'blocked' | 'running' | 'stopped' | 'error'; stopReason?: string | null };
     // Open one model call + tool-execution cycle within a turn.
     'step/start':        { turn: number; step: number; model: string; provider: string };
     // Close a step.

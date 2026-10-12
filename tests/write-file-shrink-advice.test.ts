@@ -4,6 +4,7 @@
 // shrink rejections). The prompt's Write line also promised "edit, patch, or delete" for write_file.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { setDirectorHeadlessTools } from '../workers.ts';
+import { enabledTools } from '../config.ts';
 
 const W = globalThis as any;
 
@@ -12,9 +13,13 @@ const role = (...tools: string[]) => ({ name: 'director', tools: new Set(tools) 
 
 let files: Map<string, string>;
 let orig: Record<string, any>;
+let toolsBefore: string[];
 
 beforeEach(() => {
     files = new Map([['big.py', BIG]]);
+    // The advice follows the tools the schema offers, so the editing tools are enabled here (as --enable-tools does headless).
+    toolsBefore = [...enabledTools];
+    for (const t of ['replace_in_file', 'apply_patch', 'execute_code', 'write_file', 'read_file']) enabledTools.add(t);
     orig = { r: W.agentReadFile, w: W.agentWriteFile, d: W.agentDeleteFile, l: W.agentListFiles, role: W.mainAgentRole };
     W.agentReadFile = async (p: string) => { if (!files.has(p)) throw new Error(`File not found: ${p}`); return files.get(p); };
     W.agentWriteFile = async (p: string, c: string) => { files.set(p, c); };
@@ -24,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
     W.agentReadFile = orig.r; W.agentWriteFile = orig.w; W.agentDeleteFile = orig.d; W.agentListFiles = orig.l;
     W.mainAgentRole = orig.role;
+    enabledTools.clear(); for (const t of toolsBefore) enabledTools.add(t);
 });
 
 const shrink = async (context: any = null) => W.executeToolAsync('write_file', { path: 'big.py', content: 'def f0():\n    return 0\n' }, context);
@@ -64,6 +70,16 @@ describe('shrink advice follows the caller\'s tools', () => {
         const r = await shrink(ctx);
         expect(r.error).toContain('Use apply_patch for targeted edits');
         expect(r.error).not.toContain('replace_in_file');
+    });
+});
+
+describe('shrink advice follows the enabled tools', () => {
+    it('does not recommend replace_in_file/apply_patch once they are disabled, though the role ceiling allows them', async () => {
+        W.mainAgentRole = role('write_file', 'replace_in_file', 'apply_patch', 'execute_code');
+        enabledTools.delete('replace_in_file'); enabledTools.delete('apply_patch');
+        const r = await shrink();
+        expect(r.error).not.toMatch(/replace_in_file|apply_patch/);
+        expect(r.error).toContain('execute_code');
     });
 });
 

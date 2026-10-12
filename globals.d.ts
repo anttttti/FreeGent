@@ -38,6 +38,7 @@ declare global {
     var _setInputText: any;
     var _updateSendBtnVisibility: () => void;
     var agentSend: (container?: HTMLElement | null) => Promise<void>;
+    var turnsInFlight: () => number;
     var runAgentTurn: (prompt: string, container?: HTMLElement | null, session?: any, opts?: { placeholder?: any }) => Promise<string>;
     var autoResizeTextarea: any;
     var clearCheckpoints: any;
@@ -440,6 +441,9 @@ declare global {
     var removeMcpServer: any;
     var refreshMcpServer: any;
     var setMcpServerEnabled: any;
+    var setMcpServerTrust: any;
+    var mcpToolClaim: any;
+    var mcpAnnotationsTrusted: any;
     var setMcpToolEnabled: any;
     var mcpToolSpecs: any;
     var mcpToolNames: any;
@@ -502,6 +506,8 @@ declare global {
     var _updateLedgerRow: any;
     var setTaskStatus: any;
     var transitionTask: any;
+    var forgetGatePass: any;
+    var gatesPassedDone: any;
     // ── bridged by fetch-blacklist.ts ──
     var blacklistAdd: (url: string) => void;
     var blacklistRemove: (url: string) => void;
@@ -647,6 +653,7 @@ declare global {
     // ── bridged by tool-schemas.ts ──
     var _hasBashOrCode: any;
     var activeTools: any;
+    var _sessionToolFilter: any;
     var buildOAITools: any;
     // ── bridged by tools.ts ──
     var executeToolAsync: any;

@@ -1,5 +1,6 @@
 // profiles.js — FreeGent settings profiles
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
+import { escapeHtml } from './html-escape.js';
 
 // Settings captured in a profile — everything except API credentials (keys are never captured)
 const PROFILE_KEYS = [
@@ -347,17 +348,17 @@ function _renderDiffInto(el, changes) {
     const html = [];
     for (const [sect, items] of Object.entries(bySect)) {
         html.push('<div style="margin-bottom:10px">');
-        html.push('<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:5px">' + sect + '</div>');
+        html.push('<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:5px">' + escapeHtml(sect) + '</div>');
         for (const ch of items) {
             if (ch.isList) {
                 const parts = [];
-                for (const a of (ch.added   || [])) parts.push('<span style="color:#4caf50">+' + a + '</span>');
-                for (const r of (ch.removed || [])) parts.push('<span style="color:#e57373">−' + r + '</span>');
-                html.push('<div style="font-size:12px;margin-bottom:3px">' + ch.label + ': ' + parts.join(' ') + '</div>');
+                for (const a of (ch.added   || [])) parts.push('<span style="color:#4caf50">+' + escapeHtml(a) + '</span>');
+                for (const r of (ch.removed || [])) parts.push('<span style="color:#e57373">−' + escapeHtml(r) + '</span>');
+                html.push('<div style="font-size:12px;margin-bottom:3px">' + escapeHtml(ch.label) + ': ' + parts.join(' ') + '</div>');
             } else {
-                const from = '<span style="color:var(--muted)">' + _fmtVal(ch.key, ch.from) + '</span>';
-                const to   = '<span style="color:var(--accent);font-weight:500">' + _fmtVal(ch.key, ch.to) + '</span>';
-                html.push('<div style="font-size:12px;margin-bottom:3px">' + ch.label + ': ' + from + ' → ' + to + '</div>');
+                const from = '<span style="color:var(--muted)">' + escapeHtml(_fmtVal(ch.key, ch.from)) + '</span>';
+                const to   = '<span style="color:var(--accent);font-weight:500">' + escapeHtml(_fmtVal(ch.key, ch.to)) + '</span>';
+                html.push('<div style="font-size:12px;margin-bottom:3px">' + escapeHtml(ch.label) + ': ' + from + ' → ' + to + '</div>');
             }
         }
         html.push('</div>');

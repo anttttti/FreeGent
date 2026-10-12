@@ -23,8 +23,13 @@ export function formatThrown(e: any): string {
     const head = hasMessage ? `${e.name || 'Error'}: ${e.message}` : String(e);
     const stack = typeof e?.stack === 'string' ? e.stack : '';
     const frames = stack.split('\n').filter(l => l.trim() && !/fg-exec-sandbox|\[native code\]|^anonymous$/.test(l.trim()));
-    // V8: the stack's first line already is the head.
-    const body = hasMessage && stack.includes(String(e.message)) ? frames : [head, ...frames];
+    // V8: the stack's first line already is the head ("TypeError: msg"). WebKit and Firefox stacks hold frames only
+    // ("draw@https://…"), and a frame can contain the message (a function or file named like it): only a first line shaped
+    // like a head counts.
+    const first = stack.split('\n', 1)[0] || '';
+    const stackHasHead = hasMessage && (e.message === '' ? first.trim() === (e.name || 'Error')
+        : /^[A-Za-z_$][\w$.]*: /.test(first) && first.includes(String(e.message).split('\n', 1)[0]));
+    const body = stackHasHead ? frames : [head, ...frames];
     return body.join('\n');
 }
 

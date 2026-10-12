@@ -169,6 +169,27 @@ function _capWorkerResult(result: any, limit: number): any {
         const b = best as { o: any; k: string; n: number };
         b.o[b.k] = `${b.o[b.k].slice(0, Math.floor(b.n / 2))}\n[…${b.n - Math.floor(b.n / 2)} chars not shown]`;
     }
+    // Still over: many individually short entries. Counts replace the lists, then the text is cut to the limit.
+    if (size(out) > limit) {
+        const brief = (v: any): any => {
+            if (typeof v === 'string') return v.length > 200 ? `${v.slice(0, 200)}…` : v;
+            if (Array.isArray(v)) return { count: v.length, first: v.slice(0, 3).map(x => typeof x === 'string' ? brief(x) : '…') };
+            return v;
+        };
+        const compact: any = {};
+        for (const k of Object.keys(out)) {
+            if (k === 'agents' && Array.isArray(out.agents)) compact.agents = out.agents.map((a: any) => a && typeof a === 'object'
+                ? { ...(a.id !== undefined ? { id: a.id } : {}), ...(a.role !== undefined ? { role: a.role } : {}), ...(a.status !== undefined ? { status: a.status } : {}), wrote: Array.isArray(a.wrote) ? a.wrote.length : a.wrote }
+                : brief(a));
+            else compact[k] = brief(out[k]);
+        }
+        compact.truncated = true;
+        out = compact;
+        if (size(out) > limit) {
+            const text = JSON.stringify(out);
+            out = limit > 120 ? { truncated: true, summary: `${text.slice(0, limit - 60)}…` } : { truncated: true, note: 'worker result not shown (no room left in this step)' };
+        }
+    }
     return out;
 }
 
@@ -302,7 +323,11 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
                     : `use start_line=${shownEnd + 1} to read more`;
                 return { ...result, [strField]: truncated + `\n[…lines ${shownEnd + 1}–${totalEnd} not shown — ${_hint}]` };
             }
-            return { ...result, [strField]: truncated + `\n[…${effectiveLen - limit} chars not shown]` };
+            const out = { ...result, [strField]: truncated + `\n[…${effectiveLen - limit} chars not shown]` };
+            // stderr has its own cap below, which this return used to skip.
+            if (typeof out.stderr === 'string' && out.stderr.length > limit)
+                out.stderr = out.stderr.slice(0, limit) + `\n[…${out.stderr.length - limit} chars not shown]`;
+            return out;
         }
         if (stepBudget) stepBudget.remaining -= effectiveLen;
     }
@@ -321,7 +346,10 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
 
     if (name === 'run_workers') {
         if (result.warning && !(result.incomplete?.length)) { const { warning, ...rest } = result; result = rest; }
-        return _capWorkerResult(result, limit);
+        const capped = _capWorkerResult(result, limit);
+        // Like every other result in the step, what is kept counts against the step's budget.
+        if (stepBudget) { try { stepBudget.remaining -= JSON.stringify(capped)?.length ?? 0; } catch {} }
+        return capped;
     }
 
     if (name === 'repo_map' && typeof result.map === 'string' && result.map.length > limit) {
@@ -341,7 +369,41 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         }
     }
 
-    return result;
+    // Any other tool (context7_docs, deep_research, check_page, run_git, academic_search, an MCP
+    // result that is not a single string, a tool added later): bounded by the configured limit, so
+    // no single result can exceed it. Handler-side caps normally keep these far below it.
+    return _capAnyResult(result, configLimit);
+}
+
+// Bound a result of any shape: the longest strings are cut in half until it fits; a result that
+// is still too large (many short entries) is replaced by the start of its JSON.
+export function _capAnyResult(result: any, limit: number): any {
+    const size = (v: any) => { try { return JSON.stringify(v)?.length ?? 0; } catch { return 0; } };
+    if (!result || typeof result !== 'object' || !(limit > 0) || size(result) <= limit) return result;
+    let out: any = Array.isArray(result) ? [...result] : { ...result };
+    for (let i = 0; i < 20 && size(out) > limit; i++) {
+        let best: { o: any; k: string; n: number } | null = null;
+        const walk = (o: any, depth: number) => {
+            if (!o || typeof o !== 'object' || depth > 4) return;
+            for (const k of Object.keys(o)) {
+                const v = o[k];
+                if (typeof v === 'string') { if (!best || v.length > best.n) best = { o, k, n: v.length }; }
+                else if (v && typeof v === 'object') { o[k] = Array.isArray(v) ? [...v] : { ...v }; walk(o[k], depth + 1); }
+            }
+        };
+        walk(out, 0);
+        if (!best || (best as any).n < 400) break;
+        const b = best as { o: any; k: string; n: number };
+        // Cut by what is over the limit (plus room for the note and JSON escaping), not by half:
+        // a result slightly over the limit should lose slightly more than the excess.
+        const keep = Math.max(200, Math.min(b.n - 1, b.n - (size(out) - limit) - 80));
+        b.o[b.k] = `${b.o[b.k].slice(0, keep)}\n[…${b.n - keep} chars not shown]`;
+    }
+    if (size(out) > limit) {
+        const text = JSON.stringify(out);
+        out = { truncated: true, content: `${text.slice(0, limit)}\n[…${text.length - limit} chars not shown]` };
+    }
+    return out;
 }
 
 // ── History pruning ──────────────────────────────────────────────────────────

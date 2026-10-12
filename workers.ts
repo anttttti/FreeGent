@@ -25,7 +25,7 @@ import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
 import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, renderFileList } from './workspace.js';
 import { sessionSetChatRole, sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent } from './session-store.js';
-import { convoLogTurn } from './convo-log.js';
+import { convoLogTurn, metricsNote } from './convo-log.js';
 import { registry } from './session-registry.js';
 
 
@@ -463,7 +463,7 @@ function _roleSkillBodies(roleName: string, toolSet?: Set<string>): string {
         if (!skill.roles) continue;
         const names = skill.roles.split(',').map(s => s.trim().toLowerCase());
         if (!names.includes(roleName.toLowerCase())) continue;
-        if (skill.requires && localStorage.getItem(skill.requires) === 'false') continue;
+        if (skill.requires && localStorage.getItem(String(skill.requires).trim()) !== 'true') continue;   // same rule as _skillRequiresUnmet
         if (skill.requires_tools && skill.requires_tools.split(',').some(t => !_toolCheck(t.trim()))) continue;
         const body = typeof skill.body_fn === 'function' ? skill.body_fn() : skill.body;
         if (body) parts.push('\n\n' + _filterRoleBody(body, toolSet));
@@ -935,6 +935,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                         },
                     });
                 const _u = message?.usage;
+                // Worker requests were in no task total: 27% more input tokens than reported over the
+                // v0.70 suites (64% on SWE Verified). Counted apart from the main loop's.
+                metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens });
                 console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
@@ -1237,7 +1240,7 @@ export async function _mergeLostContent(content: string, maxLen: number, llm: an
     return !!(await validateOutput(content, _MERGE_CHECKS, { llm, maxTokens: 200, ctx: { maxLen } }));
 }
 
-async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number}}> {
+export async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null, llm: any = callLLMComplete): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number; picked: number}; picked: Record<string, string>; unresolved: string[]}> {
     const autoMerged: Record<string, any> = {}, needsLLM: Record<string, any> = {};
 
     for (const [path, versions] of Object.entries(conflicts)) {
@@ -1254,7 +1257,7 @@ async function resolveFileConflicts(conflicts: Record<string, Record<string, str
     }
 
     if (!Object.keys(needsLLM).length)
-        return { resolved: autoMerged, stats: { auto: Object.keys(autoMerged).length, llm: 0 } };
+        return { resolved: autoMerged, stats: { auto: Object.keys(autoMerged).length, llm: 0, picked: 0 }, picked: {}, unresolved: [] };
 
     const fileDescs = Object.entries(needsLLM).map(([path, { merged, versions }]) => {
         if (merged !== null)
@@ -1269,33 +1272,61 @@ async function resolveFileConflicts(conflicts: Record<string, Record<string, str
     // (1024) truncates any merge over ~4KB mid-JSON, failing the whole resolution.
     // temperature: 0.1 — conflict resolution is deterministic merging; higher temps
     // can introduce hallucinated lines or omissions into the merged file content.
-    const text = await callLLMComplete(prompt, { temperature: 0.1, maxTokens: 16384, label: 'worker:resolve:resolve' }, handle ?? null);
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Could not parse conflict resolution response');
-    const llmResolved = JSON.parse(match[0]);
+    // A failed or unparseable merge request must not discard the files that merged cleanly: those
+    // are returned, and the rest are reported as unresolved (nothing is written for them).
+    let llmResolved: Record<string, any>;
+    try {
+        const text = await llm(prompt, { temperature: 0.1, maxTokens: 16384, label: 'worker:resolve:resolve' }, handle ?? null);
+        const match = text.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error('Could not parse conflict resolution response');
+        llmResolved = JSON.parse(match[0]);
+        if (!llmResolved || typeof llmResolved !== 'object') throw new Error('Could not parse conflict resolution response');
+    } catch (e) {
+        if (!Object.keys(autoMerged).length) throw e;
+        return { resolved: autoMerged, stats: { auto: Object.keys(autoMerged).length, llm: 0, picked: 0 }, picked: {}, unresolved: Object.keys(needsLLM) };
+    }
     // Merged-content validation (deterministic): this content is written to
     // files, so reject merges that lost most of the content, substituted placeholders,
-    // or hallucinated filenames — fall back to the longest source version instead.
-    const _longest = versions => Object.values(versions).reduce((a, b) =>
-        (String(a ?? '').length >= String(b ?? '').length ? a : b), '');
+    // or hallucinated filenames. A rejected or missing merge falls back to the longest worker
+    // version — that is one worker's file, not a merge, so it is reported in `picked` (path →
+    // the worker whose version was kept) and never counted as resolved by the model.
+    const picked: Record<string, string> = {};
+    const _pickLongest = (path: string, versions: Record<string, string>) => {
+        const [id, content] = Object.entries(versions).reduce((a, b) =>
+            (String(a[1] ?? '').length >= String(b[1] ?? '').length ? a : b));
+        picked[path] = id;
+        return content ?? '';
+    };
+    const merged: Record<string, any> = {};
     for (const [path, content] of Object.entries(llmResolved)) {
         const versions = needsLLM[path]?.versions;
-        if (!versions) { delete llmResolved[path]; continue; }        // filename not in the conflict set
+        if (!versions) continue;                                       // filename not in the conflict set
         const lens   = Object.values(versions).map(s => String(s ?? '').length);
         const minLen = Math.min(...lens), maxLen = Math.max(...lens);
         const bad = typeof content !== 'string'
             || content.length < minLen * 0.5
-            || await _mergeLostContent(content, maxLen);
-        if (bad) llmResolved[path] = _longest(versions);
+            || await _mergeLostContent(content, maxLen, llm);
+        merged[path] = bad ? _pickLongest(path, versions) : content;
     }
     for (const [path, { versions }] of Object.entries(needsLLM))
-        if (!(path in llmResolved)) llmResolved[path] = _longest(versions); // dropped by the LLM
+        if (!(path in merged)) merged[path] = _pickLongest(path, versions); // dropped by the LLM
+    const nPicked = Object.keys(picked).length;
     return {
-        resolved: { ...autoMerged, ...llmResolved },
-        stats: { auto: Object.keys(autoMerged).length, llm: Object.keys(llmResolved).length },
+        resolved: { ...autoMerged, ...merged },
+        stats: { auto: Object.keys(autoMerged).length, llm: Object.keys(merged).length - nPicked, picked: nPicked },
+        picked, unresolved: [],
     };
 }
 
+// Status of a whole run_workers call from its workers' statuses and the number of files that were
+// neither applied nor merged. A partial worker used to count as complete: only blocked ones were looked at.
+export function _workerRunStatus(statuses: string[], unmergedFiles = 0): 'blocked' | 'partial' | 'complete' {
+    const st = statuses.map(s => String(s ?? '').toLowerCase());
+    if (st.length > 0 && st.every(s => s === 'blocked')) return 'blocked';
+    return st.some(s => s !== 'complete') || unmergedFiles > 0 ? 'partial' : 'complete';
+}
+// Max workers one run_workers call may start (also maxItems in WORKERS_TOOL_SPEC).
+export const MAX_WORKERS_PER_CALL = 8;
 // Max steps a worker turn may run — distinct from the main-agent cap (getAgentMaxSteps()).
 const _WORKER_MAX_STEPS = 30;
 // Longest a worker waits for a rate-limit cooldown before giving up. Free-tier daily quotas put
@@ -1382,6 +1413,9 @@ async function executeWorkers(args: any): Promise<any> {
     if (!Array.isArray(rawAgents) || !rawAgents.length) rawAgents = _agentsFromMangledArgs(args) ?? [];
     let agents = rawAgents.filter(a => a && a.id && a.task);
     if (!agents.length) return { error: 'No workers specified. Call run_workers with {"agents": [{"id": "short-name", "role": "researcher", "task": "what to do"}]}.' };
+    // Every worker is a concurrent model loop on the same endpoints: an unbounded list floods them.
+    if (agents.length > MAX_WORKERS_PER_CALL)
+        return { error: `run_workers: ${agents.length} workers requested, the limit is ${MAX_WORKERS_PER_CALL} per call. Nothing was started. Call again with at most ${MAX_WORKERS_PER_CALL}: merge related subtasks, or run the rest in a later call.` };
     // Role names arrive quoted or capitalised ('"researcher"', "'Coder'" — 3–4 per SWE run in
     // v0.55/v0.56); the registry lookup then missed and the worker ran with no role prompt.
     agents = agents.map(a => typeof a.role === 'string' ? { ...a, role: _normWorkerRole(a.role, rolesRegistry) } : a);
@@ -1574,19 +1608,27 @@ async function executeWorkers(args: any): Promise<any> {
     }
 
     let resolvedFiles: Record<string, any> = {};
+    // Conflicts that were not merged: `picked` kept one worker's version, `unresolved` wrote nothing.
+    let pickedFiles: Record<string, string> = {};
+    let unresolvedFiles: string[] = [];
     if (Object.keys(conflicts).length > 0) {
         const mergeHandle = ph.addToolStep(['resolving conflicts'])[0];
         mergeHandle.setPrompt(Object.keys(conflicts).join(', '));
         try {
-            const { resolved, stats } = await resolveFileConflicts(conflicts, snapshot, mergeHandle);
+            const { resolved, stats, picked, unresolved } = await resolveFileConflicts(conflicts, snapshot, mergeHandle);
             resolvedFiles = resolved;
+            pickedFiles = picked;
+            unresolvedFiles = unresolved;
             for (const [path, content] of Object.entries(resolved))
                 await agentWriteFile(path, content);
             const parts = [];
             if (stats.auto > 0) parts.push(`auto: ${stats.auto}`);
             if (stats.llm  > 0) parts.push(`llm: ${stats.llm}`);
+            if (stats.picked > 0) parts.push(`not merged, one version kept: ${stats.picked}`);
+            if (unresolved.length) parts.push(`unresolved: ${unresolved.length}`);
             mergeHandle.setOutput(`${Object.keys(resolved).join(', ')} (${parts.join(' · ')})`);
         } catch (e) {
+            unresolvedFiles = Object.keys(conflicts);
             mergeHandle.setOutput(`Conflict resolution failed: ${e.message}`);
         }
         mergeHandle.complete();
@@ -1625,6 +1667,15 @@ async function executeWorkers(args: any): Promise<any> {
     const blocked = agentResults
         .filter(r => r.status === 'blocked')
         .map(r => ({ id: r.id, reason: r.note }));
+    // Conflicted files where one worker's version was kept instead of a merge: say whose, and whose edits were dropped.
+    const notMerged = Object.fromEntries(Object.entries(pickedFiles).map(([path, kept]) => {
+        const dropped = Object.keys(conflicts[path] || {}).filter(id => id !== kept);
+        return [path, `not merged: kept the version from "${kept}"; the edits to this file by ${dropped.map(d => `"${d}"`).join(', ')} were dropped. Read the file and redo them if they are still needed.`];
+    }));
+    // The whole call: blocked when every worker blocked; complete only when every worker completed
+    // and every file it wrote was applied or merged. Anything else is partial.
+    const runStatus = _workerRunStatus(agentResults.map(r => r.status),
+        Object.keys(pickedFiles).length + unresolvedFiles.length + binaryConflicts.length);
 
     // Files written by blocked workers may be incomplete or wrong — keep separate from applied.
     const blockedFiles = new Set(
@@ -1666,6 +1717,7 @@ async function executeWorkers(args: any): Promise<any> {
             : blocked.length > 0
             ? { warning: `${blocked.length} worker(s) blocked — files in "incomplete" may be partially or incorrectly written. Current content shown in incomplete_contents — read it before deciding next step.` }
             : {}),
+        status:            runStatus,
         agents:            agentResults
             .map(r => ({ id: r.id, error: r.error, wrote: [...r.staging.keys(), ...(r as any).binary.keys()], status: r.status, note: r.note,
                          ...(r.toolCalls?.length ? { toolCalls: r.toolCalls } : {}) })),
@@ -1674,14 +1726,14 @@ async function executeWorkers(args: any): Promise<any> {
         ...(Object.keys(incompleteContents).length > 0 ? { incomplete_contents: incompleteContents } : {}),
         conflictsFound:    [...Object.keys(conflicts), ...binaryConflicts],
         ...(binaryConflicts.length > 0 ? { binaryConflicts: `${binaryConflicts.join(', ')}: written by more than one worker; not applied (binary files cannot be merged)` } : {}),
-        conflictsResolved: Object.keys(resolvedFiles),
+        conflictsResolved: Object.keys(resolvedFiles).filter(p => !(p in pickedFiles)),
+        ...(Object.keys(notMerged).length > 0 ? { conflictsNotMerged: notMerged } : {}),
+        ...(unresolvedFiles.length > 0 ? { conflictsUnresolved: `${unresolvedFiles.join(', ')}: edited by more than one worker and the merge failed; none of those edits were applied to ${unresolvedFiles.length === 1 ? 'this file' : 'these files'}.` } : {}),
         blocked,
         ...outputField,
     };
 
-    const _runStatus = blocked.length === agentResults.length && agentResults.length > 0
-        ? 'blocked' : blocked.length > 0 ? 'partial' : 'complete';
-    sessionFinishWorkerRun?.(runId, _runStatus);
+    sessionFinishWorkerRun?.(runId, runStatus);
 
     return result;
 }

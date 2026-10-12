@@ -190,6 +190,14 @@ const _SEARCH_LINE_DISPLAY   = 500;
 // guard below told it to use them: 28 attempts in the SWE runs, all rejected, 77 shrink rejections.
 function _callerHasTool(context): (tool: string) => boolean {
     if (context?.allowedTools instanceof Set) return t => context.allowedTools.has(t);
+    // The main agent: what its schema actually offers this turn — enabled tools, the role ceiling and the per-turn filter.
+    // (v0.70 review: advice named replace_in_file after it had been disabled.) Without activeTools, the role ceiling alone.
+    if (typeof activeTools === 'function') {
+        try {
+            const offered = new Set<string>((activeTools(false, typeof _sessionToolFilter !== 'undefined' ? _sessionToolFilter : null) || []).map((t: any) => t?.name ?? t?.function?.name));
+            return t => offered.has(t);
+        } catch {}
+    }
     if (typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools) return t => mainAgentRole.tools.has(t);
     return () => true;
 }
@@ -393,6 +401,9 @@ function requestToolApproval(toolName, args) {
     let summary = toolName;
     if (args.path)     summary += `: ${args.path}`;
     if (args.language) summary += ` (${args.language})`;
+    // run_workers: who is being started, so the approval is not for an unnamed delegation.
+    if (toolName === 'run_workers' && Array.isArray(args.agents))
+        summary += `: ${args.agents.slice(0, 8).map((a: any) => `${a?.id ?? '?'} (${a?.role ?? 'director'})`).join(', ')}`;
     // Show what will run, not just which tool: the approval is only as good as what the user sees.
     const cmd = toolName === 'run_git'
         ? (Array.isArray(args.args) ? args.args.join(' ') : String(args.args ?? args.command ?? args.cmd ?? ''))
@@ -434,7 +445,24 @@ function _runsOnHost(name: string, args: any): boolean {
     return !pyodideRuns;
 }
 // browser_* tools that change what a page does or holds (click, type, select, navigate) act on an external site.
-const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'apply_patch', 'replace_in_file', 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
+// Every tool that changes workspace files belongs here ("All writes"): append_file and undo_write were
+// missing and wrote without a prompt. run_workers is decided by _workersMayWrite.
+const _FILE_WRITE_TOOLS = ['write_file', 'append_file', 'apply_patch', 'replace_in_file', 'delete_file'];
+// Worker file tools are not gated one by one (their edits are staged and applied when the run ends), so
+// under "All writes" the delegation itself is approved — but only when a requested worker's role can
+// edit files. A read-only researcher run needs no prompt.
+export function _workersMayWrite(args: any): boolean {
+    let agents = args?.agents;
+    if (typeof agents === 'string') { try { agents = JSON.parse(agents); } catch { return true; } }
+    if (!Array.isArray(agents) || !agents.length) return true;      // unreadable call: assume it can
+    return agents.some((a: any) => {
+        const role = typeof a?.role === 'string' ? a.role.replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase() : '';
+        const ceiling = role && typeof rolesRegistry !== 'undefined' ? rolesRegistry.get(role)?.tools : null;
+        if (!ceiling || typeof ceiling.has !== 'function') return true;   // unknown role or no tool ceiling
+        return _FILE_WRITE_TOOLS.some(t => ceiling.has(t));
+    });
+}
+const _APPROVAL_ALL_WRITE = new Set(['delete_file', 'execute_code', 'write_file', 'append_file', 'apply_patch', 'replace_in_file', 'undo_write', 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
 
 // ── apply_patch helpers: fuzzy offset correction + LLM disambiguation ────────
 
@@ -1014,8 +1042,14 @@ function _snapshotFiles(snap: any): Array<{ name: string; size: number }> {
 
 // SWE-bench: grader strips test-file changes before scoring — agent edits score zero.
 // 17/36 failed SWE tasks edited test files; 14 passed a self-modified test and were
-// still rejected. Headless-only (nativeExec present); interactive sessions unaffected.
+// still rejected. Benchmark policy: on only when the runner sets FG_PROTECT_TESTS=1
+// (runtime.protectTests); every other run, native or browser, may edit its tests.
 const _SWE_TEST_RE = /(^|\/)(tests?|testing|specs?)\/|(^|\/)test_|_test\.|\.test\./;
+export function isTestEditProtected(path: unknown): boolean {
+    return runtime.protectTests && typeof path === 'string' && _SWE_TEST_RE.test(path);
+}
+const _testEditRefusal = (path: string) =>
+    ({ error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${path}).` });
 
 async function _handleRunWorkers(args, context) {
     if (context) {
@@ -1031,7 +1065,7 @@ async function _handleRunWorkers(args, context) {
         });
         // Propagate committed sub-worker files into parent staging so the
         // top-level commit phase sees them for conflict detection.
-        const written = [...(result.applied || []), ...(result.conflictsResolved || [])];
+        const written = [...(result.applied || []), ...(result.conflictsResolved || []), ...Object.keys(result.conflictsNotMerged || {})];
         await Promise.all(written.map(async path => {
             try { context.staging.set(path, await agentReadFile(path)); } catch {}
         }));
@@ -1040,7 +1074,8 @@ async function _handleRunWorkers(args, context) {
     const result = await executeWorkers(args);
     // Files in "incomplete" were written by blocked workers and may be corrupt.
     // Force a read-back before any edit to those files.
-    for (const p of (result.incomplete || [])) _requireReadBack.add(p);
+    // So were files where one worker's version was kept in place of a failed merge.
+    for (const p of [...(result.incomplete || []), ...Object.keys(result.conflictsNotMerged || {})]) _requireReadBack.add(p);
     return result;
 }
 
@@ -1434,9 +1469,7 @@ async function _handleApplyPatch(args, context) {
     }
     // Normalize /workspace/ prefix (WASM bash mount point) to a plain relative path.
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
-    if (runtime.hasNativeExec && args.path && _SWE_TEST_RE.test(args.path)) {
-        return { error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${args.path}).` };
-    }
+    if (isTestEditProtected(args.path)) return _testEditRefusal(args.path);
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `apply_patch: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
     }
@@ -1606,10 +1639,37 @@ function _fitJson(v: any, budget: number, dropped: { items: number; keys: number
     return isArr ? out.map(([, x]) => x) : Object.fromEntries(out);
 }
 
+// A "#" inside a query string that carries data. Everything after "#" is a fragment, which is never
+// sent, so `?params={"color":"#ffffff","row":2}` reached the server cut off at the "#" and came back
+// as invalid JSON (v0.70 AutomationBench: 134 such calls, 92 of the 103 invalid-JSON errors). A
+// fetch has no use for a fragment; when the query before the "#" is an unclosed JSON value, or what
+// follows it closes one (a quote or closing bracket), the "#" is sent as %23. An ordinary anchor
+// (`page?id=3#tab=2`) is left alone.
+export function _encodeDataHash(url: string): string {
+    const h = url.indexOf('#'), q = url.indexOf('?');
+    if (h < 0 || q < 0 || q > h) return url;
+    const before = url.slice(q + 1, h), after = url.slice(h + 1);
+    const open = (before.match(/[{[]|%7B|%5B/gi) || []).length > (before.match(/[}\]]|%7D|%5D/gi) || []).length
+        || ((before.match(/"|%22/gi) || []).length % 2) === 1;
+    return open || /["}\]]|%22|%7D|%5D/i.test(after) ? url.slice(0, h) + url.slice(h).replace(/#/g, '%23') : url;
+}
+
+// Results of requests whose response said `Cache-Control: no-store`: the server does not want the
+// response reused, so the loop treats the call like a non-GET (earlier cached results are stale).
+const _fetchNoStore = new WeakSet<object>();
+export function fetchSaidNoStore(result: any): boolean { return !!result && typeof result === 'object' && _fetchNoStore.has(result); }
+
 async function _handleFetchUrl(args) {
+    const meta = { noStore: false };
+    const result = await _handleFetchUrlInner(args, meta);
+    if (meta.noStore && result && typeof result === 'object') _fetchNoStore.add(result);
+    return result;
+}
+
+async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
     args = { ...args, url: args.url ?? args.link ?? args.href ?? args.uri ?? '' };
     // Strip [UNAVAILABLE] suffix if the model passes an annotated URL from search results.
-    args = { ...args, url: stripUnavailable(args.url) };
+    args = { ...args, url: _encodeDataHash(stripUnavailable(args.url)) };
     // Browser only: refuse the page's own server. Same-origin requests carry the dev server's
     // token (added by the page's fetch wrapper), so a prompt-injected fetch_url could otherwise
     // drive /api/execute or /api/proxy. Loopback names on the same port are the same server.
@@ -1698,6 +1758,7 @@ async function _handleFetchUrl(args) {
 
         const status = resp.status;
         const ct     = resp.headers.get('content-type') || '';
+        meta.noStore = /\bno-store\b/i.test(resp.headers.get('cache-control') || '');
 
         if (!resp.ok) {
             // GitHub repo-root fallback: try raw README on main then master.
@@ -2014,7 +2075,7 @@ async function _handleExecuteCode(args, context, onProgress?: (message:string)=>
     // apply → run → collect sequence therefore holds a lock; main-agent runs (no staging) don't.
     const result = context?.staging
         ? await _withWorkspaceRunLock(async () => {
-            const stamps = await _applyStagingForRun(context.staging);
+            const stamps = await _applyStagingForRun(context.staging, context.snapshot);
             const res = await _handleExecuteCodeInner(args, context, onProgress);
             await _stageRunChanges(context.staging, stamps, context.snapshot);
             return res;
@@ -2034,8 +2095,14 @@ type _RunStamps = { files: Map<string, string>; t0: number };
 const _stamp = (f: any) => `${f.size ?? ''}:${f.lastModified ?? ''}`;
 
 /** Writes a worker's staged edits (null = deleted) to the workspace for a run; returns the listing. */
-async function _applyStagingForRun(staging: Map<string, string | null>): Promise<_RunStamps> {
+async function _applyStagingForRun(staging: Map<string, string | null>, snapshot?: any): Promise<_RunStamps> {
     for (const [path, content] of staging) {
+        // The snapshot reads a file on first access, and this write changes it in the shared
+        // workspace: read the original into the snapshot first, or a sibling worker that touches
+        // the file later would take this worker's unfinished edit as the run-start content and the
+        // merge base. (A file that a run's own code rewrites cannot be pinned this way: its path
+        // is not known before the run.)
+        try { await snapshot?.get?.(path); } catch {}
         try {
             if (content === null) await agentDeleteFile(path);
             else await agentWriteFile(path, content);
@@ -2363,7 +2430,7 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         const mcpRisk = name.startsWith('mcp__') && typeof mcpToolRisk === 'function' ? mcpToolRisk(name) : null;
         const needsApproval =
             (approval === 'high' && (onHost || mcpRisk === 'destructive' || (_APPROVAL_HIGH_RISK.has(name) && !(name === 'execute_code' && args.language === 'python')))) ||
-            (approval === 'all'  && (onHost || (mcpRisk && mcpRisk !== 'read') || _APPROVAL_ALL_WRITE.has(name)));
+            (approval === 'all'  && (onHost || (mcpRisk && mcpRisk !== 'read') || _APPROVAL_ALL_WRITE.has(name) || (name === 'run_workers' && _workersMayWrite(args))));
         if (needsApproval && (!context || onHost || mcpRisk)) {
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
@@ -2376,11 +2443,10 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
     if (name === 'list_files')         return _handleListFiles(args, context);
     if (name === 'read_file')          return _handleReadFile(args, context);
 
-    // SWE-bench test-file gate (headless only) — must precede write-tool dispatch.
-    if (runtime.hasNativeExec &&
-        (name === 'write_file' || name === 'replace_in_file' || name === 'append_file' || name === 'apply_patch') &&
-        args.path && _SWE_TEST_RE.test(args.path))
-        return { error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${args.path}).` };
+    // SWE-bench test-file gate (benchmark policy, see isTestEditProtected) — must precede write-tool dispatch.
+    if ((name === 'write_file' || name === 'replace_in_file' || name === 'append_file' || name === 'apply_patch') &&
+        isTestEditProtected(args.path))
+        return _testEditRefusal(args.path);
 
     if (name === 'write_file')         return _handleWriteFile(args, context);
     if (name === 'ast_query')          return _handleAstQuery(args);

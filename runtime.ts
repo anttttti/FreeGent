@@ -15,6 +15,9 @@ export const runtime = {
     get headless(): boolean { return this.hasNativeExec; },
     /** Browser pages (iframe sandbox, check_page, inline images) are available. */
     get hasBrowserUi(): boolean { return !this.headless; },
+    /** Benchmark policy, not a capability: file tools refuse to edit test files. Set by a runner whose
+     *  grader discards test-file changes (SWE-bench: FG_PROTECT_TESTS=1); never on for ordinary runs. */
+    get protectTests(): boolean { return this.hasNativeExec && g.process?.env?.FG_PROTECT_TESTS === '1'; },
     /** Run code natively. Callers check hasNativeExec first. */
     nativeExec(language: string, code: string): Promise<any> { return g.nativeExec(language, code); },
 };

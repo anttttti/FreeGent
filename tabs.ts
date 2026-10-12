@@ -1,5 +1,6 @@
 // tabs.js — FreeGent: tab management, file tabs, notify local file changed
 // Depends on: config.js, settings-ui.js, skills.js, tasks.js, editor.js
+import { escapeHtml } from './html-escape.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 
@@ -237,7 +238,7 @@ function openFileTab(name) {
             previewDiv.className = 'agent-response-text md-file-preview';
             previewDiv.style.cssText = 'flex:1;overflow:auto;padding:16px 20px;box-sizing:border-box;';
             const _refreshPreview = (src: string) => {
-                previewDiv.innerHTML = renderMarkdown?.(src) ?? src;
+                previewDiv.innerHTML = renderMarkdown?.(src) ?? escapeHtml(src);
                 processImgSlots?.(previewDiv);
                 processFileLinks?.(previewDiv);
             };

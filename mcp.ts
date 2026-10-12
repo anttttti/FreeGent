@@ -45,6 +45,7 @@ type McpServer = {
     libraryId?: string;                  // set when added from MCP_LIBRARY
     toolNote?: string;                   // appended to every tool description (after clipping)
     readOnly?: boolean;                  // every tool counts as read-only, whatever its annotations say
+    trustAnnotations?: boolean;          // the user accepts this server's own read-only/destructive labels for approval
     instructions?: string;               // the server's initialize `instructions` (usage guidance)
 };
 
@@ -361,7 +362,8 @@ async function _listTools(server: { url: string; headers?: Record<string, string
 
 // Connect to a new server and save it (only if the handshake and tools/list succeed).
 async function addMcpServer(opts: { name: string; url: string; headers?: Record<string, string>; id?: string;
-                                    enabledTools?: string[]; toolNote?: string; libraryId?: string; readOnly?: boolean }): Promise<McpServer> {
+                                    enabledTools?: string[]; toolNote?: string; libraryId?: string; readOnly?: boolean;
+                                    trustAnnotations?: boolean }): Promise<McpServer> {
     const url = String(opts.url || '').trim();
     let u: URL;
     try { u = new URL(url); } catch { throw new Error('Not a valid URL'); }
@@ -378,6 +380,7 @@ async function addMcpServer(opts: { name: string; url: string; headers?: Record<
     };
     if (opts.toolNote) entry.toolNote = opts.toolNote;
     if (opts.readOnly) entry.readOnly = true;
+    if (typeof opts.trustAnnotations === 'boolean') entry.trustAnnotations = opts.trustAnnotations;
     if (instructions) entry.instructions = instructions;
     if (opts.libraryId) entry.libraryId = opts.libraryId;
     list.push(entry);
@@ -410,6 +413,14 @@ function setMcpServerEnabled(id: string, on: boolean): void {
     const s = list.find(x => x.id === id);
     if (!s) return;
     s.enabled = !!on;
+    saveMcpServers(list);
+}
+
+function setMcpServerTrust(id: string, on: boolean): void {
+    const list = getMcpServers();
+    const s = list.find(x => x.id === id);
+    if (!s) return;
+    s.trustAnnotations = !!on;
     saveMcpServers(list);
 }
 
@@ -546,14 +557,26 @@ function _resolve(name: string): { server: McpServer; tool: McpToolInfo } | null
     return null;
 }
 
-// 'read' | 'write' | 'destructive' from the tool's annotations. MCP defaults: readOnlyHint false,
+// What the server's own annotations say about a tool. MCP defaults: readOnlyHint false,
 // destructiveHint true — so an unannotated tool counts as destructive.
+function mcpToolClaim(name: string): 'read' | 'write' | 'destructive' {
+    const a = _resolve(name)?.tool.annotations || {};
+    if (a.readOnlyHint === true) return 'read';
+    return a.destructiveHint === false ? 'write' : 'destructive';
+}
+// Whether a server's annotations may lower the approval a tool needs. They are the server's own
+// claim, and it can change them on any refresh: only a standard-library server (checked by us) or
+// one the user has marked is believed.
+function mcpAnnotationsTrusted(s: McpServer | null | undefined): boolean {
+    return !!s && (s.trustAnnotations ?? !!s.libraryId);
+}
+// The risk used for approval: 'read' | 'write' | 'destructive'. server.readOnly is a declaration
+// made on this side (the library entry), so it always counts; annotations count only when trusted,
+// otherwise the tool is treated as unannotated.
 function mcpToolRisk(name: string): 'read' | 'write' | 'destructive' {
     const r = _resolve(name);
     if (r?.server.readOnly) return 'read';
-    const a = r?.tool.annotations || {};
-    if (a.readOnlyHint === true) return 'read';
-    return a.destructiveHint === false ? 'write' : 'destructive';
+    return mcpAnnotationsTrusted(r?.server) ? mcpToolClaim(name) : 'destructive';
 }
 
 // Redact the server's auth header values and anything credential-shaped in text bound for the
@@ -582,6 +605,6 @@ async function executeMcpTool(name: string, args: any): Promise<any> {
 // Window bridge for classic scripts and inline handlers (ESM migration).
 Object.assign(window, {
     MCP_CONTEXT7_URL, callMCPTool,
-    getMcpServers, saveMcpServers, getMcpLibrary, addMcpServer, addMcpLibraryServer, removeMcpServer, refreshMcpServer, setMcpServerEnabled, setMcpToolEnabled,
+    getMcpServers, saveMcpServers, getMcpLibrary, addMcpServer, addMcpLibraryServer, removeMcpServer, refreshMcpServer, setMcpServerEnabled, setMcpServerTrust, setMcpToolEnabled, mcpToolClaim, mcpAnnotationsTrusted,
     mcpToolSpecs, mcpToolNames, mcpServerInstructionsBlock, mcpToolName, mcpToolRisk, executeMcpTool, sanitizeMcpSchema, redactMcpSecrets,
 });
