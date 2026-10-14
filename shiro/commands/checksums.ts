@@ -43,47 +43,65 @@ export function crc64(data: Uint8Array, start = 0, end = data.length): [number, 
   return [(lo ^ 0xffffffff) >>> 0, (hi ^ 0xffffffff) >>> 0];
 }
 
-const M64 = (1n << 64n) - 1n;
-const P1 = 11400714785074694791n, P2 = 14029467366897019727n, P3 = 1609587929392839161n;
-const P4 = 9650029242287828579n, P5 = 2870177450012600261n;
-const rotl = (x: bigint, r: bigint) => ((x << r) | (x >> (64n - r))) & M64;
-const round = (acc: bigint, v: bigint) => (rotl((acc + v * P2) & M64, 31n) * P1) & M64;
-const merge = (h: bigint, v: bigint) => (((h ^ round(0n, v)) * P1) + P4) & M64;
+// BigInt literals (1n) are a parse-time SyntaxError on engines without BigInt, and they take the whole
+// bundle with them (the build warned TOLERATED_TRANSFORM for each). Built from BigInt() calls instead,
+// lazily, so loading this module needs no BigInt and only xxh64 itself does.
+type K = { M64: bigint; P1: bigint; P2: bigint; P3: bigint; P4: bigint; P5: bigint;
+  n0: bigint; n1: bigint; n7: bigint; n11: bigint; n12: bigint; n18: bigint; n23: bigint; n27: bigint; n29: bigint; n31: bigint;
+  n32: bigint; n33: bigint; n64: bigint };
+let _k: K | null = null;
+function K(): K {
+  if (_k) return _k;
+  const B = BigInt;
+  _k = {
+    M64: (B(1) << B(64)) - B(1),
+    P1: B('11400714785074694791'), P2: B('14029467366897019727'), P3: B('1609587929392839161'),
+    P4: B('9650029242287828579'), P5: B('2870177450012600261'),
+    n0: B(0), n1: B(1), n7: B(7), n11: B(11), n12: B(12), n18: B(18), n23: B(23), n27: B(27), n29: B(29), n31: B(31),
+    n32: B(32), n33: B(33), n64: B(64),
+  };
+  return _k;
+}
+const rotl = (k: K, x: bigint, r: bigint) => ((x << r) | (x >> (k.n64 - r))) & k.M64;
+const round = (k: K, acc: bigint, v: bigint) => (rotl(k, (acc + v * k.P2) & k.M64, k.n31) * k.P1) & k.M64;
+const merge = (k: K, h: bigint, v: bigint) => (((h ^ round(k, k.n0, v)) * k.P1) + k.P4) & k.M64;
 
 /** XXH64 (seed 0). BigInt based: fine for checksums, slow for hundreds of MB. */
 export function xxh64(d: Uint8Array): bigint {
+  const k = K();
+  const { M64, P1, P2, P3, P4, P5 } = k;
   const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
   const n = d.length;
   let p = 0;
   let h: bigint;
   if (n >= 32) {
-    let v1 = (P1 + P2) & M64, v2 = P2, v3 = 0n, v4 = (0n - P1) & M64;
+    let v1 = (P1 + P2) & M64, v2 = P2, v3 = k.n0, v4 = (k.n0 - P1) & M64;
     for (; p <= n - 32; p += 32) {
-      v1 = round(v1, dv.getBigUint64(p, true));
-      v2 = round(v2, dv.getBigUint64(p + 8, true));
-      v3 = round(v3, dv.getBigUint64(p + 16, true));
-      v4 = round(v4, dv.getBigUint64(p + 24, true));
+      v1 = round(k, v1, dv.getBigUint64(p, true));
+      v2 = round(k, v2, dv.getBigUint64(p + 8, true));
+      v3 = round(k, v3, dv.getBigUint64(p + 16, true));
+      v4 = round(k, v4, dv.getBigUint64(p + 24, true));
     }
-    h = (rotl(v1, 1n) + rotl(v2, 7n) + rotl(v3, 12n) + rotl(v4, 18n)) & M64;
-    h = merge(h, v1); h = merge(h, v2); h = merge(h, v3); h = merge(h, v4);
+    h = (rotl(k, v1, k.n1) + rotl(k, v2, k.n7) + rotl(k, v3, k.n12) + rotl(k, v4, k.n18)) & M64;
+    h = merge(k, h, v1); h = merge(k, h, v2); h = merge(k, h, v3); h = merge(k, h, v4);
   } else h = P5;
   h = (h + BigInt(n)) & M64;
   for (; p + 8 <= n; p += 8) {
-    h ^= round(0n, dv.getBigUint64(p, true));
-    h = (rotl(h, 27n) * P1 + P4) & M64;
+    h ^= round(k, k.n0, dv.getBigUint64(p, true));
+    h = (rotl(k, h, k.n27) * P1 + P4) & M64;
   }
   if (p + 4 <= n) {
     h ^= (BigInt(dv.getUint32(p, true)) * P1) & M64;
-    h = (rotl(h, 23n) * P2 + P3) & M64;
+    h = (rotl(k, h, k.n23) * P2 + P3) & M64;
     p += 4;
   }
   for (; p < n; p++) {
     h ^= (BigInt(d[p]) * P5) & M64;
-    h = (rotl(h, 11n) * P1) & M64;
+    h = (rotl(k, h, k.n11) * P1) & M64;
   }
-  h ^= h >> 33n; h = (h * P2) & M64;
-  h ^= h >> 29n; h = (h * P3) & M64;
-  h ^= h >> 32n;
+  h ^= h >> k.n33; h = (h * P2) & M64;
+  h ^= h >> k.n29; h = (h * P3) & M64;
+  h ^= h >> k.n32;
   return h;
 }
 
