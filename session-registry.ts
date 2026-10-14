@@ -158,5 +158,7 @@ export const registry = new SessionRegistry();
 export function initPersistence(dir: string, maxDelayMs?: number): SessionPersistence {
     const p = new SessionPersistence(dir, maxDelayMs);
     registry.setPersistence(p);
+    // Old session files go; the files of this process are newer than any limit.
+    void SessionPersistence.prune(dir);
     return p;
 }
