@@ -62,13 +62,32 @@ function runnerAutopilot() { _startRunner(true); }
 // Manual start of one specific task (the play button on its card): one chat, then stop.
 function runnerStartTask(path: string) { _startRunner(false, path); }
 
+// Autopilot pressed while a chat/AI task is busy: wait for it to finish, then start.
+let _runnerWaitPoll: ReturnType<typeof setInterval> | null = null;
+
+function _cancelRunnerWait(): void {
+    if (_runnerWaitPoll) { clearInterval(_runnerWaitPoll); _runnerWaitPoll = null; }
+}
+
 function _startRunner(all: boolean, onlyPath: string | null = null) {
-    if (_runnerRunning || agentStreaming) return;
-    if (aiBusy()) {
+    if (_runnerRunning) return;
+    if (agentStreaming || aiBusy()) {
         const statusEl = document.getElementById('runner-status');
-        if (statusEl) statusEl.textContent = 'Another AI task is running — wait for it to finish';
+        if (!all) {
+            if (statusEl && !agentStreaming) statusEl.textContent = 'Another AI task is running — wait for it to finish';
+            return;
+        }
+        if (_runnerWaitPoll) { _cancelRunnerWait(); if (statusEl) statusEl.textContent = 'Autopilot cancelled'; return; }
+        if (statusEl) statusEl.textContent = 'Autopilot will start when the current chat finishes (press Autopilot again to cancel)';
+        _runnerWaitPoll = setInterval(() => {
+            if (_runnerRunning) { _cancelRunnerWait(); return; }
+            if (agentStreaming || aiBusy()) return;
+            _cancelRunnerWait();
+            _startRunner(true, onlyPath);
+        }, 500);
         return;
     }
+    _cancelRunnerWait();
     _runnerAll         = all;
     _runnerOnlyPath    = onlyPath;
     _runnerPriorChatId = activeChatId;
@@ -113,6 +132,7 @@ function runnerAbort() {
 }
 
 function runnerStop() {
+    _cancelRunnerWait();
     runnerAbort();
     // Abort any in-flight LLM stream so the stop takes effect immediately.
     if (typeof agentStreaming !== 'undefined' && agentStreaming) stopNow?.();
