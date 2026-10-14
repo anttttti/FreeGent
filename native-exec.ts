@@ -1,6 +1,7 @@
 // native-exec.ts — execute_code in headless runs: bash, python3 and node as real processes in the
 // workspace directory (or `docker exec` in a task container). headless-runner.ts installs it as
 // globalThis.nativeExec; tests/headless-tools.test.ts runs the tool tests on it.
+import { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS } from './exec-limits.js';
 import { readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -31,7 +32,7 @@ function _snapWorkspace(dir: string): Map<string, number> {
 // What test runners and type checkers leave behind. Not the command's work: a pytest run that
 // changed nothing else used to count as having written files.
 export const TOOL_CACHE_PATH_RE = /(?:^|\/)(?:\.pytest_cache|__pycache__|\.mypy_cache|\.ruff_cache|\.hypothesis|\.tox|\.nox|\.cache|node_modules\/\.cache)\/|(?:^|\/)\.coverage(?:\.[\w.-]+)?$/;
-export const EXEC_TIMEOUT_MS = 120_000;
+export { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS, execTimeoutMs } from './exec-limits.js';
 // Exit code for a process ended by a signal, as a shell reports it (128 + signal number).
 export function signalExitCode(signal: string | null | undefined): number {
     const n = signal ? (osConstants.signals as Record<string, number>)[signal] : undefined;
@@ -39,8 +40,9 @@ export function signalExitCode(signal: string | null | undefined): number {
 }
 
 export function createNativeExec({ workspaceRoot, targetContainer }: { workspaceRoot?: string | null; targetContainer?: string | null }) {
-    const MAX_OUTPUT = 200_000, TIMEOUT_MS = EXEC_TIMEOUT_MS;
-    return (language: string, code: string): Promise<any> => new Promise((resolve) => {
+    const MAX_OUTPUT = 200_000;
+    return (language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> => new Promise((resolve) => {
+        const TIMEOUT_MS = opts?.timeoutMs && opts.timeoutMs > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, opts.timeoutMs) : EXEC_TIMEOUT_MS;
         // JavaScript runs as the body of an async function, as in the browser (exec-sandbox/js-run.ts):
         // top-level await and return work the same in both.
         const js = `(async () => {\n${code}\n})().catch(e => { console.error(e); process.exitCode = 1; });`;
@@ -119,7 +121,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         const timer = setTimeout(() => {
             try { process.kill(-child.pid, 'SIGKILL'); } catch {}
             _done({ ..._shaped(),
-                    exit_code: 124, error: 'Command timed out after 120s. If it was waiting for input, pass input through a pipe or file (stdin is closed); run long jobs in the background.' });
+                    exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` });
         }, TIMEOUT_MS);
     });
 }

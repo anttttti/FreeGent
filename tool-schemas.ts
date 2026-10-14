@@ -275,7 +275,10 @@ function execToolSpec() {
             type: 'object',
             properties: {
                 language: { type: 'string', enum: languages, description: languageDesc },
-                code:     { type: 'string', description: 'Code to execute.' }
+                code:     { type: 'string', description: 'Code to execute.' },
+                ...(typeof (globalThis as any).nativeExec === 'function'
+                    ? { timeout_s: { type: 'number', description: 'Optional. Seconds to wait before the command is killed (default 120, at most 900). Set it only for a step that really needs longer, such as training a model.' } }
+                    : {}),
             },
             required: ['language', 'code']
         }

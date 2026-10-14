@@ -19,5 +19,5 @@ export const runtime = {
      *  grader discards test-file changes (SWE-bench: FG_PROTECT_TESTS=1); never on for ordinary runs. */
     get protectTests(): boolean { return this.hasNativeExec && g.process?.env?.FG_PROTECT_TESTS === '1'; },
     /** Run code natively. Callers check hasNativeExec first. */
-    nativeExec(language: string, code: string): Promise<any> { return g.nativeExec(language, code); },
+    nativeExec(language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> { return g.nativeExec(language, code, opts); },
 };

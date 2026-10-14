@@ -137,3 +137,51 @@ describe('Director prompt Write line', () => {
         expect(line).toMatch(/create, edit, patch, or delete files/);
     });
 });
+
+describe('fg-tasks/current.md is the scratch task and may be replaced by a shorter one', () => {
+    it('is overwritten without a shrink error, while any other large file is still guarded', async () => {
+        W.mainAgentRole = role('read_file', 'write_file', 'execute_code');
+        const old = '---\nid: 036\nstatus: done\n---\n' + BIG;
+        files.set('fg-tasks/current.md', old);
+        const r = await W.executeToolAsync('write_file', { path: 'fg-tasks/current.md', content: '---\nid: current\nstatus: in-progress\n---\n# New request\n' }, null);
+        expect(r.error).toBeUndefined();
+        expect(files.get('fg-tasks/current.md')).toContain('# New request');
+        files.set('fg-tasks/036-t.md', old);
+        const r2 = await W.executeToolAsync('write_file', { path: 'fg-tasks/036-t.md', content: '# short\n' }, null);
+        expect(r2.error).toMatch(/Content shrank/);
+    });
+});
+
+describe('execute_code with the script inside the language value', () => {
+    it('runs it instead of answering "No code provided"', async () => {
+        W.mainAgentRole = role('execute_code');
+        const r = await W.executeToolAsync('execute_code', { language: 'bash">\necho hi', code: '' }, null);
+        expect(r.error ?? '').not.toMatch(/No code provided/);
+    });
+});
+
+describe('abbreviated-history writes: escalation', () => {
+    it('names the loop from the third refusal on', async () => {
+        const { resetLookalikeRefusals } = await import('../tools.ts');
+        resetLookalikeRefusals();
+        W.mainAgentRole = role('read_file', 'write_file', 'replace_in_file', 'execute_code');
+        files.set('srv.py', BIG);
+        const call = () => W.executeToolAsync('write_file', { path: 'srv.py', content: '--- srv.py\n+++ srv.py\n@@ -1,2 +1,2 @@\n-a\n+b\n', _contentCompressed: true }, null);
+        const r1 = await call(); const r2 = await call(); const r3 = await call();
+        expect(r1.error).toMatch(/NOT changed/); expect(r1.error).not.toMatch(/3rd time/);
+        expect(r2.error).not.toMatch(/3rd time/);
+        expect(r3.error).toMatch(/3rd time[\s\S]*replace_in_file with only the lines that differ/);
+        expect(files.get('srv.py')).toBe(BIG);
+    });
+});
+
+describe('execute_code timeout_s', () => {
+    it('clamps a requested timeout and falls back to 120 s', async () => {
+        const { execTimeoutMs, EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS } = await import('../exec-limits.ts');
+        expect(execTimeoutMs(undefined)).toBe(EXEC_TIMEOUT_MS);
+        expect(execTimeoutMs('abc')).toBe(EXEC_TIMEOUT_MS);
+        expect(execTimeoutMs(300)).toBe(300_000);
+        expect(execTimeoutMs(99999)).toBe(EXEC_TIMEOUT_MAX_MS);
+        expect(execTimeoutMs(-5)).toBe(EXEC_TIMEOUT_MS);
+    });
+});
