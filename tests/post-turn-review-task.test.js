@@ -15,9 +15,10 @@ beforeEach(() => {
     W.refreshTasks = () => {};
     localStorage.setItem('fg_agent_review_logs', 'true');
     setActiveChatId('chat-1');
+    const FAKE_KEY = ['sk', 'abcdefghijklmnopqrstuvwxyz123456'].join('-');   // built at runtime: no secret-shaped literal in the repo
     W.conversationLog = [{ chatId: 'chat-1', step: 0, model: 'm', provider: 'p', chatName: 'Demo',
         response: 'x'.repeat(100),
-        toolCalls: [{ name: 'execute_code', args: { code: 'curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456" x' } }] }];
+        toolCalls: [{ name: 'execute_code', args: { code: `curl -H "Authorization: Bearer ${FAKE_KEY}" x` } }] }];
 });
 afterEach(() => { for (const k of STUBBED) W[k] = saved[k]; localStorage.clear(); });
 
@@ -33,6 +34,6 @@ describe('session-log review task', () => {
         await post.runPostTurnAgents();
         const log = Object.entries(files).find(([k]) => k.startsWith('logs/'))?.[1] ?? '';
         expect(log).toContain('execute_code');
-        expect(log).not.toContain('sk-abcdefghijklmnopqrstuvwxyz123456');
+        expect(log).not.toContain(['sk', 'abcdefghijklmnopqrstuvwxyz123456'].join('-'));
     });
 });
