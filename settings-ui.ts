@@ -1134,7 +1134,7 @@ function _renderPriorityList(containerId, list) {
     html += `</div>
 <div style="margin-top:6px">
   <div class="model-combo" id="${containerId}-add-combo"
-       data-options='${JSON.stringify(_addModels).replace(/'/g, "&#39;")}'
+       data-options="${escapeHtml(JSON.stringify(_addModels))}"
        data-addmode="true">
     <input type="text" class="settings-input model-combo-input" placeholder="— Search to add models —" autocomplete="off"
       oninput="_comboFilter('${containerId}-add-combo')"
@@ -1614,7 +1614,7 @@ function renderWorkerModelSelector() {
     const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
     container.innerHTML = `<div class="model-combo" id="worker-model-combo"
      style="flex:1"
-     data-options='${JSON.stringify(allOpts).replace(/'/g, "&#39;")}'
+     data-options="${escapeHtml(JSON.stringify(allOpts))}"
      data-onselect="saveWorkerModel">
   <input type="text" class="settings-input model-combo-input" autocomplete="off"
     value="${currentLabel.replace(/"/g, '&quot;')}"
@@ -1647,7 +1647,7 @@ function renderUtilityModelSelector() {
     const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
     container.innerHTML = `<div class="model-combo" id="utility-model-combo"
      style="flex:1"
-     data-options='${JSON.stringify(allOpts).replace(/'/g, "&#39;")}'
+     data-options="${escapeHtml(JSON.stringify(allOpts))}"
      data-onselect="saveUtilityModel">
   <input type="text" class="settings-input model-combo-input" autocomplete="off"
     value="${currentLabel.replace(/"/g, '&quot;')}"

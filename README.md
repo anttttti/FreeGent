@@ -191,7 +191,7 @@ BRAVE_API_KEY=...        # optional: web search
 GITHUB_TOKEN=ghp_...     # optional: raises GitHub search rate limit
 ```
 
-The dev server, TUI, and CLI all load this file automatically. Keys are forwarded to the browser's `localStorage` and go directly to each provider — never stored server-side.
+The dev server, TUI, and CLI all load this file automatically. The key values stay on the machine running the dev server: the page only learns a short hash of each and sends a placeholder, which the server's proxy replaces with the real key for that provider's host (see SECURITY.md). Keys you type into Settings are a different case: they live in the browser's `localStorage`.
 
 **Alternatives**
 
