@@ -29,6 +29,7 @@ import { lookup as lookupCb, type LookupAddress } from 'node:dns';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { scrubEnv } from './secret-env.js';
@@ -340,6 +341,65 @@ export async function publicGet(
     throw new ProxyRefusal('too many redirects');
 }
 
+// The POST proxy serves the user's configured endpoints, which may be on this machine or the LAN, so
+// private and loopback addresses are allowed; link-local (cloud metadata) and this server's own
+// address and port are not. Like the GET path, the check is made on the address actually dialled:
+// resolving the name once to check it and again to connect left a rebinding window.
+export function connectRefusal(hostname: string, addrs: string[], serverPort: number, targetPort: number): string | null {
+    const own = _ownAddresses();
+    for (const a of addrs) {
+        if (classifyAddress(a) === 'linklocal') return `${hostname} resolves to a link-local address (${a})`;
+        if (targetPort === serverPort && _isOwnAddress(a, own)) return `${hostname} resolves to this server itself`;
+    }
+    return null;
+}
+
+function _guardLookup(serverPort: number, targetPort: number) {
+    return (hostname: string, options: any, cb: (...a: any[]) => void) => {
+        lookupCb(hostname, { all: true, family: options?.family ?? 0, hints: options?.hints }, (err, addrs: LookupAddress[]) => {
+            if (err) return cb(err);
+            const why = connectRefusal(hostname, addrs.map(a => a.address), serverPort, targetPort);
+            if (why) return cb(new ProxyRefusal(why));
+            if (options?.all) cb(null, addrs); else cb(null, addrs[0].address, addrs[0].family);
+        });
+    };
+}
+
+export function postTargetRefusal(url: string, spec: string | undefined): string | null {
+    const list = String(spec ?? '').split(',').map(x => x.trim()).filter(Boolean);
+    if (!list.length) return null;
+    let origin: string;
+    try { origin = new URL(url).origin; } catch { return 'invalid target URL'; }
+    const allowed = list.map(x => { try { return new URL(x).origin; } catch { return ''; } });
+    return allowed.includes(origin) ? null : `${origin} is not in FG_PROXY_POST_ALLOW`;
+}
+
+/** fetch for the POST proxy: node:http(s) with the connect-time address check, streaming the response. */
+export function pinnedFetch(serverPort: number): typeof fetch {
+    return (async (input: any, init: any = {}) => {
+        const u = new URL(String(input));
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ProxyRefusal('only http(s) URLs can be fetched');
+        const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
+        const headers: Record<string, string> = { ...(init.headers ?? {}), 'accept-encoding': 'identity' };
+        return await new Promise<Response>((resolve, reject) => {
+            const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, {
+                method: init.method ?? 'GET', headers, lookup: _guardLookup(serverPort, port) as any,
+            }, res => {
+                const h = new Headers();
+                for (const [k, v] of Object.entries(res.headers))
+                    if (Array.isArray(v)) v.forEach(x => h.append(k, x)); else if (v != null) h.set(k, String(v));
+                const status = res.statusCode ?? 502;
+                const nullBody = status === 204 || status === 205 || status === 304;
+                resolve(new Response(nullBody ? null : (Readable.toWeb(res) as any), { status, headers: h }));
+            });
+            req.on('error', reject);
+            init.signal?.addEventListener?.('abort', () => req.destroy(new Error('aborted')));
+            if (init.body != null) req.write(init.body);
+            req.end();
+        });
+    }) as typeof fetch;
+}
+
 // Link-local addresses (cloud metadata) are refused for every proxy request, including the POST
 // path used for your configured LLM endpoints (which may be on this machine or your LAN).
 async function _refuseLinkLocal(rawUrl: string): Promise<void> {
@@ -596,7 +656,7 @@ export interface DevApiOptions {
 
 export function createDevApi(opts: DevApiOptions) {
     const { bind, port, allowedOrigins, token, keys } = opts;
-    const fetchImpl = opts.fetchImpl ?? fetch;
+    const fetchImpl = opts.fetchImpl ?? pinnedFetch(port);
     const lan = bind !== '127.0.0.1';
 
     async function apiExecute(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -765,6 +825,10 @@ export function createDevApi(opts: DevApiOptions) {
             const s = substituteServerKeys(target, rawHeaders, strBody, keys);
             const reqBody = typeof body.bodyB64 === 'string' ? Buffer.from(body.bodyB64, 'base64') : s.body;
 
+            // Optional: FG_PROXY_POST_ALLOW=http://127.0.0.1:8000,https://openrouter.ai limits the POST proxy to
+            // the endpoints you configured. Unset, any public or private host is allowed (token holders only).
+            const allow = postTargetRefusal(s.url, process.env.FG_PROXY_POST_ALLOW);
+            if (allow) throw new ProxyRefusal(allow);
             const upstream = await guardedFetch(s.url, { method, headers: s.headers, body: reqBody as any }, port, s.used, fetchImpl);
             _copyRespHeaders(upstream, res);
             res.setHeader('Content-Type', upstream.headers.get('Content-Type') ?? 'application/octet-stream');

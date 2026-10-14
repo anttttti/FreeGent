@@ -309,3 +309,38 @@ describe('isLocalRequest (review 2026-10-14)', async () => {
         expect(isLocalRequest('127.0.0.1', { host: 'evil.example' })).toBe(false);
     });
 });
+
+describe('POST proxy connect guard (review 2026-10-14, opencode M2)', async () => {
+    const { connectRefusal, postTargetRefusal, pinnedFetch } = await import('../dev-api.js');
+    it('refuses link-local and this server, allows private addresses', () => {
+        expect(connectRefusal('x.example', ['169.254.169.254'], 5000, 80)).toMatch(/link-local/);
+        expect(connectRefusal('x.example', ['127.0.0.1'], 5000, 5000)).toMatch(/this server/);
+        expect(connectRefusal('lan', ['192.168.1.20'], 5000, 8000)).toBeNull();
+        expect(connectRefusal('local', ['127.0.0.1'], 5000, 8000)).toBeNull();
+        // a name with one good and one link-local address is refused as a whole
+        expect(connectRefusal('mixed', ['93.184.216.34', '169.254.169.254'], 5000, 443)).toMatch(/link-local/);
+    });
+    it('FG_PROXY_POST_ALLOW limits targets by origin; unset allows all', () => {
+        expect(postTargetRefusal('http://10.0.0.5:8000/v1/chat/completions', undefined)).toBeNull();
+        const spec = 'http://10.0.0.5:8000, https://openrouter.ai';
+        expect(postTargetRefusal('http://10.0.0.5:8000/v1/chat/completions', spec)).toBeNull();
+        expect(postTargetRefusal('https://openrouter.ai/api/v1/chat/completions', spec)).toBeNull();
+        expect(postTargetRefusal('http://10.0.0.6:8000/', spec)).toMatch(/not in FG_PROXY_POST_ALLOW/);
+        expect(postTargetRefusal('https://openrouter.ai.evil.example/', spec)).toMatch(/not in/);
+    });
+    it('pinnedFetch streams a local server response', async () => {
+        const http = await import('node:http');
+        const srv = http.createServer((req, res) => {
+            let body = '';
+            req.on('data', c => body += c);
+            req.on('end', () => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: a\n\n'); res.end(`data: ${body}\n\n`); });
+        });
+        await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
+        const port = (srv.address() as any).port;
+        try {
+            const r = await pinnedFetch(1)(`http://127.0.0.1:${port}/x`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"k":1}' });
+            expect(r.status).toBe(200);
+            expect(await r.text()).toBe('data: a\n\ndata: {"k":1}\n\n');
+        } finally { srv.close(); }
+    });
+});
