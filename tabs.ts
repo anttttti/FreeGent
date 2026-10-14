@@ -1,6 +1,7 @@
 // tabs.js — FreeGent: tab management, file tabs, notify local file changed
 // Depends on: config.js, settings-ui.js, skills.js, tasks.js, editor.js
 import { escapeHtml } from './html-escape.js';
+import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 
@@ -189,14 +190,14 @@ function openFileTab(name) {
                 label.style.cssText = 'font-weight:600;font-size:12px;color:var(--muted);margin:8px 0 4px;';
                 label.textContent = sheetName;
                 editorWrap.appendChild(label);
-                const html = XLSX.utils.sheet_to_html(wb.Sheets[sheetName]);
+                // Built from cell values with DOM calls: sheet_to_html leaves cell text unescaped in an attribute.
+                const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: '' });
                 const wrap = document.createElement('div');
                 wrap.style.cssText = 'overflow-x:auto;margin-bottom:12px;';
-                wrap.innerHTML = `<style>
-                    .fg-xl-tbl { border-collapse:collapse; font-size:12px; font-family:inherit; }
-                    .fg-xl-tbl td, .fg-xl-tbl th { border:1px solid var(--border); padding:3px 8px; white-space:nowrap; }
-                    .fg-xl-tbl tr:first-child td { background:var(--sidebar-bg); font-weight:600; }
-                </style>` + html.replace(/<table/g, '<table class="fg-xl-tbl"');
+                const style = document.createElement('style');
+                style.textContent = SHEET_TABLE_CSS;
+                wrap.appendChild(style);
+                wrap.appendChild(buildSheetTable(document, rows));
                 editorWrap.appendChild(wrap);
             });
         }).catch(e => { editorWrap.textContent = 'Error loading spreadsheet: ' + e.message; });

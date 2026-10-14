@@ -1181,7 +1181,7 @@ function updateInputModelBtn(): void {
     const coolSfx  = rem > 0 ? ` ⏳${rem}s` : '';
     const trim     = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s;
     btn.innerHTML  = active
-        ? `<span class="ibtn-provider">${trim(provider, 16)}</span><span class="ibtn-model">${trim(modelId, 28)}${coolSfx}</span>`
+        ? `<span class="ibtn-provider">${escapeHtml(trim(provider, 16))}</span><span class="ibtn-model">${escapeHtml(trim(modelId, 28))}${coolSfx}</span>`
         : `<span class="ibtn-model">no model</span>`;
 }
 

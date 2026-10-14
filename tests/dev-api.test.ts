@@ -288,3 +288,24 @@ describe('page script', () => {
         });
     });
 });
+
+describe('isLocalRequest (review 2026-10-14)', async () => {
+    const { isLocalRequest } = await import('../dev-api.js');
+    it('accepts a loopback peer addressed by a loopback name', () => {
+        expect(isLocalRequest('127.0.0.1', { host: 'localhost:5000' })).toBe(true);
+        expect(isLocalRequest('::ffff:127.0.0.1', { host: '127.0.0.1:5000' })).toBe(true);
+        expect(isLocalRequest('::1', { host: '[::1]:5000' })).toBe(true);
+    });
+    it('refuses a LAN client relayed by a reverse proxy on this machine', () => {
+        expect(isLocalRequest('127.0.0.1', { host: '192.168.1.28', 'x-forwarded-for': '192.168.1.40' })).toBe(false);
+        // nginx without forwarding headers still passes the client's Host through
+        expect(isLocalRequest('127.0.0.1', { host: '192.168.1.28:3000' })).toBe(false);
+        // a forged header can only demote a request
+        expect(isLocalRequest('127.0.0.1', { host: 'localhost', 'x-forwarded-for': '127.0.0.1' })).toBe(false);
+    });
+    it('refuses a non-loopback peer and a missing or foreign Host', () => {
+        expect(isLocalRequest('192.168.1.40', { host: 'localhost' })).toBe(false);
+        expect(isLocalRequest('127.0.0.1', {})).toBe(false);
+        expect(isLocalRequest('127.0.0.1', { host: 'evil.example' })).toBe(false);
+    });
+});
