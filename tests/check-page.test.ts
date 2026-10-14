@@ -24,7 +24,10 @@ describe('check_page', () => {
         expect((await W.executeToolAsync('check_page', { path: 'game.js' })).error).toMatch(/HTML page/);
         const r = await W.executeToolAsync('check_page', { path: 'index.html', actions: [{ click: '#start-btn' }], probes: ['gameState', 42], wait_ms: 500 });
         expect(r.summary).toBe('ok');
-        expect(got).toEqual({ path: 'index.html', opts: { actions: [{ click: '#start-btn' }], probes: ['gameState', '42'], waitMs: 500 } });
+        expect(got).toEqual({ path: 'index.html', opts: { actions: [{ click: '#start-btn' }], probes: ['gameState', '42'], waitMs: 500, expect: [] } });
+        W.runPageCheck = async (_p: string, opts: any) => { got = opts; return {}; };
+        await W.executeToolAsync('check_page', { path: 'index.html', expect: [{ expr: 'G.state', equals: 'play' }, { nope: 1 }] });
+        expect(got.expect).toEqual([{ expr: 'G.state', equals: 'play' }]);
     });
 
     it('is a default-on tool known to the pseudo-call detector', async () => {

@@ -307,6 +307,8 @@ const CHECK_PAGE_TOOL_SPEC = {
                 },
             },
             probes:  { type: 'array', items: { type: 'string' }, description: 'JS expressions evaluated in the page after load and again at the end.' },
+            expect:  { type: 'array', description: 'What must be true at the end, after the actions and the wait. Each is {"expr": "<JS expression>", "equals": <value>} or {"expr": ..., "matches": "<regex>"} or {"expr": ..., "truthy": true}. The result says how many were met, and loading without errors is not counted as a pass for them. State what the user asked for, e.g. {"expr": "G.state", "equals": "play"} after a click that starts the game.',
+                items: { type: 'object', properties: { expr: { type: 'string' }, equals: {}, matches: { type: 'string' }, truthy: { type: 'boolean' } }, required: ['expr'] } },
             wait_ms: { type: 'number', description: 'How long to let the page run after the actions (default 1500, max 10000).' },
         },
         required: ['path'],
