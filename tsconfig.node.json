@@ -22,6 +22,7 @@
     "dotenv.ts",
     "headless-runner.ts",
     "native-exec.ts",
+    "request-ledger.ts",
     "bootstrap-jsdom.ts",
     "node-fs-adapter.ts",
     "node-sqlite-adapter.ts"

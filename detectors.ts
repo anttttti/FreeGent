@@ -15,6 +15,8 @@
 // Follows the step-validator/nudge-emitter/payload-builder pattern: ES module, exports,
 // window bridge.
 
+import { shellWrites } from './shell-writes.js';
+
 import { _seenReadFiles, _seenListFiles } from './state.js';
 
 // ── Result fingerprinting ────────────────────────────────────────────────────
@@ -111,8 +113,17 @@ export type RepeatGuard = {
 const _TURN_HISTORY = 500;   // bound on tried / seen
 export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });
 
+// The text of a shell/Python call as far as repeating it is concerned: comment-only lines, blank lines and
+// indentation do not make it a different call. DSAEval 5290 and CTF 71 (v0.70) re-ran the same find/ls/grep
+// probes for dozens of steps with a changed `# comment` line, which kept every one out of the repeat window.
+export function _normCode(code: string): string {
+    return code.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).join('\n');
+}
 export function _callSig(calls: Array<{ name: string; args: any }>): string {
-    return JSON.stringify(calls.map(c => [c.name, c.args ?? {}]));
+    return JSON.stringify(calls.map(c => {
+        const a = c.args ?? {};
+        return [c.name, c.name === 'execute_code' && typeof a.code === 'string' ? { ...a, code: _normCode(a.code) } : a];
+    }));
 }
 export function _resultSig(results: Array<{ name: string; result: any }>): string {
     const digitless = (k: string, v: any) => {
@@ -332,10 +343,101 @@ export function isEnvMissing(text: string): boolean {
     return ENV_MISSING_RE.test(text) || _moduleAttrIsEnvironment(text);
 }
 
-export function failStreakKind(name: string, result: any, readOnly: Set<string>): 'progress' | 'fail' | 'neutral' {
+// Evidence-progress detector. The exact-call and same-result guards miss a model that rotates probes: DSAEval
+// 5290 (v0.70) ran 86 steps of find/ls/grep over the same directories, CTF 14 and 71 re-read the same hex and
+// metadata variants for ~100 steps; every result differed in some digit or path, none told it anything new.
+// Here a step is "stale" when it changed nothing and none of its output lines (digits folded) had been seen
+// earlier in the turn. Advisory only: a legitimate poll or a long investigation is nudged, never stopped.
+export const NOVELTY_STALE_LIMIT = 6;
+export interface NoveltyState { seen: Set<string>; stale: number; nudges: number }
+export const newNoveltyState = (): NoveltyState => ({ seen: new Set(), stale: 0, nudges: 0 });
+const _lineKey = (l: string) => l.trim().toLowerCase().replace(/\d+/g, '#').slice(0, 160);
+function _resultLines(r: any): string[] {
+    if (!r || typeof r !== 'object') return [];
+    const parts: string[] = [];
+    for (const k of ['stdout', 'stderr', 'content', 'error', 'matches', 'files']) {
+        const v = (r as any)[k];
+        if (typeof v === 'string') parts.push(v);
+        else if (Array.isArray(v)) parts.push(v.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\n'));
+    }
+    return parts.join('\n').split('\n').map(_lineKey).filter(l => l.length > 2);
+}
+/** Update with one step's results; returns a nudge text when the streak reaches the limit, else null. */
+export function updateNovelty(st: NoveltyState, results: Array<{ name: string; result: any }>, stepChangedSomething: boolean): string | null {
+    let novel = 0, total = 0;
+    for (const r of results) {
+        for (const l of _resultLines(r.result)) {
+            total++;
+            if (!st.seen.has(l)) { novel++; if (st.seen.size < 20000) st.seen.add(l); }
+        }
+    }
+    const informative = stepChangedSomething || novel >= 2 || (total > 0 && novel / total >= 0.25);
+    if (informative) { st.stale = 0; return null; }
+    st.stale++;
+    if (st.stale >= NOVELTY_STALE_LIMIT && st.stale % NOVELTY_STALE_LIMIT === 0 && st.nudges < 3) {
+        st.nudges++;
+        return `The last ${st.stale} steps returned nothing you had not already seen and changed nothing. More probes of the same kind will not help. Write down what you now know, then either act on it (make the change, run the real check) or try a different approach; if what you need is not in this environment, reply BLOCKED: <the exact missing piece>.`;
+    }
+    return null;
+}
+
+// Query tasks and invented data. AgentBench OS tasks 43, 47 and 52 (v0.70) asked a question about files that
+// were already there; the agent wrote its own example files (or overwrote the real one) and answered from
+// them. For a question that names no action, a data file created this turn is the sign.
+const _ACTION_RE = /\b(?:creat\w*|writ\w*|mak\w*|add\w*|append\w*|generat\w*|sav\w*|set|chang\w*|modif\w*|updat\w*|delet\w*|remov\w*|renam\w*|mov\w*|copy|copi\w*|install\w*|configur\w*|edit\w*|fix\w*|build|compil\w*|replac\w*|insert\w*|stor\w*|export\w*|put|touch|chmod|chown|mkdir|kill|start|stop|restart|run|execut\w*|download\w*|upload\w*|send|post|implement\w*|refactor\w*|turn|enable|disable|clean\w*|sort|merge|split|convert\w*)\b/i;
+export function isQuestionOnlyTask(task: string): boolean {
+    const t = String(task ?? '').trim();
+    if (!t || t.length > 1500) return false;
+    return !_ACTION_RE.test(t);
+}
+const _DATA_FILE_RE = /\.(?:txt|log|csv|tsv|json|dat|md|xml|ya?ml|ini|conf)$/i;
+/** Data-like files created or changed in this run that are not scratch or temp files. */
+export function inventedDataPaths(edited: Iterable<string>, isScratch: (p: string) => boolean): string[] {
+    return [...edited].filter(p => {
+        const q = String(p);
+        return !isScratch(q) && !/^\/?(?:tmp|var\/tmp|dev)\//.test(q) && (_DATA_FILE_RE.test(q) || !/\.[A-Za-z0-9]{1,5}$/.test(q));
+    });
+}
+
+/** The file names the prompt lists in its <workspace_files> block (what was supplied before the agent acted). */
+export function suppliedFiles(promptText: string): Set<string> {
+    const m = /<workspace_files>\n[^\n]*\n([\s\S]*?)<\/workspace_files>/.exec(String(promptText ?? ''));
+    const out = new Set<string>();
+    if (m) for (const l of m[1].split('\n')) { const t = l.trim().replace(/^\.\//, ''); if (t && !t.endsWith('/') && !/^\.\.\./.test(t)) out.add(t); }
+    return out;
+}
+/** Paths a shell command writes to (redirect, tee, sed -i): see shell-writes.ts. */
+export function shellWritePaths(code: string): string[] {
+    return shellWrites(code).paths;
+}
+/** Written paths that are one of the supplied files (same path, or same name when the prompt lists bare names). */
+export function overwrittenSupplied(written: Iterable<string>, supplied: Set<string>): string[] {
+    const base = (p: string) => p.replace(/^\.\//, '');
+    const names = new Set([...supplied].map(p => base(p).split('/').pop()!));
+    // Plain data files only: a supplied .py/.js/.md/config file is routinely, legitimately edited.
+    return [...new Set([...written].map(base))].filter(p => /\.(?:txt|log|csv|tsv|dat|jsonl)$/i.test(p)
+        && (supplied.has(p) || names.has(p.split('/').pop()!)));
+}
+
+// A search or comparison that found nothing: `grep` and its relatives, `diff`, `cmp` exit 1 with no output
+// when there is no match or no difference. That is an answer, not a failure (CTF 71, v0.70: each empty
+// grep was followed by "Fix before declaring COMPLETED" and counted toward the failure streak).
+export function isNegativeProbe(args: any, result: any): boolean {
+    if (!result || result.error || result.exit_code !== 1) return false;
+    if (String(result.stdout ?? '').trim() || String(result.stderr ?? '').trim()) return false;
+    const code = String(args?.code ?? '');
+    if (!code || String(args?.language ?? 'bash') !== 'bash') return false;
+    const last = code.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).pop() ?? '';
+    // the last pipeline segment decides the exit status: `cmd | grep x`, `grep -rn x .`, `diff a b`
+    const tail = last.split(/\|(?!\|)|&&|;/).pop()!.trim();
+    return /^(?:sudo\s+)?(?:grep|egrep|fgrep|zgrep|rg|ag|diff|cmp|comm|test|\[)\b/.test(tail);
+}
+
+export function failStreakKind(name: string, result: any, readOnly: Set<string>, args?: any): 'progress' | 'fail' | 'neutral' {
     if (readOnly.has(name)) return 'neutral';
     if (result?.error) return 'fail';
     if (name !== 'execute_code') return 'progress';
+    if (isNegativeProbe(args, result)) return 'neutral';
     if ((result?.exit_code ?? 0) === 0) {
         const wrote = Array.isArray(result?.files_written) && result.files_written.length > 0;
         return (String(result?.stdout ?? '').trim() || wrote) ? 'progress' : 'neutral';
@@ -344,8 +446,8 @@ export function failStreakKind(name: string, result: any, readOnly: Set<string>)
 }
 
 // New streak value after one step's tool calls: any progress resets it, each failure adds one.
-export function updateFailStreak(prev: number, calls: Array<{ name: string; result: any }>, readOnly: Set<string>): number {
-    const kinds = calls.map(c => failStreakKind(c.name, c.result, readOnly));
+export function updateFailStreak(prev: number, calls: Array<{ name: string; result: any; args?: any }>, readOnly: Set<string>): number {
+    const kinds = calls.map(c => failStreakKind(c.name, c.result, readOnly, c.args));
     if (kinds.includes('progress')) return 0;
     return prev + kinds.filter(k => k === 'fail').length;
 }

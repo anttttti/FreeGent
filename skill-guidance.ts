@@ -200,6 +200,16 @@ function _touchedPath(r: any): string {
     return filter && !filter.includes('|') && /\.\w+$/.test(filter) ? filter : '*';
 }
 
+// Task cards, memory notes and logs are bookkeeping, not the work: a write to one is not "the edit",
+// so the code-fix definition of done must not interrupt the implementation after it (uploads review
+// 2026-10-14: fired after writing fg-tasks/current.md, and after the first of several edits).
+const _BOOKKEEPING_WRITE_RE = /^(?:\.\/)?(?:local\/)?(?:fg-tasks|memory|logs)\//;
+const _WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'append_file']);
+export function _isBookkeepingWrite(name: string, args: any, result: any): boolean {
+    if (!_WRITE_TOOLS.has(name)) return false;
+    return _BOOKKEEPING_WRITE_RE.test(String(args?.path ?? result?.path ?? ''));
+}
+
 export function reactiveSkillGuidance(toolResults: any): string {
     if (!Array.isArray(toolResults) || !toolResults.length) return '';
     const fired  = _reactiveFired;
@@ -215,9 +225,10 @@ export function reactiveSkillGuidance(toolResults: any): string {
         fired.add(s.name);
     };
 
-    for (const { name, result } of toolResults) {
+    for (const { name, result, args } of toolResults) {
+        const _bookkeeping = _isBookkeepingWrite(name, args, result);
         for (const s of skillsRegistry.values()) {
-            if (!_eligible(s) || !s.trigger_on_tool) continue;
+            if (!_eligible(s) || !s.trigger_on_tool || _bookkeeping) continue;
             const hit = s.trigger_on_tool.split(',').some(spec => {
                 const arrowIdx = spec.indexOf('=>');
                 const tool = (arrowIdx >= 0 ? spec.slice(0, arrowIdx) : spec).trim();
