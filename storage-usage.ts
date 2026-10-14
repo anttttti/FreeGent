@@ -70,6 +70,7 @@ export function refreshStorageUsage(): void {
 }
 
 function _renderStorageUsage(): void {
+    if (typeof document === 'undefined') return;   // the debounce can fire after the page is gone (teardown)
     const u   = computeStorageUsage();
     const pct = u.total / LS_QUOTA;
     const top = document.getElementById('ls-usage-label');
