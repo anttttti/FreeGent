@@ -1,6 +1,6 @@
 // A COMPLETED with no file change on a task that is solved by editing the source: SWE Lite
 // matplotlib-23314 (v0.70) analysed for 44 steps, never edited, ended `completed` with an empty patch.
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
@@ -15,6 +15,7 @@ beforeEach(() => {
     localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
     W._sessionToolFilter = new Set(['execute_code']);
 });
+afterEach(() => { delete process.env.FG_EDIT_REQUIRED; });
 
 const SWE_TASK = 'The following is a GitHub issue filed against the `x/y` repository. Your job is to locate the responsible code and fix it by editing the source files in your workspace.\n\nset_visible(False) leaves children visible.';
 
@@ -28,7 +29,18 @@ async function run(task: string, replies: any[]) {
 }
 const bounces = (s: any) => historyOf(s).filter((m: any) => m.role === 'user' && /no file in the workspace was changed/.test(String(m.content)));
 
+describe('no_edit_complete without the runner flag', () => {
+    it('does not read the prompt wording: a task that merely says "by editing the source files" is not bounced', async () => {
+        delete process.env.FG_EDIT_REQUIRED;
+        const { s, bodies } = await run(SWE_TASK, [{ content: 'The cause is in set_visible.\nCOMPLETED' }]);
+        expect(bounces(s)).toHaveLength(0);
+        expect(bodies).toHaveLength(1);
+    });
+});
+
 describe('no_edit_complete', () => {
+    // set by the SWE runner; the wording of the prompt is not consulted
+    beforeEach(() => { process.env.FG_EDIT_REQUIRED = '1'; });
     it('bounces a COMPLETED that changed nothing, once', async () => {
         const { s, bodies } = await run(SWE_TASK, [
             { content: 'The cause is in Axes3D.set_visible.\nCOMPLETED' },
@@ -39,6 +51,7 @@ describe('no_edit_complete', () => {
     });
 
     it('does not fire for a task that is not an edit task', async () => {
+        delete process.env.FG_EDIT_REQUIRED;   // an ordinary run: the runner did not set it
         const { s, bodies } = await run('How many rows are in data.csv?', [{ content: '42\nCOMPLETED' }]);
         expect(bounces(s)).toHaveLength(0);
         expect(bodies).toHaveLength(1);
@@ -79,6 +92,7 @@ describe('invented_data', () => {
     });
 
     it('bounces an answer after a supplied file was overwritten (OS task 52, v0.70)', async () => {
+        delete process.env.FG_EDIT_REQUIRED;
         const orig = W.nativeExec;
         (globalThis as any).nativeExec = W.nativeExec = async () => ({ stdout: '', stderr: '', exit_code: 0 });
         try {

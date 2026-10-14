@@ -18,6 +18,10 @@ export const runtime = {
     /** Benchmark policy, not a capability: file tools refuse to edit test files. Set by a runner whose
      *  grader discards test-file changes (SWE-bench: FG_PROTECT_TESTS=1); never on for ordinary runs. */
     get protectTests(): boolean { return this.hasNativeExec && g.process?.env?.FG_PROTECT_TESTS === '1'; },
+    /** Task policy, not a capability: the task is solved by editing files, so a COMPLETED with no edit is
+     *  bounced once. Set by the runner that knows (SWE-bench: FG_EDIT_REQUIRED=1); never inferred from
+     *  the wording of a benchmark's prompt. */
+    get editRequired(): boolean { return g.process?.env?.FG_EDIT_REQUIRED === '1'; },
     /** Run code natively. Callers check hasNativeExec first. */
     nativeExec(language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> { return g.nativeExec(language, code, opts); },
 };
