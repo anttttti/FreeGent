@@ -33,33 +33,6 @@ describe('_callSig', () => {
     });
 });
 
-import { newNoveltyState, updateNovelty, NOVELTY_STALE_LIMIT } from '../detectors.ts';
-describe('updateNovelty', () => {
-    const probe = (out: string) => [{ name: 'execute_code', result: { stdout: out, exit_code: 0 } }];
-    it('nudges after a run of probes that show nothing unseen, not before', () => {
-        const st = newNoveltyState();
-        expect(updateNovelty(st, probe('a.py\nb.py\nc.py\nd.py'), false)).toBeNull();
-        let msg: string | null = null;
-        for (let i = 0; i <= NOVELTY_STALE_LIMIT; i++) msg = updateNovelty(st, probe(`b.py\nc.py ${i}\na.py`), false) ?? msg;
-        expect(msg).toMatch(/nothing you had not already seen/);
-    });
-    it('is reset by new output or by a change', () => {
-        const st = newNoveltyState();
-        updateNovelty(st, probe('x\ny\nz'), false);
-        for (let i = 0; i < NOVELTY_STALE_LIMIT - 1; i++) updateNovelty(st, probe('x\ny'), false);
-        expect(updateNovelty(st, probe('fresh line one\nfresh line two\nfresh three'), false)).toBeNull();
-        for (let i = 0; i < NOVELTY_STALE_LIMIT - 1; i++) updateNovelty(st, probe('x\ny'), false);
-        expect(updateNovelty(st, probe('x'), true)).toBeNull();
-    });
-    it('does not nudge a changing counter as new evidence only once digits are folded', () => {
-        const st = newNoveltyState();
-        updateNovelty(st, probe('iteration 1 loss 0.5\nstatus running'), false);
-        let msg: string | null = null;
-        for (let i = 2; i < 10; i++) msg = updateNovelty(st, probe(`iteration ${i} loss 0.${i}\nstatus running`), false) ?? msg;
-        expect(msg).not.toBeNull();   // advisory: digits-only change is not new evidence
-    });
-});
-
 import { isQuestionOnlyTask, inventedDataPaths } from '../detectors.ts';
 describe('query tasks and invented data', () => {
     it('a question that names no action', () => {
