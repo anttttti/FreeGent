@@ -19,7 +19,6 @@ import { getReplyChannelHint } from './reply-channel.js';
 
 // The configured step limit (fg_agent_max_rounds / --max-rounds) — the same one runTurn loops on.
 // The constant MAX_STEPS (the setting's ceiling) made the "not on the last step" guards wrong for other limits.
-const _maxSteps = () => getAgentMaxSteps();
 
 // The detector accepts high-prior synonyms (DONE, TERMINATE, TASK COMPLETE from AutoGen/
 // LangChain-style pretraining data) since half-compliant models drift to those.
@@ -123,7 +122,12 @@ export async function _asksUser(text: string, ps: any): Promise<boolean> {
 //   { kind: 'return', text }  → caller returns text
 //   { kind: 'continue' }      → caller continues the step loop
 //   { kind: 'fallthrough' }   → caller proceeds to the remaining (provider-specific) checks
-export async function _handleTurnState(textContent: string, step: number, ps: any, adapter: any) {
+// `loopMax`: the step budget of this turn. A per-call override (the Director's closing turn runs with a
+// smaller budget) is below the global setting, and the guards below must see the budget that applies:
+// on the turn's real last step they used to think there was room, bounced a COMPLETED, and the turn ended
+// on the bounce (review 2026-10-14, opencode M9).
+export async function _handleTurnState(textContent: string, step: number, ps: any, adapter: any, loopMax?: number) {
+    const _maxSteps = () => (typeof loopMax === 'number' && loopMax > 0 ? Math.min(loopMax, getAgentMaxSteps()) : getAgentMaxSteps());
     const _isAutonomous = workflowMode;
     // COMPLETED reply to a protocol reminder. Two shapes:
     // - bare ACKNOWLEDGMENT ("Done. COMPLETED") → splice reminder+reply, return the

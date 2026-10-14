@@ -285,6 +285,18 @@ describe('_handleTurnState — shared no-tool-call protocol (Issue 8 slice 1)', 
         expect(r3.text).toBe('');
     });
 
+    it('the last step of a smaller per-call budget is not bounced (guards use the turn budget)', async () => {
+        const ps = { finalCheck: 0, cont: 0, saved: null, substCheck: 0 };
+        // the turn runs 3 steps; step index 2 is its last: an empty COMPLETED has no step left to bounce into
+        const last = await _handleTurnState('COMPLETED', 2, ps, mkAdapter(), 3);
+        expect(last.kind).toBe('return');
+        expect(ps.emptyBodyCount).toBeUndefined();
+        // the same step index under the global budget still has room, so it bounces
+        const ps2 = { finalCheck: 0, cont: 0, saved: null, substCheck: 0 };
+        const mid = await _handleTurnState('COMPLETED', 2, ps2, mkAdapter());
+        expect(mid.kind).toBe('continue');
+    });
+
     it('_saveAnswer never replaces a saved answer with body-less text (2026-07-16 regression, re-broken by 31db758)', () => {
         // The guarded saver was deleted by the v0.18 baseline revert and replaced with bare
         // `ps.saved = text`, so a bare state line or a reasoning-only step overwrote a real
