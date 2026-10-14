@@ -675,6 +675,9 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 } };
     const { timeoutMs } = _parseOpts(opts);
     await setup(opts);
+    // Per-chat state of earlier tasks in this process (worker budget, lookalike-refusal counts, replace
+    // failures) must not carry over: a second run() would inherit the first one's spent worker budget.
+    try { ((globalThis as any).clearReplaceState ?? (dom.window as any).clearReplaceState)?.(); } catch { /* best effort */ }
 
     const origCreatePH = dom.window.createResponsePlaceholder;
     const _noPH = (_container?: any) => _makeCapturingPlaceholder(_noop);

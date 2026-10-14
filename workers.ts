@@ -5,7 +5,7 @@
 // The state module's object-setter is imported under an alias for the direct-assignment sites.
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId } from './state.js';
+import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId, workflowMode } from './state.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
@@ -1352,6 +1352,18 @@ export function workerStepLimit(): number {
     return Number.isFinite(n) && n >= 0 ? n : WORKER_STEP_LIMIT_DEFAULT;
 }
 export function workerStepsUsed(): number { return _workerStepsThisRun; }
+/** The refusal for run_workers once the task's worker budget is spent, else null. `autonomous` is a run that
+ *  must finish without a user (workflowMode on a native executor): an interactive session is open-ended, and
+ *  its workers are not capped by a per-task budget (a terminal chat is one chat for as long as it lives). */
+export function workerBudgetStop(autonomous: boolean): string | null {
+    if (!autonomous) return null;
+    const limit = workerStepLimit(), tokLimit = workerInputLimit();
+    const overSteps = limit > 0 && _workerStepsThisRun >= limit;
+    const overTokens = tokLimit > 0 && _workerInputThisRun >= tokLimit;
+    if (!overSteps && !overTokens) return null;
+    return `run_workers is not available for the rest of this task: the workers have already used ${_workerStepsThisRun} steps and ${Math.round(_workerInputThisRun / 1000)}K input tokens (the limits are ${limit} steps and ${Math.round(tokLimit / 1000)}K tokens). Nothing was started. Do the remaining work yourself with read_file, replace_in_file and execute_code, using what the workers already returned.`;
+}
+export function _addWorkerUsage(steps: number, inputTokens: number): void { _workerStepsThisRun += steps; _workerInputThisRun += inputTokens; }
 export function resetWorkerBudget(): void { _workerStepsThisRun = 0; _workerInputThisRun = 0; }
 (globalThis as any).resetWorkerBudget = resetWorkerBudget;   // cleared with the other per-chat state (clearReplaceState)
 // Max steps a worker turn may run — distinct from the main-agent cap (getAgentMaxSteps()).
@@ -1441,11 +1453,8 @@ async function executeWorkers(args: any): Promise<any> {
     let agents = rawAgents.filter(a => a && a.id && a.task);
     if (!agents.length) return { error: 'No workers specified. Call run_workers with {"agents": [{"id": "short-name", "role": "researcher", "task": "what to do"}]}.' };
     {
-        const limit = workerStepLimit(), tokLimit = workerInputLimit();
-        const overSteps = limit > 0 && _workerStepsThisRun >= limit;
-        const overTokens = tokLimit > 0 && _workerInputThisRun >= tokLimit;
-        if (runtime.hasNativeExec && (overSteps || overTokens))
-            return { error: `run_workers is not available for the rest of this task: the workers have already used ${_workerStepsThisRun} steps and ${Math.round(_workerInputThisRun / 1000)}K input tokens (the limits are ${limit} steps and ${Math.round(tokLimit / 1000)}K tokens). Nothing was started. Do the remaining work yourself with read_file, replace_in_file and execute_code, using what the workers already returned.` };
+        const stop = workerBudgetStop(runtime.hasNativeExec && workflowMode);
+        if (stop) return { error: stop };
     }
     // Every worker is a concurrent model loop on the same endpoints: an unbounded list floods them.
     if (agents.length > MAX_WORKERS_PER_CALL)

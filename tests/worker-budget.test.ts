@@ -27,3 +27,21 @@ describe('worker step limit', () => {
         expect(workerInputUsed()).toBe(0);
     });
 });
+
+import { workerBudgetStop, _addWorkerUsage } from '../workers.ts';
+import { clearReplaceState } from '../llm-loops.ts';
+
+describe('worker budget scope', () => {
+    it('stops an autonomous run once spent, never an interactive session', () => {
+        _addWorkerUsage(WORKER_STEP_LIMIT_DEFAULT, 0);
+        expect(workerBudgetStop(true)).toMatch(/not available for the rest of this task/);
+        expect(workerBudgetStop(false)).toBeNull();
+    });
+    it('is cleared with the per-chat state that run() clears at its start', () => {
+        _addWorkerUsage(10, 1000);
+        expect(workerStepsUsed()).toBeGreaterThan(0);
+        clearReplaceState();
+        expect(workerStepsUsed()).toBe(0);
+        expect(workerInputUsed()).toBe(0);
+    });
+});
