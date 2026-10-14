@@ -163,6 +163,12 @@ export function buildChatPayload(ep: any, {
         ...(provider === 'openrouter' && { include_reasoning: true }),
         ..._thinkingFields(provider, isCustom, thinkingBudget, preserveThinking),
         temperature,
+        // Opt-in sampling seed for OpenAI-compatible servers (FREEGENT_SAMPLING_SEED). The benchmark's
+        // suite --seed selects tasks and environments only; this is what makes two runs of one task
+        // comparable when the server is run at concurrency 1. Off unless set.
+        ...(isCustom && Number.isFinite(Number((globalThis as any).process?.env?.FREEGENT_SAMPLING_SEED))
+            && (globalThis as any).process?.env?.FREEGENT_SAMPLING_SEED !== ''
+            && { seed: Number((globalThis as any).process.env.FREEGENT_SAMPLING_SEED) }),
         ...(provider === 'nvidia' && { top_p: 0.95 }),
         // Nous Portal requires a "user=…" tag from API-key callers on some models (400 "missing
         // user tag" otherwise — e.g. step-3.7-flash, solar-pro4, 2026-09-27). Undocumented; the

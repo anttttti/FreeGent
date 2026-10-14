@@ -937,7 +937,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 const _u = message?.usage;
                 // Worker requests were in no task total: 27% more input tokens than reported over the
                 // v0.70 suites (64% on SWE Verified). Counted apart from the main loop's.
-                metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens });
+                metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens, cachedTokens: _u?.prompt_tokens_details?.cached_tokens ?? 0 });
+                _workerStepsThisRun++;
+                _workerInputThisRun += Number(_u?.prompt_tokens) || 0;
                 console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
@@ -1328,6 +1330,30 @@ export function _workerRunStatus(statuses: string[], unmergedFiles = 0): 'blocke
 }
 // Max workers one run_workers call may start (also maxItems in WORKERS_TOOL_SPEC).
 export const MAX_WORKERS_PER_CALL = 8;
+// Task-level worker budget, headless runs only (one task per process; in the browser a chat is open-ended).
+// A per-worker step cap and 8 workers per call do not bound a whole task: v0.70 Verified `xarray-7229` spent
+// 210 worker steps (3.6M input), `django-12663` 176 (4.6M), `xarray-4094` 183 (3.4M) and none was resolved,
+// while the resolved `pylint-7114` used 92. Past the limit run_workers answers with an error and the Director
+// finishes with its own tools. FREEGENT_WORKER_STEP_LIMIT=0 turns it off.
+export const WORKER_STEP_LIMIT_DEFAULT = 150;
+let _workerStepsThisRun = 0;
+// Input tokens too: a step cap alone lets a few long-context workers cost 3-5M (django-12663: 176 steps, 4.6M).
+export const WORKER_INPUT_LIMIT_DEFAULT = 3_000_000;
+let _workerInputThisRun = 0;
+export function workerInputLimit(): number {
+    const e = (globalThis as any).process?.env?.FREEGENT_WORKER_INPUT_TOKEN_LIMIT as string | undefined;
+    const n = e != null && e !== '' ? Number(e) : WORKER_INPUT_LIMIT_DEFAULT;
+    return Number.isFinite(n) && n >= 0 ? n : WORKER_INPUT_LIMIT_DEFAULT;
+}
+export function workerInputUsed(): number { return _workerInputThisRun; }
+export function workerStepLimit(): number {
+    const e = (globalThis as any).process?.env?.FREEGENT_WORKER_STEP_LIMIT as string | undefined;
+    const n = e != null && e !== '' ? Number(e) : WORKER_STEP_LIMIT_DEFAULT;
+    return Number.isFinite(n) && n >= 0 ? n : WORKER_STEP_LIMIT_DEFAULT;
+}
+export function workerStepsUsed(): number { return _workerStepsThisRun; }
+export function resetWorkerBudget(): void { _workerStepsThisRun = 0; _workerInputThisRun = 0; }
+(globalThis as any).resetWorkerBudget = resetWorkerBudget;   // cleared with the other per-chat state (clearReplaceState)
 // Max steps a worker turn may run — distinct from the main-agent cap (getAgentMaxSteps()).
 const _WORKER_MAX_STEPS = 30;
 // Longest a worker waits for a rate-limit cooldown before giving up. Free-tier daily quotas put
@@ -1414,6 +1440,13 @@ async function executeWorkers(args: any): Promise<any> {
     if (!Array.isArray(rawAgents) || !rawAgents.length) rawAgents = _agentsFromMangledArgs(args) ?? [];
     let agents = rawAgents.filter(a => a && a.id && a.task);
     if (!agents.length) return { error: 'No workers specified. Call run_workers with {"agents": [{"id": "short-name", "role": "researcher", "task": "what to do"}]}.' };
+    {
+        const limit = workerStepLimit(), tokLimit = workerInputLimit();
+        const overSteps = limit > 0 && _workerStepsThisRun >= limit;
+        const overTokens = tokLimit > 0 && _workerInputThisRun >= tokLimit;
+        if (runtime.hasNativeExec && (overSteps || overTokens))
+            return { error: `run_workers is not available for the rest of this task: the workers have already used ${_workerStepsThisRun} steps and ${Math.round(_workerInputThisRun / 1000)}K input tokens (the limits are ${limit} steps and ${Math.round(tokLimit / 1000)}K tokens). Nothing was started. Do the remaining work yourself with read_file, replace_in_file and execute_code, using what the workers already returned.` };
+    }
     // Every worker is a concurrent model loop on the same endpoints: an unbounded list floods them.
     if (agents.length > MAX_WORKERS_PER_CALL)
         return { error: `run_workers: ${agents.length} workers requested, the limit is ${MAX_WORKERS_PER_CALL} per call. Nothing was started. Call again with at most ${MAX_WORKERS_PER_CALL}: merge related subtasks, or run the rest in a later call.` };

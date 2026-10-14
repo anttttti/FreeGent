@@ -20,3 +20,21 @@ describe('_isBarePseudoCall', () => {
         expect(M._isBarePseudoCall('The jump bug came from onGround never being reset after landing; I fixed it in the update loop.\nread_file("game.js")')).toBe(false);
     });
 });
+
+describe('the ReAct "action" envelope is a pseudo-call', () => {
+    const env = '{"action": "execute_code", "action_input": {"code": "python3 -m pytest", "language": "bash"}}';
+    it('is a bare pseudo-call', () => {
+        expect(M._isBarePseudoCall(env)).toBe(true);
+    });
+    it('a COMPLETED line after it does not pass the pseudo_tool_call check (scikit-learn-13439, v0.70)', async () => {
+        const { validateOutput } = await import('../step-validator.ts');
+        const hit = await validateOutput(`${env}\nCOMPLETED`, M._STEP_CHECKS, { phase: 'pre-state', llm: null });
+        expect(hit?.name).toBe('pseudo_tool_call');
+        expect(hit?.toolName).toBe('execute_code');
+    });
+    it('a ReAct final answer is not a tool call', async () => {
+        const { validateOutput } = await import('../step-validator.ts');
+        const hit = await validateOutput('{"action": "Final Answer", "action_input": "The bug is in line 4."}\nCOMPLETED', M._STEP_CHECKS, { phase: 'pre-state', llm: null });
+        expect(hit?.name).not.toBe('pseudo_tool_call');
+    });
+});

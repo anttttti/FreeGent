@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, isQuestionOnlyTask, inventedDataPaths, suppliedFiles, shellWritePaths, overwrittenSupplied, newNoveltyState, updateNovelty, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -21,7 +21,8 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel, fetchSaidNoStore } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
+import { newVerification, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
@@ -210,6 +211,8 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
     const _s = session ?? defaultSession;
     _s._replaceFailures  = new Map();
     _s._replaceNudgeSent = new Map();
+    resetLookalikeRefusals();
+    (globalThis as any).resetWorkerBudget?.();
 }
 
 // finish_reason category sets — used by the truncation detector to decide whether to
@@ -863,6 +866,10 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
 //   onFire    — optional (ps, text) side effect for protocol-state bookkeeping
 // Canonical tool names from step-validator.ts (AGENT_TOOL_NAMES global). Read lazily
 // at call time so a module-load race doesn't capture undefined. Fallback is emergency-only.
+// JSON keys whose value names a tool in a text pseudo-call. `action` is the ReAct/LangChain envelope
+// ({"action": "execute_code", "action_input": {...}}); it was missing, so such a reply ending in COMPLETED
+// passed as finished (SWE Lite scikit-learn-13439, v0.70: empty patch, `completed`).
+const _TOOL_KEY_ALT = 'name|tool|function|tool_name|action';
 const _toolNamesRe = () => (typeof AGENT_TOOL_NAMES !== 'undefined' && AGENT_TOOL_NAMES
     ? AGENT_TOOL_NAMES.join('|')
     : 'execute_code|write_file|read_file|replace_in_file|list_files|apply_patch|run_workers|search_workspace');
@@ -909,13 +916,13 @@ export function _isBarePseudoCall(text: string): boolean {
         .replace(/<(invoke|tool_call|function_calls)\b[\s\S]*?(?:<\/\1>|$)/gi, '')
         .replace(new RegExp(`<(${names})\\b[\\s\\S]*?(?:<\\/\\1>|\\/>|$)`, 'gi'), '')
         .split('\n')
-        .filter(l => !new RegExp(`\\b(?:${names})(?:_tool)?\\s*\\(|"(?:name|tool|function|tool_name)"\\s*:\\s*"(?:${names})"`).test(l))
+        .filter(l => !new RegExp(`\\b(?:${names})(?:_tool)?\\s*\\(|"(?:${_TOOL_KEY_ALT})"\\s*:\\s*"(?:${names})"`).test(l))
         .join('\n')
         .replace(/[\s{}\[\],"'`]/g, '');
     return rest.length < 40;
 }
 
-const _STEP_CHECKS = [
+export const _STEP_CHECKS = [
     {   // Pseudo tool call in any form: text that tries to run a command instead of
         // making a tool call. re_fail = exact formats (XML invoke/tag, python-call,
         // JSON); re_pass = terminal state or no tool-shaped content at all; the middle
@@ -924,7 +931,7 @@ const _STEP_CHECKS = [
         // _isComplete short-circuits ONLY when there is no tool-JSON in the text.
         // A COMPLETED+{"name":"execute_code",...} response must not pass unchecked —
         // the re_fail below catches the JSON syntax and fires the nudge instead.
-        re_pass: t => (_isComplete(t) && !new RegExp('"(?:name|tool|function|tool_name)"\\s*:\\s*"(?:' + _toolNamesRe() + ')"').test(t))
+        re_pass: t => (_isComplete(t) && !new RegExp(`"(?:${_TOOL_KEY_ALT})"\\s*:\\s*"(?:${_toolNamesRe()})"`).test(t))
             // Strip inline code spans (`…`) before the tool-name check so that documentation
             // like "`update_task_status(path, status)` to mark" is not treated as suspicious.
             // Code fences (``` … ```) are intentionally preserved — tool calls inside a fence
@@ -944,7 +951,7 @@ const _STEP_CHECKS = [
             // Code fences are NOT stripped — a tool call inside ``` is a real pseudo-call.
             const _bare = t.replace(/`[^`\n]+`/g, '…');
             const m = new RegExp(`\\b(${_toolNamesRe()})(?:_tool)?\\s*\\(`).exec(_bare)
-                   ?? new RegExp(`"(?:name|tool|function|tool_name)"\\s*:\\s*"(${_toolNamesRe()})"`).exec(t)
+                   ?? new RegExp(`"(?:${_TOOL_KEY_ALT})"\\s*:\\s*"(${_toolNamesRe()})"`).exec(t)
                    ?? new RegExp(`<(${_toolNamesRe()})(?:\\s|>|/|=)`, 'i').exec(t);
             if (m) return m[1];
             return /<invoke\s+name="[^"]+"/i.test(t) || /<tool_name>/i.test(t) || false;
@@ -1200,9 +1207,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
     let _stuckCallSigs: string[] = [];     // calls of the last 3 steps, for the stuck nudge's wording
-    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; scratchOnlyCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
+    const _novelty = newNoveltyState();   // output lines seen this turn, for the no-new-evidence nudge
+    const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; scratchOnlyCheck?: number; inventedDataCheck?: number; noEditCheck?: number; verifCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
+    const _verif = newVerification();         // state of the change, for the failed-check bounce at COMPLETED
+    const _shellWrites = new Set<string>();   // paths a shell command redirected into (container runs report no files_written)
     let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
     let _emptyFsNudged = false;     // empty-FS fallback fires at most once per turn
@@ -1450,6 +1460,40 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _emitNudge('scratch_only_edits', nudge(`You declared COMPLETED, but the only files changed this turn are scratch files: ${[..._editedPaths].slice(0, 6).join(', ')}. No project file was modified, so if the task was to change the code, the fix is not applied — check with \`git diff\` (or read the file) and apply it, then remove the scratch files. If these files are the deliverable, reply COMPLETED again.`));
             return { do: 'continue' };
         }
+        // The last check after the final change failed (not an import/collection failure: those are not
+        // counted as checks, verification.ts). v0.70 Lite: 11 of 69 tasks ended with a real failing check;
+        // the graded-test gate covers tasks that list their tests, this covers the rest. One bounce.
+        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
+            && step < _loopMax - 1 && !softStopPending && !ps.verifCheck && !_reactiveFired.has('graded_test')
+            && verificationVerdict(_verif) === 'failed_verification') {
+            ps.verifCheck = 1;
+            _saveAnswer(ps, textContent);
+            _emitNudge('failed_check_complete', nudge('You declared COMPLETED, but the last test or build check you ran after your final change failed. Look at its output: if the failure is caused by your change, fix it and re-run the check; if it is unrelated to your change (an existing failure, the environment), say so explicitly in your final reply and give the evidence. Then reply COMPLETED.'));
+            _forceToolCall = true;
+            return { do: 'continue' };
+        }
+        // Answering from data the agent wrote itself. AgentBench OS tasks 43, 47 and 52 (v0.70) were failed
+        // after the agent overwrote the supplied file1.log / file1.txt / logfile.txt with its own text; no
+        // other OS task wrote to a supplied file (3 of 60, replayed). Also a pure question with new data
+        // files. One bounce at COMPLETED; a task that asked for the change confirms with a second COMPLETED.
+        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
+            && step < _loopMax - 1 && !softStopPending && !ps.inventedDataCheck) {
+            const _first = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string');
+            const _supplied = suppliedFiles(_first?.content ?? '');
+            const _written = new Set<string>([..._editedPaths, ..._shellWrites]);
+            // Not for a task whose fix is a code edit (SWE prompt / graded tests): its supplied files are meant to change.
+            const _codeTask = /\bby editing the source files\b/i.test(_task) || _gradedTestIds(_task).length > 0;
+            const _over = _supplied.size && !_codeTask ? overwrittenSupplied(_written, _supplied) : [];
+            const _made = isQuestionOnlyTask(_originalTask(_histR(_s))) ? inventedDataPaths(_written, isScratchPath) : [];
+            const _flag = [...new Set([..._over, ..._made])];
+            if (_flag.length) {
+                ps.inventedDataCheck = 1;
+                _saveAnswer(ps, textContent);
+                _emitNudge('invented_data', nudge(`You wrote to data files yourself: ${_flag.slice(0, 5).join(', ')}${_over.length ? ' (supplied with the task)' : ''}. An answer computed from text you wrote is not an answer about the real data. If the task asks about files that were already there, restore or ignore your changes, compute the answer from the real contents, and reply COMPLETED with it. If the task really asked you to create or change these files, reply COMPLETED again.`));
+                _forceToolCall = true;
+                return { do: 'continue' };
+            }
+        }
         // Test-environment workarounds in the change set: a rewritten conftest.py / pytest.ini /
         // setup.cfg that made tests run locally ships with the fix and can break every graded test
         // (v0.58 xarray-5131: a root conftest.py monkeypatching pandas; collection then failed on all
@@ -1467,6 +1511,20 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration${_cfg.some(f => f.endsWith('/')) ? ', or added a new top-level package (a stand-in for a missing dependency)' : ''}: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test, and a stub package hides the real one. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file or folder you created), keep only the fix itself, then reply COMPLETED again. If local tests can't run without them, check the fix with a short script instead.`));
                 return { do: 'continue' };
             }
+        }
+        // No-edit completion on a task that asks for a code change: SWE Lite matplotlib-23314 (v0.70)
+        // analysed the bug for 44 steps, never edited a file and ended `completed` with an empty
+        // patch. The completion gate below is skipped without an edit (data-query tasks must not be
+        // second-guessed), so this narrower check covers only tasks that say the fix is an edit:
+        // the SWE runner prompt or a graded-test list. One bounce per turn; BLOCKED stays available.
+        if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending && !_editsThisRun
+            && !ps.noEditCheck && !_BLOCKED_DECLARATION_RE.test(textContent)
+            && (/\bby editing the source files\b/i.test(_task) || _gradedTestIds(_task).length > 0)) {
+            ps.noEditCheck = 1;
+            _saveAnswer(ps, textContent);
+            _emitNudge('no_edit_complete', nudge('You declared COMPLETED but no file in the workspace was changed, and this task is solved by editing the source. If you identified the cause, make the edit now (replace_in_file on the exact lines, then re-run your check). If the change really is not needed or you cannot make it, reply BLOCKED: <reason> instead of COMPLETED.'));
+            _forceToolCall = true;
+            return { do: 'continue' };
         }
         // Completion gate: context-dependent rules (trigger_on_completion in skills.js)
         // fire once when the model first declares completion. _reactiveFired dedup in
@@ -1978,6 +2036,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             convoLogTurn({
                 step, model: ep.model, provider: ep.provider ?? getProvider(),
                 promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
+                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens ?? 0,
                 response: textContent, toolCalls: [], loopDetected: false,
                 systemPrompt: buildSystemPrompt(),
                 lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
@@ -2015,7 +2074,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // Autonomous runs (benchmarks, Cowork runner) end at the limit, so finish. Interactive chat
             // only pauses — the user can continue — so reach a clean stopping point rather than wrap up.
             _emitNudge('steps_left', _nudge(_s.workflowMode
-                ? `${_left} steps left in this turn. Finish now: if you changed code, check that the change is applied (e.g. git diff) and end with COMPLETED; if the task asks for an answer, give it. Do not start new exploration.`
+                ? `${_left} steps left in this turn. Finish now: if you changed code, check that the change is applied (read the changed lines back, or git diff where git works) and end with COMPLETED; if the task asks for an answer, give it. Do not start new exploration.`
                 : `${_left} steps left in this turn before it pauses. Reach a clean stopping point: finish the change you are making, don't start new ones, and leave files in a working state. The user can continue from there.`));
         }
 
@@ -2109,10 +2168,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
         const _failedThisStep = consecutiveToolFails > _prevToolFails;
         if (consecutiveToolFails === 0) _failSigs.length = 0;
-        for (const r of _exec) if (failStreakKind(r.name, r.result, _READ_ONLY_TOOLS) === 'fail') _failSigs.push(failureSignature(r.result));
+        for (const r of _exec) if (failStreakKind(r.name, r.result, _READ_ONLY_TOOLS, r.args) === 'fail') _failSigs.push(failureSignature(r.result));
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
             promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
+                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens ?? 0,
             response: textContent,
             toolCalls: _exec.map(r => ({ name: r.name, args: r.args, result: r.result })),
             loopDetected: _repeatedNames.length > 0 || consecutiveToolFails >= 5,
@@ -2155,6 +2215,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const stalledPaths = new Set(calls.map(tc => parseArgs(tc.function.arguments)?.path).filter(Boolean).map(_normPath)) as Set<string>;
         let stuckNudge;
         ({ resultHashes, stuckMsg: stuckNudge } = _updateStuckDetector(resSig, stalledPaths, resultHashes));
+        // No new evidence: advisory nudge when several probing steps in a row showed nothing unseen.
+        const _stepChanged = results.some(r => !r.result?.error && (_WRITE_TOOLS.has(r.name) || (r.name === 'execute_code' && _execMayWrite(r.args, r.result))));
+        const _noveltyNudge = updateNovelty(_novelty, results, _stepChanged);
         _stuckCallSigs = [..._stuckCallSigs, _thisCallSig].slice(-3);
         if (stuckNudge && results.every(r => r.name === 'execute_code') && new Set(_stuckCallSigs).size > 1)
             stuckNudge = sameOutputMsg(results.map(r => r.result?.stdout ?? r.result?.content ?? ''));
@@ -2232,6 +2295,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
             && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
             _editsThisRun = true;
+        for (const r of results) if (r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0)
+            for (const p of shellWritePaths(String(r.args?.code ?? ''))) _shellWrites.add(p);
+        noteVerification(_verif, { toolCalls: results.map(r => ({ name: r.name, args: r.args, result: r.result })) });
         // Which files changed this run — for the scratch-only completion check.
         for (const r of results) {
             if (r.result?.error) continue;
@@ -2277,8 +2343,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
+        else if (_noveltyNudge)               _emitNudge('no_new_evidence', _nudge(_noveltyNudge));
         if (!stuckNudge) {
-            const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0));
+            const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0 && !(r.name === 'execute_code' && isNegativeProbe(r.args, r.result))));
             // Rate-limit: skip on the first error in a burst (the [TOOL ERROR] prefix in history
             // already carries the signal). Fire only on the 2nd+ consecutive error, and stop at 5+
             // where tool_failures (the escalation path at :1073) already fired.

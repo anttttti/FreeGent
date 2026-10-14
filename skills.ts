@@ -156,7 +156,7 @@ After the worker returns, use its findings to proceed with the task. Do not foll
         description: 'Initialize a new task: task file creation, kanban rules.',
         exclude_mode: 'container',
         trigger_on_file_present: 'fg-tasks/',
-        body: `**Direct task path** (first message is a concrete request): THAT is your task. Missing fg-tasks/ledger.md is not a blocker. Before your first code edit, write the task to fg-tasks/current.md:
+        body: `**Direct task path** (first message is a concrete request): THAT is your task. Missing fg-tasks/ledger.md is not a blocker. If the message names an existing fg-tasks/NNN-*.md file (a task started from the Tasks board), that file is the task: read it, work against it and set its status — do not create current.md. Otherwise, before your first code edit, write the task to fg-tasks/current.md:
 1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section. Overwrite it without reading it first: an existing current.md is left over from an earlier chat. Never touch the status of a task that is not yours.
 2. Work: read, edit, verify
 3. After each edit attempt, append_file under ## Attempts: what changed (file:line), whether resolved
@@ -228,10 +228,10 @@ deep_research takes a "query" string (the research question) and returns a struc
         body_fn: () => {
             const has = (t: string) => typeof isToolActive !== 'function' || isToolActive(t);
             const parts: string[] = [];
-            if (has('replace_in_file')) parts.push(`**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If still fails, rewrite the function with write_file instead.`);
+            if (has('replace_in_file')) parts.push(`**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If it still fails, use one short, distinctive line as old_string, or make the change with a short execute_code script. Do not rewrite the whole file with write_file for a small change.`);
             if (has('execute_code')) parts.push(`**execute_code fails**: narrow the step — test one line at a time, print intermediate values. If a command times out, add a shorter timeout or break into smaller steps.`);
             parts.push(`**Same tool repeated** without progress: you may be in a loop. Stop repeating the same approach. Re-read the task, check what information you already have, and try a fundamentally different tactic.${has('run_workers') ? ' If stuck, delegate to a worker for a fresh perspective via run_workers([{id:"fresh-perspective", task:"<current task and what was tried>", role:"director"}]).' : ''}`);
-            if (has('run_workers')) parts.push(`**Worker stalls**: re-read the changed file yourself with read_file. If the fix is present, treat verification as passed. If still failing after 2 stalls, spawn replanning:
+            if (has('run_workers')) parts.push(`**Worker stalls**: re-read the changed file yourself with read_file. If the fix is present it is applied, not verified: run the relevant check yourself, or say that it could not be run. If still failing after 2 stalls, spawn replanning:
 run_workers([{id:"replan", task:"Plan in <task-path> failed at step N because <reason>. Revise ## Execution Plan.", role:"director"}])
 Max 2 replan attempts.${has('update_task_status') ? ' If still failing → update_task_status(path, "failed", "<reason>").' : ''}`);
             parts.push(`**General**: The core's after-fail rule applies — a failed tool is not a stopping condition. If you cannot proceed, state BLOCKED with the exact blocker.`);
@@ -466,7 +466,7 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
         trigger: 'failing, assert, reproduce, regression, pytest, unittest, jest, mocha, test suite, test case, test file, test script',
         trigger_on_tool: 'replace_in_file=>success==true, apply_patch=>success==true, write_file=>success==true',
         trigger_on_completion: 'triggered',
-        body: `**Code fix definition of done:** If an edit was needed: (1) confirm it is applied — \`execute_code(language="bash", code="git diff HEAD --stat")\` must show a non-empty diff, (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. If the investigation concluded no change was required, state that explicitly and output COMPLETED. Do not continue exploring once all affected locations are verified fixed, or a no-change conclusion is confirmed — that is budget waste, not diligence. Re-check the original task statement before finishing — your own test cases are not the spec.
+        body: `**Code fix definition of done:** If an edit was needed: (1) confirm it is applied — read the changed lines back with read_file (or, if \`git\` works in this shell and the project is a repository, \`git diff --stat\` shows the change; if git is missing, do not retry it), (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. If the investigation concluded no change was required, state that explicitly and output COMPLETED. Do not continue exploring once all affected locations are verified fixed, or a no-change conclusion is confirmed — that is budget waste, not diligence. Re-check the original task statement before finishing — your own test cases are not the spec.
 
 **If the package cannot be imported** (missing build artifacts, uncompiled C extensions, missing optional dependencies): (1) try importing only the specific changed module(s) directly — \`import sys; sys.path.insert(0, '/workspace'); from package.module import TargetClass\` — and test that; (2) if even that fails after one attempt, declare \`BLOCKED: <import error>\` — do not try to rebuild the package, patch build guards, or install missing dependencies; (3) never run tests against an installed package as a substitute for verifying the workspace source — installed versions may have different APIs and do not test your patch.`
     },

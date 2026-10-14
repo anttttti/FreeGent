@@ -9,6 +9,8 @@
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { KEYS } from './storage-keys.js';
+import { newVerification, noteStep, verdict } from './verification.js';
+import { appendLedger } from './request-ledger.js';
 import { readFileSync, appendFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -631,6 +633,9 @@ export interface RunMetrics {
     /** Generations cut off at the output cap and discarded; their tokens are not in output_tokens. */
     discarded_generations:   number;
     discarded_output_tokens: number;
+    /** Prompt tokens the server answered from its prefix cache (main loop / workers); 0 when it does not report them. */
+    cached_input_tokens?: number;
+    worker_cached_input_tokens?: number;
     /** Worker (run_workers) requests. Not in steps/input_tokens/output_tokens, which stay the main
      *  loop's own so they compare with earlier versions; add them for the run's total. */
     worker_steps:         number;
@@ -658,6 +663,8 @@ export interface RunFinish {
     timedOut:   boolean;
     /** The error message when the run threw or timed out, else null. */
     error:      string | null;
+    /** What can be said about the change itself (verification.ts): `complete` does not mean it was checked. */
+    verification: 'no_change' | 'unverified' | 'verified' | 'failed_verification';
 }
 
 /**
@@ -677,7 +684,10 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     // Per-task metrics accumulator — installed before runAgentTurn, cleared in finally.
     const _t0 = Date.now();
     const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 };
+    const _verification = newVerification();
+    const _ledgerPath = (globalThis as any).process?.env?.FG_REQUEST_LEDGER as string | undefined;
     setMetricsWriter((record: any) => {
+        appendLedger(_ledgerPath, record);
         if (record.type === 'history_snapshot') { _metrics.compactions++; return; }
         // A discarded generation still ran: v0.66 lost 181 of them (apps_43: 13 full generations,
         // recorded as 0 steps and 0 tokens). Kept apart from output_tokens so that stays comparable.
@@ -692,13 +702,16 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             const w = record.type === 'worker_step';
             if (w) _metrics.worker_steps++; else _metrics.aux_requests++;
             _metrics[w ? 'worker_input_tokens' : 'aux_input_tokens']   += record.promptTokens   || 0;
+            if (w) _metrics.worker_cached_input_tokens = (_metrics.worker_cached_input_tokens ?? 0) + (record.cachedTokens || 0);
             _metrics[w ? 'worker_output_tokens' : 'aux_output_tokens'] += record.responseTokens || 0;
             return;   // reported with the next main step's running total
         }
         if (record.type) return; // skip history_final etc.
+        noteStep(_verification, record);
         _metrics.steps++;
         if (record.promptTokens)   _metrics.input_tokens  += record.promptTokens;
         if (record.responseTokens) _metrics.output_tokens += record.responseTokens;
+        _metrics.cached_input_tokens = (_metrics.cached_input_tokens ?? 0) + (record.cachedTokens || 0);
         opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
     });
 
@@ -820,6 +833,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         stopReason: _stopReason,
         timedOut,
         error:      error ? String((error as any)?.message ?? error).slice(0, 300) : null,
+        verification: verdict(_verification),
     };
     _metrics.finish = finish;
     return { output, error, metrics: _metrics, finish };
