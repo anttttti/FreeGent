@@ -101,14 +101,14 @@ export class NodeFsAdapter implements WorkspaceAdapter {
     _sidecarRoot: string | null;
     _sidecarPrefixes: string[];
 
-    constructor(root, { sidecarRoot = null, sidecarPrefixes = [] } = {}) {
+    constructor(root: any, { sidecarRoot = null, sidecarPrefixes = [] } = {}) {
         this._root = resolve(root);
         this.root = this._root;
         this._sidecarRoot = sidecarRoot ? resolve(sidecarRoot) : null;
         this._sidecarPrefixes = sidecarPrefixes;
     }
 
-    _resolve(path) {
+    _resolve(path: any) {
         if (path == null) throw new Error(`agentWriteFile/agentReadFile: path is required (got ${path})`);
         const rel = path.startsWith(_LOCAL) ? path.slice(_LOCAL.length) : path;
         // Absolute paths outside the workspace root (e.g. /usr/stock.log) cannot be served by
@@ -162,7 +162,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         return _walkFiles(join(this._root, dir), { skipNoise: false });
     }
 
-    async agentReadFile(path) {
+    async agentReadFile(path: any) {
         const abs = this._resolve(path);
         if (_OFFICE_RE.test(abs)) {
             const text = await new Promise<string>((res) => {
@@ -180,7 +180,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         return _decodeTextOrThrow(buf, path);
     }
 
-    async agentWriteFile(path, content, encoding = null) {
+    async agentWriteFile(path: any, content: any, encoding: string | null = null) {
         const abs = this._resolve(path);
         await mkdir(dirname(abs), { recursive: true });
         if (encoding === 'base64') {
@@ -190,7 +190,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         }
     }
 
-    async agentDeleteFile(path) {
+    async agentDeleteFile(path: any) {
         try {
             await unlink(this._resolve(path));
         } catch (e) {

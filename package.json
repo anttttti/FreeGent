@@ -31,7 +31,7 @@
     "preview": "vite preview",
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json && node scripts/typecheck-node-strict.mjs",
     "probe:headless": "node --experimental-strip-types --loader ./js-to-ts-loader.mjs scripts/headless-probe.mjs",
     "tui": "NODE_NO_WARNINGS=1 npx tsx --env-file-if-exists=.env fg-tui.tsx"
   },

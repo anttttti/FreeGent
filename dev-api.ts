@@ -1047,14 +1047,14 @@ export async function buildExecSandbox(root: string): Promise<string> {
     const workerBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'pyodide-worker.ts')], target: 'es2019' });
     const wasiWorkerBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'shiro', 'wasi-worker.ts')], target: 'es2019', supported: { 'bigint': true, 'regexp-lookbehind-assertions': false } });
     const bashBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'bash-entry.ts')], target: 'es2019', supported: { 'bigint': true, 'regexp-lookbehind-assertions': false },
-        define: { ...storageDefines, __WASI_WORKER_SRC__: JSON.stringify(wasiWorkerBuild.outputFiles[0].text) }, plugins: [rpcPlugin(true, true)] });
+        define: { ...storageDefines, __WASI_WORKER_SRC__: JSON.stringify(wasiWorkerBuild.outputFiles![0].text) }, plugins: [rpcPlugin(true, true)] });
     const modernJsBuild = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'js-modern-entry.ts')], target: 'es2019',
         define: storageDefines, plugins: [rpcPlugin(true, false)] });
     const result = await esbuild.build({ ...common, entryPoints: [join(root, 'exec-sandbox', 'entry.ts')], target: 'es2019',
         define: { ...storageDefines,
-            __PYODIDE_WORKER_SRC__: JSON.stringify(workerBuild.outputFiles[0].text),
-            __BASH_SANDBOX_SRC__: JSON.stringify(bashBuild.outputFiles[0].text),
-            __MODERN_JS_SRC__: JSON.stringify(modernJsBuild.outputFiles[0].text),
+            __PYODIDE_WORKER_SRC__: JSON.stringify(workerBuild.outputFiles![0].text),
+            __BASH_SANDBOX_SRC__: JSON.stringify(bashBuild.outputFiles![0].text),
+            __MODERN_JS_SRC__: JSON.stringify(modernJsBuild.outputFiles![0].text),
         }, plugins: [rpcPlugin(false, true)] });
-    return result.outputFiles[0].text;
+    return result.outputFiles![0].text;
 }

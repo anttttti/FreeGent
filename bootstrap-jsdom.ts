@@ -2,15 +2,16 @@
 // Import this FIRST in the headless entry point (fg-run.js).
 // Exports `dom` so headless-runner.js can eval classic scripts into the same context.
 // Never imported by browser code.
+// @ts-ignore: jsdom ships no declaration file here
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 
 // Forward error/warn from classic scripts to Node stderr.
 // log/info go nowhere to avoid polluting stdout (fg-run.js uses stdout for patch output).
 const virtualConsole = new VirtualConsole();
-virtualConsole.on('error',     (...a) => process.stderr.write('[agent] ' + a.join(' ') + '\n'));
-virtualConsole.on('warn',      (...a) => process.stderr.write('[agent] ' + a.join(' ') + '\n'));
-virtualConsole.on('jsdomError', e    => {}); // suppress jsdom HTML parse errors
+virtualConsole.on('error',     (...a: any[]) => process.stderr.write('[agent] ' + a.join(' ') + '\n'));
+virtualConsole.on('warn',      (...a: any[]) => process.stderr.write('[agent] ' + a.join(' ') + '\n'));
+virtualConsole.on('jsdomError', (e: any)    => {}); // suppress jsdom HTML parse errors
 
 export { virtualConsole };
 
@@ -61,7 +62,7 @@ window.indexedDB = new IDBFactory();
 window.alert     = () => {};
 window.confirm   = () => true;
 // marked is used by chat-render.js for markdown rendering.
-window.marked    = { parse: t => `<p>${t}</p>` };
+window.marked    = { parse: (t: any) => `<p>${t}</p>` };
 // Use native Node.js AbortController/AbortSignal so fetch() receives the right
 // realm's signal. jsdom's AbortSignal fails undici's instanceof check.
 window.AbortController = globalThis.AbortController;
@@ -93,7 +94,7 @@ const windowProxy = new Proxy(window, {
     },
     set(target, prop, value) {
         try { target[prop] = value; } catch {}
-        try { globalThis[prop] = value; } catch {}
+        try { (globalThis as any)[prop] = value; } catch {}
         return true;
     },
     defineProperty(target, prop, desc) {
