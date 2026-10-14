@@ -1,6 +1,7 @@
 // tools.js — FreeGent: tool specs, search implementations, tool execution, system prompt
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
+import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
 import { FILE_WRITE_TOOLS, MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
@@ -982,6 +983,7 @@ async function _handleCheckPage(args: any) {
             actions: Array.isArray(args.actions) ? args.actions : [],
             probes:  Array.isArray(args.probes) ? args.probes.map(String).slice(0, 10) : [],
             waitMs:  args.wait_ms,
+            expect:  parseExpectations(args.expect),
         });
     } catch (e) {
         const msg = String((e as any)?.message ?? e);

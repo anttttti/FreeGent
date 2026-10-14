@@ -650,7 +650,7 @@ declare global {
     var _buildEnvContext: () => string;
     // ── bridged by tabs.ts ──
     var openArtifactTab: any;
-    var runPageCheck: (path: string, opts?: { actions?: any[]; probes?: string[]; waitMs?: number }) => Promise<any>;
+    var runPageCheck: (path: string, opts?: { actions?: any[]; probes?: string[]; waitMs?: number; expect?: any[] }) => Promise<any>;
     // ── bridged by tasks.ts ──
     var loadTaskFiles: any;
     var syncLedgerWithTaskFiles: any;

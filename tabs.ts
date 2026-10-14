@@ -1,6 +1,7 @@
 // tabs.js — FreeGent: tab management, file tabs, notify local file changed
 // Depends on: config.js, settings-ui.js, skills.js, tasks.js, editor.js
 import { escapeHtml } from './html-escape.js';
+import { judgeExpectation, summarizeExpectations, type Expectation, type ExpectResult } from './page-expect.js';
 import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
@@ -783,7 +784,7 @@ const _clampMs = (v: any, dflt: number, max: number) => Math.max(0, Math.min(Num
 // check_page calls in a row where the page never ran (reset by any call where it did).
 let _checkPageNeverRan = 0;
 
-async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500 } = {}) {
+async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
     let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
@@ -852,6 +853,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     signal?.addEventListener('abort', stopCheck);
 
     const steps: any[] = [];
+    const expectResults: ExpectResult[] = [];
     let loaded = false, fps: number | null = null;
     window.addEventListener('message', onMsg);
     try {
@@ -888,6 +890,11 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         }
         await sleep(_clampMs(waitMs, 1500, 10000));
         await probeAll('at end');
+        // Expectations are judged on the state after the actions and the wait, from fresh evaluations.
+        for (const ex of expect) {
+            const r = await cmd({ cmd: 'eval', expr: ex.expr });
+            expectResults.push(judgeExpectation(ex, r.value, r.error));
+        }
         const st = await cmd({ cmd: 'stats' });
         if (typeof st?.frames === 'number' && st.ms > 0) fps = Math.round(st.frames / (st.ms / 1000));
     } finally {
@@ -933,14 +940,17 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     _checkPageNeverRan = _neverRan ? _checkPageNeverRan + 1 : 0;
     if (_neverRan && _checkPageNeverRan >= 2)
         notes.push(`This is the ${_checkPageNeverRan}${_checkPageNeverRan === 2 ? 'nd' : _checkPageNeverRan === 3 ? 'rd' : 'th'} check_page call in a row where the page did not run. Calling it again will not change that. Check the code another way instead: read it, and syntax-check each script with execute_code (JavaScript: new Function(source)). Say in your final answer that the page could not be run in this browser.`);
-    const summary = _neverRan
+    const baseSummary = _neverRan
         ? 'The page did not run, so nothing was checked (no script in it reported back).'
         : !errors.length
         ? (loaded ? 'Loaded fine; no errors.' : 'The page started but never finished loading, so nothing was verified (no errors were reported).')
         : `${errors.reduce((n, e) => n + e.count, 0)} error(s): ${errors[0].text}`;
+    // "Loaded fine" says the page ran, not that it did what was asked: with expectations the verdict is theirs.
+    const summary = expectResults.length ? `${baseSummary} ${summarizeExpectations(expectResults)}` : baseSummary;
     return {
         path, loaded, summary, ...(fps !== null ? { fps } : {}),
         errors, ...(warnings.length ? { warnings } : {}), console: consoleOut,
+        ...(expectResults.length ? { expectations: expectResults, expectations_met: expectResults.every(r => r.ok) } : {}),
         ...(steps.length ? { steps } : {}), ...(notes.length ? { notes } : {}),
     };
 }
