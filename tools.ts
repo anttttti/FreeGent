@@ -1349,7 +1349,7 @@ async function _handleWriteFile(args, context) {
             + `to save space, earlier write_file calls are shown there abbreviated (as a diff, a "[write_file: …]" line and a "_contentCompressed" flag). `
             + `Those calls did write the whole file${current ? `, and the file is complete (${current.length} characters), so there is nothing to restore` : ''}. `
             + `${surgical.length ? `To change it use ${surgical.join(' or ')}. ` : ''}To rewrite it, send the complete new text as "content", with no flag.`
-            + (nth >= 3 ? ` This is the ${nth}${nth === 3 ? 'rd' : 'th'} time you have sent the abbreviated form for this file: you are rewriting the whole file for a small change. `
+            + (nth >= 3 && !runtime.guardOff('lookalike_escalation') ? ` This is the ${nth}${nth === 3 ? 'rd' : 'th'} time you have sent the abbreviated form for this file: you are rewriting the whole file for a small change. `
                 + `Stop doing that. ${surgical.includes('replace_in_file') ? 'Call replace_in_file with only the lines that differ (copy old_string from read_file). ' : 'Read the file, then send the complete new text as plain source code. '}`
                 + `If the change is not needed, move on to the next step of the task.` : '') };
     }
@@ -1446,7 +1446,7 @@ async function _handleReplaceInFile(args, context) {
         let decodedNote = '';
         let decodedOutside = false;
         let newText: string = args.new_string;
-        if (idx === -1) {
+        if (idx === -1 && !runtime.guardOff('replace_decode')) {
             const hasRealNl = args.old_string.includes('\n');
             const modes: Array<'full' | 'backslash' | 'quote'> = hasRealNl ? ['backslash', 'quote'] : ['full', 'backslash', 'quote'];
             for (const mode of modes) {
@@ -1505,7 +1505,7 @@ async function _handleReplaceInFile(args, context) {
             // already echoed: the text to copy old_string from.
             const _winS = args.start_line != null || args.end_line != null ? Math.max(0, (args.start_line ?? 1) - 1) : -1;
             const _winE = _winS >= 0 ? Math.min(lines.length, args.end_line ?? lines.length) : -1;
-            const region = _bestRegion(lines, args.old_string);
+            const region = runtime.guardOff('replace_region') ? null : _bestRegion(lines, args.old_string);
             if (region && !(_winS >= 0 && region.start - 1 >= _winS && region.end <= _winE)) {
                 const body = region.text.length > 1500 ? region.text.slice(0, 1500) + '\n[…]' : region.text;
                 hint += `\nThe text closest to your old_string is at lines ${region.start}–${region.end}; copy old_string from it exactly:\n${body}`;
