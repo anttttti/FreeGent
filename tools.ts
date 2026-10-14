@@ -1458,7 +1458,11 @@ async function _handleReplaceInFile(args, context) {
                 }
                 if (at !== -1 && (rel ? true : searchText.indexOf(dOld, at + 1) === -1)) {
                     idx = at - rel; matchLen = dOld.length;
-                    newText = _decodeEscapedArg(args.new_string, mode) ?? args.new_string;
+                    // In 'full' mode (\n, \t decoded) a new_string that already holds real newlines was not double-encoded:
+                    // its `\n` are source-code escapes the model meant (a string literal), so only old_string is decoded.
+                    newText = (mode === 'full' && args.new_string.includes('\n'))
+                        ? args.new_string
+                        : (_decodeEscapedArg(args.new_string, mode) ?? args.new_string);
                     decodedNote = ' old_string and new_string contained escape sequences (\\n, \\", \\\\) that are not in the file; they were read as the characters they stand for. Send real newlines and quotes next time.';
                     break;
                 }

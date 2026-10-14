@@ -184,7 +184,8 @@ function _downloadBlob(blob, filename) {
     a.href  = URL.createObjectURL(blob);
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Revoked after the browser has started the download: a synchronous revoke cancels it in Firefox.
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
 function _slugDate() {
