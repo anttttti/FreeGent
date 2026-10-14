@@ -195,7 +195,6 @@ let _sessionFallback = null; // null | { provider, url?, key?, model }
 export type ForkBase = { system: string; tools: any[] | null; messages: any[] };
 let _lastMainRequest: ForkBase | null = null;
 export function getLastMainRequest(): ForkBase | null { return _lastMainRequest; }
-let _forceToolCall = false;  // set by enforcement nudges (completion_gate, step_validation, etc.); consumed+cleared by callOAI
 
 // Rotation step counter — reset at each new turn; passed to model-router's _nextRotationSpec.
 const _rotState = { step: 0 };
@@ -1196,9 +1195,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     };
     _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
     _stopRecent = [];
-    // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits.
-    // The flag is consumed+cleared by callOAI on the first LLM request of this turn.
-    if (forceToolCall) _forceToolCall = true;
+    // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits. Set by enforcement
+    // nudges (completion_gate, step_validation, ...) and consumed before the next request. Local to the
+    // turn: a module-level flag was consumed by a concurrent worker's request and, when a turn ended
+    // between setting and sending, leaked a forced tool call into the next turn (review 2026-10-14).
+    let _forceToolCall = !!forceToolCall;
     const _failSigs: string[] = [];   // error signature of each failure in the current streak
     let _sameErrorGraceUsed = false;
     let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _compactStreak = 0;
@@ -1594,7 +1595,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
 
         // Declared turn state (COMPLETED / BLOCKED)
-        const _ts = await _handleTurnState(textContent, step, ps, _oaiAdapter);
+        const _ts = await _handleTurnState(textContent, step, ps, _oaiAdapter, _loopMax);
         if (_ts.kind === 'return')   return { do: 'return', value: _ts.text };
         if (_ts.kind === 'continue') return { do: 'continue' };
 
@@ -1714,12 +1715,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         thinkTask.setPrompt(typeof last?.content === 'string' ? stripInjected(last.content) || last.content : JSON.stringify(last, null, 2));
 
         let message;
+        const _forceThisRequest = _forceToolCall; _forceToolCall = false;   // consumed here; a retry re-sends it
         try {
             message = await withRetry(
                 async () => {
                     const msg = await callOAI((c, t) => thinkTask.append(c, t),
                         p => thinkTask.setRequest(JSON.stringify(p, null, 2)),
-                        { endpointOverride: activeEndpoint, maxTokens: oaiMaxTokens, inputTokensHint: _lastInputTokens, toolFilterOverride: _s._toolFilter ?? toolFilterOverride, evtSession: _s, evtStep: step });
+                        { endpointOverride: activeEndpoint, forceToolCall: _forceThisRequest, maxTokens: oaiMaxTokens, inputTokensHint: _lastInputTokens, toolFilterOverride: _s._toolFilter ?? toolFilterOverride, evtSession: _s, evtStep: step });
                     // Detect responses that need a retry — four triggers, all throw isTruncated
                     // so _makeOAIRetryHandler cycles the model pool (same path as 429s/server errors).
                     const _text = (typeof msg.content === 'string' ? msg.content : '').trim();
@@ -2471,7 +2473,7 @@ const _fnTagStrips = new Map<string, number>();
 const FN_TAG_STRIP_BENCH_AT = 6;
 const FN_TAG_STRIP_BENCH_MS = 15 * 60_000;
 
-async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null } = {}): Promise<any> {
+async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null, forceToolCall = false } = {}): Promise<any> {
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;
     const provider = ep.provider ?? getProvider();
@@ -2568,7 +2570,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     }
     // All provider quirks (thinking kwargs, cache keys, tool_choice suppression, top_p)
     // live in buildChatPayload — do not add per-provider fields here.
-    const _ftc = _forceToolCall; _forceToolCall = false; // consume and reset before the call
+    const _ftc = forWorker ? false : forceToolCall;   // the main loop's per-turn flag; workers never force
     const payload = buildChatPayload(ep, {
         messages: [{ role: 'system', content: sysPrompt }, ..._hist],
         tools: forkPrefix ? forkPrefix.tools : (hasTools

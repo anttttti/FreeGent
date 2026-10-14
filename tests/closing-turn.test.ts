@@ -102,3 +102,29 @@ describe('runTurn per-turn budget and excluded tools', () => {
         expect(String(toolMsg?.content)).toMatch(/list_files is not available in this turn/);
     });
 });
+
+describe('forced tool call is per turn (review 2026-10-14, opencode M8)', () => {
+    function session() {
+        const s = W.createSession({ workflowMode: true });
+        pushHistory(s, { role: 'user', content: 'Do the task.' });
+        W._sessionToolFilter = new Set(['list_files', 'execute_code']);
+        return s;
+    }
+    const call = (i: number) => ({ tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({ path: `d${i}` }) } }] });
+
+    // openrouter and nvidia never receive tool_choice; a local server does
+    const LOCAL_EP = { ...FAKE_EP, provider: 'custom', url: 'http://localhost:8000/v1/chat/completions', key: '' };
+    it('forces only the first request of a kicked turn, and nothing leaks into the next turn', async () => {
+        const bodies: any[] = [];
+        W.fetch = makeReplayFetch([call(0), { content: 'Done.\nCOMPLETED' }], { onRequest: b => bodies.push(b) });
+        await W.runTurn(LOCAL_EP, NULL_RENDER_ADAPTER, { session: session(), forceToolCall: true });
+        const choices = bodies.filter(b => b.tools?.length).map(b => b.tool_choice);
+        expect(choices[0]).toBe('required');
+        expect(choices.slice(1).every(c => c !== 'required')).toBe(true);
+
+        const next: any[] = [];
+        W.fetch = makeReplayFetch([{ content: 'Done.\nCOMPLETED' }], { onRequest: b => next.push(b) });
+        await W.runTurn(LOCAL_EP, NULL_RENDER_ADAPTER, { session: session() });
+        expect(next.filter(b => b.tools?.length)[0].tool_choice).not.toBe('required');
+    });
+});
