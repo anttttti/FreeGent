@@ -25,7 +25,7 @@ afterEach(() => { for (const k of STUBBED) W[k] = saved[k]; localStorage.clear()
 const task = '---\nid: 002\ntitle: Game core\nstatus: in-review\n---\n# Game core\n## Acceptance Criteria\n- [ ] canvas runs\n- [ ] jump works\n';
 const review = async () => {
     files['fg-tasks/002-core.md'] = task;
-    W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ canvas runs\n- ✓ jump works\nVERDICT: PASS');
+    W.callLLMComplete = vi.fn().mockResolvedValue('NO');
     const r = await W.transitionTask('fg-tasks/002-core.md', 'done');
     return { r, prompt: W.callLLMComplete.mock.calls[0][0] };
 };
@@ -52,7 +52,7 @@ describe('acceptance review input', () => {
     it('puts files the task names first', async () => {
         files['a.js'] = 'A'; files['b.js'] = 'B'; mtimes['a.js'] = 500; mtimes['b.js'] = 1;
         files['fg-tasks/002-core.md'] = task.replace('# Game core\n', '# Game core\n## Files\n- `b.js`\n');
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ canvas runs\n- ✓ jump works\nVERDICT: PASS');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
         await W.transitionTask('fg-tasks/002-core.md', 'done');
         const prompt = W.callLLMComplete.mock.calls[0][0];
         expect(prompt.indexOf('### b.js')).toBeGreaterThan(-1);
@@ -65,7 +65,7 @@ describe('acceptance review input', () => {
         expect(prompt.length).toBeLessThan(110_000);
         expect(prompt).toContain('### src/m0.js');
         expect(prompt).not.toContain('### src/m13.js');
-        expect(prompt).toMatch(/exist in the project but are not shown here: .*src\/m13\.js/);
+        expect(prompt).toMatch(/exist in the project but are not shown: .*src\/m13\.js/);
     });
 
     it('cuts a very long file and says so', async () => {

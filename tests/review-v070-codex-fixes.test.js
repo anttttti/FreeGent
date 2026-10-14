@@ -32,7 +32,7 @@ describe('1. a task marked done in the file is not trusted without the completio
     const task = '---\nid: 001\ntitle: A\nstatus: in-progress\n---\n# A\n## Acceptance Criteria\n- [ ] works\n';
     it('records the gate pass only when update_task_status / transitionTask reached done', async () => {
         files[path] = task.replace('- [ ] works', '- [x] works'); files['app.js'] = 'x';
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ works\nVERDICT: PASS');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
         W.forgetGatePass(path);
         expect(W.gatesPassedDone(path)).toBe(false);
         const tr = await W.transitionTask(path, 'done'); expect(tr).toEqual({ transitioned: true });
@@ -42,7 +42,7 @@ describe('1. a task marked done in the file is not trusted without the completio
     });
     it('a refused transition leaves no evidence, and an edited status line is not evidence', async () => {
         files[path] = task; files['app.js'] = 'x';
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✗ works — no\nVERDICT: FAIL');
+        W.callLLMComplete = vi.fn().mockResolvedValue('YES\npayload: works — no');
         W.forgetGatePass(path);
         expect((await W.transitionTask(path, 'done')).transitioned).toBe(false);
         expect(W.gatesPassedDone(path)).toBe(false);
@@ -81,7 +81,7 @@ describe('3/4. acceptance review input', () => {
         expect(r.omitted).toHaveLength(20);
         expect(r.omittedCount).toBe(4988);
         files['fg-tasks/003-x.md'] = '---\nid: 003\ntitle: X\nstatus: in-review\n---\n## Acceptance Criteria\n- [ ] ok\n';
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ ok\nVERDICT: PASS');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
         await W.transitionTask('fg-tasks/003-x.md', 'done');
         const prompt = W.callLLMComplete.mock.calls[0][0];
         expect(prompt).toContain('(and 4968 more)');
