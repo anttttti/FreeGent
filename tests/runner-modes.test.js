@@ -103,12 +103,23 @@ describe('Autopilot', () => {
 });
 
 describe('one job at a time', () => {
-    it('refuses to start while another AI job is running', () => {
+    it('Run refuses to start while another AI job is running', () => {
+        W.setAiJob('init');
+        try {
+            W.runnerStart();
+            expect(W.isRunnerRunning()).toBe(false);
+            expect(document.getElementById('runner-status').textContent).toMatch(/Another AI task/);
+        } finally { W.setAiJob(''); }
+    });
+
+    it('Autopilot waits for the busy job, says so, and cancels on a second press', () => {
         W.setAiJob('init');
         try {
             W.runnerAutopilot();
             expect(W.isRunnerRunning()).toBe(false);
-            expect(document.getElementById('runner-status').textContent).toMatch(/Another AI task/);
+            expect(document.getElementById('runner-status').textContent).toMatch(/start when the current chat finishes/);
+            W.runnerAutopilot();
+            expect(document.getElementById('runner-status').textContent).toMatch(/cancelled/);
         } finally { W.setAiJob(''); }
     });
 });
