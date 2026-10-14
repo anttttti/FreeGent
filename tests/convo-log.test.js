@@ -158,3 +158,16 @@ describe('convo-log with a session store that reads turn logs back', () => {
         expect(window.conversationLog.map(e => e.ts)).toEqual(['2026-01-01T00:00:00.000Z']);
     });
 });
+
+describe('mergeTurnLogs (uploads review 2026-10-14, 9.2)', async () => {
+    const { mergeTurnLogs } = await import('../convo-log.ts');
+    const e = (ts, step, extra = {}) => ({ ts, step, model: 'm', type: undefined, chatId: 'c', ...extra });
+    it('keeps early persisted turns when memory holds only a tail, once each, oldest first', () => {
+        const persisted = [e('2026-10-01T00:00:01Z', 0), e('2026-10-01T00:00:02Z', 1), e('2026-10-01T00:00:03Z', 2)];
+        const memory = [e('2026-10-01T00:00:03Z', 2, { response: 'fresh' }), e('2026-10-01T00:00:04Z', 3)];
+        const out = mergeTurnLogs(memory, persisted);
+        expect(out.map(x => x.step)).toEqual([0, 1, 2, 3]);
+        expect(out[2].response).toBe('fresh');
+    });
+    it('is empty for two empty logs', () => { expect(mergeTurnLogs([], [])).toEqual([]); });
+});

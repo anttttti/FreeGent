@@ -192,13 +192,25 @@ function _slugDate() {
     return new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
 }
 
+const _turnKey = (e: ConvoLogEntry) => `${e.ts}|${e.step ?? ''}|${e.round ?? ''}|${e.type ?? ''}|${e.model ?? ''}`;
+/** Union of two copies of a chat's turn log, by identity, oldest first. The same turn in both is kept once
+ *  (the in-memory copy wins: it is the one still being written). */
+export function mergeTurnLogs(memory: ConvoLogEntry[], persisted: ConvoLogEntry[]): ConvoLogEntry[] {
+    const byKey = new Map<string, ConvoLogEntry>();
+    for (const e of persisted) byKey.set(_turnKey(e), e);
+    for (const e of memory) byKey.set(_turnKey(e), e);
+    return [...byKey.values()].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+}
+
 async function _buildChatPayload(id) {
     const list = getChatList();
     const meta = list.find(c => c.id === id);
     const oai = await _chatHistoryFor(id);
-    // conversationLog holds only chats opened this session; read other chats' logs from storage.
-    let turns = conversationLog.filter(e => e.chatId === id);
-    if (!turns.length) try { turns = await _loadPersistedLog(id); } catch {}
+    // conversationLog holds only chats opened this session and is itself capped, so a non-empty memory
+    // subset can be a tail of the chat: merge it with the persisted log instead of preferring it.
+    let persisted: ConvoLogEntry[] = [];
+    try { persisted = await _loadPersistedLog(id); } catch {}
+    const turns = mergeTurnLogs(conversationLog.filter(e => e.chatId === id), persisted);
 
     const payload = {
         exportedAt: new Date().toISOString(),
@@ -211,6 +223,9 @@ async function _buildChatPayload(id) {
         geminiHistory: null,
         openaiHistory: oai,
         sessionLogTurns: turns,
+        // What the export holds, so a capped log does not read as a complete session.
+        sessionLogInfo: { retained: turns.length, cap: _LOG_CAP, firstTs: turns[0]?.ts ?? null, lastTs: turns.at(-1)?.ts ?? null,
+            possiblyTruncated: turns.length >= _LOG_CAP },
         // fn-tag strips, tool-result truncations, and failed requests — content that never
         // enters the exported history/sessionLogTurns at all (see session-store.js). Without this,
         // a failure cascade with no successful turn in between is a silent gap in every export.
