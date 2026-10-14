@@ -48,7 +48,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         const js = `(async () => {\n${code}\n})().catch(e => { console.error(e); process.exitCode = 1; });`;
         // In a task container the local timeout only kills the `docker exec` client; the process inside
         // kept running. `timeout` inside the container ends it too (skipped where the image has none).
-        const _dc = (bin: string, flag: string, src = code) => ['docker', ['exec', '-i', targetContainer, 'sh', '-c',
+        const _dc = (bin: string, flag: string, src = code) => ['docker', ['exec', '-i', String(targetContainer), 'sh', '-c',
             `if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL ${Math.ceil(TIMEOUT_MS / 1000) + 5} "$@"; else exec "$@"; fi`, 'sh', bin, flag, src]] as const;
         const LANG_CMD: Record<string, readonly [string, readonly string[]]> = targetContainer
             ? { bash: _dc('bash', '-c'), python: _dc('python3', '-c'), javascript: _dc('node', '-e', js) }
@@ -68,7 +68,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         let done = false;
         // Head + tail of each stream (exec-output.ts); curl's progress meter is dropped from stderr.
         const _shaped = () => ({ stdout: clipOutput(out.text, out.dropped), stderr: clipOutput(stripCurlProgress(err.text), err.dropped) });
-        const _done = (val) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
+        const _done = (val: any) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
         // The runner's environment holds the provider keys (loaded from the credentials file);
         // agent commands get it without them. (docker exec doesn't forward it either way.)
         // spawn, not execFile: execFile kills the child once stdout passes its maxBuffer, and the
@@ -119,7 +119,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         });
         child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));
         const timer = setTimeout(() => {
-            try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+            try { process.kill(-(child.pid ?? 0), 'SIGKILL'); } catch {}
             _done({ ..._shaped(),
                     exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` });
         }, TIMEOUT_MS);

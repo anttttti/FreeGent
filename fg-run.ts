@@ -23,11 +23,11 @@ loadDotenv();
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-const _arg = (flag) => {
+const _arg = (flag: any) => {
     const i = args.indexOf(flag);
     return i >= 0 ? args[i + 1] ?? null : null;
 };
-const _flag = (flag) => args.includes(flag);
+const _flag = (flag: any) => args.includes(flag);
 
 function _usage(code = 1) {
     console.error(`Usage:
@@ -103,7 +103,7 @@ if (mcpConfigFile) {
     try {
         mcpServers = JSON.parse(readFileSync(mcpConfigFile, 'utf8'));
         if (!Array.isArray(mcpServers)) throw new Error('Expected an array of MCP servers');
-    } catch (e) { console.error(`Cannot read MCP config: ${e.message}`); process.exit(1); }
+    } catch (e: any) { console.error(`Cannot read MCP config: ${e.message}`); process.exit(1); }
 }
 const mainRole          = _arg('--main-role')          || '';
 const temperatureArg  = _arg('--temperature');
@@ -116,7 +116,7 @@ const maxRounds       = parseInt(_arg('--max-rounds')     || '') || 0;
 let task = taskText;
 if (!task && taskFile) {
     try { task = readFileSync(taskFile, 'utf8').trim(); }
-    catch (e) { console.error(`Cannot read task file: ${taskFile} — ${e.message}`); process.exit(1); }
+    catch (e: any) { console.error(`Cannot read task file: ${taskFile} — ${e.message}`); process.exit(1); }
 }
 if (!task && !promptText && !_flag('--print-model')) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 

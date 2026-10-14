@@ -95,14 +95,14 @@ for (const fn of ['showSettings', 'renderModelCatalogTable', 'loadRoles',
     dom.window[fn] = _noop;
 }
 
-function _makeCapturingPlaceholder(onFinalize) {
+function _makeCapturingPlaceholder(onFinalize: any) {
     return {
         div:             dom.window.document.createElement('div'),
         addThinkingTask: ()       => NULL_TASK_HANDLE,
-        addToolStep:     (labels) => (Array.isArray(labels) ? labels : [labels]).map(() => NULL_TASK_HANDLE),
+        addToolStep:     (labels: any) => (Array.isArray(labels) ? labels : [labels]).map(() => NULL_TASK_HANDLE),
         addCompactStep:  ()       => NULL_TASK_HANDLE,
         addSystemStep:   _noop,
-        finalize:        (text)   => onFinalize(text ?? ''),
+        finalize:        (text: any)   => onFinalize(text ?? ''),
     };
 }
 
@@ -135,7 +135,7 @@ const _ENV_KEY_MAP: Record<string, string> = {
     STACKEXCHANGE_API_KEY: 'fg_stackexchange_key',
 };
 
-function _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit, temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs) {
+function _configureHeadless(provider: any, model: any, apiKey: any, apiUrl: any, contextWindow: any, compactionLimit: any, temperature: any, thinkingLevel: any, preserveThinking: any, retryMode: any, retryFixedMs: any) {
     // QA lifecycle gates default OFF headless. In the browser they default ON, but each
     // gate run costs 3 callMainModelText() calls plus 2 execute_code shell-outs and can
     // BLOCK the transition (qa.ts transitionTask) — silently changing agent behaviour and
@@ -153,7 +153,7 @@ function _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, comp
     }
 
     // Explicit --api-key or FREEGENT_API_KEY always wins for the selected provider
-    const keyName = _KEY_MAP[provider] || 'fg_openai_key';
+    const keyName = (_KEY_MAP as Record<string, string>)[provider] || 'fg_openai_key';
     if (apiKey) _ls.setItem(keyName, apiKey);
 
     // Endpoint URL (openai-compatible providers)
@@ -193,7 +193,7 @@ function _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, comp
     const spec   = `${provider}|${model}`;
     let   custom = [];
     try   { custom = JSON.parse(_ls.getItem('fg_custom_models') || '[]'); } catch {}
-    if (!custom.find(m => `${m.provider}|${m.model}` === spec)) {
+    if (!custom.find((m: any) => `${m.provider}|${m.model}` === spec)) {
         custom.push({ provider, model, label: model, released: '', contextK: 128,
                       params: 0, media: ['text'], tools: true, thinking: false, note: 'headless' });
         _ls.setItem('fg_custom_models', JSON.stringify(custom));
@@ -334,7 +334,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     dom.window.setWorkspaceAdapter(targetContainer
         ? new DockerFsAdapter(targetContainer)
         : new NodeFsAdapter(workspaceRoot, sidecarDir
-            ? { sidecarRoot: sidecarDir, sidecarPrefixes: ['fg-tasks/', 'memory/'] }
+            ? { sidecarRoot: sidecarDir as any, sidecarPrefixes: ['fg-tasks/', 'memory/'] as any }
             : {}));
     _t('setup:setWorkspaceAdapter');
 
@@ -371,7 +371,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
 
     _configureHeadless(provider, model, apiKey, apiUrl, contextWindow, compactionLimit, temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs);
     if (maxRounds > 0) _ls.setItem('fg_agent_max_rounds', String(maxRounds));
-    let _disabledList = disabledTools ? disabledTools.split(',').map(t => t.trim()).filter(Boolean) : [];
+    let _disabledList = disabledTools ? disabledTools.split(',').map((t: any) => t.trim()).filter(Boolean) : [];
     // --fetch-allow: fetch_url may only reach the listed origins (parseFetchAllow throws on a
     // malformed entry, failing the run before the agent starts). Other tools that make their own
     // outbound requests are switched off so fetch_url is the only HTTP tool. Request policy only —
@@ -383,7 +383,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         _disabledList = [...new Set([..._disabledList, ..._netTools])];
     }
     // --enable-tools: make tools available and add them to the director's headless ceiling.
-    const _enableList = enableTools ? enableTools.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const _enableList = enableTools ? enableTools.split(',').map((t: any) => t.trim()).filter(Boolean) : [];
     for (const t of _enableList) {
         if (!(dom.window.ALL_TOOL_NAMES as string[]).includes(t)) throw new Error(`--enable-tools: unknown tool "${t}"`);
         if (_disabledList.includes(t)) throw new Error(`--enable-tools: "${t}" is also disabled (--disable-tools or --fetch-allow)`);
@@ -549,10 +549,10 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             if ((record as any)?.type === 'validation') return;
             try { appendFileSync(logFile, JSON.stringify(record) + '\n', 'utf8'); } catch {}
         });
-        virtualConsole.on('error', (...args) => {
+        virtualConsole.on('error', (...args: any[]) => {
             try { appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
         });
-        virtualConsole.on('warn', (...args) => {
+        virtualConsole.on('warn', (...args: any[]) => {
             try { appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
         });
     }
@@ -792,7 +792,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             ? _stripTerminal(_dirResult.text) : _dirResult.text;
         _finishSignal = _dirResult.finishSignal ?? null;
         _stopReason   = _dirResult.stop?.reason ?? null;
-    } catch (e) {
+    } catch (e: any) {
         if (process.env.FG_DEBUG_STACK) console.error('[debug stack]', e.stack);
         error = e?.message || String(e);
     } finally {

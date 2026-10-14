@@ -37,7 +37,7 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
 
     async _ensure() { if (!this._db) await this._ready; return this._db; }
 
-    async syncChatList(list) {
+    async syncChatList(list: any) {
         const db = await this._ensure();
         const stmt = db.prepare(`
             INSERT INTO chats(id, name, created_at, last_at)
@@ -47,12 +47,12 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         for (const c of list) stmt.run(c.id, c.name ?? 'New Chat', c.createdAt ?? Date.now(), c.lastAt ?? Date.now());
     }
 
-    async deleteChat(id) {
+    async deleteChat(id: any) {
         const db = await this._ensure();
         db.prepare('DELETE FROM chats WHERE id = ?').run(id);
     }
 
-    async setChatRole(id, role) {
+    async setChatRole(id: any, role: any) {
         const db = await this._ensure();
         // A chat row may not exist yet if the role is set before the first saveChatList() sync
         // (e.g. role restored immediately after chat creation) — upsert a bare row defensively.
@@ -62,18 +62,18 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         `).run(id, Date.now(), Date.now(), role ?? null);
     }
 
-    _currentGeneration(db, chatId) {
+    _currentGeneration(db: any, chatId: any) {
         const row = db.prepare('SELECT COALESCE(MAX(generation), 0) AS gen FROM messages WHERE chat_id = ? AND raw = 0').get(chatId);
         return row?.gen ?? 0;
     }
 
-    _insertGeneration(db, chatId, generation, history) {
+    _insertGeneration(db: any, chatId: any, generation: any, history: any) {
         const stmt = db.prepare(`
             INSERT INTO messages(chat_id, generation, seq, role, content, content_json, tool_calls, tool_call_id, name, raw, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         `);
         const now = Date.now();
-        (history ?? []).forEach((m, seq) => {
+        (history ?? []).forEach((m: any, seq: any) => {
             const isStringContent = typeof m?.content === 'string';
             stmt.run(
                 chatId, generation, seq, m?.role ?? 'user',
@@ -87,7 +87,7 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         });
     }
 
-    async replaceMessages(chatId, history) {
+    async replaceMessages(chatId: any, history: any) {
         const db = await this._ensure();
         // Defensively ensure the parent chat row exists — mirrors setChatRole() above.
         // messages.chat_id is a real foreign key (so ON DELETE CASCADE works when a chat is
@@ -112,7 +112,7 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
     // table/chat list is untouched, so the user never sees this as a separate session.
     // Every prior generation stays fully queryable: SELECT * FROM messages WHERE chat_id=?
     // AND generation=? AND raw=0 ORDER BY seq.
-    async compactHistory(chatId, preHistory, postHistory) {
+    async compactHistory(chatId: any, preHistory: any, postHistory: any) {
         const db = await this._ensure();
         db.prepare(`
             INSERT INTO chats(id, name, created_at, last_at) VALUES (?, 'New Chat', ?, ?)
@@ -132,7 +132,7 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
     // fn-tag tool-call text before parseFnTagCalls strips it, tool results before
     // truncateResultForHistory shortens them. Not tied to seq/replace semantics (see schema
     // comment) — queryable by chat_id + created_at for benchmarking/debugging analysis.
-    async saveRawMessage(chatId, entry) {
+    async saveRawMessage(chatId: any, entry: any) {
         const db = await this._ensure();
         db.prepare(`
             INSERT INTO chats(id, name, created_at, last_at) VALUES (?, 'New Chat', ?, ?)
@@ -147,7 +147,7 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         );
     }
 
-    async logTurn(record) {
+    async logTurn(record: any) {
         const db = await this._ensure();
         db.prepare(`
             INSERT INTO turn_log(ts, chat_id, chat_name, type, name, round, model, provider, prompt,
@@ -173,19 +173,19 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         );
     }
 
-    async createWorkerRun(id, chatId) {
+    async createWorkerRun(id: any, chatId: any) {
         const db = await this._ensure();
         db.prepare('INSERT INTO worker_runs(id, chat_id, started_at, status) VALUES (?, ?, ?, ?)')
             .run(id, chatId ?? null, Date.now(), 'running');
     }
 
-    async finishWorkerRun(id, status) {
+    async finishWorkerRun(id: any, status: any) {
         const db = await this._ensure();
         db.prepare('UPDATE worker_runs SET status = ?, finished_at = ? WHERE id = ?')
             .run(status ?? 'complete', Date.now(), id);
     }
 
-    async recordWorkerAgent(runId, agent) {
+    async recordWorkerAgent(runId: any, agent: any) {
         const db = await this._ensure();
         const result = db.prepare(`
             INSERT INTO worker_agents(run_id, agent_id, role, model, task, output, error, status, note, started_at, finished_at)
