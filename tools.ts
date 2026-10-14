@@ -1,6 +1,7 @@
 // tools.js — FreeGent: tool specs, search implementations, tool execution, system prompt
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
+import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
 import { FILE_WRITE_TOOLS, MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
@@ -173,6 +174,27 @@ function _hasTruncationMarkers(content) {
 
 const _SHRINK_MIN_OLD   = 600;  // only guard files larger than this
 const _SHRINK_THRESHOLD = 0.60; // block if new content < 60% of old
+
+// fg-tasks/current.md is the scratch task a chat starts with ("overwrite it without reading it first":
+// task-setup skill). What is there is left over from an earlier, finished request, so a short new
+// task is not content loss. The guard blocked it 9 times in the chat logs of 2026-10-12 (6841 -> 529
+// chars) and agents fell back to inventing a numbered file.
+// Escape artifacts in tool-call string arguments: the model double-encodes, so `old_string` holds the
+// two characters `\n` where the file has a newline, `\"` for a quote, `\\` for one backslash. SWE Lite +
+// Verified v0.70: ~94 of 202 "old_string not found" results had this shape and never matched however the
+// window was set. Returns the decoded string when decoding changes it, else null.
+function _decodeEscapedArg(text: string, mode: 'full' | 'backslash' | 'quote'): string | null {
+    const re = mode === 'full' ? /\\([ntr"'\\])/g : mode === 'quote' ? /\\(["'])/g : /\\(\\)/g;
+    const out = text.replace(re, (_m, c) => (c === 'n' ? '\n' : c === 't' ? '\t' : c === 'r' ? '\r' : c));
+    return out === text ? null : out;
+}
+
+// Abbreviated-history write_file refusals per path in this chat (see _historyLookalike); reset with the
+// replace-failure state on a new chat.
+const _lookalikeRefusals = new Map<string, number>();
+export function resetLookalikeRefusals(): void { _lookalikeRefusals.clear(); }
+
+const _isScratchTask = (path: string) => /^(?:\.\/)?fg-tasks\/current\.md$/.test(String(path ?? ''));
 
 // read_file: inline full content up to this many chars; above it, a snippet is shown and the
 // user/model must explicitly paginate via start_line/end_line.
@@ -574,6 +596,33 @@ function _fuzzyScore(needle: string, haystack: string): number {
     const n = trigrams(needle), h = trigrams(haystack);
     let shared = 0; for (const t of n) if (h.has(t)) shared++;
     return shared / Math.max(n.size, 1);
+}
+
+// The part of a file that old_string most nearly describes, for a "not found" answer. v0.70: 125 of 202
+// failed edits re-sent the same old_string; the single closest line (or the echoed window) did not show the
+// model what the text really is. Candidate starts are lines equal (trimmed) to some line of old_string, so
+// the cost is bounded; the score is the mean per-line similarity. null below 0.6.
+export function _bestRegion(lines: string[], oldText: string): { start: number; end: number; score: number; text: string } | null {
+    const old = oldText.replace(/\r\n/g, '\n').split('\n');
+    while (old.length && !old[old.length - 1].trim()) old.pop();
+    if (!old.length || old.length > 60) return null;
+    const norm = (l: string) => l.trim();
+    const oldN = old.map(norm);
+    const sim = (a: string, b: string): number => (a === b ? 1 : (!a || !b) ? 0 : _fuzzyScore(a.toLowerCase(), b.toLowerCase()));
+    const starts = new Set<number>();
+    const index = new Map<string, number[]>();
+    lines.forEach((l, i) => { const t = norm(l); if (t.length >= 4) (index.get(t) ?? index.set(t, []).get(t)!).push(i); });
+    oldN.forEach((t, k) => { if (t.length >= 4) for (const i of index.get(t) ?? []) { starts.add(Math.max(0, i - k)); if (starts.size > 200) return; } });
+    let best: { start: number; score: number } | null = null;
+    for (const st of starts) {
+        let sum = 0;
+        for (let k = 0; k < oldN.length; k++) sum += sim(oldN[k], norm(lines[st + k] ?? ''));
+        const score = sum / oldN.length;
+        if (!best || score > best.score) best = { start: st, score };
+    }
+    if (!best || best.score < 0.6) return null;
+    const end = Math.min(lines.length, best.start + old.length);
+    return { start: best.start + 1, end, score: best.score, text: lines.slice(best.start, end).join('\n') };
 }
 
 // ---- Per-tool handler functions --------------------------------------------------------
@@ -983,7 +1032,11 @@ async function _handleUpdateTaskStatus(args: any) {
         // Always sync ledger directly — guards against any call-chain path that skips _updateLedgerRow
         await _updateLedgerRow(path, status);
         refreshTasks?.();
-        return { ok: true, path, status };
+        const unverified = (result as any).unverified as string[] | undefined;
+        return unverified?.length
+            ? { ok: true, path, status, unverified,
+                note: `The task is ${status}, but not verified: ${unverified.join('; ')}. Say so in your answer; do not describe it as checked.` }
+            : { ok: true, path, status };
     } catch (e) { return { error: e.message }; }
 }
 
@@ -1281,6 +1334,11 @@ async function _handleWriteFile(args, context) {
     // failures"). Say that the file is untouched; the size guard alone only said "content dropped".
     const copied = _historyLookalike(args);
     if (copied) {
+        // Count per path: the refusal alone did not end the loop (TerminalBench solana-data, v0.70: 19
+        // refusals of `server.py`, each followed by a full rewrite, 25 rewrites in all). From the third,
+        // say what is happening and name the way out.
+        const nth = (_lookalikeRefusals.get(String(args.path)) ?? 0) + 1;
+        _lookalikeRefusals.set(String(args.path), nth);
         let current = '';
         try { current = await agentReadFile(args.path); } catch {}
         const has = _callerHasTool(context);
@@ -1288,7 +1346,10 @@ async function _handleWriteFile(args, context) {
         return { error: `write_file: "${args.path}" was NOT changed. The content you sent is ${copied}, copied from the conversation: `
             + `to save space, earlier write_file calls are shown there abbreviated (as a diff, a "[write_file: …]" line and a "_contentCompressed" flag). `
             + `Those calls did write the whole file${current ? `, and the file is complete (${current.length} characters), so there is nothing to restore` : ''}. `
-            + `${surgical.length ? `To change it use ${surgical.join(' or ')}. ` : ''}To rewrite it, send the complete new text as "content", with no flag.` };
+            + `${surgical.length ? `To change it use ${surgical.join(' or ')}. ` : ''}To rewrite it, send the complete new text as "content", with no flag.`
+            + (nth >= 3 ? ` This is the ${nth}${nth === 3 ? 'rd' : 'th'} time you have sent the abbreviated form for this file: you are rewriting the whole file for a small change. `
+                + `Stop doing that. ${surgical.includes('replace_in_file') ? 'Call replace_in_file with only the lines that differ (copy old_string from read_file). ' : 'Read the file, then send the complete new text as plain source code. '}`
+                + `If the change is not needed, move on to the next step of the task.` : '') };
     }
     const nul = _nulReport(args.content);
     if (nul) return { error: `write_file: "${args.path}" was NOT changed. ${nul}` };
@@ -1299,10 +1360,10 @@ async function _handleWriteFile(args, context) {
         const old = context.staging.has(args.path)
             ? (context.staging.get(args.path) ?? '')
             : ((await context.snapshot.get(args.path)) ?? '');
-        if (old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD) {
+        if (!_isScratchTask(args.path) && old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD) {
             return { error: _shrinkError(args.path, old.length, args.content.length, _callerHasTool(context)) };
         }
-        if (old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
+        if (!_isScratchTask(args.path) && old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(old, args.content) > _EDIT_REVIEW_THRESHOLD) {
             const review = await _reviewFileEdit(args.path, old, args.content);
             if (!review.approved)
@@ -1315,10 +1376,10 @@ async function _handleWriteFile(args, context) {
     try {
         let previous = '';
         try { previous = await agentReadFile(args.path); } catch {}
-        if (previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD) {
+        if (!_isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD) {
             return { error: _shrinkError(args.path, previous.length, args.content.length, _callerHasTool(context)) };
         }
-        if (previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
+        if (!_isScratchTask(args.path) && previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(previous, args.content) > _EDIT_REVIEW_THRESHOLD) {
             const review = await _reviewFileEdit(args.path, previous, args.content);
             if (!review.approved)
@@ -1348,7 +1409,7 @@ async function _handleReplaceInFile(args, context) {
         return { error: `replace_in_file: old_string is empty. To REPLACE text, set old_string to the exact lines to find. To INSERT text, include the surrounding lines as old_string and repeat them plus your addition in new_string. Example — insert after a function signature: old_string='def foo():\\n    pass', new_string='def foo():\\n    # new line\\n    pass'. Read the file first to get exact content.` };
     }
     if (args.old_string === args.new_string) {
-        return { error: `replace_in_file: old_string and new_string are identical — this would change nothing. Provide different text.` };
+        return { error: `replace_in_file: old_string and new_string are identical — this would change nothing. If the text is already what you want, the edit is already in the file: read those lines to confirm instead of repeating it; otherwise change the part of new_string that must differ.` };
     }
     const nulNew = _nulReport(args.new_string);
     if (nulNew) return { error: `replace_in_file: "${args.path}" was NOT changed. new_string: ${nulNew}` };
@@ -1379,10 +1440,34 @@ async function _handleReplaceInFile(args, context) {
                 if (hits.length === 1) { idx = hits[0].index; matchLen = hits[0][0].length; }
             } catch {}
         }
+        // Escape artifacts: retry with the decoded old_string, same transform on new_string, unique match only.
+        let decodedNote = '';
+        let decodedOutside = false;
+        let newText: string = args.new_string;
+        if (idx === -1) {
+            const hasRealNl = args.old_string.includes('\n');
+            const modes: Array<'full' | 'backslash' | 'quote'> = hasRealNl ? ['backslash', 'quote'] : ['full', 'backslash', 'quote'];
+            for (const mode of modes) {
+                const dOld = _decodeEscapedArg(args.old_string, mode);
+                if (dOld == null) continue;
+                let at = searchText.indexOf(dOld), rel = 0;
+                if (at === -1 && (args.start_line != null || args.end_line != null)) {
+                    // Not in the window: the whole file, if the decoded text occurs exactly once there.
+                    const w = original.indexOf(dOld);
+                    if (w !== -1 && original.indexOf(dOld, w + 1) === -1) { at = w; rel = searchOffset; decodedOutside = true; }
+                }
+                if (at !== -1 && (rel ? true : searchText.indexOf(dOld, at + 1) === -1)) {
+                    idx = at - rel; matchLen = dOld.length;
+                    newText = _decodeEscapedArg(args.new_string, mode) ?? args.new_string;
+                    decodedNote = ' old_string and new_string contained escape sequences (\\n, \\", \\\\) that are not in the file; they were read as the characters they stand for. Send real newlines and quotes next time.';
+                    break;
+                }
+            }
+        }
         // Not in the given line range, but exactly once in the file: the range was off. v0.66 SWE
         // workers: 41 of 83 "old_string not found" failures were range misses like lines 42–45 for
         // text on line 41. An exact, unique match needs no range to be unambiguous.
-        let outsideRange = false;
+        let outsideRange = decodedOutside;
         if (idx === -1 && (args.start_line != null || args.end_line != null)) {
             const at = original.indexOf(args.old_string);
             if (at !== -1 && original.indexOf(args.old_string, at + 1) === -1) {
@@ -1410,16 +1495,25 @@ async function _handleReplaceInFile(args, context) {
                     }
                 }
             }
+            // The region of the whole file that old_string most nearly describes, when it is not what was
+            // already echoed: the text to copy old_string from.
+            const _winS = args.start_line != null || args.end_line != null ? Math.max(0, (args.start_line ?? 1) - 1) : -1;
+            const _winE = _winS >= 0 ? Math.min(lines.length, args.end_line ?? lines.length) : -1;
+            const region = _bestRegion(lines, args.old_string);
+            if (region && !(_winS >= 0 && region.start - 1 >= _winS && region.end <= _winE)) {
+                const body = region.text.length > 1500 ? region.text.slice(0, 1500) + '\n[…]' : region.text;
+                hint += `\nThe text closest to your old_string is at lines ${region.start}–${region.end}; copy old_string from it exactly:\n${body}`;
+            }
             return { error: `replace_in_file: old_string not found in "${args.path}"${args.start_line != null || args.end_line != null ? ` within lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}` : ''}.${hint}` };
         }
         const absIdx = searchOffset + idx;
-        const updated = original.slice(0, absIdx) + args.new_string + original.slice(absIdx + matchLen);
+        const updated = original.slice(0, absIdx) + newText + original.slice(absIdx + matchLen);
         await write(updated);
         const _line = outsideRange ? original.slice(0, absIdx).split('\n').length : 0;
         return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(updated),
-            note: outsideRange
-                ? `Change applied at line ${_line}: old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length} but occurs exactly once in the file. No need to re-read the file to verify.`
-                : 'Change applied. No need to re-read the file to verify.' };
+            note: (outsideRange
+                ? `Change applied at line ${_line}: old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}; but occurs exactly once in the file. No need to re-read the file to verify.`
+                : 'Change applied. No need to re-read the file to verify.') + decodedNote };
     };
     if (context) {
         return doReplace(
@@ -2145,8 +2239,15 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // must accept the same keys or they drift (pre-repair normally handles this;
     // dispatch aliasing is the backstop for paths that skip repair).
     const _firstStr = (keys) => { for (const k of keys) { if (typeof args[k] === 'string' && args[k]) return args[k]; } return undefined; };
-    const _code = _firstStr(EXEC_CODE_ALIASES) ?? '';
-    const _lang = _firstStr(EXEC_LANG_ALIASES);   // undefined when the model omitted it
+    let _code = _firstStr(EXEC_CODE_ALIASES) ?? '';
+    let _lang = _firstStr(EXEC_LANG_ALIASES);   // undefined when the model omitted it
+    // Malformed call: the script was written inside the language value ("bash\">\ncd /workspace…")
+    // and `code` came out empty (chat logs of 2026-10-08/10: three calls in one chat, all rejected).
+    // The language token and the script are both there, so split them rather than reject.
+    if (!_code.trim() && _lang) {
+        const m = /^\s*([A-Za-z][\w+#-]{0,15})["'>\s]*?\n([\s\S]*\S[\s\S]*)$/.exec(_lang);
+        if (m) { _lang = m[1]; _code = m[2]; }
+    }
     // No language given: Python when the code clearly is Python, else bash (the old default).
     // An explicit language is not overridden up front; the only switch is the compile-error
     // re-run below, where Python has proven the code isn't Python and nothing has run.
@@ -2219,7 +2320,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
         // Must come before Pyodide and local-sandbox so headless runs never
         // hit localhost:5000 or the Pyodide-loading-forever path.
-        try { execResult = await runtime.nativeExec(args.language, args.code); }
+        try { execResult = await runtime.nativeExec(args.language, args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined); }
         catch (e) { return { error: `nativeExec: ${e.message}` }; }
     } else if (_needsDisplay && args.language !== 'bash' && args.language !== 'javascript') {
         // pygame / tkinter / etc. need a real canvas — execute_code can't provide one.
