@@ -10065,7 +10065,7 @@
     "shiro/commands/canonical.ts": "a88310ca0540700d6897b26ff0507be0d6ad0db732c4631032f490fde28343c5",
     "shiro/commands/case.ts": "9afa83add92ad9e28ff1993bbe622122989a00428b980a19b3f12938ece1295f",
     "shiro/commands/cat.ts": "3a2652f27a43dbbebaee1139f92df965e927fdd4be836fe3de39d07e1fcf167a",
-    "shiro/commands/checksums.ts": "30533d5af6cbade8f100b959f29c79dbf8d317b529ee36ecc7458e8d0dee648d",
+    "shiro/commands/checksums.ts": "1c26aeaebe250f56dbf77ce826ad8dbce1d0a33af06971d9e1332e763f638349",
     "shiro/commands/chmod.ts": "f036c63adb4a65a23f26b548ea75780933672b5fd963cc88bc938d693f88ce55",
     "shiro/commands/chown.ts": "ae6dffd76c2db89311394c42746f7ac725e2f1399323dc2880e29b75c5323676",
     "shiro/commands/cksum.ts": "ed6a5900a27e03c3da8fb066550764cdf703eea509e54e7668550c243b416c25",
