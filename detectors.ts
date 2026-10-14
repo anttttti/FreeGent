@@ -16,6 +16,7 @@
 // window bridge.
 
 import { shellWrites } from './shell-writes.js';
+import { runtime } from './runtime.js';
 
 import { _seenReadFiles, _seenListFiles } from './state.js';
 
@@ -117,6 +118,7 @@ export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });
 // indentation do not make it a different call. DSAEval 5290 and CTF 71 (v0.70) re-ran the same find/ls/grep
 // probes for dozens of steps with a changed `# comment` line, which kept every one out of the repeat window.
 export function _normCode(code: string): string {
+    if (runtime.guardOff('call_norm')) return code;
     return code.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).join('\n');
 }
 export function _callSig(calls: Array<{ name: string; args: any }>): string {
@@ -423,6 +425,7 @@ export function overwrittenSupplied(written: Iterable<string>, supplied: Set<str
 // when there is no match or no difference. That is an answer, not a failure (CTF 71, v0.70: each empty
 // grep was followed by "Fix before declaring COMPLETED" and counted toward the failure streak).
 export function isNegativeProbe(args: any, result: any): boolean {
+    if (runtime.guardOff('negative_probe')) return false;
     if (!result || result.error || result.exit_code !== 1) return false;
     if (String(result.stdout ?? '').trim() || String(result.stderr ?? '').trim()) return false;
     const code = String(args?.code ?? '');

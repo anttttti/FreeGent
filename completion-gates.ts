@@ -8,6 +8,7 @@
 // A gate is "once": the nudge is delivered, the counter set, and a second COMPLETED passes (the agent
 // may have a reason). BLOCKED declarations are never bounced.
 import { _BLOCKED_DECLARATION_RE, _isComplete } from './turn-protocol.js';
+import { runtime } from './runtime.js';
 import type { Verification } from './verification.js';
 import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths } from './detectors.js';
 
@@ -126,6 +127,7 @@ export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inv
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {
+        if (runtime.guardOff(g.name)) continue;   // experiment switch (FG_DISABLE_GUARDS)
         const hit = await g.run(c);
         if (hit) return hit;
     }

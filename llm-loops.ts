@@ -2161,7 +2161,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         ({ resultHashes, stuckMsg: stuckNudge } = _updateStuckDetector(resSig, stalledPaths, resultHashes));
         // No new evidence: advisory nudge when several probing steps in a row showed nothing unseen.
         const _stepChanged = results.some(r => !r.result?.error && (_WRITE_TOOLS.has(r.name) || (r.name === 'execute_code' && _execMayWrite(r.args, r.result))));
-        const _noveltyNudge = updateNovelty(_novelty, results, _stepChanged);
+        const _noveltyNudge = runtime.guardOff('no_new_evidence') ? null : updateNovelty(_novelty, results, _stepChanged);
         _stuckCallSigs = [..._stuckCallSigs, _thisCallSig].slice(-3);
         if (stuckNudge && results.every(r => r.name === 'execute_code') && new Set(_stuckCallSigs).size > 1)
             stuckNudge = sameOutputMsg(results.map(r => r.result?.stdout ?? r.result?.content ?? ''));
