@@ -23,6 +23,7 @@ import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
 import { newVerification, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
+import { runCompletionGates } from './completion-gates.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
@@ -1449,83 +1450,24 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // Advisory mode: nudge in history, model not forced to loop.
             }
         }
-        // Scratch-only completion: every file changed this run is a repro/debug/temp file, so the
-        // fix itself is not in place (SWE-bench v0.55 astropy-12907: a sed that matched nothing,
-        // then COMPLETED with only repro scripts in the patch). One bounce; a second COMPLETED
-        // is accepted — the scratch files may be the deliverable.
-        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && step < _loopMax - 1 && !softStopPending && !ps.scratchOnlyCheck
-            && _editedPaths.size && [..._editedPaths].every(isScratchPath)) {
-            ps.scratchOnlyCheck = 1;
-            _saveAnswer(ps, textContent);
-            _emitNudge('scratch_only_edits', nudge(`You declared COMPLETED, but the only files changed this turn are scratch files: ${[..._editedPaths].slice(0, 6).join(', ')}. No project file was modified, so if the task was to change the code, the fix is not applied — check with \`git diff\` (or read the file) and apply it, then remove the scratch files. If these files are the deliverable, reply COMPLETED again.`));
-            return { do: 'continue' };
-        }
-        // The last check after the final change failed (not an import/collection failure: those are not
-        // counted as checks, verification.ts). v0.70 Lite: 11 of 69 tasks ended with a real failing check;
-        // the graded-test gate covers tasks that list their tests, this covers the rest. One bounce.
-        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && step < _loopMax - 1 && !softStopPending && !ps.verifCheck && !_reactiveFired.has('graded_test')
-            && verificationVerdict(_verif) === 'failed_verification') {
-            ps.verifCheck = 1;
-            _saveAnswer(ps, textContent);
-            _emitNudge('failed_check_complete', nudge('You declared COMPLETED, but the last test or build check you ran after your final change failed. Look at its output: if the failure is caused by your change, fix it and re-run the check; if it is unrelated to your change (an existing failure, the environment), say so explicitly in your final reply and give the evidence. Then reply COMPLETED.'));
-            _forceToolCall = true;
-            return { do: 'continue' };
-        }
-        // Answering from data the agent wrote itself. AgentBench OS tasks 43, 47 and 52 (v0.70) were failed
-        // after the agent overwrote the supplied file1.log / file1.txt / logfile.txt with its own text; no
-        // other OS task wrote to a supplied file (3 of 60, replayed). Also a pure question with new data
-        // files. One bounce at COMPLETED; a task that asked for the change confirms with a second COMPLETED.
-        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && step < _loopMax - 1 && !softStopPending && !ps.inventedDataCheck) {
-            const _first = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string');
-            const _supplied = suppliedFiles(_first?.content ?? '');
-            const _written = new Set<string>([..._editedPaths, ..._shellWrites]);
-            // Not for a task whose fix is a code edit (SWE prompt / graded tests): its supplied files are meant to change.
-            const _codeTask = runtime.editRequired || _gradedTestIds(_task).length > 0;
-            const _over = _supplied.size && !_codeTask ? overwrittenSupplied(_written, _supplied) : [];
-            const _made = isQuestionOnlyTask(_originalTask(_histR(_s))) ? inventedDataPaths(_written, isScratchPath) : [];
-            const _flag = [...new Set([..._over, ..._made])];
-            if (_flag.length) {
-                ps.inventedDataCheck = 1;
+        // One-shot checks at COMPLETED (scratch-only edits, failed check, invented data, test-environment
+        // edits, no edit on an edit task): completion-gates.ts, tried in a fixed order.
+        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)) {
+            const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string');
+            const _gate = await runCompletionGates({
+                text: textContent, step, loopMax: _loopMax, softStopPending, ps, workflowMode: !!_s.workflowMode,
+                editedPaths: _editedPaths, shellWrites: _shellWrites, editsThisRun: !!_editsThisRun, editEvents: _editEvents,
+                verdict: verificationVerdict(_verif), reactiveFired: _reactiveFired,
+                firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
+                editRequired: runtime.editRequired, gradedTestIds: () => _gradedTestIds(_task),
+                isScratchPath, envConfigEdits,
+            });
+            if (_gate) {
                 _saveAnswer(ps, textContent);
-                _emitNudge('invented_data', nudge(`You wrote to data files yourself: ${_flag.slice(0, 5).join(', ')}${_over.length ? ' (supplied with the task)' : ''}. An answer computed from text you wrote is not an answer about the real data. If the task asks about files that were already there, restore or ignore your changes, compute the answer from the real contents, and reply COMPLETED with it. If the task really asked you to create or change these files, reply COMPLETED again.`));
-                _forceToolCall = true;
+                _emitNudge(_gate.name, nudge(_gate.text));
+                if (_gate.force) _forceToolCall = true;
                 return { do: 'continue' };
             }
-        }
-        // Test-environment workarounds in the change set: a rewritten conftest.py / pytest.ini /
-        // setup.cfg that made tests run locally ships with the fix and can break every graded test
-        // (v0.58 xarray-5131: a root conftest.py monkeypatching pandas; collection then failed on all
-        // 34 graded tests). Skipped when the task itself names the file; a COMPLETED repeated with
-        // no edits in between passes. A second bounce follows new edits: v0.59 flask-4045 restored
-        // conftest.py after the first, then rewrote it to make the checklist's test run pass.
-        if (_s.workflowMode && _isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && step < _loopMax - 1 && !softStopPending
-            && (ps.envConfigCheck ?? 0) < 2 && (ps.envConfigCheck ? _editEvents > (ps.envConfigAt ?? 0) : true)) {
-            const _cfg = await envConfigEdits(_originalTask(_histR(_s)), _editedPaths);
-            if (_cfg.length) {
-                ps.envConfigCheck = (ps.envConfigCheck ?? 0) + 1;
-                ps.envConfigAt = _editEvents;
-                _saveAnswer(ps, textContent);
-                _emitNudge('env_config_edits', nudge(`You changed test or packaging configuration${_cfg.some(f => f.endsWith('/')) ? ', or added a new top-level package (a stand-in for a missing dependency)' : ''}: ${_cfg.slice(0, 6).join(', ')}. The graded tests run in their own prepared environment and these edits ship with your change — a modified conftest.py or pytest.ini can break every graded test, and a stub package hides the real one. Unless the task asks for these changes, restore them (\`git checkout -- <file>\`, or delete a file or folder you created), keep only the fix itself, then reply COMPLETED again. If local tests can't run without them, check the fix with a short script instead.`));
-                return { do: 'continue' };
-            }
-        }
-        // No-edit completion on a task that asks for a code change: SWE Lite matplotlib-23314 (v0.70)
-        // analysed the bug for 44 steps, never edited a file and ended `completed` with an empty
-        // patch. The completion gate below is skipped without an edit (data-query tasks must not be
-        // second-guessed), so this narrower check covers only tasks that say the fix is an edit:
-        // the SWE runner prompt or a graded-test list. One bounce per turn; BLOCKED stays available.
-        if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending && !_editsThisRun
-            && !ps.noEditCheck && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && (runtime.editRequired || _gradedTestIds(_task).length > 0)) {
-            ps.noEditCheck = 1;
-            _saveAnswer(ps, textContent);
-            _emitNudge('no_edit_complete', nudge('You declared COMPLETED but no file in the workspace was changed, and this task is solved by editing the source. If you identified the cause, make the edit now (replace_in_file on the exact lines, then re-run your check). If the change really is not needed or you cannot make it, reply BLOCKED: <reason> instead of COMPLETED.'));
-            _forceToolCall = true;
-            return { do: 'continue' };
         }
         // Completion gate: context-dependent rules (trigger_on_completion in skills.js)
         // fire once when the model first declares completion. _reactiveFired dedup in
