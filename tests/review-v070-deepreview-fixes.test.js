@@ -446,3 +446,47 @@ describe('F4. a worker run does not change what its siblings see as the original
         expect(await pinSnap.get('m.py')).toBe('original\n'); // a sibling's first read still gets the original
     });
 });
+
+describe('event log growth is bounded', () => {
+    let dir, fsp, path, SessionPersistence;
+    beforeEach(async () => {
+        fsp = await import('node:fs/promises'); path = await import('node:path');
+        ({ SessionPersistence } = await import('../session-persistence.ts'));
+        dir = await fsp.mkdtemp(path.join((await import('node:os')).tmpdir(), 'fg-persist-'));
+    });
+    afterEach(async () => { await fsp.rm(dir, { recursive: true, force: true }); });
+    const ev = (seq, content = 'x') => ({ seq, type: 'tool/result', time: 0, data: { content } });
+
+    it('cuts long fields on disk and marks the event', async () => {
+        const p = new SessionPersistence(dir, 60_000, { maxFieldChars: 100 });
+        p.enqueue('s', ev(0, 'a'.repeat(5000))); p.enqueue('s', ev(1));
+        await p.flush();
+        const [a, b] = await p.load('s');
+        expect(a.truncated).toBe(true);
+        expect(a.data.content.length).toBeLessThan(200);
+        expect(a.data.content).toContain('4900 more chars');
+        expect(b.truncated).toBeUndefined();
+    });
+    it('stops writing a session at the file cap and keeps what was written', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const p = new SessionPersistence(dir, 60_000, { maxFileBytes: 400 });
+        for (let i = 0; i < 3; i++) { p.enqueue('s', ev(i, 'y'.repeat(60))); await p.flush(); }
+        for (let i = 3; i < 10; i++) { p.enqueue('s', ev(i, 'y'.repeat(60))); await p.flush(); }
+        const loaded = await p.load('s');
+        expect(loaded.length).toBeGreaterThan(0);
+        expect(loaded.length).toBeLessThan(10);
+        expect(loaded.map(e => e.seq)).toEqual([...loaded.keys()]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
+    it('prunes files by age, then oldest first down to the size budget', async () => {
+        const w = async (n, bytes, ageDays) => {
+            const f = path.join(dir, n + '.jsonl'); await fsp.writeFile(f, 'z'.repeat(bytes));
+            const t = new Date(Date.now() - ageDays * 86_400_000); await fsp.utimes(f, t, t);
+        };
+        await w('old', 10, 40); await w('mid', 100, 3); await w('new', 100, 1); await fsp.writeFile(path.join(dir, 'keep.txt'), 'k'.repeat(999));
+        expect(await SessionPersistence.prune(dir, { maxAgeDays: 30, maxTotalBytes: 150 })).toBe(2);
+        const left = (await fsp.readdir(dir)).sort();
+        expect(left).toEqual(['keep.txt', 'new.jsonl']);
+    });
+});
