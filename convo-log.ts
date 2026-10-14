@@ -232,7 +232,7 @@ async function exportChat(id) {
 export function redactSecrets(text: string, extra: string[] = []): string {
     return redactText(text, extra);
 }
-function _storedSecretValues(): string[] {
+export function storedSecretValues(): string[] {
     const vals: string[] = [];
     try {
         for (let i = 0; i < localStorage.length; i++) {
@@ -249,7 +249,7 @@ async function sendChatLog(id) {
     const url = 'https://proxy.freegent.ai/log';
     if (!confirm('Send this chat (messages, tool calls and results) to the FreeGent developer for debugging? API keys are removed first. It is kept for 14 days.')) return;
     try {
-        const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), _storedSecretValues());
+        const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());
         const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body });
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.id) throw new Error(j.error || `HTTP ${r.status}`);

@@ -1,6 +1,7 @@
 // post-turn.js — FreeGent: post-turn background agent system
 // Depends on: config.js, workers.js, state.js (aiBusy, setAiJob, activeChatId).
 import { activeChatId, aiBusy, setAiJob } from './state.js';
+import { redactSecrets, storedSecretValues } from './convo-log.js';
 
 export async function runPostTurnAgents(): Promise<void> {
     if (getAgentReviewLogs()) {
@@ -49,15 +50,19 @@ async function _saveLogAndCreateReviewTask() {
         lines.push('');
     }
 
-    const tasksDir = 'tasks';
+    // The canonical task store (tasks.ts, qa.ts, rebuildLedger). A bare `tasks/` made a second ledger and
+    // an id scan that never saw the real tasks, so the review task was always 001.
+    const tasksDir = 'fg-tasks';
     let nextId = '001';
     const [, filesResult] = await Promise.allSettled([
-        agentWriteFile(logPath, lines.join('\n')),
+        // The log is read back by an agent and often lives in a git repository: keys pasted into the chat or
+        // echoed by a tool must not be persisted verbatim (review 2026-10-14, opencode M1).
+        agentWriteFile(logPath, redactSecrets(lines.join('\n'), storedSecretValues())),
         agentListFiles(),
     ]);
     if (filesResult.status === 'fulfilled') {
         const ids = (filesResult.value || [])
-            .map(f => (f.name || f).match(/^(?:local\/)?tasks\/(\d+)-/))
+            .map(f => (f.name || f).match(/^(?:local\/)?(?:fg-)?tasks\/(\d+)-/))
             .filter(Boolean)
             .map(m => parseInt(m[1], 10));
         if (ids.length) nextId = String(Math.max(...ids) + 1).padStart(3, '0');
