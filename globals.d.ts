@@ -411,6 +411,9 @@ declare global {
     var _markCooldown: any;
     var _markExactCooldown: any;
     var _markFlatCooldown: any;
+    var noteRefusal: any;
+    var REFUSAL_LIMIT: any;
+    var REFUSAL_COOLDOWN_MS: any;
     var _switchToFreeModel: any;
     var applyMemoryUpdates: any;
     var compactHistory: any;

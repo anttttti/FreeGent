@@ -147,9 +147,21 @@ export function _isRateLimit(msg: string): boolean {
 export function _isServerError(msg: string): boolean {
     return /HTTP [45]\d\d|idle timeout|signal timed out|read operation timed out|stream error|failed to fetch|networkerror|load failed|connection reset|connection refused|econnreset|socket hang up|bodystreambuffer|stream.*aborted/i.test(msg || '');
 }
+// Consecutive HTTP 403 answers per endpoint; a success clears it.
+export const REFUSAL_LIMIT = 3;
+export const REFUSAL_COOLDOWN_MS = 30 * 60_000;
+const _refusals = new Map<string, number>();
+export function noteRefusal(endpoint: any): number {
+    if (!endpoint) return 0;
+    const key = `${endpoint.provider}|${endpoint.model}`;
+    const n = (_refusals.get(key) ?? 0) + 1;
+    _refusals.set(key, n);
+    return n;
+}
 export function recordSuccess(endpoint: any): void {
     if (!endpoint) return;
     const key = `${endpoint.provider}|${endpoint.model}`;
+    _refusals.delete(key);
     _endpointSuccessSinceCooldown.set(key, true);
 }
 export function _markCooldown(endpoint: any, exactMs: number | null = null): void {
@@ -435,6 +447,7 @@ export function utilityEndpoint(): any {
 Object.assign(window, {
     _endpointCooldown, _endpointHits, _endpointNeedsProbe, _endpointSuccessSinceCooldown,
     RATE_LIMIT_COOLDOWN_MS, RATE_LIMIT_MAX_MS, RATE_LIMIT_PENALTY_MS,
+    noteRefusal, REFUSAL_LIMIT, REFUSAL_COOLDOWN_MS,
     knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, isCacheCapable,
     _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining,
     oaiEndpoint, specToEndpoint, _defaultEndpoint, firstFreeEndpoint, utilityEndpoint,
