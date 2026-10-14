@@ -1483,7 +1483,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             const _supplied = suppliedFiles(_first?.content ?? '');
             const _written = new Set<string>([..._editedPaths, ..._shellWrites]);
             // Not for a task whose fix is a code edit (SWE prompt / graded tests): its supplied files are meant to change.
-            const _codeTask = /\bby editing the source files\b/i.test(_task) || _gradedTestIds(_task).length > 0;
+            const _codeTask = runtime.editRequired || _gradedTestIds(_task).length > 0;
             const _over = _supplied.size && !_codeTask ? overwrittenSupplied(_written, _supplied) : [];
             const _made = isQuestionOnlyTask(_originalTask(_histR(_s))) ? inventedDataPaths(_written, isScratchPath) : [];
             const _flag = [...new Set([..._over, ..._made])];
@@ -1520,7 +1520,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // the SWE runner prompt or a graded-test list. One bounce per turn; BLOCKED stays available.
         if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending && !_editsThisRun
             && !ps.noEditCheck && !_BLOCKED_DECLARATION_RE.test(textContent)
-            && (/\bby editing the source files\b/i.test(_task) || _gradedTestIds(_task).length > 0)) {
+            && (runtime.editRequired || _gradedTestIds(_task).length > 0)) {
             ps.noEditCheck = 1;
             _saveAnswer(ps, textContent);
             _emitNudge('no_edit_complete', nudge('You declared COMPLETED but no file in the workspace was changed, and this task is solved by editing the source. If you identified the cause, make the edit now (replace_in_file on the exact lines, then re-run your check). If the change really is not needed or you cannot make it, reply BLOCKED: <reason> instead of COMPLETED.'));
