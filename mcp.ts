@@ -360,6 +360,22 @@ async function _listTools(server: { url: string; headers?: Record<string, string
     return { tools, instructions };
 }
 
+// Plain http:// carries the server's credentials and every tool result in clear text, and a tampered
+// result is a prompt injection into the agent. Allowed only where the path is not the public internet:
+// loopback, RFC1918/link-local addresses, and single-label or .local/.lan names.
+export function plainHttpAllowed(hostname: string): boolean {
+    const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    if (!h) return false;
+    if (h === 'localhost' || h.endsWith('.localhost') || h === '::1') return true;
+    const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+    if (m) {
+        const a = Number(m[1]), b = Number(m[2]);
+        return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+    }
+    if (h.includes(':')) return /^f[cd]|^fe[89ab]/.test(h);   // IPv6 unique-local / link-local
+    return !h.includes('.') || h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.internal');
+}
+
 // Connect to a new server and save it (only if the handshake and tools/list succeed).
 async function addMcpServer(opts: { name: string; url: string; headers?: Record<string, string>; id?: string;
                                     enabledTools?: string[]; toolNote?: string; libraryId?: string; readOnly?: boolean;
@@ -368,6 +384,8 @@ async function addMcpServer(opts: { name: string; url: string; headers?: Record<
     let u: URL;
     try { u = new URL(url); } catch { throw new Error('Not a valid URL'); }
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('URL must be http(s)');
+    if (u.protocol === 'http:' && !plainHttpAllowed(u.hostname))
+        throw new Error('Use https:// for a server on the public internet (plain http is allowed only for localhost and private-network addresses)');
     const list = getMcpServers();
     if (list.some(s => s.url === url)) throw new Error('This server is already added');
     const name = String(opts.name || '').trim() || u.hostname;

@@ -1,5 +1,6 @@
 // init.js — FreeGent: DOMContentLoaded bootstrap, wires all modules together
 // Depends on: all other modules (loaded last)
+import { sanitizePastedHtml } from './paste-sanitize.js';
 import { installPassHeader } from './proxy.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
@@ -360,10 +361,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const html = e.clipboardData?.getData('text/html');
             if (!html) return; // plain-text paste — let browser handle it
             e.preventDefault();
-            const clean = html
-                .replace(/ (style|class|id|data-[^=]*|on\w+)="[^"]*"/gi, '') // strip style/class/id + on* handler attrs (XSS)
-                .replace(/<\/?span[^>]*>/gi, '')                         // unwrap spans
-                .replace(/<(script|style|head|meta|link)[^>]*>[\s\S]*?<\/\1>/gi, ''); // drop noise tags
+            // Allowlist rebuild, not regex stripping: unquoted on* handlers and other tags used to survive.
+            const clean = sanitizePastedHtml(html);
             document.execCommand('insertHTML', false, clean);
             autoResizeTextarea(input);
         });
