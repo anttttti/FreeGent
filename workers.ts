@@ -1103,11 +1103,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     return { output: `${_report.replace(/STATUS:\s*(complete|blocked|partial).*$/im, '').trim()}\n\n${_capFooter}`, toolCalls: _wToolCalls };
 }
 
-// Labels used by the two protocol-compliance judge mechanisms (step-validator.js's generic
-// checks, turn-protocol.js's post-COMPLETED verify) — logged to turn_log below since neither
-// ever touches the chat history. Everything else callLLMComplete is used for (research:*,
-// skill:*, worker:review/locate/analyze/resolve) is the agent's own sub-task work, not
-// protocol judging, and stays out of this to avoid misrepresenting it as "validation".
+// Labels of the two protocol-compliance judge mechanisms (step-validator.js's generic checks,
+// turn-protocol.js's post-COMPLETED verify). Every callLLMComplete call is logged (see below); this tells a
+// judge from the agent's own sub-task work (research:*, skill:*, worker:*, qa:*) where that matters.
 function _isJudgeLabel(label: string | null | undefined): boolean { return label === 'completion:verify' || !!label?.startsWith('validate:'); }
 
 // Central router for single-turn text completions (no tools, no history management). It is built on
@@ -1206,9 +1204,12 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
         result = data.content || '';
         handle.setOutput(result || '(empty)');
         if (_own) result.trim() ? handle.complete() : handle.abort();
-        // Judge calls never touch the chat history and aren't otherwise logged — this is
-        // their only durable record once the live UI step box is gone.
-        if (_isJudgeLabel(label) && typeof convoLogTurn === 'function') {
+        // Auxiliary calls (judges, QA reviews, summaries, worker text) never touch the chat history and are
+        // not otherwise logged — this is their only durable record once the live UI step box is gone, and
+        // the only place they reach the run's request totals. Judge labels were logged alone; a review or a
+        // task-enrichment call was an unrecorded model request (uploads review 2026-10-14, 9.1). `name`
+        // says which call it was.
+        if (typeof convoLogTurn === 'function') {
             convoLogTurn({
                 type: 'validation', name: label,
                 model: ep.model, provider: ep.provider,

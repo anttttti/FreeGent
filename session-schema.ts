@@ -88,7 +88,8 @@ END;
 -- that relationship is fully owned by this adapter's own call order (see NodeSqliteAdapter).
 -- type/name distinguish what kind of entry this is: null = a regular main-loop turn,
 -- 'nudge' = a framework nudge (name = nudge name, e.g. 'post_state_validation'),
--- 'validation' = a step-validator judge call (name = check name, e.g. 'missing_state_line').
+-- 'validation' = an auxiliary model call made outside the main loop: a step-validator judge (name = check
+--   name, e.g. 'missing_state_line') or any other callLLMComplete label (QA review, summary, worker text).
 -- prompt is only meaningful for 'validation' rows (what was actually asked to the judge) —
 -- these calls are otherwise invisible once their live UI step box scrolls away or the page
 -- reloads: not in the chat history (see llm-loops.js/callLLMComplete), so this is their only
