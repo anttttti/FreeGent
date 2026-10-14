@@ -1592,7 +1592,8 @@ async function executeWorkers(args: any): Promise<any> {
                 lastError = e;
                 // Permanent failures (bad auth, model discontinued, no tool support) — don't retry.
                 const isPermanent = /HTTP 40[14]|no endpoints found|invalid model|model.*not.*exist|does not exist/i.test(e.message ?? '');
-                if (attempt < MAX_RETRIES && !isPermanent) {
+                if (isPermanent) break;   // every further attempt would fail the same way, and cost a full run
+                if (attempt < MAX_RETRIES) {
                     // Transient error (stream abort, network) — clear partial staging and retry
                     staging.clear();
                     binary.clear();

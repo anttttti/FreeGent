@@ -176,6 +176,16 @@ describe('file tools', () => {
         expect(await W.agentReadFile('u.txt')).toBe('one');
     });
 
+    it('undo_write: a file that existed empty is restored empty, one that did not exist is deleted', async () => {
+        await W.agentWriteFile('empty.txt', '');
+        await tool('write_file', { path: 'empty.txt', content: 'now text' });
+        await tool('undo_write', { path: 'empty.txt' });
+        expect(await W.agentReadFile('empty.txt')).toBe('');
+        await tool('write_file', { path: 'fresh-undo.txt', content: 'x' });
+        await tool('undo_write', { path: 'fresh-undo.txt' });
+        await expect(W.agentReadFile('fresh-undo.txt')).rejects.toThrow();
+    });
+
     it('search_workspace: literal (case-insensitive) or regex, "|" for OR, names/contents scope, path_filter with "|", context up to 50 lines', async () => {
         claims(described('search_workspace', 'pattern'), 'Literal string (default, case-insensitive) or regex when is_regex=true. Use | for multi-term OR');
         claims(described('search_workspace', 'scope'), '"names" = filenames only; "contents" = contents only');

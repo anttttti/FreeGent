@@ -437,6 +437,25 @@ describe('session-store with a read-back adapter (IndexedDB)', () => {
         expect(await a.loadRawMessages('c1')).toEqual([{ content: 'old raw', ts: 1234 }]);
     });
 
+    it('a retry after a partly failed migration copies the missing records before the source is removed', async () => {
+        const src = [1, 2, 3].map(n => ({ ts: `2026-01-0${n}T00:00:00.000Z`, chatId: 'c1', response: `turn ${n}` }));
+        localStorage.setItem('fg_chat_c1_log', JSON.stringify(src));
+        const a = await idbAdapter();
+        window.setSessionStore(a);
+        // First attempt: the destination takes one record, then fails.
+        const realLog = a.logTurn.bind(a);
+        let n = 0;
+        a.logTurn = async (rec: any) => { if (n++ >= 1) throw new Error('quota'); return realLog(rec); };
+        await window.sessionMigrateLocalStorage();
+        expect(localStorage.getItem('fg_chat_c1_log')).not.toBeNull();
+        expect((await a.loadTurnLog('c1', 10)).length).toBe(1);
+        // Retry: the other two arrive, then the source goes.
+        a.logTurn = realLog;
+        await window.sessionMigrateLocalStorage();
+        expect((await a.loadTurnLog('c1', 10)).map((r: any) => r.response)).toEqual(['turn 1', 'turn 2', 'turn 3']);
+        expect(localStorage.getItem('fg_chat_c1_log')).toBeNull();
+    });
+
     it('sessionMigrateLocalStorage is a no-op without an adapter', async () => {
         localStorage.setItem('fg_chat_c1_log', '[]');
         await window.sessionMigrateLocalStorage();
