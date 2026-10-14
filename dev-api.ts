@@ -116,6 +116,7 @@ function _checkTokenThrottle(ip: string): boolean {
 }
 function _recordTokenFailure(ip: string): void {
     const now = Date.now();
+    if (_tokenFailures.size > 1000) for (const [k, v] of _tokenFailures) if (now >= v.resetAt) _tokenFailures.delete(k);
     const rec = _tokenFailures.get(ip);
     if (!rec || now >= rec.resetAt) _tokenFailures.set(ip, { count: 1, resetAt: now + _TOKEN_FAIL_WINDOW_MS });
     else rec.count++;
@@ -171,6 +172,24 @@ function _tokenOk(given: string | undefined, token: string): boolean {
     if (!given) return false;
     const a = Buffer.from(given), b = Buffer.from(token);
     return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Whether a request came from a process on this machine, not from a LAN device behind a reverse proxy.
+// The socket peer alone is not enough: nginx on the same host (nginx.conf, port 3000 -> 5000) connects
+// from 127.0.0.1 for every client. A request is local only when
+//   - the peer address is loopback, and
+//   - no forwarding header is present (any of them means a proxy relayed it; a forged header can only
+//     make a request count as remote, never as local), and
+//   - the Host header names this machine by a loopback name (a proxied LAN client carries the LAN
+//     name or address; a DNS-rebinding page carries the attacker's name).
+export function isLocalRequest(peer: string | undefined, headers: Record<string, string | string[] | undefined>): boolean {
+    if (!/^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(peer ?? '')) return false;
+    for (const h of ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'])
+        if (headers[h] !== undefined) return false;
+    const hostHeader = Array.isArray(headers.host) ? headers.host[0] : headers.host;
+    if (!hostHeader) return false;
+    const host = hostHeader.toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
 }
 
 // ── Dotenv ────────────────────────────────────────────────────────────────────
@@ -437,6 +456,7 @@ export function execIsolation(): ExecIsolation {
     const ok = process.platform === 'linux'
         && spawnSync('bwrap', [...bwrapArgs(probeDir, process.env.PATH ?? '', homedir()), '--', 'true'], { timeout: 5000 }).status === 0;
     if (!ok && want === 'bwrap') throw new Error('FG_EXEC_ISOLATION=bwrap, but bubblewrap does not work here');
+    if (!ok) console.warn('[FreeGent] bubblewrap is not usable here: execute_code and run_git run WITHOUT isolation. Install bubblewrap or set FG_EXEC_ISOLATION=none to silence this.');
     return (_isolation = ok ? 'bwrap' : 'none');
 }
 
@@ -796,7 +816,10 @@ export function createDevApi(opts: DevApiOptions) {
             res.end(); return;
         }
         if (origin && !allowedOrigins.has(origin)) { jsonErr(res, 403, 'Cross-origin request rejected'); return; }
-        const clientIp = req.socket.remoteAddress ?? 'unknown';
+        // Behind a reverse proxy every client shares the socket peer; the proxy appends the real address last.
+        const fwd = req.headers['x-forwarded-for'];
+        const fwdLast = (Array.isArray(fwd) ? fwd.join(',') : fwd ?? '').split(',').pop()?.trim();
+        const clientIp = (req.socket.remoteAddress ?? 'unknown') + (fwdLast ? `|${fwdLast}` : '');
         if (_checkTokenThrottle(clientIp)) { jsonErr(res, 429, 'Too many failed token attempts'); return; }
         const given = req.headers['x-fg-token'];
         if (!_tokenOk(Array.isArray(given) ? given[0] : given, token)) {
@@ -810,7 +833,7 @@ export function createDevApi(opts: DevApiOptions) {
         const path = url.split('?')[0];
         // /api/execute and /api/git run shell commands on this machine — only the local browser
         // needs them. /api/proxy is needed by LAN devices for fetch_url (CORS bypass) and LLM calls.
-        const isLoopback = /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(clientIp ?? '');
+        const isLoopback = isLocalRequest(req.socket.remoteAddress, req.headers);
         if (!isLoopback && (path === '/api/execute' || path === '/api/git')) {
             jsonErr(res, 403, 'This endpoint is only accessible from the local machine');
             return;

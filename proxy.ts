@@ -23,6 +23,13 @@ export function resolveProxy(kind: ProxyKind, manual = ''): string {
     } catch { return ''; }
 }
 
+/** True when `url` is on the default Worker's origin. A string prefix test also matched
+ *  https://proxy.freegent.ai.example.com and would have sent the passphrase there. */
+export function isDefaultWorkerUrl(url: string): boolean {
+    try { return new URL(url).origin === new URL(DEFAULT_CF_WORKER).origin; }
+    catch { return false; }
+}
+
 // Requests to the CF Worker carry the saved passphrase, if any.
 export function installPassHeader(): void {
     const _origFetch = window.fetch;
@@ -30,7 +37,7 @@ export function installPassHeader(): void {
         try {
             const url = typeof input === 'string' ? input : input?.url ?? String(input);
             const pass = localStorage.getItem('fg_pass');
-            if (pass && typeof url === 'string' && url.startsWith(DEFAULT_CF_WORKER)) {
+            if (pass && typeof url === 'string' && isDefaultWorkerUrl(url)) {
                 const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input.headers : undefined));
                 headers.set('X-FG-Pass', pass);
                 return _origFetch.call(window, input, { ...init, headers });

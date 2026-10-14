@@ -385,7 +385,7 @@ function _makeProfileCard(uid, name, description, settings, isBuiltin, savedAt) 
     const topLine = document.createElement('div');
     topLine.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap';
     topLine.innerHTML =
-        '<span style="font-size:13px;font-weight:600">' + name + '</span>' +
+        '<span style="font-size:13px;font-weight:600">' + escapeHtml(name) + '</span>' +
         (isBuiltin
             ? '<span style="font-size:10px;background:var(--border);color:var(--muted);padding:1px 6px;border-radius:3px">built-in</span>'
             : '') +
