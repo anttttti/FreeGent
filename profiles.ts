@@ -224,7 +224,8 @@ function computeProfileDiff(targetSettings) {
     for (const key of PROFILE_KEYS) {
         const meta = PROFILE_KEY_META[key];
         if (!meta) continue;
-        const current = localStorage.getItem(key);
+        // the runtime stores the primary model list under fg_main_models (see captureCurrentProfile)
+        const current = localStorage.getItem(key === 'fg_primary_models' ? 'fg_main_models' : key);
         const target  = key in targetSettings ? targetSettings[key] : null;
         if (current === target) continue;
 
@@ -302,11 +303,12 @@ function profileDelete(name) {
 function profileDownload(name, settings) {
     const data = JSON.stringify({ name, version: 1, savedAt: new Date().toISOString(), settings }, null, 2);
     const a    = document.createElement('a');
-    a.href     = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+    const _url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+    a.href     = _url;
     a.download = /^(current|fg-current-profile(\.json)?)$/i.test(name.trim()) ? 'fg-current-profile.json'
                : 'fg-profile-' + name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.json';
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(_url), 10_000);   // a synchronous revoke cancels the download in Firefox
 }
 
 function profileUpload() {

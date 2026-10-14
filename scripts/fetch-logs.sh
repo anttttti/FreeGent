@@ -38,8 +38,16 @@ case "$cmd" in
     for id in $ids; do
       is_reviewed "$id" && continue
       [ -e "$DIR/$id.json" ] && continue
-      npx wrangler kv key get "log:$id" --binding FG_LOGS --remote > "$DIR/$id.json"
-      echo "$DIR/$id.json"; new=$((new + 1))
+      # Download to a temporary name, check it parses, then rename: an interrupted download used to leave
+      # a partial <id>.json that every later run skipped as "already fetched".
+      tmp="$DIR/.$id.json.part"
+      if npx wrangler kv key get "log:$id" --binding FG_LOGS --remote > "$tmp" \
+         && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp"; then
+        mv "$tmp" "$DIR/$id.json"
+        echo "$DIR/$id.json"; new=$((new + 1))
+      else
+        rm -f "$tmp"; echo "skipped $id: download failed or is not valid JSON" >&2
+      fi
     done
     echo "fetched $new new log(s); mark reviewed with: scripts/fetch-logs.sh mark <id>..." >&2 ;;
   pending)

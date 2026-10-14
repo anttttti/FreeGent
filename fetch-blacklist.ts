@@ -94,7 +94,7 @@ export function blacklistHas(url: string): boolean {
     const host = _hostname(url);
     if (!host) return false;
     const data = _prune();
-    return host in data;
+    return Object.prototype.hasOwnProperty.call(data, host);
 }
 
 /**

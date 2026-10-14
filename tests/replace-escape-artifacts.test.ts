@@ -68,3 +68,15 @@ describe('replace_in_file: the closest region is shown', () => {
         expect(r.error).not.toMatch(/closest to your old_string/);
     });
 });
+
+describe('new_string decoding is narrowed (review 2026-10-14)', () => {
+    it('keeps a source-level \\n in new_string that already has real newlines', async () => {
+        files.set('n.py', 'def f(items):\n    return items\n');
+        // old_string arrives double-escaped on one line; new_string is real multi-line code with a "\n" literal
+        const r = await rep({ path: 'n.py',
+            old_string: 'def f(items):\\n    return items',
+            new_string: 'def f(items):\n    return "\\n".join(items)' });
+        expect(r.error).toBeUndefined();
+        expect(files.get('n.py')).toBe('def f(items):\n    return "\\n".join(items)\n');
+    });
+});

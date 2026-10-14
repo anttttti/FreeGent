@@ -148,8 +148,10 @@ export function sleepInterruptible(ms: number, signal?: AbortSignal | null) {
     return new Promise<void>((resolve, reject) => {
         const _signal = signal ?? activeAbortController?.signal;
         if (_signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-        const timer = setTimeout(resolve, ms);
-        _signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+        // The listener is removed when the sleep ends: every retry used to leave one on the long-lived signal.
+        const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+        const timer = setTimeout(() => { _signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+        _signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
 

@@ -51,6 +51,18 @@ describe('CF Worker', () => {
         expect(upstream).not.toHaveBeenCalled();
     });
 
+    it('proxies only GET and POST to a provider, whatever method the client names', async () => {
+        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
+        for (const method of ['DELETE', 'PUT', 'PATCH']) {
+            const r = await worker.fetch(post({ ...LLM, method }), env);
+            expect(r.status).toBe(405);
+        }
+        expect(upstream).not.toHaveBeenCalled();
+        const ok = await worker.fetch(post({ url: 'https://openrouter.ai/api/v1/models', method: 'get', headers: {} }), env);
+        expect(ok.status).toBe(200);
+        expect(upstream.mock.calls[0][1].method).toBe('GET');
+    });
+
     it('does not follow redirects for a request that carries the shared key', async () => {
         await worker.fetch(post({ url: 'https://api.groq.com/openai/v1/chat/completions', headers: {}, body: '{}' }),
             { GROQ_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) });

@@ -247,8 +247,12 @@ export default {
                 try { body = await request.json(); }
                 catch { return _err(400, 'Invalid JSON body'); }
 
-                const { url: target, method = 'POST', headers = {}, body: reqBody } = body;
+                const { url: target, method: rawMethod = 'POST', headers = {}, body: reqBody } = body;
                 if (!target) return _err(400, 'Missing url field in body');
+                // Provider APIs are called with POST (completions) and GET (model lists). Another method with
+                // the shared key injected would be a way to delete or modify the operator's provider resources.
+                const method = String(rawMethod).toUpperCase();
+                if (method !== 'POST' && method !== 'GET') return _err(405, 'Only GET and POST are proxied');
                 if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
                 // Shared keys must never travel in clear text or to a URL that carries credentials.
                 if (!_httpsNoCreds(target)) return _err(403, 'Only https:// URLs without embedded credentials are allowed');
