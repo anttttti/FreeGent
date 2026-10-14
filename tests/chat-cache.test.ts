@@ -99,3 +99,51 @@ describe('searchMessages', () => {
         expect(hits.map((h: any) => h.chatId)).toEqual(['old']);
     });
 });
+
+describe('chooseHistory: a stamp, not length, says which copy is newer', () => {
+    const m = (n: number, tag = 'a') => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `${tag}${i}` }));
+    it('a whole cache beats a longer store that has not caught up (rewind)', async () => {
+        const { chooseHistory } = await import('../convo-log.ts');
+        const cached = m(4, 'new'), stored = m(10, 'old');
+        expect(chooseHistory(cached, stored, { rev: 'r2', trimmed: false, acked: 'r1' })).toBe(cached);
+    });
+    it('a trimmed cache gives way to the store once the store acknowledged that save', async () => {
+        const { chooseHistory } = await import('../convo-log.ts');
+        const cached = m(4), stored = m(10);
+        expect(chooseHistory(cached, stored, { rev: 'r2', trimmed: true, acked: 'r2' })).toBe(stored);
+    });
+    it('a trimmed cache with a store that is behind, or no stamp, falls back to the longer copy', async () => {
+        const { chooseHistory } = await import('../convo-log.ts');
+        const cached = m(4), stored = m(10);
+        expect(chooseHistory(cached, stored, { rev: 'r2', trimmed: true, acked: 'r1' })).toBe(stored);
+        expect(chooseHistory(cached, stored, null)).toBe(stored);
+        expect(chooseHistory(null, stored, { rev: 'r', trimmed: false })).toBe(stored);
+        expect(chooseHistory(cached, null, null)).toBe(cached);
+    });
+});
+
+describe('saveHistory stamps the cache and records the store acknowledgement', () => {
+    it('stamps each save, acks it when the store accepts, and a rewind is not overridden by the older store copy', async () => {
+        seedChats(1);
+        const held = storeWith(['c0']);
+        window.activeChatId = 'c0';
+        const long = Array.from({ length: 8 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }));
+        window.setChatHistory(long);
+        window.saveHistory(); await settle();
+        const s1 = JSON.parse(localStorage.getItem('fg_chat_c0_rev')!);
+        expect(s1.trimmed).toBe(false);
+        expect(s1.acked).toBe(s1.rev);
+
+        // The store stops taking saves (lagging or failing); the user rewinds.
+        window.setSessionStore({ loadHistory: async () => held.get('c0'), replaceMessages: async () => { throw new Error('down'); } } as any);
+        window.setChatHistory(long.slice(0, 2));
+        window.saveHistory(); await settle();
+        const s2 = JSON.parse(localStorage.getItem('fg_chat_c0_rev')!);
+        expect(s2.rev).not.toBe(s1.rev);
+        expect(s2.acked).toBeUndefined();
+
+        const { chooseHistory } = await import('../convo-log.ts');
+        const cached = JSON.parse(localStorage.getItem('fg_chat_c0_oh')!);
+        expect(chooseHistory(cached, held.get('c0')!, s2)).toHaveLength(2);
+    });
+});

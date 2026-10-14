@@ -142,6 +142,7 @@ export const KEYS = {
 
 export const chatKey = {
     oh:      (id: string) => `fg_chat_${id}_oh`,
+    rev:     (id: string) => `fg_chat_${id}_rev`,   // freshness stamp of the _oh cache (see convo-log chooseHistory)
     msgs:    (id: string) => `fg_chat_${id}_msgs`,
     gh:      (id: string) => `fg_chat_${id}_gh`,
     role:    (id: string) => `fg_chat_${id}_role`,
@@ -150,7 +151,7 @@ export const chatKey = {
     runCkpt: (id: string) => `fg_chat_${id}_run_ckpt`,
     draft:   (id: string) => `fg_draft_${id}`,   // unsent composer text
     all:     (id: string): string[] => [
-        `fg_chat_${id}_gh`, `fg_chat_${id}_oh`, `fg_chat_${id}_msgs`,
+        `fg_chat_${id}_gh`, `fg_chat_${id}_oh`, `fg_chat_${id}_rev`, `fg_chat_${id}_msgs`,
         `fg_chat_${id}_role`, `fg_chat_${id}_raw`, `fg_chat_${id}_log`,
         `fg_chat_${id}_run_ckpt`, `fg_draft_${id}`,
     ],

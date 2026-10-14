@@ -163,6 +163,29 @@ async function _chatHistoryFor(id: string): Promise<any[] | null> {
     // The localStorage copy can be a trimmed snapshot (first message + recent tail) of a history
     // the store holds whole, or a newer one the async store save hasn't reached yet: the longer wins.
     const stored = typeof sessionLoadHistory === 'function' ? (await sessionLoadHistory(id)) ?? null : null;
+    let stamp: HistoryStamp | null = null;
+    try { stamp = JSON.parse(localStorage.getItem(chatKey.rev(id)) || 'null'); } catch {}
+    return chooseHistory(cached, stored, stamp);
+}
+
+/** What saveHistory records beside the localStorage copy: which save wrote it, whether it is a
+ *  trimmed snapshot, and which save the session store last acknowledged. */
+export interface HistoryStamp { rev: string; trimmed: boolean; acked?: string }
+
+/**
+ * Picks the history to use when the localStorage copy and the session store disagree.
+ * Length is not freshness: after a rewind the cache is shorter and newer than a store whose save
+ * has not landed. The stamp settles it:
+ *   - cache whole (not trimmed)            → the cache, it is the latest synchronous write;
+ *   - cache trimmed, store acked that save → the store holds that save in full;
+ *   - cache trimmed, store behind          → the longer of the two (the cache is partial);
+ *   - no stamp (older cache)               → the longer of the two.
+ */
+export function chooseHistory(cached: any[] | null, stored: any[] | null, stamp: HistoryStamp | null): any[] | null {
+    if (!cached || !stored) return stored ?? cached;
+    if (!stamp || typeof stamp.rev !== 'string') return fullerHistory(cached, stored);
+    if (!stamp.trimmed) return cached;
+    if (stamp.acked === stamp.rev) return stored;
     return fullerHistory(cached, stored);
 }
 export function fullerHistory(cached: any[] | null, stored: any[] | null): any[] | null {
