@@ -219,6 +219,7 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
 export function _isLocalEp(ep: any): boolean { return !!ep && (ep.provider === 'custom' || ep.provider === 'vllm'); }
 
 // HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
+export const SAME_ENDPOINT_WAIT_LIMIT_MS = 20 * 60_000;
 const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b/;
 export const CUSTOM_CLIENT_ERROR_ATTEMPTS = 3;
 
@@ -256,6 +257,19 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         return null;
     };
     let _clientErrors = 0;
+    // Waiting out the same endpoint when there is nothing to rotate to. withRetry is called with no attempt
+    // limit by the main loop, and every branch below returns a positive delay, so a local server that stays
+    // down (OOM, crash, wrong port) was retried every 5-60 s until the task's wall clock ended (review
+    // 2026-10-14, opencode H3). Past this much waiting the error is reported and the loop's own recovery
+    // runs. A cloud 429 is not bounded: its cooldown is a quota window, and waiting it out is the point.
+    let _sameEpWaitedMs = 0;
+    const _boundedWait = (ms: number, ep: any, e: any, is429: boolean, isCustom: boolean): number | false => {
+        if (is429 && !isCustom) return ms;
+        _sameEpWaitedMs += ms;
+        if (_sameEpWaitedMs <= SAME_ENDPOINT_WAIT_LIMIT_MS) return ms;
+        onNote(`[${ep.provider}|${ep.model}][giving up: ${Math.round(_sameEpWaitedMs / 60_000)} min of retries on this endpoint with nowhere to rotate: ${String(e.message || '').slice(0, 120)}]`);
+        return false;
+    };
     return (n, e, d) => {
         // Truncated/empty response: cycle through the model pool, same as for 429s.
         // Use a short exact cooldown (30s) so each provider is skipped in turn while
@@ -308,6 +322,23 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             const next = _anyFreeSpec(noVisionKey);
             if (next) { setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next); return 0; }
             return false;
+        }
+        // A cloud endpoint that answers HTTP 403 again and again is refusing this account or key, not
+        // having a short outage (uploads review 2026-10-14: nine identical TokenHarbor refusals, each
+        // followed by the flat two-minute cooldown). After a few, skip it for a long while, if there is
+        // somewhere to go; without a fallback the normal retry applies. Not a permanent pause: a 403 can
+        // also be about one request, or lift later.
+        if (/HTTP 403/.test(e.message || '') && !_isLocalEp(ep) && !forWorker) {
+            const refKey = `${ep.provider}|${ep.model}`;
+            if (noteRefusal(ep) >= REFUSAL_LIMIT) {
+                const next = _anyFreeSpecSameFormat(refKey);
+                if (next) {
+                    _markExactCooldown(ep, REFUSAL_COOLDOWN_MS);
+                    onNote(`[${refKey}][refused ${REFUSAL_LIMIT} times (HTTP 403): skipped for ${Math.round(REFUSAL_COOLDOWN_MS / 60_000)} min, using ${next}]`);
+                    setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next);
+                    return 0;
+                }
+            }
         }
         const isGone = /HTTP 40[14]/.test(e.message || '');
         if (isGone && !_isLocalEp(ep) && !forWorker) {
@@ -374,15 +405,17 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 return 0;
             }
             // No rotation target — retry same endpoint after cooldown.
-            if (is429 && e.retryAfterMs != null) return Math.max(e.retryAfterMs, 5_000);
+            if (is429 && e.retryAfterMs != null) return _boundedWait(Math.max(e.retryAfterMs, 5_000), ep, e, is429, isCustom);
             const remaining = getCooldownRemaining(`${ep.provider}|${ep.model}`) * 1000;
             // For custom endpoints: use 5s flat for recoverable server errors (OOM/CUDA, HTTP 5xx).
             // For network-level failures (Failed to fetch / server unreachable), use exponential
             // backoff capped at 60s so a crashed local server doesn't spin at 5s forever.
             const isFetchFail = /failed to fetch|networkerror|load failed|econnreset|connection/i.test(e.message);
             const delay = remaining > 0 ? remaining : (isCustom && !isFetchFail ? 5_000 : Math.min(d, 60_000));
+            const bounded = _boundedWait(delay, ep, e, is429, isCustom);
+            if (bounded === false) return false;
             onNote(`[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(delay)}]`);
-            return delay;
+            return bounded;
         }
         if (effectiveErr && e.retryAfterMs != null) return Math.max(e.retryAfterMs, 5_000);
         onNote(`[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(e.retryAfterMs ?? d)}]`);
