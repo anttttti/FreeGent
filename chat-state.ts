@@ -149,15 +149,30 @@ const _CACHED_CHATS  = 3;
 const _OH_CACHE_MAX  = 1_500_000;
 const _HTML_CACHE_MAX = 1_000_000;
 // Older versions' per-chat logs (convo-log / session-store); dropped along with a chat's cache.
-const _chatCacheKeys = (id: string) => [chatKey.oh(id), chatKey.msgs(id), chatKey.log(id), chatKey.raw(id)];
+const _chatCacheKeys = (id: string) => [chatKey.oh(id), chatKey.rev(id), chatKey.msgs(id), chatKey.log(id), chatKey.raw(id)];
 
 // Chats whose full history is known to be in the session store (a save resolved, or a prune
 // found the stored copy at least as long as the cache). A chat's localStorage copy is only ever
 // dropped once it is in here: without a durable copy the cache may be the only one, and a missing
 // or failing adapter (init.ts continues without one) must not turn eviction into data loss.
 const _durableHistory = new Set<string>();
-function _noteDurable(id: string, saved: Promise<boolean> | undefined) {
-    saved?.then?.(ok => { if (ok) _durableHistory.add(id); else _durableHistory.delete(id); });
+let _revSeq = 0;
+const _newRev = () => `${Date.now().toString(36)}-${(++_revSeq).toString(36)}`;
+// The stamp beside a chat's cache (chatKey.rev): `rev` names the save that wrote the cache,
+// `acked` the save the session store last confirmed. convo-log's chooseHistory reads it.
+function _readStamp(id: string): { rev: string; trimmed: boolean; acked?: string } | null {
+    try { return JSON.parse(localStorage.getItem(chatKey.rev(id)) || 'null'); } catch { return null; }
+}
+function _noteDurable(id: string, saved: Promise<boolean> | undefined, rev?: string) {
+    saved?.then?.(ok => {
+        if (ok) _durableHistory.add(id); else _durableHistory.delete(id);
+        if (ok && rev) {
+            const st = _readStamp(id);
+            // Only the save that wrote the cache can be acknowledged for it; a later cache write
+            // has its own stamp, and an older ack must not be pinned onto it.
+            if (st && st.rev === rev) { try { localStorage.setItem(chatKey.rev(id), JSON.stringify({ ...st, acked: rev })); } catch {} }
+        }
+    });
 }
 
 // Drop the cache of every chat except the active one and the _CACHED_CHATS - 1 most recent others,
@@ -167,7 +182,7 @@ async function _pruneChatCaches() {
         .sort((a: any, b: any) => (b.lastAt || 0) - (a.lastAt || 0));
     for (const old of others.slice(_CACHED_CHATS - 1)) {
         if (!(await _hasDurableHistory(old.id))) continue;
-        for (const k of [chatKey.oh(old.id), chatKey.msgs(old.id)]) localStorage.removeItem(k);
+        for (const k of [chatKey.oh(old.id), chatKey.rev(old.id), chatKey.msgs(old.id)]) localStorage.removeItem(k);
     }
 }
 async function _hasDurableHistory(id: string): Promise<boolean> {
@@ -175,6 +190,10 @@ async function _hasDurableHistory(id: string): Promise<boolean> {
     if (typeof sessionLoadHistory !== 'function') return false;
     let cached = 0;
     try { cached = JSON.parse(localStorage.getItem(chatKey.oh(id)) || '[]').length; } catch { return false; }
+    const st = _readStamp(id);
+    // A stamped cache is durable once the store acknowledged that very save; length proves nothing
+    // (a rewound cache is shorter than the store's older copy).
+    if (st) return st.acked === st.rev;
     try {
         const stored = await sessionLoadHistory(id);
         if (stored && stored.length >= cached) { _durableHistory.add(id); return true; }
@@ -207,8 +226,10 @@ function saveHistory() {
     // browser) are readable when the user opens the chat tab. Only the DOM HTML snapshot
     // is skipped in workflowMode — rendering goes to runner-process, not the messages div.
     const _hist: any[] = getChatHistory();
+    const _rev = _newRev();
+    let _trimmed = false;
     if (_wfMode) {
-        try { _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist)); } catch {}
+        try { _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist), _rev); } catch {}
         // fall through to save the history to localStorage
     }
     // Browser UI path: write localStorage for fast reload access.
@@ -223,6 +244,7 @@ function saveHistory() {
             while (tail.length && tail[0].role !== 'user') tail = tail.slice(1);
             const head = tail[0] === _hist[0] ? [] : [_hist[0]];
             oh = JSON.stringify([...head, ...tail]);
+            _trimmed = true;
             console.warn(`[saveHistory] history exceeds the localStorage cache cap — cached a trimmed snapshot (${head.length + tail.length}/${_hist.length} msgs); the full history goes to IndexedDB`);
         }
         _pruneChatCaches().catch(() => {});
@@ -230,17 +252,23 @@ function saveHistory() {
         const _lsSet = (key: string, val: string) => {
             try { localStorage.setItem(key, val); return true; } catch { return false; }
         };
-        if (!_lsSet(chatKey.oh(activeChatId), oh)) {
-            evictOldChatCaches(() => _lsSet(chatKey.oh(activeChatId), oh));
+        let _written = _lsSet(chatKey.oh(activeChatId), oh);
+        if (!_written) {
+            _written = evictOldChatCaches(() => _lsSet(chatKey.oh(activeChatId), oh));
             // Last resort: save an even smaller snapshot (last 10 messages only)
-            if (!localStorage.getItem(chatKey.oh(activeChatId))) {
-                const _mini = _hist.slice(-10);
-                try { localStorage.setItem(chatKey.oh(activeChatId), JSON.stringify(_mini)); } catch {}
+            if (!_written && !localStorage.getItem(chatKey.oh(activeChatId))) {
+                try { localStorage.setItem(chatKey.oh(activeChatId), JSON.stringify(_hist.slice(-10))); _written = true; _trimmed = true; } catch {}
             }
         }
+        // Stamp what the cache now holds. When no copy could be written, drop the stamp so a
+        // leftover older copy is not taken for this save.
+        try {
+            if (_written) localStorage.setItem(chatKey.rev(activeChatId), JSON.stringify({ rev: _rev, trimmed: _trimmed }));
+            else localStorage.removeItem(chatKey.rev(activeChatId));
+        } catch {}
         // Additive: also persist the full (untrimmed) history to the session-store adapter
         // (skipped when _wfMode since it was already called above).
-        if (!_wfMode) _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist));
+        if (!_wfMode) _noteDurable(activeChatId, sessionSaveHistory?.(activeChatId, _hist), _rev);
     } catch (e) { console.warn('[saveHistory] LLM history persist failed:', (e as any)?.message); }
     // Messages HTML — browser only (requires a real DOM element).
     // In workflowMode, save it only when something was rendered: headless runs use the NULL
