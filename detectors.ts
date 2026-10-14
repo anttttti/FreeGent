@@ -345,44 +345,6 @@ export function isEnvMissing(text: string): boolean {
     return ENV_MISSING_RE.test(text) || _moduleAttrIsEnvironment(text);
 }
 
-// Evidence-progress detector. The exact-call and same-result guards miss a model that rotates probes: DSAEval
-// 5290 (v0.70) ran 86 steps of find/ls/grep over the same directories, CTF 14 and 71 re-read the same hex and
-// metadata variants for ~100 steps; every result differed in some digit or path, none told it anything new.
-// Here a step is "stale" when it changed nothing and none of its output lines (digits folded) had been seen
-// earlier in the turn. Advisory only: a legitimate poll or a long investigation is nudged, never stopped.
-export const NOVELTY_STALE_LIMIT = 6;
-export interface NoveltyState { seen: Set<string>; stale: number; nudges: number }
-export const newNoveltyState = (): NoveltyState => ({ seen: new Set(), stale: 0, nudges: 0 });
-const _lineKey = (l: string) => l.trim().toLowerCase().replace(/\d+/g, '#').slice(0, 160);
-function _resultLines(r: any): string[] {
-    if (!r || typeof r !== 'object') return [];
-    const parts: string[] = [];
-    for (const k of ['stdout', 'stderr', 'content', 'error', 'matches', 'files']) {
-        const v = (r as any)[k];
-        if (typeof v === 'string') parts.push(v);
-        else if (Array.isArray(v)) parts.push(v.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\n'));
-    }
-    return parts.join('\n').split('\n').map(_lineKey).filter(l => l.length > 2);
-}
-/** Update with one step's results; returns a nudge text when the streak reaches the limit, else null. */
-export function updateNovelty(st: NoveltyState, results: Array<{ name: string; result: any }>, stepChangedSomething: boolean): string | null {
-    let novel = 0, total = 0;
-    for (const r of results) {
-        for (const l of _resultLines(r.result)) {
-            total++;
-            if (!st.seen.has(l)) { novel++; if (st.seen.size < 20000) st.seen.add(l); }
-        }
-    }
-    const informative = stepChangedSomething || novel >= 2 || (total > 0 && novel / total >= 0.25);
-    if (informative) { st.stale = 0; return null; }
-    st.stale++;
-    if (st.stale >= NOVELTY_STALE_LIMIT && st.stale % NOVELTY_STALE_LIMIT === 0 && st.nudges < 3) {
-        st.nudges++;
-        return `The last ${st.stale} steps returned nothing you had not already seen and changed nothing. More probes of the same kind will not help. Write down what you now know, then either act on it (make the change, run the real check) or try a different approach; if what you need is not in this environment, reply BLOCKED: <the exact missing piece>.`;
-    }
-    return null;
-}
-
 // Query tasks and invented data. AgentBench OS tasks 43, 47 and 52 (v0.70) asked a question about files that
 // were already there; the agent wrote its own example files (or overwrote the real one) and answered from
 // them. For a question that names no action, a data file created this turn is the sign.

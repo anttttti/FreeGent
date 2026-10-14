@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, isQuestionOnlyTask, inventedDataPaths, suppliedFiles, shellWritePaths, overwrittenSupplied, newNoveltyState, updateNovelty, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, isQuestionOnlyTask, inventedDataPaths, suppliedFiles, shellWritePaths, overwrittenSupplied, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -1209,7 +1209,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
     let _repeatGuard = newRepeatGuard();   // same call + same result streak (detectors.ts)
     let _stuckCallSigs: string[] = [];     // calls of the last 3 steps, for the stuck nudge's wording
-    const _novelty = newNoveltyState();   // output lines seen this turn, for the no-new-evidence nudge
     const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; scratchOnlyCheck?: number; inventedDataCheck?: number; noEditCheck?: number; verifCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
@@ -2159,9 +2158,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const stalledPaths = new Set(calls.map(tc => parseArgs(tc.function.arguments)?.path).filter(Boolean).map(_normPath)) as Set<string>;
         let stuckNudge;
         ({ resultHashes, stuckMsg: stuckNudge } = _updateStuckDetector(resSig, stalledPaths, resultHashes));
-        // No new evidence: advisory nudge when several probing steps in a row showed nothing unseen.
-        const _stepChanged = results.some(r => !r.result?.error && (_WRITE_TOOLS.has(r.name) || (r.name === 'execute_code' && _execMayWrite(r.args, r.result))));
-        const _noveltyNudge = runtime.guardOff('no_new_evidence') ? null : updateNovelty(_novelty, results, _stepChanged);
         _stuckCallSigs = [..._stuckCallSigs, _thisCallSig].slice(-3);
         if (stuckNudge && results.every(r => r.name === 'execute_code') && new Set(_stuckCallSigs).size > 1)
             stuckNudge = sameOutputMsg(results.map(r => r.result?.stdout ?? r.result?.content ?? ''));
@@ -2287,7 +2283,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
-        else if (_noveltyNudge)               _emitNudge('no_new_evidence', _nudge(_noveltyNudge));
         if (!stuckNudge) {
             const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0 && !(r.name === 'execute_code' && isNegativeProbe(r.args, r.result))));
             // Rate-limit: skip on the first error in a burst (the [TOOL ERROR] prefix in history

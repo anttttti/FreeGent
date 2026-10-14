@@ -9,7 +9,7 @@
 const g = globalThis as any;
 
 // The guards and tool behaviours added by the 2026-10 review, as named for FG_DISABLE_GUARDS.
-export const REVIEW_GUARDS = ['no_edit_complete', 'failed_check_complete', 'invented_data', 'no_new_evidence',
+export const REVIEW_GUARDS = ['no_edit_complete', 'failed_check_complete', 'invented_data',
     'replace_decode', 'replace_region', 'lookalike_escalation', 'negative_probe', 'call_norm'];
 
 export const runtime = {
