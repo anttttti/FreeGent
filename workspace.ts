@@ -310,7 +310,9 @@ async function saveCheckpointSnapshot(chatId, ckptId) {
         const h = _ckptHash(f.content || '');
         idbHashes[f.name] = h;
         const op = prevIdbH[f.name] === undefined ? 'add' : prevIdbH[f.name] !== h ? 'modify' : null;
-        if (op) idbDelta.push({ name: f.name, content: f.content || '', op });
+        // `encoding` is the record's own tag ('base64' for binary): without it a restored image came back as
+        // base64 text under a .png name (uploads review 2026-10-14, 7.2). Absent for text and for older deltas.
+        if (op) idbDelta.push({ name: f.name, content: f.content || '', op, ...(f.encoding ? { encoding: f.encoding } : {}) });
     }
     for (const name of Object.keys(prevIdbH)) {
         if (!idbHashes[name]) idbDelta.push({ name, content: null, op: 'delete' });
@@ -353,11 +355,12 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
 
     // Replay deltas from first checkpoint up to target to reconstruct state
     const idbState   = {};
+    const idbEnc     = {};
     const localState = {};
     for (let i = 0; i <= targetIdx; i++) {
         for (const f of ckpts[i].idbDelta) {
-            if (f.content === null) delete idbState[f.name];
-            else idbState[f.name] = f.content;
+            if (f.content === null) { delete idbState[f.name]; delete idbEnc[f.name]; }
+            else { idbState[f.name] = f.content; if (f.encoding) idbEnc[f.name] = f.encoding; else delete idbEnc[f.name]; }
         }
         for (const f of ckpts[i].localDelta) {
             if (f.content === null) delete localState[f.name];
@@ -365,10 +368,35 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
         }
     }
 
-    // Restore IDB: delete all current files, write reconstructed set
+    // Restore IDB without a window in which the workspace is half-deleted: write the target files first
+    // (keeping what each overwrote), delete the files the target does not have last, and put every
+    // change back if any step throws. The old order deleted everything first, so a failed write (quota,
+    // a closed database) left a workspace with its originals gone and the snapshot only partly written.
     const current = await listWorkspaceFileNames();
-    for (const name of current) await deleteWorkspaceFile(name);
-    for (const [name, content] of Object.entries(idbState)) await writeWorkspaceFile(name, content);
+    const originals = new Map<string, any>();   // name -> record before this restore touched it
+    const touched: string[] = [];
+    try {
+        for (const [name, content] of Object.entries(idbState)) {
+            if (current.includes(name)) originals.set(name, await readWorkspaceFile(name));
+            touched.push(name);
+            await writeWorkspaceFile(name, content, null, idbEnc[name] ?? null);
+        }
+        for (const name of current) {
+            if (name in idbState) continue;
+            originals.set(name, await readWorkspaceFile(name));
+            touched.push(name);
+            await deleteWorkspaceFile(name);
+        }
+    } catch (e) {
+        for (const name of touched.reverse()) {
+            try {
+                const rec = originals.get(name);
+                if (rec) await writeWorkspaceFile(name, rec.content ?? '', rec.lastModified ?? null, rec.encoding ?? null);
+                else await deleteWorkspaceFile(name);   // a file the restore created
+            } catch { /* keep rolling back the rest */ }
+        }
+        throw e;
+    }
 
     return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })) };
 }
