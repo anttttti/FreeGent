@@ -3,14 +3,15 @@
 
 
 import { canonTaskStatus, TASK_DIRS } from './task-status.js';
+import { validateOutput } from './step-validator.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
     'open->in-progress':      ['dependency-check', 'task-enrichment'],
-    'in-progress->in-review': ['completeness-check', 'self-review'],
+    'in-progress->in-review': ['completeness-check'],
     'in-review->done':        ['acceptance-review', 'test-runner'],
     // Direct in-progress→done (model skipped in-review): run the full review suite
-    'in-progress->done':      ['completeness-check', 'self-review', 'acceptance-review', 'test-runner'],
+    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner'],
 };
 
 // The body of the first "## <name>" section (any of `names`, case-insensitive), up to the next
@@ -169,9 +170,11 @@ async function writeBackgroundReport(message) {
     } catch {}
 }
 
-async function appendMemoryLog(taskPath, fromStatus, toStatus, gates) {
+// Gates are listed by what they established: `name ✓` passed, `name ?` could not decide, `name –` skipped.
+async function appendMemoryLog(taskPath, fromStatus, toStatus, gates: string[], unknown: string[] = [], skipped: string[] = []) {
     const name  = taskPath.split('/').pop().replace('.md', '');
-    const gList = gates.length ? ` [${gates.join(', ')} ✓]` : '';
+    const parts = [...gates.map(g => `${g} ✓`), ...unknown.map(g => `${g} ?`), ...skipped.map(g => `${g} –`)];
+    const gList = parts.length ? ` [${parts.join(', ')}]` : '';
     const line  = `${new Date().toISOString().slice(0, 16)}Z  ${name}  ${fromStatus} → ${toStatus}${gList}\n`;
     try {
         let log: string = '';
@@ -323,6 +326,10 @@ async function gate_self_review(taskPath, content) {
         catch {}
     }
 
+    // Without the changed files the model only has the title to go on and invents what changed
+    // (chat logs of 2026-10-12: a "LavaExplosionManager" and a "5-min stress test" that do not exist).
+    if (!fileContents) return { blocks: false, outcome: 'skipped', detail: 'No changed files named — self-review skipped' };
+
     const fm = parseFrontmatter(content);
     const prompt =
         `Write a 4–6 bullet self-review for this completed task: what changed, why, and which ` +
@@ -339,11 +346,30 @@ async function gate_self_review(taskPath, content) {
 }
 
 
+// One check through the shared three-band validator (step-validator.ts). `text` is the code the
+// reviewer was shown; YES means "at least one criterion is clearly not met" and carries the failing
+// criteria in a `payload:` line. A short YES/NO answer replaces the old per-criterion essay that
+// ran past maxTokens before reaching its VERDICT line (task 043, chat logs of 2026-10-12), and a
+// reviewer that is down or cannot decide no longer blocks the task.
+const _ACCEPTANCE_CHECKS = [{
+    name: 'acceptance_not_met',
+    max: Infinity,
+    extract: () => '',   // the default extractor would pull a "command" out of the code under review
+    llmPrompt: (_code: string, ctx: any) =>
+        `Check whether each acceptance criterion is met by the code below.\n\nCriteria:\n${ctx.criteria}\n\n` +
+        (ctx.omitted.length ? `Source files that exist in the project but are not shown: ${ctx.omitted.join(', ')}${ctx.omittedCount > ctx.omitted.length ? ` (and ${ctx.omittedCount - ctx.omitted.length} more)` : ''}. Do not treat a file as missing because it is not shown.\n` : '') +
+        (ctx.missing.length ? `Names from the criteria that appear in none of the code shown: ${ctx.missing.join(', ')}.\n` : '') +
+        `A behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it. ` +
+        `Answer YES only when at least one criterion is clearly NOT met or is contradicted by the code. ` +
+        `Answer NO when every criterion is met or the code needed to decide is not shown.\n` +
+        `Reply with the first line YES or NO. When YES, add a second line "payload: " followed by the unmet criteria, each with a short reason, separated by "; ".`,
+}];
+
 async function gate_acceptance_review(taskPath, content) {
-    if (!getQaAcceptanceReview()) return { blocks: false };
+    if (!getQaAcceptanceReview()) return { blocks: false, outcome: 'skipped', detail: 'Acceptance review is turned off' };
 
     const acceptM = _mdSection(content, 'Acceptance', 'Acceptance Criteria');
-    if (acceptM === null || !acceptM.trim()) return { blocks: false, detail: 'No acceptance criteria — skipping review' };
+    if (acceptM === null || !acceptM.trim()) return { blocks: false, outcome: 'skipped', detail: 'No acceptance criteria — skipping review' };
 
     const criteria = acceptM.trim();
     const fileSec  = _mdSection(content, 'Files');
@@ -359,66 +385,49 @@ async function gate_acceptance_review(taskPath, content) {
 
     const { text: fileContents, shown, omitted, omittedCount } = await gatherReviewCode(filePaths);
 
-    const prompt =
-        `Check whether each acceptance criterion is met in the provided code.\n\n` +
-        `Criteria:\n${criteria}\n\nCode:${fileContents || '\n(no files available)'}\n\n` +
-        (omitted.length ? `Source files that exist in the project but are not shown here: ${omitted.join(', ')}${omittedCount > omitted.length ? ` (and ${omittedCount - omitted.length} more)` : ''}. Do not treat a file as missing because it is not shown.\n\n` : '') +
-        `Judge each criterion from the code: ✓ when the code implements it, ✗ when the code lacks it or is clearly wrong` +
-        (shown.length ? ` (a behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it)` : '') +
-        `; use ? only when the code needed to decide is not shown.\n\n` +
-        `For EACH criterion output exactly one line:\n` +
-        `- ✓ [criterion] — if clearly met\n` +
-        `- ✗ [criterion] — [reason] — if not met\n` +
-        `- ? [criterion] — if cannot verify\n\n` +
-        `Final line: VERDICT: PASS or VERDICT: FAIL`;
+    // Backticked names in the criteria that the code never mentions: a hint for the judge, not a
+    // verdict, because a criterion may be about something that was removed.
+    const missing = shown.length && !omittedCount
+        ? [...new Set([...criteria.matchAll(/`([^`\n]{3,60})`/g)].map(m => m[1].trim()))].filter(n => !fileContents.includes(n)).slice(0, 10)
+        : [];
 
-    // Pass only on an explicit "VERDICT: PASS" with every criterion marked met. An empty reply, a
-    // refusal, a "?" (cannot verify) line or prose that never states a verdict leaves the task
-    // unverified. One retry for a reply with no verdict; a failed call blocks rather than waves
-    // the task through.
-    try {
-        let result = '';
-        for (let attempt = 0; attempt < 2; attempt++) {
-            // temperature: 0 — binary PASS/FAIL verdict against criteria; deterministic is better.
-            result = await callLLMComplete(prompt, { temperature: 0, maxTokens: 1024 });
-            if (/VERDICT:\s*(PASS|FAIL)/i.test(result)) break;
-        }
-        const ts     = new Date().toISOString().slice(0, 16) + 'Z';
-        await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\n${result.trim()}`);
+    // Record what the reviewer said (or that it could not answer) for the task file and the reason.
+    let reply = '', unavailable = false;
+    const llm = async (p: string, o: any) => {
+        try { reply = await callLLMComplete(p, o); return reply; }
+        catch (e) { unavailable = true; throw e; }
+    };
+    const hit = await validateOutput(fileContents || '(no files available)', _ACCEPTANCE_CHECKS, {
+        llm, maxTokens: 300, budget: Infinity, ctx: { criteria, omitted, omittedCount, missing },
+    });
 
-        // The leading "- " is optional: reviewers often drop the bullet, and a strict match gave a
-        // blocking verdict with an empty reason ("Criteria not met: ") that agents could not act on.
-        const failed     = [...result.matchAll(/^\s*(?:[-*]\s*)?✗\s*(.+)/gm)].map(m => m[1]);
-        const unverified = [...result.matchAll(/^\s*(?:[-*]\s*)?\?\s+(.+)/gm)].map(m => m[1]);
-        // Nothing is shown to be wrong, only unprovable from the code the reviewer was given.
-        // Re-asking returns the same answer (the model called update_task_status three times in a
-        // row and the task stayed In Progress), so after two earlier failed attempts accept it
-        // and leave a note for the human.
-        const prior = parseInt(parseFrontmatter(content).rework_count || '0', 10);
-        if (failed.length === 0 && unverified.length > 0 && prior >= 2) {
-            await appendGateNote(taskPath, `## QA: accepted unverified (${new Date().toISOString().slice(0, 16)}Z)\nThe acceptance review could not verify: ${unverified.join('; ').slice(0, 600)}. Passed after ${prior} blocked attempts; please check by hand.`);
-            return { blocks: false, detail: 'Unverifiable criteria accepted after repeated attempts' };
-        }
-        if (/VERDICT:\s*FAIL/i.test(result) || failed.length > 0) {
-            if (failed.length > 0)
-                return { blocks: true, reason: `Criteria not met: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''}` };
-            const why = result.replace(/VERDICT:.*$/im, '').trim().replace(/\s+/g, ' ').slice(0, 300);
-            return { blocks: true, reason: `Acceptance review failed${why ? `: ${why}` : ' without naming a criterion — see the "QA: Acceptance Review" section of the task file'}` };
-        }
-        if (unverified.length > 0)
-            return { blocks: true, reason: `Criteria could not be verified: ${unverified.slice(0, 2).join('; ')}${unverified.length > 2 ? ` (+${unverified.length - 2} more)` : ''}` };
-        if (!/VERDICT:\s*PASS/i.test(result))
-            return { blocks: true, reason: 'Acceptance review gave no VERDICT: PASS — task left unverified' };
-    } catch (e) {
-        return { blocks: true, reason: `Acceptance review could not run: ${e.message}` };
+    const ts = new Date().toISOString().slice(0, 16) + 'Z';
+    if (hit) {
+        const why = hit.payload || 'see the reviewer note in the task file';
+        await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\nNot met: ${why}`);
+        return { blocks: true, reason: `Criteria not met: ${why}` };
     }
+    // A pass needs a readable NO. The validator returns null both for NO and for a reply it could not
+    // read (a refusal, prose with no verdict): the second is "unknown", not "met" (uploads review
+    // 2026-10-14, 4.2). Same decision rule as validateOutput: the last line that starts with YES or NO.
+    const decision = reply.split('\n').filter(l => /^\s*\W*(YES|NO)\b/i.test(l)).at(-1) ?? '';
+    const readable = /^\s*\W*NO\b/i.test(decision);
+    if (unavailable || !reply.trim()) {
+        await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\nNot verified: the reviewer could not be reached or gave no answer. Check the criteria by hand.`);
+        return { blocks: false, outcome: 'unknown', detail: 'Reviewer unavailable — acceptance not verified' };
+    }
+    if (!readable) {
+        await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\nNot verified: the reviewer's answer was not YES or NO (${reply.trim().replace(/\s+/g, ' ').slice(0, 160)}). Check the criteria by hand.`);
+        return { blocks: false, outcome: 'unknown', detail: 'Reviewer answer unreadable — acceptance not verified' };
+    }
+    await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\nNo criterion was judged unmet by the code shown.`);
     return { blocks: false };
 }
 
 
 async function gate_test_runner(taskPath, content) {
-    if (!getQaTestRunner()) return { blocks: false };
-    if (!_hasBashOrCode())  return { blocks: false, detail: 'No sandbox — skipping tests' };
+    if (!getQaTestRunner()) return { blocks: false, outcome: 'skipped', detail: 'Test runner is turned off' };
+    if (!_hasBashOrCode())  return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping tests' };
 
     const fileSec  = _mdSection(content, 'Files');
     const filePaths = fileSec
@@ -433,7 +442,7 @@ async function gate_test_runner(taskPath, content) {
             try { await agentReadFile(c); testFiles.push(c); break; } catch {}
         }
     }
-    if (!testFiles.length) return { blocks: false, detail: 'No test files found for changed files' };
+    if (!testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found for changed files' };
 
     let cmd: string | null = null;
     try {
@@ -451,15 +460,15 @@ async function gate_test_runner(taskPath, content) {
             return { blocks: true, reason: `Tests failed (exit ${res.exit_code}): ${output.split('\n').find(l => /fail|error/i.test(l)) || 'see task file'}` };
         }
     } catch (e) {
-        return { blocks: false, detail: `Test runner error: ${e.message}` };
+        return { blocks: false, outcome: 'unknown', detail: `Test runner error: ${e.message}` };
     }
     return { blocks: false };
 }
 
 
 async function gate_regression_guard(taskPath) {
-    if (!getQaRegressionGuard()) return { blocks: false };
-    if (!_hasBashOrCode())       return { blocks: false, detail: 'No sandbox — skipping regression guard' };
+    if (!getQaRegressionGuard()) return { blocks: false, outcome: 'skipped', detail: 'Regression guard is turned off' };
+    if (!_hasBashOrCode())       return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping regression guard' };
 
     const { config }: { config: any } = await loadWorkflow();
     let cmd: string | null = config?.regression_guard_command || null;
@@ -472,7 +481,7 @@ async function gate_regression_guard(taskPath) {
                 : null;
         } catch {}
     }
-    if (!cmd) return { blocks: false, detail: 'No build command detected — skipping' };
+    if (!cmd) return { blocks: false, outcome: 'skipped', detail: 'No build command detected — skipping' };
 
     try {
         const res = await executeToolAsync('execute_code', { language: 'bash', code: _tailKeepStatus(cmd, 30) }, null);
@@ -483,7 +492,7 @@ async function gate_regression_guard(taskPath) {
             return { blocks: true, reason: `Regression: \`${cmd}\` failed (exit ${res.exit_code})` };
         }
     } catch (e) {
-        return { blocks: false, detail: `Regression guard error: ${e.message}` };
+        return { blocks: false, outcome: 'unknown', detail: `Regression guard error: ${e.message}` };
     }
     return { blocks: false };
 }
@@ -541,21 +550,25 @@ async function _transitionTask(taskPath, toStatus) {
     // in-progress->done is in QA_DEFAULT_GATES with the full review suite.
     const gateKey  = `${fromStatus}->${toStatus}`;
     const gateNames = workflowGates[gateKey] || [];
-    const passed   = [];
+    const passed: string[] = [], unknown: Array<{ gate: string; detail?: string }> = [], skipped: string[] = [];
 
     const failures = [];
     for (const gateName of gateNames) {
         const gateFn = GATES[gateName];
         if (!gateFn) continue;
 
-        let result: { blocks: boolean; reason?: string; detail?: string };
+        let result: { blocks: boolean; reason?: string; detail?: string; outcome?: 'unknown' | 'skipped' };
         try   { result = await gateFn(taskPath, content); }
-        catch (e) { result = { blocks: false, detail: `Gate error: ${e.message}` }; }
+        catch (e) { result = { blocks: false, outcome: 'unknown', detail: `Gate error: ${e.message}` }; }
 
         const ts = new Date().toISOString().slice(0, 16) + 'Z';
         if (result.blocks) {
             await appendGateNote(taskPath, `## Gate: ${gateName} FAILED (${ts})\n${result.reason || ''}`);
             failures.push({ gate: gateName, reason: result.reason });
+        } else if (result.outcome === 'unknown') {
+            unknown.push({ gate: gateName, detail: result.detail });
+        } else if (result.outcome === 'skipped') {
+            skipped.push(gateName);
         } else {
             passed.push(gateName);
         }
@@ -573,10 +586,23 @@ async function _transitionTask(taskPath, toStatus) {
         return { transitioned: false, reason: failures.map(f => `[${f.gate}] ${f.reason}`).join(' | ') };
     }
 
+    // A gate that could not decide is not a pass. The task may still move (a flaky reviewer must not
+    // strand the board), but the file, the memory log and the tool answer all say it was not verified.
+    if (unknown.length && toStatus === 'done') {
+        try {
+            const latest = await agentReadFile(taskPath);
+            await agentWriteFile(taskPath, _setFrontmatterField(latest, 'qa', 'unverified'));
+        } catch {}
+    }
+    else if (toStatus === 'done' && /^qa:[ \t]*unverified[ \t]*$/m.test(content)) {
+        try { await agentWriteFile(taskPath, _setFrontmatterField(await agentReadFile(taskPath), 'qa', 'verified')); } catch {}
+    }
     await setTaskStatus(taskPath, toStatus);
-    await appendMemoryLog(taskPath, fromStatus, toStatus, passed);
+    await appendMemoryLog(taskPath, fromStatus, toStatus, passed, unknown.map(u => u.gate), skipped);
     try { await refreshTasks(); } catch {}
-    return { transitioned: true };
+    return unknown.length
+        ? { transitioned: true, unverified: unknown.map(u => `${u.gate}${u.detail ? ` (${u.detail})` : ''}`) }
+        : { transitioned: true };
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).

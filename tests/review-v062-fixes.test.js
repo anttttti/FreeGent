@@ -63,7 +63,7 @@ describe('lifecycle gates', () => {
         expect(r.reason).toMatch(/Plan incomplete/);
         // and a file that already says "review" is gated on the way to done
         files['fg-tasks/002-t.md'] = task('## Acceptance\n- a\n', 'review');
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✗ a — no\nVERDICT: FAIL');
+        W.callLLMComplete = vi.fn().mockResolvedValue('YES\npayload: a — no');
         const r2 = await W.transitionTask('fg-tasks/002-t.md', 'done');
         expect(W.callLLMComplete).toHaveBeenCalled();
         expect(r2.transitioned).toBe(false);
@@ -76,7 +76,7 @@ describe('lifecycle gates', () => {
         const r = await W.transitionTask('fg-tasks/001-t.md', 'in-review');
         expect(r.reason).toMatch(/TODO\/FIXME in bad\.js/);
         files['fg-tasks/001-t.md'] = task('## Acceptance\r\n- first\r\n- second', 'in-review');
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ first\n- ✓ second\nVERDICT: PASS');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
         await W.transitionTask('fg-tasks/001-t.md', 'done');
         const prompt = W.callLLMComplete.mock.calls[0][0];
         expect(prompt).toContain('- first');
@@ -85,28 +85,63 @@ describe('lifecycle gates', () => {
 
     it('R12 a task created in the UI (## Acceptance Criteria) is acceptance-reviewed', async () => {
         files['fg-tasks/001-t.md'] = task('## Acceptance Criteria\n- [x] requirement\n', 'in-review');
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✓ requirement\nVERDICT: PASS');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
         const r = await W.transitionTask('fg-tasks/001-t.md', 'done');
         expect(W.callLLMComplete).toHaveBeenCalledTimes(1);
         expect(r.transitioned).toBe(true);
     });
 
-    it('R21 an acceptance review without a PASS verdict does not pass', async () => {
+    it('R21 an unmet criterion blocks; a reviewer that cannot decide or is down does not', async () => {
         files['fg-tasks/001-t.md'] = task('## Acceptance\n- a\n', 'in-review');
-        W.callLLMComplete = vi.fn().mockResolvedValue('I cannot verify this criterion.');
+        W.callLLMComplete = vi.fn().mockResolvedValue('YES\npayload: a — never implemented');
         const r = await W.transitionTask('fg-tasks/001-t.md', 'done');
         expect(r.transitioned).toBe(false);
-        expect(r.reason).toMatch(/no VERDICT: PASS/);
-        expect(W.callLLMComplete).toHaveBeenCalledTimes(2);   // one retry for a reply with no verdict
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ? a\nVERDICT: PASS');
-        expect((await W.transitionTask('fg-tasks/001-t.md', 'done')).transitioned).toBe(false);
+        expect(r.reason).toMatch(/Criteria not met: a — never implemented/);
+        expect(W.callLLMComplete).toHaveBeenCalledTimes(1);   // a short answer, no retry
+        // the reply is a short YES/NO call, not an essay that can run out of tokens
+        expect(W.callLLMComplete.mock.calls[0][1].maxTokens).toBeLessThanOrEqual(300);
+        // cannot decide: accepted, with a note for the human
+        W.callLLMComplete = vi.fn().mockResolvedValue('I cannot verify this criterion.');
+        const unread = await W.transitionTask('fg-tasks/001-t.md', 'done');
+        expect(unread.transitioned).toBe(true);
+        // ... but it is not recorded as a pass: the answer, the file and the memory log say "not verified"
+        expect(unread.unverified?.[0]).toMatch(/acceptance-review/);
+        expect(files['fg-tasks/001-t.md']).toMatch(/^qa: unverified$/m);
+        expect(files['fg-tasks/001-t.md']).toContain('Not verified');
+        files['fg-tasks/001-t.md'] = task('## Acceptance\n- a\n', 'in-review');
+        // reviewer offline: accepted unverified rather than stuck, and the file says so
+        files['fg-tasks/001-t.md'] = task('## Acceptance\n- a\n', 'in-review');
         W.callLLMComplete = vi.fn().mockRejectedValue(new Error('offline'));
-        expect((await W.transitionTask('fg-tasks/001-t.md', 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask('fg-tasks/001-t.md', 'done')).transitioned).toBe(true);
+        expect(files['fg-tasks/001-t.md']).toContain('Not verified: the reviewer could not be reached');
+        expect(files['fg-tasks/001-t.md']).toMatch(/^qa: unverified$/m);
+    });
+
+    it('a readable NO is a pass and is not marked unverified', async () => {
+        files['fg-tasks/001-t.md'] = task('## Acceptance\n- a\n', 'in-review');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        const r = await W.transitionTask('fg-tasks/001-t.md', 'done');
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified).toBeUndefined();
+        expect(files['fg-tasks/001-t.md']).not.toMatch(/^qa:/m);
+        expect(files['fg-tasks/001-t.md']).toContain('No criterion was judged unmet');
+    });
+
+    it('self-review is not generated when no changed file is named (it would invent one)', async () => {
+        files['fg-tasks/001-t.md'] = task('- [x] done\n');
+        W.callLLMComplete = vi.fn().mockResolvedValue('- changed the LavaExplosionManager');
+        W.localStorage.setItem('fg_qa_acceptance_review', 'false');
+        // a workflow that still lists the gate must not get a made-up review
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- self-review\n';
+        const r = await W.transitionTask('fg-tasks/001-t.md', 'in-review');
+        expect(r.transitioned).toBe(true);
+        expect(W.callLLMComplete).not.toHaveBeenCalled();
+        expect(files['fg-tasks/001-t.md']).not.toContain('Self-Review');
     });
 
     it('R22 failure notes survive the rework-count update', async () => {
         files['fg-tasks/001-t.md'] = task('## Acceptance\n- a\n', 'in-review');
-        W.callLLMComplete = vi.fn().mockResolvedValue('- ✗ a — missing\nVERDICT: FAIL');
+        W.callLLMComplete = vi.fn().mockResolvedValue('YES\npayload: a — missing');
         await W.transitionTask('fg-tasks/001-t.md', 'done');
         expect(files['fg-tasks/001-t.md']).toContain('rework_count: 1');
         expect(files['fg-tasks/001-t.md']).toContain('## QA: Acceptance Review');
