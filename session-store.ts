@@ -178,9 +178,23 @@ function sessionPruneRawFrom(chatId: string, sinceMs: number): void {
     } catch (e) { console.warn('[session-store] raw prune failed:', e?.message); }
 }
 
+// Source records the destination does not hold yet, matched one for one (two identical records need
+// two destination rows).
+function _missingFrom(source: any[], dest: any[], key: (r: any) => string): any[] {
+    const have = new Map<string, number>();
+    for (const r of dest) have.set(key(r), (have.get(key(r)) ?? 0) + 1);
+    return source.filter(r => {
+        const n = have.get(key(r)) ?? 0;
+        if (n > 0) { have.set(key(r), n - 1); return false; }
+        return true;
+    });
+}
+
 // One-time move, after an adapter that reads logs back is injected: per-chat turn logs and raw
 // captures that earlier versions kept in localStorage go to the adapter, then leave localStorage.
-// The adapter has mirrored both all along, so a chat it already has rows for is only cleared.
+// The adapter has mirrored both all along, so a chat it already has rows for is only cleared. A
+// destination that holds fewer rows than the source is a partly finished migration (or newer rows
+// written beside it), not a finished one: the missing records are copied before the source goes.
 async function sessionMigrateLocalStorage(): Promise<void> {
     if (!sessionHas('loadTurnLog') || !sessionHas('loadRawMessages')) return;
     const keys: string[] = [];
@@ -194,10 +208,12 @@ async function sessionMigrateLocalStorage(): Promise<void> {
         try {
             const list: any[] = JSON.parse(localStorage.getItem(key) || '[]');
             if (kind === 'log') {
-                if (list.length && !(await _store!.loadTurnLog!(chatId, 1)).length)
-                    for (const rec of list) await _store!.logTurn({ ...rec, chatId });
-            } else if (list.length && !(await _store!.loadRawMessages!(chatId)).length) {
-                for (const { ts, ...entry } of list) await _store!.saveRawMessage(chatId, { ...entry, createdAt: ts ?? Date.now() });
+                // Copy only what the destination lacks, so a retry finishes the job instead of skipping it.
+                const missing = _missingFrom(list, (await _store!.loadTurnLog!(chatId, 100000)), (r: any) => `${r.ts ?? ''}|${r.response ?? ''}`);
+                for (const rec of missing) await _store!.logTurn({ ...rec, chatId });
+            } else {
+                const missing = _missingFrom(list, (await _store!.loadRawMessages!(chatId)), (r: any) => `${r.ts ?? r.createdAt ?? ''}|${r.content ?? ''}`);
+                for (const { ts, ...entry } of missing) await _store!.saveRawMessage(chatId, { ...entry, createdAt: ts ?? Date.now() });
             }
             localStorage.removeItem(key);
         } catch (e) { console.warn(`[session-store] migrating ${key} failed:`, (e as any)?.message); }

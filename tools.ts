@@ -107,14 +107,16 @@ function _rmSymbols(filename, content, lang) {
 }
 
 
-const _fileCheckpoints = new Map(); // path → string[]
+// path → what the file was before each write. `existed` keeps "the file was absent" apart from "the
+// file was empty", which a bare string could not (undoing a write to an empty file deleted it).
+const _fileCheckpoints = new Map<string, { existed: boolean; content: string }[]>();
 
 // Paths written by blocked workers that must be read back before any edit.
 const _requireReadBack = new Set();
 
-function _pushCheckpoint(path, content) {
+function _pushCheckpoint(path: string, content: string, existed: boolean = true) {
     if (!_fileCheckpoints.has(path)) _fileCheckpoints.set(path, []);
-    _fileCheckpoints.get(path).push(content);
+    _fileCheckpoints.get(path)!.push({ existed, content });
 }
 
 // Normalize a path supplied to a file tool so that the model's use of the WASM bash
@@ -672,14 +674,17 @@ async function _handleUndoWrite(args: any) {
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
     const stack = _fileCheckpoints.get(args.path);
     if (!stack || !stack.length) return { error: `undo_write: no checkpoint for "${args.path}" in this session.` };
-    const previous = stack.pop();
+    // The checkpoint is consumed only once the restore has worked: a failed restore must stay retryable.
+    const previous = stack[stack.length - 1];
     try {
-        if (previous === '') {
+        if (!previous.existed) {
             await agentDeleteFile(args.path);
+            stack.pop();
             return { success: true, path: args.path, note: 'File deleted (it did not exist before the write).' };
         }
-        await agentWriteFile(args.path, previous);
-        return { success: true, path: args.path, bytes: _byteLen(previous), note: 'Restored previous content.' };
+        await agentWriteFile(args.path, previous.content);
+        stack.pop();
+        return { success: true, path: args.path, bytes: _byteLen(previous.content), note: 'Restored previous content.' };
     } catch (e) { return { error: `undo_write: ${e.message}` }; }
 }
 
@@ -1377,7 +1382,8 @@ async function _handleWriteFile(args, context) {
     }
     try {
         let previous = '';
-        try { previous = await agentReadFile(args.path); } catch {}
+        let existed = true;
+        try { previous = await agentReadFile(args.path); } catch { existed = false; }
         if (!_isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD) {
             return { error: _shrinkError(args.path, previous.length, args.content.length, _callerHasTool(context)) };
         }
@@ -1387,7 +1393,7 @@ async function _handleWriteFile(args, context) {
             if (!review.approved)
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
         }
-        _pushCheckpoint(args.path, previous);
+        _pushCheckpoint(args.path, previous, existed);
         await agentWriteFile(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path);
@@ -1531,8 +1537,9 @@ async function _handleReplaceInFile(args, context) {
         );
     }
     try {
-        const before = await agentReadFile(args.path).catch(() => '');
-        _pushCheckpoint(args.path, before);
+        let existed = true;
+        const before = await agentReadFile(args.path).catch(() => { existed = false; return ''; });
+        _pushCheckpoint(args.path, before, existed);
         const rif = await doReplace(
             () => Promise.resolve(before),
             c  => agentWriteFile(args.path, c)
