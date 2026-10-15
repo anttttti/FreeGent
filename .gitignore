@@ -11,8 +11,6 @@ node_modules/
 /tmp_dev/
 /logs/
 /handover.md
-/smoke/logs/
-/smoke/tmp-workspace/
 /notes/
 /results/
 /memory/
