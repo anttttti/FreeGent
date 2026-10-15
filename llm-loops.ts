@@ -604,6 +604,10 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             ? new Map(await Promise.all([...replFails.keys()].map(
                 async fp => [fp, await agentFileMtime(fp)] as [string, number | null])))
             : null;
+        // A tool the user turned off in Settings → Tools is not executed even if the model emits the call.
+        if (!context && typeof isToolOffByUser === 'function' && isToolOffByUser(name)) {
+            result = { error: `Tool '${name}' is turned off in Settings → Tools. Use another approach or declare BLOCKED.` };
+        } else
         try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
         catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
         if (_rereadNote && result && !result.error) {

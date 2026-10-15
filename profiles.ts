@@ -208,12 +208,39 @@ Write complete, working implementations — no stubs or placeholders.`,
 let _previewedId: string | null = null;
 
 
+// fg_custom_models holds each model's API key beside its settings. Profiles are shared files and are
+// documented as credential-free, so the keys are dropped from every profile and put back on apply.
+export function stripModelKeys(json: string | null | undefined): string | null | undefined {
+    if (typeof json !== 'string') return json;
+    try {
+        const arr = JSON.parse(json);
+        if (!Array.isArray(arr)) return json;
+        return JSON.stringify(arr.map((m: any) => {
+            if (!m || typeof m !== 'object') return m;
+            const { key: _k, apiKey: _a, ...rest } = m;
+            return rest;
+        }));
+    } catch { return json; }
+}
+function _restoreModelKeys(incoming: string): string {
+    try {
+        const arr = JSON.parse(incoming);
+        if (!Array.isArray(arr)) return incoming;
+        const cur = JSON.parse(localStorage.getItem('fg_custom_models') || '[]');
+        const keyOf = new Map<string, any>();
+        if (Array.isArray(cur)) for (const m of cur) if (m?.key) keyOf.set(`${m.provider}|${m.model}`, m.key);
+        return JSON.stringify(arr.map((m: any) => (m && typeof m === 'object' && !m.key && keyOf.has(`${m.provider}|${m.model}`))
+            ? { ...m, key: keyOf.get(`${m.provider}|${m.model}`) } : m));
+    } catch { return incoming; }
+}
+
 function captureCurrentProfile() {
     const p = {};
     for (const k of PROFILE_KEYS) {
         // fg_primary_models is the profile key; the runtime writes to fg_main_models
         const storageKey = k === 'fg_primary_models' ? 'fg_main_models' : k;
-        const v = localStorage.getItem(storageKey);
+        let v = localStorage.getItem(storageKey);
+        if (k === 'fg_custom_models') v = stripModelKeys(v) as string | null;
         if (v !== null) p[k] = v;
     }
     return p;
@@ -267,7 +294,7 @@ function getSavedProfiles() {
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
 function profileApply(settings) {
     for (const key of PROFILE_KEYS) {
-        if (key in settings) localStorage.setItem(key, settings[key]);
+        if (key in settings) localStorage.setItem(key, key === 'fg_custom_models' ? _restoreModelKeys(String(settings[key])) : settings[key]);
         else localStorage.removeItem(key);
     }
     // Sync fg_primary_models (profile key) → fg_main_models (runtime key)
@@ -301,7 +328,10 @@ function profileDelete(name) {
 }
 
 function profileDownload(name, settings) {
-    const data = JSON.stringify({ name, version: 1, savedAt: new Date().toISOString(), settings }, null, 2);
+    // Profiles saved before keys were dropped still carry them: never write those out.
+    const clean = { ...settings };
+    if ('fg_custom_models' in clean) clean.fg_custom_models = stripModelKeys(clean.fg_custom_models);
+    const data = JSON.stringify({ name, version: 1, savedAt: new Date().toISOString(), settings: clean }, null, 2);
     const a    = document.createElement('a');
     const _url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
     a.href     = _url;
@@ -488,4 +518,4 @@ function renderProfilesTab() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { profileSaveCurrent, profileDelete, profileDownload, profileUpload, profilePreview, renderProfilesTab });
+Object.assign(window, { getSavedProfiles, profileApply, stripModelKeys, profileSaveCurrent, profileDelete, profileDownload, profileUpload, profilePreview, renderProfilesTab });

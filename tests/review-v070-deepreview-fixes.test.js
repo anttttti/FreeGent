@@ -8,6 +8,7 @@ import { isTestEditProtected, _workersMayWrite } from '../tools.ts';
 
 const W = globalThis;
 await import('../tool-schemas.ts');
+const { enabledTools } = await import('../config.ts');   // write tools are off by default and now also refused at dispatch
 
 const STUBBED = ['agentListFiles', 'agentReadFile', 'agentWriteFile', 'agentDeleteFile', 'agentFileMtime', 'callLLMComplete', 'nativeExec'];
 let saved, files;
@@ -66,6 +67,8 @@ describe('F2. the test-file edit rule is benchmark policy', () => {
 });
 
 describe('R1. append_file is a write for approval and for the repeat cache', () => {
+    beforeEach(() => { enabledTools.add('append_file'); });
+    afterEach(() => { enabledTools.delete('append_file'); });
     it('asks under "All writes" and does not write when denied', async () => {
         files['notes.txt'] = 'first\n';
         localStorage.setItem('fg_tool_approval', 'all');
@@ -336,6 +339,8 @@ describe('F3. the event log survives write failures and torn lines', () => {
 });
 
 describe('R9. calls in one response run in order when one of them changes state', () => {
+    beforeEach(() => { enabledTools.add('write_file'); });
+    afterEach(() => { enabledTools.delete('write_file'); });
     it('a read listed after a write sees the write; reads alone still run together', async () => {
         files['n.txt'] = 'one\n';
         const origWrite = W.agentWriteFile;

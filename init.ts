@@ -205,7 +205,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Model combo-box search fields are excluded: they save through their own handlers, and
         // saveSettings() re-renders Model Priority, replacing the search field on every keystroke.
         const autoSave = e => {
-            if (!_settingsPopulating &&
+            // Draft forms (Add custom model, Add MCP server, profile name …) are submitted by their own
+            // button. Autosaving on their keystrokes re-rendered the catalog and wiped the half-typed form.
+            if (!_settingsPopulating && !e.target.closest('#add-custom-model-form, [id^="new-"], #profile-name-input') &&
                 e.target.matches('input.settings-input:not(.model-combo-input), select.settings-input, input[name="provider"]'))
                 saveSettings();
         };
@@ -435,10 +437,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!(e instanceof DOMException && e.name === 'QuotaExceededError')) console.warn('[init] _saveDraft localStorage failed:', e);
         }
     }
+    // Save the open chat's draft now (and cancel the pending debounce) — called before the active chat
+    // changes, so the text is stored under the chat it was typed in, not under the next one.
+    function _flushDraft(): void {
+        if (_draftTimer) { clearTimeout(_draftTimer); _draftTimer = null; }
+        _saveDraft();
+    }
+    // The composer shows the destination chat's draft — or nothing: another chat's text must not stay.
     function _restoreDraft(chatId: string): void {
+        if (!input) return;
         const draft = chatId ? localStorage.getItem(chatKey.draft(chatId)) : null;
-        if (!draft || !input) return;
-        _setInputText?.(input, draft);
+        _setInputText?.(input, draft || '');
         autoResizeTextarea?.(input);
         _updateSendBtnVisibility?.();
     }
@@ -538,7 +547,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     _applyTheme(localStorage.getItem('fg_dark_mode') === '1');
 
     // Expose to HTML onclick handlers and window bridge (chat-render.ts uses _updateScrollBtn)
-    Object.assign(window, { scrollToLatest, _updateScrollBtn, openMsgSearch, closeMsgSearch, runMsgSearch, msgSearchKeydown, msgSearchSelect, clearInputDraft, _restoreDraft, toggleDarkMode });
+    Object.assign(window, { scrollToLatest, _updateScrollBtn, openMsgSearch, closeMsgSearch, runMsgSearch, msgSearchKeydown, msgSearchSelect, clearInputDraft, _restoreDraft, _flushDraft, toggleDarkMode });
 
     // Close model picker when clicking outside
     document.addEventListener('click', e => {

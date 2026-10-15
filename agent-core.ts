@@ -1482,6 +1482,7 @@ function stopNow(): void {
     // stream let its loop carry on with the next turn / task.
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
     setSoftStopPending(false);
+    (window as any).cancelPendingApprovals?.();   // an approval left on screen would still run its tool
     activeAbortController?.abort();
     setAgentStreaming(false);
     setInputState(true);
@@ -1517,6 +1518,7 @@ function userSend(): void {
 
 function createNewChat(): void {
     (window as any).closeChatViewer?.();
+    (window as any)._flushDraft?.();   // the open chat's unsent text is saved under that chat first
     const id  = 'chat_' + Date.now();
     const now = Date.now();
     const list = getChatList();
@@ -1528,7 +1530,9 @@ function createNewChat(): void {
     setLastProvider('');
     lastUserMessageText = '';
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
+    (window as any).cancelPendingApprovals?.();   // an approval from the previous chat must not act on this one
     clearImageAttachments();
+    (window as any)._restoreDraft?.(id);   // empty: a new chat has no draft
     // Cannot import clearSessionFallback/clearReplaceState directly — llm-loops.ts imports
     // agent-core.ts (circular). These calls go via the window bridge from llm-loops.ts.
     if (typeof clearSessionFallback === 'function') clearSessionFallback();
