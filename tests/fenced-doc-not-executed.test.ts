@@ -15,4 +15,12 @@ describe('parseFnTagCalls fenced shell blocks (Format I-b)', () => {
         const t = '```markdown\n# Tool\n\n## Usage\n\n```bash\npython3 cli.py file.txt\n```\n```\n\nCOMPLETED';
         expect(W.parseFnTagCalls(t).tool_calls).toEqual([]);
     });
+    it('does not run examples in a README shown without a wrapper (markdown headings around the fence)', () => {
+        const t = 'Here is the README:\n\n# Tool\n\n## Usage\n\n```bash\npython3 cli.py file.txt\n```\n\nCOMPLETED';
+        expect(W.parseFnTagCalls(t).tool_calls).toEqual([]);
+    });
+    it('still rescues a command narrated in a fence among prose', () => {
+        const r = W.parseFnTagCalls('I will check the directory:\n```bash\nls -la\n```');
+        expect(r.tool_calls).toHaveLength(1);
+    });
 });
