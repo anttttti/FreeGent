@@ -1602,6 +1602,8 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
     try {
         _evtSess.append('user/message', { role: 'user', content: _userContent }, { surfaceOp: 'append' } as any);
     } catch {}
+    // Persist now: a reload, crash or sleep mid-turn must not lose the message the user just sent.
+    try { saveHistory(); } catch {}
 
     const _ph: RenderAdapter = _reusePh
         ?? (_s.workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container));

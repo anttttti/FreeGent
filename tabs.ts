@@ -6,16 +6,19 @@ import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 
+// Escape for use inside a double-quoted attribute selector (file names may contain " or \).
+function _attrEsc(v: unknown): string { return String(v).replace(/["\\]/g, '\\$&'); }
+
 function activateTab(key) {
     // Rail nav button active state
     document.querySelectorAll('.left-rail .rail-nav-btn').forEach(b => b.classList.remove('active'));
-    const railBtn = document.querySelector(`.left-rail .rail-nav-btn[data-tab="${key}"]`);
+    const railBtn = document.querySelector(`.left-rail .rail-nav-btn[data-tab="${_attrEsc(key)}"]`);
     if (railBtn) railBtn.classList.add('active');
     // File tabs (in #tab-bar)
     document.querySelectorAll('#tab-bar .tab').forEach(t => t.classList.remove('active'));
     // Tab panels
     document.querySelectorAll('#tab-content .tab-panel').forEach(p => p.classList.remove('active'));
-    const panelEl = document.querySelector(`#tab-content [data-panel="${key}"]`);
+    const panelEl = document.querySelector(`#tab-content [data-panel="${_attrEsc(key)}"]`);
     if (panelEl) panelEl.classList.add('active');
     const ft = fileTabs.get(key);
     if (ft) { ft.tab.classList.add('active'); ft.panel.classList.add('active'); }

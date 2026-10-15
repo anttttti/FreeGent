@@ -326,7 +326,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Click/tap on the ghost text accepts the suggestion.
         // Ghost text is rendered by ::before, so we measure its pixel width with Canvas
         // and only accept if the click landed within the text span (+ 12 px touch slop).
+        // The click that merely focuses the input must not accept it (typing would append to it).
+        let _wasFocusedOnDown = false;
+        input.addEventListener('mousedown', () => { _wasFocusedOnDown = document.activeElement === input; });
         input.addEventListener('click', (e: MouseEvent) => {
+            if (!_wasFocusedOnDown) return;
             const suggestion = input.getAttribute('data-suggestion');
             if (!suggestion || input.textContent?.trim()) return;
             const cs  = window.getComputedStyle(input);

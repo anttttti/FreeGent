@@ -15,7 +15,7 @@ function _loadCM() {
         const [view, state, setup, js, py, htm, cssMod, md, json] = await Promise.all([
             import(/* @vite-ignore */ `${BASE}/@codemirror/view@6`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/state@6`),
-            import(/* @vite-ignore */ `${BASE}/@codemirror/basic-setup@0.7${DEPS}`),
+            import(/* @vite-ignore */ `${BASE}/@codemirror/basic-setup@0.20.0${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-javascript@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-python@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-html@6${DEPS}`),
