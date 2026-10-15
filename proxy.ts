@@ -24,22 +24,36 @@ export function resolveProxy(kind: ProxyKind, manual = ''): string {
 }
 
 /** True when `url` is on the default Worker's origin. A string prefix test also matched
- *  https://proxy.freegent.ai.example.com and would have sent the passphrase there. */
+ *  https://proxy.freegent.ai.example.com and would have sent the Developer key there. */
 export function isDefaultWorkerUrl(url: string): boolean {
     try { return new URL(url).origin === new URL(DEFAULT_CF_WORKER).origin; }
     catch { return false; }
 }
 
-// Requests to the CF Worker carry the saved passphrase, if any.
+/** The Developer key (localStorage fg_dev_key; was fg_pass, moved on first read). Unlocks the Worker's
+ *  shared provider keys and turns on developer logging (dev-log.ts). Empty string when unset. */
+export const DEV_KEY_LS = 'fg_dev_key';
+export function getDevKey(): string {
+    try {
+        let v = localStorage.getItem(DEV_KEY_LS);
+        if (v === null) {
+            const old = localStorage.getItem('fg_pass');
+            if (old !== null) { localStorage.setItem(DEV_KEY_LS, old); localStorage.removeItem('fg_pass'); v = old; }
+        }
+        return v ?? '';
+    } catch { return ''; }
+}
+
+// Requests to the CF Worker carry the saved Developer key, if any.
 export function installPassHeader(): void {
     const _origFetch = window.fetch;
     window.fetch = function (input: any, init?: any) {
         try {
             const url = typeof input === 'string' ? input : input?.url ?? String(input);
-            const pass = localStorage.getItem('fg_pass');
+            const pass = getDevKey();
             if (pass && typeof url === 'string' && isDefaultWorkerUrl(url)) {
                 const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input.headers : undefined));
-                headers.set('X-FG-Pass', pass);
+                headers.set('X-FG-Dev-Key', pass);
                 return _origFetch.call(window, input, { ...init, headers });
             }
         } catch {}

@@ -2,6 +2,7 @@
 // Depends on: all other modules (loaded last)
 import { sanitizePastedHtml } from './paste-sanitize.js';
 import { installPassHeader } from './proxy.js';
+import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
 
@@ -115,6 +116,8 @@ async function _doModelWarmup(): Promise<void> {
     }
     _setWarmupDisplay('none');
 }
+
+installDevLog();   // capture errors/warnings from the start; sends only while a Developer key is saved
 
 document.addEventListener('DOMContentLoaded', async () => {
     installPassHeader();

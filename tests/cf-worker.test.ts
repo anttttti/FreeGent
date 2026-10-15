@@ -6,7 +6,7 @@ const ORIGIN = 'https://freegent.ai';
 const limiter = (success: boolean) => ({ limit: vi.fn().mockResolvedValue({ success }) });
 
 function post(body: any, origin: string | null = ORIGIN) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', 'X-FG-Pass': 'pw' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', 'X-FG-Dev-Key': 'pw' };
     if (origin) headers.Origin = origin;
     return new Request('https://fg-proxy.example.workers.dev/', { method: 'POST', headers, body: JSON.stringify(body) });
 }
@@ -23,13 +23,13 @@ describe('CF Worker', () => {
     });
 
     it('rejects requests without an Origin header', async () => {
-        const r = await worker.fetch(post(LLM, null), { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw' });
+        const r = await worker.fetch(post(LLM, null), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw' });
         expect(r.status).toBe(403);
         expect(upstream).not.toHaveBeenCalled();
     });
 
     it('injects the shared key while under the rate limit', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         const r = await worker.fetch(post(LLM), env);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer shared');
@@ -37,13 +37,13 @@ describe('CF Worker', () => {
     });
 
     it('uses no shared key without the matching passphrase', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'other', FG_RATE_LIMITER: limiter(true) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'other', FG_RATE_LIMITER: limiter(true) };
         await worker.fetch(post(LLM), env);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
     });
 
     it('never forwards a shared key over http:// or to a URL with credentials', async () => {
-        const env = { GROQ_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
+        const env = { GROQ_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const url of ['http://api.groq.com/openai/v1/chat/completions', 'https://u:p@api.groq.com/openai/v1/chat/completions']) {
             const r = await worker.fetch(post({ url, headers: {}, body: '{}' }), env);
             expect(r.status).toBe(403);
@@ -52,7 +52,7 @@ describe('CF Worker', () => {
     });
 
     it('proxies only GET and POST to a provider, whatever method the client names', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const method of ['DELETE', 'PUT', 'PATCH']) {
             const r = await worker.fetch(post({ ...LLM, method }), env);
             expect(r.status).toBe(405);
@@ -65,19 +65,27 @@ describe('CF Worker', () => {
 
     it('does not follow redirects for a request that carries the shared key', async () => {
         await worker.fetch(post({ url: 'https://api.groq.com/openai/v1/chat/completions', headers: {}, body: '{}' }),
-            { GROQ_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(true) });
+            { GROQ_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) });
         expect(upstream.mock.calls[0][1].redirect).toBe('manual');
     });
 
     it('refuses shared-key use over the rate limit', async () => {
-        const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(false) });
+        // Only the shared-key budget is spent; the key-guess budget still has room.
+        const lim = { limit: vi.fn(async ({ key }: any) => ({ success: !key.startsWith('key:') })) };
+        const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: lim });
         expect(r.status).toBe(429);
         expect(r.headers.get('X-FG-Proxy-Error')).toBe('1');
         expect(upstream).not.toHaveBeenCalled();
     });
 
+    it('with the key-guess budget spent, even the right key gets no shared key', async () => {
+        const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(false) });
+        expect(r.status).toBe(200);
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
+    });
+
     it('never rate-limits a request that brings its own key', async () => {
-        const env = { OPENROUTER_API_KEY: 'shared', FG_PASS: 'pw', FG_RATE_LIMITER: limiter(false) };
+        const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(false) };
         const r = await worker.fetch(post({ ...LLM, headers: { Authorization: 'Bearer user-own' } }), env);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer user-own');
@@ -161,5 +169,45 @@ describe('CF Worker POST /log', () => {
     it('cannot read logs back', async () => {
         const r = await worker.fetch(new Request('https://proxy.example/log', { method: 'GET', headers: { Origin: ORIGIN } }), { FG_LOGS: kv() });
         expect(r.status).toBe(405);
+    });
+});
+
+describe('CF Worker /errlog and legacy names', () => {
+    const errReq = (body: string, key: string | null = 'pw') => new Request('https://proxy.example/errlog', {
+        method: 'POST', body, headers: { Origin: ORIGIN, 'CF-Connecting-IP': '203.0.113.9', ...(key ? { 'X-FG-Dev-Key': key } : {}) } });
+    const kv = () => ({ put: vi.fn().mockResolvedValue(undefined) });
+
+    it('stores a batch under the session id with the Developer key', async () => {
+        const FG_LOGS = kv();
+        const r = await worker.fetch(errReq('{"sessionId":"abc123","entries":[]}'), { FG_LOGS, FG_DEV_KEY: 'pw' });
+        expect(r.status).toBe(200);
+        expect(FG_LOGS.put.mock.calls[0][0]).toMatch(/^err:abc123:\d+:[0-9a-f]{8}$/);
+    });
+    it('refuses without or with a wrong key', async () => {
+        const FG_LOGS = kv();
+        expect((await worker.fetch(errReq('{"sessionId":"a"}', null), { FG_LOGS, FG_DEV_KEY: 'pw' })).status).toBe(401);
+        expect((await worker.fetch(errReq('{"sessionId":"a"}', 'no'), { FG_LOGS, FG_DEV_KEY: 'pw' })).status).toBe(401);
+        expect(FG_LOGS.put).not.toHaveBeenCalled();
+    });
+    it('still honours the old FG_PASS secret and X-FG-Pass header', async () => {
+        const FG_LOGS = kv();
+        const req = new Request('https://proxy.example/errlog', { method: 'POST', body: '{"sessionId":"a"}',
+            headers: { Origin: ORIGIN, 'X-FG-Pass': 'old' } });
+        expect((await worker.fetch(req, { FG_LOGS, FG_PASS: 'old' })).status).toBe(200);
+    });
+});
+
+describe('CF Worker key guessing', () => {
+    it('spends the per-IP budget on every key-bearing request, and a spent budget refuses even the right key', async () => {
+        const kvPut = vi.fn().mockResolvedValue(undefined);
+        const lim = { limit: vi.fn().mockResolvedValue({ success: true }) };
+        const mk = (key: string) => new Request('https://proxy.example/errlog', { method: 'POST', body: '{"sessionId":"a"}',
+            headers: { Origin: ORIGIN, 'CF-Connecting-IP': '203.0.113.9', 'X-FG-Dev-Key': key } });
+        const env = { FG_LOGS: { put: kvPut }, FG_DEV_KEY: 'pw', FG_RATE_LIMITER: lim };
+        expect((await worker.fetch(mk('wrong'), env)).status).toBe(401);
+        expect(lim.limit).toHaveBeenCalledWith({ key: 'devkey:203.0.113.9' });
+        lim.limit.mockResolvedValue({ success: false });
+        expect((await worker.fetch(mk('pw'), env)).status).toBe(429);
+        expect(kvPut).not.toHaveBeenCalled();
     });
 });
