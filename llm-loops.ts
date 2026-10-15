@@ -772,6 +772,33 @@ export function getTurnStopInfo(): { reason: string | null; edited: boolean } { 
 // outputs of this turn. Set by runTurn.
 let _stopTask = '';
 let _stopRecent: string[] = [];
+// The last few attempts of this turn, failures included, for the fallback used when the model's
+// stop summary comes back empty: the user reads what was tried instead of only the stop reason.
+interface StopAttempt { name: string; arg: string; outcome: string; n: number; }
+let _stopAttempts: StopAttempt[] = [];
+function _oneLine(t: unknown, max: number): string {
+    return String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+export function _noteStopAttempts(results: Array<{ name: string; args?: any; result?: any }>): void {
+    for (const r of results) {
+        const a = r.args || {};
+        const arg = _oneLine(typeof a.code === 'string' ? a.code : (a.path ?? a.filename ?? a.file ?? a.query ?? a.command
+            ?? Object.values(a).find(v => typeof v === 'string') ?? ''), 100);
+        const res = r.result || {};
+        const outcome = res.error ? `error: ${_oneLine(res.error, 140)}`
+            : res.exit_code != null && res.exit_code !== 0 ? `exit ${res.exit_code}${res.stderr ? ': ' + _oneLine(res.stderr, 140) : ''}`
+            : 'ok';
+        const last = _stopAttempts[_stopAttempts.length - 1];
+        if (last && last.name === r.name && last.arg === arg && last.outcome === outcome) last.n++;
+        else _stopAttempts.push({ name: r.name, arg, outcome, n: 1 });
+    }
+    if (_stopAttempts.length > 4) _stopAttempts = _stopAttempts.slice(-4);
+}
+/** What the user is told when the model's own stop summary is unavailable. */
+export function _stopFallbackText(reason: string, attempts: StopAttempt[] = _stopAttempts): string {
+    const lines = attempts.map(a => `- ${a.name}${a.arg ? ` \`${a.arg}\`` : ''}${a.n > 1 ? ` (×${a.n})` : ''} → ${a.outcome}`);
+    return `I stopped because ${reason}.` + (lines.length ? `\n\nWhat I tried last:\n${lines.join('\n')}` : '');
+}
 function _noteStopOutputs(results: Array<{ name: string; result: any }>): void {
     for (const r of results) {
         const res = r.result;
@@ -836,7 +863,7 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
     // line as the answer, and with BLOCKED last the answer became the stop reason — v0.58 CTF 48 had
     // the flag in its step-1 output and was graded "it kept repeating calls that…".
     const withBlocked = (t: string) => _BLOCKED_DECLARATION_RE.test(t) ? t : `BLOCKED: ${reason}\n\n${t}`;
-    if (typeof callLLMComplete !== 'function') return withBlocked(`*(stopped: ${reason})*`);
+    if (typeof callLLMComplete !== 'function') return withBlocked(_stopFallbackText(reason));
     try {
         const task = _stopTask ? `Task:\n${_stopTask.slice(0, 1500)}\n\n` : '';
         const outs = _stopRecent.length ? `Most recent tool outputs:\n${_stopRecent.join('\n---\n')}\n\n` : '';
@@ -845,8 +872,8 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
             `${task}${outs}${ctx}An autonomous agent working on this task was force-stopped (${reason}). If the task asks for a specific answer (a value, name, flag, path, command or query) and the tool outputs above show it, reply with only that answer, in the form the task asks for. Otherwise summarise in 1-2 sentences what was accomplished and why it stopped.`,
             { maxTokens: 300, label: 'termination:synthesis', maxAttempts: 1 }
         );
-        return withBlocked(text?.trim() || `*(stopped: ${reason})*`);
-    } catch { return withBlocked(`*(stopped: ${reason})*`); }
+        return withBlocked(text?.trim() || _stopFallbackText(reason));
+    } catch { return withBlocked(_stopFallbackText(reason)); }
 }
 
 // ── Generic step-output validation ──────────────────────────────────────────
@@ -1196,6 +1223,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     };
     _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
     _stopRecent = [];
+    _stopAttempts = [];
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits. Set by enforcement
     // nudges (completion_gate, step_validation, ...) and consumed before the next request. Local to the
     // turn: a module-level flag was consumed by a concurrent worker's request and, when a turn ended
@@ -2122,6 +2150,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             systemPrompt: buildSystemPrompt(),
             lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
         });
+        _noteStopAttempts(_exec);   // before any stop below, so the step that ends the run is included
         _updateLogBadge?.();
         // Checked after the log row, so the step that ends the run is in the step log.
         // Same error every time: one directed nudge and 5 more attempts before the stop (once per turn).
