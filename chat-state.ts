@@ -163,6 +163,35 @@ const _newRev = () => `${Date.now().toString(36)}-${(++_revSeq).toString(36)}`;
 function _readStamp(id: string): { rev: string; trimmed: boolean; acked?: string } | null {
     try { return JSON.parse(localStorage.getItem(chatKey.rev(id)) || 'null'); } catch { return null; }
 }
+// The rev this tab last wrote or loaded for a chat. When the stamp in storage differs, another tab
+// has saved the chat since, and this tab's in-memory history is stale (a save from it would
+// overwrite the other tab's messages).
+const _seenRev = new Map<string, string>();
+function _noteSeenRev(id: string) { const st = _readStamp(id); if (st?.rev) _seenRev.set(id, st.rev); }
+function chatChangedElsewhere(id: string | null = activeChatId): boolean {
+    if (!id) return false;
+    const st = _readStamp(id);
+    return !!(st?.rev && _seenRev.get(id) !== st.rev);
+}
+// Re-open the active chat from storage when another tab saved it. Never while a turn is running
+// (its own end-of-turn save is the newer write) and never saves this tab's stale copy first.
+async function reloadChatIfChangedElsewhere(): Promise<boolean> {
+    if (!activeChatId || agentStreaming || _loadingChatId || !chatChangedElsewhere()) return false;
+    const inp = document.getElementById('agent-input');
+    const draft = inp?.innerHTML ?? '';
+    await switchToChat(activeChatId, true);
+    if (inp && draft && !inp.innerHTML.trim()) inp.innerHTML = draft;
+    return true;
+}
+let _xTabTimer: any = null;
+if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (e: StorageEvent) => {
+        if (!activeChatId || e.key !== chatKey.rev(activeChatId)) return;
+        clearTimeout(_xTabTimer);
+        _xTabTimer = setTimeout(() => { reloadChatIfChangedElsewhere().catch(() => {}); }, 200);
+    });
+}
+
 function _noteDurable(id: string, saved: Promise<boolean> | undefined, rev?: string) {
     saved?.then?.(ok => {
         if (ok) _durableHistory.add(id); else _durableHistory.delete(id);
@@ -263,7 +292,7 @@ function saveHistory() {
         // Stamp what the cache now holds. When no copy could be written, drop the stamp so a
         // leftover older copy is not taken for this save.
         try {
-            if (_written) localStorage.setItem(chatKey.rev(activeChatId), JSON.stringify({ rev: _rev, trimmed: _trimmed }));
+            if (_written) { localStorage.setItem(chatKey.rev(activeChatId), JSON.stringify({ rev: _rev, trimmed: _trimmed })); _seenRev.set(activeChatId, _rev); }
             else localStorage.removeItem(chatKey.rev(activeChatId));
         } catch {}
         // Additive: also persist the full (untrimmed) history to the session-store adapter
@@ -296,6 +325,7 @@ function saveHistory() {
 }
 
 async function loadChatHistory(id: string): Promise<boolean> {
+    _noteSeenRev(id);
     try {
         // Try SQLite session store first (available when an adapter is injected).
         const sqliteHistory = await sessionLoadHistory?.(id);
@@ -873,7 +903,14 @@ async function viewChatReadOnly(id: string) {
     back.textContent = 'Back to running chat';
     back.title = 'Close this read-only view and return to the chat that is running';
     back.onclick = closeChatViewer;
-    bar.append(label, back);
+    // The composer (and its Stop button) is hidden while another chat is shown; the running turn must stay stoppable.
+    const stop = document.createElement('button');
+    stop.className = 'ws-action-btn';
+    stop.id = 'fg-chat-viewer-stop';
+    stop.textContent = 'Stop';
+    stop.title = 'Stop the running turn';
+    stop.onclick = () => (document.getElementById('agent-action-btn') as HTMLElement | null)?.click();
+    bar.append(label, stop, back);
     const body = document.createElement('div');
     body.className = 'fg-chat-viewer-body';
     viewer.append(bar, body);
@@ -894,13 +931,13 @@ async function viewChatReadOnly(id: string) {
     body.scrollTop = body.scrollHeight;
 }
 
-async function switchToChat(id) {
-    if (id === activeChatId) { closeChatViewer(); return; }
+async function switchToChat(id, force = false) {
+    if (id === activeChatId && !force) { closeChatViewer(); return; }
     const runnerOther = typeof isRunnerRunning === 'function' && isRunnerRunning()
         && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null);
     if (agentStreaming || runnerOther) { await viewChatReadOnly(id); return; }
     closeChatViewer();
-    saveHistory();
+    if (!force) saveHistory();   // a forced reload replaces a stale copy: saving it would overwrite the newer one
     activeChatId        = id;
     _loadingChatId      = id;
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
@@ -1061,7 +1098,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

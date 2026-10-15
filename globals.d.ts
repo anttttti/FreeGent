@@ -128,6 +128,8 @@ declare global {
     var setChatName: any;
     var startInlineRenameCurrentChat: any;
     var switchToChat: any;
+    var reloadChatIfChangedElsewhere: any;
+    var chatChangedElsewhere: any;
     var toggleChatsDropdown: any;
     var getChatStats: (chatId: string) => Promise<{ turns: number; models: { model: string; steps: number }[] }>;
     var getChatSnapshotInfo: (chatId: string) => Promise<any>;

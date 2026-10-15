@@ -1151,6 +1151,8 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     }
 }
 async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
+    // Another tab may have saved this chat since this one loaded it: take its messages first.
+    if (!agentStreaming) { try { await reloadChatIfChangedElsewhere(); } catch {} }
     if (agentStreaming) {
         // The text-only queue cannot carry media. Preserve the complete submission
         // in the composer rather than queuing just its text and dropping its files.
@@ -1352,6 +1354,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     // History is always in OAI format. Media is stored as OAI content types
     // (image_url, input_audio, video_url) and sent directly to the OAI-compat endpoint.
     _pushHistoryMessage(provider, _mediaGeminiModel, _mediaOAIEndpoint, sendImages, _binaryFiles, historyText);
+    // Persist now: a reload, crash or sleep before the turn ends must not lose the message just sent.
+    try { saveHistory(); } catch {}
 
     const _ph: RenderAdapter = workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container);
     setActivePlaceholder(_ph);
@@ -1541,13 +1545,15 @@ function createNewChat(): void {
 
 function newChat(): void {
     if (aiBusy()) return;
-    const hasHistory = chatHistoryLength() > 0;
+    // A chat another tab has written since this one loaded it is not empty, whatever this tab holds.
+    const stale = typeof chatChangedElsewhere === 'function' && chatChangedElsewhere();
+    const hasHistory = chatHistoryLength() > 0 || stale;
     if (!hasHistory) {
         const msgs = getMessagesEl();
         if (msgs) msgs.innerHTML = '';
         return;
     }
-    saveHistory();
+    if (!stale) saveHistory();   // saving the stale copy would overwrite the other tab's messages
     createNewChat();
 }
 
