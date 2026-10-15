@@ -804,6 +804,25 @@ Object.assign(window, {
 const _FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const _modalOpeners = new Map<HTMLElement, HTMLElement | null>();
 
+// Name every form control that has no accessible name. The source order of the existing forms gives
+// the label: an associated <label>, the first cell of its table row, the closest preceding
+// `.settings-label` of its section, then title / placeholder / the id as words.
+export function labelControls(root: ParentNode = document): void {
+    root.querySelectorAll<HTMLInputElement>('input, select, textarea').forEach(el => {
+        if (el.type === 'hidden' || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
+        if (el.closest('label') || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`))) return;
+        // The first cell with text: a leading checkbox cell (the skills table) has none.
+        let name = [...(el.closest('tr')?.querySelectorAll('td') ?? [])].map(td => td.textContent?.trim() ?? '').find(t => t);
+        if (!name) {
+            const section = el.closest('.settings-section');
+            const lab = section?.querySelector('.settings-label');
+            if (lab && (lab.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) name = lab.textContent?.trim();
+        }
+        name = name || el.getAttribute('title') || el.getAttribute('placeholder') || el.id.replace(/[-_]+/g, ' ').trim();
+        if (name) el.setAttribute('aria-label', name.slice(0, 120));
+    });
+}
+
 function _enhanceModal(ov: HTMLElement) {
     if (_modalOpeners.has(ov)) return;
     _modalOpeners.set(ov, document.activeElement as HTMLElement | null);
@@ -816,13 +835,7 @@ function _enhanceModal(ov: HTMLElement) {
         box.setAttribute('aria-labelledby', title.id);
     }
     ov.querySelectorAll('.fg-modal-close').forEach(b => { if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', 'Close'); });
-    // Label fields from the first cell of their table row (the layout every form dialog uses).
-    ov.querySelectorAll<HTMLInputElement>('input, select, textarea').forEach(el => {
-        if (el.type === 'hidden' || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
-        if (el.id && ov.querySelector(`label[for="${el.id}"]`)) return;
-        const name = el.closest('tr')?.querySelector('td')?.textContent?.trim() || el.getAttribute('placeholder') || el.getAttribute('title');
-        if (name) el.setAttribute('aria-label', name);
-    });
+    labelControls(ov);
     if (!ov.contains(document.activeElement))
         (ov.querySelector<HTMLElement>('input:not([type=hidden]):not([type=checkbox]), textarea, select')
             || ov.querySelector<HTMLElement>(_FOCUSABLE))?.focus();
@@ -846,6 +859,13 @@ function _modalKeydown(e: KeyboardEvent) {
 }
 
 function initModalA11y() {
+    // Settings and toolbar controls are static markup that populate/re-render in place: label them once the
+    // page is up and again (debounced) when their containers change.
+    labelControls(document);
+    let _lblTimer: any = null;
+    const relabel = () => { clearTimeout(_lblTimer); _lblTimer = setTimeout(() => labelControls(document), 250); };
+    for (const sel of ['#tab-content [data-panel="settings"]', '.chat-toolbar', '#hdr-bar'])
+        document.querySelectorAll(sel).forEach(el => new MutationObserver(relabel).observe(el, { childList: true, subtree: true }));
     document.querySelectorAll<HTMLElement>('.fg-modal-overlay').forEach(_enhanceModal);
     document.addEventListener('keydown', _modalKeydown, true);
     new MutationObserver(muts => {

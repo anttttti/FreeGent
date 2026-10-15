@@ -305,7 +305,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             }
             return false; // still nothing — fall through with empty content
         }
-        const is429 = _isRateLimit(e.message);
+        const is429 = _isRateLimit(e.message, getEp());
         const isErr = !is429 && _isServerError(e.message);
         const headroom = parseContextOverflow(e);
         if (headroom !== null) {
