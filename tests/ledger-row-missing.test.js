@@ -29,6 +29,18 @@ describe('_updateLedgerRow', () => {
         await W._updateLedgerRow('fg-tasks/001-first.md', 'done');
         expect(rows().find(r => r[0] === '001')[1]).toBe('done');
     });
+    it('treats a row that already has the status as done: no rewrite, no rebuild', async () => {
+        files['fg-tasks/ledger.md'] = files['fg-tasks/ledger.md'].replace('| 001 | open  ', '| 001 | done  ');
+        const before = files['fg-tasks/ledger.md'];
+        let writes = 0; const w = W.agentWriteFile; W.agentWriteFile = async (p, c) => { writes++; return w(p, c); };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await W._updateLedgerRow('fg-tasks/001-first.md', 'done');
+        W.agentWriteFile = w;
+        expect(writes).toBe(0);
+        expect(warn).not.toHaveBeenCalled();
+        expect(files['fg-tasks/ledger.md']).toBe(before);
+        warn.mockRestore();
+    });
     it('adds the missing row by rebuilding the ledger from the task files', async () => {
         await W._updateLedgerRow('fg-tasks/068-late.md', 'done');
         const r = rows().find(x => x[0] === '068');
