@@ -213,6 +213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         settingsPanel.addEventListener('input',  autoSave);
     }
 
+    initModalA11y();
     setupChatDropZone();
     setInputState(true);
 
@@ -785,3 +786,72 @@ Object.assign(window, {
     saveVoiceSettings, populateVoiceTab,
     _addVoiceItem, _removeVoiceItem, _moveVoiceItem,
 });
+
+// ── Modal dialogs: role, labels, focus trap, Escape ────────────────────────
+// Every dialog is a `.fg-modal-overlay` appended to <body>. One observer makes them accessible instead of
+// each creator doing it: dialog role + name, labelled fields, focus moved in (and restored on close),
+// Tab kept inside, Escape = the dialog's own Close/Cancel (so cleanup handlers run).
+function _enhanceModal(ov: HTMLElement) {
+    if (ov.dataset.a11y) return;
+    ov.dataset.a11y = '1';
+    const box = (ov.querySelector('.fg-modal') as HTMLElement) || ov;
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    const title = ov.querySelector('.fg-modal-title') as HTMLElement | null;
+    if (title) {
+        if (!title.id) title.id = `fg-modal-title-${Math.random().toString(36).slice(2, 8)}`;
+        box.setAttribute('aria-labelledby', title.id);
+    }
+    ov.querySelectorAll('.fg-modal-close').forEach(b => {
+        if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', 'Close');
+    });
+    // Label fields from the first cell of their table row (the layout every form dialog uses).
+    ov.querySelectorAll('input, select, textarea').forEach(f => {
+        const el = f as HTMLInputElement;
+        if (el.type === 'hidden' || el.id && ov.querySelector(`label[for="${el.id}"]`)) return;
+        if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
+        const row = el.closest('tr');
+        const text = row?.querySelector('td')?.textContent?.trim();
+        const name = text || el.getAttribute('placeholder') || el.getAttribute('title');
+        if (name) el.setAttribute('aria-label', name);
+    });
+    const opener = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(ov.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+        .filter(e => e.offsetParent !== null || e === document.activeElement);
+    if (!ov.contains(document.activeElement)) {
+        const first = ov.querySelector<HTMLElement>('input:not([type=hidden]):not([type=checkbox]), textarea, select') || focusable()[0];
+        first?.focus();
+    }
+    const onKey = (e: KeyboardEvent) => {
+        if (!ov.isConnected) { document.removeEventListener('keydown', onKey, true); return; }
+        // Only the topmost dialog reacts.
+        const all = document.querySelectorAll('.fg-modal-overlay');
+        if (all[all.length - 1] !== ov) return;
+        if (e.key === 'Escape') {
+            e.preventDefault(); e.stopPropagation();
+            const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel');
+            if (btn) btn.click(); else ov.remove();
+        } else if (e.key === 'Tab') {
+            const f = focusable();
+            if (!f.length) return;
+            const i = f.indexOf(document.activeElement as HTMLElement);
+            if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+            else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+        }
+    };
+    document.addEventListener('keydown', onKey, true);
+    new MutationObserver((_m, obs) => {
+        if (!ov.isConnected) { obs.disconnect(); document.removeEventListener('keydown', onKey, true); try { opener?.focus?.(); } catch {} }
+    }).observe(document.body, { childList: true });
+}
+function initModalA11y() {
+    document.querySelectorAll<HTMLElement>('.fg-modal-overlay').forEach(_enhanceModal);
+    new MutationObserver(muts => {
+        for (const m of muts) m.addedNodes.forEach(n => {
+            if (!(n instanceof HTMLElement)) return;
+            if (n.classList.contains('fg-modal-overlay')) _enhanceModal(n);
+            else n.querySelectorAll?.('.fg-modal-overlay').forEach(o => _enhanceModal(o as HTMLElement));
+        });
+    }).observe(document.body, { childList: true });
+}

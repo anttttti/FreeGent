@@ -183,7 +183,10 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null): voi
     // on this endpoint — the provider is persistently refusing; back off hard.
     const hadSuccess = _endpointSuccessSinceCooldown.get(key) ?? false; // no entry = no prior success → penalty applies
     _endpointSuccessSinceCooldown.set(key, false); // reset; recordSuccess() will flip back on next hit
-    if (!hadSuccess) {
+    // A user's own endpoint (custom / vLLM) has no shared quota to protect: back off exponentially
+    // (capped at RATE_LIMIT_MAX_MS) so a persistent 429 never reads as "waiting 1.0h".
+    const _ownEndpoint = endpoint.provider === 'custom' || endpoint.provider === 'vllm';
+    if (!hadSuccess && !_ownEndpoint) {
         _endpointCooldown.set(key, Date.now() + RATE_LIMIT_PENALTY_MS);
         return;
     }
