@@ -256,6 +256,8 @@ const _REPEAT_CACHE_MAX = 150;
 // Consecutive all-failing tool turns before the loop bails with a graceful synthesis.
 const _MAX_CONSEC_TOOL_FAILS = 10;
 const _MAX_COMPACT_STREAK = 4;   // compactions in a row with no model response between them before the turn stops
+const _MAX_EMPTY_STREAK = 5;       // consecutive empty/truncated replies (no endpoint left to cycle to) before the turn stops
+const _EMPTY_BACKOFF_MS = 1_500;   // first wait between them; doubles, capped at 12 s
 const _MAX_CUT_OFF_STREAK = 4;   // consecutive responses discarded at the output cap before the turn stops
 
 // Role-mode step cap — tighter than the main-agent budget; emits BLOCKED rather than synthesising.
@@ -1231,7 +1233,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _forceToolCall = !!forceToolCall;
     const _failSigs: string[] = [];   // error signature of each failure in the current streak
     let _sameErrorGraceUsed = false;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _compactStreak = 0;
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0;
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -1827,6 +1829,15 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 if (e.streamStalled) {
                     _emitNudge('output_stalled', _nudge('Your last response stalled mid-generation and was discarded — nothing was executed, and any tool call you were writing was lost. This usually means a single tool call was too large. Make the next call now, keeping it small: split a large file into several smaller files (e.g. index.html, style.css, game.js split by feature), each well under 300 lines — or, if append_file is available, write the first part and append the rest in further calls.'));
                 }
+                // Replies that come back empty or cut with nowhere left to cycle to: without a pause the loop
+                // re-sent the request at once, step after step (100 requests in under 2 s against an
+                // endpoint that answered with nothing). Wait, doubling, and stop after a few.
+                if (!e.outputCapHit && !e.streamStalled) {
+                    if (++_emptyStreak >= _MAX_EMPTY_STREAK) return await _gracefulSynthesis(`the model returned ${_MAX_EMPTY_STREAK} empty or cut-off replies in a row`, '');
+                    const _wait = Math.min(_EMPTY_BACKOFF_MS * Math.pow(2, _emptyStreak - 1), 12_000);
+                    thinkTask.append(`\n[empty reply (${e.truncReason ?? 'truncated'}): retrying in ${Math.round(_wait / 1000)}s]\n`, 'warn');
+                    try { await sleepInterruptible(_wait); } catch { return '*(break)*'; }
+                }
                 continue;
             }
             const _is429 = _isRateLimit(e.message);
@@ -1892,7 +1903,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             throw e;
         }
-        _cutOffStreak = 0; _compactStreak = 0;   // a response came back whole
+        _cutOffStreak = 0; _emptyStreak = 0; _compactStreak = 0;   // a response came back whole
         if (!message) throw new Error('No response from model');
         _endpointNeedsProbe.delete(_epKey);
         recordSuccess(activeEndpoint ?? _defaultEndpoint());

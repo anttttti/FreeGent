@@ -67,3 +67,12 @@ describe('empty reply and sandbox hint', () => {
         expect(h).toContain('reaches public URLs');
     });
 });
+
+describe('empty-reply retry burst', () => {
+    it('consecutive empty/cut replies back off and stop after a few', () => {
+        const s = src('llm-loops.ts');
+        expect(s).toContain('const _MAX_EMPTY_STREAK = 5');
+        expect(s).toContain('_emptyStreak >= _MAX_EMPTY_STREAK');
+        expect(s).toContain('_cutOffStreak = 0; _emptyStreak = 0;');
+    });
+});
