@@ -164,6 +164,15 @@ function _applySandboxProviderUI(val) {
     if (localHint) localHint.style.display = val === 'local' ? '' : 'none';
 }
 
+function onPrivacyChange(which: 'geo' | 'analytics', checked: boolean) {
+    if (which === 'geo') {
+        localStorage.setItem('fg_geo_lookup', checked ? '1' : '0');
+        if (checked) prefetchGeoCache?.().catch(() => {});
+    } else {
+        localStorage.setItem('fg_analytics', checked ? '1' : '0');
+    }
+}
+
 function onPyodideAutoloadChange(checked) {
     localStorage.setItem('fg_pyodide_autoload', checked ? '1' : '0');
     if (checked && (typeof pyodideStatus === 'undefined' || pyodideStatus === 'idle'))
@@ -397,6 +406,10 @@ function populateSettingsForm() {
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
     if (pyAuto) pyAuto.checked = localStorage.getItem('fg_pyodide_autoload') !== '0';
+    const geoCb = (document.getElementById('privacy-geo') as HTMLInputElement);
+    if (geoCb) geoCb.checked = localStorage.getItem('fg_geo_lookup') === '1';
+    const anCb = (document.getElementById('privacy-analytics') as HTMLInputElement);
+    if (anCb) anCb.checked = localStorage.getItem('fg_analytics') !== '0' && navigator.doNotTrack !== '1';
     const sbp = (document.getElementById('sandbox-provider') as HTMLInputElement);
     if (sbp) {
         let sbpVal = getSandboxProvider();
@@ -2391,4 +2404,4 @@ async function submitAddMcpServer() {
     }
 }
 
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

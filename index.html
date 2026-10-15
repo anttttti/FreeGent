@@ -581,6 +581,12 @@
 
                 <div class="settings-tab-panel" data-tab="agent">
                     <div class="settings-section">
+                        <span class="settings-label">Privacy</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Requests FreeGent makes besides the model provider you chose. Libraries (marked, DOMPurify, highlight.js, KaTeX, Bootstrap, CodeMirror) load from jsdelivr / esm.sh regardless.</p>
+                        <label class="settings-check-row"><input type="checkbox" id="privacy-geo" onchange="onPrivacyChange('geo', this.checked)"> Look up approximate location (sends your IP to ipinfo.io; city, region and ISP are then added to prompts that ask about weather, places or maps)</label>
+                        <label class="settings-check-row"><input type="checkbox" id="privacy-analytics" onchange="onPrivacyChange('analytics', this.checked)" checked> Anonymous page-view counter (GoatCounter; no cookies; skipped when Do Not Track is on). Applies on next load.</label>
+                    </div>
+                    <div class="settings-section">
                         <span class="settings-label">Context Management</span>
                         <label class="settings-check-row"><input type="checkbox" id="agent-tool-truncation" onchange="saveAgentSetting('fg_agent_tool_result_truncation', this.checked)"> Tool result truncation</label>
                         <p class="settings-hint agent-hint">Cap tool results stored in history to avoid context bloat.</p>
@@ -906,10 +912,21 @@
         <div id="msg-search-results" class="msg-search-results" role="listbox" aria-label="Search results"></div>
     </div>
 </div>
-<!-- GoatCounter — privacy-friendly page view analytics (no cookies, no personal data) -->
-<!-- Shared GoatCounter site: prefix paths with /freegent so FreeGent hits are separate from other projects -->
-<script>window.goatcounter = {path: function (p) { return '/freegent' + (p || '/'); }};</script>
-<script data-goatcounter="https://anttttti.goatcounter.com/count"
-        async src="//gc.zgo.at/count.js"></script>
+<!-- GoatCounter — privacy-friendly page view analytics (no cookies, no personal data).
+     Shared site: paths are prefixed /freegent. Skipped when Do Not Track is on or the user turned it off
+     in Settings → Agent → Privacy. -->
+<script>
+(function () {
+    try {
+        if (navigator.doNotTrack === '1' || localStorage.getItem('fg_analytics') === '0') return;
+    } catch (e) {}
+    window.goatcounter = {path: function (p) { return '/freegent' + (p || '/'); }};
+    var s = document.createElement('script');
+    s.async = true;
+    s.dataset.goatcounter = 'https://anttttti.goatcounter.com/count';
+    s.src = '//gc.zgo.at/count.js';
+    document.body.appendChild(s);
+})();
+</script>
 </body>
 </html>

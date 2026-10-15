@@ -338,8 +338,15 @@ export function browserBashAvailable(): boolean {
 // current one (detected on the next startup after an IP change) or after 7 days.
 const GEO_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// Off unless the user turns it on (Settings → Agent → Privacy): the lookup sends the user's IP to ipinfo.io
+// and the result (city, region, ISP) goes into prompts. Without it the location skill uses timezone + locale.
+export function geoLookupEnabled(): boolean {
+    try { return localStorage.getItem('fg_geo_lookup') === '1'; } catch { return false; }
+}
+
 export function getGeoCache(): { ip?:string; city?:string; region?:string; country?:string; timezone?:string; org?:string } | null {
     try {
+        if (!geoLookupEnabled()) return null;
         const raw = localStorage.getItem(KEYS.GEO_CACHE);
         if (!raw) return null;
         const d = JSON.parse(raw);
@@ -352,6 +359,7 @@ export function getGeoCache(): { ip?:string; city?:string; region?:string; count
 
 export async function prefetchGeoCache(): Promise<void> {
     try {
+        if (!geoLookupEnabled()) return;
         const cached = getGeoCache();
         if (cached?.ip) return; // still fresh
         const res  = await fetch('https://ipinfo.io/json');
@@ -1243,7 +1251,7 @@ Object.assign(window, {
     getTopP, getTopK, getMinP, getPresencePenalty, getRepetitionPenalty, getSamplingParams,
     getTavilyKey, getHFKey, getSearchProxy, getEffectiveProxy, getLocalApiProxy,
     getBraveKey, getGithubToken, getStackExchangeKey,
-    getSandboxProvider, browserBashAvailable, getGeoCache, prefetchGeoCache,
+    getSandboxProvider, browserBashAvailable, getGeoCache, prefetchGeoCache, geoLookupEnabled,
     getAgentToolTruncation, getAgentMaxToolResult, getDirectorMaxToolResult,
     getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens,
     getAgentMaxSteps, getAgentLeanWorkers,
