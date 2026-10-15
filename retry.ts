@@ -450,7 +450,9 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
             catch { msg += ': ' + raw; }
         }
     } catch {
-        if (text) msg += ': ' + text.slice(0, 120);
+        // A non-JSON body is often an HTML error page from a proxy: show its text, not its markup.
+        const plain = text.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (plain) msg += ': ' + plain.slice(0, 120);
     }
     const e: any = new Error(prefix ? `${prefix} ${msg}` : msg);
     if (retryAfterMs !== null) e.retryAfterMs = retryAfterMs;

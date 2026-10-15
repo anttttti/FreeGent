@@ -10,7 +10,8 @@
     --user-bg:     #ddeeff;
     --model-bg:    #ffffff;
     --text:        #1a1f2e;
-    --muted:       #6b7a99;
+    --muted:       #56637f;
+    --faint:       #6b6b6b;  /* small secondary text on light surfaces (>= 4.5:1) */
     --code-bg:     #f0f2f5;
     --shadow:      0 2px 8px rgba(0,0,0,0.08);
     /* Aliases — several rules referenced these without a definition, silently
@@ -765,7 +766,7 @@ html, body {
 .seq-step { display: grid; grid-template-columns: auto 1fr; gap: 2px 0; align-content: start; }
 .seq-step-system { display: flex; align-items: center; padding: 3px 10px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; background: #f0f0f0; border: 1px solid #d8d8d8; color: #888; font-style: italic; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: default; }
 .seq-task { position: relative; display: flex; flex-direction: column; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; cursor: pointer; min-width: 70px; max-width: 220px; border: 1px solid transparent; transition: all 0.15s; user-select: none; }
-.seq-task-id { position: absolute; top: 2px; right: 4px; font-size: 9px; color: #bbb; font-weight: 600; line-height: 1; }
+.seq-task-id { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--faint); font-weight: 600; line-height: 1; }
 .seq-task > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seq-running { background: #fff8e1; border-color: #f9a825; animation: seq-pulse 1.2s ease-in-out infinite; }
 @keyframes seq-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
@@ -773,22 +774,22 @@ html, body {
 .seq-stopped { background: #fce4ec; border-color: #ef5350; }
 .seq-compact { background: #f3e5f5; border-color: #ab47bc; }
 .seq-selected { background: #e3f2fd; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(74,124,247,0.2); }
-.seq-task-tokens { font-size: 10px; color: #aaa; }
+.seq-task-tokens { font-size: 10px; color: var(--faint); }
 .seq-task-time-row { display: flex; justify-content: space-between; align-items: baseline; }
-.seq-task-start { font-size: 10px; color: #aaa; }
+.seq-task-start { font-size: 10px; color: var(--faint); }
 .seq-rerun-btn { align-self: flex-start; margin-top: 3px; padding: 1px 6px; font-size: 10px; line-height: 1.4; background: none; color: inherit;
     border: 1px solid currentColor; border-radius: 4px; opacity: .65; cursor: pointer; font-family: inherit; }
 .seq-rerun-btn:hover { opacity: 1; }
 .seq-agg-entry-row .seq-rerun-btn { margin: 0; flex-shrink: 0; align-self: center; }
-.seq-task-timer { font-size: 10px; color: #aaa; }
-.seq-task-model { font-size: 9px; color: #bbb; font-family: 'SF Mono','Fira Code',monospace; display: block; }
+.seq-task-timer { font-size: 10px; color: var(--faint); }
+.seq-task-model { font-size: 9px; color: var(--faint); font-family: 'SF Mono','Fira Code',monospace; display: block; }
 .seq-task-model s, .seq-agg-entry-model s { color: #666; text-decoration-color: #555; }
 .seq-task-truncated-note { font-size: 9px; color: #ef5350; display: block; font-style: italic; }
 .seq-live-detail, .seq-selected-detail { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .seq-detail-col { background: #f7f9fc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 200px; max-width: 400px; flex: 1; font-size: 12px; }
 .seq-col-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .seq-col-header > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
-.step-toggle { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: #bbb; flex-shrink: 0; }
+.step-toggle { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: var(--faint); flex-shrink: 0; }
 .step-tabs { display: flex; gap: 1px; align-items: center; margin-left: auto; flex-shrink: 0; }
 .step-tab-btn { background: none; border: none; padding: 1px 6px; cursor: pointer; font-size: 10px; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: 0.4px; border-radius: 3px; transition: color 0.1s, background 0.1s; }
 .step-tab-btn:hover { color: #555; background: rgba(0,0,0,0.06); }
@@ -1893,6 +1894,7 @@ select:focus:not(:focus-visible) { outline: none; }
     --model-bg:   #1e2535;
     --text:       #dde3f0;
     --muted:      #8898bb;
+    --faint:      #a9b2c6;
     --code-bg:    #161d2d;
     --shadow:     0 2px 8px rgba(0,0,0,0.4);
     /* aliases auto-follow their referenced vars */
@@ -1963,3 +1965,12 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 #fg-chat-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .fg-chat-viewer-bar { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 10px; font-size: 12px; background: var(--surface2, #2a2a2a); border-bottom: 1px solid var(--border, #444); }
 .fg-chat-viewer-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 8px; }
+
+/* Contrast: inline code in dark mode (was #d63384 on the code background, 3.7:1) */
+[data-theme="dark"] .agent-response-text :not(pre) > code { color: #ff8fc2; }
+/* Tap targets on phones: small icon buttons get a 32px hit area without changing their look */
+@media (max-width: 600px) {
+    .chat-act-btn, .step-toggle { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
+    .hdr-model-display-wrap { max-width: calc(100vw - 150px); }
+    .hdr-model-text { max-width: 100%; }
+}
