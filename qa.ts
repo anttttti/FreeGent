@@ -145,6 +145,12 @@ async function _updateLedgerRow(taskPath, newStatus) {
         }
         console.warn(`[QA] _updateLedgerRow: no row found for ID ${id} in "${ledgerPath}"`);
     }
+    // No ledger had a row for this task: it was created without one (a file written outside the
+    // board's add-task path, or a ledger that predates it). The task file already holds the new
+    // status, so rebuilding the ledger from the files gives the row, and every other row, correctly.
+    if (typeof rebuildLedger === 'function') {
+        try { await rebuildLedger(); } catch (e) { console.warn('[QA] ledger rebuild failed:', e); }
+    }
 }
 
 function _setFrontmatterField(content, key, value) {
