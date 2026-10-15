@@ -3,6 +3,7 @@
 // Loaded after chat-state.js, before agent-core.js
 import { chatKey, SESSION_KEYS } from './storage-keys.js';
 import { FG_VERSION } from './build-info.js';
+import { SESSION_ID } from './dev-log.js';
 import { escapeHtml } from './html-escape.js';
 import { redactText } from './secrets.js';
 import { getMcpServers } from './mcp.js';
@@ -238,6 +239,7 @@ async function _buildChatPayload(id) {
     const payload = {
         exportedAt: new Date().toISOString(),
         deployVersion: FG_VERSION,
+        sessionId: SESSION_ID,
         cfKeys: typeof getCfKeysDiagnostics === 'function' ? getCfKeysDiagnostics() : null,
         id,
         name:       meta?.name ?? 'Untitled',
@@ -282,6 +284,10 @@ export function storedSecretValues(): string[] {
         for (const srv of getMcpServers()) vals.push(...Object.values(srv.headers || {}).map(String));
     } catch {}
     return vals;
+}
+/** The chat's payload as JSON with stored credentials removed (what sendChatLog posts). */
+export async function buildRedactedChatJson(id: string): Promise<string> {
+    return redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());
 }
 async function sendChatLog(id) {
     if (!id) { alert('No chat to send.'); return; }

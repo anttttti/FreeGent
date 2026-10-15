@@ -5,6 +5,8 @@ import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus } from './task-status.js';
 import * as MsgQueue from './msg-queue.js';
 import { isStepLimitStop } from './loop-director.js';
+import { sendTaskLog } from './dev-log.js';
+import { buildRedactedChatJson } from './convo-log.js';
 
 interface Task {
     path: string;
@@ -209,6 +211,10 @@ async function _runLoop() {
                 _runnerDeferred.add(task.path);
                 return { success: false, blocked: false, blockedReason: '', failReason: String(e?.message ?? e).slice(0, 200) };
             });
+            // Developer key set: the task's chat goes to the Worker whenever work on it stops (not awaited).
+            void sendTaskLog({ id: task.fm.id || '', title: task.fm.title || task.path, path: task.path },
+                _runnerAbort ? 'stopped' : result.success ? 'done' : result.blocked ? 'blocked' : 'failed',
+                result.blockedReason || result.failReason || '', _runnerChatId, buildRedactedChatJson);
             if (_runnerAbort) break;
 
             _runnerSessionLog.push({

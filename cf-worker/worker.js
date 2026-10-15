@@ -47,7 +47,8 @@
  * The Worker is a pure passthrough. No data is logged, stored, or inspected —
  * with one opt-in exception: POST /log stores a chat log the user explicitly sends from the app
  * ("Send log to developer") in the FG_LOGS KV namespace for 14 days. It is write-only here;
- * logs are read with `wrangler kv`. Without the FG_LOGS binding the endpoint answers 503.
+ * logs are read with `wrangler kv`. POST /errlog (Developer key required) stores batches of
+ * console errors/warnings under err:<sessionId>:... in the same namespace. Without the FG_LOGS binding the endpoint answers 503.
  * API keys (user's own or injected from env) are forwarded directly to the
  * provider and never retained.
  *
@@ -115,7 +116,7 @@ const SEARCH_HEADER_MAP = {
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Pass',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass',
     'Access-Control-Max-Age':       '86400',
     'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
 };
@@ -148,11 +149,37 @@ async function _storeLog(request, env) {
     return new Response(JSON.stringify({ id }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
+// ── POST /errlog: console errors/warnings from a Developer-key session ────────
+// Requires the Developer key (unlike /log, which any user may send). Body: {sessionId, entries[]}.
+// Stored under err:<session>:<time>:<rand> for 14 days; the session id is the same one carried by
+// the task chat logs (POST /log), so the two can be joined.
+const ERRLOG_MAX_BYTES = 256 * 1024;
+async function _storeErrLog(request, env) {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (request.method !== 'POST') return _err(405, 'POST only');
+    if (!env || !env.FG_LOGS) return _err(503, 'Log upload is not configured on this Worker');
+    if (await _rateLimited(request, env, 'errlog')) return _err(429, 'Rate limit exceeded — try again in a minute');
+    if (!(await _unlocked(request, env))) return _err(401, 'Developer key required');
+    const body = await request.text();
+    if (new TextEncoder().encode(body).length > ERRLOG_MAX_BYTES) return _err(413, 'Error log batch too large (max 256 KB)');
+    let sessionId = '';
+    try { sessionId = String(JSON.parse(body).sessionId || ''); } catch { return _err(400, 'Body must be JSON'); }
+    sessionId = sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'unknown';
+    const rand = Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        await env.FG_LOGS.put(`err:${sessionId}:${Date.now()}:${rand}`, body, { expirationTtl: LOG_TTL_SECONDS });
+    } catch (e) {
+        return _err(507, 'Log storage is full or over its daily limit');
+    }
+    return new Response('{"ok":true}', { headers: { ...CORS, 'Content-Type': 'application/json' } });
+}
+
 export default {
     async fetch(request, env) {
         const origin = request.headers.get('Origin') || '';
 
         if (new URL(request.url).pathname === '/log') return _storeLog(request, env);
+        if (new URL(request.url).pathname === '/errlog') return _storeErrLog(request, env);
 
         // ── CORS preflight ────────────────────────────────────────────────────
         if (request.method === 'OPTIONS') {
@@ -326,9 +353,13 @@ function _hostOk(target) {
 }
 
 async function _unlocked(request, env) {
-    const want = env && env.FG_PASS;
-    const got = request.headers.get('X-FG-Pass');
+    // FG_DEV_KEY / X-FG-Dev-Key; the pre-rename FG_PASS secret and X-FG-Pass header still work.
+    const want = env && (env.FG_DEV_KEY || env.FG_PASS);
+    const got = request.headers.get('X-FG-Dev-Key') || request.headers.get('X-FG-Pass');
     if (!want || !got) return false;
+    // Every key-bearing request spends from a per-IP budget BEFORE the comparison, so guessing the
+    // key online is capped at the rate limit (a wrong key and an over-budget right key look alike).
+    if (await _rateLimited(request, env, 'devkey')) return false;
     const enc = new TextEncoder();
     const [a, b] = await Promise.all([want, got].map(v => crypto.subtle.digest('SHA-256', enc.encode(v))));
     const x = new Uint8Array(a), y = new Uint8Array(b);

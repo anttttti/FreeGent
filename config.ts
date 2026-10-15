@@ -4,7 +4,7 @@ import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
-import { resolveProxy } from './proxy.js';
+import { resolveProxy, getDevKey } from './proxy.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -822,13 +822,13 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
 // Query the CF Worker /keys endpoint and cache which provider keys it has.
 // Called once on startup when a CF Worker URL is configured.
 let _cfKeysDiag: Record<string, any> = { loaded: false };
-// What the last /keys lookup saw, for exported chat logs (never includes the passphrase itself).
+// What the last /keys lookup saw, for exported chat logs (never includes the Developer key itself).
 export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKeysDiag }; }
 
 export async function loadCfWorkerKeys(): Promise<void> {
     const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
     let passSet = false;
-    try { passSet = !!localStorage.getItem('fg_pass'); } catch {}
+    try { passSet = !!getDevKey(); } catch {}
     _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
     if (!proxy) return;
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)

@@ -1,4 +1,5 @@
 import { escapeHtml, jsArg } from './html-escape.js';
+import { getDevKey, DEV_KEY_LS } from './proxy.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -259,28 +260,19 @@ function fillKeysFromText(text: string) {
     const box = document.getElementById('key-paste') as HTMLTextAreaElement | null;
     const found = findKeysInText(text);
     const labels = Object.keys(found).map(env => ENV_KEY_MAP[env].label);
-    const pass = text.trim();
-    if (!labels.length && pass.length >= 4 && pass.length <= 200 && !pass.includes('\n')) {
-        localStorage.setItem('fg_pass', pass);
-        if (box) { box.value = pass; _keyPasteLen = pass.length; }
-        if (status) status.textContent = 'Saved.';
-        (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
-        (window as any).renderMainModelList?.();
-        return;
-    }
     // Filling an empty field needs no question; replacing a working key with a different one does
     // (a log excerpt or another project's .env pasted by mistake would otherwise overwrite it).
     const replaced = Object.entries(found)
         .filter(([env, val]) => { const old = localStorage.getItem(ENV_KEY_MAP[env].ls); return !!old && old !== val; })
         .map(([env]) => ENV_KEY_MAP[env].label);
     if (replaced.length && !confirm(`This replaces the saved key for: ${replaced.join(', ')}. Continue?`)) {
-        if (box) { box.value = localStorage.getItem('fg_pass') ?? ''; _keyPasteLen = box.value.length; }
+        if (box) { box.value = ''; _keyPasteLen = 0; }
         if (status) status.textContent = 'Cancelled — no keys changed.';
         return;
     }
     if (labels.length) {
         applyFoundKeys(found);
-        if (box) { box.value = localStorage.getItem('fg_pass') ?? ''; _keyPasteLen = box.value.length; }  // don't leave keys sitting in plain text
+        if (box) { box.value = ''; _keyPasteLen = 0; }  // don't leave keys sitting in plain text
     }
     if (status) status.textContent = labels.length
         ? `✓ Filled ${labels.length}: ${labels.join(', ')}${replaced.length ? ` (replaced: ${replaced.join(', ')})` : ''}`
@@ -297,9 +289,13 @@ let _keyPasteLen = 0;
 };
 (window as any).fillKeysFromBox = function(box: HTMLTextAreaElement) {
     if (box.value.trim()) return fillKeysFromText(box.value);
-    if (localStorage.getItem('fg_pass') === null) return;
-    localStorage.removeItem('fg_pass');
     _keyPasteLen = 0;
+};
+// The Developer key field (end of API Credentials): unlocks the Worker's shared keys and turns on
+// developer logging. Empty removes it.
+(window as any).saveDevKey = function(input: HTMLInputElement) {
+    const v = input.value.trim();
+    try { if (v) localStorage.setItem(DEV_KEY_LS, v); else { localStorage.removeItem(DEV_KEY_LS); localStorage.removeItem('fg_pass'); } } catch {}
     (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     (window as any).renderMainModelList?.();
 };
@@ -380,8 +376,7 @@ function populateSettingsForm() {
         el.value = val;
         if (val) el.dataset.fgLoaded = '1';
     };
-    set('key-paste',      localStorage.getItem('fg_pass') ?? '');
-    _keyPasteLen = (localStorage.getItem('fg_pass') ?? '').length;
+    set('dev-key',        getDevKey());
     set('gemini-key',     getGeminiKey());
     set('groq-key',       getGroqKey());
     set('nvidia-key',     getNvidiaKey());
@@ -1128,7 +1123,7 @@ function _renderPriorityList(containerId, list) {
         }
     }
     const _addModels = getAllModels()
-        .filter(m => !list.includes(`${m.provider}|${m.model}`) && (!!localStorage.getItem('fg_pass') || _modelHasKey(m)))
+        .filter(m => !list.includes(`${m.provider}|${m.model}`) && (!!getDevKey() || _modelHasKey(m)))
         .sort((a, b) => `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`))
         .map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     html += `</div>

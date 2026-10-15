@@ -39,7 +39,9 @@ namespace_id = "1001"
 #   npx wrangler kv namespace create FG_LOGS
 # Read logs:  npx wrangler kv key list --binding FG_LOGS --remote
 #             npx wrangler kv key get log:<id> --binding FG_LOGS --remote
-# Until the binding exists, /log answers 503.
+# Developer-key sessions also write console errors/warnings here as err:<sessionId>:<time>:<rand>
+# (POST /errlog); a task chat log carries the same id as "devSession".
+# Until the binding exists, /log and /errlog answer 503.
 [[kv_namespaces]]
 binding = "FG_LOGS"
 id = "5cf3c4410d8c42e88c416fd7ff5e04b3"

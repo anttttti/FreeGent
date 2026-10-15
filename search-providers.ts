@@ -175,7 +175,7 @@ export async function performWebSearch(query: any): Promise<any> {
             // Wikipedia only (no Tavily/Brave configured) and nothing found: say so, or the model
             // retries many reworded queries against an index that can't answer news/events/local ones.
             if (name === 'Wikipedia' && !errors.length && candidates.length === 1 && !result.results?.length) {
-                return { ...result, note: 'No web search provider is available, so only Wikipedia was searched (encyclopedia articles, not current events or local info) and it found nothing. Do not retry with reworded queries. Tell the user live web search needs a Tavily or Brave key in Settings, or the shared-key passphrase pasted into the key box in Settings; or use fetch_url on a known page.' };
+                return { ...result, note: 'No web search provider is available, so only Wikipedia was searched (encyclopedia articles, not current events or local info) and it found nothing. Do not retry with reworded queries. Tell the user live web search needs a Tavily or Brave key in Settings, or the Developer key entered in Settings; or use fetch_url on a known page.' };
             }
             // Earlier providers failed and Wikipedia answered: say why, so the model/user can see it.
             if (errors.length) return { ...result, skipped_providers: errors };

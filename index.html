@@ -461,8 +461,11 @@
                                 <td><input class="settings-input" id="nous-key" type="password" placeholder="nsk-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://portal.nousresearch.com/" target="_blank" rel="noopener" title="Get a Nous Portal key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">HuggingFace Key</td>
                                 <td><input class="settings-input" id="hf-key" type="password" placeholder="hf_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener" title="Get a HuggingFace key">Get key &#8599;</a></td></tr>
+                            <tr><td class="settings-table-label">Developer key</td>
+                                <td><input class="settings-input" id="dev-key" type="password" autocomplete="off" placeholder="Secret key of your Cloudflare Worker" style="width:100%" onchange="saveDevKey(this)"></td><td></td></tr>
                         </tbody></table>
                         <p class="settings-hint" style="margin-top:6px">HuggingFace key enables FLUX / SDXL via HF Inference as a fallback for <code>generate_image</code> (Pollinations works without a key). Env var: <code>HF_API_KEY</code>.</p>
+                        <p class="settings-hint">Developer key: unlocks the Worker's shared provider keys. When filled, each finished or failed Task chat and every console error/warning is also sent to the Worker's logs, tagged with this session's ID.</p>
                     </div>
 
                     <!-- Media model selectors -->
