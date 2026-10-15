@@ -14,7 +14,8 @@ import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
-const JS_SANDBOX_TIMEOUT_MS = 120_000;
+const JS_SANDBOX_TIMEOUT_MS = 60_000;      // the sandbox is for short scripts; longer work belongs in bash/Python in the background
+const JS_SANDBOX_NOTICE_MS  = 10_000;      // after this long, say that Stop cancels it
 
 const _REPO_MAP_EXT = {
     js:'javascript', jsx:'javascript', mjs:'javascript', cjs:'javascript',
@@ -2300,8 +2301,15 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             // like bash and Python (exec-sandbox/js-fs.ts). Its writes and deletions apply even
             // when it throws, as they would in the shell.
             let run;
+            const _notice = onProgress ? setTimeout(() => {
+                try { onProgress(`JS is still running after ${JS_SANDBOX_NOTICE_MS / 1000} s — press Stop to cancel it (it is ended automatically after ${JS_SANDBOX_TIMEOUT_MS / 1000} s)`); } catch {}
+            }, JS_SANDBOX_NOTICE_MS) : null;
             try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS, undefined, activeAbortController?.signal); }
-            catch (e) { return { stdout: '', stderr: `JS sandbox: ${e.message ?? e}`, exit_code: 1 }; }
+            catch (e) {
+                const m = String(e.message ?? e);
+                return { stdout: '', stderr: `JS sandbox: ${m}${/timed out/.test(m) ? ' (an endless loop, or work that needs longer: run it as a background bash/Python job instead)' : ''}`, exit_code: 1 };
+            }
+            finally { if (_notice) clearTimeout(_notice); }
             for (const path of (run.deleted ?? []) as string[]) {
                 await agentDeleteFile(path).catch(() => {});
                 if (context?.staging) context.staging.set(path, null);

@@ -235,6 +235,21 @@ export function _creditProgress(g: RepeatGuard, resSig: string, ok: boolean): Re
 // Pass a shared garbledState = { count: 0 } object; reset it when the response is clean.
 // Does NOT handle the very-short / truncated-stream case — that requires per-loop fallback
 // switching logic and stays inline in each loop.
+// A long reply is a runaway only when it loops. Genuinely long answers (a full document, a long
+// listing) are accepted: a run-on loop repeats its chunks, a document does not. The hard cap
+// bounds what one reply may put into the history.
+export const LONG_TEXT_HARD_CAP = 400_000;
+export function _isLoopedLongText(text: string): boolean {
+    if (text.length > LONG_TEXT_HARD_CAP) return true;
+    const CH = 80;
+    const seen = new Set<string>();
+    let total = 0;
+    for (let i = 0; i + CH <= text.length; i += CH) { seen.add(text.slice(i, i + CH)); total++; }
+    // Repeats of a longer unit that is not a multiple of CH shift the grid, so also sample at an offset.
+    for (let i = 37; i + CH <= text.length; i += CH) { seen.add(text.slice(i, i + CH)); total++; }
+    return total > 0 && seen.size / total < 0.5;
+}
+
 export function _checkTextResponse(textContent: string, step: number, maxSteps: number,
                                    garbledState: { count: number } = { count: 0 }) {
     // On the final step the caller handles the response directly as-is; don't interfere.
@@ -249,10 +264,10 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
         truncated: textContent.slice(0, 100),
         nudge:     'Your last response appeared malformed (EOS token with no tool calls). The original task is re-injected below — continue with a tool call.'
     };
-    else if (textContent.length > 30_000) result = {
+    else if (textContent.length > 30_000 && _isLoopedLongText(textContent)) result = {
         action:    'runaway',
         truncated: textContent.slice(0, 2000) + `\n[…truncated: response was ${textContent.length.toLocaleString()} chars with no tool calls]`,
-        nudge:     'Your last response was very long but contained no tool calls. Please call a tool to get the information you need, or give a short final answer.'
+        nudge:     'Your last response was very long and repeated itself, with no tool calls. Please call a tool to get the information you need, or give a short final answer.'
     };
     else {
         // Detect low-entropy garbage responses. Two bands:
