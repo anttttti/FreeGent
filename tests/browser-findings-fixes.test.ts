@@ -22,3 +22,20 @@ describe('browser-tour fixes', () => {
         expect(src('init.ts')).toContain('_wasFocusedOnDown');
     });
 });
+
+describe('browser-tour fixes, low-severity round', () => {
+    it('the stop/send button keeps its aria-label in step with its state', () => {
+        expect(src('agent-core.ts')).toContain("'aria-label', enabled ? 'Send message' : 'Stop now'");
+    });
+    it('an HTML error body is reduced to its text', async () => {
+        const { _httpErrorFromResponse } = await import('../retry.ts');
+        const resp = new Response('<html><head><style>x{}</style></head><body><h1>502 Bad Gateway</h1><p>nginx</p></body></html>', { status: 502 });
+        const e: any = await _httpErrorFromResponse(resp);
+        expect(e.message).toBe('HTTP 502: 502 Bad Gateway nginx');
+    });
+    it('task slugs keep the base letters of accented titles', () => {
+        const slug = (t: string) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
+        expect(slug('Ünïcödé 日本語 🎉')).toBe('unicode');
+        expect(src('tasks.ts')).toContain("title.normalize('NFKD')");
+    });
+});

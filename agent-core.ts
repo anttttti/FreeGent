@@ -800,6 +800,7 @@ function setInputState(enabled: boolean): void {
             ? `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m0 0L5 12m7-7l7 7"/></svg>`
             : `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`;
         btn.title     = enabled ? 'Send (Enter)' : 'Stop now';
+        btn.setAttribute('aria-label', enabled ? 'Send message' : 'Stop now');
         btn.className = enabled ? 'send-btn send-btn-go' : 'send-btn send-btn-stop';
         btn.style.display = ''; // always show (stop always shown; send always shown for discoverability)
     }
