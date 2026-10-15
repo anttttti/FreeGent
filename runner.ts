@@ -55,6 +55,10 @@ async function _runnerTurn(prompt: string): Promise<any> {
 // Tasks whose start gate refused them this session (blocked dependency, rework limit): skipped by
 // _selectNextTask so Autopilot moves on instead of picking the same task again.
 const _runnerDeferred = new Set<string>();
+// What the user answered when the run paused for input, for the tasks that follow (each task gets a
+// fresh chat, so an answer given for one task is otherwise lost to the next). Cleared per run.
+const _runnerUserNotes: { task: string; question: string; answer: string }[] = [];
+const _runnerRetriedAfterAnswer = new Set<string>();
 
 function runnerStart() { _startRunner(false); }
 
@@ -185,6 +189,8 @@ async function _runLoop() {
     _runnerConsecutiveFails = 0;
     _runnerPendingSteer.length = 0;
     _runnerDeferred.clear();
+    _runnerUserNotes.length = 0;
+    _runnerRetriedAfterAnswer.clear();
     _updateRunnerUI();
 
     try {
@@ -229,9 +235,13 @@ async function _runLoop() {
             if (result.blocked) {
                 _runnerPaused      = true;
                 _runnerPauseReason = result.blockedReason || 'Worker blocked — needs input';
+                const _asked = _runnerPauseReason;
                 const userReply = await _waitForUnblock();
                 if (_runnerAbort) break;
-                if (userReply) await _runnerTurn(userReply);
+                if (userReply) {
+                    _runnerUserNotes.push({ task: String(task.fm.title || task.path), question: _asked.slice(0, 300), answer: userReply.slice(0, 500) });
+                    await _runnerTurn(userReply);
+                }
                 _runnerConsecutiveFails = 0;
                 // The follow-up may have finished the task the block was about: record that, then
                 // let the Run / Autopilot rule decide whether another task starts.
@@ -241,6 +251,12 @@ async function _runLoop() {
                         const last = _runnerSessionLog[_runnerSessionLog.length - 1];
                         if (last) { last.outcome = 'done'; last.reason = ''; }
                         _renderRunnerLog();
+                    } else if (userReply && !_declinesTask(userReply) && !_runnerRetriedAfterAnswer.has(task.path)) {
+                        // The answer may have been only part of what the task needed: give the task one
+                        // more episode, with the answers so far in its prompt, before later tasks run
+                        // without it (a blocked task is otherwise never picked again).
+                        _runnerRetriedAfterAnswer.add(task.path);
+                        await setTaskStatus(task.path, 'todo');
                     }
                 } catch {}
                 if (!_runnerAll) break;
@@ -283,6 +299,21 @@ async function _runLoop() {
         _updateRunnerUI();
         if (_runnerPriorChatId) switchToChat(_runnerPriorChatId).catch(() => {});
     }
+}
+
+// A reply that says the task should be skipped or that the user cannot supply what it needs: the
+// blocked task stays as it is instead of getting another episode.
+function _declinesTask(reply: string): boolean {
+    return /\b(skip|ignore|drop|forget|never ?mind|cancel|abandon|don'?t have|do not have|can'?t|cannot|unable|not available|no access)\b/i.test(reply);
+}
+
+// The user's answers given earlier in this run, as a prompt block ('' when there are none).
+function _userNotesBlock(): string {
+    if (!_runnerUserNotes.length) return '';
+    return 'The user replied to questions earlier in this run. Use any values they gave and do not ask for them again or invent others. ' +
+        'If a reply tells you to skip or drop a task, do not do it: mark that task failed with "skipped by the user". ' +
+        'Never mark a task done unless its work exists.\n' +
+        _runnerUserNotes.map(n => `- Asked while on "${n.task}": ${n.question}\n  User: ${n.answer}`).join('\n') + '\n\n';
 }
 
 function _selectNextTask(tasks: Task[]): Task | null {
@@ -422,7 +453,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         if (isContinuation) turn--;
         const prompt = isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
             : turn === 1
-            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\nWhen done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").`
+            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
         const _lastResult: any = await _runnerTurn(prompt);
