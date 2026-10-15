@@ -54,3 +54,16 @@ describe('cross-tab chat history', () => {
         expect(c).toContain("window.addEventListener('storage'");
     });
 });
+
+describe('empty reply and sandbox hint', () => {
+    it('interactive turns that end with no text show a note instead of an empty bubble', () => {
+        const s = src('agent-core.ts');
+        expect(s).toContain('_EMPTY_REPLY_NOTE');
+        expect(s.match(/placeholder\.finalize\(_uiFinalText\(finalText\)\)/g)?.length).toBe(4);
+    });
+    it('the JS sandbox hint no longer says there is no network access', () => {
+        const h = src('index.html');
+        expect(h).not.toContain('no network access');
+        expect(h).toContain('reaches public URLs');
+    });
+});

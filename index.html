@@ -532,7 +532,7 @@
                 <div class="settings-tab-panel" data-tab="code">
                     <div class="settings-section">
                         <span class="settings-label">JavaScript in Browser</span>
-                        <p class="settings-hint">Always active — no configuration needed. <code>execute_code(language="javascript")</code> runs in a browser sandbox with a virtual filesystem shim (<code>fs</code>, <code>path</code> modules). Files written via <code>fs.writeFileSync</code> sync back to the workspace automatically. Limitations: no npm, no DOM or canvas, no network access. For canvas/DOM work the AI can generate a self-contained HTML file instead.</p>
+                        <p class="settings-hint">Always active — no configuration needed. <code>execute_code(language="javascript")</code> runs in a browser sandbox with a virtual filesystem shim (<code>fs</code>, <code>path</code> modules). Files written via <code>fs.writeFileSync</code> sync back to the workspace automatically. Limitations: no npm packages, no DOM or canvas. <code>fetch()</code> reaches public URLs (directly when the site allows cross-origin requests, otherwise as a plain GET through the same proxy as fetch_url). For canvas/DOM work the AI can generate a self-contained HTML file instead.</p>
                     </div>
                     <div class="settings-section">
                         <span class="settings-label">Python in Browser (Pyodide)</span>

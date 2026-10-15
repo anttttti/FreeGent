@@ -627,7 +627,7 @@ async function rerunFromStep(btn: HTMLElement): Promise<void> {
     if (!mainAgentRole) setMainAgentRole('director');
     try {
         const finalText = await runTurn(null, placeholder, { toolFilterOverride: null });
-        placeholder.finalize(_doStripTerminal(finalText));
+        placeholder.finalize(_uiFinalText(finalText));
     } catch (err) {
         _handleTurnError(err, placeholder, 'agent');
     }
@@ -982,6 +982,10 @@ function _handleTurnError(err: any, placeholder: RenderAdapter, logTag: string):
 
 // Strip terminal escape sequences.
 const _doStripTerminal = (text: string) => _stripTerminal(text);
+// What the interactive view shows when a turn ends with no text at all. An empty bubble reads as a
+// broken page; the history (and headless callers) still get the empty string.
+const _EMPTY_REPLY_NOTE = '*(The model returned an empty reply. Try sending again, or switch model.)*';
+const _uiFinalText = (text: string) => { const t = _stripTerminal(text); return t && t.trim() ? t : _EMPTY_REPLY_NOTE; };
 
 // Fire-and-forget suggestion refresh. tag is used in the warning label.
 function _fireSuggestion(tag: string): void {
@@ -1379,7 +1383,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             : (_mediaOAIEndpoint ?? null);
         let finalText = await runTurn(_ep, placeholder, { toolFilterOverride: _mediaToolFilter });
 
-        placeholder.finalize(_doStripTerminal(finalText));
+        placeholder.finalize(_uiFinalText(finalText));
         _runCompleted = true;
     } catch (err) {
         // Roll back the user message pushed before the turn — failed/aborted turns
@@ -1450,7 +1454,7 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
     let _regenCompleted = false;
     try {
         const finalText = await runTurn(null, placeholder);
-        placeholder.finalize(_doStripTerminal(finalText));
+        placeholder.finalize(_uiFinalText(finalText));
         _regenCompleted = true;
     } catch (err) {
         _handleTurnError(err, placeholder, 'agent');
@@ -1647,7 +1651,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
     try {
         finalText = await runTurn(null, placeholder, { session: _s, forceToolCall, maxSteps, excludeTools });
         if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
-        placeholder.finalize(_doStripTerminal(finalText));
+        placeholder.finalize(_uiFinalText(finalText));
     } catch (err) {
         // Roll back the user message so the stale entry does not create consecutive user messages
         // in deriveMessages() on retry (a tombstone: content:null makes the projection skip it).
