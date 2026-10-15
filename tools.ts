@@ -452,7 +452,18 @@ function resolveToolApproval(allowed) {
     if (_currentApprovalResolve) { _currentApprovalResolve(allowed); _currentApprovalResolve = null; }
 }
 
+// Stop / New Chat: nothing may stay waiting behind an approval toast. A pending or queued approval that
+// is answered later would run its tool (and append its result) after the turn that asked had been cancelled.
+export function cancelPendingApprovals(): void {
+    const queued = _approvalQueue.splice(0);
+    for (const q of queued) q.resolve(false);
+    const toast = document.getElementById('tool-approval-toast');
+    if (toast) toast.style.display = 'none';
+    if (_currentApprovalResolve) { _currentApprovalResolve(false); _currentApprovalResolve = null; }
+}
+
 window.resolveToolApproval = resolveToolApproval;
+(window as any).cancelPendingApprovals = cancelPendingApprovals;
 
 const _APPROVAL_HIGH_RISK = new Set(['delete_file', 'execute_code']);
 
@@ -2499,6 +2510,16 @@ async function _handlePhantomAlias(name, args, context, onProgress?: (message:st
     }
     return { error: `Unknown tool: ${name}` };
 }
+// Settings → Tools turns a tool off by removing it from the schemas the model is offered. A model that
+// emits the call anyway (weak models do, as do repaired pseudo-calls) must not get it: the model-call
+// dispatch asks this before executing. Aliases resolve to their target tool first.
+export function isToolOffByUser(name: string): boolean {
+    const target = _PHANTOM_ALIASES[name]?.tool ?? name;
+    return typeof isToolActive === 'function' && typeof ALL_TOOL_NAMES !== 'undefined'
+        && (ALL_TOOL_NAMES as string[]).includes(target) && !isToolActive(target);
+}
+(window as any).isToolOffByUser = isToolOffByUser;
+
 export async function executeToolAsync(name, args, context = null, onProgress?: (message:string)=>void) {
     // Role tool-filter enforcement: reject calls to tools outside the role's allowed set.
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
@@ -2556,6 +2577,8 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         if (needsApproval && (!context || onHost || mcpRisk)) {
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
+            // Approved late: if the turn was stopped meanwhile, nothing may run.
+            if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
         }
     }
 

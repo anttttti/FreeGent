@@ -717,7 +717,7 @@ function renderModelCatalogTable() {
   </tbody></table>
   <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
     <button class="btn-save" onclick="addCustomModel()">Add</button>
-    <button class="ws-action-btn" onclick="(document.getElementById('add-custom-model-form') as HTMLInputElement).style.display='none'">Cancel</button>
+    <button class="ws-action-btn" onclick="document.getElementById('add-custom-model-form').style.display='none'">Cancel</button>
   </div>
 </div>`;
 

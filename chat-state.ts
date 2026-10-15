@@ -938,6 +938,10 @@ async function switchToChat(id, force = false) {
     if (agentStreaming || runnerOther) { await viewChatReadOnly(id); return; }
     closeChatViewer();
     if (!force) saveHistory();   // a forced reload replaces a stale copy: saving it would overwrite the newer one
+    if (!force) {
+        (window as any)._flushDraft?.();            // the composer text belongs to the chat being left
+        if (typeof clearImageAttachments === 'function') clearImageAttachments();   // so do its pending attachments
+    }
     activeChatId        = id;
     _loadingChatId      = id;
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);

@@ -20,6 +20,7 @@ declare global {
     // ── bridged by chat-attachments.ts ──
     var addImageAttachment: any;
     var clearImageAttachments: any;
+    var isToolOffByUser: any;
     var addFileAttachment: any;
     var hasPendingAttachments: () => boolean;
     var warnAttachmentSendBusy: () => void;

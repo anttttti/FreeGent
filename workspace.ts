@@ -804,6 +804,9 @@ async function readFileAsDataUrl(path) {
 // "/workspace/../etc") is refused rather than stored under a name like "../x".
 export function workspaceName(path: string): string {
     let p = String(path ?? '').trim();
+    // A Windows-style path ("C:\\x\\y.txt") is a path inside the workspace like any other, never a drive.
+    if (/^[A-Za-z]:[\\/]/.test(p)) p = p.slice(2);
+    p = p.replace(/\\/g, '/');
     if (p === '/workspace' || p.startsWith('/workspace/')) p = p.slice('/workspace'.length);
     const out: string[] = [];
     for (const seg of p.split('/')) {
@@ -876,6 +879,14 @@ async function _refuseDuplicateTask(path: string, content: any): Promise<void> {
     if (twin) throw new Error(`write: ${path} duplicates task "${twin.fm.title}" (${twin.path}) — continue that task instead of creating a copy`);
 }
 
+// Re-rendering the whole file list after every agent write made 1,500 writes take 150 s (O(n) each).
+// Agent writes ask for a render instead; at most one runs per quiet period.
+let _fileListRenderTimer: any = null;
+function _scheduleFileListRender() {
+    if (_fileListRenderTimer) return;
+    _fileListRenderTimer = setTimeout(() => { _fileListRenderTimer = null; renderFileList().catch(() => {}); }, 120);
+}
+
 export async function agentWriteFile(path, content, encoding = null) {
     if (_wa) return _wa.agentWriteFile(path, content, encoding);
     path = workspaceName(path);
@@ -904,7 +915,7 @@ export async function agentWriteFile(path, content, encoding = null) {
         }
         await writeWorkspaceFile(path, content, null, encoding);
     }
-    await renderFileList();
+    _scheduleFileListRender();
     if (path === 'AGENTS.md')       loadAgentsContext?.();
     if (path.startsWith('roles/'))  loadRoles?.();
     if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
@@ -2661,7 +2672,24 @@ async function _extractDocText(name, base64Content) {
 }
 
 
+// A project file is checked completely before anything is replaced: the restore clears the workspace
+// first, so a structure that fails halfway used to leave the user with neither project.
+export function validateProjectData(data: any): void {
+    if (!data || typeof data !== 'object') throw new Error('The file is not a project.');
+    if (data.workspace !== undefined && !Array.isArray(data.workspace))
+        throw new Error('The project\'s workspace must be a list of files.');
+    for (const [i, f] of (data.workspace || []).entries()) {
+        if (!f || typeof f !== 'object') throw new Error(`Workspace entry ${i + 1} is not a file.`);
+        if (typeof f.name !== 'string' || !f.name.trim()) throw new Error(`Workspace entry ${i + 1} has no file name.`);
+        if (typeof f.content !== 'string') throw new Error(`Workspace file "${f.name}" has no text content.`);
+        if (f.encoding != null && f.encoding !== 'base64') throw new Error(`Workspace file "${f.name}" has an unknown encoding.`);
+    }
+    if (data.chatData !== undefined && (data.chatData === null || typeof data.chatData !== 'object' || Array.isArray(data.chatData)))
+        throw new Error('The project\'s chat data is not valid.');
+}
+
 async function _restoreProjectData(data) {
+    validateProjectData(data);
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
     // this ensures settings survive the operation regardless.
