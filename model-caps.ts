@@ -443,7 +443,9 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
 
     // Format I-b — fenced bash/sh blocks as last resort when no tool call was recognized.
     // Models that fall back to narrating commands in code fences rather than using XML formats.
-    if (!tool_calls.length) {
+    // Not when the reply is a document shown to the user (```markdown / ```md … with nested
+    // fences, e.g. a README): its shell examples are content, and running them is wrong.
+    if (!tool_calls.length && !/```(?:markdown|md|text|txt)\b/i.test(cleaned)) {
         cleaned = cleaned.replace(
             /```(?:bash|sh|shell)\n([\s\S]*?)\n```/g,
             (_, code) => {
