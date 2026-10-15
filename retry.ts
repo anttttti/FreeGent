@@ -224,6 +224,8 @@ export function _isLocalEp(ep: any): boolean { return !!ep && (ep.provider === '
 export const SAME_ENDPOINT_WAIT_LIMIT_MS = 20 * 60_000;
 const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b/;
 export const CUSTOM_CLIENT_ERROR_ATTEMPTS = 3;
+// Attempts (with backoff) on an empty or cut-off reply when no other model is free to cycle to.
+export const EMPTY_REPLY_ATTEMPTS = 4;
 
 // Returns an onRetry callback for withRetry() in OAI-compatible contexts.
 // Handles 429s, server errors, and context overflow; rotates endpoints across all providers.
@@ -293,7 +295,15 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 onNote(`[${curKey}][${_kind}: cycling to ${next}]`);
                 return 0;
             }
-            return false; // pool exhausted — fall through with empty content
+            // Nowhere to cycle to: back off like any other transient failure (retryDelay: exponential, or the
+            // user's fixed delay), a few times, instead of re-sending at once. Past that, fall through.
+            // Output-cap and stalled-stream cut-offs are not "the provider returned nothing": they need the
+            // loop's nudge (shorter calls), so they leave withRetry at once.
+            if (!e.outputCapHit && !e.streamStalled && n + 1 < EMPTY_REPLY_ATTEMPTS) {
+                onNote(`[${curKey}][${e.isFiltered ? 'filtered' : 'empty or cut-off reply'}: retrying in ${fmtDelay(d)}]`);
+                return d;
+            }
+            return false; // still nothing — fall through with empty content
         }
         const is429 = _isRateLimit(e.message);
         const isErr = !is429 && _isServerError(e.message);
