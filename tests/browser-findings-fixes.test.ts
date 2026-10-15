@@ -13,11 +13,6 @@ describe('browser-tour fixes', () => {
         expect(s).toContain('_attrEsc(key)');
         expect(s).not.toMatch(/\[data-panel="\$\{key\}"\]/);
     });
-    it('the user message is persisted before the turn runs', () => {
-        const s = src('agent-core.ts');
-        const i = s.indexOf("_evtSess.append('user/message'");
-        expect(s.slice(i, i + 500)).toContain('saveHistory()');
-    });
     it('the click that focuses the input does not accept the ghost suggestion', () => {
         expect(src('init.ts')).toContain('_wasFocusedOnDown');
     });

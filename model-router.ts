@@ -19,6 +19,7 @@
 // Follows the step-validator/…/history pattern: ES module, exports, window bridge.
 
 import { isStaticHost } from './static-hosts.js';
+import { isCustomEndpoint } from './payload-builder.js';
 
 // ── Endpoint cooldown state ──────────────────────────────────────────────────
 // Shared by all LLM callers (main loops, compaction, workers).
@@ -130,7 +131,7 @@ export function recordCacheCapable(endpoint: any): void {
  *  provider+model pair. Returns false (unknown) until a real response confirms it. */
 export function isCacheCapable(endpoint: any): boolean {
     if (!endpoint) return false;
-    if (endpoint.provider === 'custom' || endpoint.provider === 'vllm') return true;
+    if (isCustomEndpoint(endpoint)) return true;
     const key = `${endpoint.provider}|${endpoint.model}`;
     return !!_cacheCapMap()[key];
 }
@@ -185,8 +186,7 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null): voi
     _endpointSuccessSinceCooldown.set(key, false); // reset; recordSuccess() will flip back on next hit
     // A user's own endpoint (custom / vLLM) has no shared quota to protect: back off exponentially
     // (capped at RATE_LIMIT_MAX_MS) so a persistent 429 never reads as "waiting 1.0h".
-    const _ownEndpoint = endpoint.provider === 'custom' || endpoint.provider === 'vllm';
-    if (!hadSuccess && !_ownEndpoint) {
+    if (!hadSuccess && !isCustomEndpoint(endpoint)) {
         _endpointCooldown.set(key, Date.now() + RATE_LIMIT_PENALTY_MS);
         return;
     }
@@ -201,7 +201,7 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null): voi
 export function _markFlatCooldown(endpoint: any, exactMs: number | null = null): void {
     if (!endpoint) return;
     const key = `${endpoint.provider}|${endpoint.model}`;
-    const base = (endpoint.provider === 'custom' || endpoint.provider === 'vllm') ? 5_000 : RATE_LIMIT_COOLDOWN_MS();
+    const base = isCustomEndpoint(endpoint) ? 5_000 : RATE_LIMIT_COOLDOWN_MS();
     _endpointCooldown.set(key, Date.now() + (exactMs != null ? Math.max(exactMs, base) : base));
 }
 // Like _markFlatCooldown but sets exactly `ms` with no rate-limit-cooldown floor.

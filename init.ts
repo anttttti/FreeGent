@@ -788,70 +788,69 @@ Object.assign(window, {
 });
 
 // ── Modal dialogs: role, labels, focus trap, Escape ────────────────────────
-// Every dialog is a `.fg-modal-overlay` appended to <body>. One observer makes them accessible instead of
-// each creator doing it: dialog role + name, labelled fields, focus moved in (and restored on close),
-// Tab kept inside, Escape = the dialog's own Close/Cancel (so cleanup handlers run).
+// Every dialog is a `.fg-modal-overlay` appended to <body>. One observer and one key handler make them
+// accessible instead of each creator doing it: dialog role + name, labelled fields, focus moved in (and
+// restored to the opener on close), Tab kept inside, Escape = the dialog's own Close/Cancel (so cleanup
+// handlers run).
+const _FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const _modalOpeners = new Map<HTMLElement, HTMLElement | null>();
+
 function _enhanceModal(ov: HTMLElement) {
-    if (ov.dataset.a11y) return;
-    ov.dataset.a11y = '1';
+    if (_modalOpeners.has(ov)) return;
+    _modalOpeners.set(ov, document.activeElement as HTMLElement | null);
     const box = (ov.querySelector('.fg-modal') as HTMLElement) || ov;
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
     const title = ov.querySelector('.fg-modal-title') as HTMLElement | null;
     if (title) {
-        if (!title.id) title.id = `fg-modal-title-${Math.random().toString(36).slice(2, 8)}`;
+        if (!title.id) title.id = `fg-modal-title-${_modalOpeners.size}-${Date.now().toString(36)}`;
         box.setAttribute('aria-labelledby', title.id);
     }
-    ov.querySelectorAll('.fg-modal-close').forEach(b => {
-        if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', 'Close');
-    });
+    ov.querySelectorAll('.fg-modal-close').forEach(b => { if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', 'Close'); });
     // Label fields from the first cell of their table row (the layout every form dialog uses).
-    ov.querySelectorAll('input, select, textarea').forEach(f => {
-        const el = f as HTMLInputElement;
-        if (el.type === 'hidden' || el.id && ov.querySelector(`label[for="${el.id}"]`)) return;
-        if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
-        const row = el.closest('tr');
-        const text = row?.querySelector('td')?.textContent?.trim();
-        const name = text || el.getAttribute('placeholder') || el.getAttribute('title');
+    ov.querySelectorAll<HTMLInputElement>('input, select, textarea').forEach(el => {
+        if (el.type === 'hidden' || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
+        if (el.id && ov.querySelector(`label[for="${el.id}"]`)) return;
+        const name = el.closest('tr')?.querySelector('td')?.textContent?.trim() || el.getAttribute('placeholder') || el.getAttribute('title');
         if (name) el.setAttribute('aria-label', name);
     });
-    const opener = document.activeElement as HTMLElement | null;
-    const focusable = () => Array.from(ov.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
-        .filter(e => e.offsetParent !== null || e === document.activeElement);
-    if (!ov.contains(document.activeElement)) {
-        const first = ov.querySelector<HTMLElement>('input:not([type=hidden]):not([type=checkbox]), textarea, select') || focusable()[0];
-        first?.focus();
-    }
-    const onKey = (e: KeyboardEvent) => {
-        if (!ov.isConnected) { document.removeEventListener('keydown', onKey, true); return; }
-        // Only the topmost dialog reacts.
-        const all = document.querySelectorAll('.fg-modal-overlay');
-        if (all[all.length - 1] !== ov) return;
-        if (e.key === 'Escape') {
-            e.preventDefault(); e.stopPropagation();
-            const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel');
-            if (btn) btn.click(); else ov.remove();
-        } else if (e.key === 'Tab') {
-            const f = focusable();
-            if (!f.length) return;
-            const i = f.indexOf(document.activeElement as HTMLElement);
-            if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
-            else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
-        }
-    };
-    document.addEventListener('keydown', onKey, true);
-    new MutationObserver((_m, obs) => {
-        if (!ov.isConnected) { obs.disconnect(); document.removeEventListener('keydown', onKey, true); try { opener?.focus?.(); } catch {} }
-    }).observe(document.body, { childList: true });
+    if (!ov.contains(document.activeElement))
+        (ov.querySelector<HTMLElement>('input:not([type=hidden]):not([type=checkbox]), textarea, select')
+            || ov.querySelector<HTMLElement>(_FOCUSABLE))?.focus();
 }
+
+function _modalKeydown(e: KeyboardEvent) {
+    const all = document.querySelectorAll<HTMLElement>('.fg-modal-overlay');
+    const ov = all[all.length - 1];          // only the topmost dialog reacts
+    if (!ov) return;
+    if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel');
+        if (btn) btn.click(); else ov.remove();
+    } else if (e.key === 'Tab') {
+        const f = Array.from(ov.querySelectorAll<HTMLElement>(_FOCUSABLE)).filter(x => x.offsetParent !== null || x === document.activeElement);
+        if (!f.length) return;
+        const i = f.indexOf(document.activeElement as HTMLElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+    }
+}
+
 function initModalA11y() {
     document.querySelectorAll<HTMLElement>('.fg-modal-overlay').forEach(_enhanceModal);
+    document.addEventListener('keydown', _modalKeydown, true);
     new MutationObserver(muts => {
-        for (const m of muts) m.addedNodes.forEach(n => {
-            if (!(n instanceof HTMLElement)) return;
-            if (n.classList.contains('fg-modal-overlay')) _enhanceModal(n);
-            else n.querySelectorAll?.('.fg-modal-overlay').forEach(o => _enhanceModal(o as HTMLElement));
-        });
+        for (const m of muts) {
+            m.addedNodes.forEach(n => {
+                if (!(n instanceof HTMLElement)) return;
+                if (n.classList.contains('fg-modal-overlay')) _enhanceModal(n);
+                else n.querySelectorAll?.('.fg-modal-overlay').forEach(o => _enhanceModal(o as HTMLElement));
+            });
+            m.removedNodes.forEach(n => {
+                if (!(n instanceof HTMLElement) || !_modalOpeners.has(n)) return;
+                const opener = _modalOpeners.get(n); _modalOpeners.delete(n);
+                try { opener?.focus?.(); } catch {}
+            });
+        }
     }).observe(document.body, { childList: true });
 }

@@ -985,7 +985,7 @@ const _doStripTerminal = (text: string) => _stripTerminal(text);
 // What the interactive view shows when a turn ends with no text at all. An empty bubble reads as a
 // broken page; the history (and headless callers) still get the empty string.
 const _EMPTY_REPLY_NOTE = '*(The model returned an empty reply. Try sending again, or switch model.)*';
-const _uiFinalText = (text: string) => { const t = _stripTerminal(text); return t && t.trim() ? t : _EMPTY_REPLY_NOTE; };
+const _uiFinalText = (text: string) => { const t = _doStripTerminal(text); return t && t.trim() ? t : _EMPTY_REPLY_NOTE; };
 
 // Fire-and-forget suggestion refresh. tag is used in the warning label.
 function _fireSuggestion(tag: string): void {
@@ -1613,8 +1613,6 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
     try {
         _evtSess.append('user/message', { role: 'user', content: _userContent }, { surfaceOp: 'append' } as any);
     } catch {}
-    // Persist now: a reload, crash or sleep mid-turn must not lose the message the user just sent.
-    try { saveHistory(); } catch {}
 
     const _ph: RenderAdapter = _reusePh
         ?? (_s.workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { _checkTextResponse, _isLoopedLongText, LONG_TEXT_HARD_CAP } from '../detectors.ts';
+import { _checkTextResponse, LONG_TEXT_HARD_CAP } from '../detectors.ts';
 import { readFileSync } from 'fs';
 
 const doc = (n: number) => Array.from({ length: n }, (_, i) => `Section ${i}: ${(i * 2654435761 % 1e9).toString(36)} covers ${i % 97} topics in region ${(i * 31) % 1013}.`).join('\n\n');
@@ -13,15 +13,14 @@ describe('long text replies', () => {
         const unit = 'The same sentence repeats again and again without end. ';
         const t = unit.repeat(1200);
         expect(t.length).toBeGreaterThan(30_000);
-        expect(_isLoopedLongText(t)).toBe(true);
         expect(_checkTextResponse(t, 1, 50)?.action).toBe('runaway');
     });
     it('a unit that is not a multiple of the sampling grid is still caught', () => {
         const t = 'abcdefghij klmnopqrs tuvwxyz 0123456789 '.repeat(1000);
-        expect(_isLoopedLongText(t)).toBe(true);
+        expect(_checkTextResponse(t, 1, 50)?.action).toBe('runaway');
     });
     it('anything past the hard cap is refused', () => {
-        expect(_isLoopedLongText(doc(8000).padEnd(LONG_TEXT_HARD_CAP + 1, 'x'))).toBe(true);
+        expect(_checkTextResponse(doc(8000).padEnd(LONG_TEXT_HARD_CAP + 1, 'x'), 1, 50)?.action).toBe('runaway');
     });
 });
 
