@@ -135,12 +135,15 @@ async function _updateLedgerRow(taskPath, newStatus) {
         const archiveSplit = ledger.indexOf('\n## Archive');
         const mainPart    = archiveSplit >= 0 ? ledger.slice(0, archiveSplit) : ledger;
         const archivePart = archiveSplit >= 0 ? ledger.slice(archiveSplit)    : '';
-        const updated = mainPart.replace(
-            new RegExp(`^(\\|\\s*${id}\\s*\\|\\s*)\\S[^|]*(\\|)`, 'm'),
-            (_, pre, post) => `${pre}${newStatus.padEnd(12)}${post}`
-        );
-        if (updated !== mainPart) {
-            await agentWriteFile(ledgerPath, updated + archivePart);
+        const rowRe = new RegExp(`^(\\|\\s*${id}\\s*\\|\\s*)\\S[^|]*(\\|)`, 'm');
+        // A row that already carries this status is done: the status is written once by the lifecycle
+        // engine and again by update_task_status, and the second call used to read as "no row".
+        const row = rowRe.exec(mainPart);
+        if (row) {
+            const current = new RegExp(`^\\|\\s*${id}\\s*\\|\\s*([^|]*?)\\s*\\|`, 'm').exec(mainPart)?.[1];
+            if (current === newStatus) return;
+            const updated = mainPart.replace(rowRe, (_, pre, post) => `${pre}${newStatus.padEnd(12)}${post}`);
+            if (updated !== mainPart) await agentWriteFile(ledgerPath, updated + archivePart);
             return;
         }
         console.warn(`[QA] _updateLedgerRow: no row found for ID ${id} in "${ledgerPath}"`);
