@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,9 +7,9 @@ import { spawnSync } from 'node:child_process';
 function runFixture(checks: object, entries: object[], stdout: string, llm?: string, files: Record<string, string> = {}, caseOverrides: object = {}, extraArgs: string[] = [], childResult: object = {}) {
     const root = mkdtempSync(join(tmpdir(), 'fg-smoke-test-'));
     try {
-        const smoke = join(root, 'smoke');
-        mkdirSync(smoke);
-        copyFileSync(resolve('smoke/run.js'), join(smoke, 'run.mjs'));
+        const smoke = join(root, 'bench', 'smoke');
+        mkdirSync(smoke, { recursive: true });
+        copyFileSync(resolve('bench/smoke/run.js'), join(smoke, 'run.mjs'));
         writeFileSync(join(smoke, 'cases.jsonl'), JSON.stringify({
             id: 'fixture', group: 'basic', desc: 'Recorded response', task: 'Answer the question.', checks, ...caseOverrides,
         }) + '\n');
@@ -41,7 +41,7 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
             ...(llm ? ['--llm', llm] : []),
             ...extraArgs,
         ], { encoding: 'utf8', env: { ...process.env, FREEGENT_LLM: '', NODE_OPTIONS: '' } });
-        const logDir = join(smoke, 'logs');
+        const logDir = join(root, 'bench', 'logs', 'smoke');
         const logName = readdirSync(logDir).find(name => name.startsWith('smoke-'))!;
         return {
             exit: result.status,
@@ -54,9 +54,10 @@ function runFixture(checks: object, entries: object[], stdout: string, llm?: str
     }
 }
 
-describe('smoke runner', () => {
+// The smoke tests live in the bench repo (bench/smoke); without that checkout there is nothing to test.
+describe.skipIf(!existsSync(resolve('bench/smoke/run.js')))('smoke runner', () => {
     it('keeps the refusal case free of host access so it is deterministic, and still rejects fabricated success', () => {
-        const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const cases = readFileSync(resolve('bench/smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const refusal = cases.find(c => c.id === 's49-graceful-refusal');
         // The model must have no way to find a mail path on the host or network (it used to probe a
         // local service for two minutes and time out), but the task wording stays the original one.
@@ -111,7 +112,7 @@ describe('smoke runner', () => {
     });
 
     it('accepts the basic file-write case through bash and rejects a missing or incorrect file', () => {
-        const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const cases = readFileSync(resolve('bench/smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const checks = cases.find(c => c.id === 's03-write').checks;
         const entries = [{ step: 0, response: '', toolCalls: [{ name: 'execute_code', args: {} }] }];
         const good = runFixture(checks, entries, 'Created smoke-out.txt.', undefined, { 'smoke-out.txt': 'smoke test ok' });
@@ -127,7 +128,7 @@ describe('smoke runner', () => {
     });
 
     it('opts the replace tool-coverage case into its required tool without overriding the model', () => {
-        const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const cases = readFileSync(resolve('bench/smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const replaceCase = cases.find(c => c.id === 's17-replace-file');
         const content = 'name=app\nversion=2\nenv=prod';
         const entries = [{ step: 0, response: '', toolCalls: [{ name: 'replace_in_file', args: {} }] }];
@@ -163,7 +164,7 @@ describe('smoke runner', () => {
     });
 
     it('accepts an empty-input bug explanation through either prose or the exact reproducer', () => {
-        const cases = readFileSync(resolve('smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const cases = readFileSync(resolve('bench/smoke/cases.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const bugCase = cases.find(c => c.id === 's41-proactive-bugfind');
         const entries = [{ step: 0, toolCalls: [{ name: 'read_file' }] }];
         for (const answer of ['Empty input causes division by zero.', 'average([]) raises ZeroDivisionError.']) {
