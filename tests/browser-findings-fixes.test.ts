@@ -39,3 +39,18 @@ describe('browser-tour fixes, low-severity round', () => {
         expect(src('tasks.ts')).toContain("title.normalize('NFKD')");
     });
 });
+
+describe('cross-tab chat history', () => {
+    it('the interactive send persists the message right after it enters history', () => {
+        const s = src('agent-core.ts');
+        const i = s.indexOf('_pushHistoryMessage(provider, _mediaGeminiModel');
+        expect(s.slice(i, i + 400)).toContain('saveHistory()');
+    });
+    it('a send and New Chat take the other tab\'s messages instead of overwriting them', () => {
+        const a = src('agent-core.ts'), c = src('chat-state.ts');
+        expect(a).toContain('reloadChatIfChangedElsewhere()');
+        expect(a).toContain('chatChangedElsewhere()');
+        expect(c).toContain('if (!force) saveHistory();');
+        expect(c).toContain("window.addEventListener('storage'");
+    });
+});
