@@ -944,7 +944,15 @@ function saveWorkerModel(v) { localStorage.setItem(KEYS.WORKER_MODEL, v ?? ''); 
 
 // 'none'              = all utility LLM calls are disabled (no title gen, no suggestions).
 // 'provider|model'    = use that specific model.
-function getUtilityModel() { return ls(KEYS.UTILITY_MODEL, 'google|gemma-4-26b-a4b-it'); }
+function getUtilityModel() {
+    const saved = ls(KEYS.UTILITY_MODEL, '');
+    if (saved) return saved;
+    // Not chosen by the user. When the main model is a custom endpoint (a local vLLM / Ollama), keep
+    // utility calls on it: the hosted default would send file names and prompts to a provider the user
+    // chose not to use, and fail without a key for it.
+    try { const first = getActiveMainModelList()[0]; if (typeof first === 'string' && first.startsWith('custom|')) return first; } catch {}
+    return 'google|gemma-4-26b-a4b-it';
+}
 function saveUtilityModel(v) { localStorage.setItem(KEYS.UTILITY_MODEL, v ?? ''); }
 function isUtilityDisabled() { return getUtilityModel() === 'none'; }
 

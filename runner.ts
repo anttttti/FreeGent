@@ -453,7 +453,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         if (isContinuation) turn--;
         const prompt = isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
             : turn === 1
-            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").`
+            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").\nIf you need a value or decision only the user can give (a credential, a choice, a missing fact), do not guess or invent it: finish your reply with a line "BLOCKED: <your question for the user, one sentence>" — the user sees that text and can answer.`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
         const _lastResult: any = await _runnerTurn(prompt);
@@ -657,6 +657,8 @@ function _updateRunnerUI() {
     // Auto-expand runner zone when loop becomes active; don't auto-collapse on idle
     // so the session log stays visible after a run.
     if (_runnerRunning) toggleRunnerZone(true);
+    // Paused for the user: the answer goes in the reply box, so put the cursor there.
+    if (paused) { try { (document.getElementById('runner-unblock-input') as HTMLTextAreaElement | null)?.focus(); } catch {} }
 }
 
 export function _updateRunnerCurrentTask(task: Task | null): void {
@@ -730,11 +732,11 @@ function toggleRunnerZone(forceExpand?: boolean): void {
     const zone = document.getElementById('runner-zone');
     const btn  = document.getElementById('runner-zone-toggle');
     if (!zone) return;
-    const collapsed = forceExpand === true ? false
-                    : forceExpand === false ? true
-                    : zone.classList.contains('collapsed');
-    zone.classList.toggle('collapsed', !collapsed);
-    if (btn) btn.innerHTML = collapsed ? '&#9650;' : '&#9660;';
+    // true = open, false = close, omitted = flip. (The forced branches were inverted: the call that
+    // auto-opens the zone while the loop runs collapsed it, hiding the reply box at a pause.)
+    const expand = forceExpand ?? zone.classList.contains('collapsed');
+    zone.classList.toggle('collapsed', !expand);
+    if (btn) btn.innerHTML = expand ? '&#9650;' : '&#9660;';
 }
 
 function initRunner() {
