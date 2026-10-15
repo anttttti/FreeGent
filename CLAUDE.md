@@ -43,5 +43,14 @@ scripts/fetch-logs.sh            # download logs not yet fetched/reviewed, print
 scripts/fetch-logs.sh pending    # downloaded but not yet reviewed
 scripts/fetch-logs.sh mark <id>… # or `mark --all`, once reviewed (so they're skipped next time)
 ```
+Sessions that have a Developer key saved (Settings → API Credentials) also upload: console errors/warnings
+(`POST /errlog`, KV keys `err:<sessionId>:…`) and the chat of each finished/failed/blocked Autopilot task
+(`POST /log`, field `devSession`). The `sessionId` / `devSession` value joins the two streams. Turn a
+reproducible failure into a unit test or a `bench/sim` scenario (see `bench/BENCHMARKS.md` → "What tests what").
 Logs and the reviewed list live outside the repo (`~/.local/share/freegent/logs/`,
 `~/.config/freegent/reviewed-logs.txt`) because they contain users' chats. Never copy them into the repo.
+
+## Evaluation and smoke tests
+
+Smoke tests (`node bench/smoke/run.js`), simulations (`node bench/sim/sim.mjs`) and benchmarks live in the
+`bench/` repo; `bench/BENCHMARKS.md` ("What tests what") says which to use when. Unit tests: `npx vitest run`.
