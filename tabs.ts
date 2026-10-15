@@ -113,6 +113,16 @@ function openFileTab(name) {
 
     async function doSave(content) {
         try {
+            // Saving a buffer must not silently undo a newer write (the agent's, or another tab's): when the
+            // stored file no longer matches what this tab opened, the user decides.
+            const current = await agentReadFile(name).catch(() => null);
+            if (typeof current === 'string' && current !== ft.savedContent && current !== content) {
+                if (!confirm(`"${name}" was changed since you opened it (by the agent or another tab).\n\nOK overwrites it with the version in this editor; Cancel keeps the newer file and leaves your edits in the editor.`)) {
+                    saveBtn.textContent = '⚠ File changed';
+                    saveBtn.title = 'The file changed since this tab opened it. Copy your edits if you need them, then reopen the file.';
+                    return;
+                }
+            }
             await agentWriteFile(name, content);
             ft.savedContent = content;
             saveBtn.textContent = '✓ Saved';
@@ -1022,6 +1032,16 @@ function scheduleArtifactRefresh(changedName = '') {
     }, 800);
 }
 
+// The agent (or any tool) wrote a workspace file. A clean editor shows the new text; an editor with unsaved
+// edits keeps them and says the file changed underneath (Save then asks before overwriting).
+function notifyAgentFileWritten(path: string, content: string) {
+    const ft = fileTabs.get(path);
+    if (!ft?.editor) return;
+    if (ft.editor.state.doc.toString() === ft.savedContent) { notifyLocalFileChanged(path, content); return; }
+    const saveBtn = ft.panel.querySelector('.file-save-btn');
+    if (saveBtn) { saveBtn.textContent = '⚠ File changed'; saveBtn.title = 'The agent changed this file while you were editing it. Save asks before overwriting.'; }
+}
+
 function notifyLocalFileChanged(fullPath, content) {
     scheduleArtifactRefresh(fullPath.replace(/^local\//, ''));
     const ft = fileTabs.get(fullPath);
@@ -1077,4 +1097,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });

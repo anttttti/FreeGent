@@ -1838,11 +1838,15 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     return await _gracefulSynthesis(`the model kept returning empty or cut-off replies (${e.truncReason ?? 'truncated'})`, '');
                 continue;
             }
-            const _is429 = _isRateLimit(e.message);
+            const _is429 = _isRateLimit(e.message, activeEndpoint ?? _defaultEndpoint());
             const _isErr = _isServerError(e.message);
             // Permanent configuration errors (model not found, no access) must not re-enter
             // the retry cycle — fall through to throw so the task fails fast with a clear message.
-            const _isPermanent = /does not exist|you do not have access|model not found|no such model/i.test(e.message || '');
+            // A custom/local endpoint that has answered 401/403/404 (retry.ts already gave it
+            // CUSTOM_CLIENT_ERROR_ATTEMPTS tries) is refusing the key, the route or the model: another
+            // step gets the same answer. Say so, instead of a stack of "Working" steps with no text.
+            const _isPermanent = /does not exist|you do not have access|model not found|no such model/i.test(e.message || '')
+                || (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP (?:401|403|404)\b/.test(e.message || ''));
             if (_forceCompact && parseContextOverflow(e) !== null) { thinkTask.abort(); continue; }
             const _oEp = activeEndpoint ?? _defaultEndpoint();
             if (_isPermanent) throw e;

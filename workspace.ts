@@ -916,6 +916,7 @@ export async function agentWriteFile(path, content, encoding = null) {
         await writeWorkspaceFile(path, content, null, encoding);
     }
     _scheduleFileListRender();
+    if (typeof content === 'string' && !encoding) (window as any).notifyAgentFileWritten?.(path, content);   // open editor tabs
     if (path === 'AGENTS.md')       loadAgentsContext?.();
     if (path.startsWith('roles/'))  loadRoles?.();
     if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
