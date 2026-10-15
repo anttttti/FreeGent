@@ -859,9 +859,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 getEp: () => endpoint ?? oaiEndpoint(),
                 setEp: ep => { endpoint = ep; taskHandle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`)); },
                 forWorker: explicitModel,
-                onNote: msg => { console.error(`[${noteTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
+                onNote: msg => { console.warn(`[${noteTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); },
                 ...extra,
-            }), msg => { console.error(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
+            }), msg => { console.warn(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
             100,
             () => isCustomEndpoint(endpoint ?? oaiEndpoint()));
 
@@ -907,7 +907,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 // evtSession uses a fake AgentSession shape (only _session and _evtTurn needed).
                 const _wEvtSessProxy = _wSession ? { _session: _wSession, _evtTurn: _wEvtTurn } as any : null;
                 message = await _workerRetry(
-                    () => { console.error(`[worker:${_wRole}:step${step}] calling callOAI attempt=${_callAttempt++} ep=${(endpoint??oaiEndpoint()).provider}|${(endpoint??oaiEndpoint()).model} histLen=${localOH.length}`); return callOAI((c, t) => taskHandle.append(c, t),
+                    () => { console.log(`[worker:${_wRole}:step${step}] calling callOAI attempt=${_callAttempt++} ep=${(endpoint??oaiEndpoint()).provider}|${(endpoint??oaiEndpoint()).model} histLen=${localOH.length}`); return callOAI((c, t) => taskHandle.append(c, t),
                         p => {
                             taskHandle.setRequest?.(JSON.stringify(p, null, 2));
                             _ownRequest = { system: p.messages[0]?.content ?? '', tools: p.tools ?? null, messages: p.messages.slice(1) };
@@ -940,7 +940,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens, cachedTokens: _u?.prompt_tokens_details?.cached_tokens ?? 0 });
                 _workerStepsThisRun++;
                 _workerInputThisRun += Number(_u?.prompt_tokens) || 0;
-                console.error(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
+                console.log(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
 
@@ -1000,11 +1000,11 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                     const _reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
                     const _recent = summarizeRecentToolCalls(localOH);
                     const _fallback = `${_reasoning ? `${_reasoning.slice(-4000)}\n\n` : ''}Last tool calls:\n${_recent}\n\nSTATUS: partial — the worker ended without writing a report`;
-                    console.error(`[worker:${_wRole}:step${step}] empty final message after nudge, returning ${_reasoning ? 'reasoning' : 'tool-call'} fallback`);
+                    console.warn(`[worker:${_wRole}:step${step}] empty final message after nudge, returning ${_reasoning ? 'reasoning' : 'tool-call'} fallback`);
                     _wSessionClose({ kind: 'completed' });
                     return { output: _fallback, toolCalls: _wToolCalls };
                 }
-                console.error(`[worker:${_wRole}:step${step}] no tool calls, returning text`);
+                console.log(`[worker:${_wRole}:step${step}] no tool calls, returning text`);
                 _wSessionClose({ kind: 'completed' });
                 return { output: text, toolCalls: _wToolCalls };
             }
@@ -1479,7 +1479,7 @@ async function executeWorkers(args: any): Promise<any> {
     // validate that the name is a known/registered role. rolesRegistry.has() is the correct check.
     agents = agents.map(a => {
         if (!a.role || (rolesRegistry.has(a.role) && isRoleEnabled(a.role))) return a;
-        console.error(`[executeWorkers] agent ${a.id} has unknown/disabled role "${a.role}" — falling back to director`);
+        console.warn(`[executeWorkers] agent ${a.id} has unknown/disabled role "${a.role}" — falling back to director`);
         return { ...a, role: 'director' };
     });
 
@@ -1498,15 +1498,15 @@ async function executeWorkers(args: any): Promise<any> {
     const _activePool = new Set(getActiveMainModelList());
     agents = agents.map(a => {
         if (!a.model || _activePool.has(a.model)) return a;
-        console.error(`[executeWorkers] agent ${a.id} requested unavailable model ${a.model} — falling back to default`);
+        console.warn(`[executeWorkers] agent ${a.id} requested unavailable model ${a.model} — falling back to default`);
         const { model: _m, ...rest } = a;
         return rest;
     });
 
     // Sub-worker calls reuse the parent's snapshot so they share the same consistent view.
-    console.error(`[executeWorkers] starting ${agents.length} agents: ${agents.map(a=>a.id).join(',')}`);
+    console.log(`[executeWorkers] starting ${agents.length} agents: ${agents.map(a=>a.id).join(',')}`);
     const snapshot = args._parentSnapshot || await takeWorkspaceSnapshot();
-    console.error(`[executeWorkers] snapshot taken (${snapshot.size} files), launching workers`);
+    console.log(`[executeWorkers] snapshot taken (${snapshot.size} files), launching workers`);
     const labels   = agents.map(a => a.role ? `worker:${a.id}:${a.role}` : `worker:${a.id}`);
 
     // activePlaceholder may be null when executeWorkers is called from a background/post-turn
