@@ -274,6 +274,16 @@ function fillKeysFromText(text: string) {
         applyFoundKeys(found);
         if (box) { box.value = ''; _keyPasteLen = 0; }  // don't leave keys sitting in plain text
     }
+    // One short line that is not a provider key is most likely the Worker's Developer key (this box
+    // used to take it): do not leave it sitting in plain text here, and say where it goes.
+    const t = text.trim();
+    const looksLikeDevKey = !labels.length && t.length >= 4 && t.length <= 200 && !t.includes('\n') && !t.includes('=');
+    if (looksLikeDevKey) {
+        if (box) { box.value = ''; _keyPasteLen = 0; }
+        if (status) status.textContent = 'Not a provider API key. A Developer key goes in the "Developer key" field below.';
+        try { (document.getElementById('dev-key') as HTMLInputElement | null)?.focus(); } catch {}
+        return;
+    }
     if (status) status.textContent = labels.length
         ? `✓ Filled ${labels.length}: ${labels.join(', ')}${replaced.length ? ` (replaced: ${replaced.join(', ')})` : ''}`
         : 'No recognised keys found.';
