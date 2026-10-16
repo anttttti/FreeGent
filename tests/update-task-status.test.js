@@ -62,6 +62,14 @@ describe('update_task_status', () => {
         expect(files.get('tasks/007.md')).toMatch(/^status: in-progress$/m);
     });
 
+    it('refuses a file that is not a task and leaves it untouched', async () => {
+        files.set('config.json', '{"port": 1}\n');
+        const res = await W.executeToolAsync('update_task_status',
+            { path: 'config.json', status: 'done', log_entry: 'x' }, null);
+        expect(res.error).toMatch(/not a task file/);
+        expect(files.get('config.json')).toBe('{"port": 1}\n');
+    });
+
     it('appends a log entry when one is supplied', async () => {
         files.set('tasks/007.md', TASK);
         await W.executeToolAsync('update_task_status',
