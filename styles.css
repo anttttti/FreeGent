@@ -2005,3 +2005,10 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
     #chat-name-display { display: inline-block; min-height: 32px; line-height: 32px; }
 }
 @media (pointer: coarse) { .rail-btn { min-height: 40px; } }
+
+/* Phone: the step-graph header (fold arrows, Step graph, Event log, Rewind, Rerun, model name) is one row wider than
+   the card; Rerun was cut off at the edge. Let it wrap, with the Rewind/Rerun group on its own line. */
+@media (max-width: 700px) {
+    .agent-turn-collapse-row { flex-wrap: wrap; row-gap: 4px; }
+    .agent-ckpt-group { flex-wrap: wrap; margin-left: 0; flex-basis: 100%; }
+}

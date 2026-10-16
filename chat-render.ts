@@ -1307,6 +1307,12 @@ export function createResponsePlaceholder(container: null | undefined = null, op
         // Collapse the event log once the response is complete
         aggDetail.style.display = 'none';
         aggToggle.textContent = '▶';
+        // A phone shows one screen of the reply: the open step graph (a tall box per step) pushed the answer
+        // text below it. Fold the graph once the answer is there; the Step graph toggle opens it again.
+        if (window.matchMedia?.('(max-width: 700px)').matches && _stripTerminal(cleanResponse(typeof text === 'string' ? text : String(text ?? ''))).trim()) {
+            graphDetailEl.style.display = 'none';
+            graphToggle.textContent = '▶';
+        }
         // Strip terminal markers as a safety net — callers (native harness, Pi harness,
         // error paths) should strip before calling finalize(), but an unstripped "COMPLETED"
         // leaking here would render visibly.  cleanResponse() only strips think-tags, so
