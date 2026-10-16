@@ -119,8 +119,12 @@ describe('classification & policy', () => {
         expect(retryDelay(0, new Error('HTTP 429'))).toBeGreaterThan(retryDelay(0, new Error('HTTP 500')));
     });
     it('parseContextOverflow extracts headroom (sign tells recover vs compact)', () => {
-        const e = new Error("maximum context length is 30000 tokens. However, you requested at least 29000 input tokens");
-        expect(parseContextOverflow(e)).toBe(30000 - 29000 - 256);
+        const e = new Error("maximum context length is 30000 tokens. However, you requested at least 28000 input tokens");
+        expect(parseContextOverflow(e)).toBe(30000 - 28000 - 256);
+        // Under 1024 tokens of room there is no useful answer: no headroom, the caller must shrink the prompt.
+        expect(parseContextOverflow(new Error("maximum context length is 30000 tokens. However, you requested at least 29000 input tokens"))).toBe(0);
+        expect(parseContextOverflow(new Error("This model's maximum context length is 30000 tokens. However, you requested 1442 output tokens and your prompt contains at least 28559 input tokens"))).toBe(0);
+        expect(parseContextOverflow(new Error("This model's maximum context length is 30000 tokens. However, you requested 5770 output tokens and your prompt contains at least 24231 input tokens"))).toBe(2885);
         expect(parseContextOverflow(new Error('HTTP 500'))).toBeNull();
     });
     it('fmtDelay renders human units', () => {
