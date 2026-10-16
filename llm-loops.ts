@@ -1647,7 +1647,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // The estimate is chars/4 and runs about a third under real tokens for numbers and code, so the server's
                 // own rejection (_forceCompact is set by it) counts as proof too.
                 const _est = estimateTokens(_h0), _win = getOAIContextTokens();
-                if (_forceCompact || _est + 7500 + MIN_USEFUL_OUTPUT > _win) {
+                if (_est > _win * 0.5 && (_forceCompact || _est + 7500 + MIN_USEFUL_OUTPUT > _win)) {
                     const _chars = _h0.reduce((n: number, m: any) => n + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length), 0);
                     const e: any = new Error(`That message (${Math.round(_chars / 1000)}k characters) does not fit the model's ${Math.round(_win / 1000)}k-token context window, which also holds about 7k of system prompt and tools, so it cannot be sent. Shorten it, or save the text as a file in the workspace and ask about the file.`);
                     e.contextTooLarge = true;
