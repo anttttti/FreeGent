@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -14,7 +14,7 @@ import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlP
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, userForbidsExecution, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
-import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages } from './payload-builder.js';
+import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages, markModelRefusesImages, modelRefusesImages, stripImageParts } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
@@ -1242,7 +1242,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _forceToolCall = !!forceToolCall;
     const _failSigs: string[] = [];   // error signature of each failure in the current streak
     let _sameErrorGraceUsed = false;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0;
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0;
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -1892,8 +1892,23 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // A custom/local endpoint that has answered 401/403/404 (retry.ts already gave it
             // CUSTOM_CLIENT_ERROR_ATTEMPTS tries) is refusing the key, the route or the model: another
             // step gets the same answer. Say so, instead of a stack of "Working" steps with no text.
-            const _isPermanent = /does not exist|you do not have access|model not found|no such model/i.test(e.message || '')
+            // A custom endpoint that keeps answering 400 to the same request (each escape here is already three tries): the same
+            // request gets the same answer, so end the turn with the server's words, not an endless "all endpoints cooling" loop
+            // (real-model run: a server refusing images was re-asked every 5 s for minutes). Overflow and image refusals have their own paths.
+            const _is400Again = isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP 400\b/.test(e.message || '')
+                && parseContextOverflow(e) === null && !IMAGE_REFUSAL_RE.test(e.message || '') && ++_rejectedStreak >= 2;
+            const _isPermanent = _is400Again || /does not exist|you do not have access|model not found|no such model/i.test(e.message || '')
                 || (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP (?:401|403|404)\b/.test(e.message || ''));
+            // A model that takes no images (vLLM --language-model-only answers 400 "At most 0 image(s)"): the same request was re-sent
+            // every few seconds with no end (real-model run). Remember it, say so, and resend with the image as a text note.
+            if (/\bHTTP 400\b/.test(e.message || '') && IMAGE_REFUSAL_RE.test(e.message || '')) {
+                const _key = `${(activeEndpoint ?? _defaultEndpoint()).provider}|${(activeEndpoint ?? _defaultEndpoint()).model}`;
+                if (!modelRefusesImages(_key)) {
+                    markModelRefusesImages(_key);
+                    thinkTask.append(`\n[${_key}: this model does not accept images, sending the message without the image]\n`, 'error');
+                    thinkTask.abort(); continue;
+                }
+            }
             if (_forceCompact && parseContextOverflow(e) !== null) { thinkTask.abort(); continue; }
             const _oEp = activeEndpoint ?? _defaultEndpoint();
             if (_isPermanent) throw e;
@@ -1952,7 +1967,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             throw e;
         }
-        _cutOffStreak = 0; _emptyStreak = 0; _compactStreak = 0;   // a response came back whole
+        _cutOffStreak = 0; _emptyStreak = 0; _compactStreak = 0; _rejectedStreak = 0;   // a response came back whole
         if (!message) throw new Error('No response from model');
         _endpointNeedsProbe.delete(_epKey);
         recordSuccess(activeEndpoint ?? _defaultEndpoint());
@@ -2583,6 +2598,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // 2. Normalize mid-conversation role:'system' messages (NVIDIA nudges) to role:'user' —
     //    Mistral/Devstral reject system after position 0.
     let _hist = buildRequestMessages(_effectiveHist, provider);
+    if (modelRefusesImages(`${provider}|${ep.model}`)) _hist = stripImageParts(_hist);
     // Guard: vLLM (Qwen3 Jinja2 template) raises "No user query found in messages." when
     // the messages array contains no user-role entry. This should never happen — the
     // invariant is that the first event appended to a session is the task's user message.

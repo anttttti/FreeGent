@@ -91,6 +91,10 @@ export function isTransient(e) {
 // attempt, no end in minutes). Below it the caller is told there is no headroom, so it shrinks the prompt instead.
 export const MIN_USEFUL_OUTPUT = 1024;
 
+// The server says it takes no images (vLLM --language-model-only: "At most 0 image(s) may be provided"). Re-sending the same request
+// gets the same answer; the caller resends without the image instead.
+export const IMAGE_REFUSAL_RE = /(?:at most 0 image|image input is not supported|(?:does not|doesn't) (?:accept|support) (?:image|vision|multimodal)|no endpoints found that support image)/i;
+
 export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
     const msg = e.message || '';
     // vLLM (current): "you requested M output tokens and your prompt contains at least N input
@@ -386,6 +390,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // the same request gets the same answer, and callers pass no attempt limit for custom
         // endpoints, so it was re-sent every 5 s until the run's time limit. A few attempts cover a
         // server that is still loading its model; after that the error is reported.
+        if (isCustom && IMAGE_REFUSAL_RE.test(e.message || '')) return false;   // the caller drops the image and resends
         if (isCustom && _CLIENT_ERROR_RE.test(e.message || '') && ++_clientErrors >= CUSTOM_CLIENT_ERROR_ATTEMPTS) {
             onNote(`[${ep.provider}|${ep.model}][not retrying: the server rejected the request ${_clientErrors} times: ${String(e.message || '').slice(0, 120)}]`);
             return false;
