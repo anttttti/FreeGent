@@ -54,3 +54,6 @@ Logs and the reviewed list live outside the repo (`~/.local/share/freegent/logs/
 
 Smoke tests (`node bench/smoke/run.js`), simulations (`node bench/sim/sim.mjs`) and benchmarks live in the
 `bench/` repo; `bench/BENCHMARKS.md` ("What tests what") says which to use when. Unit tests: `npx vitest run`.
+Browser-level checks of the WebUI (real Chromium/Firefox, scripted model): `node bench/browser/run.mjs` (probes and
+regressions) and `node bench/browser/matrix.mjs` (device / OS / browser matrix); a defect found by hand gets a
+regression probe there.
