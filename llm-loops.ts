@@ -227,6 +227,7 @@ const _FR_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'o
 const _FR_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
 const _FR_ERROR     = new Set(['error', 'abort']);
 // Set by stream-decode when the stream went silent mid-response (SSE idle timeout).
+const _FR_STOP_OK = new Set(['stop', 'end_turn', 'STOP', 'completed']);   // a provider declaring the reply complete
 const _FR_STALLED   = new Set(['idle_timeout']);
 // Normal finish reasons (stop, end_turn, tool_calls, …) are never checked — fall-through is the normal path.
 
@@ -1713,7 +1714,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     // 3. Legacy: very short content despite output tokens (blank/truncated start).
                     //    Requires _text.length > 0 — empty text with completion_tokens is handled
                     //    by _isEmptyReasoning in _handleTextOnlyStep, not by model cycling.
+                    // Only when the provider did not say the reply ended ("stop"): with a reasoning model
+                    // completion_tokens counts the reasoning, so a correct one-word answer ("PONG", "391") after
+                    // 200 reasoning tokens looked cut off and was retried until the turn gave up (real-model run).
                     const _shortTrunc  = _text.length > 0 && _text.length < 20 && !/[.!?]/.test(_text)
+                        && (_fr == null || !_FR_STOP_OK.has(_fr))
                         && !_isComplete(_text) && !msg.tool_calls?.length
                         && (msg.usage?.completion_tokens ?? 0) >= 10;
                     // 4. Completely empty response with no tool calls — provider swallowed the
