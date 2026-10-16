@@ -969,7 +969,7 @@ export async function agentFileMtime(path: string): Promise<number | null> {
 }
 
 
-const collapsedDirs = new Set(); // full paths like 'local/tasks' that are collapsed
+const collapsedDirs = new Set(); // full paths like 'local/fg-tasks' that are collapsed
 const selectedFiles = new Set<string>();
 let _idbClickAnchorName: string | null = null;
 let _localClickAnchorName: string | null = null;

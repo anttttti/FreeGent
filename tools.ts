@@ -1165,8 +1165,8 @@ async function _handleListFiles(args, context) {
     // Any form of a workspace path ("/workspace/src", "./src/", "src") names the same folder.
     const pathFilter = await _rootRelativeToolPath(_normToolPath(quoted));
     // Normalise both the filter and each filename by stripping the leading "local/" (or bare
-    // "local") so that "tasks/", "local/tasks/", and "local" all work as filters.
-    // "local" → "" (match all local files), "local/tasks/" → "tasks/", "tasks/" → "tasks/"
+    // "local") so that "fg-tasks/", "local/fg-tasks/", and "local" all work as filters.
+    // "local" → "" (match all local files), "local/fg-tasks/" → "fg-tasks/", "fg-tasks/" → "fg-tasks/"
     const normFilter = pathFilter.replace(/^local(\/|$)/, '');
     const normName   = f => (f.name || f).replace(/^local\//, '');
     const applyFilter = files => {
@@ -1178,7 +1178,7 @@ async function _handleListFiles(args, context) {
         const inFolder = files.filter(f => normName(f) === normFilter || normName(f).startsWith(normFilter + '/'));
         const filtered = inFolder.length ? inFolder : files.filter(f => normName(f).startsWith(normFilter));
         // Sort so files directly at the requested path come before subdirectory files,
-        // ensuring e.g. local/tasks/038-*.md appears before local/tasks/archive/*.md
+        // ensuring e.g. local/fg-tasks/038-*.md appears before local/fg-tasks/archive/*.md
         const base = normFilter.endsWith('/') ? normFilter : normFilter + '/';
         return filtered.sort((a, b) => {
             const aSub = normName(a).slice(base.length).includes('/');

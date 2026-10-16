@@ -10,7 +10,7 @@ describe('R02: runner task label is text, not HTML', () => {
         document.body.innerHTML = '<div id="runner-current-task"></div>';
         const runner: any = await import('../runner.ts');
         runner._setRunnerChatIdForTest('chat-1');
-        runner._updateRunnerCurrentTask({ path: 'tasks/001-x.md', fm: { id: '1', title: '<img src=x onerror="window.__pwn=1">' } });
+        runner._updateRunnerCurrentTask({ path: 'fg-tasks/001-x.md', fm: { id: '1', title: '<img src=x onerror="window.__pwn=1">' } });
         const el = document.getElementById('runner-current-task')!;
         expect(el.querySelector('img')).toBeNull();
         expect(el.textContent).toContain('<img src=x');

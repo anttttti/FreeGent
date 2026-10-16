@@ -147,8 +147,8 @@ describe('A9/B4. local file adapter', () => {
 
 describe('A10. task folders', () => {
     it('recognises fg-tasks/ inside a Local Folder too', () => {
-        for (const p of ['fg-tasks/001-a.md', 'tasks/x.md', 'local/fg-tasks/001-a.md', 'local/tasks/x.md']) expect(isTaskPath(p), p).toBe(true);
-        for (const p of ['src/tasks/x.md', 'local/src/a.ts', 'mytasks/x.md', null]) expect(isTaskPath(p), String(p)).toBe(false);
+        for (const p of ['fg-tasks/001-a.md', 'local/fg-tasks/001-a.md']) expect(isTaskPath(p), p).toBe(true);
+        for (const p of ['tasks/x.md', 'local/tasks/x.md', 'src/tasks/x.md', 'local/src/a.ts', 'mytasks/x.md', null]) expect(isTaskPath(p), String(p)).toBe(false);
         expect(TASK_DIRS).toContain('local/fg-tasks/');
     });
 });

@@ -50,7 +50,7 @@ async function _saveLogAndCreateReviewTask() {
         lines.push('');
     }
 
-    // The canonical task store (tasks.ts, qa.ts, rebuildLedger). A bare `tasks/` made a second ledger and
+    // The canonical task store (tasks.ts, qa.ts, rebuildLedger). A bare `tasks/` once made a second ledger and
     // an id scan that never saw the real tasks, so the review task was always 001.
     const tasksDir = 'fg-tasks';
     let nextId = '001';

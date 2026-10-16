@@ -3,7 +3,7 @@
 node_modules/
 .idea/
 /work/
-/tasks/
+/fg-tasks/
 /planning_notes*.md
 /project_idea.md
 /bench/
@@ -26,7 +26,7 @@ code_review.md
 20[0-9][0-9]_*.md
 chat-export-*.md
 006-*.md
-tasks/0*.md
+fg-tasks/0*.md
 
 # Claude Code internal files
 .claude/

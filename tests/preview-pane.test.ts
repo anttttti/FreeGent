@@ -3,7 +3,7 @@ import { previewCandidates, selectPreviewFile } from '../preview-pane.js';
 
 describe('previewCandidates', () => {
     it('drops scratch, task, tooling, dot and local files', () => {
-        const names = ['tmp/a.py', 'tasks/1.md', 'fg-tasks/ledger.md', 'src/tmp/x.js', 'node_modules/p/i.js',
+        const names = ['tmp/a.py', 'fg-tasks/1.md', 'fg-tasks/ledger.md', 'src/tmp/x.js', 'node_modules/p/i.js',
             '.git/config', 'local/a.html', 'game.html', 'docs/readme.md', 'src/main.js'];
         expect(previewCandidates(names)).toEqual(['game.html', 'docs/readme.md', 'src/main.js']);
     });
@@ -21,7 +21,7 @@ describe('selectPreviewFile', () => {
         expect(pick).toHaveBeenCalledOnce();
     });
     it('returns null when only excluded files exist', async () => {
-        expect(await selectPreviewFile(['tmp/x', 'tasks/y.md'], async () => 'tmp/x')).toBeNull();
+        expect(await selectPreviewFile(['tmp/x', 'fg-tasks/y.md'], async () => 'tmp/x')).toBeNull();
     });
     it('skips the model for a single candidate', async () => {
         const pick = vi.fn();
