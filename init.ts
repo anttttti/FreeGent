@@ -294,10 +294,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (input) {
         // keypress is a fallback for mobile soft-keyboards that skip keydown on contenteditable
         input.addEventListener('keypress', e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); userSend(); }
+            // Enter that confirms an IME composition (Japanese, Chinese, Korean; keyCode 229 on older engines) is not a send.
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); userSend(); }
         });
         input.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); userSend(); }
+            // Enter that confirms an IME composition (Japanese, Chinese, Korean; keyCode 229 on older engines) is not a send.
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); userSend(); }
             if (e.key === 'Tab' && !e.shiftKey) {
                 const accepted = acceptSuggestion?.();
                 if (accepted) { e.preventDefault(); autoResizeTextarea(input); _updateSendBtnVisibility?.(); }

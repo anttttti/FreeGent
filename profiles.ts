@@ -222,15 +222,18 @@ export function stripModelKeys(json: string | null | undefined): string | null |
         }));
     } catch { return json; }
 }
+// A key belongs to a model AT an address: the same provider/model name with another URL is another server, and a shared or
+// older profile must not send the user's key there (code review CR-01). So the saved key is restored only to the same endpoint.
+const _endpointId = (m: any) => `${m?.provider}|${m?.model}|${String(m?.url ?? '').trim().replace(/\/+$/, '').toLowerCase()}`;
 function _restoreModelKeys(incoming: string): string {
     try {
         const arr = JSON.parse(incoming);
         if (!Array.isArray(arr)) return incoming;
         const cur = JSON.parse(localStorage.getItem('fg_custom_models') || '[]');
         const keyOf = new Map<string, any>();
-        if (Array.isArray(cur)) for (const m of cur) if (m?.key) keyOf.set(`${m.provider}|${m.model}`, m.key);
-        return JSON.stringify(arr.map((m: any) => (m && typeof m === 'object' && !m.key && keyOf.has(`${m.provider}|${m.model}`))
-            ? { ...m, key: keyOf.get(`${m.provider}|${m.model}`) } : m));
+        if (Array.isArray(cur)) for (const m of cur) if (m?.key) keyOf.set(_endpointId(m), m.key);
+        return JSON.stringify(arr.map((m: any) => (m && typeof m === 'object' && !m.key && keyOf.has(_endpointId(m)))
+            ? { ...m, key: keyOf.get(_endpointId(m)) } : m));
     } catch { return incoming; }
 }
 

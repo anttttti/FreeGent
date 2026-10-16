@@ -424,8 +424,14 @@ function _showApprovalToast(toolName: string, summary: string): Promise<boolean>
 
 let _currentApprovalResolve: ((v: boolean) => void) | null = null;
 
-function requestToolApproval(toolName, args) {
+// After Stop / New Chat the batch that was running may still ask for its next tool (calls in one response run one after
+// another): that ask must be refused, not shown (codex campaign 4: a second approval appeared after Stop). The next turn reopens it.
+let _approvalsGated = false;
+export function reopenApprovals(): void { _approvalsGated = false; }
+
+export function requestToolApproval(toolName, args) {
     if (!document.getElementById('tool-approval-toast')) return Promise.resolve(true);
+    if (_approvalsGated) return Promise.resolve(false);
     let summary = toolName;
     if (args.path)     summary += `: ${args.path}`;
     if (args.language) summary += ` (${args.language})`;
@@ -456,6 +462,7 @@ function resolveToolApproval(allowed) {
 // Stop / New Chat: nothing may stay waiting behind an approval toast. A pending or queued approval that
 // is answered later would run its tool (and append its result) after the turn that asked had been cancelled.
 export function cancelPendingApprovals(): void {
+    _approvalsGated = true;
     const queued = _approvalQueue.splice(0);
     for (const q of queued) q.resolve(false);
     const toast = document.getElementById('tool-approval-toast');
@@ -465,6 +472,7 @@ export function cancelPendingApprovals(): void {
 
 window.resolveToolApproval = resolveToolApproval;
 (window as any).cancelPendingApprovals = cancelPendingApprovals;
+(window as any).reopenApprovals = reopenApprovals;
 
 const _APPROVAL_HIGH_RISK = new Set(['delete_file', 'execute_code']);
 

@@ -180,7 +180,8 @@ async function reloadChatIfChangedElsewhere(): Promise<boolean> {
     const inp = document.getElementById('agent-input');
     const draft = inp?.innerHTML ?? '';
     await switchToChat(activeChatId, true);
-    if (inp && draft && !inp.innerHTML.trim()) inp.innerHTML = draft;
+    // The composer as it was, empty or not: the saved draft is older than what is in it (code review CR-03).
+    if (inp) inp.innerHTML = draft;
     return true;
 }
 let _xTabTimer: any = null;
@@ -937,7 +938,8 @@ async function switchToChat(id, force = false) {
         && id !== (typeof getRunnerChatId === 'function' ? getRunnerChatId() : null);
     if (agentStreaming || runnerOther) { await viewChatReadOnly(id); return; }
     closeChatViewer();
-    if (!force) saveHistory();   // a forced reload replaces a stale copy: saving it would overwrite the newer one
+    // Not when another tab has saved this chat since: this tab's copy is the stale one (code review CR-04), as in newChat().
+    if (!force && !chatChangedElsewhere()) saveHistory();   // a forced reload replaces a stale copy: saving it would overwrite the newer one
     if (!force) {
         (window as any)._flushDraft?.();            // the composer text belongs to the chat being left
         (window as any).parkPendingAttachments?.(activeChatId);                       // so do its pending attachments: parked per chat
