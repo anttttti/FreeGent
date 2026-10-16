@@ -2027,3 +2027,10 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 @media (max-width: 700px) {
     #chat-welcome { top: calc(50% - 132px); }
 }
+
+/* Phone: the ten Settings sub-tabs are one 694px row inside a 264px panel, so the whole panel (forms included)
+   slid sideways to reach Tools or Voice. The row scrolls by itself and the page stays put. */
+@media (max-width: 700px) {
+    .settings-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+    .settings-tab-btn { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; }
+}
