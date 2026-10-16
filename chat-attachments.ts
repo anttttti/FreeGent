@@ -160,6 +160,23 @@ function clearImageAttachments(): void {
     if (strip) { strip.innerHTML = ''; strip.style.display = 'none'; }
 }
 
+// Pending attachments belong to the chat they were chosen in: switching chats parks them (in memory, per chat)
+// and switching back puts the chips back, like the text draft. Before this the draft came back and the file
+// did not, so a restored draft was sent without the attachment its author had chosen.
+const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pendingFiles }>();
+function parkPendingAttachments(chatId: string | null | undefined): void {
+    if (!chatId) return;
+    if (_pendingImages.length || _pendingFiles.length) _parkedAttachments.set(chatId, { images: [..._pendingImages], files: [..._pendingFiles] });
+    else _parkedAttachments.delete(chatId);
+}
+function restoreParkedAttachments(chatId: string | null | undefined): void {
+    const parked = chatId ? _parkedAttachments.get(chatId) : null;
+    if (!parked) return;
+    _parkedAttachments.delete(chatId!);
+    for (const img of parked.images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
+    for (const f of parked.files) restoreFileAttachment(f);
+}
+
 // Returns snapshots of the pending arrays for callers that need to read state
 // (saveCheckpoint, agentSend) without exposing the mutable arrays directly.
 function getPendingAttachments(): {
@@ -397,7 +414,7 @@ Object.assign(window, {
 });
 
 Object.assign(window, {
-    addImageAttachment, clearImageAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
+    addImageAttachment, clearImageAttachments, parkPendingAttachments, restoreParkedAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
     setupChatDropZone, restoreFileAttachment, getPendingAttachments,
     _guessMime, _fileIcon, _fmtSz, _LANG_MAP, _audioFmt,
 });

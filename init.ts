@@ -391,12 +391,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         // Cmd/Ctrl+K → open chat search
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
             e.preventDefault();
             focusChatSearch?.();
         }
         // Cmd/Ctrl+Shift+F → open message content search
-        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
             e.preventDefault();
             openMsgSearch();
         }

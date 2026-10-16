@@ -863,7 +863,7 @@ function _renderQueuePanel(): void {
     const panel = document.getElementById('msg-queue-panel');
     if (!panel) return;
     const items = MsgQueue.getAll();
-    if (!items.length) { panel.style.display = 'none'; return; }
+    if (!items.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
     panel.style.display = 'flex';
     panel.innerHTML = '';
     items.forEach((item, i) => {
@@ -1527,6 +1527,7 @@ function userSend(): void {
 function createNewChat(): void {
     (window as any).closeChatViewer?.();
     (window as any)._flushDraft?.();   // the open chat's unsent text is saved under that chat first
+    (window as any).parkPendingAttachments?.(activeChatId);   // and so are its pending attachments
     const id  = 'chat_' + Date.now();
     const now = Date.now();
     const list = getChatList();
