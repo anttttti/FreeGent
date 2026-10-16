@@ -24,7 +24,7 @@ describe('legacy tasks/ migration', () => {
         files.set('local/tasks/002-b.md', task('002', 'B', 'done'));
         files.set('tasks/archive/003-c.md', task('003', 'C'));
         const loaded = await W.loadTaskFiles();
-        expect([...files.keys()].sort()).toEqual(['fg-tasks/001-a.md', 'fg-tasks/archive/003-c.md', 'local/fg-tasks/002-b.md']);
+        expect([...files.keys()].filter(n => !n.endsWith('.legacy-tasks-migrated')).sort()).toEqual(['fg-tasks/001-a.md', 'fg-tasks/archive/003-c.md', 'local/fg-tasks/002-b.md']);
         expect(files.get('fg-tasks/001-a.md')).toBe(task('001', 'A'));
         expect(loaded.map(t => t.path).sort()).toEqual(['fg-tasks/001-a.md', 'fg-tasks/archive/003-c.md', 'local/fg-tasks/002-b.md']);
     });
@@ -34,7 +34,7 @@ describe('legacy tasks/ migration', () => {
         files.set('tasks/ledger.md', '| id |\n');
         files.set('tasks/001-a.md', task('001', 'A'));
         await W.loadTaskFiles();
-        expect([...files.keys()].sort()).toEqual(['fg-tasks/001-a.md', 'tasks/README.md', 'tasks/ledger.md']);
+        expect([...files.keys()].filter(n => !n.endsWith('.legacy-tasks-migrated')).sort()).toEqual(['fg-tasks/001-a.md', 'tasks/README.md', 'tasks/ledger.md']);
     });
 
     it('gives a task whose name is taken the next free id instead of overwriting', async () => {
@@ -45,6 +45,21 @@ describe('legacy tasks/ migration', () => {
         expect(files.get('fg-tasks/001-a.md')).toBe(task('001', 'Existing'));
         expect(files.has('tasks/001-a.md')).toBe(false);
         expect(files.get('fg-tasks/003-a.md')).toBe(task('003', 'Legacy'));
+    });
+
+    it('moves only once: a task-shaped file added to tasks/ afterwards stays', async () => {
+        files.set('tasks/001-a.md', task('001', 'A'));
+        await W.loadTaskFiles();
+        files.set('tasks/002-later.md', task('002', 'Later'));
+        await W.loadTaskFiles();
+        expect(files.has('tasks/002-later.md')).toBe(true);
+        expect(files.has('fg-tasks/002-later.md')).toBe(false);
+    });
+
+    it('does not move numbered markdown without task frontmatter', async () => {
+        files.set('tasks/001-notes.md', '# just notes\n');
+        await W.loadTaskFiles();
+        expect([...files.keys()]).toEqual(['tasks/001-notes.md']);
     });
 
     it('is a no-op when there is no legacy folder', async () => {
