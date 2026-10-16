@@ -435,6 +435,15 @@ function _makeProfileCard(uid, name, description, settings, isBuiltin, savedAt) 
     actDiv.style.cssText = 'display:flex;gap:6px;flex-shrink:0;margin-left:10px';
     actDiv.onclick = e => e.stopPropagation();
 
+    // The card header opens the diff with the Apply button, but nothing on the card said so: only
+    // Download/Delete were visible, and built-in cards had no control at all.
+    const openBtn = document.createElement('button');
+    openBtn.className = 'ws-action-btn'; openBtn.textContent = isOpen ? 'Close' : 'Review & apply';
+    openBtn.title = isOpen ? 'Close the preview' : 'Show what this profile changes, then apply it';
+    openBtn.setAttribute('aria-expanded', String(isOpen));
+    openBtn.onclick = () => profilePreview(uid);
+    actDiv.append(openBtn);
+
     if (!isBuiltin) {
         const dlBtn = document.createElement('button');
         dlBtn.className = 'ws-action-btn'; dlBtn.title = 'Download'; dlBtn.textContent = '↓';
