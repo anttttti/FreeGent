@@ -414,8 +414,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         const distFromBottom = _msgEl.scrollHeight - _msgEl.scrollTop - _msgEl.clientHeight;
         const canScrollDown  = distFromBottom > 40;
         _scrollLatestBtn.style.display = canScrollDown ? '' : 'none';
+        // Sit just above the message list, whatever height the input area has: a fixed 72 px put it on top of
+        // the message box on a phone, where the input area is two rows tall, and it swallowed taps there.
+        const panel = _scrollLatestBtn.offsetParent as HTMLElement | null;
+        if (canScrollDown && panel)
+            _scrollLatestBtn.style.bottom = Math.max(8, Math.round(panel.getBoundingClientRect().bottom - _msgEl.getBoundingClientRect().bottom) + 12) + 'px';
     }
-    _msgEl?.addEventListener('scroll', _updateScrollBtn, { passive: true });
+    _msgEl?.addEventListener('scroll', () => {
+        // The reader's position, for scrollBottom(): pinned = at (or within 80 px of) the newest content.
+        (_msgEl as any)._fgPinned = _msgEl.scrollHeight - _msgEl.scrollTop - _msgEl.clientHeight < 80;
+        _updateScrollBtn();
+    }, { passive: true });
     // Re-evaluate when the messages container's content changes size (new chat clears
     // content, streaming adds messages, window resize changes clientHeight) — without
     // this, a stale "Latest" button stays visible after the content shrinks.
@@ -544,7 +553,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Apply saved theme now that DOM is ready (wires icon + hljs sheets)
-    _applyTheme(localStorage.getItem('fg_dark_mode') === '1');
+    // No saved choice yet: follow the system setting (a Mac or phone in dark mode opened FreeGent in light).
+    { const saved = localStorage.getItem('fg_dark_mode'); _applyTheme(saved === '1' || (saved === null && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches)); }
 
     // Expose to HTML onclick handlers and window bridge (chat-render.ts uses _updateScrollBtn)
     Object.assign(window, { scrollToLatest, _updateScrollBtn, openMsgSearch, closeMsgSearch, runMsgSearch, msgSearchKeydown, msgSearchSelect, clearInputDraft, _restoreDraft, _flushDraft, toggleDarkMode });

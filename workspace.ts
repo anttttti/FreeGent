@@ -7,6 +7,7 @@ import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
+import { PYODIDE_CDN } from './pyodide-version.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -1043,7 +1044,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all}
 <div id="_st">Loading Pyodide…</div>
 <div id="_cv"><canvas id="canvas"></canvas></div>
 <div id="_op"></div>
-<script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+<script src="${PYODIDE_CDN}pyodide.js"></script>
 <script>
 const _FN=${sj(filename)},_CODE=${sj(runCode)},_FILES=${sj(textFiles)},_BIN=${sj(binFiles)},_IMP=${sj(imports)},_SYS=${sj(sysPathPy)},_CHK=${sj(localCheckPy)},_CD=${sj(chdirPy)},_PYGAME=${sj(hasPygame)};
 const _st=document.getElementById('_st'),_op=document.getElementById('_op');
@@ -1072,7 +1073,7 @@ window._fgPlayRaw=function(data,rate,ch){
 };
 (async()=>{try{
 ss('Loading Pyodide…');
-const py=await loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/'});
+const py=await loadPyodide({indexURL:'${PYODIDE_CDN}'});
 ss('Initializing…');
 await py.loadPackage('micropip');
 py.FS.mkdirTree('/workspace');

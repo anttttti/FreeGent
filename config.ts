@@ -930,6 +930,10 @@ function getMediaCapableSpec(requiredMedia) {
     // No active model covers the needed media — fall back to the first catalog model that does.
     // Gemini 3.5 Flash is the only confirmed free audio model; this ensures audio routing works
     // even when it is not in the user's active rotation.
+    // Not for someone running their own server: their attachment would go to a hosted provider they never
+    // set up (found with a local vLLM profile: an image went to Gemini, hung for 30 s, and left the user's
+    // own model out of the turn). They get the "no image model" chip and a text-only turn instead.
+    if (getProvider() === 'custom') return null;
     const _catalogFallback = all.find(m => requiredMedia.every(t => (m.media || ['text']).includes(t)));
     return _catalogFallback ? `${_catalogFallback.provider}|${_catalogFallback.model}` : null;
 }
