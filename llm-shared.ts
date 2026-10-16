@@ -129,8 +129,11 @@ async function loadAgentsContext() {
 
 // Compaction fetch timeout so a hanging connection doesn't stall forever. Local endpoints get
 // longer (a ~50K-token prefill plus a ≤2K-token summary), still well inside task timeouts.
-function _compactFetchSignal(ep: any = null) {
-    return combineSignals(activeAbortController?.signal, isCustomEndpoint(ep) ? 3 * 60_000 : 90_000)!;
+// A local 27B prefills ~500 tokens/s and writes ~20/s: a 20k-token history plus a 2k-token summary is ~150 s idle, and
+// the old flat 3 minutes cut it off ("the summarizer failed: signal timed out", the facts were lost). Allow 8 ms per prompt token on top.
+function _compactFetchSignal(ep: any = null, promptTokens = 0) {
+    const local = 3 * 60_000 + Math.max(0, promptTokens) * 8;
+    return combineSignals(activeAbortController?.signal, isCustomEndpoint(ep) ? local : 90_000)!;
 }
 
 // Compaction retry handler: a deliberately smaller sibling of retry.ts _makeOAIRetryHandler.
@@ -274,8 +277,8 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             const body = JSON.stringify(payload);
             const proxyUrl = ep.proxy ? getLocalApiProxy() : '';
             const resp = await (proxyUrl
-                ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
-                : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep), body })
+                ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
+                : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body })
             ).catch(e => { throw asTransportError(e); });
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             return resp.json();
