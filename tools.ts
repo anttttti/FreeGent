@@ -12,7 +12,7 @@ import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
-import { isTaskPath, TASK_DIRS } from './task-status.js';
+import { isTaskPath } from './task-status.js';
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 60_000;      // the sandbox is for short scripts; longer work belongs in bash/Python in the background
@@ -1016,7 +1016,7 @@ async function _handleUpdateTaskStatus(args: any) {
     if (!path || !status) return { error: 'path and status are required.' };
     // Only task files carry a status. Run on any other file this prepended frontmatter and a log
     // line to it (a model "finishing" config.json left the JSON unparsable, sim chat-clarify-config).
-    if (!isTaskPath(path)) return { error: `update_task_status: "${path}" is not a task file (task files live in ${TASK_DIRS.slice(0, 2).join(' or ')}). Nothing was changed; to finish ordinary work, just say so in your answer.` };
+    if (!isTaskPath(path)) return { error: `update_task_status: "${path}" is not a task file (task files live in fg-tasks/). Nothing was changed; to finish ordinary work, just say so in your answer.` };
     if (path.startsWith('local/') && !(typeof fsaHandle !== 'undefined' && fsaHandle)) {
         const fallback = path.replace(/^local\//, '');
         return { error: `update_task_status: No local folder is open — use the workspace path "${fallback}" instead of "${path}".` };
