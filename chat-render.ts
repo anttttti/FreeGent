@@ -503,8 +503,9 @@ export function scrollBottom(el: any, threshold: number | undefined = 80): void 
     if (!el) return;
     // Follow when the reader was at the bottom BEFORE this content arrived: measured now, a table or code
     // block that lands in one chunk is already taller than the threshold and the view stayed put, on a phone
-    // a whole screen above the answer. init.ts keeps el._fgPinned current from the scroll position.
-    if (el._fgPinned === true || el.scrollHeight - el.scrollTop - el.clientHeight < threshold)
+    // a whole screen above the answer. init.ts keeps el._fgPinned current from the scroll position; before the reader has scrolled at all it is
+    // unset, which counts as pinned (a reply taller than the screen arrives before any scroll event exists).
+    if (el._fgPinned !== false || el.scrollHeight - el.scrollTop - el.clientHeight < threshold)
         el.scrollTop = el.scrollHeight;
     // Keep jump-to-latest button state consistent after any programmatic scroll.
     // Via window: init.ts bridges it at the end of its DOMContentLoaded handler, and chat

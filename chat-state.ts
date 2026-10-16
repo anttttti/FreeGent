@@ -940,7 +940,8 @@ async function switchToChat(id, force = false) {
     if (!force) saveHistory();   // a forced reload replaces a stale copy: saving it would overwrite the newer one
     if (!force) {
         (window as any)._flushDraft?.();            // the composer text belongs to the chat being left
-        if (typeof clearImageAttachments === 'function') clearImageAttachments();   // so do its pending attachments
+        (window as any).parkPendingAttachments?.(activeChatId);                       // so do its pending attachments: parked per chat
+        if (typeof clearImageAttachments === 'function') clearImageAttachments();
     }
     activeChatId        = id;
     _loadingChatId      = id;
@@ -974,6 +975,7 @@ async function switchToChat(id, force = false) {
     setInputState(true);
     // Restore composer draft for this chat (set by init.ts _saveDraft)
     window._restoreDraft?.(id);   // bridged late by init.ts — bare name can be undeclared
+    (window as any).restoreParkedAttachments?.(id);   // the attachments chosen in this chat before leaving it
 }
 
 function deleteChat(id) {

@@ -6544,6 +6544,7 @@
       "path": "shiro/commands/python.ts",
       "reachable": true,
       "imports": [
+        "pyodide-version.ts",
         "shiro/commands/index.ts",
         "shiro/runtime-filesystem.ts",
         "shiro/runtime-lock.ts",
@@ -10148,7 +10149,7 @@
     "shiro/commands/printenv.ts": "5f00087b8323d5652f28e6edd9d971480f6a56c4d0b67ac136c64f9575770f7e",
     "shiro/commands/printf.ts": "9c77853faa6bd7cc15e64336ee9eeb2f9a555a884f06c6f63be88fcdb2314105",
     "shiro/commands/pwd.ts": "8366faeaf19b85b879707461752e09de15ec299c9ee5068fd8257e45e5fe2162",
-    "shiro/commands/python.ts": "9c00249e7924c1389b991ea9821dfa70d5b448c818871c40e1092c962f89d859",
+    "shiro/commands/python.ts": "e4115fa023b0e779f5b8372c22bba12a6ea77e3ae3b7c1126a1dd01aea738322",
     "shiro/commands/readlink.ts": "57efd313007b2198918a20dd5848e3a582a26cbeb23cf5521e02878953283e4c",
     "shiro/commands/realpath.ts": "18903b0705cca452b873d8389618d8cab153c8344fa236da7a1e87e83a46d1b6",
     "shiro/commands/return.ts": "0053047e0beae664697aff88d543b44bd194407fb00ec7dfb0e09f5459e08808",

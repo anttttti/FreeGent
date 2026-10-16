@@ -76,7 +76,7 @@ callLLMComplete(prompt, { temperature, maxTokens, endpoint, label }, handle)
 - `endpoint` — override with a specific `{provider, url, key, model}` object; null = active main model.
 - `label` — stepbox label, e.g. `'worker:review:review'`. Parsed by `_friendlyLabel` in `chat-render.js`.
 - `handle` — null: creates stepbox from `activePlaceholder`, owns lifecycle (complete/abort). Provided: sets model/request/output on existing handle; caller owns lifecycle.
-- Always adds `chat_template_kwargs: { enable_thinking: false }` for custom endpoints to prevent thinking tokens consuming the budget silently.
+- Thinking fields for custom endpoints follow the thinking level (`_thinkingFields` in `payload-builder.ts`): `off` sends `chat_template_kwargs: { enable_thinking: false }` so thinking tokens cannot consume the budget silently; a non-off level sends `enable_thinking: true` (and raises `max_tokens`); `default` sends no thinking field at all.
 
 Convenience wrappers (both delegate to `callLLMComplete`):
 - `callMainModelText(prompt, opts)` — active main model; used by qa.js, chat-state.js.
@@ -170,7 +170,7 @@ requires: fg_some_setting  # optional — localStorage key that must equal 'true
 
 ## Skill body
 
-Everything after the frontmatter is the skill body — injected verbatim into the system prompt as a `### Active skill: name` block.
+Everything after the frontmatter is the skill body — injected verbatim into the system prompt as a `### Always-on skill: name` block (rules: `### Always-on rule: name`).
 ```
 
 ### Injection lifecycle
@@ -189,7 +189,7 @@ Everything after the frontmatter is the skill body — injected verbatim into th
 
 `requires` check: if `localStorage.getItem(s.requires) !== 'true'` the skill is skipped even if triggered.
 
-**Injection location**: always-on (`activeSkills`) bodies stay in the system prompt (stable prefix, cache-friendly). Keyword/filetype/lifecycle-triggered bodies are prepended to the user message as `<active_guidance>…</active_guidance>` via `buildTriggeredGuidance()`. Reactive guidance is injected inline as a nudge. A shared context budget caps total injected text.
+**Injection location**: always-on (`activeSkills`) bodies stay in the system prompt (stable prefix, cache-friendly). Keyword/filetype/lifecycle-triggered bodies are prepended to the user message as a `~~~guidance … ~~~` block via `buildTriggeredGuidance()` (`<active_guidance>` only survives as a strip pattern for old chats). Reactive guidance is injected inline as a nudge. A shared context budget caps total injected text.
 
 Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a matching `roles` value are concatenated into worker system prompts via `buildWorkerSystemPrompt()`, independently of `currentTurnSkills`.
 

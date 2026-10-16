@@ -2,6 +2,7 @@ import type { Command, CommandContext } from './index';
 import { bytesToText, textToBytes, concatBytes, sameBytes } from '../utils/bytes';
 import { withRuntimeLock } from '../runtime-lock';
 import { snapshotRuntimeFiles, clearRuntimeDir, stageRuntimePath } from '../runtime-filesystem';
+import { PYODIDE_VERSION } from '../../pyodide-version';
 
 /**
  * python/python3: Python interpreter via Pyodide (WebAssembly CPython)
@@ -16,7 +17,7 @@ import { snapshotRuntimeFiles, clearRuntimeDir, stageRuntimePath } from '../runt
  *   pip install numpy                # install packages via micropip
  */
 
-const PYODIDE_CDN = 'https://cdn.jsdelivr.net/pyodide/v0.27.2/full';
+const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full`;
 
 let pyodide: any = null;
 let loadPromise: Promise<any> | null = null;
