@@ -1007,7 +1007,8 @@ export function getContextThreshold() {
     const m = getActiveModel();
     const p = getProvider();
     const entry = getAllModels().find(x => x.provider === p && x.model === m);
-    if (entry) return entry.contextK * 1000;
+    // A custom model saved without a context size has no contextK: fall through to the endpoint's setting.
+    if (entry && entry.contextK > 0) return entry.contextK * 1000;
     // For custom provider, use configured max input tokens
     if (p === 'custom') return getOAIContextTokens();
     // Fallback by provider
