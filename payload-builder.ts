@@ -91,6 +91,17 @@ export function fnTagMessages(hist: any[]): any[] {
     return out;
 }
 
+// Models that answered a request with "no images" (vLLM started with --language-model-only: "At most 0 image(s) may be provided").
+// Their requests carry an attached image as a text note instead; the refusal is remembered for the session.
+const _noImageModels = new Set<string>();
+export const markModelRefusesImages = (key: string) => { _noImageModels.add(key); };
+export const modelRefusesImages = (key: string) => _noImageModels.has(key);
+export function stripImageParts(hist: any[]): any[] {
+    return hist.map(m => Array.isArray(m?.content) && m.content.some((p: any) => p?.type === 'image_url')
+        ? { ...m, content: m.content.map((p: any) => p?.type === 'image_url' ? { type: 'text', text: '[image omitted: this model does not accept images]' } : p) }
+        : m);
+}
+
 export function buildRequestMessages(hist: any[], provider: string): any[] {
     const _clean = (n: string) => (n || '').replace(/[^a-zA-Z0-9_-]/g, '_');
     const raw = hist
