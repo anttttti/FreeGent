@@ -1186,6 +1186,11 @@ type StepAction =
 // Cross-provider fallback is handled by changing activeEndpoint with no history conversion.
 async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOverride = null as Set<string> | null, session, forceToolCall = false, maxSteps, excludeTools }: { toolFilterOverride?: Set<string> | null; session?: AgentSession; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] } = {}): Promise<string> {
     const _s = session ?? defaultSession;
+    // This turn's own abort signal. activeAbortController is replaced when the NEXT turn starts, so a turn that was stopped
+    // while a tool ran, and resumed when the tool returned, saw the new turn's live controller, carried on, and wrote its
+    // tool call, result and nudges into the history after the new user message (real-model run, Stop at 20 s of a `sleep 25`).
+    const _myAbort = activeAbortController;
+    const _stopped = () => !!_myAbort?.signal.aborted || (softStopPending && activeAbortController === _myAbort);
     // Every nudge must land in THIS turn's history, which is `_s`'s event log — not the default
     // chat's (headless runs have their own session; the model saw none of their nudges from
     // 8028033 until emitNudge was bound here). The log is the only sink: emitNudge is told to
@@ -1617,7 +1622,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     }
 
     for (let step = 0; step < _loopMax; step++) {
-        if (softStopPending || activeAbortController?.signal.aborted) return '*(break)*';
+        if (_stopped()) return '*(break)*';
         const _paused = [..._toolPauses].filter(([, until]) => step <= until).map(([t]) => t);
         _stepPausedTools = _paused.length ? new Set(_paused) : null;
 
@@ -1837,7 +1842,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // step: addThinkingTask() is called, then sleepInterruptible() immediately
                 // throws (signal aborted), propagating the AbortError out of the catch block
                 // instead of continuing the loop — cosmetically wrong and semantically confusing.
-                if (softStopPending || activeAbortController?.signal.aborted) return '*(break)*';
+                if (_stopped()) return '*(break)*';
                 // Genuine browser/network abort with a live signal — mobile radio sleep, iOS
                 // backgrounding, network interface change. withRetry already retries these but
                 // if one escapes the race, re-enter the turn loop without surfacing *(stopped)*.
@@ -2169,6 +2174,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 replFails: _s._replaceFailures,
                 replNudge: _s._replaceNudgeSent,
             });
+        // Stopped while the tools ran: nothing of this step may reach the history (the next turn may already be running).
+        if (_myAbort?.signal.aborted) { toolTasks?.forEach?.((t: any) => t?.abort?.()); return '*(break)*'; }   // a soft stop (pause after the step) still records the step
         // A read-only refusal is free only while there is budget left and the tool hasn't already been
         // taken away for the rest of the turn; after that it counts, so the turn ends cleanly instead
         // of cycling pause → re-ask → pause to the step cap (sympy-15875, scikit-learn-12471, django-15957).

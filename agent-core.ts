@@ -1391,6 +1391,11 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             : (_mediaOAIEndpoint ?? null);
         let finalText = await runTurn(_ep, placeholder, { toolFilterOverride: _mediaToolFilter });
 
+        // Stopped before anything was answered: the history ends on the user's own request. Left like that, the next message
+        // lets the model do what the user just cancelled (real-model run: Stop on a running command, then "reply SAFE" -
+        // the model answered and ran the command again). Say that it was stopped.
+        if (finalText === '*(break)*' && getChatHistory().at(-1)?.role === 'user')
+            appendChatMessage({ role: 'assistant', content: '[The user stopped this request before it was answered. Do not carry it out unless they ask for it again.]' });
         placeholder.finalize(_uiFinalText(finalText));
         _runCompleted = true;
     } catch (err) {
