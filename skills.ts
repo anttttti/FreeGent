@@ -1613,10 +1613,15 @@ function setupSkillAutocomplete() {
             dropdown.appendChild(item);
         }
         const rect = input.getBoundingClientRect();
-        dropdown.style.left   = rect.left + 'px';
-        dropdown.style.width  = Math.max(rect.width, 320) + 'px';
-        dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
-        dropdown.style.top    = 'auto';
+        // 31 commands made a 1,100 px list with overflow hidden: the first ~20 sat above the top of the screen,
+        // out of reach. Cap it to the room above the box and scroll inside; keep it within the width too.
+        const width = Math.min(Math.max(rect.width, 320), window.innerWidth - 16);
+        dropdown.style.width     = width + 'px';
+        dropdown.style.left      = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+        dropdown.style.bottom    = (window.innerHeight - rect.top + 4) + 'px';
+        dropdown.style.top       = 'auto';
+        dropdown.style.maxHeight = Math.max(120, Math.min(360, rect.top - 12)) + 'px';
+        dropdown.style.overflowY = 'auto';
         if (dropdown.style.display === 'none') {
             // Attach outside-click guard only when opening — removed in hideDropdown.
             document.addEventListener('click', _onDocClick);
@@ -1664,10 +1669,12 @@ function setupSkillAutocomplete() {
             e.preventDefault();
             selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
             items.forEach((it, i) => it.classList.toggle('selected', i === selectedIdx));
+            (items[selectedIdx] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             selectedIdx = Math.max(selectedIdx - 1, 0);
             items.forEach((it, i) => it.classList.toggle('selected', i === selectedIdx));
+            (items[selectedIdx] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
         } else if (e.key === 'Tab' || (e.key === 'Enter' && selectedIdx >= 0)) {
             e.preventDefault();
             const sel = items[selectedIdx] ?? items[0];

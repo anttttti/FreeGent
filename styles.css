@@ -1984,3 +1984,24 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 .agent-msg-user .agent-msg-bubble a { color: #1d3f9e; }
 [data-theme="dark"] .agent-msg-user .agent-msg-bubble a { color: #9ab8ff; }
 [data-theme="dark"] .agent-msg-bubble code { color: #ff8fc2; }
+
+/* Phones and tablets: iOS Safari zooms the page when a field under 16px takes focus, and the three toolbar
+   selects were 24px tall. Found by the Playwright device matrix (bench/browser/matrix.mjs). */
+@media (max-width: 700px), (pointer: coarse) {
+    #agent-input { font-size: 16px; }
+    .chat-select { font-size: 16px; min-height: 36px; }
+}
+
+/* Narrow screens: the Tasks toolbar (title, status, token count, Run / Autopilot buttons) is one flex row and pushed
+   the Run button past the edge of a 320 px phone. */
+@media (max-width: 700px) {
+    .tasks-toolbar { flex-wrap: wrap; row-gap: 6px; padding: 8px 10px; }
+    .runner-status-text { flex-basis: 100%; order: 5; }
+}
+/* Touch screens: three small controls were 13-30 px (the toolbar fold arrow, the model chip, the chat name). */
+@media (pointer: coarse) {
+    .toolbar-toggle-btn { min-width: 32px; min-height: 32px; top: 2px; left: 0; }
+    #input-model-btn { min-height: 36px; }
+    #chat-name-display { display: inline-block; min-height: 32px; line-height: 32px; }
+}
+@media (pointer: coarse) { .rail-btn { min-height: 40px; } }

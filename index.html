@@ -29,7 +29,7 @@
     <!-- Dark-mode pre-paint: set data-theme BEFORE styles.css is applied so the
          browser never paints the light theme first.  ES modules (init.ts) load
          asynchronously and would cause a flash if this ran there instead. -->
-    <script>if(localStorage.getItem('fg_dark_mode')==='1')document.documentElement.dataset.theme='dark';</script>
+    <script>try{var _d=localStorage.getItem('fg_dark_mode');if(_d==='1'||(_d===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark';}catch(e){}</script>
     <link rel="stylesheet" href="styles.css">
     <!-- Early stubs for inline onclick= handlers. ES modules load asynchronously, so
          clicking a rail button before tabs.ts finishes would throw "is not defined".

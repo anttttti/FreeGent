@@ -181,6 +181,15 @@ async function _waitUntilReachable(): Promise<void> {
 // onFailure: optional fn(e) called for EVERY caught exception, before the transient/non-transient
 // branch — a non-transient error (e.g. a 400 that doesn't match any isTransient() pattern) never
 // reaches onRetry at all, so this is the only hook that sees every failed attempt unconditionally.
+// The note shown while a request is being retried. With the browser offline, say that: a "Failed to fetch"
+// that repeats for minutes (a tunnel, a lost Wi-Fi) read like the model hanging, with Stop the only way out.
+function _retryNote(ep: any, n: number, e: any, waitMs: number): string {
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    return offline
+        ? `[${ep.provider}|${ep.model}][offline: no network connection, retrying in ${fmtDelay(waitMs)}; it continues when the connection is back, or press Stop]`
+        : `[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(waitMs)}]`;
+}
+
 export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverride = null, onFailure = null) {
     let weakProse = 0;
     for (let attempt = 0; ; attempt++) {
@@ -426,11 +435,11 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             const delay = remaining > 0 ? remaining : (isCustom && !isFetchFail ? 5_000 : Math.min(d, 60_000));
             const bounded = _boundedWait(delay, ep, e, is429, isCustom);
             if (bounded === false) return false;
-            onNote(`[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(delay)}]`);
+            onNote(_retryNote(ep, n, e, delay));
             return bounded;
         }
         if (effectiveErr && e.retryAfterMs != null) return Math.max(e.retryAfterMs, 5_000);
-        onNote(`[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(e.retryAfterMs ?? d)}]`);
+        onNote(_retryNote(ep, n, e, e.retryAfterMs ?? d));
         if (e.retryAfterMs != null) return Math.max(e.retryAfterMs, 5_000);
         // Workers skip the !forWorker rotation block above, so without this cap they fall through
         // to retryDelay()'s raw exponential (1500*2^attempt) with no ceiling — hours of sleep.

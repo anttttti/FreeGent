@@ -2,8 +2,9 @@
 // Bundled into one classic script by dev-api.ts buildExecSandbox().
 import './polyfills';
 import { runInPyodide } from './pyodide-run';
+import { PYODIDE_CDN } from './pyodide-version';
 
-importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js');
+importScripts(PYODIDE_CDN + 'pyodide.js');
 
 let pyodide: any = null;
 
@@ -36,7 +37,7 @@ self.fetch = async (input: any, init: any = {}) => {
 async function init() {
     try {
         pyodide = await loadPyodide({
-            indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/'
+            indexURL: PYODIDE_CDN
         });
         await pyodide.loadPackage("micropip");
 
