@@ -385,6 +385,7 @@ export function pinnedFetch(serverPort: number): typeof fetch {
             const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, {
                 method: init.method ?? 'GET', headers, lookup: _guardLookup(serverPort, port) as any,
             }, res => {
+                res.on('error', () => { /* aborted mid-body: the web stream below reports it to its reader */ });
                 const h = new Headers();
                 for (const [k, v] of Object.entries(res.headers))
                     if (Array.isArray(v)) v.forEach(x => h.append(k, x)); else if (v != null) h.set(k, String(v));
@@ -829,7 +830,12 @@ export function createDevApi(opts: DevApiOptions) {
             // the endpoints you configured. Unset, any public or private host is allowed (token holders only).
             const allow = postTargetRefusal(s.url, process.env.FG_PROXY_POST_ALLOW);
             if (allow) throw new ProxyRefusal(allow);
-            const upstream = await guardedFetch(s.url, { method, headers: s.headers, body: reqBody as any }, port, s.used, fetchImpl);
+            // The browser leaving (Stop, a closed tab, a reload) must end the upstream request too. Without this the model
+            // server kept generating for a client that was gone (Stop never stopped a local model), and big abandoned
+            // prompts piled up in vLLM's queue until it stopped answering anyone (found by the real-model browser run).
+            const upstreamAbort = new AbortController();
+            res.on('close', () => { if (!res.writableEnded) upstreamAbort.abort(); });
+            const upstream = await guardedFetch(s.url, { method, headers: s.headers, body: reqBody as any, signal: upstreamAbort.signal }, port, s.used, fetchImpl);
             _copyRespHeaders(upstream, res);
             res.setHeader('Content-Type', upstream.headers.get('Content-Type') ?? 'application/octet-stream');
             res.writeHead(upstream.status);
@@ -845,6 +851,7 @@ export function createDevApi(opts: DevApiOptions) {
                         res.write(value);
                     }
                 } catch (streamErr: any) {
+                    if (upstreamAbort.signal.aborted) { reader.cancel().catch(() => {}); return; }
                     try { res.write(`data: ${JSON.stringify({ error: { message: `Stream error: ${streamErr}` } })}\n\n`); }
                     catch { /* client disconnected */ }
                 }

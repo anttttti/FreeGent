@@ -208,6 +208,26 @@ describe('dev API over HTTP', () => {
             expect((await api(`/api/proxy?url=${encodeURIComponent(u)}`)).status, u).toBe(403);
     });
 
+    it('POST proxy ends the upstream request when the browser goes away (Stop must stop the model)', async () => {
+        let closed: () => void; const upstreamClosed = new Promise<void>(r => { closed = r; });
+        const slow = createServer((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            const t = setInterval(() => res.write('data: {"x":1}\n\n'), 50);
+            res.on('close', () => { clearInterval(t); closed(); });
+        });
+        await new Promise<void>(r => slow.listen(0, '127.0.0.1', r));
+        const slowPort = (slow.address() as any).port;
+        try {
+            const ac = new AbortController();
+            const r = await api('/api/proxy', { method: 'POST', signal: ac.signal,
+                body: JSON.stringify({ url: `http://127.0.0.1:${slowPort}/v1/chat/completions`, method: 'POST', body: '{}' }) });
+            const reader = r.body!.getReader();
+            await reader.read();              // the stream is flowing
+            ac.abort();                       // Stop
+            await Promise.race([upstreamClosed, new Promise((_, rej) => setTimeout(() => rej(new Error('upstream still open 3 s after the client left')), 3000))]);
+        } finally { await new Promise<void>(r => slow.close(() => r())); }
+    });
+
     it('POST proxy reaches local LLM servers but never link-local addresses', async () => {
         const local = await api('/api/proxy', { method: 'POST', body: JSON.stringify({ url: 'http://127.0.0.1:9/v1/models', method: 'GET' }) });
         expect(local.status).toBe(502);   // allowed: nothing listens on port 9, so the connection fails
