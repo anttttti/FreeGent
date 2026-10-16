@@ -6,6 +6,7 @@ import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
+import { clearChatHistory } from './chat-history.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -2696,8 +2697,19 @@ export function validateProjectData(data: any): void {
         throw new Error('The project\'s chat data is not valid.');
 }
 
+// A running turn belongs to the project being replaced: its tool calls would write into the imported
+// workspace and its messages into the imported chat. Stop it and wait for it to wind down first.
+async function _stopTurnsBeforeReplace() {
+    const w = window as any;
+    const busy = () => (w.turnsInFlight?.() ?? 0) > 0 || !!w.agentStreaming;
+    if (!busy()) return;
+    w.stopNow?.();
+    for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+}
+
 async function _restoreProjectData(data) {
     validateProjectData(data);
+    await _stopTurnsBeforeReplace();
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
     // this ensures settings survive the operation regardless.
@@ -2745,6 +2757,9 @@ async function _restoreProjectData(data) {
     setActiveChatId(activeId);
     lastUserMessageText = '';
     setLastProvider('');
+    // An import with no chat leaves no active chat: the replaced project's conversation must not stay in
+    // memory, where the next message would send it to the model.
+    if (!activeId) { clearChatHistory(); (window as any).cancelPendingApprovals?.(); (window as any).clearImageAttachments?.(); }
     if (typeof loadChatHistory === 'function' && activeId) loadChatHistory(activeId);
     await renderFileList();
     const msgEl = typeof getMessagesEl === 'function' ? getMessagesEl() : null;

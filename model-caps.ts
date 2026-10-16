@@ -159,6 +159,16 @@ function _gemmaObject(s: string, i: number): [Record<string, any>, number] {
     return [obj, s.length];
 }
 
+/** True when the user's request says a command is to be shown, not run ("do not execute it", "documentation
+ *  only", "just show me an example"). A shell fence in the reply is then the answer, not a command to rescue. */
+export function userForbidsExecution(userText: unknown): boolean {
+    const t = String(userText ?? '');
+    return /\b(?:do\s*n['o]t|don['’]t|never|without|not\s+to|no\s+need\s+to)\s+(?:actually\s+)?(?:execut|run|launch)/i.test(t)
+        || /\b(?:documentation|docs?|example|illustration|reference)[\s-]+only\b/i.test(t)
+        || /\b(?:just|only)\s+(?:show|display|give|write|list|print)\b/i.test(t)
+        || /\bfor\s+(?:documentation|illustration|reference|the\s+docs)\b/i.test(t);
+}
+
 // Parse tool-call XML blocks emitted by models that don't use native function calling.
 // Handles eight formats:
 //   Format A (Hermes/trinity): <tool_call><function=name><parameter=k>v</parameter>...</function></tool_call>
@@ -173,7 +183,8 @@ function _gemmaObject(s: string, i: number): [Record<string, any>, number] {
 //   Format J (GLM native):     <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
 //   Format K (Gemma native):   <|tool_call>call:name{k:<|"|>v<|"|>,n:3}<tool_call|>  (wrappers optional)
 // Returns { tool_calls, cleaned } — cleaned is the text with all tool-call blocks removed.
-export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; } {
+// opts.fenceRescue=false skips Format I-b (see userForbidsExecution).
+export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {}): { tool_calls: any[]; cleaned: any; } {
     const tool_calls = [];
     let cleaned = text;
     const _known = _knownToolNames();
@@ -446,7 +457,7 @@ export function parseFnTagCalls(text: any): { tool_calls: any[]; cleaned: any; }
     // Not when the reply is a document shown to the user: a ```markdown / ```md wrapper, or markdown
     // headings around the fence (a README pasted as-is). Its shell examples are content, and
     // running them is wrong. A command narrated in a fence with prose and no headings is still rescued.
-    if (!tool_calls.length && !/```(?:markdown|md|text|txt)\b/i.test(cleaned) && !/^#{1,6}[ \t]+\S/m.test(cleaned)) {
+    if (opts.fenceRescue !== false && !tool_calls.length && !/```(?:markdown|md|text|txt)\b/i.test(cleaned) && !/^#{1,6}[ \t]+\S/m.test(cleaned)) {
         cleaned = cleaned.replace(
             /```(?:bash|sh|shell)\n([\s\S]*?)\n```/g,
             (_, code) => {

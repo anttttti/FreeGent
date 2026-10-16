@@ -24,3 +24,23 @@ describe('parseFnTagCalls fenced shell blocks (Format I-b)', () => {
         expect(r.tool_calls).toHaveLength(1);
     });
 });
+
+describe('a request that says "show, do not run" keeps its shell fence', () => {
+    const fence = 'Here is the example:\n```bash\necho hi > doc-example.txt\n```\nCOMPLETED';
+    it.each([
+        'Show a shell example as documentation only. Do not execute it or create files.',
+        "don't run it, just show me the command",
+        'Give an example snippet, documentation-only',
+        'Write the command for the docs, without executing it',
+    ])('userForbidsExecution: %s', async (ask) => {
+        const { userForbidsExecution } = await import('../model-caps.ts');
+        expect(userForbidsExecution(ask)).toBe(true);
+        expect(W.parseFnTagCalls(fence, { fenceRescue: !userForbidsExecution(ask) }).tool_calls).toEqual([]);
+    });
+    it.each(['Count the lines in app.log', 'Run the tests and fix failures', 'list the files, then run them'])(
+        'a task request leaves the rescue on: %s', async (ask) => {
+            const { userForbidsExecution } = await import('../model-caps.ts');
+            expect(userForbidsExecution(ask)).toBe(false);
+            expect(W.parseFnTagCalls(fence, { fenceRescue: true }).tool_calls).toHaveLength(1);
+        });
+});
