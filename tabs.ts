@@ -349,6 +349,12 @@ function openFileTab(name) {
 function closeFileTab(name) {
     const ft = fileTabs.get(name);
     if (!ft) return;
+    // Closing throws the editor buffer away: a buffer that differs from the saved file needs the user's say.
+    if (ft.editor && ft.editor.state.doc.toString() !== ft.savedContent
+        && !confirm(`"${name}" has unsaved changes.\n\nOK closes the tab and discards them; Cancel keeps the tab open so you can save.`)) {
+        activateTab(name);
+        return;
+    }
     const wasActive = ft.tab.classList.contains('active');
     ft.editor?.destroy();
     if (ft._blobUrl) URL.revokeObjectURL(ft._blobUrl);

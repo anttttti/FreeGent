@@ -13,7 +13,7 @@ import { stripInjected, parseArgs } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
-import { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
+import { getModelToolFormat, parseFnTagCalls, userForbidsExecution, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
 import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { decodeOAIResponse } from './stream-decode.js';
@@ -2597,7 +2597,11 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // tool-call syntax (e.g. ThinkingCap generating <invoke>/<execute_code> instead of
     // <tool_call>{json}</tool_call>). Safe because parseFnTagCalls is restricted to known tool names.
     if ((toolFormat === 'fn-tag' || toolFormat === 'openai') && result.content && !result.tool_calls?.length) {
-        const { tool_calls, cleaned } = parseFnTagCalls(result.content);
+        // The request itself can say a command is to be shown, not run: then a shell fence is the answer.
+        const _lastAsk = [...(payload.messages ?? [])].reverse().find((m: any) => m.role === 'user' && !String(m.content ?? '').startsWith('<nudge>'));
+        const _askText = typeof _lastAsk?.content === 'string' ? _lastAsk.content
+            : Array.isArray(_lastAsk?.content) ? _lastAsk.content.map((p: any) => p?.text ?? '').join(' ') : '';
+        const { tool_calls, cleaned } = parseFnTagCalls(result.content, { fenceRescue: !userForbidsExecution(_askText) });
         if (tool_calls.length) {
             // Capture the pre-strip text before it's overwritten — this is otherwise gone
             // forever, and it's exactly what's needed to diagnose a model's tool-call
