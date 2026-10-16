@@ -1,7 +1,7 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
-import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, legacyTaskTarget } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -11,55 +11,10 @@ function parseLastLogEntry(content) {
     return entries.length ? entries[entries.length - 1][1] : '';
 }
 
-// A task file has task frontmatter (a status and an id or title). Other markdown a project keeps in
-// its own tasks/ folder stays where it is, whatever it is called.
-function _looksLikeTask(content: string) {
-    const fm = parseFrontmatter(content);
-    return !!(fm.status && (fm.id || fm.title));
-}
-
-// Written after the first move: the migration is one-time per workspace, so a file put in tasks/
-// later is the project's own and is never moved.
-const _MIGRATED_MARK = 'fg-tasks/.legacy-tasks-migrated';
-
-/** Moves task files out of the retired `tasks/` / `local/tasks/` folders into `fg-tasks/` /
- *  `local/fg-tasks/`, once per workspace. A name already taken there gets the next free id (file name
- *  and `id:` line). Copy, verify, then delete, so an interrupted move leaves the original in place.
- *  Returns the number moved. */
-async function migrateLegacyTasks(files: Array<{ name: string }>): Promise<number> {
-    const legacy = files.filter(f => legacyTaskTarget(f.name));
-    if (!legacy.length) return 0;
-    if (await agentReadFile(_MIGRATED_MARK).then(() => true, () => false)) return 0;
-    const taken = new Set(files.map(f => f.name));
-    let moved = 0;
-    for (const f of legacy.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-        try {
-            let content = await agentReadFile(f.name);
-            if (!_looksLikeTask(content)) continue;
-            let target = legacyTaskTarget(f.name)!;
-            if (taken.has(target)) {
-                const dir = target.slice(0, target.indexOf('fg-tasks/') + 9);
-                const ids = [...taken].filter(n => n.startsWith(dir)).map(n => Number(/\/(\d+)-/.exec(n)?.[1]) || 0);
-                const id = String(Math.max(0, ...ids) + 1).padStart(3, '0');
-                target = `${dir}${id}-${f.name.split('/').pop()!.replace(/^\d+-/, '')}`;
-                content = content.replace(/^id:.*$/m, `id: ${id}`);
-            }
-            await agentWriteFile(target, content);
-            if ((await agentReadFile(target)) !== content) continue;
-            await agentDeleteFile(f.name);
-            taken.add(target); taken.delete(f.name);
-            moved++;
-        } catch {}
-    }
-    if (moved) await agentWriteFile(_MIGRATED_MARK, 'Task files from the old tasks/ folder were moved to fg-tasks/ once; later files in tasks/ are left alone.\n').catch(() => {});
-    return moved;
-}
-
 async function loadTaskFiles() {
     const tasks: any[] = [];
     try {
-        let files = await agentListFiles();
-        if (await migrateLegacyTasks(files)) files = await agentListFiles();
+        const files = await agentListFiles();
         await Promise.all(
             files
                 .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
