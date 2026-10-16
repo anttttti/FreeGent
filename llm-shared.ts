@@ -217,7 +217,8 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
         : null;
     const _firstMsgContent = _origText !== null ? _origText.replace(/^\[TASK[^\]]*\]\n/, '') : null;
     const beforeTokens = estimateTokens(_hR);
-    task.setPrompt(`~${_fmtK(beforeTokens)} tokens → Compacting…`);
+    // On a local model a ~20k-token history takes ~5 minutes to summarise; the step said only "Compacting…" and a running timer.
+    task.setPrompt(`~${_fmtK(beforeTokens)} tokens → Compacting…${isCustomEndpoint(activeEndpoint) && beforeTokens > 8000 ? ' (a local model can take a few minutes for this)' : ''}`);
 
     const tail = (() => {
         let t = _hR.slice(-COMPACT_TAIL).filter((m: any) => m !== _origFirst);
