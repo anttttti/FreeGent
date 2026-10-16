@@ -1212,6 +1212,7 @@ function toggleInputModelPicker(): void {
     }
     _renderInputModelPicker(picker);
     picker.classList.add('picker-open');
+    (picker.querySelector('.picker-active, .picker-model-item') as HTMLElement | null)?.focus();   // keyboard: start on the current model
 }
 
 function _renderInputModelPicker(picker: HTMLElement): void {
@@ -1228,13 +1229,28 @@ function _renderInputModelPicker(picker: HTMLElement): void {
         seen.add(spec);
         items.push({ spec, label: modelFriendlyName(spec) || spec.replace('|', '/') });
     }
+    // Options are real list options: reachable by Tab / arrow keys and chosen with Enter or Space (they were
+    // plain divs with a click handler, so a keyboard could open the picker but never pick from it).
+    picker.setAttribute('role', 'listbox');
+    picker.setAttribute('aria-label', 'Model');
     picker.innerHTML = items.map(it =>
-        `<div class="picker-model-item${it.spec === active ? ' picker-active' : ''}"
+        `<div class="picker-model-item${it.spec === active ? ' picker-active' : ''}" role="option" tabindex="0" aria-selected="${it.spec === active}"
               onclick="_selectInputModel(${jsArg(it.spec)})">
             <span>${escapeHtml(it.label)}</span>
          </div>`
     ).join('') +
-    `<div class="picker-model-item picker-all-link" onclick="activateTab('settings');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
+    `<div class="picker-model-item picker-all-link" role="option" tabindex="0" onclick="activateTab('settings');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
+    if (!(picker as any)._kbd) {
+        (picker as any)._kbd = true;
+        picker.addEventListener('keydown', (e: KeyboardEvent) => {
+            const opts = [...picker.querySelectorAll<HTMLElement>('.picker-model-item')];
+            const i = opts.indexOf(document.activeElement as HTMLElement);
+            if (e.key === 'ArrowDown') { e.preventDefault(); opts[Math.min(i + 1, opts.length - 1)]?.focus(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); opts[Math.max(i - 1, 0)]?.focus(); }
+            else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (document.activeElement as HTMLElement)?.click(); }
+            else if (e.key === 'Escape') { picker.classList.remove('picker-open'); document.getElementById('input-model-btn')?.focus(); }
+        });
+    }
 }
 
 function _selectInputModel(spec: string): void {
