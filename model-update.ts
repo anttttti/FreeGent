@@ -9,6 +9,7 @@
 
 // Returns the active proxy base URL — CF Worker on GitHub Pages, local /api/proxy otherwise.
 import { escapeHtml } from './html-escape.js';
+import { bestLadder, formatLadder } from './ladder-info.js';
 function _proxyBase(): string {
     return typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '/api/proxy';
 }
@@ -799,7 +800,7 @@ function _renderSectionRows(items: Proposal[], sectionIdx: 'adds' | 'removes', a
             <span style="flex:1;min-width:0">
                 ${provBadge}<strong style="color:${color}">${_lnk(escapeHtml(p.label))}</strong>
                 <span style="color:var(--muted);margin-left:4px">${_lnk(escapeHtml(p.model))}</span>${filterTag}
-                <br><span style="color:var(--muted)">${escapeHtml(p.note)}</span>
+                <br><span style="color:var(--muted)">${escapeHtml(p.note)}</span>${(() => { const l = formatLadder(bestLadder([p.spec])); return l ? `<br><span style="color:var(--muted)" title="Measured by bench/modelladder">${escapeHtml(l)}</span>` : ''; })()}
             </span>
         </label>`;
     }).join('');
