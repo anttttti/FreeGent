@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -1637,11 +1637,43 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }
                 return _lastEstTokens;
             })();
+        // A conversation that is one message too big for the window cannot be sent or compacted (the compaction keeps the
+        // task text, so it overflows too): every attempt costs a full prefill, 45 s each on a local 27B, and four
+        // compactions plus the retries took minutes to end (real-model run: a pasted 25k-token text, 30k window).
+        // Refuse at once; the turn rolls back, so the next message works. About 7.5k of the window is the system prompt and tools.
+        if (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint())) {
+            const _h0 = _histR(_s);
+            if (_h0.length <= 2) {
+                // The estimate is chars/4 and runs about a third under real tokens for numbers and code, so the server's
+                // own rejection (_forceCompact is set by it) counts as proof too.
+                const _est = estimateTokens(_h0), _win = getOAIContextTokens();
+                if (_forceCompact || _est + 7500 + MIN_USEFUL_OUTPUT > _win) {
+                    const _chars = _h0.reduce((n: number, m: any) => n + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length), 0);
+                    const e: any = new Error(`That message (${Math.round(_chars / 1000)}k characters) does not fit the model's ${Math.round(_win / 1000)}k-token context window, which also holds about 7k of system prompt and tools, so it cannot be sent. Shorten it, or save the text as a file in the workspace and ask about the file.`);
+                    e.contextTooLarge = true;
+                    throw e;
+                }
+            }
+        }
         if (_forceCompact || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
             // Compaction after compaction with no response in between: the context is not getting
             // smaller, and each round spends a step (v0.66 sanitize-git-repo: 119 rounds, then the
             // step limit). Stop with what there is.
-            if (++_compactStreak > _MAX_COMPACT_STREAK) return await _gracefulSynthesis(`the conversation no longer fits the model's context after ${_MAX_COMPACT_STREAK} compactions in a row`, '');
+            if (++_compactStreak > _MAX_COMPACT_STREAK) {
+                // The only thing in the conversation is one message that fills the window: nothing can be compacted, the
+                // message can never be sent. Say so plainly and let the turn roll back (the message leaves the history,
+                // so the next message works) instead of a model-written "force-stopped" essay.
+                const _h1 = _histR(_s);
+                if (_h1.length <= 2) {
+                    const _est = estimateTokens(_h1), _win = getOAIContextTokens();
+                    if (_est + 3000 > _win) {
+                        const e: any = new Error(`That message is about ${Math.round(_est / 1000)}k tokens; the model's context window is ${Math.round(_win / 1000)}k and the system prompt needs about 6k of it. It was not sent. Shorten it, or save the text as a file in the workspace and ask about the file.`);
+                        e.contextTooLarge = true;
+                        throw e;
+                    }
+                }
+                return await _gracefulSynthesis(`the conversation no longer fits the model's context after ${_MAX_COMPACT_STREAK} compactions in a row`, '');
+            }
             await _doCompact(step);
         }
 

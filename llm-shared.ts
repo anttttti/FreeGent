@@ -143,7 +143,7 @@ function _compactFetchSignal(ep: any = null) {
 function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = null as any, onContextTruncate = null as any }) {
     return (n: number, e: any, d: number) => {
         // Context overflow (OAI "maximum context length" error)
-        const headroom = parseContextOverflow(e);
+        const headroom = parseContextOverflow(e, 256);   // a summary can be short: the answer-sized floor is for the main loop
         if (headroom !== null) {
             if (headroom > 0 && onContextOverflow) { onContextOverflow(headroom); return 0; }
             if (onContextTruncate) {

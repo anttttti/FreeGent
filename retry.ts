@@ -86,7 +86,12 @@ export function isTransient(e) {
     return _TRANSIENT_MSG_RE.test(msg);
 }
 
-export function parseContextOverflow(e) {
+// Less room than this for the answer is no room: a reasoning model spends it all thinking and returns nothing, and every
+// retry then pays for the whole prompt (real-model run: max_tokens halved to 721 under a 29k-token prompt, 45 s per
+// attempt, no end in minutes). Below it the caller is told there is no headroom, so it shrinks the prompt instead.
+export const MIN_USEFUL_OUTPUT = 1024;
+
+export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
     const msg = e.message || '';
     // vLLM (current): "you requested M output tokens and your prompt contains at least N input
     // tokens, for a total of at least <ctx+1> tokens". N is a lower bound vLLM derives as ctx+1−M,
@@ -96,7 +101,7 @@ export function parseContextOverflow(e) {
     const lb = msg.match(/you requested (\d+) output tokens and your prompt contains at least \d+ input tokens/i);
     if (lb) {
         const half = Math.floor(parseInt(lb[1], 10) / 2);
-        return half >= 256 ? half : 0;
+        return half >= min ? half : 0;
     }
     // vLLM / SGLang: "maximum context length is N ... at least M input tokens"
     let m = msg.match(/maximum context length is (\d+).*?at least (\d+) input tokens/is);
@@ -120,7 +125,8 @@ export function parseContextOverflow(e) {
     // Raw headroom — may be negative when the prompt alone exceeds the context limit.
     // Callers must check the sign: positive → reduce max_tokens and retry;
     // negative/zero → prompt is irrecoverably too large, must compact history instead.
-    return contextLimit - promptTokens - 256;
+    const room = contextLimit - promptTokens - 256;
+    return room > 0 && room < min ? 0 : room;
 }
 
 const MAX_BACKOFF_MS = 60_000; // 60s — long retries hurt more than they help for local endpoints
