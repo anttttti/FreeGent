@@ -1,5 +1,6 @@
 import { escapeHtml, jsArg } from './html-escape.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
+import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -1294,6 +1295,7 @@ type ModelRankGroup = {
     aa: { intelligence: number | null; coding: number | null; agentic: number | null } | null;
     live: boolean;              // details came from the live OpenRouter list
     successes: number;          // successful main-agent requests to this model, all providers (recordModelSuccess)
+    ladder: string;             // measured microtask/context ladder summary (bench/modelladder), '' when never run
 };
 
 // Group available catalog entries by canonical model id and merge their features — live
@@ -1318,7 +1320,7 @@ export function buildModelRankGroups(available: any[], orModels: any[] = [], suc
         let g = byId.get(cid);
         if (!g) {
             g = { id: cid, entries: [], contextK: null, paramsB: null, activeB: null, tools: false, thinking: false, released: null, aa: null, live: false,
-                  successes: Number(successCounts[cid]) || 0 };
+                  successes: Number(successCounts[cid]) || 0, ladder: '' };
             byId.set(cid, g);
         }
         g.entries.push(m);
@@ -1330,6 +1332,7 @@ export function buildModelRankGroups(available: any[], orModels: any[] = [], suc
         return [...c.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] ?? null;
     };
     for (const g of byId.values()) {
+        g.ladder = formatLadder(bestLadder(g.entries.map((e: any) => `${e.provider}|${e.model}`)));
         const om = live.get(g.id);
         // Display id: the org/model form when any source has one, minus :free/-free suffixes.
         const withOrg = [om?.id, ...g.entries.map(e => e.model)].find(x => typeof x === 'string' && x.includes('/'));
@@ -1371,8 +1374,9 @@ export function formatModelRankLine(n: number, g: ModelRankGroup): string {
     const params = g.paramsB != null ? `${g.paramsB}B${g.activeB != null ? ` (${g.activeB}B active)` : ''}` : 'size unknown';
     const caps = [g.tools ? 'tools' : 'no tools', g.thinking && 'reasoning'].filter(Boolean).join(', ');
     const aa = g.aa ? `, AA intelligence ${g.aa.intelligence}${g.aa.coding != null ? ` / coding ${g.aa.coding}` : ''}${g.aa.agentic != null ? ` / agentic ${g.aa.agentic}` : ''}` : '';
+    const ladder = g.ladder ? `, ${g.ladder}` : '';
     const used = g.successes > 0 ? `, ${g.successes} successful request${g.successes === 1 ? '' : 's'} here` : ', not used here yet';
-    return `${n}. ${g.id} — ${params}, ${g.contextK != null ? `${g.contextK}K ctx` : 'ctx unknown'}, ${caps}${g.released ? `, released ${g.released}` : ''}${aa}${used}`;
+    return `${n}. ${g.id} — ${params}, ${g.contextK != null ? `${g.contextK}K ctx` : 'ctx unknown'}, ${caps}${g.released ? `, released ${g.released}` : ''}${aa}${ladder}${used}`;
 }
 
 function resetModelPriorityDefaults() {
@@ -1446,7 +1450,7 @@ async function autoPopulateModelPriority() {
             : '';
 
         const userMsg =
-`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. A model without tool support is unsuitable for agent work — rank it last. The models are listed newest release first, so the latest ones come first; concentrate on those, and favour a recent model over an older one of similar capability.
+`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. "long chats: …" is a measurement from FreeGent's own long-context test (run ${MODEL_LADDER_DATE}): three separate conversations per model, one each of agentic coding, real-world knowledge and reasoning, each starting from a long context and growing by tens of thousands of tokens with about six tasks per step, up to a 250K-token context or the model's free-tier limit; the counts are tasks solved / attempted and "held" is the largest context it kept working at in that conversation. A model that solved few tasks, lost accuracy, or whose free tier stopped early is less reliable than its size suggests, and one that solved most is proven to work; models without this line are untested. A model without tool support is unsuitable for agent work — rank it last. The models are listed newest release first, so the latest ones come first; concentrate on those, and favour a recent model over an older one of similar capability.
 ${refSection}
 ${modelLines}
 
