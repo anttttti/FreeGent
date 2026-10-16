@@ -2715,11 +2715,7 @@ export function validateProjectData(data: any): void {
 // A running turn belongs to the project being replaced: its tool calls would write into the imported
 // workspace and its messages into the imported chat. Stop it and wait for it to wind down first.
 async function _stopTurnsBeforeReplace() {
-    const w = window as any;
-    const busy = () => (w.turnsInFlight?.() ?? 0) > 0 || !!w.agentStreaming;
-    if (!busy()) return;
-    w.stopNow?.();
-    for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+    await (window as any).stopTurnAndWait?.();
 }
 
 async function _restoreProjectData(data) {
