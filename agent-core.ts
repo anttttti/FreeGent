@@ -1501,6 +1501,16 @@ function stopNow(): void {
     setInputState(true);
 }
 
+/** Stop whatever turn is running and wait (up to 5 s) for it to wind down. For actions that replace the open conversation
+ *  (import a chat or a project, delete the running chat): a turn left running keeps its tool calls and its replies, and they
+ *  land in whatever chat is open when they arrive. */
+async function stopTurnAndWait(): Promise<void> {
+    const busy = () => aiBusy() || turnsInFlight() > 0;
+    if (!busy()) return;
+    stopNow();
+    for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+}
+
 function handleSendButton(): void {
     if (agentStreaming) stopNow();
     else userSend();
@@ -1710,7 +1720,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
-export { runAgentTurn, stopNow, createNewChat, turnsInFlight };
+export { runAgentTurn, stopNow, createNewChat, turnsInFlight, stopTurnAndWait };

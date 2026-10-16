@@ -978,7 +978,10 @@ async function switchToChat(id, force = false) {
     (window as any).restoreParkedAttachments?.(id);   // the attachments chosen in this chat before leaving it
 }
 
-function deleteChat(id) {
+async function deleteChat(id) {
+    // Deleting the chat a turn is running in: stop it first. Left running, the turn kept an ownerless history (activeChatId null)
+    // and the next message was answered but never saved (codex PW-05).
+    if (id === activeChatId) await (window as any).stopTurnAndWait?.();
     const list = getChatList().filter(c => c.id !== id);
     saveChatList(list);
     clearChatStorage(id);

@@ -360,6 +360,9 @@ async function importChat() {
             alert('File does not look like a FreeGent chat export (missing openaiHistory array).');
             return;
         }
+        // A turn running in the open chat would carry on in the imported one (its tool calls and replies land in whatever chat
+        // is open; codex PW-04): stop it first.
+        await (window as any).stopTurnAndWait?.();
         // Create a new chat, populate it, and persist.
         createNewChat?.();
         setChatHistory(data.openaiHistory);
