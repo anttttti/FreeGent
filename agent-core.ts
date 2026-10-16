@@ -499,6 +499,13 @@ async function rewindToCheckpoint(ckptId: string, checkpointRow: HTMLElement): P
     setInputState(true);
 }
 
+// The Rewind button: it drops every later message and puts the workspace back, and neither can be undone.
+async function rewindWithConfirm(ckptId: string, checkpointRow: HTMLElement): Promise<void> {
+    if (aiBusy()) return;
+    if (!confirm('Rewind to before this message?\n\nThe messages after it are removed and the workspace is restored to how it was then. This cannot be undone.')) return;
+    await rewindToCheckpoint(ckptId, checkpointRow);
+}
+
 async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Promise<void> {
     if (aiBusy()) { console.warn('[rerun] blocked — an AI task is running'); return; }
     const raw = localStorage.getItem(ckptKey(ckptId));
@@ -648,6 +655,7 @@ function bindRerunButton(btn: HTMLElement): void {
 Object.assign(window, { rerunFromStep, bindRerunButton });
 
 window.rewindToCheckpoint  = rewindToCheckpoint;
+(window as any).rewindWithConfirm = rewindWithConfirm;
 window.rerunCheckpoint   = rerunCheckpoint;
 window.showCheckpointDiff = showCheckpointDiff;
 (window as any).showCheckpointFileDiff = showCheckpointFileDiff;
@@ -661,7 +669,7 @@ function appendCheckpointRow(ckptId: string, container: HTMLElement | null = nul
     const rewindBtn = document.createElement('button');
     rewindBtn.className = 'agent-ckpt-btn'; rewindBtn.dataset.action = 'rewind';
     rewindBtn.textContent = '⏮ Rewind'; rewindBtn.title = 'Restore history to before this message';
-    rewindBtn.onclick = (e) => { e.stopPropagation(); rewindToCheckpoint(ckptId, row); };
+    rewindBtn.onclick = (e) => { e.stopPropagation(); rewindWithConfirm(ckptId, row); };
 
     const rerunBtn = document.createElement('button');
     rerunBtn.className = 'agent-ckpt-btn'; rerunBtn.dataset.action = 'rerun';

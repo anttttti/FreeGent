@@ -202,10 +202,14 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
             return { kind: 'continue' };
         }
         if (ps.substCheck < 1 && step < _maxSteps() - 1) {
-            const isQuestionDone = _isAutonomous && (_askedCache ?? await _asksUser(bodyText, ps));
+            // BLOCKED: <question> is how an autonomous run asks: the runner pauses and shows it to the user.
+            // Bouncing it as "a question declared COMPLETED" sent the model to fail the task instead
+            // (sim s2-ap-three-answers: a task needing three user-only facts failed after the first answer).
+            const _isBlockedExit = _BLOCKED_DECLARATION_RE.test(textContent) && !_TERMINAL_RE.test(textContent);
+            const isQuestionDone = _isAutonomous && !_isBlockedExit && (_askedCache ?? await _asksUser(bodyText, ps));
             if (isQuestionDone) {
                 ps.substCheck++;
-                adapter.pushNudge('You cannot ask the user for information in autonomous mode. Complete the task with available information, or end with BLOCKED: <specific reason>.');
+                adapter.pushNudge('You cannot ask the user a question mid-turn in autonomous mode. Complete the task with available information. If you need something only the user can give, end with BLOCKED: <the exact question or missing value> — the run pauses and shows it to them.');
                 return { kind: 'continue' };
             }
             // JSON tool-call written as text instead of a structured call — reject deterministically.

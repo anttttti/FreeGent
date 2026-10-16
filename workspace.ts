@@ -1777,6 +1777,8 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
             const actions = document.createElement('div');
             actions.className = 'workspace-file-actions';
 
+            actions.appendChild(_openButton(f.name));
+
             const del = document.createElement('button');
             del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
             del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
@@ -1788,6 +1790,16 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
             parentEl.appendChild(row);
         }
     }
+}
+
+// Opening a file was double-click only: nothing on the row said so, a keyboard could not do it, and a
+// double tap on a phone zooms. The same action as a button.
+function _openButton(name: string): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.className = 'ws-btn'; b.title = 'Open (or double-click the row)'; b.textContent = '↗';
+    b.setAttribute('aria-label', `Open ${name}`);
+    b.onclick = e => { e.stopPropagation(); openFileTab(name); };
+    return b;
 }
 
 // The ▶ / ↓ / × buttons of a workspace file row. Shared by the Project files list and the
@@ -1837,6 +1849,8 @@ export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}
     }
 
     if (opts.playOnly) return actions;
+
+    actions.appendChild(_openButton(name));
 
     const dl = document.createElement('button');
     dl.className = 'ws-btn'; dl.title = 'Download'; dl.textContent = '↓';
