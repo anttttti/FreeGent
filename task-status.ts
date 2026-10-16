@@ -33,17 +33,9 @@ export function dedupeTasksByTitle<T extends { path: string; fm: any }>(tasks: T
 
 // Folders that hold task files: the workspace's fg-tasks/ and the same folder inside an attached Local
 // Folder. (`local/fg-tasks/` was once missing from every check, so a Local Folder project's tasks did
-// not reach the board.) The older `tasks/` and `local/tasks/` are no longer task folders: files left
-// there are moved by migrateLegacyTasks (tasks.ts).
+// not reach the board.) The older `tasks/` and `local/tasks/` are no longer task folders: nothing
+// writes tasks there and files left there are not read as tasks.
 export const TASK_DIRS = ['fg-tasks/', 'local/fg-tasks/'];
 export function isTaskPath(path: unknown): boolean {
     return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d));
-}
-
-const LEGACY_TASK_RE = /^(local\/)?tasks\/(.+\.md)$/;
-/** Where a file in the retired `tasks/` (or `local/tasks/`) folder belongs, or null when it is not one. */
-export function legacyTaskTarget(path: string): string | null {
-    const m = LEGACY_TASK_RE.exec(path);
-    if (!m || /(^|\/)ledger\.md$/.test(path)) return null;
-    return `${m[1] ?? ''}fg-tasks/${m[2]}`;
 }
