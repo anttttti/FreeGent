@@ -1195,7 +1195,20 @@ async function _handleListFiles(args, context) {
             if (c !== null) files.push({ name: n, size: _byteLen(c || '') });
         return { path: pathFilter, ..._cap(applyFilter(files)) };
     }
-    try   { return { path: pathFilter, ..._cap(applyFilter(await agentListFiles())) }; }
+    try {
+        const hidden = typeof agentHiddenDirs === 'function' ? await agentHiddenDirs() : [];
+        // A hidden directory named by path is listed on request; at the root the listing says what it leaves out.
+        const named = hidden.find(d => normFilter === d || normFilter.startsWith(d + '/'));
+        if (named) {
+            const dir = normFilter.replace(/\/$/, '');
+            const inDir = (await agentListFilesInDir(dir)).map(f => ({ name: `${dir}/${f.name}` }));
+            return { path: pathFilter, ..._cap(applyFilter(inDir)) };
+        }
+        const listed = _cap(applyFilter(await agentListFiles()));
+        if (!hidden.length || pathFilter) return { path: pathFilter, ...listed };
+        const hiddenNote = `Not listed (build/cache/dependency directories that exist): ${hidden.map(d => d + '/').join(', ')}. Pass one as path to list it.`;
+        return { path: pathFilter, ...listed, note: [listed.note, hiddenNote].filter(Boolean).join(' ') };
+    }
     catch (e) { return { error: e.message }; }
 }
 

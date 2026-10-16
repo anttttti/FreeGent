@@ -158,6 +158,15 @@ export class NodeFsAdapter implements WorkspaceAdapter {
 
     /** Scan a single subdirectory without stat() calls — used by loadSkills() to
      *  avoid a full workspace walk (64K files × per-tick JSDOM overhead = ~5 s). */
+    /** Top-level directories present but left out of every workspace listing (build output, caches,
+     *  dependencies). list_files names them so "no build/ directory" is never concluded from a listing. */
+    async agentHiddenDirs(): Promise<string[]> {
+        try {
+            return (await readdir(this._root, { withFileTypes: true }))
+                .filter(e => e.isDirectory() && _SKIP.has(e.name)).map(e => e.name).sort();
+        } catch { return []; }
+    }
+
     async agentListFilesInDir(dir: string): Promise<Array<{name: string}>> {
         return _walkFiles(join(this._root, dir), { skipNoise: false });
     }
