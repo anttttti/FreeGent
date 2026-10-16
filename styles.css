@@ -2035,3 +2035,10 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
     .settings-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
     .settings-tab-btn { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; }
 }
+
+/* The Tasks board is four columns of at least 210px: below ~1100px of tab width the fourth (Done) ran past the edge and the board
+   had to be scrolled sideways to see it (iPad portrait 834px, a 1024px laptop). Let the columns narrow first. */
+@media (max-width: 1150px) {
+    .kanban-col { min-width: 150px; }
+    .kanban-board { gap: 8px; padding: 12px 10px; }
+}
