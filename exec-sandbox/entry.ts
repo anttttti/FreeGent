@@ -24,6 +24,7 @@ globalThis.fetch = sandboxFetch as typeof fetch;
 declare const __PYODIDE_WORKER_SRC__: string;
 declare const __BASH_SANDBOX_SRC__: string;
 declare const __MODERN_JS_SRC__: string;
+declare const __JS_WORKER_SRC__: string;
 
 function loadTrustedBundle(source: string, name: string): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -80,12 +81,41 @@ function startPython(): void {
     ownedWorker.onerror = (ev) => { URL.revokeObjectURL(url); ownedWorker.terminate(); post({ fg: 'event', name: 'py-error', data: String((ev as any).message || 'worker error') }); if (pyWorker === ownedWorker) pyWorker = null; };
 }
 
+// ── JavaScript (a worker per run) ─────────────────────────────────────────
+
+function runJsInWorker(code: string, files: Record<string, any>): Promise<any> {
+    return new Promise((resolve, reject) => {
+        if (typeof Worker !== 'function' || typeof BigInt !== 'function') { reject(Object.assign(new Error('no worker'), { noWorker: true })); return; }
+        const url = URL.createObjectURL(new Blob([__JS_WORKER_SRC__], { type: 'text/javascript' }));
+        let w: Worker;
+        try { w = new Worker(url); } catch { URL.revokeObjectURL(url); reject(Object.assign(new Error('no worker'), { noWorker: true })); return; }
+        const done = () => { URL.revokeObjectURL(url); try { w.terminate(); } catch { /* a stub without terminate */ } };
+        w.onmessage = ({ data }) => {
+            if (data?.type === 'net') {
+                pageFetch(String(data.url ?? '')).then(
+                    value => w.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
+                    err   => w.postMessage({ type: 'net-reply', id: data.id, error: String(err?.message ?? err) }));
+                return;
+            }
+            if (data?.type === 'result') { done(); resolve(data.result); }
+            else if (data?.type === 'error') { done(); reject(new Error(data.message)); }
+        };
+        w.onerror = (ev: any) => { done(); reject(Object.assign(new Error(String(ev?.message ?? 'worker error')), { noWorker: /syntax|worker/i.test(String(ev?.message ?? '')) })); };
+        try { w.postMessage({ type: 'run', code, files }); }
+        catch { done(); reject(Object.assign(new Error('no worker'), { noWorker: true })); }
+    });
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 onCall(async (d: any) => {
     switch (d.kind) {
         case 'js':
-            return (await loadModernJs() || runJs)(String(d.code ?? ''), d.files ?? {});
+            return runJsInWorker(String(d.code ?? ''), d.files ?? {}).catch(async (e: any) => {
+                // No Worker (or a browser that cannot start one from a blob URL): the old way, on this thread.
+                if (e?.noWorker) return (await loadModernJs() || runJs)(String(d.code ?? ''), d.files ?? {});
+                throw e;
+            });
         case 'bash':
             return browserBash(String(d.code ?? ''), message => post({ fg: 'progress', id: d.id, message }));
         case 'py-start':
