@@ -10,6 +10,8 @@ export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
     agentListFilesInDir?(dir: string): Promise<Array<{name: string}>>;
+    /** Top-level directories that exist but are left out of listings (build output, caches, dependencies). */
+    agentHiddenDirs?(): Promise<string[]>;
     agentReadFile(path: string, encoding?: string): Promise<string>;
     agentWriteFile(path: string, content: string, encoding?: string): Promise<void>;
     agentDeleteFile(path: string): Promise<void>;
@@ -753,6 +755,11 @@ export async function agentListFilesInDir(dir: string): Promise<Array<{name: str
     return all
         .filter(f => f.name.startsWith(prefix))
         .map(f => ({ name: f.name.slice(prefix.length) }));
+}
+
+/** Top-level directories present in the workspace but omitted from listings; [] where nothing is hidden. */
+export async function agentHiddenDirs(): Promise<string[]> {
+    return _wa?.agentHiddenDirs ? _wa.agentHiddenDirs() : [];
 }
 
 /** Full workspace walk without stat() calls and with standard exclusions
@@ -2955,7 +2962,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // Document helpers exposed for tools.js and other classic scripts
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,
     // Agent file ops (called via window.X in tools.js)
-    agentListFiles, agentListFilesInDir, agentListFilesNoStat, agentReadFile, agentReadFileBytes, agentWriteFile, agentDeleteFile, agentFileMtime,
+    agentListFiles, agentListFilesInDir, agentHiddenDirs, agentListFilesNoStat, agentReadFile, agentReadFileBytes, agentWriteFile, agentDeleteFile, agentFileMtime,
     setWorkspaceAdapter, workspaceUsesAbsolutePaths, workspaceRootDir, workspaceName,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {
