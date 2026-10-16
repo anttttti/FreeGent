@@ -31,10 +31,19 @@ export function dedupeTasksByTitle<T extends { path: string; fm: any }>(tasks: T
     return tasks.filter(t => { const k = taskTitleKey(t.fm?.title); return !k || keep.get(k) === t; });
 }
 
-// Folders that hold task files: the workspace's fg-tasks/ (or the older tasks/), and the same two
-// inside an attached Local Folder. `local/fg-tasks/` was missing from every check, so a Local
-// Folder project's tasks did not reach the board.
-export const TASK_DIRS = ['fg-tasks/', 'tasks/', 'local/fg-tasks/', 'local/tasks/'];
+// Folders that hold task files: the workspace's fg-tasks/ and the same folder inside an attached Local
+// Folder. (`local/fg-tasks/` was once missing from every check, so a Local Folder project's tasks did
+// not reach the board.) The older `tasks/` and `local/tasks/` are no longer task folders: files left
+// there are moved by migrateLegacyTasks (tasks.ts).
+export const TASK_DIRS = ['fg-tasks/', 'local/fg-tasks/'];
 export function isTaskPath(path: unknown): boolean {
     return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d));
+}
+
+const LEGACY_TASK_RE = /^(local\/)?tasks\/(.+\.md)$/;
+/** Where a file in the retired `tasks/` (or `local/tasks/`) folder belongs, or null when it is not one. */
+export function legacyTaskTarget(path: string): string | null {
+    const m = LEGACY_TASK_RE.exec(path);
+    if (!m || /(^|\/)ledger\.md$/.test(path)) return null;
+    return `${m[1] ?? ''}fg-tasks/${m[2]}`;
 }

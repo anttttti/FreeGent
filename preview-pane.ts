@@ -8,7 +8,7 @@ import { agentListFiles, buildFileActions } from './workspace.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 
 // Top-level directories that never hold the thing a user wants to preview.
-const _SKIP_DIRS = new Set(['tmp', 'temp', 'tasks', 'fg-tasks', 'node_modules', 'dist', 'build', 'memory', 'skills', 'rules', '__pycache__']);
+const _SKIP_DIRS = new Set(['tmp', 'temp', 'fg-tasks', 'node_modules', 'dist', 'build', 'memory', 'skills', 'rules', '__pycache__']);
 const _MAX_CANDIDATES = 120;
 
 // Workspace file names worth offering as a preview: no scratch/task/tooling directories at any
