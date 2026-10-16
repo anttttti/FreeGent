@@ -109,6 +109,7 @@ These manage their own streaming fetch because token-by-token display and mid-st
 ### Nudge injection
 
 Framework messages injected mid-conversation use role to carry the signal where supported:
+- Local vLLM with speculative decoding can end a reply after one token with `finish_reason: "stop"` (seen as `B` for `BETA`, about 3 in 10 one-word answers). FreeGent trusts `stop` (a long reasoning phase makes a short answer look cut off otherwise), so such a reply is shown as is; it is the server's early stop, not a page bug.
 - `_nudgeRole(provider)` returns `'system'` for `nvidia` only (raw ChatML API). All others including `custom` (vLLM/HuggingFace) use `'user'` — HF chat templates (e.g. Qwen3) forbid system messages after turn 0.
 - When role is `'user'`, wrap text in `<note>...</note>` tags via the `_nudge` closure in `llm-loops.ts`.
 

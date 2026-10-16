@@ -545,6 +545,7 @@ function getCustomModels() {
 // localStorage fills up with cached chat histories; on a quota error, evict old chats' caches
 // and retry. Throws if it still does not fit, so callers can tell the user.
 function saveCustomModels(arr) {
+    (globalThis as any).clearImageRefusals?.();   // a changed model list may mean a different server: ask about images again
     const val = JSON.stringify(arr);
     const set = () => { try { localStorage.setItem(KEYS.CUSTOM_MODELS, val); return true; } catch { return false; } };
     if (set()) return;

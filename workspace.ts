@@ -2714,13 +2714,13 @@ export function validateProjectData(data: any): void {
 
 // A running turn belongs to the project being replaced: its tool calls would write into the imported
 // workspace and its messages into the imported chat. Stop it and wait for it to wind down first.
-async function _stopTurnsBeforeReplace() {
-    await (window as any).stopTurnAndWait?.();
+async function _stopTurnsBeforeReplace(): Promise<boolean> {
+    return (await (window as any).stopTurnAndWait?.()) !== false;
 }
 
 async function _restoreProjectData(data) {
     validateProjectData(data);
-    await _stopTurnsBeforeReplace();
+    if (!(await _stopTurnsBeforeReplace())) throw new Error('Import cancelled: Autopilot is still running.');
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
     // this ensures settings survive the operation regardless.

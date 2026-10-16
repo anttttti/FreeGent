@@ -981,7 +981,7 @@ async function switchToChat(id, force = false) {
 async function deleteChat(id) {
     // Deleting the chat a turn is running in: stop it first. Left running, the turn kept an ownerless history (activeChatId null)
     // and the next message was answered but never saved (codex PW-05).
-    if (id === activeChatId) await (window as any).stopTurnAndWait?.();
+    if (id === activeChatId && (await (window as any).stopTurnAndWait?.()) === false) return;
     const list = getChatList().filter(c => c.id !== id);
     saveChatList(list);
     clearChatStorage(id);
