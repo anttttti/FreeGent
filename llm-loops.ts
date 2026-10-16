@@ -678,7 +678,8 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
     // read listed after a write returned the old content, and "write the file, then run it" raced.
     if (normCalls.length > 1 && !normCalls.every(_isReadOnlyCall)) {
         const out: Array<{ name: string; args: any; result: any }> = [];
-        for (let i = 0; i < normCalls.length; i++) out.push(await _runOne(normCalls[i], i));
+        const _sig = activeAbortController?.signal;   // this batch's own turn: after Stop the rest of the batch does not start
+        for (let i = 0; i < normCalls.length; i++) { if (_sig?.aborted) break; out.push(await _runOne(normCalls[i], i)); }
         return out;
     }
     return Promise.all(normCalls.map(_runOne));
@@ -1191,6 +1192,15 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // tool call, result and nudges into the history after the new user message (real-model run, Stop at 20 s of a `sleep 25`).
     const _myAbort = activeAbortController;
     const _stopped = () => !!_myAbort?.signal.aborted || (softStopPending && activeAbortController === _myAbort);
+    // Stop must not wait for a tool that is still running (a 60 s command kept the stopped turn, the Send button's real state and any
+    // import or delete that waits for it hostage). On abort the tools are left to finish on their own and the step is dropped.
+    const _untilAborted = async <T,>(work: Promise<T>): Promise<T | never[]> => {
+        if (!_myAbort) return work;
+        const aborted = new Promise<'abort'>(res => { if (_myAbort.signal.aborted) res('abort'); else _myAbort.signal.addEventListener('abort', () => res('abort'), { once: true }); });
+        const r = await Promise.race([work, aborted]);
+        if (r === 'abort') { work.catch(() => {}); return [] as never[]; }
+        return r as T;
+    };
     // Every nudge must land in THIS turn's history, which is `_s`'s event log — not the default
     // chat's (headless runs have their own session; the model saw none of their nudges from
     // 8028033 until emitNudge was bound here). The log is the only sink: emitNudge is told to
@@ -2191,7 +2201,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 toolTasks?.[i]?.complete();
                 return { name, args, result };
             })
-            : await _runToolCalls(_normCalls, toolTasks, {
+            : await _untilAborted(_runToolCalls(_normCalls, toolTasks, {
                 forWorker: false,
                 blockedTools: _turnExcludedTools,
                 pausedTools: _stepPausedTools,
@@ -2200,7 +2210,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 onRepeat: (name) => _repeatedNames.push(name),
                 replFails: _s._replaceFailures,
                 replNudge: _s._replaceNudgeSent,
-            });
+            }));
         // Stopped while the tools ran: nothing of this step may reach the history (the next turn may already be running).
         if (_myAbort?.signal.aborted) { toolTasks?.forEach?.((t: any) => t?.abort?.()); return '*(break)*'; }   // a soft stop (pause after the step) still records the step
         // A read-only refusal is free only while there is budget left and the tool hasn't already been

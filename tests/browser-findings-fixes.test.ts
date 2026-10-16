@@ -45,7 +45,7 @@ describe('cross-tab chat history', () => {
         const a = src('agent-core.ts'), c = src('chat-state.ts');
         expect(a).toContain('reloadChatIfChangedElsewhere()');
         expect(a).toContain('chatChangedElsewhere()');
-        expect(c).toContain('if (!force) saveHistory();');
+        expect(c).toContain('if (!force && !chatChangedElsewhere()) saveHistory();');
         expect(c).toContain("window.addEventListener('storage'");
     });
 });

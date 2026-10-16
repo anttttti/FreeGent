@@ -1148,7 +1148,9 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // workspace context) is serialized so a double tap cannot start two turns.
     if (agentStreaming) return _agentSendReady(container);
     if (_sendPreparing || aiJob) return;
+    (window as any).reopenApprovals?.();   // a Stop or New Chat before this turn refused the old batch's asks; this turn may ask again
     _sendPreparing = true;
+    _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
     setAiJob('send-preparing');
     try {
         if (typeof waitForAttachments === 'function') await waitForAttachments();
@@ -1160,6 +1162,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     } finally {
         if (aiJob === 'send-preparing') setAiJob('');
         _sendPreparing = false;
+        _sendsActive--;
     }
 }
 async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
@@ -1503,7 +1506,7 @@ function stopNow(): void {
 
 /** Stop whatever turn is running and wait (up to 5 s) for it to wind down. For actions that replace the open conversation
  *  (import a chat or a project, delete the running chat): a turn left running keeps its tool calls and its replies, and they
- *  land in whatever chat is open when they arrive. Returns false when the user declined to stop a running Autopilot. */
+ *  land in whatever chat is open when they arrive. Returns false when the user declined to stop a running Autopilot, or when the turn did not wind down within 5 s (nothing is replaced then). */
 async function stopTurnAndWait(): Promise<boolean> {
     const busy = () => aiBusy() || turnsInFlight() > 0;
     if (!busy()) return true;
@@ -1511,6 +1514,10 @@ async function stopTurnAndWait(): Promise<boolean> {
     if (aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+    if (busy()) {   // a tool that ignores cancellation: do not replace the conversation under it
+        alert('The running task did not stop in time, so nothing was changed. Try again in a moment.');
+        return false;
+    }
     return true;
 }
 
@@ -1603,9 +1610,11 @@ function newChat(): void {
 // scan, prelude) is done, so on its own it reads "idle" for that whole window — the runner then opened the next task's chat
 // under a turn that was still starting. A turn is counted from its first line.
 let _turnsActive = 0;
-const turnsInFlight = (): number => _turnsActive;
+let _sendsActive = 0;   // interactive sends (agentSend) that have not finished unwinding
+const turnsInFlight = (): number => _turnsActive + _sendsActive;
 async function runAgentTurn(prompt: string, container: HTMLElement | null = null, session?: AgentSession,
                             opts: { placeholder?: RenderAdapter | null; forceToolCall?: boolean; maxSteps?: number; excludeTools?: string[] } = {}): Promise<TurnResult> {
+    (window as any).reopenApprovals?.();
     _turnsActive++;
     try { return await _runAgentTurn(prompt, container, session, opts); }
     finally { _turnsActive--; }

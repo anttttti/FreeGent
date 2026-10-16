@@ -29,6 +29,18 @@ describe('profile credentials', () => {
     });
 });
 
+describe('profile credentials follow the endpoint', () => {
+    it('a saved key is restored to the same address only', async () => {
+        await import('../profiles.ts'); const profileApply = W.profileApply;
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://trusted.example/v1/', key: 'SYNTHETIC' }]));
+        profileApply({ fg_custom_models: JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://different.example/v1' }]) });
+        expect(JSON.parse(localStorage.getItem('fg_custom_models')!)[0].key).toBeUndefined();
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://trusted.example/v1/', key: 'SYNTHETIC' }]));
+        profileApply({ fg_custom_models: JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://TRUSTED.example/v1' }]) });
+        expect(JSON.parse(localStorage.getItem('fg_custom_models')!)[0].key).toBe('SYNTHETIC');
+    });
+});
+
 describe('workspace paths', () => {
     it('a drive path or backslashes stay inside the workspace', async () => {
         const { workspaceName } = await import('../workspace.ts');
@@ -40,15 +52,23 @@ describe('workspace paths', () => {
 });
 
 describe('approvals and disabled tools', () => {
-    it('cancelPendingApprovals denies the queued and the shown approval', async () => {
-        document.body.insertAdjacentHTML('beforeend', '<div id="tool-approval-toast"><span id="tool-approval-label"></span><input type="checkbox" id="tool-approval-session"><span id="tool-approval-session-name"></span></div>');
-        const { requestToolApproval, cancelPendingApprovals } = await import('../tools.ts') as any;
-        const rq = requestToolApproval ?? W.requestToolApproval;
-        if (typeof rq !== 'function') return;   // not exported in this build: covered by the browser probe B01
-        const a = rq('write_file', { path: 'x' }), b = rq('write_file', { path: 'y' });
+    it('cancelPendingApprovals denies the queued and the shown approval, and refuses the next ask of the same batch until a new turn', async () => {
+        if (!document.getElementById('tool-approval-toast'))
+            document.body.insertAdjacentHTML('beforeend', '<div id="tool-approval-toast"><span id="tool-approval-label"></span><input type="checkbox" id="tool-approval-session"><span id="tool-approval-session-name"></span></div>');
+        const { requestToolApproval, cancelPendingApprovals, reopenApprovals } = await import('../tools.ts');
+        expect(typeof requestToolApproval).toBe('function');   // exported: a missing function must fail, not skip
+        const a = requestToolApproval('write_file', { path: 'x' }), b = requestToolApproval('write_file', { path: 'y' });
         cancelPendingApprovals();
         expect(await a).toBe(false);
         expect(await b).toBe(false);
+        // the batch's next call asks after the cancel: refused at once, no toast
+        expect(await requestToolApproval('write_file', { path: 'z' })).toBe(false);
+        expect(document.getElementById('tool-approval-toast')!.style.display).toBe('none');
+        reopenApprovals();
+        const c = requestToolApproval('write_file', { path: 'later' });
+        await Promise.resolve();
+        expect(document.getElementById('tool-approval-toast')!.style.display).not.toBe('none');
+        cancelPendingApprovals(); await c; reopenApprovals();
     });
     it('isToolOffByUser follows the Settings toggle', async () => {
         const { isToolOffByUser } = await import('../tools.ts');
