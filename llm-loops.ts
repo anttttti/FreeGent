@@ -1655,7 +1655,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }
             }
         }
-        if (_forceCompact || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
+        // The first step of a turn has no server-reported token count yet (it is per turn), so a long chat never reached the
+        // threshold test above and grew until the server refused it (real-model run: three 3k-token messages, threshold 7k,
+        // no compaction, then a 400 and a stalled 28k-token prefill). Use the estimate, which runs about a fifth under real
+        // tokens for numbers and code, with a margin.
+        const _openingStepOverThreshold = step === 0 && _lastInputTokens === 0 && _histR(_s).length > 3 && _tokEst * 1.2 > _compactThreshold();
+        if (_forceCompact || _openingStepOverThreshold || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
             // Compaction after compaction with no response in between: the context is not getting
             // smaller, and each round spends a step (v0.66 sanitize-git-repo: 119 rounds, then the
             // step limit). Stop with what there is.
