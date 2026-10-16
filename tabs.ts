@@ -1089,13 +1089,36 @@ function toggleChatToolbar() {
     const toolbar = document.querySelector('.chat-toolbar') as HTMLElement | null;
     const btn = document.getElementById('toolbar-toggle-btn');
     const collapsed = toolbar?.classList.toggle('collapsed');
+    try { localStorage.setItem('fg_toolbar_collapsed', collapsed ? '1' : '0'); } catch {}   // the reader's choice, kept
     if (btn) {
         btn.textContent = collapsed ? '▶' : '▼';
         btn.title = collapsed ? 'Show toolbar' : 'Hide toolbar';
     }
 }
 
+// On a phone the three-row toolbar (name, model, three selects, token count) takes a fifth of the screen:
+// start folded unless the reader has opened it, and keep their choice. Desktop is unchanged.
+function toolbarFoldedByDefault(): boolean {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('fg_toolbar_collapsed'); } catch {}
+    return saved === '1' || (saved === null && !!window.matchMedia?.('(max-width: 700px)').matches);
+}
+function _phoneToolbarFolded(): boolean {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('fg_toolbar_collapsed'); } catch {}
+    return saved !== '0' && !!window.matchMedia?.('(max-width: 700px)').matches;
+}
+function applyToolbarDefault() {
+    const toolbar = document.querySelector('.chat-toolbar') as HTMLElement | null;
+    const btn = document.getElementById('toolbar-toggle-btn');
+    if (!toolbar || !toolbarFoldedByDefault()) return;
+    toolbar.classList.add('collapsed');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Show toolbar'; }
+}
+
 function expandChatToolbar() {
+    // New Chat from the rail used to open the toolbar again every time, even on a phone where it starts folded.
+    if (_phoneToolbarFolded()) return;
     const toolbar = document.querySelector('.chat-toolbar') as HTMLElement | null;
     const btn = document.getElementById('toolbar-toggle-btn');
     toolbar?.classList.remove('collapsed');
@@ -1103,4 +1126,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { applyToolbarDefault, activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });

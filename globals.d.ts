@@ -329,6 +329,7 @@ declare global {
     var applyHdrCompactTokens: any;
     var applyHdrReasoning: any;
     var closeFileTab: any;
+    var applyToolbarDefault: () => void;
     var createRuleFromForm: any;
     var createSkillFromForm: any;
     var deleteCustomModel: any;

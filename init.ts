@@ -246,6 +246,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             .catch(() => {});
     }
 
+    applyToolbarDefault?.();
+
     // ── Mobile hamburger button ────────────────────────────────────────────
     // Injected by JS so it only appears when the @media query hides the rail.
     if (!document.getElementById('mobile-menu-btn')) {
