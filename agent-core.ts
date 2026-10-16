@@ -1503,12 +1503,15 @@ function stopNow(): void {
 
 /** Stop whatever turn is running and wait (up to 5 s) for it to wind down. For actions that replace the open conversation
  *  (import a chat or a project, delete the running chat): a turn left running keeps its tool calls and its replies, and they
- *  land in whatever chat is open when they arrive. */
-async function stopTurnAndWait(): Promise<void> {
+ *  land in whatever chat is open when they arrive. Returns false when the user declined to stop a running Autopilot. */
+async function stopTurnAndWait(): Promise<boolean> {
     const busy = () => aiBusy() || turnsInFlight() > 0;
-    if (!busy()) return;
+    if (!busy()) return true;
+    // Autopilot owns the chat: stopping the turn ends the whole run, so that is the user's call.
+    if (aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+    return true;
 }
 
 function handleSendButton(): void {

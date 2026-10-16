@@ -93,9 +93,19 @@ export function fnTagMessages(hist: any[]): any[] {
 
 // Models that answered a request with "no images" (vLLM started with --language-model-only: "At most 0 image(s) may be provided").
 // Their requests carry an attached image as a text note instead; the refusal is remembered for the session.
-const _noImageModels = new Set<string>();
-export const markModelRefusesImages = (key: string) => { _noImageModels.add(key); };
-export const modelRefusesImages = (key: string) => _noImageModels.has(key);
+// The refusal expires: restarting the server with a vision model (or switching what a custom model points at) must not leave
+// images replaced by notes for the rest of the page's life.
+const IMAGE_REFUSAL_TTL_MS = 10 * 60_000;
+const _noImageModels = new Map<string, number>();
+export const markModelRefusesImages = (key: string) => { _noImageModels.set(key, Date.now()); };
+export const clearImageRefusals = () => { _noImageModels.clear(); };
+export const modelRefusesImages = (key: string) => {
+    const at = _noImageModels.get(key);
+    if (at === undefined) return false;
+    if (Date.now() - at > IMAGE_REFUSAL_TTL_MS) { _noImageModels.delete(key); return false; }
+    return true;
+};
+if (typeof window !== 'undefined') (window as any).clearImageRefusals = clearImageRefusals;   // settings code resets it when the model list changes
 export function stripImageParts(hist: any[]): any[] {
     return hist.map(m => Array.isArray(m?.content) && m.content.some((p: any) => p?.type === 'image_url')
         ? { ...m, content: m.content.map((p: any) => p?.type === 'image_url' ? { type: 'text', text: '[image omitted: this model does not accept images]' } : p) }

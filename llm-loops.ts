@@ -1242,7 +1242,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _forceToolCall = !!forceToolCall;
     const _failSigs: string[] = [];   // error signature of each failure in the current streak
     let _sameErrorGraceUsed = false;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0;
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0, _last400Key = '';
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -1297,6 +1297,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let activeEndpoint    = endpoint ?? _sessionFallback ?? null;
     let oaiMaxTokens      = null;
     let _forceCompact     = false;
+    let _promptRejected   = false;   // the server said the prompt itself leaves no room for an answer (not just a too-large max_tokens)
     let _lastInputTokens  = 0;
     let _lastHistoryLen   = 0;    // last history.length seen by the estimator (for cache hit check)
     let _lastEstTokens    = 0;    // cached result of estimateTokens for that length
@@ -1649,10 +1650,12 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint())) {
             const _h0 = _histR(_s);
             if (_h0.length <= 2) {
-                // The estimate is chars/4 and runs about a third under real tokens for numbers and code, so the server's
-                // own rejection (_forceCompact is set by it) counts as proof too.
+                // The estimate is chars/4 and runs about a third under real tokens for numbers and code, so the server's own
+                // "no room" answer counts as proof (_promptRejected; _forceCompact is also set by a recovered overflow or a cut-off
+                // reply, which say nothing about the prompt). The estimate alone is only used interactively: autonomous and
+                // benchmark runs have compressed system prompts and would be refused on a guess.
                 const _est = estimateTokens(_h0), _win = getOAIContextTokens();
-                if (_est > _win * 0.5 && (_forceCompact || _est + 7500 + MIN_USEFUL_OUTPUT > _win)) {
+                if (_est > _win * 0.5 && (_promptRejected || (!(_s.workflowMode ?? workflowMode) && _est + 7500 + MIN_USEFUL_OUTPUT > _win))) {
                     const _chars = _h0.reduce((n: number, m: any) => n + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length), 0);
                     const e: any = new Error(`That message (${Math.round(_chars / 1000)}k characters) does not fit the model's ${Math.round(_win / 1000)}k-token context window, which also holds about 7k of system prompt and tools, so it cannot be sent. Shorten it, or save the text as a file in the workspace and ask about the file.`);
                     e.contextTooLarge = true;
@@ -1819,6 +1822,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     onContextOverflow: max => {
                         oaiMaxTokens = max;
                         _forceCompact = true;
+                        if (max < MIN_USEFUL_OUTPUT) _promptRejected = true;   // retry.ts reports 256 when there is no headroom at all
                         thinkTask.append(`\n[context: reducing max_tokens to ${max}, will compact]\n`, 'thinking');
                     }
                 }),
@@ -1895,8 +1899,16 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // A custom endpoint that keeps answering 400 to the same request (each escape here is already three tries): the same
             // request gets the same answer, so end the turn with the server's words, not an endless "all endpoints cooling" loop
             // (real-model run: a server refusing images was re-asked every 5 s for minutes). Overflow and image refusals have their own paths.
-            const _is400Again = isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP 400\b/.test(e.message || '')
-                && parseContextOverflow(e) === null && !IMAGE_REFUSAL_RE.test(e.message || '') && ++_rejectedStreak >= 2;
+            // Only the SAME answer twice counts (digits ignored): vLLM also answers 400 under load for reasons that pass (speculative
+            // decoding, grammar state), and those messages differ or stop; an identical refusal after six tries will not change.
+            let _is400Again = false;
+            if (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP 400\b/.test(e.message || '')
+                    && parseContextOverflow(e) === null && !IMAGE_REFUSAL_RE.test(e.message || '')) {
+                const _key = String(e.message || '').replace(/\d+/g, '#').slice(0, 160);
+                _rejectedStreak = _key === _last400Key ? _rejectedStreak + 1 : 1;
+                _last400Key = _key;
+                _is400Again = _rejectedStreak >= 2;
+            }
             const _isPermanent = _is400Again || /does not exist|you do not have access|model not found|no such model/i.test(e.message || '')
                 || (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP (?:401|403|404)\b/.test(e.message || ''));
             // A model that takes no images (vLLM --language-model-only answers 400 "At most 0 image(s)"): the same request was re-sent
@@ -1967,7 +1979,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             throw e;
         }
-        _cutOffStreak = 0; _emptyStreak = 0; _compactStreak = 0; _rejectedStreak = 0;   // a response came back whole
+        _cutOffStreak = 0; _emptyStreak = 0; _compactStreak = 0; _rejectedStreak = 0; _last400Key = ''; _promptRejected = false;   // a response came back whole
         if (!message) throw new Error('No response from model');
         _endpointNeedsProbe.delete(_epKey);
         recordSuccess(activeEndpoint ?? _defaultEndpoint());
