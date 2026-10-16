@@ -58,7 +58,10 @@ const _runnerDeferred = new Set<string>();
 // What the user answered when the run paused for input, for the tasks that follow (each task gets a
 // fresh chat, so an answer given for one task is otherwise lost to the next). Cleared per run.
 const _runnerUserNotes: { task: string; question: string; answer: string }[] = [];
-const _runnerRetriedAfterAnswer = new Set<string>();
+// How many more episodes a task gets after the user answered a question and the task still was not done
+// (a task can need several answers). The task stays blocked, with a message in the run log, once spent.
+const MAX_ANSWER_EPISODES = 3;
+const _runnerAnswerEpisodes = new Map<string, number>();
 
 function runnerStart() { _startRunner(false); }
 
@@ -190,7 +193,7 @@ async function _runLoop() {
     _runnerPendingSteer.length = 0;
     _runnerDeferred.clear();
     _runnerUserNotes.length = 0;
-    _runnerRetriedAfterAnswer.clear();
+    _runnerAnswerEpisodes.clear();
     _updateRunnerUI();
 
     try {
@@ -251,12 +254,19 @@ async function _runLoop() {
                         const last = _runnerSessionLog[_runnerSessionLog.length - 1];
                         if (last) { last.outcome = 'done'; last.reason = ''; }
                         _renderRunnerLog();
-                    } else if (userReply && !_declinesTask(userReply) && !_runnerRetriedAfterAnswer.has(task.path)) {
-                        // The answer may have been only part of what the task needed: give the task one
-                        // more episode, with the answers so far in its prompt, before later tasks run
-                        // without it (a blocked task is otherwise never picked again).
-                        _runnerRetriedAfterAnswer.add(task.path);
-                        await setTaskStatus(task.path, 'todo');
+                    } else if (userReply && !_declinesTask(userReply)) {
+                        // The answer may have been only part of what the task needed: give the task another
+                        // episode, with the answers so far in its prompt, before later tasks run without it
+                        // (a blocked task is otherwise never picked again).
+                        const used = _runnerAnswerEpisodes.get(task.path) ?? 0;
+                        if (used < MAX_ANSWER_EPISODES) {
+                            _runnerAnswerEpisodes.set(task.path, used + 1);
+                            await setTaskStatus(task.path, 'todo');
+                        } else {
+                            const last = _runnerSessionLog[_runnerSessionLog.length - 1];
+                            if (last) { last.outcome = 'blocked'; last.reason = `Still needs input after ${MAX_ANSWER_EPISODES} answers; left blocked. Answer in its chat or edit the task, then run it again.`; }
+                            _renderRunnerLog();
+                        }
                     }
                 } catch {}
                 if (!_runnerAll) break;

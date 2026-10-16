@@ -599,7 +599,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!ckptId) return;
         if (action === 'rerun') rerunCheckpoint(ckptId, row as HTMLElement);
         else if (action === 'diff') showCheckpointDiff(ckptId);
-        else rewindToCheckpoint(ckptId, row as HTMLElement);
+        else (window as any).rewindWithConfirm(ckptId, row as HTMLElement);
     });
 
     // Each turn's changed-file list refits to its width (see fitChangedFiles), also after a reload.

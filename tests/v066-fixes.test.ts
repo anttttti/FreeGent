@@ -126,3 +126,22 @@ describe('reply-channel hint', () => {
         expect(pushed).not.toContain(HINT);
     });
 });
+
+describe('autonomous run: BLOCKED: <question> is the way to ask the user', () => {
+    const pushed: string[] = [];
+    const adapter = () => ({ pushNudge: (t: string) => { pushed.push(t); }, spliceFromSecondLast: () => {}, histLen: () => 2 });
+    const ps = () => ({ finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} } as any);
+    beforeEach(() => { pushed.length = 0; setWorkflowMode(true); });
+    afterEach(() => setWorkflowMode(false));
+
+    it('accepts a BLOCKED declaration whose reason is a question', async () => {
+        const r = await _handleTurnState('BLOCKED: What are the real values for region and owner?', 3, ps(), adapter());
+        expect(r.kind).toBe('return');
+        expect(pushed).toEqual([]);
+    });
+    it('still bounces a question that is declared COMPLETED, and says how to ask', async () => {
+        const r = await _handleTurnState('Please provide your zip code? COMPLETED', 3, ps(), adapter());
+        expect(r.kind).toBe('continue');
+        expect(pushed.join(' ')).toMatch(/BLOCKED: <the exact question/);
+    });
+});

@@ -521,7 +521,7 @@ async function restoreChatMessages(id) {
                 const b = btn as HTMLButtonElement;
                 const action = b.dataset.action;
                 if (action === 'rewind' || !action) {
-                    b.onclick = (e) => { e.stopPropagation(); rewindToCheckpoint?.(ckptId, row); };
+                    b.onclick = (e) => { e.stopPropagation(); (window as any).rewindWithConfirm?.(ckptId, row); };
                 } else if (action === 'rerun') {
                     b.onclick = (e) => { e.stopPropagation(); rerunCheckpoint?.(ckptId, row); };
                 }
