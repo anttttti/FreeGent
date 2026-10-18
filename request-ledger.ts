@@ -6,7 +6,7 @@
 // not report is absent, not zero.
 import { appendFileSync } from 'node:fs';
 
-export interface LedgerLine { ts: string; purpose: string; promptTokens?: number; responseTokens?: number; cachedTokens?: number; kept: boolean; step?: number }
+interface LedgerLine { ts: string; purpose: string; promptTokens?: number; responseTokens?: number; cachedTokens?: number; kept: boolean; step?: number }
 
 const PURPOSE: Record<string, string> = {
     worker_step: 'worker', validation: 'validation', compaction: 'compaction', cut_off: 'discarded', request_failed: 'failed',

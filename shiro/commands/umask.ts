@@ -2,7 +2,7 @@ import type { Command } from './index';
 import { parseArgs } from './flags';
 import { applySymbolicMode } from '../utils/permissions';
 
-export interface UmaskResult { mask:number; stdout:string; stderr:string; status:number }
+interface UmaskResult { mask:number; stdout:string; stderr:string; status:number }
 
 export function processUmask(current:number, args:string[]):UmaskResult {
   const {flags,positional} = parseArgs(args);

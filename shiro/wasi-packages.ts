@@ -12,10 +12,11 @@ import { compileWasm } from './wasm-module';
 import { ARTIFACT_PINS } from './wasi-artifact-pins';
 import type { FileSystem } from './filesystem';
 import type { Command, CommandContext } from './commands/index';
+import { idbCache, openStoreDB } from './utils/idb-cache';
 
 // ── Package manifest types ───────────────────────────────────────────
 
-export interface WasmPackage {
+interface WasmPackage {
   /** Package name (used as command name) */
   name: string;
   /** Human-readable description */
@@ -374,89 +375,26 @@ export async function handlePackageCacheRequest(request:PackageCacheRequest): Pr
   }
 }
 
-function openPkgDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(PKG_CACHE_DB, PKG_DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(PKG_CACHE_STORE)) {
-        db.createObjectStore(PKG_CACHE_STORE);
-      }
-      if (!db.objectStoreNames.contains(PKG_META_STORE)) {
-        db.createObjectStore(PKG_META_STORE);
-      }
-    };
-  });
-}
+const pkgCache = idbCache(() => openStoreDB(PKG_CACHE_DB, PKG_DB_VERSION, [PKG_CACHE_STORE, PKG_META_STORE]));
 
 async function idbGet<T>(store: string, key: string): Promise<T | null> {
   if (cacheTransport) return cacheTransport({op:'get',store:store as PackageCacheRequest['store'],key});
-  try {
-    const db = await openPkgDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(store, 'readonly');
-      const s = tx.objectStore(store);
-      const req = s.get(key);
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror = () => resolve(null);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    return null;
-  }
+  return pkgCache.get<T>(store, key);
 }
 
 async function idbPut(store: string, key: string, value: any): Promise<void> {
   if (cacheTransport) {await cacheTransport({op:'put',store:store as PackageCacheRequest['store'],key,value}); return;}
-  try {
-    const db = await openPkgDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(store, 'readwrite');
-      const s = tx.objectStore(store);
-      const req = s.put(value, key);
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => {db.close(); resolve();};
-      tx.onabort = () => {db.close(); reject(tx.error);};
-    });
-  } catch {
-    // Non-fatal — cache miss next time
-  }
+  return pkgCache.put(store, key, value);
 }
 
 async function idbDelete(store: string, key: string): Promise<void> {
   if (cacheTransport) {await cacheTransport({op:'delete',store:store as PackageCacheRequest['store'],key}); return;}
-  try {
-    const db = await openPkgDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(store, 'readwrite');
-      const s = tx.objectStore(store);
-      const req = s.delete(key);
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => {db.close(); resolve();};
-      tx.onabort = () => {db.close(); reject(tx.error);};
-    });
-  } catch {
-    // Non-fatal
-  }
+  return pkgCache.delete(store, key);
 }
 
 async function idbGetAllKeys(store: string): Promise<string[]> {
   if (cacheTransport) return cacheTransport({op:'keys',store:store as PackageCacheRequest['store']});
-  try {
-    const db = await openPkgDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(store, 'readonly');
-      const s = tx.objectStore(store);
-      const req = s.getAllKeys();
-      req.onsuccess = () => resolve((req.result as string[]) || []);
-      req.onerror = () => resolve([]);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    return [];
-  }
+  return pkgCache.keys(store);
 }
 
 // ── WebC extraction ─────────────────────────────────────────────────
@@ -713,7 +651,7 @@ export async function getCompiledModule(
 }
 
 /** Clear the compiled module cache (e.g., after package removal) */
-export function clearModuleCache(name?: string): void {
+function clearModuleCache(name?: string): void {
   if (name) {
     const pkg = findPackage(name);
     if (pkg) for (const key of moduleCache.keys()) if (key.startsWith(artifactKey(pkg) + ':')) moduleCache.delete(key);

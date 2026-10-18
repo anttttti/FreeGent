@@ -172,7 +172,7 @@ async function _chatHistoryFor(id: string): Promise<any[] | null> {
 
 /** What saveHistory records beside the localStorage copy: which save wrote it, whether it is a
  *  trimmed snapshot, and which save the session store last acknowledged. */
-export interface HistoryStamp { rev: string; trimmed: boolean; acked?: string }
+interface HistoryStamp { rev: string; trimmed: boolean; acked?: string }
 
 /**
  * Picks the history to use when the localStorage copy and the session store disagree.

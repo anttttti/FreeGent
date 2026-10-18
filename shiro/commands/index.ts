@@ -1,7 +1,7 @@
 import type { FileSystem } from '../filesystem';
 import type { Shell } from '../shell';
 
-export interface TerminalLike {
+interface TerminalLike {
   writeOutput(text: string): void;
   enterStdinPassthrough(cb: (data: string) => void, forceExitCb?: () => void): void;
   exitStdinPassthrough(): void;

@@ -9,8 +9,8 @@ export const FLAG_PF = 2;   // Parity Flag
 export const FLAG_AF = 4;   // Auxiliary Carry Flag
 export const FLAG_ZF = 6;   // Zero Flag
 export const FLAG_SF = 7;   // Sign Flag
-export const FLAG_TF = 8;   // Trap Flag
-export const FLAG_IF = 9;   // Interrupt Flag
+const FLAG_TF = 8;   // Trap Flag
+const FLAG_IF = 9;   // Interrupt Flag
 export const FLAG_DF = 10;  // Direction Flag
 export const FLAG_OF = 11;  // Overflow Flag
 

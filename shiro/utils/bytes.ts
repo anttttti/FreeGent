@@ -98,11 +98,6 @@ export function normalizeBytes(s: string): string {
   return hasEscapedByte(s) ? bytesToText(textToBytes(s)) : s;
 }
 
-/** Number of bytes the string stands for. */
-export function byteLength(s: string): number {
-  return textToBytes(s).length;
-}
-
 /** Bytes → base64 in one btoa call (chunked btoa puts '=' mid-string; atob stops there). */
 export function bytesToBase64(bytes: Uint8Array): string {
   let s = '';

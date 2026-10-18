@@ -13,14 +13,6 @@ const MASK16 = 0xFFFFn;
 const MASK32 = 0xFFFFFFFFn;
 const MASK64 = 0xFFFFFFFFFFFFFFFFn;
 
-export class X86ExitSignal {
-  constructor(public code: number) {}
-}
-
-export class X86SyscallSignal {
-  // Raised when SYSCALL is hit; the runtime handles it externally
-}
-
 /** Decoded operand: either a register index or a memory address */
 interface Operand {
   type: 'reg' | 'mem';

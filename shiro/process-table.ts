@@ -5,7 +5,7 @@
 import type { WindowTerminal } from './window-terminal';
 import type { ServerWindow } from './server-window';
 
-export interface ShiroProcess {
+interface ShiroProcess {
   pid: number;
   command: string;
   status: 'running' | 'exited' | 'killed';

@@ -3,7 +3,7 @@ import { bytesToText } from '../utils/bytes';
 import { sprintf as cSprintf } from './awk';
 
 /** One formatter for registry and shell builtin entry paths; strings retain raw bytes. */
-export function formatPrintf(fmt: string, fmtArgs: string[]): {stdout:string; stderr:string; exitCode:number} {
+function formatPrintf(fmt: string, fmtArgs: string[]): {stdout:string; stderr:string; exitCode:number} {
   let stderr = '', exitCode = 0;
   const BYTE = 0xe000;   // escaped bytes are held as U+E000+byte until decoded below
   let argIdx = 0;

@@ -129,7 +129,7 @@ export function setFailureCounts(v: any): void         { _failureCounts        =
 export function setActiveChatId(v: any): void          { activeChatId          = v; }
 export function setSeenReadFiles(v: any): void         { _seenReadFiles        = v; }
 export function setSeenListFiles(v: any): void         { _seenListFiles        = v; }
-export function setMainAgentRole(v: any): void         { mainAgentRole         = v; }
+export function setMainAgentRoleObject(v: any): void         { mainAgentRole         = v; }
 export function setWorkflowMode(v: boolean): void      { workflowMode          = v; }
 export function setToolCallHistory(v: any): void       { _toolCallHistory      = v; }
 export function setLastUserMessageText(v: any): void   { lastUserMessageText   = v; }
@@ -149,7 +149,7 @@ export const defaultSession: AgentSession = {
     get abortController()      { return activeAbortController; },
     set abortController(v)     { setActiveAbortController(v); },
     get role()                 { return mainAgentRole; },
-    set role(v)                { setMainAgentRole(v); },
+    set role(v)                { setMainAgentRoleObject(v); },
     get _toolFilter()          { return _sessionToolFilter; },
     set _toolFilter(v)         { setSessionToolFilter(v); },
     // §1: proxy all per-session globals so code reading defaultSession.X stays consistent
@@ -197,7 +197,7 @@ const _setters = {
     setChatHistory, getChatHistory, setAgentStreaming, setActivePlaceholder,
     setActiveAbortController, setLastProvider, setSoftStopPending, setPendingAgentsContextInject,
     setCurrentTurnSkills, setReactiveFired, setFailureCounts,
-    setActiveChatId, setSeenReadFiles, setSeenListFiles, setMainAgentRole, setWorkflowMode, setToolCallHistory,
+    setActiveChatId, setSeenReadFiles, setSeenListFiles, setMainAgentRoleObject, setWorkflowMode, setToolCallHistory,
     setSessionToolFilter, _clearHistory, setAiJob, aiBusy,
     // §A2: createSession exposed so headless / test code that reads window.createSession can
     // build a proper AgentSession without falling back to the bare {history,abortController,role} stub.
@@ -216,7 +216,7 @@ const _reactiveProps: Array<[string, () => any, (v: any) => void]> = [
     ['activeChatId',          () => activeChatId,          setActiveChatId],
     ['_seenReadFiles',        () => _seenReadFiles,        setSeenReadFiles],
     ['_seenListFiles',        () => _seenListFiles,        setSeenListFiles],
-    ['mainAgentRole',         () => mainAgentRole,         setMainAgentRole],
+    ['mainAgentRole',         () => mainAgentRole,         setMainAgentRoleObject],
     ['workflowMode',          () => workflowMode,          setWorkflowMode],
     ['_toolCallHistory',      () => _toolCallHistory,      setToolCallHistory],
     ['lastUserMessageText',   () => lastUserMessageText,   setLastUserMessageText],

@@ -4,7 +4,7 @@ import { bytesToText, textToBytes } from '../utils/bytes';
 
 // GNU head: -n N / -n -N (all but the last N), -c N / -c -N, -q / -v, "==> name <==" headers for
 // several files. Output is the input's bytes, so a missing final newline stays missing.
-export function headText(text: string, n: number, bytes: boolean, allBut: boolean): string {
+function headText(text: string, n: number, bytes: boolean, allBut: boolean): string {
   if (bytes) { const b = textToBytes(text); return bytesToText(allBut ? b.slice(0, Math.max(0, b.length - n)) : b.slice(0, n)); }
   if (!allBut) {
     let idx = 0;

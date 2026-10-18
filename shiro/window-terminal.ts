@@ -3,4 +3,3 @@ export interface WindowTerminal {
     writeOutput(text: string): void;
     close(): void;
 }
-export function openWindowTerminal(_opts?: unknown): void {}

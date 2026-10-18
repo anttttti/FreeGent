@@ -7,14 +7,3 @@ export class ProcessExitError extends Error {
     this.code = code;
   }
 }
-
-export function formatArg(arg: any): string {
-  if (typeof arg === 'string') return arg;
-  if (arg === null) return 'null';
-  if (arg === undefined) return 'undefined';
-  try {
-    return JSON.stringify(arg, null, 2);
-  } catch {
-    return String(arg);
-  }
-}

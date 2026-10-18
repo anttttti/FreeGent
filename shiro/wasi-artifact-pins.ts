@@ -1,7 +1,7 @@
 // Generated from pinned WebC containers by scripts/wasi-artifacts (upstream webc 10.0.1).
 // Offsets are valid only after the complete container SHA-256 and length match.
-export interface ArtifactSlice { offset:number; length:number; sha256:string }
-export interface ArtifactPin {
+interface ArtifactSlice { offset:number; length:number; sha256:string }
+interface ArtifactPin {
   sha256:string; length:number; atoms:Record<string,ArtifactSlice>;
   commands:Record<string,string>; resources:Record<string,ArtifactSlice>;
   upstream:Record<string,unknown>;

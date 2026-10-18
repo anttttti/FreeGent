@@ -208,7 +208,7 @@ function _configureHeadless(provider: any, model: any, apiKey: any, apiUrl: any,
 export const PROFILE_PATH = join(__dir, 'fg-current-profile.json');
 const _KEY_BLOCKLIST = /key|token|secret|password/i;
 
-export function loadProfile(): void {
+function loadProfile(): void {
     try {
         const raw      = readFileSync(PROFILE_PATH, 'utf8');
         const profile  = JSON.parse(raw);
@@ -631,7 +631,7 @@ export async function prompt(text: string, opts: Record<string, any> = {}): Prom
 }
 
 /** Per-task metrics accumulated by the metrics writer installed in run(). */
-export interface RunMetrics {
+interface RunMetrics {
     elapsed_s:     number;
     steps:         number;
     input_tokens:  number;
@@ -660,7 +660,7 @@ export interface RunMetrics {
 
 /** How a headless run ended, as the harness decided it — callers must not re-derive this from the
  *  answer text, whose COMPLETED/BLOCKED markers are stripped. */
-export interface RunFinish {
+interface RunFinish {
     /** complete: the agent declared the task done. blocked: it declared BLOCKED or the loop stopped it
      *  (stopReason says which). stopped: stop request or run timeout. error: the turn threw. */
     signal:     'complete' | 'blocked' | 'running' | 'stopped' | 'error';

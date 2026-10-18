@@ -5,9 +5,9 @@
 
 import { KEYS } from './storage-keys.js';
 
-export const LS_QUOTA = 5_000_000;
+const LS_QUOTA = 5_000_000;
 
-export interface StorageUsage {
+interface StorageUsage {
     total:        number;
     settings:     number;                // everything not attributable to the project or a chat
     project:      number;                // project-scoped keys not tied to one chat (chat list, name, legacy checkpoints)

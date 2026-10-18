@@ -16,7 +16,7 @@
 
 import { devProvider, FileSystem, globPatternToRegex } from './filesystem';
 import type { StatResult } from './filesystem';
-import { bytesToText, isTextBytes, textToBytes } from './utils/bytes';
+import { base64ToBytes, bytesToBase64, bytesToText, isTextBytes, textToBytes } from './utils/bytes';
 import {
     agentWriteFile,
     agentDeleteFile,
@@ -32,43 +32,11 @@ export const WORKSPACE_MOUNT = '/workspace';
 // Text records hold UTF-8 text exactly (a BOM, CRLF and lone CRs included).
 const dec = new TextDecoder('utf-8', { ignoreBOM: true });
 
-/**
- * Encode a Uint8Array to base64 without chunking.
- *
- * Chunked approaches (btoa per N-byte slice) insert '=' padding mid-string
- * whenever the chunk size is not a multiple of 3.  Browser atob() stops
- * decoding at the first interior '=', silently truncating files > N bytes.
- * Building the binary string char-by-char then calling btoa once produces
- * a single valid padded base64 string with no interior '='.
- */
-function _bytesToBase64(data: Uint8Array): string {
-    let s = '';
-    for (let i = 0; i < data.length; i++) s += String.fromCharCode(data[i]);
-    return btoa(s);
-}
-
-/**
- * Decode a base64 string to Uint8Array, tolerating interior '=' padding.
- *
- * Legacy data encoded with 8192-byte chunks has '=' mid-string; browser
- * atob() stops at the first interior '=', producing a truncated result.
- * Stripping all '=' then re-adding correct end-padding before calling atob
- * makes the decoder robust against both well-formed and chunked base64.
- */
-function _base64ToBytes(b64: string): Uint8Array {
-    const s   = b64.replace(/=/g, '');
-    const pad = (4 - s.length % 4) % 4;
-    const raw = atob(s + '='.repeat(pad));
-    const out = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-    return out;
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /** A workspace record's bytes: base64 decoded, or the text as UTF-8. */
 function _recordBytes(rec: { content?: string; encoding?: string | null }): Uint8Array {
-    return rec.encoding === 'base64' ? _base64ToBytes(rec.content ?? '') : textToBytes(rec.content ?? '');
+    return rec.encoding === 'base64' ? base64ToBytes(rec.content ?? '') : textToBytes(rec.content ?? '');
 }
 
 function makeStat(type: 'file' | 'dir', size = 0, mtime = Date.now(), executable = false): StatResult {
@@ -220,7 +188,7 @@ export class FWFileSystem extends FileSystem {
             // UTF-8 text without NULs is stored as text; anything else (binary, Latin-1 …) as
             // base64, so the bytes come back unchanged.
             if (isTextBytes(bytes)) await agentWriteFile(wsPath, dec.decode(bytes));
-            else await agentWriteFile(wsPath, _bytesToBase64(bytes), 'base64');
+            else await agentWriteFile(wsPath, bytesToBase64(bytes), 'base64');
             this.changed(path,opts?.mode);
             return;
         }

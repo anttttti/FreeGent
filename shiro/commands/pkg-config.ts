@@ -30,7 +30,7 @@ function parsePc(id: string, text: string, prefixOverride?: string): Pc {
 }
 
 /** Version comparison in the style of rpmvercmp. */
-export function compareVersions(a: string, b: string): number {
+function compareVersions(a: string, b: string): number {
   const ta = a.match(/[0-9]+|[A-Za-z]+/g) ?? [], tb = b.match(/[0-9]+|[A-Za-z]+/g) ?? [];
   for (let i = 0; i < Math.max(ta.length, tb.length); i++) {
     const x = ta[i], y = tb[i];

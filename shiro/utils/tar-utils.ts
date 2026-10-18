@@ -74,7 +74,7 @@ interface TarHeader {
 /**
  * Extracted file from tar archive
  */
-export interface TarEntry {
+interface TarEntry {
   name: string;
   type: 'file' | 'directory' | 'symlink';
   mode: number;
@@ -136,7 +136,7 @@ function parseTarHeader(headerBytes: Uint8Array): TarHeader | null {
 /**
  * Extract all files from a tar archive
  */
-export async function untar(tarData: Uint8Array): Promise<TarEntry[]> {
+async function untar(tarData: Uint8Array): Promise<TarEntry[]> {
   const entries: TarEntry[] = [];
   let offset = 0;
 
@@ -208,7 +208,7 @@ export async function untar(tarData: Uint8Array): Promise<TarEntry[]> {
 /**
  * Extract tar.gz (tgz) archive
  */
-export async function extractTarGz(compressedData: Uint8Array): Promise<TarEntry[]> {
+async function extractTarGz(compressedData: Uint8Array): Promise<TarEntry[]> {
   const decompressed = await gunzip(compressedData);
   return untar(decompressed);
 }

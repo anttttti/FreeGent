@@ -35,7 +35,7 @@ function numToStr(n: number, fmt: string): string {
 // ─── printf ──────────────────────────────────────────────────────────────────
 
 
-export class MissingArgs extends Error { constructor(public partial: string) { super('not enough arguments passed to printf'); } }
+class MissingArgs extends Error { constructor(public partial: string) { super('not enough arguments passed to printf'); } }
 
 export function sprintf(fmt: string, args: Val[], toStr: (v: Val) => string = v => typeof v === 'number' ? numToStr(v, '%.6g') : v instanceof StrNum ? v.s : v, strictArgs = false): string {
   let out = '';

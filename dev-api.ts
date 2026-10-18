@@ -39,7 +39,7 @@ const execFileAsync = promisify(execFile);
 // ── Keys ──────────────────────────────────────────────────────────────────────
 
 // Environment variable → FreeGent settings key. The first variable found wins per settings key.
-export const KEY_MAP: Array<[string, string]> = [
+const KEY_MAP: Array<[string, string]> = [
     ['GEMINI_API_KEY',        'fg_gemini_key'],
     ['GOOGLE_API_KEY',        'fg_gemini_key'],
     ['GROQ_API_KEY',          'fg_groq_key'],
@@ -241,7 +241,7 @@ export async function isSelfTarget(rawUrl: string, serverPort: number): Promise<
 
 // 'linklocal' (169.254/16, fe80::/10 — cloud metadata lives here) is never reachable through the
 // proxy. 'private' covers loopback, RFC 1918, CGNAT, unique-local, multicast and unspecified.
-export type AddressClass = 'public' | 'private' | 'linklocal';
+type AddressClass = 'public' | 'private' | 'linklocal';
 
 function _v4(a: string): number[] | null {
     const m = a.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
@@ -294,7 +294,7 @@ function _publicOnlyLookup(serverPort: number, targetPort: number) {
     };
 }
 
-export interface PublicGetResult { status: number; headers: IncomingHttpHeaders; body: Buffer }
+interface PublicGetResult { status: number; headers: IncomingHttpHeaders; body: Buffer }
 
 export async function publicGet(
     url: string, headers: Record<string, string>, serverPort: number, keyUsed: boolean,
@@ -445,7 +445,7 @@ export async function guardedFetch(
 // directory (writable) and the toolchains on PATH (read-only). Network access stays.
 //   FG_EXEC_ISOLATION=auto (default: bubblewrap when it works here) | bwrap | none
 //   FG_EXEC_BIND=/path/a,/path/b   extra read-only paths to expose
-export type ExecIsolation = 'bwrap' | 'none';
+type ExecIsolation = 'bwrap' | 'none';
 
 const _SYSTEM_DIRS = ['/usr', '/bin', '/sbin', '/lib', '/lib32', '/lib64', '/libx32', '/opt', '/snap'];
 // /etc is excluded from the wide bind to avoid exposing /etc/shadow, /etc/sudoers, etc.
@@ -590,7 +590,7 @@ const _GIT_READONLY_REMOTE_OPS   = new Set(['-v', '--verbose', 'show', 'get-url'
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-export class BodyTooLarge extends Error {}
+class BodyTooLarge extends Error {}
 
 // Request bodies are capped (execute_code sends the workspace, each file ≤ 1 MB): a client can't
 // exhaust the server's memory by streaming an endless body.
@@ -646,7 +646,7 @@ const _SAFE_GET_HEADERS = new Set(['accept', 'accept-language', 'cache-control',
 
 // ── The API ───────────────────────────────────────────────────────────────────
 
-export interface DevApiOptions {
+interface DevApiOptions {
     bind: string;
     port: number;
     allowedOrigins: Set<string>;
@@ -960,7 +960,7 @@ export function spawnCapture(bin: string, args: string[], opts: { cwd: string; e
 }
 
 /** A file's bytes as text when they are text (valid UTF-8 without NUL in the first 8 KB), else null: those travel as base64. */
-export function outputAsText(bytes: Buffer): string | null {
+function outputAsText(bytes: Buffer): string | null {
     if (bytes.subarray(0, 8192).includes(0)) return null;
     try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
 }

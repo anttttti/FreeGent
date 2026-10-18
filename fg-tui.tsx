@@ -30,7 +30,7 @@ export function setScrollHandler(fn: (row: number, col: number, dir: 1|-1) => vo
 
 // Transform that strips X10 mouse events from the byte stream before Ink reads.
 // Non-mouse bytes pass through unchanged.
-export const stdinFilter = new Transform({
+const stdinFilter = new Transform({
     transform(chunk: Buffer, _enc, cb) {
         const parts: Buffer[] = [];
         let i = 0;

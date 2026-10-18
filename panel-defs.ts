@@ -4,8 +4,8 @@
 // and the localStorage key that stores each value.  It contains NO rendering
 // code.  Platform renderers translate it into their native primitives:
 //
-//   WebUI  → settings-ui.ts  renderPanelSection() → HTML <input>/<select>/…
 //   TUI    → tui-app.tsx     <SettingsPanel>       → Ink <Text> / <Box>
+//   (the WebUI settings forms in settings-ui.ts are hand-written, not generated from this)
 //
 // The same localStorage key space (fg_*) is shared between both platforms,
 // so any value written by the WebUI is immediately visible to the TUI and
@@ -13,7 +13,7 @@
 
 // ── Field types ───────────────────────────────────────────────────────────────
 
-export interface NumberField {
+interface NumberField {
     kind:        'number';
     key:         string;           // localStorage key (fg_*)
     label:       string;
@@ -23,14 +23,14 @@ export interface NumberField {
     step?:       number;
 }
 
-export interface SelectField {
+interface SelectField {
     kind:    'select';
     key:     string;
     label:   string;
     options: Array<{ value: string; label: string }>;
 }
 
-export interface TextField {
+interface TextField {
     kind:        'text';
     key:         string;
     label:       string;
@@ -38,15 +38,15 @@ export interface TextField {
     secret?:     boolean;          // render as password in WebUI; masked in TUI
 }
 
-export interface ToggleField {
+interface ToggleField {
     kind:        'toggle';
     key:         string;
     label:       string;
     description?: string;
 }
 
-export interface HeadingField { kind: 'heading'; text: string }
-export interface HintField    { kind: 'hint';    text: string }
+interface HeadingField { kind: 'heading'; text: string }
+interface HintField    { kind: 'hint';    text: string }
 
 export type FieldDef =
     | NumberField | SelectField | TextField | ToggleField
@@ -60,7 +60,7 @@ export interface SectionDef {
     fields:  FieldDef[];
 }
 
-export interface PanelDef {
+interface PanelDef {
     id:       string;
     title:    string;
     sections: SectionDef[];
@@ -168,101 +168,3 @@ export const SETTINGS_DEF: PanelDef = {
         },
     ],
 };
-
-// ── WebUI renderer ────────────────────────────────────────────────────────────
-// Call renderPanelSection(section, container) from settings-ui.ts to generate
-// the HTML form elements for any SectionDef driven by SETTINGS_DEF.
-// The produced elements write directly to localStorage via the shared key.
-//
-// Usage example (settings-ui.ts):
-//
-//   import { SETTINGS_DEF, renderPanelSection } from './panel-defs.js';
-//   // Inside populateSettingsForm():
-//   const agentSection = SETTINGS_DEF.sections.find(s => s.title === 'Agent');
-//   renderPanelSection(agentSection, document.getElementById('agent-settings-auto'));
-
-export function renderPanelSection(section: SectionDef, container: HTMLElement): void {
-    container.innerHTML = '';
-
-    for (const field of section.fields) {
-        if (field.kind === 'heading') {
-            const el = document.createElement('span');
-            el.className = 'settings-label';
-            el.textContent = field.text;
-            container.appendChild(el);
-            continue;
-        }
-        if (field.kind === 'hint') {
-            const el = document.createElement('p');
-            el.className = 'settings-hint';
-            el.textContent = field.text;
-            container.appendChild(el);
-            continue;
-        }
-
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px';
-
-        const lbl = document.createElement('label');
-        lbl.className = 'settings-input-label';
-        lbl.style.cssText = 'min-width:180px;margin:0';
-        lbl.textContent = field.label;
-        row.appendChild(lbl);
-
-        if (field.kind === 'toggle') {
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = localStorage.getItem(field.key) === 'true';
-            cb.onchange = () => localStorage.setItem(field.key, String(cb.checked));
-            lbl.prepend(cb, ' ');
-            container.appendChild(lbl);
-            if (field.description) {
-                const hint = document.createElement('p');
-                hint.className = 'settings-hint agent-hint';
-                hint.textContent = field.description;
-                container.appendChild(hint);
-            }
-            continue;
-        }
-
-        if (field.kind === 'select') {
-            const sel = document.createElement('select');
-            sel.className = 'settings-input';
-            const current = localStorage.getItem(field.key) ?? '';
-            for (const opt of field.options) {
-                const o = document.createElement('option');
-                o.value = opt.value;
-                o.textContent = opt.label;
-                if (opt.value === current) o.selected = true;
-                sel.appendChild(o);
-            }
-            sel.onchange = () => localStorage.setItem(field.key, sel.value);
-            row.appendChild(sel);
-        } else if (field.kind === 'number') {
-            const inp = document.createElement('input');
-            inp.className = 'settings-input';
-            inp.type = 'number';
-            inp.style.width = '100px';
-            if (field.min  != null) inp.min  = String(field.min);
-            if (field.max  != null) inp.max  = String(field.max);
-            if (field.step != null) inp.step = String(field.step);
-            if (field.placeholder) inp.placeholder = field.placeholder;
-            inp.value = localStorage.getItem(field.key) ?? '';
-            inp.oninput = () => {
-                if (inp.value === '') localStorage.removeItem(field.key);
-                else localStorage.setItem(field.key, inp.value);
-            };
-            row.appendChild(inp);
-        } else if (field.kind === 'text') {
-            const inp = document.createElement('input');
-            inp.className = 'settings-input';
-            inp.type = field.secret ? 'password' : 'text';
-            if (field.placeholder) inp.placeholder = field.placeholder;
-            inp.value = localStorage.getItem(field.key) ?? '';
-            inp.onchange = () => localStorage.setItem(field.key, inp.value);
-            row.appendChild(inp);
-        }
-
-        container.appendChild(row);
-    }
-}

@@ -10,6 +10,7 @@
 // Returns the active proxy base URL — CF Worker on GitHub Pages, local /api/proxy otherwise.
 import { escapeHtml } from './html-escape.js';
 import { bestLadder, formatLadder } from './ladder-info.js';
+import { modelPageUrl as _modelPageUrl } from './model-page-url.js';
 function _proxyBase(): string {
     return typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '/api/proxy';
 }
@@ -424,26 +425,6 @@ async function _fetchNousModels(): Promise<FetchResult> {
         return { live, rejected };
     } catch {
         return { live: [], rejected: [] };
-    }
-}
-
-// ── URL generator (mirrors settings-ui.ts _modelPageUrl) ─────────────────
-
-function _modelPageUrl(provider: string, model: string): string {
-    switch (provider) {
-        case 'openrouter': return `https://openrouter.ai/${model.replace(/:free$/, '')}`;
-        case 'nous':       return model.includes('/')
-            ? `https://openrouter.ai/${model.replace(/:free$/, '')}`
-            : 'https://portal.nousresearch.com/models';
-        case 'nvidia':     return `https://build.nvidia.com/${model}`;
-        case 'google':
-            if (model.startsWith('gemma')) return 'https://ai.google.dev/gemma/docs/gemma-models';
-            return `https://ai.google.dev/gemini-api/docs/models#${model}`;
-        case 'groq':       return 'https://console.groq.com/docs/models';
-        case 'tokenharbor':   return 'https://tokenharbor.ai/models';
-        case 'kilo':          return 'https://kilo.ai/models';
-        case 'vercel':        return 'https://vercel.com/ai-gateway/models';
-        default:              return '';
     }
 }
 

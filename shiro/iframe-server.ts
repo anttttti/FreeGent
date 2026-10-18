@@ -13,9 +13,9 @@ export interface VirtualResponse {
     body?: string | Uint8Array | object;
     contentType?: string;
 }
-export type RequestHandler = (req: VirtualRequest) => Promise<VirtualResponse> | VirtualResponse;
+type RequestHandler = (req: VirtualRequest) => Promise<VirtualResponse> | VirtualResponse;
 
-export interface IframeServerManager {
+interface IframeServerManager {
     serve(port: number, handler: RequestHandler, label?: string): (() => void) | void;
     fetch(port: number, path?: string, opts?: Partial<VirtualRequest>): Promise<VirtualResponse>;
     close(port: number): void;
@@ -29,6 +29,3 @@ export const iframeServer: IframeServerManager = {
     async createIframe() { return document.createElement('iframe'); },
     isPortInUse() { return false; },
 };
-
-export function openInIframe(_url: string, _opts?: unknown): void {}
-export function closeIframe(): void {}

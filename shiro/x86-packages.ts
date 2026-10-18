@@ -8,9 +8,11 @@
  * Mirrors wasi-packages.ts pattern — manifest + IndexedDB cache.
  */
 
+import { idbCache, openStoreDB } from './utils/idb-cache';
+
 // ── Package manifest types ───────────────────────────────────────────
 
-export interface X86Package {
+interface X86Package {
   /** Package name (used as command name) */
   name: string;
   /** Human-readable description */
@@ -64,86 +66,8 @@ const X86_CACHE_STORE = 'elfs';
 const X86_META_STORE = 'elf-metadata';
 const X86_DB_VERSION = 1;
 
-function openX86DB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(X86_CACHE_DB, X86_DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(X86_CACHE_STORE)) {
-        db.createObjectStore(X86_CACHE_STORE);
-      }
-      if (!db.objectStoreNames.contains(X86_META_STORE)) {
-        db.createObjectStore(X86_META_STORE);
-      }
-    };
-  });
-}
-
-async function idbGet<T>(store: string, key: string): Promise<T | null> {
-  try {
-    const db = await openX86DB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(store, 'readonly');
-      const s = tx.objectStore(store);
-      const req = s.get(key);
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror = () => resolve(null);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function idbPut(store: string, key: string, value: any): Promise<void> {
-  try {
-    const db = await openX86DB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(store, 'readwrite');
-      const s = tx.objectStore(store);
-      const req = s.put(value, key);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    // Non-fatal — cache miss next time
-  }
-}
-
-async function idbDelete(store: string, key: string): Promise<void> {
-  try {
-    const db = await openX86DB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(store, 'readwrite');
-      const s = tx.objectStore(store);
-      const req = s.delete(key);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    // Non-fatal
-  }
-}
-
-async function idbGetAllKeys(store: string): Promise<string[]> {
-  try {
-    const db = await openX86DB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(store, 'readonly');
-      const s = tx.objectStore(store);
-      const req = s.getAllKeys();
-      req.onsuccess = () => resolve((req.result as string[]) || []);
-      req.onerror = () => resolve([]);
-      tx.oncomplete = () => db.close();
-    });
-  } catch {
-    return [];
-  }
-}
+const x86Cache = idbCache(() => openStoreDB(X86_CACHE_DB, X86_DB_VERSION, [X86_CACHE_STORE, X86_META_STORE]));
+const { get: idbGet, put: idbPut } = x86Cache;
 
 // ── ELF validation ──────────────────────────────────────────────────
 
@@ -161,34 +85,19 @@ function isValidElf(data: ArrayBuffer): boolean {
 // ── Public API ───────────────────────────────────────────────────────
 
 /** Get package metadata from manifest by name or alias */
-export function findX86Package(name: string): X86Package | undefined {
+function findX86Package(name: string): X86Package | undefined {
   return PACKAGE_MANIFEST.find(
     p => p.name === name || p.aliases?.includes(name) || p.applets?.includes(name)
   );
 }
 
-/** Search packages by query string (matches name and description) */
-export function searchX86Packages(query: string): X86Package[] {
-  const q = query.toLowerCase();
-  return PACKAGE_MANIFEST.filter(
-    p => p.name.includes(q) || p.description.toLowerCase().includes(q) ||
-         p.category.includes(q) || (p.aliases || []).some(a => a.includes(q)) ||
-         (p.applets || []).some(a => a.includes(q))
-  );
-}
-
-/** List all available packages */
-export function listX86Available(): X86Package[] {
-  return [...PACKAGE_MANIFEST];
-}
-
 /** Get cached ELF binary. Returns null if not cached. */
-export async function getCachedX86Package(name: string): Promise<ArrayBuffer | null> {
+async function getCachedX86Package(name: string): Promise<ArrayBuffer | null> {
   return idbGet<ArrayBuffer>(X86_CACHE_STORE, name);
 }
 
 /** Download a package, cache it, and return the binary */
-export async function downloadX86Package(
+async function downloadX86Package(
   name: string,
   onProgress?: (msg: string) => void,
 ): Promise<ArrayBuffer> {
@@ -243,33 +152,11 @@ export async function downloadX86Package(
 }
 
 /** Get package binary (from cache or download) */
-export async function getX86Package(
+async function getX86Package(
   name: string,
   onProgress?: (msg: string) => void,
 ): Promise<ArrayBuffer> {
   return downloadX86Package(name, onProgress);
-}
-
-/** List installed (cached) packages with metadata */
-export async function listX86Installed(): Promise<Array<{ name: string; version: string; installedAt: number; size: number }>> {
-  const keys = await idbGetAllKeys(X86_META_STORE);
-  const results: Array<{ name: string; version: string; installedAt: number; size: number }> = [];
-  for (const key of keys) {
-    const meta = await idbGet<{ name: string; version: string; installedAt: number; size: number }>(X86_META_STORE, key);
-    if (meta) results.push(meta);
-  }
-  return results;
-}
-
-/** Remove a package from cache */
-export async function removeX86Package(name: string): Promise<void> {
-  await idbDelete(X86_CACHE_STORE, name);
-  await idbDelete(X86_META_STORE, name);
-}
-
-/** Check if a command name matches an available x86 package or applet */
-export function isAvailableAsX86Package(cmdName: string): X86Package | undefined {
-  return findX86Package(cmdName);
 }
 
 // ── Byte array cache (for executeElfFromBytes) ────────────────────
@@ -288,13 +175,4 @@ export async function getX86Binary(
   const bytes = new Uint8Array(binary);
   elfBytesCache.set(name, bytes);
   return bytes;
-}
-
-/** Clear the ELF binary cache */
-export function clearX86Cache(name?: string): void {
-  if (name) {
-    elfBytesCache.delete(name);
-  } else {
-    elfBytesCache.clear();
-  }
 }

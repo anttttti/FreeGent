@@ -133,8 +133,8 @@ const _DEGEN_TAIL = 2000;
 // Tools whose arguments are file content: a generated CSV, fixture or padding is legitimately
 // periodic, so these are only checked once the payload is far past a normal step. A real runaway
 // still reaches this length well before the output cap.
-export const CONTENT_ARG_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch']);
-export const DEGENERATE_MIN_CHARS_CONTENT = 20000;
+const CONTENT_ARG_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch']);
+const DEGENERATE_MIN_CHARS_CONTENT = 20000;
 export function _degenerateTail(s: string, minChars = DEGENERATE_MIN_CHARS): string | null {
     if (s.length < minChars) return null;
     const t = s.slice(-_DEGEN_TAIL);

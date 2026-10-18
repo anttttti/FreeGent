@@ -18,14 +18,14 @@ const directFetch = globalThis.fetch.bind(globalThis);
 
 const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
 
-export function responseFromPage(r: PageFetchResult): Response {
+function responseFromPage(r: PageFetchResult): Response {
     const headers: Record<string, string> = { [VIA_PROXY_HEADER]: '1' };
     if (r.contentType) headers['Content-Type'] = r.contentType;
     return new Response(NULL_BODY_STATUS.has(r.status) ? null : r.body, { status: r.status, headers });
 }
 
 // Whether a request the browser refused may be retried as a proxied plain GET.
-export function proxyable(url: string, method: string, hasBody: boolean): boolean {
+function proxyable(url: string, method: string, hasBody: boolean): boolean {
     return (method === 'GET' || method === 'HEAD') && !hasBody && /^https?:\/\//i.test(url);
 }
 

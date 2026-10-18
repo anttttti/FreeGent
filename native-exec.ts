@@ -31,7 +31,7 @@ function _snapWorkspace(dir: string): Map<string, number> {
 
 // What test runners and type checkers leave behind. Not the command's work: a pytest run that
 // changed nothing else used to count as having written files.
-export const TOOL_CACHE_PATH_RE = /(?:^|\/)(?:\.pytest_cache|__pycache__|\.mypy_cache|\.ruff_cache|\.hypothesis|\.tox|\.nox|\.cache|node_modules\/\.cache)\/|(?:^|\/)\.coverage(?:\.[\w.-]+)?$/;
+const TOOL_CACHE_PATH_RE = /(?:^|\/)(?:\.pytest_cache|__pycache__|\.mypy_cache|\.ruff_cache|\.hypothesis|\.tox|\.nox|\.cache|node_modules\/\.cache)\/|(?:^|\/)\.coverage(?:\.[\w.-]+)?$/;
 export { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS, execTimeoutMs } from './exec-limits.js';
 // Exit code for a process ended by a signal, as a shell reports it (128 + signal number).
 export function signalExitCode(signal: string | null | undefined): number {

@@ -9,7 +9,7 @@
  * - Comparator ranges: ">=1.2.3 <2.0.0"
  */
 
-export interface SemVer {
+interface SemVer {
   major: number;
   minor: number;
   patch: number;
@@ -21,7 +21,7 @@ export interface SemVer {
 /**
  * Parse a semantic version string
  */
-export function parseSemVer(version: string): SemVer | null {
+function parseSemVer(version: string): SemVer | null {
   // Remove leading 'v' if present
   version = version.trim();
   if (version.startsWith('v')) {
@@ -51,7 +51,7 @@ export function parseSemVer(version: string): SemVer | null {
  * Compare two semver versions
  * Returns: -1 if a < b, 0 if a === b, 1 if a > b
  */
-export function compareSemVer(a: SemVer, b: SemVer): number {
+function compareSemVer(a: SemVer, b: SemVer): number {
   // Compare major.minor.patch
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
@@ -204,47 +204,4 @@ export function maxSatisfying(versions: string[], range: string): string | null 
 
   parsed.sort((a, b) => compareSemVer(b, a)); // Descending order
   return parsed[0].raw;
-}
-
-/**
- * Coerce a version string to valid semver
- */
-export function coerce(version: string): string {
-  version = version.trim();
-
-  // Remove leading 'v'
-  if (version.startsWith('v')) {
-    version = version.slice(1);
-  }
-
-  // Try to extract major.minor.patch from partial versions
-  const match = version.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
-  if (match) {
-    const major = match[1];
-    const minor = match[2] || '0';
-    const patch = match[3] || '0';
-    return `${major}.${minor}.${patch}`;
-  }
-
-  // Default to 0.0.0 if can't parse
-  return '0.0.0';
-}
-
-/**
- * Increment a version by type
- */
-export function increment(version: string, type: 'major' | 'minor' | 'patch'): string {
-  const semver = parseSemVer(version);
-  if (!semver) return version;
-
-  switch (type) {
-    case 'major':
-      return `${semver.major + 1}.0.0`;
-    case 'minor':
-      return `${semver.major}.${semver.minor + 1}.0`;
-    case 'patch':
-      return `${semver.major}.${semver.minor}.${semver.patch + 1}`;
-    default:
-      return version;
-  }
 }

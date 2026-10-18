@@ -107,7 +107,7 @@ export const coworkEnabledTools = (() => {
 
 // ── Mode ───────────────────────────────────────────────────────────────────
 // Global UX mode: 'chat' (default) | 'cowork'.
-export type AppMode = 'chat' | 'cowork';
+type AppMode = 'chat' | 'cowork';
 
 export function getMode(): AppMode {
     return (localStorage.getItem(KEYS.MODE) as AppMode) || 'chat';

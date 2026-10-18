@@ -11,7 +11,7 @@
 import type { AgentSession } from './state.js';
 import type { TurnResult } from './types.js';
 
-export interface DirectorOpts {
+interface DirectorOpts {
     /** Max additional turns after the first. Default 4 (matches legacy headless-runner behaviour). */
     maxContinuations?: number;
     /** Prompt injected for each continuation turn. */
@@ -53,7 +53,7 @@ export const STEP_LIMIT_PROMPT = (steps?: number, envFiles: string[] = []): stri
     + (envFiles.length ? `first restore these test/packaging configuration edits or stub packages, which ship with your change and can break the graded tests (\`git checkout -- <file>\`, or delete a file or folder you created): ${envFiles.slice(0, 6).join(', ')}. Then ` : '')
     + `if you changed code, check that the change is applied (e.g. git diff), run the most relevant test once if you can, and correct only what that shows; if the task asks for an answer (a value, flag, command or file), give it now from what you found. End with COMPLETED. Do not start new exploration.`;
 
-export type RunOneTurn = (
+type RunOneTurn = (
     prompt: string,
     session: AgentSession,
     opts?: { forceToolCall?: boolean; placeholder?: any; maxSteps?: number; excludeTools?: string[] },

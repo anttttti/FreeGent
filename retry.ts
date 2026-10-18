@@ -66,7 +66,7 @@ const _TRANSIENT_MSG_RE = new RegExp([
 const _WEAK_PROSE_RE = /not found|try again later|internal error|connection error|request timed out/i;
 const _STRONG_PROSE_RE = /HTTP \d{3}|rate.?limit|too many requests|overloaded|unavailable|bad gateway|gateway time|quota|insufficient balance|high (?:traffic|demand)|spikes in demand|upstream|idle timeout|net::ERR_|Failed to fetch|network/i;
 const WEAK_PROSE_MAX_ATTEMPTS = 6;
-export function isWeakProseTransient(e): boolean {
+function isWeakProseTransient(e): boolean {
     if (!e || (typeof e === 'object' && _transportErrors.has(e))) return false;
     if (_NET_CODE_RE.test(e.code ?? '') || _NET_CODE_RE.test(e.cause?.code ?? '') || _isTimeoutError(e)) return false;
     const msg = e.message || '';

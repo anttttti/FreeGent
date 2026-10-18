@@ -10,7 +10,7 @@ import { concatBytes, sameBytes, bytesToBase64, base64ToBytes, isTextBytes, byte
 import { withRuntimeLock } from './shiro/runtime-lock.js';
 import { snapshotRuntimeFiles, clearRuntimeDir } from './shiro/runtime-filesystem.js';
 
-export type RunResult = {
+type RunResult = {
     stdout: string;
     stderr: string;
     exit_code: number;
@@ -67,7 +67,7 @@ function snapshotDir(py: any, dir: string, prefix = '', out = new Map<string, Ui
 
 
 /** Empties a directory tree in Pyodide's in-memory FS (the directory itself stays). */
-export function clearDir(py: any, dir: string) {
+function clearDir(py: any, dir: string) {
     clearRuntimeDir(py.FS,dir);
 }
 

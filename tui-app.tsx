@@ -21,6 +21,7 @@ import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
 import { SETTINGS_DEF, keyedFields, type FieldDef, type SectionDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
+import { friendlyLabel } from './step-label.js';
 
 // ── Click registry ─────────────────────────────────────────────────────────────
 // Maps "row:colFrom:colTo" → action. SectionLabel components populate this after
@@ -177,57 +178,12 @@ function useAnimTick(enabled: boolean): number {
     return _animTick;
 }
 
+// The TUI shows the role of a role-tagged thinking step ("Thinking:code_reviewer" → "Code Reviewer").
 function _friendlyLabel(raw: string): string {
-    if (!raw) return raw;
-    const s = raw.trim();
-    if (s.startsWith('worker:')) {
-        const parts = s.slice(7).split(':');
-        const id = (parts[1] || parts[0]).toLowerCase();
-        if (/director/i.test(id))               return 'Directing';
-        if (/orchestrat/i.test(id))             return 'Orchestrating';
-        if (/planner?$/i.test(id) || id === 'plan' || id === 'replan') return 'Planning';
-        if (/research/i.test(id))               return 'Researching';
-        if (/cod(e|er|ing)/i.test(id))          return 'Coding';
-        if (/synthes/i.test(id))                return 'Synthesising';
-        if (/reduc/i.test(id))                  return 'Reducing';
-        if (/review/i.test(id))                 return 'Reviewing';
-        if (/search/i.test(id))                 return 'Searching';
-        if (/find/i.test(id))                   return 'Finding';
-        if (/read/i.test(id))                   return 'Reading';
-        if (/write|generat|creat/i.test(id))    return 'Writing';
-        if (/analys|analyz/i.test(id))          return 'Analysing';
-        if (/test|verif/i.test(id))             return 'Verifying';
-        if (/fix|patch|repair/i.test(id))       return 'Fixing';
-        return id.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    }
-    if (/^Thinking/i.test(s)) {
-        const ci = s.indexOf(':');
-        return ci >= 0 ? s.slice(ci + 1).replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Working';
-    }
-    if (/^compact/i.test(s))             return 'Compacting';
-    if (/summariz/i.test(s))             return 'Synthesising';
-    if (/resolv.*conflict/i.test(s))     return 'Resolving';
-    if (s.startsWith('read:'))           return 'Reading';
-    if (s.startsWith('write:'))          return 'Writing';
-    if (s.startsWith('replace:'))        return 'Editing';
-    if (s.startsWith('patch:'))          return 'Patching';
-    if (s.startsWith('append:'))         return 'Appending';
-    if (s.startsWith('del:'))            return 'Deleting';
-    if (s.startsWith('undo:'))           return 'Undoing';
-    if (s.startsWith('search:'))         return 'Searching';
-    if (s.startsWith('wiki:'))           return 'Looking up';
-    if (s.startsWith('fetch:'))          return 'Fetching';
-    if (s.startsWith('grep:'))           return 'Searching';
-    if (s.startsWith('arxiv:'))          return 'Researching';
-    if (s.startsWith('s2:'))             return 'Researching';
-    if (s.startsWith('exec('))           return 'Executing';
-    if (s.startsWith('workers('))        return 'Delegating';
-    if (s.startsWith('task:'))           return 'Updating task';
-    if (s.startsWith('git '))            return 'Git';
-    if (s === 'list_files')              return 'Listing files';
-    if (s.startsWith('<handover>') || s === 'handover') return 'Handing over';
-    const clean = s.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
-    return clean.length > 48 ? clean.slice(0, 45) + '…' : clean;
+    const s = raw?.trim() ?? '';
+    const ci = s.indexOf(':');
+    if (/^Thinking:/i.test(s)) return s.slice(ci + 1).replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return friendlyLabel(raw);
 }
 
 // Sections in display order: Prompt (sent context), Thinking, Output, raw Request

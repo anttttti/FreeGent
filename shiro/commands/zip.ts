@@ -8,6 +8,7 @@ import { transformBytes } from '../utils/streams';
  */
 import type { Command, CommandContext } from './index';
 import { crc32 } from './checksums';
+import { dosStamp } from '../utils/dos-stamp';
 import { bytesToText, textToBytes } from '../utils/bytes';
 import { readdirEntries, statEntry } from './flags';
 import { globToRegex } from '../utils/glob-regex.js';
@@ -31,11 +32,6 @@ interface Entry {
   isDir: boolean;
 }
 
-function dosStamp(ms: number): { time: number; date: number } {
-  const d = new Date(ms);
-  const y = Math.max(1980, d.getFullYear());
-  return { time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date: ((y - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate() };
-}
 const dosString = (e: Entry) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${1980 + (e.date >> 9)}-${p((e.date >> 5) & 15)}-${p(e.date & 31)} ${p(e.time >> 11)}:${p((e.time >> 5) & 63)}`;

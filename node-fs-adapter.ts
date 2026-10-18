@@ -13,7 +13,7 @@ const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pyc
 // run had written.
 const _SHOWN_DOT_DIRS = new Set(['.github', '.gitlab', '.circleci', '.husky', '.devcontainer', '.storybook']);
 const _SHOWN_DOT_FILE_RE = /^\.(?:gitignore|gitattributes|gitmodules|dockerignore|editorconfig|nvmrc|node-version|python-version|ruby-version|tool-versions|env\.(?:example|sample|template)|gitlab-ci\.yml|travis\.yml|pre-commit-config\.ya?ml|eslintrc(?:\.\w+)?|eslintignore|prettierrc(?:\.\w+)?|prettierignore|babelrc(?:\.\w+)?|stylelintrc(?:\.\w+)?|flake8|pylintrc|coveragerc|clang-format|clang-tidy|rubocop\.yml|mocharc(?:\.\w+)?|browserslistrc)$/;
-export function isListedDotEntry(name: string, isDirectory: boolean): boolean {
+function isListedDotEntry(name: string, isDirectory: boolean): boolean {
     return isDirectory ? _SHOWN_DOT_DIRS.has(name) : _SHOWN_DOT_FILE_RE.test(name);
 }
 

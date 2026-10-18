@@ -46,9 +46,9 @@ function createWorker(): WasiWorkerLike | null {
 }
 
 /** Wall-clock limit for one program unless the caller passes its own. */
-export const DEFAULT_DEADLINE_MS = 30_000;
+const DEFAULT_DEADLINE_MS = 30_000;
 
-export interface ExecOptions {
+interface ExecOptions {
   /** Kill the program after this many milliseconds (Infinity: no limit). */
   deadlineMs?: number;
   /** Complete filesystem root (default: /); explicit bounds fail instead of truncating. */

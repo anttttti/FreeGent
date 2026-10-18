@@ -30,7 +30,7 @@ interface Redirect {
   fd?: number;
 }
 
-export interface BackgroundJob {
+interface BackgroundJob {
   id: number;
   command: string;
   promise: Promise<number>;
@@ -5879,7 +5879,7 @@ export class Shell {
  * `#` inside a word (a#b, $#, ${#x}, *#*), in quotes, after a backslash, or in a heredoc body,
  * which is data. Lines and their order stay, so line numbers in messages do too.
  */
-export function stripComments(src: string): string {
+function stripComments(src: string): string {
   if (!src.includes('#')) return src;
   let out = '';
   let i = 0;

@@ -74,7 +74,7 @@ callLLMComplete(prompt, { temperature, maxTokens, endpoint, label }, handle)
 ```
 
 - `endpoint` — override with a specific `{provider, url, key, model}` object; null = active main model.
-- `label` — stepbox label, e.g. `'worker:review:review'`. Parsed by `_friendlyLabel` in `chat-render.js`.
+- `label` — stepbox label, e.g. `'worker:review:review'`. Parsed by `friendlyLabel` in `step-label.ts`.
 - `handle` — null: creates stepbox from `activePlaceholder`, owns lifecycle (complete/abort). Provided: sets model/request/output on existing handle; caller owns lifecycle.
 - Thinking fields for custom endpoints follow the thinking level (`_thinkingFields` in `payload-builder.ts`): `off` sends `chat_template_kwargs: { enable_thinking: false }` so thinking tokens cannot consume the budget silently; a non-off level sends `enable_thinking: true` (and raises `max_tokens`); `default` sends no thinking field at all.
 
@@ -130,7 +130,7 @@ Framework messages injected mid-conversation use role to carry the signal where 
 Every LLM step in the UI is represented by a handle with these methods:
 `setModel(str)`, `setPrompt(str)`, `setRequest(str)`, `setOutput(str)`, `append(chunk, type)`, `setTokens(in, out)`, `complete()`, `abort()`, `markCompact()`.
 
-`activePlaceholder.addToolStep(labels)` returns an array of handles. Labels starting with `worker:` render as `[N] Role · Jobname`; others fall through to pattern matching in `_friendlyLabel` (`chat-render.js`).
+`activePlaceholder.addToolStep(labels)` returns an array of handles. Labels starting with `worker:` render as `[N] Role · Jobname`; others fall through to pattern matching in `friendlyLabel` (`step-label.ts`).
 
 ## File routing (workspace.js)
 
@@ -218,7 +218,7 @@ Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a ma
 - `agent-core.ts` — `agentSend` entry point, checkpoint system, per-turn skill/tool trigger evaluation, Agent→Director handover
 - `search-providers.ts` — web-search backends (split out of tools.js)
 - `mcp.ts` — MCP client (Streamable HTTP) + server registry (`fg_mcp_servers`): discovery, `mcp__<server>__<tool>` specs appended in `activeTools()`, dispatch via `executeMcpTool`, standard library (`MCP_LIBRARY`). Servers' `instructions` go into the system prompt in full ("## MCP servers", only for servers with an enabled tool the role can call). Settings → MCP tab lives in `settings-ui.ts`
-- `chat-render.ts` — `createTask()` stepbox rendering, `_friendlyLabel()` label → display name
+- `chat-render.ts` — `createTask()` stepbox rendering; `step-label.ts` — `friendlyLabel()` label → display name
 - `settings-ui.ts` — settings form, `updateActiveModelDisplay()`, `applyHdrReasoning()`
 - `profiles.ts` — `PROFILE_KEYS`, `profileApply()` — **credentials must never be in `PROFILE_KEYS`**
 - `dev-api.ts` — the dev/preview server's `/api/*` (token check, `/api/proxy` with server-key
@@ -292,5 +292,5 @@ All three are on the window bridge and declared in `globals.d.ts`:
 
 **Add a background LLM call:**
 1. Call `callLLMComplete(prompt, { ..., label: 'worker:role:role' }, handle)` — never raw fetch
-2. Pick a label that matches an existing pattern in `_friendlyLabel`, or add one
+2. Pick a label that matches an existing pattern in `friendlyLabel`, or add one
 3. If calling from within `executeWorkers`, pass the existing outer handle rather than creating a sub-step

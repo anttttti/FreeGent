@@ -1,4 +1,4 @@
-import { setMainAgentRole as setRoleObject } from '../state.ts';
+import { setMainAgentRoleObject as setRoleObject } from '../state.ts';
 const W: any = globalThis;
 beforeEach(() => { W.setBrowserBridge(''); W.fetch.mockReset(); W.setMainAgentRole(null); W.setDisabledTools([]); });
 afterEach(() => W.setBrowserBridge(''));

@@ -19,7 +19,7 @@ export function quoteOperand(path: string): string {
   return /[^\w./:+,-]/.test(path) ? "'" + path.replace(/'/g, "'\\''") + "'" : path;
 }
 
-export interface ParsedArgs {
+interface ParsedArgs {
   flags: Record<string, boolean>;
   values: Record<string, string>;
   positional: string[];
@@ -140,7 +140,7 @@ export function parseSize(s: string): number | null {
 }
 
 /** Directory entry with metadata (replaces FluffyEntry). */
-export interface DirEntry {
+interface DirEntry {
   name: string;
   type: 'file' | 'dir' | 'symlink';
   size: number;
@@ -150,7 +150,7 @@ export interface DirEntry {
 }
 
 /** Stat result as a plain object (replaces FluffyStat). */
-export interface StatEntry {
+interface StatEntry {
   type: 'file' | 'dir' | 'symlink';
   size: number;
   mode: number;

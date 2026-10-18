@@ -6,7 +6,7 @@
 import type { Command } from './index';
 import { bracket } from './posix-test';
 
-export const cdCmd: Command = {
+const cdCmd: Command = {
   name: 'cd',
   description: 'Change directory',
   async exec(ctx) {
@@ -33,7 +33,7 @@ const PERSIST_ENV: Record<string, string> = {
   GOOGLE_API_KEY: 'shiro_google_key',
 };
 
-export const exportCmd: Command = {
+const exportCmd: Command = {
   name: 'export',
   description: 'Set environment variables',
   async exec(ctx) {
@@ -52,7 +52,7 @@ export const exportCmd: Command = {
   },
 };
 
-export const helpCmd: Command = {
+const helpCmd: Command = {
   name: 'help',
   description: 'Show available commands',
   async exec(ctx) {
@@ -76,7 +76,7 @@ export const helpCmd: Command = {
   },
 };
 
-export const commandCmd: Command = {
+const commandCmd: Command = {
   name: 'command',
   description: 'Run a command or describe its resolution',
   async exec(ctx) {
@@ -91,7 +91,7 @@ export const commandCmd: Command = {
 const lf = (s: string) => s.replace(/\r\n/g, '\n');
 
 // sh/bash: execute shell commands from stdin or -c flag
-export const shCmd: Command = {
+const shCmd: Command = {
   name: 'sh',
   description: 'Execute shell commands',
   async exec(ctx) {
@@ -143,7 +143,7 @@ export const shCmd: Command = {
   },
 };
 
-export const bashCmd: Command = {
+const bashCmd: Command = {
   name: 'bash',
   description: 'Execute shell commands',
   async exec(ctx) {
