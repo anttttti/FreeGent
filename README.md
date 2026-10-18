@@ -2,7 +2,7 @@
 
 **An AI agent that runs in your browser, your terminal, or a script, against free-tier cloud models and models on your own machine.**
 
-FreeGent reads and edits files, runs code, searches the web, splits work across sub-agents and keeps a task board. It is built to stay reliable on weaker, rate-limited models: it rotates between models when one hits a limit, compacts long chats, and checks its own tool calls.
+FreeGent reads and edits files, runs code, searches the web, splits work across sub-agents and keeps a task board. It is built to stay reliable on diverse rate-limited free models: it rotates between models when one hits a limit, compacts long chats, and checks its own tool calls.
 
 **[Open freegent.ai](https://freegent.ai)** — nothing to install. Paste an API key from any provider in [Default providers](docs/models/providers.md) and start chatting.
 
@@ -22,7 +22,7 @@ FreeGent reads and edits files, runs code, searches the web, splits work across 
 | API keys | typed in Settings, stored in your browser | in `~/.config/freegent/credentials`, kept on the server; the page only gets placeholders |
 | Cloud providers | yes, through FreeGent's hosted proxy | yes, through the local server |
 | Local models (Ollama, vLLM, LM Studio) | no | yes |
-| Code the agent runs | in-browser sandboxes (JavaScript, Python, WASM bash) | the same, plus real bash on your machine (isolated with bubblewrap on Linux) |
+| Code the agent runs | in-browser sandboxes (JavaScript, Python, WASM bash) | the same, plus real bash on your machine (optionally isolated) |
 | `run_git` | no | yes (opt-in) |
 
 Details: [Overview](docs/overview.md) · [Providers and models](docs/models/index.md).

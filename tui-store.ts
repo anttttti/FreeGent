@@ -46,6 +46,7 @@ export interface AppState {
     activePanel:      string | null;
     agentRunning:     boolean;
     scrollOffset:     number;   // rows scrolled up from bottom in event log
+    panelCursor:      number;   // highlighted row of a selectable panel (model, role)
     promptSuggestion: string;   // ghost text shown in the input line after each turn
     queue:            QueuedMsg[];  // pending messages mirrored from JSDOM msg-queue
     ready:            boolean;     // false while setup() is running; input is disabled
@@ -56,6 +57,7 @@ const _state: AppState = {
     activePanel:      null,
     agentRunning:     false,
     scrollOffset:     0,
+    panelCursor:      0,
     promptSuggestion: '',
     queue:            [],
     ready:            false,
@@ -169,6 +171,13 @@ export function toggleStepSection(step: StepState, section: StepSection): void {
 
 export function setActivePanel(panel: string | null): void {
     _state.activePanel = _state.activePanel === panel ? null : panel;
+    _state.panelCursor = 0;
+    _notify();
+}
+
+/** Move the highlight of a selectable panel by `delta` rows, staying inside its `count` rows. */
+export function movePanelCursor(delta: number, count: number): void {
+    _state.panelCursor = Math.min(Math.max(0, count - 1), Math.max(0, _state.panelCursor + delta));
     _notify();
 }
 

@@ -575,14 +575,21 @@ export { dom };
 
 /** List sessions belonging to this workspace, newest first. */
 export async function listWorkspaceSessions(): Promise<
-    { id: string; name: string; createdAt: number; lastAt: number }[]
+    { id: string; name: string; createdAt: number; lastAt: number; messages: number; firstMessage: string }[]
 > {
     if (!_sessionAdapter || !_workspacePrefix) return [];
     try {
         const all = await _sessionAdapter.loadChatList();
-        return all
-            .filter(s => s.id.startsWith(_workspacePrefix))
-            .sort((a, b) => b.lastAt - a.lastAt);
+        const mine = all.filter(s => s.id.startsWith(_workspacePrefix)).sort((a, b) => b.lastAt - a.lastAt);
+        // Every launch starts a session; those never used hold nothing to resume and would be picked first.
+        const info = await Promise.all(mine.map(async s => {
+            try {
+                const users = ((await _sessionAdapter!.loadHistory(s.id)) ?? []).filter((m: any) => m.role === 'user');
+                const first = users.find((m: any) => typeof m.content === 'string' && !m.content.startsWith('<'))?.content ?? users[0]?.content;
+                return { messages: users.length, firstMessage: typeof first === 'string' ? first.replace(/\s+/g, ' ').trim().slice(0, 80) : '' };
+            } catch { return { messages: 0, firstMessage: '' }; }
+        }));
+        return mine.map((s, i) => ({ ...s, ...info[i] })).filter(s => s.messages > 0);
     } catch { return []; }
 }
 
@@ -831,6 +838,9 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     }
 
     if (timedOut && !error) error = new Error(`Task timed out after ${timeoutMs} ms`);
+    // A turn that failed (no key, provider refusal) comes back as text with the 'error' signal and no exception:
+    // report it as an error too, so the exit status of fg-run says the run failed.
+    if (!error && !timedOut && _finishSignal === 'error') error = new Error(output.replace(/^\*\*Error:\*\*\s*/, '').trim() || 'the agent turn failed');
     const finish: RunFinish = {
         signal:     timedOut ? 'stopped' : _finishSignal ?? 'error',
         stopReason: _stopReason,

@@ -1,6 +1,6 @@
 # Skills and rules
 
-A skill is a short Markdown instruction that FreeGent adds to the prompt only when it is relevant. This keeps the base system prompt small, which matters on weaker models, and still lets the agent follow a detailed procedure for debugging, testing, PDFs and so on when the situation calls for it. A **rule** is the same kind of file, but a standing instruction rather than a procedure.
+A skill is a short Markdown instruction that FreeGent adds to the prompt only when it is relevant. This keeps the base system prompt small, which saves tokens on every request, and still lets the agent follow a detailed procedure for debugging, testing, PDFs and so on when the situation calls for it. A **rule** is the same kind of file, but a standing instruction rather than a procedure.
 
 ## What is built in
 

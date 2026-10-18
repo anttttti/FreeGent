@@ -1,6 +1,6 @@
 # Local or self-hosted
 
-freegent.ai needs nothing beyond an API key, but it cannot run bash or Python on your machine, use `run_git` or reach models on `localhost`. For those, run FreeGent from a clone of the repository. The same install gives you all three interfaces:
+freegent.ai needs nothing beyond an API key, but it cannot run bash or Python on your machine or use `run_git`, and at the default privacy level it cannot reach models on `localhost` (Provider-only and Local reach them directly if the model server allows the page's origin). For those, run FreeGent from a clone of the repository. The same install gives you all three interfaces:
 
 | Page | Covers |
 |---|---|
@@ -42,8 +42,8 @@ See [WebUI](/local/webui) for LAN access and its token.
 
 | | freegent.ai | Local server, TUI, CLI |
 |---|---|---|
-| JavaScript and Python | browser sandboxes | browser sandboxes (WebUI) |
-| bash | WASM sandbox in the browser | real bash on your machine, optionally isolated with bubblewrap |
+| JavaScript and Python | browser sandboxes | WebUI: JavaScript in the browser sandbox, Python in the browser or on your machine (Local sandbox); TUI and CLI: on your machine |
+| bash | WASM sandbox in the browser | real bash on your machine, optionally isolated |
 | `run_git` | no | yes (opt-in) |
 | Local models (Ollama, vLLM, LM Studio) | no | yes |
 

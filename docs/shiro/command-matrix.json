@@ -10053,7 +10053,7 @@
     "exec-sandbox/bash-run.ts": "eeb71e95458338b585f1326b5ccc9e796fb2254911e4224558027072e201f9f2",
     "exec-sandbox/channel.ts": "90bf0416f164b7042bb28e885448978ecfe7de2c7302d05b85d96983c97d2fd9",
     "exec-sandbox/entry.ts": "44de012f0f16a61496627b5e8dbb5c1f57f32e89b9ef66890d2e6855fa09a448",
-    "headless-runner.ts": "d3b8c599c5bde700105d420c7bcda817a5e6d7243c06f71f345db614d3d4982b",
+    "headless-runner.ts": "b87c51b33c9fc4216d557b4f0853a4cd6a5af2cd7992d3ed3364ab4c3e52891b",
     "pyodide-run.ts": "1c5770ccaf45d404adb9d2427739768f5df53ab989bcde212b27ef45b0dff635",
     "shiro/claude-config.ts": "95dc5aebac869a0a4eb395b046069067ab8f6da24f2c480eef7868534ee20992",
     "shiro/commands/awk.ts": "4dc0c11ccfdb54c123366abb8e82dc2b61565fc763d59021df6d4b7a8322fa88",

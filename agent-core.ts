@@ -1346,6 +1346,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     window.clearInputDraft?.();  // remove saved draft now that the message is sent (bridged late by init.ts)
     lastUserMessageText = rawText;
     _currentUserIntent  = rawText; // used by intent validation in executeToolAsync
+    (window as any).resetIntentTaint?.();   // a new request: nothing external has been read yet
     if (rawText.trim()) _userInputHistory.push(rawText);
     if (aiJob === 'send-preparing') setAiJob('');
     setAgentStreaming(true);
@@ -1683,6 +1684,8 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
                             { placeholder: _reusePh = null as RenderAdapter | null, forceToolCall = false,
                               maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {}): Promise<TurnResult> {
     const _s = session ?? defaultSession;
+    // The request this turn serves (a task prompt for Autopilot), for the intent check on risky tool calls.
+    if (_s === defaultSession) { _currentUserIntent = prompt; (window as any).resetIntentTaint?.(); }
 
     autoloadPyodideIfEnabled?.();
 

@@ -804,12 +804,12 @@ async function _fillChatCard(chatId: string, detail: HTMLElement, snaps: HTMLEle
             t.textContent = `${label}: ${snap.files} file${snap.files === 1 ? '' : 's'}, ${_fmtBytes(snap.bytes)} · ${fmtTime(snap.ts)}`;
             const btn = document.createElement('button');
             btn.className = 'ws-action-btn';
-            btn.textContent = `⟲ Set workspace to ${which}`;
+            btn.textContent = `⟲ Reset workspace to ${which}`;
             btn.title = tip;
             btn.onclick = async e => {
                 e.stopPropagation();
                 if (!confirm(`Replace the current workspace files with the ${which} state of this chat (${snap.files} files)? Files created since will be removed.`)) return;
-                if (await restoreChatWorkspace(chatId, snap.ckptId)) btn.textContent = '✓ Restored';
+                if (await restoreChatWorkspace(chatId, snap.ckptId)) btn.textContent = '✓ Workspace reset';
             };
             r.append(t, btn);
             return r;

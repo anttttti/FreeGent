@@ -2,7 +2,7 @@
 // Layout (full-width, Claude Code style):
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │  openai|gpt-4o  ● ready  ctx 3.4K/1050.0K        Alt+? help  │ ← status bar
+//   │  openai|gpt-4o  ● ready  ctx 3.4K/1050.0K        Alt+H help  │ ← status bar
 //   ├──────────────────────────────────────────────────────────────┤
 //   │                                                              │
 //   │  Event log  (scrollable, fills all available rows)           │
@@ -15,10 +15,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useWindowSize, useApp } from 'ink';
-import TextInput from 'ink-text-input';
 import * as Store from './tui-store.js';
 import { sendMessage, stopAgent, newSession, setMouseHandler, setScrollHandler, runCompact, listWorkspaceSessions, resumeSession } from './fg-tui.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
+import { KEYS } from './storage-keys.js';
 import { SETTINGS_DEF, keyedFields, type FieldDef, type SectionDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
 
@@ -461,24 +461,27 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
 function ModelPanel() {
     const [models, setModels] = useState<string[]>([]);
     const [paused, setPaused] = useState<string[]>([]);
+    const cursor = useStore().panelCursor;
 
     useEffect(() => {
         const refresh = () => {
             try {
-                setModels(dom.window.getMainModelList?.() ?? []);
+                const list: string[] = dom.window.getMainModelList?.() ?? [];
+                setModels(list);
                 setPaused(dom.window.getPausedMainModels?.() ?? []);
+                _panelItems = { kind: 'model', items: list };
             } catch {}
         };
         refresh();
         const t = setInterval(refresh, 2000);
-        return () => clearInterval(t);
+        return () => { clearInterval(t); _panelItems = { kind: null, items: [] }; };
     }, []);
 
     return (
         <Box flexDirection="column">
             <Text bold>Primary models</Text>
             <Text dimColor>{`  profile: ${PROFILE_PATH}`}</Text>
-            <Text dimColor>{'  /model <provider>|<model> to change  •  --model flag overrides on start'}</Text>
+            <Text dimColor>{'  ↑/↓ choose, Enter to use it, Esc to close  •  /model <provider>|<model> for one that is not listed  •  --model flag overrides on start'}</Text>
             {models.length === 0
                 ? <Text dimColor>  No models configured. Edit profile or use /model openai|gpt-4o</Text>
                 : models.map((m, i) => {
@@ -486,7 +489,8 @@ function ModelPanel() {
                     const [prov, ...rest] = m.split('|');
                     return (
                         <Text key={m}>
-                            <Text dimColor>{`  ${i + 1}. `}</Text>
+                            <Text color="yellow">{i === cursor ? '▸' : ' '}</Text>
+                            <Text dimColor>{` ${i + 1}. `}</Text>
                             <Text color="cyan">{prov}</Text>
                             <Text>{`|${rest.join('|')}`}</Text>
                             {isPaused && <Text color="red"> [paused]</Text>}
@@ -501,18 +505,19 @@ function ModelPanel() {
 function RolePanel() {
     const [currentRole, setCurrentRole] = useState<any>(null);
     const [roles, setRoles] = useState<any[]>([]);
+    const cursor = useStore().panelCursor;
 
     useEffect(() => {
         const refresh = () => {
             try {
                 setCurrentRole((globalThis as any).mainAgentRole ?? null);
                 const reg: Map<string, any> | undefined = (globalThis as any).rolesRegistry;
-                if (reg) setRoles([...reg.values()]);
+                if (reg) { const list = [...reg.values()]; setRoles(list); _panelItems = { kind: 'role', items: list.map(r => r.name) }; }
             } catch {}
         };
         refresh();
         const t = setInterval(refresh, 2000);
-        return () => clearInterval(t);
+        return () => { clearInterval(t); _panelItems = { kind: null, items: [] }; };
     }, []);
 
     const activeName = currentRole?.name ?? 'none';
@@ -524,11 +529,12 @@ function RolePanel() {
                 <Text color="cyan">{activeName}</Text>
                 {currentRole?.description ? <Text dimColor>{`  — ${currentRole.description}`}</Text> : null}
             </Text>
-            <Text dimColor>{'  Switch: /role <name>  •  Reset to default: /role director'}</Text>
-            {roles.map(r => (
+            <Text dimColor>{'  ↑/↓ choose, Enter to use it, Esc to close  •  /role <name>  •  Reset to default: /role director'}</Text>
+            {roles.map((r, i) => (
                 <Text key={r.name}>
+                    <Text color="yellow">{i === cursor ? '▸' : ' '}</Text>
                     <Text color={r.name === activeName ? 'cyan' : undefined} dimColor={r.name !== activeName}>
-                        {`  ${r.name}`}
+                        {` ${r.name}`}
                     </Text>
                     {r.description
                         ? <Text dimColor>{`  — ${r.description}`}</Text>
@@ -645,17 +651,18 @@ function _lsSet(key: string, value: string): void {
 
 function renderTuiField(field: FieldDef, val: string): React.ReactNode {
     if (field.kind === 'heading') {
-        return <Text key={field.text} bold dimColor>{`  ${field.text}`}</Text>;
+        return <Text key={field.text} bold dimColor wrap="truncate-end">{`  ${field.text}`}</Text>;
     }
     if (field.kind === 'hint') {
-        return <Text key={field.text} dimColor>{`    ${field.text}`}</Text>;
+        return <Text key={field.text} dimColor wrap="truncate-end">{`    ${field.text}`}</Text>;
     }
     if (field.kind === 'toggle') {
         const on = val === 'true';
         return (
-            <Text key={field.key}>
+            <Text key={field.key} wrap="truncate-end">
                 <Text dimColor>{`  ${field.label.padEnd(36)}`}</Text>
                 <Text color={on ? 'green' : 'red'}>{on ? '✓ on' : '✗ off'}</Text>
+                <Text dimColor>{`   ${field.key}`}</Text>
             </Text>
         );
     }
@@ -664,10 +671,10 @@ function renderTuiField(field: FieldDef, val: string): React.ReactNode {
         const display = opt?.label ?? (val || '');
         const hint = field.options.map(o => o.value).join(' | ');
         return (
-            <Text key={field.key}>
+            <Text key={field.key} wrap="truncate-end">
                 <Text dimColor>{`  ${field.label.padEnd(36)}`}</Text>
                 <Text color={val ? 'cyan' : undefined} dimColor={!val}>{val ? display : 'default'}</Text>
-                <Text dimColor>{`  (${hint})`}</Text>
+                <Text dimColor>{`  ${field.key} (${hint})`}</Text>
             </Text>
         );
     }
@@ -676,37 +683,33 @@ function renderTuiField(field: FieldDef, val: string): React.ReactNode {
     const display = masked ? '••••••••' : val;
     const placeholder = 'placeholder' in field ? field.placeholder : undefined;
     return (
-        <Text key={field.key}>
+        <Text key={field.key} wrap="truncate-end">
             <Text dimColor>{`  ${field.label.padEnd(36)}`}</Text>
             <Text color={val ? 'cyan' : undefined} dimColor={!val}>
                 {val ? display : 'default'}
             </Text>
             {placeholder && !val && <Text dimColor>{`  (${placeholder})`}</Text>}
+            <Text dimColor>{`  ${field.key}`}</Text>
         </Text>
     );
 }
 
-function TuiSection({ section, vals }: { section: SectionDef; vals: Record<string, string> }) {
-    return (
-        <Box flexDirection="column" marginTop={1}>
-            {section.title && (
-                <Text bold>{`  ${section.title}`}</Text>
-            )}
-            {section.hint && (
-                <Text dimColor>{`    ${section.hint}`}</Text>
-            )}
-            {section.fields.map((field, i) => (
-                <React.Fragment key={i}>
-                    {renderTuiField(field, 'key' in field ? (vals[field.key] ?? '') : '')}
-                </React.Fragment>
-            ))}
-        </Box>
-    );
+function settingsRows(vals: Record<string, string>): React.ReactNode[] {
+    const rows: React.ReactNode[] = [];
+    SETTINGS_DEF.sections.forEach((section, i) => {
+        rows.push(<Text key={`gap${i}`}> </Text>);
+        if (section.title) rows.push(<Text key={`t${i}`} bold wrap="truncate-end">{`  ${section.title}`}</Text>);
+        if (section.hint)  rows.push(<Text key={`h${i}`} dimColor wrap="truncate-end">{`    ${section.hint}`}</Text>);
+        section.fields.forEach((field, j) => rows.push(
+            <React.Fragment key={`f${i}.${j}`}>{renderTuiField(field, 'key' in field ? (vals[field.key] ?? '') : '')}</React.Fragment>));
+    });
+    return rows;
 }
 
-function SettingsPanel() {
+function SettingsPanel({ height }: { height: number }) {
     const keys = keyedFields(SETTINGS_DEF).map(f => f.key);
     const [vals, setVals] = useState<Record<string, string>>({});
+    const cursor = useStore().panelCursor;
 
     useEffect(() => {
         const refresh = () => {
@@ -719,13 +722,16 @@ function SettingsPanel() {
         return () => clearInterval(t);
     }, []);
 
+    // The panel is a few rows high and the settings are many: ↑/↓ scroll them.
+    const rows = settingsRows(vals);
+    const visible = Math.max(1, height - 5);
+    _panelItems = { kind: 'settings', items: rows.map((_, i) => String(i)) };
+    useEffect(() => () => { _panelItems = { kind: null, items: [] }; }, []);
     return (
         <Box flexDirection="column">
-            <Text bold>Settings</Text>
+            <Text bold>{`Settings  (${Math.min(cursor + 1, rows.length)}–${Math.min(rows.length, cursor + visible)} of ${rows.length}, ↑/↓ scroll)`}</Text>
             <Text dimColor>{'  /set <key> <value> to change  •  e.g. /set fg_temperature 0.8'}</Text>
-            {SETTINGS_DEF.sections.map((section, i) => (
-                <TuiSection key={i} section={section} vals={vals} />
-            ))}
+            {rows.slice(cursor, cursor + visible)}
         </Box>
     );
 }
@@ -735,13 +741,17 @@ function SettingsPanel() {
 function ProjectPanel({ workspaceRoot, height }: { workspaceRoot: string; height: number }) {
     const [files, setFiles] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
+    const cursor = useStore().panelCursor;
 
     useEffect(() => {
         const refresh = async () => {
             setLoading(true);
             try {
-                const list = await (dom.window as any).listWorkspaceFiles?.() ?? [];
-                setFiles(list.slice(0, height - 6));
+                // The workspace adapter's listing: the TUI works on disk, the browser's IndexedDB store is empty here.
+                const list = await (dom.window as any).agentListFilesNoStat?.() ?? [];
+                const names = list.map((f: any) => f.name).sort();
+                setFiles(names);
+                _panelItems = { kind: 'project', items: names };
             } catch {
                 setFiles([]);
             } finally {
@@ -750,7 +760,7 @@ function ProjectPanel({ workspaceRoot, height }: { workspaceRoot: string; height
         };
         refresh();
         const t = setInterval(refresh, 8000);
-        return () => clearInterval(t);
+        return () => { clearInterval(t); _panelItems = { kind: null, items: [] }; };
     }, [height]);
 
     return (
@@ -765,9 +775,10 @@ function ProjectPanel({ workspaceRoot, height }: { workspaceRoot: string; height
             {files.length === 0 && !loading && (
                 <Text dimColor>  No files found in workspace root.</Text>
             )}
-            {files.map((f: string) => (
-                <Text key={f} dimColor>{'  '}<Text>{f}</Text></Text>
+            {files.slice(cursor, cursor + Math.max(1, height - 7)).map((f: string) => (
+                <Text key={f} dimColor wrap="truncate-end">{'  '}<Text>{f}</Text></Text>
             ))}
+            {files.length > height - 7 && <Text dimColor>{`  ${cursor + 1}–${Math.min(files.length, cursor + height - 7)} of ${files.length} files  •  ↑/↓ scroll`}</Text>}
         </Box>
     );
 }
@@ -785,13 +796,13 @@ function Panel({ name, height, workspaceRoot }: {
         name === 'role'     ? <RolePanel /> :
         name === 'tasks'    ? <TasksPanel /> :
         name === 'agent'    ? <AgentPanel /> :
-        name === 'settings' ? <SettingsPanel /> :
+        name === 'settings' ? <SettingsPanel height={height} /> :
         (() => {
             const content: Record<string, string> = {
                 help: 'Keyboard shortcuts (Alt + key):\n' +
                       '  Alt+N  new chat        Alt+M  model list\n' +
                       '  Alt+T  tasks           Alt+A  agent info\n' +
-                      '  Alt+,  settings        Alt+R  role\n' +
+                      '  Alt+S  settings        Alt+R  role\n' +
                       '  Alt+P  project files   Alt+H  this help\n' +
                       '  Esc    close panel      ↑/↓   scroll log\n' +
                       '\n' +
@@ -873,7 +884,7 @@ function StatusBar({ agentRunning, ready }: {
             </Text>
             {ctxLabel ? <Text color={ctxColor} dimColor={!ctxColor}>{ctxLabel}</Text> : null}
             <Box flexGrow={1} />
-            <Text dimColor>{'Alt+? help'}</Text>
+            <Text dimColor>{'Alt+H help'}</Text>
         </Box>
     );
 }
@@ -954,20 +965,95 @@ const SLASH_COMMANDS = [
 ];
 
 // /model <provider>|<model> — set the active model and register it as a custom model if needed.
+// Use `spec` ("provider|model") from now on. The chosen model goes first and the rest of the priority list stays, so
+// rotation still has somewhere to go when it is rate-limited (this used to replace the whole list with the one model).
+// A model the catalog does not know is registered as a custom one; one that was paused is resumed.
 function _setModel(spec: string): void {
     const parts = spec.split('|');
     if (parts.length < 2) return;
     const [provider, ...rest] = parts;
     const model = rest.join('|');
     try {
-        const reg: any[] = JSON.parse(dom.window.localStorage?.getItem?.('fg_custom_models') || '[]');
-        if (!reg.find(m => `${m.provider}|${m.model}` === spec)) {
-            reg.push({ provider, model, label: model, released: '', contextK: 128,
-                       params: 0, media: ['text'], tools: true, thinking: false, note: 'tui' });
-            dom.window.localStorage?.setItem?.('fg_custom_models', JSON.stringify(reg));
+        const w: any = dom.window;
+        const known = (w.getAllModels?.() ?? []).some((m: any) => `${m.provider}|${m.model}` === spec);
+        if (!known) {
+            const reg: any[] = JSON.parse(w.localStorage?.getItem?.('fg_custom_models') || '[]');
+            if (!reg.find(m => `${m.provider}|${m.model}` === spec)) {
+                reg.push({ provider, model, label: model, released: '', contextK: 128,
+                           params: 0, media: ['text'], tools: true, thinking: false, note: 'tui' });
+                w.localStorage?.setItem?.('fg_custom_models', JSON.stringify(reg));
+            }
         }
-        dom.window.saveMainModelList?.([spec]);
+        const list: string[] = w.getMainModelList?.() ?? [];
+        w.saveMainModelList?.([spec, ...list.filter(s => s !== spec)]);
+        const paused: string[] = w.getPausedMainModels?.() ?? [];
+        if (paused.includes(spec)) w.savePausedMainModels?.(paused.filter(s => s !== spec));
     } catch {}
+}
+
+// The rows of the panel that is open and selectable (model or role), published by the panel so the key handler and the
+// composer know how many there are. ↑/↓ move the highlight, Enter on an empty composer chooses the highlighted row.
+// Settings and Project are not selectable; for them the cursor is the first visible row (↑/↓ scroll).
+let _panelItems: { kind: 'model' | 'role' | 'settings' | 'project' | null; items: string[] } = { kind: null, items: [] };
+function _selectFromPanel(): boolean {
+    const st = Store.getState();
+    if (!st.activePanel || _panelItems.kind !== st.activePanel || (_panelItems.kind !== 'model' && _panelItems.kind !== 'role')) return false;
+    const item = _panelItems.items[st.panelCursor];
+    if (!item) return false;
+    if (_panelItems.kind === 'model') _setModel(item);
+    else { try { (globalThis as any).setMainAgentRole(item); } catch {} }
+    Store.setActivePanel(st.activePanel);   // choosing closes the list (the same call that Esc and Alt+M use)
+    return true;
+}
+
+// The composer's text field. ink-text-input inserts whatever letter arrives, so every Alt+key shortcut (Alt+P, Alt+T, …)
+// opened its panel and also typed its letter into the message. This one ignores Alt and Ctrl combinations (the app's own
+// key handler takes those) and edits with the arrows, backspace/delete and Ctrl+A (start), Ctrl+E (end), Ctrl+U (clear).
+function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
+    value: string; onChange: (v: string) => void; onSubmit: (v: string) => void; placeholder?: string;
+}) {
+    const [cursor, setCursorState] = useState(value.length);
+    // The latest text and cursor, updated at once: keys that arrive faster than the screen is redrawn (typing ahead,
+    // a paste, Enter right after the last letter) would otherwise each be applied to a stale copy and lose characters.
+    const text = useRef(value);
+    const cur  = useRef(value.length);
+    const setCursor = (n: number) => { cur.current = n; setCursorState(n); };
+    const edit = (v: string, c: number) => { text.current = v; onChange(v); setCursor(c); };
+    // Text changed from outside (cleared after a send, filled by Tab): put the cursor at its end.
+    useEffect(() => {
+        if (value !== text.current) { text.current = value; setCursor(value.length); }
+        else if (cur.current > value.length) setCursor(value.length);
+    }, [value]);
+
+    useInput((input, key) => {
+        if (key.upArrow || key.downArrow || key.tab || key.escape) return;   // the app's handler (scroll, panels, suggestion, Esc)
+        const v = text.current, c = cur.current;
+        if (key.ctrl) {
+            if (input === 'a') setCursor(0);
+            else if (input === 'e') setCursor(v.length);
+            else if (input === 'u') edit(v.slice(c), 0);
+            return;                                   // Ctrl+C and the rest belong to the app
+        }
+        if (key.meta) return;                         // Alt+key shortcuts: not text
+        if (key.return) { onSubmit(v); return; }
+        if (key.leftArrow)  { setCursor(Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setCursor(Math.min(v.length, c + 1)); return; }
+        if (key.backspace || key.delete) {
+            if (c > 0) edit(v.slice(0, c - 1) + v.slice(c), c - 1);
+            return;
+        }
+        if (!input) return;
+        // Pasted text arrives as one chunk, line breaks included: they become spaces, and a paste never sends by itself.
+        const add = input.replace(/\s*[\r\n]+\s*/g, ' ').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+        if (add) edit(v.slice(0, c) + add + v.slice(c), c + add.length);
+    });
+
+    if (!value) {
+        return placeholder
+            ? <Text><Text inverse>{placeholder[0]}</Text><Text dimColor>{placeholder.slice(1)}</Text></Text>
+            : <Text inverse>{' '}</Text>;
+    }
+    return <Text>{value.slice(0, cursor)}<Text inverse>{value[cursor] ?? ' '}</Text>{value.slice(cursor + 1)}</Text>;
 }
 
 function InputLine({ ready, running, promptSuggestion }: {
@@ -986,9 +1072,9 @@ function InputLine({ ready, running, promptSuggestion }: {
         const t = pendingRef.current;
         pendingRef.current = null;
         (async () => {
+            if (t.startsWith('/')) { await handleSlash(t); return; }   // commands need no model: /model is how one is chosen
             const activeModels = dom.window.getActiveMainModelList?.() ?? [];
             if (activeModels.length === 0) return;
-            if (t.startsWith('/')) { await handleSlash(t); return; }
             Store.addUserMessage(t);
             await sendMessage(t);
         })();
@@ -1006,7 +1092,7 @@ function InputLine({ ready, running, promptSuggestion }: {
 
     const onSubmit = useCallback(async (text: string) => {
         const t = text.trim();
-        if (!t) return;
+        if (!t) { _selectFromPanel(); return; }   // Enter on an empty composer chooses the highlighted model or role
         setValue('');
         setSuggestions([]);
         Store.setPromptSuggestion('');
@@ -1017,13 +1103,15 @@ function InputLine({ ready, running, promptSuggestion }: {
             return;
         }
 
-        const activeModels = dom.window.getActiveMainModelList?.() ?? [];
-        if (activeModels.length === 0) return; // no model configured — silently drop
-
+        // Slash commands first: with no usable model the placeholder says "/model <provider|id> to configure", and
+        // dropping every input here made that, and /help and /settings, impossible.
         if (t.startsWith('/')) {
             await handleSlash(t);
             return;
         }
+
+        const activeModels = dom.window.getActiveMainModelList?.() ?? [];
+        if (activeModels.length === 0) return; // no model configured — nothing to send a message to
 
         if (running) {
             // Agent busy — enqueue; the message appears in the queue panel, not the chat log yet.
@@ -1081,7 +1169,7 @@ function InputLine({ ready, running, promptSuggestion }: {
                         const activeModels = dom.window.getActiveMainModelList?.() ?? [];
                         const noModel = activeModels.length === 0;
                         return (
-                            <TextInput
+                            <PromptInput
                                 value={value}
                                 onChange={onChange}
                                 onSubmit={onSubmit}
@@ -1116,7 +1204,7 @@ async function runResume(arg?: string): Promise<void> {
         const fmt = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
         const lines = [
             '**Previous sessions** — use `/resume N` to restore one:\n',
-            ...sessions.map((s, i) => `  **${i + 1}.** ${s.name}  _(last active ${fmt(s.lastAt)})_`),
+            ...sessions.map((s, i) => `  **${i + 1}.** ${s.name}  _(${s.messages} message${s.messages === 1 ? '' : 's'}, last active ${fmt(s.lastAt)})_`),
         ];
         const t = Store.addTurn();
         Store.finalizeTurn(t, lines.join('\n'));
@@ -1215,10 +1303,17 @@ async function handleSlash(cmd: string) {
         }
         case '/set': {
             const [key, ...valParts] = parts.slice(1);
-            if (key && valParts.length) {
-                _lsSet(key, valParts.join(' '));
-                Store.setActivePanel('settings');
+            const say = (msg: string) => { const t = Store.addTurn(); Store.finalizeTurn(t, msg); };
+            if (!key) { Store.setActivePanel('settings'); break; }
+            const field = keyedFields(SETTINGS_DEF).find(f => f.key === key);
+            if (!field && !(Object.values(KEYS) as string[]).includes(key)) { say(`_Unknown setting \`${key}\`. \`/settings\` lists the common ones with their keys._`); break; }
+            const val = valParts.join(' ');
+            if (field?.kind === 'select' && val && !field.options.some(o => o.value === val)) {
+                say(`_\`${key}\` takes one of: ${field.options.map(o => o.value || '(default)').join(', ')}._`); break;
             }
+            // Without a value the setting goes back to its default.
+            if (val) _lsSet(key, val); else { try { dom.window.localStorage?.removeItem(key); } catch {} }
+            Store.setActivePanel('settings');
             break;
         }
         case '/skills':   Store.setActivePanel('model'); break;  // model panel lists skills context
@@ -1277,13 +1372,20 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
             if (input === 'p') { Store.setActivePanel('project');  return; }
             if (input === 't') { Store.setActivePanel('tasks');    return; }
             if (input === 'a') { Store.setActivePanel('agent');    return; }
-            if (input === ',') { Store.setActivePanel('settings'); return; }
+            // Alt+S, not Alt+,: a terminal sends Alt+punctuation in a form Ink reports as the bare character (no Alt),
+            // so a shortcut on a punctuation key can never be recognised, and typed its character instead.
+            if (input === 's') { Store.setActivePanel('settings'); return; }
             if (input === 'm') { Store.setActivePanel('model');    return; }
             if (input === 'r') { Store.setActivePanel('role');     return; }
             if (input === 'h') { Store.setActivePanel('help');     return; }
             if (input === 'x') { stopAgent(); return; }
             if (input === 'b') { try { dom.window.stopAfterStep?.(); } catch {} return; }
             if (input === 'u') { try { (globalThis as any).retryLastTurn?.(); } catch {} return; }
+        }
+        // A model or role list that is open: the arrows move its highlight (Enter on an empty composer chooses the row).
+        if ((key.upArrow || key.downArrow) && state.activePanel && _panelItems.kind === state.activePanel && _panelItems.items.length) {
+            Store.movePanelCursor(key.upArrow ? -1 : 1, _panelItems.items.length);
+            return;
         }
         // Scroll event log
         if (key.upArrow)   Store.scroll(1);
