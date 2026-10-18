@@ -1,99 +1,50 @@
-# FreeGent CORS Proxy — Cloudflare Worker
+# FreeGent Cloudflare Worker
 
-A thin passthrough worker that adds CORS headers so the GitHub Pages version of
-FreeGent can reach LLM providers that don't allow direct browser requests.
+A small proxy that lets the static FreeGent site call model providers, which mostly do not allow direct browser requests. The official instance runs at `proxy.freegent.ai` and is used automatically by `freegent.ai`. **Most users never deploy this.** You need your own copy only if you host FreeGent on another origin, want another provider allowed, or want shared keys for your own users. The guide for that is [docs/self-hosting.md](../docs/self-hosting.md); the quick version is below.
 
-It also supports **shared API key injection**: store your own Groq, OpenRouter,
-Gemini, or Nous keys as Cloudflare secrets, and GitHub Pages users can
-use those providers without configuring their own keys.
+## What it does
 
-## Deploy your own (5 minutes, free)
+- `POST` (model calls): forwards only to an allow-list of hosts (`ALLOWED_HOSTS` in `worker.js`): Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, OpenAI, Tavily and Brave.
+- `GET ?url=` (page fetches, searches): forwards to any public HTTPS address.
+- `GET /keys`: tells the page which shared provider keys exist, as `true`/`false` per provider. Values are never sent.
+- Optional shared keys: stored as Worker secrets and injected only for requests that carry the Developer key (`X-FG-Dev-Key`, matched against the `FG_DEV_KEY` secret). Visitors without it always use their own keys.
+- Developer-key sessions can also upload console errors and finished Autopilot chats (`/errlog`, `/log`) to KV for the maintainer to review. Users can also send a chat log on purpose.
 
-1. **Create a free Cloudflare account** at [cloudflare.com](https://cloudflare.com) if you don't have one.
+## Protections
 
-2. **Deploy:**  
-   First remove the `workers_dev = false` and `routes = …` lines from `wrangler.toml`.
-   They serve the official worker at proxy.freegent.ai and will fail in your account.
+- **Origin check.** Only the origins in `ALLOWED_ORIGINS` are served (freegent.ai, the old GitHub Pages URL and local dev ports). An `Origin` header is easy to forge from a non-browser client, so it stops other websites, not other programs.
+- **Rate limit.** A per-IP limit (`ratelimits` in `wrangler.toml`) bounds use of shared keys and of the open `?url=` fetch path, and guesses at the Developer key.
+- **Host allow-list** for `POST`, HTTPS only, no credentials in URLs.
+- **Nothing is retained** apart from the opt-in logs above. API keys, whether the user's or injected, are forwarded to the provider and not stored.
+
+## Deploy your own
+
+1. Create a free Cloudflare account.
+2. In `wrangler.toml`, delete `workers_dev = false` and the `routes = …` line (they bind the official instance to `proxy.freegent.ai`). Change `name` to change the URL slug.
+3. Add your site's origin to `ALLOWED_ORIGINS` in `worker.js`.
+4. Deploy:
    ```bash
    cd cf-worker
    npx wrangler deploy
+   # or: CLOUDFLARE_API_TOKEN=<token> npx wrangler deploy
    ```
-   If `wrangler deploy` opens a browser but localhost refuses the connection,
-   use an API token instead:
-   ```bash
-   CLOUDFLARE_API_TOKEN=<your-token> npx wrangler deploy
-   ```
-   After deploying you'll see:
-   ```
-   Published freegent-proxy (https://freegent-proxy.<your-subdomain>.workers.dev)
-   ```
+5. In FreeGent, open **Settings → Privacy → CORS Proxy / CF Worker URL** and paste the URL it prints.
 
-3. **Configure FreeGent:**  
-   Open [FreeGent](https://freegent.ai), go to  
-   **Settings → CORS Proxy / CF Worker URL** and paste your Worker URL.
-
-That's it — all proxied providers (Kilo, NVIDIA NIM, TokenHarbor,
-Vercel AI Gateway, and, if configured, Groq / OpenRouter / Gemini /
-Nous) will now work from the browser.
-
-## Optional: shared API keys
-
-Store your API keys as Cloudflare secrets so GitHub Pages users can use those
-providers without configuring their own keys. Keys are stored encrypted — never
-in the Worker code or the repository.
+### Shared keys (optional)
 
 ```bash
-# Run once per key you want to share (prompts for the value securely):
-npx wrangler secret put OPENROUTER_API_KEY
-npx wrangler secret put GROQ_API_KEY
-npx wrangler secret put GEMINI_API_KEY
-npx wrangler secret put NOUS_API_KEY
+npx wrangler secret put GROQ_API_KEY        # also OPENROUTER_API_KEY, GEMINI_API_KEY, NOUS_API_KEY,
+                                            # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY
+npx wrangler secret put FG_DEV_KEY          # the Developer key that unlocks them
 ```
 
-**How it works:**
-- On startup, FreeGent calls `GET /keys` on the Worker to discover which
-  provider keys are available.  The response is `{"GROQ_API_KEY": true, ...}` —
-  the actual key values are never sent to the browser.
-- When the client makes an LLM request without an `Authorization` header (or
-  with an empty one), the Worker injects the matching secret before forwarding.
-- If a user has configured their own API key in browser settings, that key wins;
-  the Worker only injects when the client sends nothing.
+Whether it is acceptable to share a key depends on the provider's terms. Free models on OpenRouter, Groq's free tier, Gemini and Nous are usually fine for server-side use; check yours.
 
-**Which providers allow shared key use:**
-| Provider | Shared key OK? | Notes |
+## Limits (Cloudflare free plan)
+
+| | Free | Workers Paid |
 |---|---|---|
-| OpenRouter | ✅ | Free models cost nothing; paid credits needed for paid models |
-| Groq | ✅ | Generous free tier; server-side use is fine |
-| Gemini | ✅ | Google recommends server-side key use |
-| Nous | ✅ | Free tier |
-
-## Security
-
-- **Origin check:** only requests from allowed browser origins (GitHub Pages,
-  localhost dev ports) are accepted.  Direct curl calls from unknown origins
-  are rejected with 403.
-- **Domain allowlist:** the target URL must be a known LLM or search provider.
-  Arbitrary URL forwarding is not possible.
-- **Secrets never leave:** `/keys` returns only `true`/`false` per provider —
-  the actual key values are never sent to the browser.
-
-## Privacy
-
-The Worker is a pure passthrough. Nothing is logged, stored, or inspected.
-API keys (user's own or injected from env) are forwarded directly to the
-provider and are never retained.
-
-## Free-tier limits
-
-| Limit | Free plan | Workers Paid ($5/mo) |
-|---|---|---|
-| Requests | 100 000 / day | 10 million / month |
+| Requests | 100,000 per day | 10 million per month |
 | Wall time per request | 30 seconds | 30 minutes |
 
-The 30-second limit covers the vast majority of LLM calls. Very long generations
-on slow models may time out; upgrade if that's an issue.
-
-## Rename the worker
-
-Edit `name` in `wrangler.toml` before deploying to change the URL slug from
-`freegent-proxy` to something else.
+Very long generations on slow models can hit the 30-second limit.

@@ -55,6 +55,10 @@ jobs:
         env:
           VITE_BASE_URL: /
 
+      # The user guide is published at /docs/ next to the app. It must run after the app build, which empties dist/.
+      - name: Build docs
+        run: npm run docs:build
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
