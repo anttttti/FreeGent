@@ -9,6 +9,7 @@ import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
+import { omittedFileWriteMessage } from './exec-limits.js';
 import { isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
@@ -2320,16 +2321,19 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         execResult = await (async () => {
             // Copy the workspace for this run: raw records (binary files as base64, no text
             // extraction), plus a synced local folder's files if one is open.
-            const files: Record<string, string | { base64: string }> = {};
+            const files: Record<string, string | { base64: string }> = Object.create(null);   // no prototype: __proto__ is a file name here
+            const omitted = new Set<string>();   // too large to copy: the run cannot see them, so it may not replace them
             try {
                 for (const rec of (await listWorkspaceFiles()) || []) {
-                    if (!rec?.name || typeof rec.content !== 'string' || rec.content.length > EXEC_FILE_MAX_CHARS) continue;
+                    if (!rec?.name || typeof rec.content !== 'string') continue;
+                    if (rec.content.length > EXEC_FILE_MAX_CHARS) { omitted.add(rec.name); continue; }
                     files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content } : rec.content;
                 }
                 for (const f of await agentListFiles()) {
                     if (!f.isLocal || f.name in files) continue;
                     const c = await agentReadFile(f.name).catch(() => null);
-                    if (typeof c === 'string' && c.length <= EXEC_FILE_MAX_CHARS) files[f.name] = c;
+                    if (typeof c !== 'string') continue;
+                    if (c.length <= EXEC_FILE_MAX_CHARS) files[f.name] = c; else omitted.add(f.name);
                 }
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
@@ -2353,6 +2357,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             }
             const write_errors = [];
             for (const [path, content] of Object.entries(run.written as Record<string, string | Uint8Array>)) {
+                if (omitted.has(path)) { write_errors.push(omittedFileWriteMessage(path)); continue; }
                 try {
                     // Bytes that are UTF-8 text (a Buffer of a text file) are stored as text; others
                     // (binary, Latin-1 …) as base64, so they come back unchanged.
@@ -2393,15 +2398,17 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         const provider = getSandboxProvider();
         if (provider === 'local') {
             try {
-                const files = {};
+                const files = Object.create(null);
+                const omitted = new Set<string>();   // too large to send: the run cannot see them, so it may not replace them
                 try {
                     // Use raw workspace records so binary files (encoding='base64') are sent
                     // as '\x00BIN\x00<base64>' instead of their text-extracted content.
+                    // Empty files are sent too: an empty __init__.py makes a directory a package.
                     const recs = await listWorkspaceFiles();
                     for (const rec of (recs || [])) {
-                        if (!rec?.name || !rec.content) continue;
-                        if (rec.content.length > 1_000_000) continue;
-                        files[rec.name] = rec.encoding === 'base64'
+                        if (!rec?.name || typeof rec.content !== 'string') continue;
+                        if (rec.content.length > 1_000_000) { omitted.add(rec.name); continue; }
+                        files[rec.name] = rec.encoding === 'base64' && rec.content
                             ? `\x00BIN\x00${rec.content}`
                             : rec.content;
                     }
@@ -2414,13 +2421,24 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 });
                 if (!resp.ok) return { error: `Local sandbox HTTP ${resp.status}` };
                 execResult = await resp.json();
+                const deletedPaths: string[] = [];
+                const writeErrors: string[] = [];
+                // Files the run removed or renamed away
+                for (const path of (execResult.files_deleted ?? []) as string[]) {
+                    try { await agentDeleteFile(path); } catch (e) { writeErrors.push(`delete ${path}: ${e.message ?? e}`); continue; }
+                    if (context?.staging) context.staging.set(path, null);
+                    _invalidateReadDedup(path);
+                    deletedPaths.push(path);
+                }
                 if (execResult.files_written) {
                     const writtenPaths = [];
                     for (const [path, content] of Object.entries(execResult.files_written as Record<string, string>)) {
+                        if (omitted.has(path)) { writeErrors.push(omittedFileWriteMessage(path)); continue; }
                         const isBin = typeof content === 'string' && content.startsWith('\x00BIN\x00');
                         const enc   = isBin ? 'base64' : null;
                         const data  = isBin ? content.slice(5) : content;
-                        await agentWriteFile(path, data, enc).catch(() => {});
+                        try { await agentWriteFile(path, data, enc); }
+                        catch (e) { writeErrors.push(`${path}: ${e.message ?? e}`); continue; }   // not claimed as written
                         if (context?.staging) context.staging.set(path, data);
                         // Invalidate dedup so a subsequent read_file sees the new content
                         _invalidateReadDedup(path);
@@ -2428,6 +2446,13 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     }
                     // Strip file contents — they're in the workspace now; history only needs the paths
                     execResult = { ...execResult, files_written: writtenPaths };
+                }
+                if (deletedPaths.length) execResult = { ...execResult, files_deleted: deletedPaths } as any;
+                else if (execResult.files_deleted) { const { files_deleted: _d, ...rest } = execResult; execResult = rest; }
+                if (writeErrors.length) {
+                    const wrote = (execResult.files_written ?? []).length > 0;
+                    execResult = { ...execResult, stderr: (execResult.stderr ? execResult.stderr + '\n' : '') + writeErrors.map(m => `[write failed] ${m}`).join('\n'),
+                        write_errors: writeErrors, exit_code: execResult.exit_code || (wrote ? 0 : 1) };
                 }
             } catch (e) { return { error: `Local sandbox: ${e.message} — is the dev server (npm run dev) running?` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {

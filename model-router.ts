@@ -168,9 +168,71 @@ export function recordSuccess(endpoint: any): void {
     _refusals.delete(key);
     _endpointSuccessSinceCooldown.set(key, true);
 }
-export function _markCooldown(endpoint: any, exactMs: number | null = null): void {
+
+// ── Per-account quota errors ────────────────────────────────────────────────
+// Some providers meter one allowance for the whole account (TokenHarbor's weekly free period, a depleted
+// credit balance). When such an error names the reset, every free model of that provider is unavailable
+// until then, so the siblings go on cooldown too instead of each being tried and refused in turn.
+const _MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+export function isAccountQuotaError(msg: string): boolean {
+    return /free allowance|free.?tier.?limit|free_tier_limit_reached|out of (free )?credits|credits? (are |have )?(exhausted|depleted|run out)|insufficient (balance|credits?)|HTTP 402\b/i.test(msg || '');
+}
+// Milliseconds until the reset time named in an error message, or null when it names none.
+// Understands "20 Oct 2026 at 04:23 UTC", ISO timestamps after reset/renew/again/until, and "resets in 3h 20m".
+export function parseQuotaResetMs(msg: string, now: number = Date.now()): number | null {
+    const m = String(msg || '');
+    let at: number | null = null;
+    const d = m.match(/(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+(\d{4})(?:\s+at)?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:UTC|GMT|Z)?/);
+    if (d) {
+        const mon = _MONTHS.indexOf(d[2].toLowerCase());
+        if (mon >= 0) at = Date.UTC(+d[3], mon, +d[1], +d[4], +d[5], +(d[6] || 0));
+    }
+    if (at === null) {
+        const iso = m.match(/(?:reset|renew|again|until|after|resumes?|starts?)\D{0,30}?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?/i);
+        if (iso) { const t = Date.parse(iso[1].replace(' ', 'T') + (iso[2] || 'Z')); if (!isNaN(t)) at = t; }
+    }
+    if (at === null) {
+        const dur = m.match(/(?:reset|renew|retry|try again|available|again)\D{0,20}?in\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,and]*)+)/i);
+        if (dur) {
+            let ms = 0;
+            for (const x of dur[1].matchAll(/(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi)) {
+                const u = x[2][0].toLowerCase();
+                ms += parseFloat(x[1]) * (u === 'd' ? 86_400_000 : u === 'h' ? 3_600_000 : u === 'm' ? 60_000 : 1_000);
+            }
+            if (ms > 0) at = now + ms;
+        }
+    }
+    if (at === null) return null;
+    const wait = at - now;
+    return wait > 0 && wait <= 40 * 86_400_000 ? wait : null;
+}
+// Cool down every other free model of the endpoint's provider (same flat cooldown). Free = id ends in
+// ":free" / "-free", or, for a provider whose failing model carries no such suffix, any catalog model of it.
+function _cooldownFreeSiblings(endpoint: any, ms: number): void {
+    const mods = typeof getAllModels === 'function' ? getAllModels() : [];
+    const isFree = (id: string) => /(:|-)free$/i.test(id);
+    const failingFree = isFree(endpoint.model);
+    for (const m of mods) {
+        if (m.provider !== endpoint.provider || m.model === endpoint.model) continue;
+        if (failingFree && !isFree(m.model)) continue;
+        const k = `${m.provider}|${m.model}`;
+        const until = Date.now() + ms;
+        if ((_endpointCooldown.get(k) ?? 0) < until) _endpointCooldown.set(k, until);
+    }
+}
+export function _markCooldown(endpoint: any, exactMs: number | null = null, err: any = null): void {
     if (!endpoint) return;
     const key  = `${endpoint.provider}|${endpoint.model}`;
+    // A per-account quota error: the model and its free siblings wait until the reset the message names
+    // (a Retry-After header can be much shorter than that), else the catalog's cooldown, else an hour.
+    const _msg = String(err?.message ?? '');
+    if (err && isAccountQuotaError(_msg)) {
+        const _cat = (typeof getAllModels === 'function' ? getAllModels() : []).find((m: any) => m.provider === endpoint.provider && m.model === endpoint.model);
+        const ms = parseQuotaResetMs(_msg) ?? _cat?.cooldownMs ?? Math.max(exactMs ?? 0, 60 * 60_000);
+        _endpointCooldown.set(key, Date.now() + ms);
+        _cooldownFreeSiblings(endpoint, ms);
+        return;
+    }
     // Per-model catalog override: if the catalog entry has a cooldownMs field, use it as a
     // flat cooldown (ignoring penalty/exponential logic). Designed for free-tier models that
     // have daily quotas — when the quota is hit the cooldown should match the reset window
@@ -254,13 +316,16 @@ function _customEndpoint(model: string, hintProvider: string): any {
         || /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl);
     const key     = entry?.key ?? (_oaiKeyUsable ? _oaiKey : '');
     const fmt     = entry?.apiFormat || hintProvider || 'openai';
-    const path    = fmt === 'ollama' ? '/api/chat' : '/chat/completions';
     const provider = fmt === 'vllm' ? 'vllm' : 'custom';
+    // The "Ollama" format talks to Ollama's OpenAI-compatible API, whatever address was typed (http://host:11434, .../api or
+    // .../v1). It used to post to /api/chat, Ollama's native API, whose newline-delimited stream nothing here can read, so
+    // every request of such a model ended without a reply.
+    const url = fmt === 'ollama' ? `${baseUrl.replace(/\/(?:api|v1)$/, '')}/v1/chat/completions` : `${baseUrl}/chat/completions`;
     // proxy:true routes through the same-origin /api/proxy to avoid CORS in the browser.
     // In headless/Node.js mode there is no browser CORS restriction and no proxy server,
     // so skip it to fetch the LLM endpoint directly.
     const useProxy = !window._fgHeadless;
-    return { provider, url: `${baseUrl}${path}`, key, model, proxy: useProxy };
+    return { provider, url, key, model, proxy: useProxy };
 }
 
 // On static hosts (freegent.ai, GitHub Pages, *.pages.dev) there is no local server, so route

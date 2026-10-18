@@ -4,9 +4,7 @@ import { escapeHtml } from './html-escape.js';
 
 // Settings captured in a profile — everything except API credentials (keys are never captured)
 const PROFILE_KEYS = [
-    'fg_primary_models',
-    'fg_custom_models',
-    'fg_openai_url', 'fg_openai_model', 'fg_openai_context',
+    'fg_openai_url', 'fg_openai_context',
     'fg_search_provider',
     'fg_sandbox_provider',
     'fg_agent_tool_result_truncation',
@@ -45,9 +43,7 @@ const PROFILE_KEYS = [
     'fg_tool_approval',
     'fg_git_enabled',
     'fg_ast_enabled',
-    'fg_image_model',
-    'fg_audio_model',
-    'fg_video_model',
+    'fg_temperature',
     'fg_top_p',
     'fg_top_k',
     'fg_min_p',
@@ -56,14 +52,8 @@ const PROFILE_KEYS = [
 ];
 
 const PROFILE_KEY_META = {
-    fg_primary_models:              { label: 'Primary models',        section: 'Models',  isList: true },
-    fg_custom_models:               { label: 'Custom models',         section: 'Models',  isList: true },
     fg_openai_url:                  { label: 'OpenAI-compat URL',     section: 'Models'  },
-    fg_openai_model:                { label: 'OpenAI-compat model',   section: 'Models'  },
     fg_openai_context:              { label: 'OpenAI-compat context', section: 'Models'  },
-    fg_image_model:                 { label: 'Image model',           section: 'Models'  },
-    fg_audio_model:                 { label: 'Audio model',           section: 'Models'  },
-    fg_video_model:                 { label: 'Video model',           section: 'Models'  },
     fg_endpoint_rotation:           { label: 'Endpoint rotation',     section: 'Models'  },
     fg_rate_limit_cooldown_min:     { label: 'Rate-limit cooldown',   section: 'Models'  },
     fg_search_provider:             { label: 'Search provider',       section: 'Search'  },
@@ -106,61 +96,16 @@ const PROFILE_KEY_META = {
     fg_top_k:                           { label: 'Top K',                     section: 'Models'  },
     fg_min_p:                           { label: 'Min P',                     section: 'Models'  },
     fg_presence_penalty:                { label: 'Presence penalty',          section: 'Models'  },
+    fg_temperature:                     { label: 'Temperature',               section: 'Models'  },
     fg_repetition_penalty:              { label: 'Repetition penalty',        section: 'Models'  },
 };
 
-const PROFILE_DEFAULT_PRIMARY_MODELS = JSON.stringify([
-    'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    'openrouter|nvidia/nemotron-3-super-120b-a12b:free',
-]);
-
 const BUILTIN_PROFILES = [
-    {
-        id: 'paid',
-        name: 'Paid',
-        description: 'For paid cloud APIs (e.g. models via OpenRouter). Full system prompt, eager skill injection, rich worker tool sets. Context is compacted only at the hard limit — no proactive trimming.',
-        settings: {
-            fg_primary_models:               PROFILE_DEFAULT_PRIMARY_MODELS,
-            fg_agent_tool_result_truncation: 'true',
-            fg_agent_max_tool_result:        '100000',
-            fg_agent_proactive_compact:      'false',
-            fg_agent_compact_at:             '0.75',
-            fg_agent_max_rounds:             '20',
-            fg_agent_lean_workers:           'false',
-            fg_agent_worker_history:         'true',
-            fg_agent_concise_prompts:        'true',
-            fg_agent_worker_reduce:          'true',
-            fg_agent_role_model_routing:     'true',
-            fg_worker_thinking_budget:       '24576',
-            fg_agent_max_delegation_depth:   '1',
-            fg_qa_enabled:             'true',
-            fg_qa_acceptance_review:   'true',
-            fg_qa_test_runner:         'true',
-            fg_qa_regression_guard:    'false',
-            fg_qa_rework_limit:        '3',
-            fg_agent_loop_qa:                       'true',
-            fg_agent_loop_max_consecutive_failures: '5',
-            fg_agent_ledger:                       'true',
-            fg_agent_review_logs:                  'false',
-            fg_openai_context:                     '50000',
-            fg_git_enabled:                        'false',
-            fg_ast_enabled:                        'true',
-            fg_agent_prompt_template:
-`You are operating on a paid cloud model with a large context window. Approach every task with depth and thoroughness:
-- Split tasks with independent subtasks across workers — parallelism is your primary scaling mechanism; wall time stays flat regardless of how many workers run in parallel
-- Use the full tool suite without economising — explore, verify, and iterate freely; tool results stay in context
-- Produce comprehensive, detailed outputs; do not truncate analysis, summaries, or implementations
-- Write production-ready code: no stubs, no placeholders, no TODOs — complete implementations with proper error handling
-- Verify your work: run code with execute_code, check outputs, and test edge cases before reporting done
-- On unfamiliar codebases, use execute_code (bash: grep/find) to map symbols before choosing which files to read`,
-        },
-    },
     {
         id: 'free',
         name: 'Free',
-        description: 'For free-tier OpenRouter models: Nemotron Ultra 550B (1M ctx), Nemotron Super 120B (262K ctx), Gemma 4 31B (262K ctx). Proactive compaction at 40K tokens. Compressed system prompt (30%), lazy skill injection, and lean worker tool sets to stay within TPM limits.',
+        description: 'For free-tier models with tight token-per-minute limits. Context is compacted proactively at 40K tokens, and workers use a lean tool set. Task/progress ledger, QA gates (acceptance review and test runner) and role-based model routing are on, as in Paid. The prompt tells the model to run independent subtasks in parallel workers and keep its context small by writing findings to files.',
         settings: {
-            fg_primary_models:               JSON.stringify(['openrouter|nvidia/nemotron-3-ultra-550b-a55b:free','openrouter|nvidia/nemotron-3-super-120b-a12b:free','openrouter|google/gemma-4-31b-it:free']),
             fg_agent_tool_result_truncation: 'true',
             fg_agent_max_tool_result:        '100000',
             fg_agent_proactive_compact:      'true',
@@ -203,6 +148,45 @@ const BUILTIN_PROFILES = [
 Write complete, working implementations — no stubs or placeholders.`,
         },
     },
+    {
+        id: 'paid',
+        name: 'Paid',
+        description: 'For paid cloud APIs. Context is compacted only at the model\'s hard limit (no proactive trimming), workers get the full tool set, and results up to 100K characters are kept. Task/progress ledger, QA gates (acceptance review and test runner) and role-based model routing are on; up to 5 consecutive failures per runner task. The prompt tells the model to split independent subtasks across workers, verify its work and write complete code.',
+        settings: {
+            fg_agent_tool_result_truncation: 'true',
+            fg_agent_max_tool_result:        '100000',
+            fg_agent_proactive_compact:      'false',
+            fg_agent_compact_at:             '0.75',
+            fg_agent_max_rounds:             '20',
+            fg_agent_lean_workers:           'false',
+            fg_agent_worker_history:         'true',
+            fg_agent_concise_prompts:        'true',
+            fg_agent_worker_reduce:          'true',
+            fg_agent_role_model_routing:     'true',
+            fg_worker_thinking_budget:       '24576',
+            fg_agent_max_delegation_depth:   '1',
+            fg_qa_enabled:             'true',
+            fg_qa_acceptance_review:   'true',
+            fg_qa_test_runner:         'true',
+            fg_qa_regression_guard:    'false',
+            fg_qa_rework_limit:        '3',
+            fg_agent_loop_qa:                       'true',
+            fg_agent_loop_max_consecutive_failures: '5',
+            fg_agent_ledger:                       'true',
+            fg_agent_review_logs:                  'false',
+            fg_openai_context:                     '50000',
+            fg_git_enabled:                        'false',
+            fg_ast_enabled:                        'true',
+            fg_agent_prompt_template:
+`You are operating on a paid cloud model with a large context window. Approach every task with depth and thoroughness:
+- Split tasks with independent subtasks across workers — parallelism is your primary scaling mechanism; wall time stays flat regardless of how many workers run in parallel
+- Use the full tool suite without economising — explore, verify, and iterate freely; tool results stay in context
+- Produce comprehensive, detailed outputs; do not truncate analysis, summaries, or implementations
+- Write production-ready code: no stubs, no placeholders, no TODOs — complete implementations with proper error handling
+- Verify your work: run code with execute_code, check outputs, and test edge cases before reporting done
+- On unfamiliar codebases, use execute_code (bash: grep/find) to map symbols before choosing which files to read`,
+        },
+    },
 ];
 
 let _previewedId: string | null = null;
@@ -222,28 +206,11 @@ export function stripModelKeys(json: string | null | undefined): string | null |
         }));
     } catch { return json; }
 }
-// A key belongs to a model AT an address: the same provider/model name with another URL is another server, and a shared or
-// older profile must not send the user's key there (code review CR-01). So the saved key is restored only to the same endpoint.
-const _endpointId = (m: any) => `${m?.provider}|${m?.model}|${String(m?.url ?? '').trim().replace(/\/+$/, '').toLowerCase()}`;
-function _restoreModelKeys(incoming: string): string {
-    try {
-        const arr = JSON.parse(incoming);
-        if (!Array.isArray(arr)) return incoming;
-        const cur = JSON.parse(localStorage.getItem('fg_custom_models') || '[]');
-        const keyOf = new Map<string, any>();
-        if (Array.isArray(cur)) for (const m of cur) if (m?.key) keyOf.set(_endpointId(m), m.key);
-        return JSON.stringify(arr.map((m: any) => (m && typeof m === 'object' && !m.key && keyOf.has(_endpointId(m)))
-            ? { ...m, key: keyOf.get(_endpointId(m)) } : m));
-    } catch { return incoming; }
-}
 
 function captureCurrentProfile() {
     const p = {};
     for (const k of PROFILE_KEYS) {
-        // fg_primary_models is the profile key; the runtime writes to fg_main_models
-        const storageKey = k === 'fg_primary_models' ? 'fg_main_models' : k;
-        let v = localStorage.getItem(storageKey);
-        if (k === 'fg_custom_models') v = stripModelKeys(v) as string | null;
+        const v = localStorage.getItem(k);
         if (v !== null) p[k] = v;
     }
     return p;
@@ -254,8 +221,7 @@ function computeProfileDiff(targetSettings) {
     for (const key of PROFILE_KEYS) {
         const meta = PROFILE_KEY_META[key];
         if (!meta) continue;
-        // the runtime stores the primary model list under fg_main_models (see captureCurrentProfile)
-        const current = localStorage.getItem(key === 'fg_primary_models' ? 'fg_main_models' : key);
+        const current = localStorage.getItem(key);
         const target  = key in targetSettings ? targetSettings[key] : null;
         if (current === target) continue;
 
@@ -297,13 +263,9 @@ function getSavedProfiles() {
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
 function profileApply(settings) {
     for (const key of PROFILE_KEYS) {
-        if (key in settings) localStorage.setItem(key, key === 'fg_custom_models' ? _restoreModelKeys(String(settings[key])) : settings[key]);
+        if (key in settings) localStorage.setItem(key, settings[key]);
         else localStorage.removeItem(key);
     }
-    // Sync fg_primary_models (profile key) → fg_main_models (runtime key)
-    const m = localStorage.getItem('fg_primary_models');
-    if (m) localStorage.setItem('fg_main_models', m);
-    else   localStorage.removeItem('fg_main_models');
     _previewedId = null;
     if (typeof populateSettingsForm === 'function') populateSettingsForm();
     renderProfilesTab();

@@ -9,3 +9,9 @@ export function execTimeoutMs(seconds: unknown): number {
     const n = Number(seconds);
     return Number.isFinite(n) && n > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, Math.max(1_000, Math.round(n * 1000))) : EXEC_TIMEOUT_MS;
 }
+
+/** Why a run's write was refused: the file it targets was left out of the run's copy of the workspace (too large),
+ *  so the run could not have seen its content and writing it would replace the original with whatever the run made. */
+export function omittedFileWriteMessage(path: string): string {
+    return `${path}: not written. The existing file is too large to be copied into the run, so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
+}

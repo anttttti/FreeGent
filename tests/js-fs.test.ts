@@ -74,4 +74,19 @@ describe('execute_code JavaScript fs', () => {
         const { fs } = ws();
         expect(() => fs.readFileSync('missing.txt')).toThrow(/ENOENT/);
     });
+
+    it('file names that are also Object.prototype members are ordinary names (codex campaign 6, cases 039-040)', () => {
+        const { fs, written } = createWorkspaceFs(Object.fromEntries([['constructor', 'C'], ['__proto__', 'P'], ['ordinary.txt', 'O']]));
+        for (const name of ['toString', 'hasOwnProperty', 'valueOf', 'isPrototypeOf']) {
+            expect(fs.existsSync(name), name).toBe(false);
+            expect(() => fs.readFileSync(name), name).toThrow(/ENOENT/);
+        }
+        expect(fs.readFileSync('constructor', 'utf8')).toBe('C');
+        expect(fs.readFileSync('__proto__', 'utf8')).toBe('P');
+        expect(fs.readdirSync('.').sort()).toEqual(['__proto__', 'constructor', 'ordinary.txt']);
+        fs.writeFileSync('__proto__', 'P2');
+        expect(Object.entries(written)).toEqual([['__proto__', 'P2']]);
+        fs.unlinkSync('constructor');
+        expect(fs.existsSync('constructor')).toBe(false);
+    });
 });

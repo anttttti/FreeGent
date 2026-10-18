@@ -85,6 +85,9 @@ export function buildWorkspaceIndex(paths: string[]): {
 // names, so a brief stale view is fine and avoids repeating the walk every turn.
 let _pathCache: { paths: string[]; at: number } | null = null;
 const _PATH_CACHE_MS = 30_000;
+/** Forget the cached listing: a file was written or deleted, so the next turn must list the workspace again. */
+export function invalidateWorkspacePaths(): void { _pathCache = null; }
+
 export async function collectWorkspacePaths(): Promise<string[]> {
     const now = Date.now();
     if (_pathCache && now - _pathCache.at < _PATH_CACHE_MS) return _pathCache.paths;
@@ -127,10 +130,13 @@ export function applyTurnTriggers({
         for (const tc of (msg?.tool_calls || []))
             if (tc.function?.name) histTools.add(tc.function.name);
 
-    // In Cowork mode the tasks skill is always active — the keyword "task" need not appear.
-    // Build an augmented seed so evaluateSkillTriggers starts with it already fired.
-    const _coworkSeed = (typeof getMode === 'function' && getMode() === 'cowork' && skillsRegistry.has('tasks'))
-        ? new Set([...activeSkills, 'tasks'])
+    // In Cowork mode the task guidance is always active — the keyword "task" need not appear.
+    // Build an augmented seed so evaluateSkillTriggers starts with it already fired. (The guidance was once one skill,
+    // `tasks`; it is now task-setup + execution-workflow, and the seed kept asking for the old name, which a browser
+    // workspace does not have: Cowork got no task guidance until a board task existed.)
+    const _coworkSkills = ['task-setup', 'execution-workflow', 'tasks'].filter(n => skillsRegistry.has(n));
+    const _coworkSeed = (typeof getMode === 'function' && getMode() === 'cowork' && _coworkSkills.length)
+        ? new Set([...activeSkills, ..._coworkSkills])
         : activeSkills;
     setCurrentTurnSkills(evaluateSkillTriggers(skillsRegistry, _coworkSeed, {
         roleName:         mainAgentRole?.name?.toLowerCase() ?? null,
@@ -246,6 +252,6 @@ export function formatWorkspaceListing(rawPaths: string[], { inContainer = false
 }
 
 Object.assign(window, {
-    _isCompletionRequest, isTaskCompletionRequest, buildWorkspaceIndex, collectWorkspacePaths,
+    _isCompletionRequest, isTaskCompletionRequest, buildWorkspaceIndex, collectWorkspacePaths, invalidateWorkspacePaths,
     applyTurnTriggers, buildTurnPrelude,
 });

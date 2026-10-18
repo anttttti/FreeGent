@@ -8,16 +8,21 @@
 //           refuse, and the user's MCP credentials must not go through a shared proxy. On a static
 //           host or headless it is '' (direct fetch), which is a deliberate policy, not an omission.
 import { isStaticHost } from './static-hosts.js';
+import { getPrivacyLevel, privacyBlockReason, proxiedTarget } from './privacy.js';
 
 export const DEFAULT_CF_WORKER = 'https://proxy.freegent.ai';
 export type ProxyKind = 'get' | 'post' | 'local';
 
 export function resolveProxy(kind: ProxyKind, manual = ''): string {
+    // Settings → Privacy: below "Default" no hosted or custom Worker is used. The local server's own
+    // /api/proxy stays, because it runs on this machine and holds the credentials-file keys.
+    const restricted = getPrivacyLevel() !== 'default';
+    if (restricted) manual = '';
     if (kind !== 'local' && manual) return kind === 'post' ? manual.replace(/\/$/, '') : manual;
     // Headless (fg-run, benchmarks) has no local server and no CORS: fetch directly.
     if ((window as any)._fgHeadless) return '';
     try {
-        if (isStaticHost(window.location.hostname)) return kind === 'local' ? '' : DEFAULT_CF_WORKER;
+        if (isStaticHost(window.location.hostname)) return kind === 'local' || restricted ? '' : DEFAULT_CF_WORKER;
         // Same-origin /api/proxy also covers LAN-IP access (https://192.168.1.28:5000), avoiding CORS.
         return `${window.location.origin}/api/proxy`;
     } catch { return ''; }
@@ -59,4 +64,28 @@ export function installPassHeader(): void {
         } catch {}
         return _origFetch.call(window, input, init);
     } as typeof fetch;
+}
+
+/** Enforce Settings → Privacy on every window.fetch. "Provider-only" refuses the hosted and the custom Worker;
+ *  "Local" refuses anything but this machine and the local network, looking inside requests to the local
+ *  server's /api/proxy for the address it would fetch. The refusal is an Error with name PrivacyBlockedError. */
+export function installPrivacyGuard(): void {
+    if ((window as any)._fgPrivacyGuard) return;
+    (window as any)._fgPrivacyGuard = true;
+    const _origFetch = window.fetch;
+    window.fetch = function (input: any, init?: any) {
+        try {
+            const level = getPrivacyLevel();
+            if (level !== 'default') {
+                const url = typeof input === 'string' ? input : input?.url ?? String(input);
+                const pageOrigin = window.location.origin;
+                const manual = (() => { try { return new URL(localStorage.getItem('fg_search_proxy') || '').origin; } catch { return ''; } })();
+                const ctx = { pageOrigin, workerOrigins: [DEFAULT_CF_WORKER, manual].filter(Boolean) };
+                const target = proxiedTarget(url, init?.body, pageOrigin) ?? url;
+                const why = privacyBlockReason(target, level, ctx);
+                if (why) { const e = new Error(why); e.name = 'PrivacyBlockedError'; return Promise.reject(e); }
+            }
+        } catch {}
+        return _origFetch.call(window, input, init);
+    } as typeof window.fetch;
 }

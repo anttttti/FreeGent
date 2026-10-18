@@ -43,6 +43,8 @@
 
 // ── Typed message protocol ────────────────────────────────────────────────────
 
+import { sandboxCspMeta } from './privacy.js';
+
 export type HostToFrameMessage =
     | { type: 'fg:eval';  code: string; id: string }
     | { type: 'fg:clear' }
@@ -119,6 +121,7 @@ function _buildSrcdoc(body: string): string {
     return [
         '<!DOCTYPE html><html><head>',
         '<meta charset="utf-8">',
+        sandboxCspMeta(),
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
         '<style>',
         '*{box-sizing:border-box}',

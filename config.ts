@@ -3,8 +3,11 @@
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
+import { omittedFileWriteMessage } from './exec-limits.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
+import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
+import { isStaticHost } from './static-hosts.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -244,39 +247,47 @@ function getSearchProvider() { return ls('fg_search_provider', 'auto'); }
 // 'default' = no thinking argument sent to the endpoint (endpoint uses its own default behaviour).
 // Legacy fg_reasoning_budget / fg_custom_thinking are superseded by this.
 export function getThinkingLevel() { return ls('fg_thinking_level', 'default'); }
+// A sampling field's value. Never saved: FreeGent's default. Saved empty (the user cleared the field): null, so the parameter
+// is left out of the request and the server uses its own default, as Settings → Models → Sampling says. ls() cannot tell
+// those two apart (it reads an empty string as "never saved"), hence the direct read.
+function _sampling(key: string, def: string): string | null {
+    let v: string | null = null;
+    try { v = localStorage.getItem(key); } catch {}
+    return v === null ? ls(key, def) : v;
+}
 // LLM sampling temperature (0–2). Stored as string; null/empty → use provider default (0.2).
 export function getTemperature() {
-    const v = ls('fg_temperature', '0.6');
+    const v = _sampling('fg_temperature', '0.6');
     if (v === '' || v === null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
 }
 export function getTopP() {
-    const v = ls('fg_top_p', '0.95');
+    const v = _sampling('fg_top_p', '0.95');
     if (v === '' || v === null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
 }
 export function getTopK() {
-    const v = ls('fg_top_k', '20');
+    const v = _sampling('fg_top_k', '20');
     if (v === '' || v === null) return null;
     const n = parseInt(v, 10);
     return isNaN(n) ? null : n;
 }
 function getMinP() {
-    const v = ls('fg_min_p', '0.0');
+    const v = _sampling('fg_min_p', '0.0');
     if (v === '' || v === null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
 }
 function getPresencePenalty() {
-    const v = ls('fg_presence_penalty', '0.0');
+    const v = _sampling('fg_presence_penalty', '0.0');
     if (v === '' || v === null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
 }
 function getRepetitionPenalty() {
-    const v = ls('fg_repetition_penalty', '1.0');
+    const v = _sampling('fg_repetition_penalty', '1.0');
     if (v === '' || v === null) return null;
     const n = parseFloat(v);
     return isNaN(n) ? null : n;
@@ -338,10 +349,11 @@ export function browserBashAvailable(): boolean {
 // current one (detected on the next startup after an IP change) or after 7 days.
 const GEO_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-// Off unless the user turns it on (Settings → Agent → Privacy): the lookup sends the user's IP to ipinfo.io
+// On unless the user turns it off (Settings → Privacy): the lookup sends the user's IP to ipinfo.io
 // and the result (city, region, ISP) goes into prompts. Without it the location skill uses timezone + locale.
+// Never at the Provider-only and Local privacy levels.
 export function geoLookupEnabled(): boolean {
-    try { return localStorage.getItem('fg_geo_lookup') === '1'; } catch { return false; }
+    try { return getPrivacyLevel() === 'default' && localStorage.getItem('fg_geo_lookup') !== '0'; } catch { return false; }
 }
 
 export function getGeoCache(): { ip?:string; city?:string; region?:string; country?:string; timezone?:string; org?:string } | null {
@@ -752,7 +764,7 @@ const _DEFAULT_MAIN_MODELS = [
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
 
-function getMainModelList() {
+export function getMainModelList() {
     const _validSpec = spec => {
         if (typeof spec !== 'string' || !spec.length) return false;
         if (spec.indexOf('|') < 0) return false;
@@ -843,7 +855,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
     let passSet = false;
     try { passSet = !!getDevKey(); } catch {}
     _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
-    if (!proxy) return;
+    if (!proxy) { _cfWorkerKeys = {}; return; }   // no Worker at this privacy level: its shared keys are not usable
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
     try { if (new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; return; } } catch { return; }
     try {
@@ -897,7 +909,21 @@ export function specHasKey(spec: string): boolean {
 // Active lists — full list minus paused models and models with no configured key
 export function getActiveMainModelList() {
     const paused = new Set(getPausedMainModels());
-    return getMainModelList().filter(k => !paused.has(k) && specHasKey(k));
+    return getMainModelList().filter(k => !paused.has(k) && specHasKey(k) && !specBlockedByPrivacy(k));
+}
+
+// True when Settings → Privacy rules the model out: every cloud model at the Local level, and at the
+// Provider-only level the providers that a browser cannot call without the Worker (NVIDIA, Kilo) on a static host.
+export function specBlockedByPrivacy(spec: string): boolean {
+    const level = getPrivacyLevel();
+    if (level === 'default') return false;
+    const bar = spec.indexOf('|');
+    if (bar < 0) return false;
+    const provider = spec.slice(0, bar);
+    const entry = getAllModels().find(m => m.provider === provider && m.model === spec.slice(bar + 1)) as any;
+    let staticHost = false;
+    try { staticHost = !(window as any)._fgHeadless && isStaticHost(window.location.hostname); } catch {}
+    return providerBlockedByPrivacy(provider, level, { staticHost, url: entry?.url });
 }
 
 // Returns the first active model spec that supports every required media type.
@@ -967,7 +993,12 @@ function getUtilityModel() {
     // Not chosen by the user. When the main model is a custom endpoint (a local vLLM / Ollama), keep
     // utility calls on it: the hosted default would send file names and prompts to a provider the user
     // chose not to use, and fail without a key for it.
-    try { const first = getActiveMainModelList()[0]; if (typeof first === 'string' && first.startsWith('custom|')) return first; } catch {}
+    // Below the Default privacy level the same holds for any provider: Provider-only means the providers the
+    // user chose, so the chat title and prompt suggestions use the first usable main model, not Google.
+    try {
+        const first = getActiveMainModelList()[0];
+        if (typeof first === 'string' && (first.startsWith('custom|') || getPrivacyLevel() !== 'default')) return first;
+    } catch {}
     return 'google|gemma-4-26b-a4b-it';
 }
 function saveUtilityModel(v) { localStorage.setItem(KEYS.UTILITY_MODEL, v ?? ''); }
@@ -1129,6 +1160,8 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
     if (pyodideStatus === 'loading') await pyodideReadyPromise;
     if (pyodideStatus !== 'ready') throw new Error('Pyodide not loaded');
     const wsFiles = await listWorkspaceFiles();
+    // Too large to copy into the run: the run cannot see them, so it may not replace them.
+    const omitted = new Set<string>(wsFiles.filter(f => typeof f.content === 'string' && f.content.length > EXEC_FILE_MAX_CHARS).map(f => f.name));
     const files   = Object.fromEntries(
         wsFiles
             .filter(f => typeof f.content === 'string' && f.content.length <= EXEC_FILE_MAX_CHARS)
@@ -1144,8 +1177,8 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
             if (!f.isLocal || /^local\/logs\//.test(f.name)) continue;
             try {
                 const content = await agentReadFile(f.name);
-                if (typeof content === 'string' && content.length <= EXEC_FILE_MAX_CHARS)
-                    files[f.name] = content;
+                if (typeof content !== 'string') continue;
+                if (content.length <= EXEC_FILE_MAX_CHARS) files[f.name] = content; else omitted.add(f.name);
             } catch {}
         }
     } catch {}
@@ -1160,6 +1193,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                         await agentDeleteFile(name).catch(e => writeErrors.push(`delete ${name}: ${(e as any).message ?? e}`));
                         continue;
                     }
+                    if (omitted.has(name)) { writeErrors.push(omittedFileWriteMessage(name)); continue; }
                     // Text as is; binary (xlsx, pdf, zip, Latin-1 text …) and images as base64.
                     const { data: fileData, encoding, imageMime } = decodeOutputFile(content);
                     try {
@@ -1279,7 +1313,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
+    getActiveMainModelList, specHasKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,

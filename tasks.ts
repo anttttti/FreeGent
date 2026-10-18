@@ -186,6 +186,14 @@ function makeKanbanCard(task) {
     return card;
 }
 
+// A task title as written in front matter. It is kept exactly as typed: a colon used to be rewritten to " -", which showed
+// the author a different title than they entered and made the title they meant next ("Call - supplier") collide with it
+// as a duplicate. A title with a colon is quoted, so a strict YAML reader takes it too; FreeGent's own reader takes
+// everything after the first colon and drops the quotes.
+export function fmTitleValue(title: string): string {
+    return title.includes(':') && !title.includes('"') ? `"${title}"` : title;
+}
+
 function openAddTaskDialog(status: string) {
     openTaskDialog({ status });
 }
@@ -375,7 +383,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 const crit = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
                 const checked = new Set(parsed.criteria.filter(c => c.checked).map(c => c.text));
                 const set: Record<string, string> = {
-                    title: title.replace(/:/g, ' -'),
+                    title: fmTitleValue(title),
                     priority: $('atd-priority').value,
                     updated: new Date().toISOString().slice(0, 10),
                 };
@@ -410,7 +418,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
             const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
             const criteria = $('atd-criteria').value.split('\n').map((l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '')).filter(Boolean);
             const today = new Date().toISOString().slice(0, 10);
-            const content = `---\nid: ${id}\ntitle: ${title.replace(/:/g, ' -')}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
+            const content = `---\nid: ${id}\ntitle: ${fmTitleValue(title)}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
             await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
             saved = true;
             overlay.remove();

@@ -3,6 +3,7 @@
 //   • console errors / warnings / uncaught errors → POST /errlog (batched, key required)
 //   • a finished or failed Task's chat log        → POST /log     (sendTaskLog, called by runner.ts)
 import { DEFAULT_CF_WORKER, getDevKey } from './proxy.js';
+import { getPrivacyLevel } from './privacy.js';
 import { redactText } from './secrets.js';
 import { FG_VERSION } from './build-info.js';
 
@@ -15,7 +16,7 @@ function _randomId(): string {
 /** One ID per page load. Carried by every error-log batch and every task chat log. */
 export const SESSION_ID: string = _randomId();
 export function getSessionId(): string { return SESSION_ID; }
-export function devLoggingOn(): boolean { return !!getDevKey(); }
+export function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'default'; }
 
 export interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
 

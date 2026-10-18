@@ -1,5 +1,7 @@
 import { escapeHtml, jsArg } from './html-escape.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
+import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel } from './privacy.js';
+import { specBlockedByPrivacy } from './config.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
@@ -163,6 +165,33 @@ function _applySandboxProviderUI(val) {
     const localHint = (document.getElementById('sandbox-local-hint') as HTMLElement);
     if (wasmHint)  wasmHint.style.display  = val === 'wasm'  ? '' : 'none';
     if (localHint) localHint.style.display = val === 'local' ? '' : 'none';
+}
+
+// Settings → Privacy: one of 'default' | 'provider' | 'local' (privacy.ts). Takes effect at once.
+const _PRIVACY_NOTES: Record<string, string> = {
+    default:  '',
+    provider: 'Models that browsers cannot call directly (NVIDIA, Kilo) are left out of the rotation on a hosted page. Shared keys held by the Worker are not available.',
+    local:    'Only local models are usable. Add one under Models → Add custom model (for example http://localhost:11434/v1).',
+};
+function _applyPrivacyLevelUI(level: string) {
+    document.querySelectorAll<HTMLInputElement>('input[name="privacy-level"]').forEach(r => { r.checked = r.value === level; });
+    const note = document.getElementById('privacy-level-note');
+    if (note) note.textContent = _PRIVACY_NOTES[level] || '';
+    const restricted = level !== 'default';
+    for (const id of ['privacy-geo', 'privacy-analytics', 'search-proxy']) {
+        const el = document.getElementById(id) as HTMLInputElement | null;
+        if (el) el.disabled = restricted;
+    }
+}
+function onPrivacyLevelChange(level: string) {
+    setPrivacyLevel(parsePrivacyLevel(level));
+    const now = getPrivacyLevel();
+    _applyPrivacyLevelUI(now);
+    // Shared Worker keys come and go with the level, and so do the models that can be reached.
+    (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
+    renderMainModelList?.();
+    renderModelCatalogTable?.();
+    updateActiveModelDisplay?.();
 }
 
 function onPrivacyChange(which: 'geo' | 'analytics', checked: boolean) {
@@ -407,8 +436,9 @@ function populateSettingsForm() {
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
     if (pyAuto) pyAuto.checked = localStorage.getItem('fg_pyodide_autoload') !== '0';
+    _applyPrivacyLevelUI(getPrivacyLevel());
     const geoCb = (document.getElementById('privacy-geo') as HTMLInputElement);
-    if (geoCb) geoCb.checked = localStorage.getItem('fg_geo_lookup') === '1';
+    if (geoCb) geoCb.checked = localStorage.getItem('fg_geo_lookup') !== '0';
     const anCb = (document.getElementById('privacy-analytics') as HTMLInputElement);
     if (anCb) anCb.checked = localStorage.getItem('fg_analytics') !== '0' && navigator.doNotTrack !== '1';
     const sbp = (document.getElementById('sandbox-provider') as HTMLInputElement);
@@ -458,15 +488,29 @@ function updateActiveModelDisplay() {
     updateInputModelBtn(); // keep input-bar button in sync with header
 }
 
+// The header's compaction select shows the threshold in force. A value that is not one of its presets (60000 typed in
+// Settings → Agent) gets an option of its own, so the header never names a different preset than the setting holds.
+function syncHdrCompactSelect() {
+    const sel = document.getElementById('hdr-compact-tokens') as HTMLSelectElement | null;
+    if (!sel) return;
+    const v = String(getAgentCompactTokens());
+    sel.querySelectorAll('option[data-custom]').forEach(o => o.remove());
+    if (![...sel.options].some(o => o.value === v)) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) {
+            const o = document.createElement('option');
+            o.value = v; o.dataset.custom = '1';
+            o.textContent = `Compact: ${n % 1000 === 0 ? n / 1000 : (n / 1000).toFixed(1)}K`;
+            const after = [...sel.options].find(x => Number(x.value) > n);
+            sel.insertBefore(o, after ?? null);
+        }
+    }
+    sel.value = v;
+}
+
 function initHdrPicker() {
     updateActiveModelDisplay();
-    // Sync compact-tokens header select from saved value (snap to nearest option)
-    const saved = String(getAgentCompactTokens());
-    const sel = (document.getElementById('hdr-compact-tokens') as HTMLSelectElement);
-    if (sel) {
-        const opts = [...sel.options].map(o => o.value);
-        sel.value = opts.includes(saved) ? saved : '40000';
-    }
+    syncHdrCompactSelect();
 }
 
 function refreshCooldowns() { if (typeof getActiveMainModelList === 'function') updateActiveModelDisplay(); }
@@ -512,6 +556,7 @@ function hideModelCooldownPopup() {
 function applyHdrCompactTokens() {
     const val = (document.getElementById('hdr-compact-tokens') as HTMLSelectElement)?.value ?? '20000';
     localStorage.setItem('fg_agent_compact_tokens', val);
+    syncHdrCompactSelect();
     // Keep settings panel in sync
     const el = (document.getElementById('agent-compact-tokens') as HTMLInputElement);
     if (el) el.value = val;
@@ -523,9 +568,8 @@ function applyHdrReasoning() {
 }
 
 function saveSamplingSetting(key, value) {
-    const v = value.trim();
-    if (v === '') localStorage.removeItem(key);
-    else localStorage.setItem(key, v);
+    // An emptied field is kept as empty: the parameter is then not sent. Removing the key made FreeGent's default come back.
+    localStorage.setItem(key, value.trim());
 }
 function populateSamplingSettings() {
     const set = (id, lsKey, getter) => {
@@ -711,7 +755,7 @@ function renderModelCatalogTable() {
         <td><select class="settings-input" id="new-model-api" style="width:100%">
           <option value="openai">OpenAI-compatible (default)</option>
           <option value="vllm">vLLM</option>
-          <option value="ollama">Ollama</option>
+          <option value="ollama">Ollama (its OpenAI-compatible /v1 API)</option>
         </select></td></tr>
     <tr><td class="settings-table-label">Note</td>
         <td><input class="settings-input" id="new-model-note" type="text" style="width:100%"></td></tr>
@@ -834,7 +878,7 @@ function openEditModelDialog(key: string) {
           <td><select class="settings-input" id="emd-api-fmt" style="margin:0;width:100%">
             <option value="openai" ${(m.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
             <option value="vllm"   ${m.apiFormat === 'vllm'   ? 'selected' : ''}>vLLM</option>
-            <option value="ollama" ${m.apiFormat === 'ollama' ? 'selected' : ''}>Ollama</option>
+            <option value="ollama" ${m.apiFormat === 'ollama' ? 'selected' : ''}>Ollama (its OpenAI-compatible /v1 API)</option>
           </select></td></tr>` : ''}
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Note</td>
           <td><input class="settings-input" id="emd-note" type="text" value="${escapeHtml(m.note)}" style="margin:0;width:100%"></td></tr>
@@ -1202,6 +1246,8 @@ function updateInputModelBtn(): void {
     btn.innerHTML  = active
         ? `<span class="ibtn-provider">${escapeHtml(trim(provider, 16))}</span><span class="ibtn-model">${escapeHtml(trim(modelId, 28))}${coolSfx}</span>`
         : `<span class="ibtn-model">no model</span>`;
+    // Send is enabled only while a model can answer: the model list just changed (paused, resumed, added, removed).
+    (window as any)._updateSendBtnVisibility?.();
 }
 
 function toggleInputModelPicker(): void {
@@ -1219,16 +1265,18 @@ function toggleInputModelPicker(): void {
 function _renderInputModelPicker(picker: HTMLElement): void {
     const raw  = typeof getMainModelList === 'function' ? getMainModelList() : [];
     const all  = typeof getAllModels === 'function' ? getAllModels() : [];
-    // Filter to models the user has a key for (mirrors _renderPriorityList behaviour).
+    // Filter to models the user has a key for (mirrors _renderPriorityList behaviour), and to those the privacy level allows.
     const _allModelMap = new Map((all as any[]).map(m => [`${m.provider}|${m.model}`, m]));
-    const list = raw.filter(k => { const m = _allModelMap.get(k); return !m || _modelHasKey(m); });
-    const active = list[0] || '';
+    const list = raw.filter(k => { const m = _allModelMap.get(k); return (!m || _modelHasKey(m)) && !specBlockedByPrivacy(k); });
+    // The highlighted model is the one requests are routed to: the first that is not paused, not the first in the list.
+    const paused = new Set(getPausedMainModels());
+    const active = (typeof getActiveMainModelList === 'function' ? getActiveMainModelList() : list)[0] || '';
     const seen = new Set<string>();
-    const items: Array<{spec: string; label: string}> = [];
+    const items: Array<{spec: string; label: string; paused: boolean}> = [];
     for (const spec of list) {
         if (seen.has(spec)) continue;
         seen.add(spec);
-        items.push({ spec, label: modelFriendlyName(spec) || spec.replace('|', '/') });
+        items.push({ spec, label: modelFriendlyName(spec) || spec.replace('|', '/'), paused: paused.has(spec) });
     }
     // Options are real list options: reachable by Tab / arrow keys and chosen with Enter or Space (they were
     // plain divs with a click handler, so a keyboard could open the picker but never pick from it).
@@ -1237,7 +1285,7 @@ function _renderInputModelPicker(picker: HTMLElement): void {
     picker.innerHTML = items.map(it =>
         `<div class="picker-model-item${it.spec === active ? ' picker-active' : ''}" role="option" tabindex="0" aria-selected="${it.spec === active}"
               onclick="_selectInputModel(${jsArg(it.spec)})">
-            <span>${escapeHtml(it.label)}</span>
+            <span>${escapeHtml(it.label)}</span>${it.paused ? '<span class="picker-paused" title="Paused: choosing it resumes it"> · paused</span>' : ''}
          </div>`
     ).join('') +
     `<div class="picker-model-item picker-all-link" role="option" tabindex="0" onclick="activateTab('settings');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
@@ -1255,6 +1303,10 @@ function _renderInputModelPicker(picker: HTMLElement): void {
 }
 
 function _selectInputModel(spec: string): void {
+    // Choosing a model is choosing to use it: a paused one is resumed. (It used to move to the front and stay paused,
+    // so the button, the highlight and the routing disagreed about which model was in use.)
+    const paused = getPausedMainModels();
+    if (paused.includes(spec)) savePausedMainModels(paused.filter(s => s !== spec));
     const list    = typeof getMainModelList === 'function' ? getMainModelList() : [];
     const newList = [spec, ...list.filter(s => s !== spec)];
     if (typeof saveMainModelList === 'function') saveMainModelList(newList);
@@ -1450,7 +1502,7 @@ async function autoPopulateModelPriority() {
             : '';
 
         const userMsg =
-`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. "long chats: …" is a measurement from FreeGent's own long-context test (run ${MODEL_LADDER_DATE}): three separate conversations per model, one each of agentic coding, real-world knowledge and reasoning, each starting from a long context and growing by tens of thousands of tokens with about six tasks per step, up to a 250K-token context or the model's free-tier limit; the counts are tasks solved / attempted and "held" is the largest context it kept working at in that conversation. A model that solved few tasks, lost accuracy, or whose free tier stopped early is less reliable than its size suggests, and one that solved most is proven to work; models without this line are untested. A model without tool support is unsuitable for agent work — rank it last. The models are listed newest release first, so the latest ones come first; concentrate on those, and favour a recent model over an older one of similar capability.
+`Rank these AI models by overall capability for general-purpose agent work (coding, reasoning, instruction following, tool use). Weigh the Artificial Analysis indices most where shown (intelligence, then coding and agentic); otherwise use total/active parameter counts, recency, context length, and tool/reasoning support. Also weigh proven reliability: "successful requests here" counts completed agent requests this app has made to that model — a model with many is known to work here; one with none is untried. "long chats: …" is a measurement from FreeGent's own long-context test (run ${MODEL_LADDER_DATE}): up to three conversations per model, started from 10K, 20K and 50K tokens of context, in which agentic coding, real-world knowledge and reasoning tasks alternate while the context grows to 250K tokens or the model's free-tier limit; "solved" counts graded tasks, "held" is the largest context it kept working at in each conversation, and tok/s is its output speed. A model that solved few tasks, or whose free tier stopped a conversation early, is less reliable than its size suggests, and one that solved most is proven to work; models without this line are untested. A model without tool support is unsuitable for agent work — rank it last. The models are listed newest release first, so the latest ones come first; concentrate on those, and favour a recent model over an older one of similar capability.
 ${refSection}
 ${modelLines}
 
@@ -1764,6 +1816,7 @@ function _addPriorityItem(containerId) {
 function saveAgentSetting(key, value) {
     if (typeof value === 'boolean') value = value ? 'true' : 'false';
     localStorage.setItem(key, String(value));
+    if (key === 'fg_agent_compact_tokens') { try { syncHdrCompactSelect(); } catch {} }
 }
 
 function populateAgentSettings() {
@@ -1777,9 +1830,7 @@ function populateAgentSettings() {
     cb('agent-proactive-compact', getAgentProactiveCompact());
     sel('agent-compact-at',       getAgentCompactAt());
     num('agent-compact-tokens',   getAgentCompactTokens());
-    // Sync header compact-tokens select
-    { const v = String(getAgentCompactTokens()); const h = (document.getElementById('hdr-compact-tokens') as HTMLSelectElement);
-      if (h) { const opts = [...h.options].map(o => o.value); h.value = opts.includes(v) ? v : '20000'; } }
+    syncHdrCompactSelect();   // the header's select follows the setting
 
     cb('agent-concise-prompts',   getAgentConcisePrompts());
     num('agent-max-rounds',       getAgentMaxSteps());
@@ -2424,4 +2475,4 @@ async function submitAddMcpServer() {
     }
 }
 
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

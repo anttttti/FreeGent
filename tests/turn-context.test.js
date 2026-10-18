@@ -118,3 +118,33 @@ describe('buildTurnPrelude', () => {
         expect(await W.buildTurnPrelude({ text: 'fix it', isFirstTurn: false })).not.toContain('<workspace_files>');
     });
 });
+
+describe('codex campaign 7 findings', () => {
+    it('Cowork mode starts the task guidance (task-setup, execution-workflow) although no task file exists yet (cases 031-032)', () => {
+        W.skillsRegistry.set('task-setup', skill({ name: 'task-setup', trigger_on_file_present: 'fg-tasks/' }));
+        W.skillsRegistry.set('execution-workflow', skill({ name: 'execution-workflow', trigger_on_file_present: 'fg-tasks/' }));
+        W.skillsRegistry.set('unrelated', skill({ name: 'unrelated', trigger: 'zzz' }));
+        W.localStorage.setItem('fg_mode', 'cowork');
+        try {
+            W.applyTurnTriggers({ rawText: 'put the agenda for Friday into tasks', history: [], wsPaths: [] });
+            expect([...W.currentTurnSkills].sort()).toEqual(['execution-workflow', 'task-setup']);
+            W.localStorage.setItem('fg_mode', 'chat');
+            W.applyTurnTriggers({ rawText: 'put the agenda for Friday into tasks', history: [], wsPaths: [] });
+            expect([...W.currentTurnSkills]).toEqual([]);
+        } finally { W.localStorage.removeItem('fg_mode'); }
+    });
+    it('the cached workspace listing is dropped when a file is written or deleted (case 019)', async () => {
+        let names = ['meeting-notes.txt'];
+        const real = W.agentListFilesNoStat;
+        W.agentListFilesNoStat = async () => names.map(name => ({ name }));
+        try {
+            W.invalidateWorkspacePaths();
+            expect(await W.collectWorkspacePaths()).toEqual(['meeting-notes.txt']);
+            names = ['meeting-notes.txt', 'actions.csv'];
+            expect(await W.collectWorkspacePaths()).toEqual(['meeting-notes.txt']);   // cached for 30 s
+            W.invalidateWorkspacePaths();
+            expect(await W.collectWorkspacePaths()).toEqual(['meeting-notes.txt', 'actions.csv']);
+        } finally { W.agentListFilesNoStat = real; W.invalidateWorkspacePaths(); }
+    });
+});
+

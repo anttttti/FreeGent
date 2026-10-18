@@ -13,14 +13,34 @@ describe('F4 modal accessibility', () => {
 
 describe('F6 privacy', () => {
     beforeAll(async () => { await import('../config.ts'); });
-    it('the IP lookup is off unless the user opts in', async () => {
+    it('the IP lookup is on by default, off when the user opts out or the privacy level is restricted', async () => {
         const W = window as any;
         localStorage.clear();
         localStorage.setItem('fg_geo_cache', JSON.stringify({ ip: '1.2.3.4', city: 'X', ts: Date.now() }));
+        expect(W.geoLookupEnabled()).toBe(true);
+        expect(W.getGeoCache()).not.toBeNull();
+        localStorage.setItem('fg_geo_lookup', '0');
         expect(W.geoLookupEnabled()).toBe(false);
         expect(W.getGeoCache()).toBeNull();
         localStorage.setItem('fg_geo_lookup', '1');
         expect(W.geoLookupEnabled()).toBe(true);
+        for (const level of ['provider', 'local']) {
+            localStorage.setItem('fg_privacy_level', level);
+            expect(W.geoLookupEnabled(), level).toBe(false);
+        }
+        localStorage.clear();
+    });
+    it('the default utility model stays on the main provider below the Default privacy level', () => {
+        const W = window as any;
+        localStorage.clear();
+        localStorage.setItem('fg_groq_key', 'k');
+        localStorage.setItem('fg_main_models', JSON.stringify(['groq|openai/gpt-oss-120b']));
+        expect(W.getUtilityModel()).toBe('google|gemma-4-26b-a4b-it');
+        localStorage.setItem('fg_privacy_level', 'provider');
+        expect(W.getUtilityModel()).toBe('groq|openai/gpt-oss-120b');
+        localStorage.setItem('fg_utility_model', 'groq|openai/gpt-oss-20b');
+        expect(W.getUtilityModel()).toBe('groq|openai/gpt-oss-20b');
+        localStorage.clear();
     });
     it('analytics honour Do Not Track and the opt-out', () => {
         const h = src('index.html');

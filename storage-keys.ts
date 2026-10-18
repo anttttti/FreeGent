@@ -116,7 +116,8 @@ export const KEYS = {
 
     // ── Search / sandbox ──────────────────────────────────────────────────────
     SEARCH_PROVIDER:    'fg_search_provider',
-    SEARCH_PROXY:       'fg_search_proxy',
+    SEARCH_PROXY:       'fg_search_proxy',   // custom CF Worker URL (Settings → Privacy)
+    PRIVACY_LEVEL:      'fg_privacy_level',  // 'default' | 'provider' | 'local' (privacy.ts)
     SANDBOX_PROVIDER:   'fg_sandbox_provider',
 
     // ── Geo cache ─────────────────────────────────────────────────────────────
