@@ -702,6 +702,7 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'nvidia|moonshotai/kimi-k2.6',               // HTTP 404 "Function ... Not found for account" (2026-10-17)
     'vercel|reflection/beam-free',               // HTTP 403 "Free tier users do not have access" despite $0 price (2026-10-17)
     'vercel|reflection/beam',                    // same 403 (2026-10-17)
+    'vercel|stealth/glyph-cluster',              // HTTP 403 "requires an active Pro plan with purchased AI Gateway credits" despite $0 price (2026-10-18)
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
