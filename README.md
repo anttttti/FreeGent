@@ -1,245 +1,63 @@
 # FreeGent
 
-**Run AI agents against free-tier cloud LLMs and local models — no per-token billing.**
+**An AI agent that runs in your browser, your terminal, or a script, against free-tier cloud models and models on your own machine.**
 
-FreeGent is an open-source AI agent runner that works against Gemini free tier, OpenRouter, NVIDIA, Groq, and local models via Ollama, vLLM, or LM Studio. It ships three interfaces: a browser WebUI, an interactive terminal TUI, and a headless CLI for scripting.
+FreeGent reads and edits files, runs code, searches the web, splits work across sub-agents and keeps a task board. It is built to stay reliable on weaker, rate-limited models: it rotates between models when one hits a limit, compacts long chats, and checks its own tool calls.
 
-🌐 **[Try it at freegent.ai](https://freegent.ai)** — no install needed.
+**[Open freegent.ai](https://freegent.ai)** — nothing to install. Paste an API key from any provider in [Default providers](docs/models/providers.md) and start chatting.
 
----
+## Three ways to run it
 
-## Supported Providers
-
-| Provider | Free tier | Key env var |
+| | What it is | Start it |
 |---|---|---|
-| **Google Gemini** | ✓ 30 RPM / 1 500 RPD | `GEMINI_API_KEY` |
-| **OpenRouter** | ✓ many free models | `OPENROUTER_API_KEY` |
-| **NVIDIA NIM** | ✓ free API credits | `NVIDIA_API_KEY` |
-| **Kilo** | ✓ `:free` models (200 req/hr anon) | `KILO_API_KEY` |
-| **Nous Portal** | ✓ 50 RPM / 500K TPM rotating | `NOUSPORTAL_API_KEY` |
-| **TokenHarbor** | ✓ weekly quota | `TOKENHARBOR_API_KEY` |
-| **Vercel AI Gateway** | ✓ $0/token select models | `VERCEL_API_KEY` |
-| **Groq** | ✓ free tier (rate limited) | `GROQ_API_KEY` |
-| **OpenAI** | — | `OPENAI_API_KEY` |
-| **HuggingFace** | ✓ free token (image gen fallback) | `HF_API_KEY` |
-| **Ollama / vLLM / LM Studio** | local | `--api-url http://...` |
+| **WebUI** | Chat, project files, task board, settings. Runs in the browser. | [freegent.ai](https://freegent.ai), or `npm run dev` |
+| **TUI** | Interactive terminal session on the same agent core. | `npm run tui` |
+| **CLI** | One-off or scripted runs, for CI and benchmarks. | `npx tsx fg-run.ts --task "…"` |
 
----
+## Hosted site or your own machine?
 
-## Installation
+| | Hosted site (freegent.ai) | Local dev server (`npm run dev`) |
+|---|---|---|
+| Install | none | Node.js 22+, `git clone`, `npm install` |
+| API keys | typed in Settings, stored in your browser | in `~/.config/freegent/credentials`, kept on the server; the page only gets placeholders |
+| Cloud providers | yes, through FreeGent's hosted proxy | yes, through the local server |
+| Local models (Ollama, vLLM, LM Studio) | no | yes |
+| Code the agent runs | in-browser sandboxes (JavaScript, Python, WASM bash) | the same, plus real bash on your machine (isolated with bubblewrap on Linux) |
+| `run_git` | no | yes (opt-in) |
 
-**Requirements:** Node.js 22+ and npm.
+Details: [Overview](docs/overview.md) · [Providers and models](docs/models/index.md).
+
+## Quick start (local)
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/anttttti/FreeGent
 cd FreeGent
 npm install
 
-# 2. Set up credentials (outside the repo — safe from accidental commits)
 mkdir -p ~/.config/freegent
-cp .env.example ~/.config/freegent/credentials
-# edit ~/.config/freegent/credentials and add at least one API key
+cp .env.example ~/.config/freegent/credentials   # add at least one API key
 
-# 3. Start the dev server
-npm run dev          # → http://localhost:5000
+npm run dev                                       # http://localhost:5000
 ```
 
-That's it. Open the URL, pick a model in **Settings → Models**, and start chatting.
+Open the URL, pick a model in **Settings → Models**, and send a message. With no key at all, the Kilo route in the default model list can still answer.
 
----
+## Documentation
 
-## WebUI
+The guide is published at **[freegent.ai/docs](https://freegent.ai/docs/)**. The same pages are in [`docs/`](docs).
 
-A browser-based chat interface served by the Vite dev server.
-
-```bash
-npm run dev          # localhost only  →  http://localhost:5000
-npm run dev:lan      # all interfaces  →  also reachable from phone / other devices
-FG_PORT=8080 npm run dev              # custom port
-```
-
-`npm run dev:lan` is equivalent to `vite --host`. On startup it prints one URL per network address that carries an access token (`#fg_token=…`); open that URL once on each device, which then remembers the token. Without it, the page loads but the server's API (code execution, the proxy, server-held keys) refuses requests — anyone else on the network can load the page but can't use them. The token is stored in `~/.config/freegent/server-token`; delete that file to issue a new one. If the port is taken, the server exits instead of moving to another port.
-
-Code the agent runs in the browser (JavaScript, Python via Pyodide, and the in-browser bash shell) runs in a sandboxed frame that can't read the app's data. With **Local** code execution, commands run on your machine through the dev server: on Linux with [bubblewrap](https://github.com/containers/bubblewrap) (`apt install bubblewrap`) each command is isolated from your home directory, keeping system directories, the toolchains on your `PATH` (e.g. conda) and network access. `FG_EXEC_BIND=/path,/other` exposes extra read-only paths; `FG_EXEC_ISOLATION=none` turns isolation off. Without bubblewrap the agent asks before each local command. With bubblewrap, `run_git` runs isolated too: it sees only this repository, so `git push` over SSH has to come from your own shell.
-
-Enter your API key in **Settings → Profiles**, or put it in `~/.config/freegent/credentials` — it loads automatically on startup (see [API keys](#api-keys) below). Keys in the credentials file stay in the dev server: the page only gets placeholders, and the server adds each key to requests going to that provider's own hosts.
-
-**Key features:**
-
-- Streaming responses with auto-scroll (pauses when you scroll up; jump-to-latest button re-engages)
-- Syntax-highlighted code blocks (highlight.js) with one-click copy and `▶ Run` / `▶ Preview` buttons
-- Math rendering (KaTeX): `$$…$$`, `\[…\]` block math; `\(…\)` inline math
-- Dark / light mode toggle in the left rail (persisted across sessions)
-- Context window usage shown as `4.2k / 128k` in the chat toolbar — turns yellow at 70%, red at 90%
-- Full-text search across all chat history (`Ctrl/Cmd+Shift+F`)
-- Draft preservation — typed text survives page reload and chat switches
-- Keyboard shortcuts: `Enter` send · `Shift+Enter` newline · `Esc` stop generation · `Ctrl/Cmd+K` new chat
-
----
-
-## TUI (Terminal UI)
-
-Interactive terminal session running the same agent core as the WebUI.
-
-```bash
-npm run tui
-
-# With explicit credentials:
-npm run tui -- --provider google --api-key AIza...
-npm run tui -- --provider groq --model openai/gpt-oss-120b --api-key ...
-
-# Against a local model:
-npm run tui -- --api-url http://localhost:8000/v1 --provider custom --model qwen3
-```
-
-The TUI auto-detects your provider from standard environment variable names (`GEMINI_API_KEY`, `OPENAI_API_KEY`, etc.) and from `~/.config/freegent/credentials` (loaded automatically).
-
-**Status bar** shows model, running state, session throughput (`↑in ↓out`), and current context window usage (`ctx 4.2K/128K` — yellow at 70%, red at 90%).
-
-**Key bindings:**
-
-| Key | Action |
+| Page | Covers |
 |---|---|
-| `Enter` | Send message |
-| `Esc` | Stop generation (if running) · close panel (if open) |
-| `Ctrl+C` | Stop after current step (if running) · exit (if idle) |
-| `Alt+X` | Stop generation immediately |
-| `Alt+N` | New session |
-| `Alt+,` | Settings panel |
-| `Alt+M` | Model selector |
-| `Alt+A` | Agent panel |
-| `Alt+P` | Project panel |
-| `Alt+?` | Help |
-| `↑ / ↓` | Scroll event log |
+| [Overview](docs/overview.md) | The design ideas and where each is explained |
+| [WebUI](docs/webui/index.md) | Project, Tasks, Chats and modes, Settings |
+| [Providers and models](docs/models/index.md) | Default providers, keys, fallbacks and retries, the proxy, local models |
+| [Harness](docs/harness/index.md) | Tools, roles, skills, MCP, compaction, checks and approval |
+| [Code execution](docs/code-execution/index.md) | Python, JavaScript and bash in the browser or on your machine; git |
+| [Local or self-hosted](docs/local/index.md) | Install, LAN access, your own site and Worker; TUI keys and commands; CLI flags |
+| [Security](SECURITY.md) | What each component trusts, sandboxes, reporting a vulnerability |
+| [Contributing](docs/contributing.md) | Tests, checks, deploying, architecture notes |
 
----
-
-## CLI (Headless)
-
-Non-interactive agent runs for scripting, benchmarks, or CI.
-
-```bash
-# Run a task (agent with tools)
-npx tsx fg-run.ts --task "Refactor the auth module to use async/await" \
-  --workspace ./myproject \
-  --provider google --api-key $GEMINI_API_KEY
-
-# Read task from a file
-npx tsx fg-run.ts --task-file task.txt --workspace ./myproject
-
-# One-shot LLM call (no tools)
-npx tsx fg-run.ts --prompt "Summarise this: $(cat notes.txt)" \
-  --provider google --api-key $GEMINI_API_KEY
-
-# Combined provider+model selector
-npx tsx fg-run.ts --task "Write unit tests" --llm "google|gemini-3.6-flash"
-
-# Against a local model
-npx tsx fg-run.ts --task "Write unit tests for src/api.py" \
-  --api-url http://localhost:8000/v1 --provider custom --model qwen3
-```
-
-**Key flags:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--task` / `--workflow` | — | Task description (agent + tools) |
-| `--prompt` | — | Direct LLM call, no tools |
-| `--task-file` | — | Read task from file |
-| `--workspace` | cwd | Root directory for file operations |
-| `--llm` | — | Combined selector: `provider\|model` |
-| `--provider` | `openai` | Provider ID |
-| `--model` | — | Model ID |
-| `--api-key` | — | API key (or `FREEGENT_API_KEY` env var) |
-| `--api-url` | — | Custom OpenAI-compatible base URL |
-| `--thinking-level` | `off` | `off \| low \| medium \| high` |
-| `--timeout` | 1800000 | Abort after N ms (default 30 min) |
-| `--disable-tools` | — | Comma-separated tool names to disable |
-| `--log` | `/tmp/fg-agent.log` | JSONL turn log path |
-| `--no-log` | — | Disable turn logging |
-
----
-
-## Configuration
-
-### API keys
-
-**Recommended: `~/.config/freegent/credentials`**
-
-This file lives outside every git repo on your machine, so it can never be accidentally committed.
-
-```bash
-mkdir -p ~/.config/freegent
-cp .env.example ~/.config/freegent/credentials
-# edit with your keys
-```
-
-The file uses the same `KEY=VALUE` format as `.env`:
-
-```ini
-# ~/.config/freegent/credentials
-
-GEMINI_API_KEY=AIza...
-OPENROUTER_API_KEY=sk-or-...
-GROQ_API_KEY=gsk_...
-NVIDIA_API_KEY=nvapi-...
-OPENAI_API_KEY=sk-...
-HF_API_KEY=hf_...        # optional: HuggingFace image fallback
-TAVILY_API_KEY=tvly-...  # optional: web search
-BRAVE_API_KEY=...        # optional: web search
-GITHUB_TOKEN=ghp_...     # optional: raises GitHub search rate limit
-```
-
-The dev server, TUI, and CLI all load this file automatically. The key values stay on the machine running the dev server: the page only learns a short hash of each and sends a placeholder, which the server's proxy replaces with the real key for that provider's host (see SECURITY.md). Keys you type into Settings are a different case: they live in the browser's `localStorage`.
-
-**Alternatives**
-
-Shell exports (also work, take highest precedence):
-
-```bash
-# ~/.bashrc or ~/.zshrc
-export GEMINI_API_KEY=AIza...
-```
-
-Project `.env` at the repo root (gitignored, overrides the credentials file):
-
-```bash
-cp .env.example .env   # fill in keys — git will never commit this
-```
-
-### Local LLMs (vLLM, Ollama, LM Studio)
-
-Any OpenAI-compatible endpoint works. In the WebUI go to **Settings → Model → Custom Endpoint** and enter the base URL. For CLI/TUI use `--api-url`.
-
-**vLLM example (Qwen3 27B):**
-
-```bash
-vllm serve cyankiwi/Qwen3.6-27B-AWQ-INT4 \
-  --port 8000 \
-  --max-model-len 20000 \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_coder \
-  --reasoning-parser qwen3
-# Endpoint: http://localhost:8000/v1
-```
-
-**Ollama example:**
-
-```bash
-ollama run qwen2.5-coder:7b
-# Endpoint: http://localhost:11434/v1
-```
-
----
-
-## Skills
-
-Skills are Markdown files in `skills/<name>/SKILL.md` that are injected into the agent's system prompt based on triggers: keywords in the user message, file types in the workspace, tool call results, or lifecycle events. They let you shape agent behaviour for your project without touching source code.
-
-Enable skills in **Settings → Skills**, or drop a `SKILL.md` into the workspace `skills/` directory.
-
----
+Project internals for contributors and coding agents live in [AGENTS.md](AGENTS.md) and [bench/BENCHMARKS.md](bench/BENCHMARKS.md).
 
 ## License
 

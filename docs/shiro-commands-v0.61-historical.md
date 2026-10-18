@@ -15,7 +15,7 @@ This is the command surface assembled for the FreeGent-backed Shiro shell. “Su
 3. If no registered command matches, Shiro searches `PATH` for a script, WASI package stub, or `.wasm` binary.
 4. If there is no executable in `PATH`, Shiro checks the WASI manifest. A match is downloaded, cached in IndexedDB, compiled, and run through the WASI runtime. The runtime is hosted in a Worker when available. WASI programs that `exec` another command are routed back through Shiro’s command dispatcher.
 
-Key code: [shell.ts command dispatch](../shiro/shell.ts:2394), [shell.ts WASI execution](../shiro/shell.ts:5757), [shell-singleton.ts registry](../shiro/shell-singleton.ts:41), [WASI package manifest](../shiro/wasi-packages.ts:35), [WASI host](../shiro/wasi-host.ts:1).
+Key code: [shell.ts command dispatch](../shiro/shell.ts#L2394), [shell.ts WASI execution](../shiro/shell.ts#L5757), [shell-singleton.ts registry](../shiro/shell-singleton.ts#L41), [WASI package manifest](../shiro/wasi-packages.ts#L35), [WASI host](../shiro/wasi-host.ts#L1).
 
 ## Shell language and builtins
 

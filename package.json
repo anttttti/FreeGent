@@ -33,7 +33,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json && node scripts/typecheck-node-strict.mjs",
     "probe:headless": "node --experimental-strip-types --loader ./js-to-ts-loader.mjs scripts/headless-probe.mjs",
-    "tui": "NODE_NO_WARNINGS=1 npx tsx --env-file-if-exists=.env fg-tui.tsx"
+    "tui": "NODE_NO_WARNINGS=1 npx tsx --env-file-if-exists=.env fg-tui.tsx",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs"
   },
   "dependencies": {
     "diff": "^9.0.0",
@@ -54,6 +56,7 @@
     "ts-morph": "^28.0.0",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.10"
   },
   "directories": {

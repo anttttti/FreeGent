@@ -358,6 +358,8 @@ if $DO_GIT || ! $DO_DEPLOY; then
     step "Build"
     npm run build 2>&1 | grep -v "^$" | tail -8
     ok "Build succeeded"
+    npm run docs:build 2>&1 | grep -v "^$" | tail -4
+    ok "Docs build succeeded"
 fi
 
 [ "$DO_DEPLOY" = false ] && { echo; ok "Checks complete (--check-only, nothing deployed)"; exit 0; }

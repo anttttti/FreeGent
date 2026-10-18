@@ -41,3 +41,6 @@ cf-worker/.wrangler/
 CONTRIBUTING.md
 docs/adr/
 __pycache__/
+
+# VitePress
+docs/.vitepress/cache/
