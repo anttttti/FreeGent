@@ -362,6 +362,7 @@
                     <button class="settings-tab-btn active" data-tab="profiles" title="Saved presets that bundle a model, tools and settings; switch or save one in a click" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
                     <button class="settings-tab-btn"        data-tab="model" title="Add and order model providers, API keys and endpoints, and set the utility and fallback models"    onclick="switchSettingsTab('model')">Models</button>
                     <button class="settings-tab-btn"        data-tab="search" title="Choose the web search provider and its API key used by web_search and research tools"   onclick="switchSettingsTab('search')">Search</button>
+                    <button class="settings-tab-btn"        data-tab="privacy" title="Where FreeGent's requests may go: through the Cloudflare Worker, straight to providers, or local network only" onclick="switchSettingsTab('privacy')">Privacy</button>
                     <button class="settings-tab-btn"        data-tab="code" title="Choose where code the agent runs executes (in-browser sandbox, local shell) and its limits"     onclick="switchSettingsTab('code')">Code Execution</button>
                     <button class="settings-tab-btn"        data-tab="agent" title="Agent behavior: step limits, retries, context and compaction, QA gates and the task runner"    onclick="switchSettingsTab('agent')">Agent</button>
                     <button class="settings-tab-btn"        data-tab="skills" title="Turn built-in and custom skills (extra instructions the agent loads on demand) on or off"   onclick="switchSettingsTab('skills')">Skills</button>
@@ -518,9 +519,6 @@
                         <label class="settings-input-label">Tavily API Key <a class="key-link" href="https://app.tavily.com/" target="_blank" rel="noopener" title="Get a Tavily key">Get key &#8599;</a></label>
                         <input class="settings-input" id="tavily-key" type="password" placeholder="tvly-...">
                         <p class="settings-hint">Direct browser call &#8212; no proxy needed.</p>
-                        <label class="settings-input-label">CORS Proxy / CF Worker URL</label>
-                        <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
-                        <p class="settings-hint">Required on GitHub Pages for providers that block direct browser calls (Kilo, NVIDIA NIM, TokenHarbor, Vercel). Also used for Brave search. Deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL — see <code>cf-worker/README.md</code> for instructions.</p>
                         <label class="settings-input-label">Brave API Key (optional) <a class="key-link" href="https://api-dashboard.search.brave.com/app/keys" target="_blank" rel="noopener" title="Get a Brave Search key">Get key &#8599;</a></label>
                         <input class="settings-input" id="brave-key" type="password" placeholder="BSA...">
                         <p class="settings-hint" style="margin-bottom:0">Sent as <code>X-Brave-Key</code> header.</p>
@@ -530,6 +528,31 @@
                         <label class="settings-input-label">Stack Exchange Key (optional) <a class="key-link" href="https://stackapps.com/apps/oauth/register" target="_blank" rel="noopener" title="Get a Stack Exchange key">Get key &#8599;</a></label>
                         <input class="settings-input" id="stackexchange-key" type="password" placeholder="key=...">
                         <p class="settings-hint">Upgrades Stack Overflow search from 300/day to 10,000/day.</p>
+                    </div>
+                </div>
+
+                <div class="settings-tab-panel" data-tab="privacy">
+                    <div class="settings-section">
+                        <span class="settings-label">Network privacy</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Where FreeGent may send requests. The level applies at once and is saved in this browser only (profiles do not carry it).</p>
+                        <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="default" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
+                            <span><b>Default</b> &mdash; Cloudflare Worker + endpoint<br><span class="settings-hint">Browsers block direct calls to some providers, so on freegent.ai model requests, web fetches and searches go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. On a local server, providers that need one go through its own proxy. Everything else goes straight to its endpoint.</span></span></label>
+                        <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="provider" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
+                            <span><b>Provider-only</b> &mdash; no FreeGent.ai or Cloudflare<br><span class="settings-hint">Your browser calls the model providers directly. Nothing goes through the hosted or a custom Worker, and the page-view counter, log uploads and location lookup are off. Providers that do not allow browser calls (NVIDIA, Kilo) are dropped from the rotation on a hosted page, and so are web fetches and Brave search for sites without CORS headers. A local server's own proxy still works.</span></span></label>
+                        <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="local" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
+                            <span><b>Local</b> &mdash; local network access only<br><span class="settings-hint">Only localhost and private-network addresses are reachable: local models (Ollama, vLLM, LM Studio) and MCP servers on your network. Cloud providers, web search and <code>fetch_url</code> are refused, and code the agent runs (JavaScript, Python) and HTML previews cannot call other hosts. Libraries the page loads from jsdelivr / esm.sh (and runtimes such as Pyodide) still load once and are cached.</span></span></label>
+                        <p class="settings-hint" id="privacy-level-note" style="margin-top:8px"></p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">CORS Proxy / CF Worker URL</span>
+                        <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
+                        <p class="settings-hint">Optional, Default level only. freegent.ai and the local dev server already proxy provider calls, so leave this empty unless you host FreeGent on your own domain or fork (the built-in Worker refuses other origins). Then deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL &mdash; see <a href="https://freegent.ai/docs/local/webui#hosting-your-own-site-and-worker" target="_blank" rel="noopener">Hosting your own site and Worker</a>.</p>
+                    </div>
+                    <div class="settings-section" style="border-bottom:none">
+                        <span class="settings-label">Other requests</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Besides the model provider you chose. Both are off at the Provider-only and Local levels.</p>
+                        <label class="settings-check-row"><input type="checkbox" id="privacy-geo" onchange="onPrivacyChange('geo', this.checked)"> Look up approximate location (sends your IP to ipinfo.io; city, region and ISP are then added to prompts that ask about weather, places or maps)</label>
+                        <label class="settings-check-row"><input type="checkbox" id="privacy-analytics" onchange="onPrivacyChange('analytics', this.checked)" checked> Anonymous page-view counter (GoatCounter; no cookies; skipped when Do Not Track is on). Applies on next load.</label>
                     </div>
                 </div>
 
@@ -584,12 +607,6 @@
                 </div>
 
                 <div class="settings-tab-panel" data-tab="agent">
-                    <div class="settings-section">
-                        <span class="settings-label">Privacy</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Requests FreeGent makes besides the model provider you chose. Libraries (marked, DOMPurify, highlight.js, KaTeX, Bootstrap, CodeMirror) load from jsdelivr / esm.sh regardless.</p>
-                        <label class="settings-check-row"><input type="checkbox" id="privacy-geo" onchange="onPrivacyChange('geo', this.checked)"> Look up approximate location (sends your IP to ipinfo.io; city, region and ISP are then added to prompts that ask about weather, places or maps)</label>
-                        <label class="settings-check-row"><input type="checkbox" id="privacy-analytics" onchange="onPrivacyChange('analytics', this.checked)" checked> Anonymous page-view counter (GoatCounter; no cookies; skipped when Do Not Track is on). Applies on next load.</label>
-                    </div>
                     <div class="settings-section">
                         <span class="settings-label">Context Management</span>
                         <label class="settings-check-row"><input type="checkbox" id="agent-tool-truncation" onchange="saveAgentSetting('fg_agent_tool_result_truncation', this.checked)"> Tool result truncation</label>
@@ -918,11 +935,13 @@
 </div>
 <!-- GoatCounter — privacy-friendly page view analytics (no cookies, no personal data).
      Shared site: paths are prefixed /freegent. Skipped when Do Not Track is on or the user turned it off
-     in Settings → Agent → Privacy. -->
+     in Settings → Privacy, or the privacy level there is Provider-only or Local. -->
 <script>
 (function () {
     try {
         if (navigator.doNotTrack === '1' || localStorage.getItem('fg_analytics') === '0') return;
+        var lvl = localStorage.getItem('fg_privacy_level');
+        if (lvl === 'provider' || lvl === 'local') return;
     } catch (e) {}
     window.goatcounter = {path: function (p) { return '/freegent' + (p || '/'); }};
     var s = document.createElement('script');

@@ -60,9 +60,10 @@ const fromBase64 = base64ToBytes;
  * an encoding return one, as in Node. Without it they return plain Uint8Arrays.
  */
 export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffer?: { from(data: any, enc?: string): Uint8Array & { toString(enc?: string): string } }) {
-    const files: Record<string, Content> = {};
+    // No prototype: a file named toString, constructor or __proto__ is an ordinary name, and an absent one is absent.
+    const files: Record<string, Content> = Object.create(null);
     for (const [name, v] of Object.entries(sent)) files[name] = typeof v === 'string' ? v : fromBase64(v.base64);
-    const written: Record<string, Content> = {};
+    const written: Record<string, Content> = Object.create(null);
     const deleted = new Set<string>();
     const scratch = new Map<string, Content>();    // outside /workspace: this run only
     const dirs = new Set<string>();                 // made with mkdirSync

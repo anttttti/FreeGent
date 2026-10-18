@@ -17,6 +17,7 @@
 import { checkFetchAllowed } from './fetch-allow.js';
 import { combineSignals } from './abort.js';
 import { activeAbortController } from './state.js';
+import { sandboxCspMeta } from './privacy.js';
 
 const LOAD_TIMEOUT_MS = 30_000;
 
@@ -129,7 +130,7 @@ function _ensureFrame(): Promise<void> {
     frame.tabIndex = -1;
     frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
     const src = sandboxScriptUrl().replace(/"/g, '&quot;');
-    const srcdoc = (retry: boolean) => `<!DOCTYPE html><html><head><meta charset="utf-8"><script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body><!--${retry ? 'retry' : 'first'}--></body></html>`;
+    const srcdoc = (retry: boolean) => `<!DOCTYPE html><html><head><meta charset="utf-8">${sandboxCspMeta()}<script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body><!--${retry ? 'retry' : 'first'}--></body></html>`;
     frame.srcdoc = srcdoc(false);
     const ownedFrame = frame;
     ready = new Promise<void>((resolve, reject) => {

@@ -1,4 +1,4 @@
-import { mimeOfExt, docKindOfExt, docKindOfMime } from './mime.js';
+import { mimeOfExt, docKindOfExt, docKindOfMime, MODEL_IMAGE_MIMES } from './mime.js';
 // chat-attachments.ts — pending image/file attachment state and UI (thumbnails, chips, drag-drop, paste).
 // Depends on: nothing (pure DOM + state).
 
@@ -52,6 +52,23 @@ type _Img = { mimeType: string; base64: string; name?: string; workspacePath?: s
 let _pendingImages: _Img[] = [];
 let _pendingFiles: { name: string; mimeType: string; contentType: string; content: string; size: number; workspacePath?: string }[] = [];
 
+// Vision APIs take PNG, JPEG, GIF and WebP. Other rasters (BMP, AVIF, ICO, HEIC, TIFF …) are decoded by the
+// browser and re-encoded as PNG for the model; null when this browser cannot decode the format.
+async function _rasterToPng(dataUrl: string): Promise<{ mimeType: string; base64: string } | null> {
+    try {
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        const MAX = 2048, scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const out = canvas.toDataURL('image/png');
+        return out.startsWith('data:image/png') ? { mimeType: 'image/png', base64: out.slice(out.indexOf(',') + 1) } : null;
+    } catch { return null; }
+}
+
 // ── File attachment helpers ───────────────────────────────────────────────────
 
 const _TEXT_EXTS = new Set([
@@ -82,10 +99,13 @@ function _guessMime(ext: string): string { return mimeOfExt(ext); }
 
 function _fileIcon(mimeType: string, name: string): string {
     if (mimeType === 'application/pdf')    return '📄';
+    if (mimeType.startsWith('image/'))     return '🖼️';
     if (mimeType.startsWith('audio/'))     return '🎵';
     if (mimeType.startsWith('video/'))     return '🎬';
     const ext = name.split('.').pop()?.toLowerCase() || '';
-    if (ext === 'csv' || ext === 'tsv')    return '📊';
+    if (ext === 'csv' || ext === 'tsv' || ['xlsx','xls','ods'].includes(ext)) return '📊';
+    if (['pptx','ppt','odp'].includes(ext)) return '📽️';
+    if (['docx','doc','odt','rtf'].includes(ext)) return '📄';
     if (['json','yaml','yml','toml','xml'].includes(ext)) return '{}';
     return '📝';
 }
@@ -99,7 +119,8 @@ function _fmtSz(n: number): string {
 function _audioFmt(mimeType: string): string {
     const m = { 'audio/mpeg':'mp3', 'audio/mp3':'mp3', 'audio/wav':'wav',
                 'audio/ogg':'ogg', 'audio/flac':'flac', 'audio/mp4':'mp4',
-                'audio/aac':'aac', 'audio/webm':'webm', 'audio/aiff':'aiff' };
+                'audio/aac':'aac', 'audio/webm':'webm', 'audio/aiff':'aiff',
+                'audio/x-wav':'wav', 'audio/wave':'wav', 'audio/x-aiff':'aiff', 'audio/x-flac':'flac' };
     return m[mimeType] || 'mp3';
 }
 
@@ -151,8 +172,16 @@ function addImageAttachment(mimeType: string, base64: string, extra: { name?: st
     strip.style.display = 'flex';
 }
 
+// A read that is still running belongs to the chat it was started in. Leaving the chat parks its attachments
+// (parkPendingAttachments), and a read in flight then survives: it finishes into that chat's parked set, so the
+// file is there when the reader comes back. Anything else that empties the composer (a send, Clear) cancels it.
+type _ReadToken = { owner: string | null; cancelled: boolean; survives: boolean };
+const _readTokens = new Set<_ReadToken>();
+const _readerChat = (): string | null => (globalThis as any).activeChatId ?? null;
+
 function clearImageAttachments(): void {
     _attachmentGeneration++;
+    for (const t of _readTokens) if (!t.survives) t.cancelled = true;
     _attachmentReads.clear();
     _pendingImages = [];
     _pendingFiles  = [];
@@ -166,8 +195,19 @@ function clearImageAttachments(): void {
 const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pendingFiles }>();
 function parkPendingAttachments(chatId: string | null | undefined): void {
     if (!chatId) return;
+    for (const t of _readTokens) if (t.owner === chatId) t.survives = true;   // reads still running follow their chat
     if (_pendingImages.length || _pendingFiles.length) _parkedAttachments.set(chatId, { images: [..._pendingImages], files: [..._pendingFiles] });
     else _parkedAttachments.delete(chatId);
+}
+/** Forget every parked attachment and cancel every read (Clear project: they belong to the project that is going). */
+function clearParkedAttachments(): void {
+    _parkedAttachments.clear();
+    for (const t of _readTokens) t.cancelled = true;
+}
+function _parkFor(chatId: string): { images: _Img[]; files: typeof _pendingFiles } {
+    let p = _parkedAttachments.get(chatId);
+    if (!p) { p = { images: [], files: [] }; _parkedAttachments.set(chatId, p); }
+    return p;
 }
 function restoreParkedAttachments(chatId: string | null | undefined): void {
     const parked = chatId ? _parkedAttachments.get(chatId) : null;
@@ -194,23 +234,24 @@ function restoreFileAttachment(att: { name: string; mimeType: string; contentTyp
 }
 
 function addFileAttachment(file: File, existingPath?: string): Promise<void> {
-    const generation = _attachmentGeneration;
+    const token: _ReadToken = { owner: _readerChat(), cancelled: false, survives: false };
+    _readTokens.add(token);
     const strip = document.getElementById('img-strip');
     const loading = document.createElement('div');
     loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
     loading.textContent = `Reading ${file.name}…`;
     if (strip) { strip.appendChild(loading); strip.style.display = 'flex'; }
-    const read = _loadFileAttachment(file, generation, existingPath);
+    const read = _loadFileAttachment(file, token, existingPath);
     _attachmentReads.add(read);
     // Attach a rejection handler even when the caller is an inline event handler.
-    void read.then(() => { loading.remove(); _attachmentReads.delete(read); }, error => {
-        loading.remove(); _attachmentReads.delete(read);
-        if (generation === _attachmentGeneration) _attachmentError(file.name, error);
+    void read.then(() => { loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token); }, error => {
+        loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token);
+        if (!token.cancelled && token.owner === _readerChat()) _attachmentError(file.name, error);
     });
     return read;
 }
 // existingPath: the file already lives in the workspace there (Select mode), so no copy is written.
-async function _loadFileAttachment(file: File, generation: number, existingPath?: string): Promise<void> {
+async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?: string): Promise<void> {
     const name = file.name;
     const ext = name.split('.').pop()?.toLowerCase() || '';
     const mimeType = file.type && file.type !== 'application/octet-stream' ? file.type : _guessMime(ext);
@@ -219,11 +260,19 @@ async function _loadFileAttachment(file: File, generation: number, existingPath?
         || _TEXT_EXTS.has(ext);
     const docExt = docKindOfExt(ext) ?? (!_TEXT_EXTS.has(ext) ? docKindOfMime(mimeType) : undefined);
     if (!isText && file.size > 25 * 1024 * 1024) throw new Error('Binary attachment exceeds the 25 MB limit');
-    const current = () => generation === _attachmentGeneration;
+    const current = () => !token.cancelled;
+    let imageUrl: string | undefined, sendImage: { mimeType: string; base64: string } | undefined;
     if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {
-        const url = await _readAttachment(file, 'readAsDataURL');
+        imageUrl = await _readAttachment(file, 'readAsDataURL');
         if (!current()) return;
-        const base64 = url.slice(url.indexOf(',') + 1);
+        const base64 = imageUrl.slice(imageUrl.indexOf(',') + 1);
+        sendImage = MODEL_IMAGE_MIMES.has(mimeType) ? { mimeType, base64 } : (await _rasterToPng(imageUrl)) ?? undefined;
+        if (!current()) return;
+    }
+    // A raster the browser cannot decode (HEIC outside Safari, TIFF) is attached as a file instead: the model
+    // is told its workspace path rather than receiving an image part the API would reject.
+    if (imageUrl && sendImage) {
+        const base64 = imageUrl.slice(imageUrl.indexOf(',') + 1);
         // Also store the image in the workspace, so tools can open it and the agent can move or
         // save it (as for other binary attachments); the model sees the pixels via the message.
         let workspacePath: string | undefined = existingPath;
@@ -235,7 +284,9 @@ async function _loadFileAttachment(file: File, generation: number, existingPath?
                 if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
             } catch { workspacePath = undefined; }
         }
-        addImageAttachment(mimeType, base64, { name, ...(workspacePath ? { workspacePath } : {}) });
+        const extra = { name, ...(workspacePath ? { workspacePath } : {}) };
+        if (token.owner !== _readerChat()) _parkFor(token.owner!).images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });   // finished in another chat
+        else addImageAttachment(sendImage.mimeType, sendImage.base64, extra);
         return;
     }
 
@@ -267,6 +318,7 @@ async function _loadFileAttachment(file: File, generation: number, existingPath?
         if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
+    if (token.owner !== _readerChat()) { _parkFor(token.owner!).files.push(att); return; }   // finished in another chat
     _pendingFiles.push(att);
     _addFileChip(att);
 }
@@ -414,7 +466,7 @@ Object.assign(window, {
 });
 
 Object.assign(window, {
-    addImageAttachment, clearImageAttachments, parkPendingAttachments, restoreParkedAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
+    addImageAttachment, clearImageAttachments, parkPendingAttachments, restoreParkedAttachments, clearParkedAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
     setupChatDropZone, restoreFileAttachment, getPendingAttachments,
     _guessMime, _fileIcon, _fmtSz, _LANG_MAP, _audioFmt,
 });

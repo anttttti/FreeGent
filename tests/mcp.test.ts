@@ -519,3 +519,72 @@ describe('MCP approval for workers', () => {
         expect(reqs.filter(c => c.body.method === 'tools/call').length).toBe(before);
     });
 });
+
+describe('codex campaign 6 MCP findings (cases 026-031)', () => {
+    const setup = async (tools: any[], enabled: string[], opts: { sse?: boolean } = {}) => {
+        mockServer((msg) => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18', capabilities: { tools: {} } } };
+            if (msg.method === 'tools/list') return { result: { tools } };
+            if (msg.method === 'tools/call') return { result: { content: [{ type: 'text', text: `ran ${msg.params.name}` }] } };
+            return { error: { code: -32601, message: 'unknown' } };
+        }, opts);
+        const s = await W.addMcpServer({ name: 'Collide', url: 'https://c.example.com/mcp' });
+        for (const t of enabled) W.setMcpToolEnabled(s.id, t, true);
+        return s;
+    };
+    const T = (name: string) => ({ name, description: name, inputSchema: { type: 'object', properties: {} } });
+
+    it('tools whose names differ only in punctuation get distinct names, and each runs as itself', async () => {
+        const s = await setup([T('lookup.user'), T('lookup_user')], ['lookup.user', 'lookup_user']);
+        const names = W.mcpToolSpecs().map((x: any) => x.name);
+        expect(new Set(names).size).toBe(2);
+        expect(names).toContain('mcp__collide__lookup_user');   // the plainly spelled one keeps the plain name
+        const dotted = names.find((n: string) => n !== 'mcp__collide__lookup_user');
+        expect((await W.executeMcpTool(dotted, {})).content).toBe('ran lookup.user');
+        expect((await W.executeMcpTool('mcp__collide__lookup_user', {})).content).toBe('ran lookup_user');
+        expect(s.id).toBe('collide');
+    });
+    it('only the second of two colliding tools enabled: its name works (it was refused as the disabled first one)', async () => {
+        await setup([T('lookup_user'), T('lookup.user')], ['lookup.user']);
+        const names = W.mcpToolSpecs().map((x: any) => x.name);
+        expect(names).toHaveLength(1);
+        expect((await W.executeMcpTool(names[0], {})).content).toBe('ran lookup.user');
+        expect((await W.executeMcpTool('mcp__collide__lookup_user', {})).error).toMatch(/disabled/);
+    });
+    it('the names do not depend on the order the server lists its tools in', async () => {
+        await setup([T('a.b'), T('a_b')], ['a.b', 'a_b']);
+        const first = W.mcpToolSpecs().map((x: any) => x.name).sort();
+        localStorage.removeItem('fg_mcp_servers');
+        await setup([T('a_b'), T('a.b')], ['a.b', 'a_b']);
+        expect(W.mcpToolSpecs().map((x: any) => x.name).sort()).toEqual(first);
+    });
+    it('a plain JSON reply for another request id is rejected, not taken as the tool output', async () => {
+        W.fetch.mockImplementation(async (_u: string, init: any) => {
+            const body = JSON.parse(init.body);
+            const rh = { 'Content-Type': 'application/json', 'Mcp-Session-Id': 's' };
+            if (body.id === undefined) return new Response(null, { status: 202 });
+            if (body.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: {} } }), { headers: rh });
+            if (body.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [T('echo')] } }), { headers: rh });
+            return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id + 1000, result: { content: [{ type: 'text', text: 'WRONG_REQUEST_RESULT' }] } }), { headers: rh });
+        });
+        const s = await W.addMcpServer({ name: 'Ids', url: 'https://ids.example.com/mcp' });
+        W.setMcpToolEnabled(s.id, 'echo', true);
+        const r = await W.executeMcpTool('mcp__ids__echo', {});
+        expect(r.content).toBeUndefined();
+        expect(r.error).toMatch(/does not answer this request/);
+    });
+    it('one SSE event whose JSON is spread over several data: lines is one message', async () => {
+        W.fetch.mockImplementation(async (_u: string, init: any) => {
+            const body = JSON.parse(init.body);
+            if (body.id === undefined) return new Response(null, { status: 202 });
+            const reply = (result: any) => `event: message\ndata: {"jsonrpc":"2.0",\ndata: "id":${body.id},\ndata: "result":${JSON.stringify(result)}}\n\n`;
+            const out = body.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: {} }
+                : body.method === 'tools/list' ? { tools: [T('echo')] } : { content: [{ type: 'text', text: 'MULTILINE_OK' }] };
+            return new Response(reply(out), { headers: { 'Content-Type': 'text/event-stream', 'Mcp-Session-Id': 's' } });
+        });
+        const s = await W.addMcpServer({ name: 'Multi', url: 'https://m.example.com/mcp' });
+        W.setMcpToolEnabled(s.id, 'echo', true);
+        expect((await W.executeMcpTool('mcp__multi__echo', {})).content).toBe('MULTILINE_OK');
+    });
+});
+

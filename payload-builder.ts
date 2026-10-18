@@ -183,7 +183,8 @@ export function buildChatPayload(ep: any, {
         }),
         ...(provider === 'openrouter' && { include_reasoning: true }),
         ..._thinkingFields(provider, isCustom, thinkingBudget, preserveThinking),
-        temperature,
+        // No value (the user cleared the field): the key is left out, so the server uses its own default.
+        ...(temperature != null && { temperature }),
         // Opt-in sampling seed for OpenAI-compatible servers (FREEGENT_SAMPLING_SEED). The benchmark's
         // suite --seed selects tasks and environments only; this is what makes two runs of one task
         // comparable when the server is run at concurrency 1. Off unless set.

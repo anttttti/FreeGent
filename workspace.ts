@@ -2,7 +2,9 @@
 // IndexedDB storage + optional File System Access API
 
 import { escapeHtml } from './html-escape.js';
-import { extOf, isBinaryExt, isDocExt, mimeOfName } from './mime.js';
+import { extOf, isBinaryExt, isDocExt, mimeOfName, previewKindOfName } from './mime.js';
+import { pptxSlides, odfText, docxText, fixXlsxCharRefs } from './office-text.js';
+import { decodeTextBytes } from './text-decode.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
@@ -194,7 +196,7 @@ async function writeWorkspaceFile(name, content, lastModified = null, encoding =
         tx.objectStore(STORE).put(record);
         // Resolve on COMMIT, not when the request is queued: a quota failure surfaces as an abort
         // afterwards, and a write reported as done that never landed left task files unchanged.
-        tx.oncomplete = () => { try { scheduleArtifactRefresh?.(name); } catch {} resolve(); };
+        tx.oncomplete = () => { try { scheduleArtifactRefresh?.(name); } catch {} try { (window as any).refreshOpenFileTab?.(name); } catch {} try { (window as any).invalidateWorkspacePaths?.(); } catch {} resolve(); };
         tx.onabort    = () => reject(tx.error ?? new Error('IndexedDB write aborted (storage full?)'));
         tx.onerror    = () => reject(tx.error ?? new Error('IndexedDB write failed'));
     });
@@ -237,7 +239,7 @@ async function deleteWorkspaceFile(name) {
         const req = store.delete(name);
 
         req.onsuccess = () => {
-            transaction.oncomplete = () => resolve();
+            transaction.oncomplete = () => { try { (window as any).invalidateWorkspacePaths?.(); } catch {} resolve(); };
             transaction.onerror = () => reject(transaction.error);
         };
         req.onerror = () => reject(req.error);
@@ -308,7 +310,7 @@ async function saveCheckpointSnapshot(chatId, ckptId) {
 
     // IDB delta
     const idbFiles = await listWorkspaceFiles();
-    const idbHashes = {};
+    const idbHashes = Object.create(null);
     const idbDelta  = [];
     for (const f of idbFiles) {
         const h = _ckptHash(f.content || '');
@@ -323,7 +325,7 @@ async function saveCheckpointSnapshot(chatId, ckptId) {
     }
 
     // Local (FSA) delta
-    const localHashes = {};
+    const localHashes = Object.create(null);
     const localDelta  = [];
     if (fsaHandle) {
         try {
@@ -358,9 +360,9 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
     if (targetIdx < 0) return { localFiles: [] };
 
     // Replay deltas from first checkpoint up to target to reconstruct state
-    const idbState   = {};
-    const idbEnc     = {};
-    const localState = {};
+    const idbState   = Object.create(null);
+    const idbEnc     = Object.create(null);
+    const localState = Object.create(null);
     for (let i = 0; i <= targetIdx; i++) {
         for (const f of ckpts[i].idbDelta) {
             if (f.content === null) { delete idbState[f.name]; delete idbEnc[f.name]; }
@@ -407,7 +409,7 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
 
 // Workspace state after replaying a chat's snapshot deltas up to index `upto` (inclusive).
 function _replayCkpts(ckpts, upto) {
-    const idb = {}, local = {};
+    const idb = Object.create(null), local = Object.create(null);
     for (let i = 0; i <= upto && i < ckpts.length; i++) {
         for (const f of ckpts[i].idbDelta)   { if (f.content === null) delete idb[f.name];   else idb[f.name]   = f.content; }
         for (const f of ckpts[i].localDelta) { if (f.content === null) delete local[f.name]; else local[f.name] = f.content; }
@@ -444,7 +446,7 @@ async function getCheckpointDiff(chatId, ckptId) {
     const ckpt = ckpts.find(c => c.ckptId === ckptId);
     if (!ckpt) return null;
     const targetIdx = ckpts.indexOf(ckpt);
-    const prevIdb = {}, prevLocal = {};
+    const prevIdb = Object.create(null), prevLocal = Object.create(null);
     for (let i = 0; i < targetIdx; i++) {
         for (const f of ckpts[i].idbDelta)   { if (f.content === null) delete prevIdb[f.name];   else prevIdb[f.name]   = f.content; }
         for (const f of ckpts[i].localDelta) { if (f.content === null) delete prevLocal[f.name]; else prevLocal[f.name] = f.content; }
@@ -683,13 +685,32 @@ async function fsaNavigate(name, create = false) {
     return { dir, filename: parts[parts.length - 1] };
 }
 
+// A file that is not on the binary list: text goes in as text (UTF-16 and legacy 8-bit encodings converted, see
+// text-decode.ts); bytes that are not text are kept as they are, in base64, instead of being decoded into garbage.
+async function _storeUploadedText(path: string, file: File): Promise<void> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = decodeTextBytes(bytes);
+    if (text !== null) await writeWorkspaceFile(path, text);
+    else await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
+}
+
+// The text of a base64 workspace record: a document is extracted; a plain text file (task attachments are stored as
+// base64 whatever they are) is decoded from its bytes; anything else gets the extractor's message.
+async function _readBase64Record(path: string, b64: string): Promise<string> {
+    if (!_isDocExt(path)) {
+        const text = decodeTextBytes(_base64ToUint8(b64));
+        if (text !== null) return text;
+    }
+    return await _extractDocText(path, b64);
+}
+
 async function readFsaFile(name, asBase64 = false) {
     if (!fsaHandle) throw new Error('No local folder is synced — "local/…" paths are unavailable. Use the plain workspace path without the "local/" prefix (e.g. "src/main.js").');
     const { dir, filename } = await fsaNavigate(name);
     const handle = await dir.getFileHandle(filename);
     const file   = await handle.getFile();
     if (asBase64) { const buf = await file.arrayBuffer(); return _uint8ToBase64(new Uint8Array(buf)); }
-    return await file.text();
+    return decodeTextBytes(new Uint8Array(await file.arrayBuffer())) ?? await file.text();
 }
 
 async function writeFsaFile(name, content) {
@@ -843,12 +864,12 @@ export async function agentReadFile(path) {
     if (path.startsWith('local/')) {
         try { return await _fsaRead(path.slice(6)); } catch {}
         const rec = await readWorkspaceFile(path);
-        if (rec) return rec.encoding === 'base64' ? await _extractDocText(path, rec.content) : rec.content;
+        if (rec) return rec.encoding === 'base64' ? await _readBase64Record(path, rec.content) : rec.content;
         throw new Error(`File not found: ${path}`);
     }
     const rec = await readWorkspaceFile(path);
     if (rec) {
-        if (rec.encoding === 'base64') return await _extractDocText(path, rec.content);
+        if (rec.encoding === 'base64') return await _readBase64Record(path, rec.content);
         return rec.content;
     }
     try { return await _fsaRead(path); } catch {}
@@ -898,9 +919,11 @@ function _scheduleFileListRender() {
 
 export async function agentWriteFile(path, content, encoding = null) {
     if (_wa) return _wa.agentWriteFile(path, content, encoding);
+    const generation = _workspaceGeneration;
     path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
     await _refuseDuplicateTask(path, content);
+    if (generation !== _workspaceGeneration) throw new Error(`write: the project was cleared or replaced while this write of ${path} was pending; it was not applied`);
     if (path.startsWith('local/')) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
@@ -997,7 +1020,7 @@ function _buildPyRunnerHtml(filename, code, files) {
     const sj = v => JSON.stringify(v).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
     // Split text vs binary files for Pyodide FS
-    const textFiles = {}, binFiles = {};
+    const textFiles = Object.create(null), binFiles = Object.create(null);
     for (const [k, v] of Object.entries(files || {})) {
         if (v == null) continue;
         if (_isBinaryExt(k)) binFiles[k] = v;  // base64 string
@@ -1639,9 +1662,10 @@ function _collectNodeFiles(node): string[] {
 
 // Augment a directory row with a copy-to-other-side button and drag support.
 // `subtree`   – the tree node for this directory (used to enumerate its files)
-// `copyLabel` – tooltip text; drives the button glyph (→ for workspace, ← for local)
+// `copyLabel` – tooltip text; drives the button glyph. Workspace is the left column and Local Folder the right one, so a
+// button that copies to the workspace points left (←) and one that copies to the local folder points right (→).
 function _makeDirRow(dirRow: HTMLElement, subtree: any, copyLabel: string): void {
-    const glyph = copyLabel.toLowerCase().includes('workspace') ? '→' : '←';
+    const glyph = copyLabel.toLowerCase().includes('workspace') ? '←' : '→';
 
     const actions = document.createElement('div');
     actions.className = 'workspace-dir-actions';
@@ -1819,15 +1843,13 @@ export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}
         };
         actions.appendChild(play);
     }
-    if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(name)) {
+    const kind = previewKindOfName(name);
+    if (kind) {
         const play = document.createElement('button');
-        play.className = 'ws-btn ws-btn-play'; play.title = 'Preview image'; play.textContent = '▶';
-        play.onclick = e => { e.stopPropagation(); openFileTab(name); };
-        actions.appendChild(play);
-    }
-    if (/\.pdf$/i.test(name)) {
-        const play = document.createElement('button');
-        play.className = 'ws-btn ws-btn-play'; play.title = 'Preview PDF'; play.textContent = '▶';
+        play.className = 'ws-btn ws-btn-play';
+        play.title = { image: 'Preview image', audio: 'Play audio', video: 'Play video', pdf: 'Preview PDF', sheet: 'Preview spreadsheet',
+            docx: 'Preview document', odf: 'Preview document', pptx: 'Preview presentation', 'legacy-office': 'Open' }[kind];
+        play.textContent = '▶';
         play.onclick = e => { e.stopPropagation(); openFileTab(name); };
         actions.appendChild(play);
     }
@@ -1840,7 +1862,7 @@ export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}
             try {
                 const code = await agentReadFile(name);
                 const idbRecs = await listWorkspaceFiles();
-                const filesDict = {};
+                const filesDict = Object.create(null);
                 for (const rec of idbRecs) filesDict[rec.name] = rec.content;
                 openArtifactTab(name, _buildPyRunnerHtml(name, code, filesDict), { isPreview: false });
             } catch (err) { alert(`Run failed: ${err.message}`); }
@@ -2379,8 +2401,7 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
                     const content = _uint8ToBase64(new Uint8Array(buf));
                     await writeWorkspaceFile(path, content, null, 'base64');
                 } else {
-                    const text = await file.text();
-                    await writeWorkspaceFile(path, text);
+                    await _storeUploadedText(path, file);
                 }
             } catch (e) {
                 console.error('[workspace] upload error:', path, e);
@@ -2468,8 +2489,7 @@ function initDragAndDrop() {
                     const content = _uint8ToBase64(new Uint8Array(buf));
                     await writeWorkspaceFile(path, content, null, 'base64');
                 } else {
-                    const text = await file.text();
-                    await writeWorkspaceFile(path, text);
+                    await _storeUploadedText(path, file);
                 }
             } catch (err) {
                 console.error('[workspace] drop error:', path, err);
@@ -2505,8 +2525,10 @@ document.addEventListener('keydown', e => {
 
 // ── Project save / load / export / import ─────────────────────────────────
 
+// The id a saved project is stored under. Letters and digits of any script count: reducing the name to a-z0-9 gave every
+// Persian, Japanese or Hindi project name the same id, so saving one replaced another.
 function _projectSlug(name) {
-    return (name || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+    return (name || 'project').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'project';
 }
 
 // The localStorage keys that belong to a project's chats. Anything else (settings, API keys,
@@ -2630,9 +2652,15 @@ async function _gunzipToJson(buffer) {
     const ds = new DecompressionStream('gzip');
     const writer = ds.writable.getWriter();
     const textPromise = new Response(ds.readable).text();
-    await writer.write(new Uint8Array(buffer));
-    await writer.close();
-    return JSON.parse(await textPromise);
+    // Damaged data rejects the writer's promises and the reader's together. Each rejection must be observed or the
+    // browser reports an unhandled one; the reader's carries the cause, so it is the one awaited.
+    textPromise.catch(() => {});
+    writer.write(new Uint8Array(buffer)).catch(() => {});
+    writer.close().catch(() => {});
+    let text: string;
+    try { text = await textPromise; }
+    catch { throw new Error('The compressed project file is damaged and cannot be read.'); }
+    return JSON.parse(text);
 }
 
 async function _documentLibrary(name: 'pdfjsLib' | 'mammoth' | 'XLSX', selector: string): Promise<any> {
@@ -2680,14 +2708,21 @@ export async function extractDocumentText(name: string, base64Content: string): 
         } finally { if (pdf) await pdf.destroy(); else await task.destroy?.(); }
     }
     if (ext === '.docx') {
+        // Read word/document.xml directly (line breaks kept); mammoth is the fallback for what that cannot read.
+        try { const text = docxText(bytes); if (text.trim()) return text; } catch { /* not a package we can read */ }
         const lib = await _documentLibrary('mammoth', 'script[src*="mammoth@"]');
         return (await lib.extractRawText({ arrayBuffer: bytes.buffer })).value;
     }
     if (['.xlsx', '.xls', '.ods'].includes(ext)) {
         const lib = await _documentLibrary('XLSX', 'script[src*="xlsx@"]');
-        const wb = lib.read(bytes, { type: 'array' });
+        const wb = lib.read(await fixXlsxCharRefs(bytes), { type: 'array' });
         return wb.SheetNames.map(sn => `Sheet: ${sn}\n${lib.utils.sheet_to_csv(wb.Sheets[sn])}`).join('\n\n');
     }
+    if (ext === '.pptx') {
+        const text = pptxSlides(bytes).map((t, i) => `Slide ${i + 1}\n${t}`).join('\n\n');
+        return text;
+    }
+    if (ext === '.odt' || ext === '.odp') return odfText(bytes);
     throw new Error(`Text extraction is not supported for ${ext || 'this document type'}`);
 }
 async function _extractDocText(name, base64Content) {
@@ -2718,9 +2753,27 @@ async function _stopTurnsBeforeReplace(): Promise<boolean> {
     return (await (window as any).stopTurnAndWait?.()) !== false;
 }
 
+// Bumped when a project is cleared or replaced. A write that started before that must not land afterwards: it would
+// put the old project's file into the new one (agentWriteFile checks it just before it commits).
+let _workspaceGeneration = 0;
+
+// What belongs to the project that is being cleared or replaced: messages queued behind the stopped turn, the text typed
+// in the composer (which createNewChat would save again under the old chat), its attachments, and the open editors
+// with their unsaved buffers. The user has already confirmed the operation, so none of it asks again.
+function _discardProjectUiState(): void {
+    const w = window as any;
+    w.msgQueue?.clear?.();
+    const input = document.getElementById('agent-input');
+    if (input) w._setInputText?.(input, '');
+    w.clearImageAttachments?.(); w.clearParkedAttachments?.();
+    w.closeAllFileTabs?.();
+}
+
 async function _restoreProjectData(data) {
     validateProjectData(data);
     if (!(await _stopTurnsBeforeReplace())) throw new Error('Import cancelled: Autopilot is still running.');
+    _workspaceGeneration++;
+    _discardProjectUiState();
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
     // this ensures settings survive the operation regardless.
@@ -2842,6 +2895,11 @@ async function clearProject() {
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
     (ov.querySelector('.fg-modal-btn-danger') as HTMLElement).onclick = async () => {
         ov.remove();
+        // A running turn belongs to the project being cleared: its tool calls would write into the empty project and its
+        // messages into the next chat. Import and chat deletion stop it first; so does this.
+        if (!(await _stopTurnsBeforeReplace())) return;
+        _workspaceGeneration++;
+        _discardProjectUiState();
         const _settingsSnap = _snapshotSettings();
         // Clear workspace files
         await ensureDB();
@@ -2993,7 +3051,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {
         const recs = await listWorkspaceFiles();
-        const d = {};
+        const d = Object.create(null);
         for (const r of recs) d[r.name] = r.content;
         return d;
     },

@@ -127,19 +127,35 @@ async function _send(url: string, headers: Record<string, string>, body: string,
     });
 }
 
+// The message in a JSON-RPC reply (one message, or a batch) that answers request `id`. A reply with id null and an error
+// is the server's answer to a request it could not parse. Numbers and their string forms count as the same id.
+function _answerTo(msg: any, id: any): any {
+    for (const m of Array.isArray(msg) ? msg : [msg]) {
+        if (!m || typeof m !== 'object' || !('result' in m || 'error' in m)) continue;
+        if (m.id === id || (m.id != null && String(m.id) === String(id)) || (m.id === null && 'error' in m)) return m;
+    }
+    return null;
+}
+
 // Pick the JSON-RPC response for `id` out of a JSON or SSE body.
 function _parseRpcBody(text: string, contentType: string, id: any): any {
     if (contentType.includes('text/event-stream')) {
-        for (const line of text.split('\n')) {
-            if (!line.startsWith('data:')) continue;
+        // An event is a block of lines ended by a blank line; all its data: lines make one message, joined by newlines
+        // (a server may pretty-print its JSON over several data: lines).
+        for (const event of text.split(/\r?\n\r?\n/)) {
+            const data = event.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+            if (!data.trim()) continue;
             try {
-                const msg = JSON.parse(line.slice(5).trim());
-                if (msg && msg.id === id) return msg;
+                const hit = _answerTo(JSON.parse(data), id);
+                if (hit) return hit;
             } catch { /* keep scanning */ }
         }
         throw new Error('MCP: no matching response in SSE stream');
     }
-    return JSON.parse(text);
+    // A plain JSON reply must answer this request too: taking whatever arrived let a stray or mismatched reply become the tool's output.
+    const hit = _answerTo(JSON.parse(text), id);
+    if (!hit) throw new Error('MCP: the reply does not answer this request (its id does not match)');
+    return hit;
 }
 
 // A JSON-RPC error that means "this session is gone", as opposed to an application error that
@@ -312,6 +328,23 @@ function mcpToolName(serverId: string, toolName: string): string {
     const full = `mcp__${serverId}__${String(toolName).replace(/[^A-Za-z0-9_-]/g, '_')}`;
     if (full.length <= _MAX_NAME) return full;
     return `${full.slice(0, _MAX_NAME - 5)}_${_hash4(full)}`;
+}
+
+// The names the model sees for a server's tools: mcpToolName(server, tool) — except where two tools would get the same one
+// ("lookup.user" and "lookup_user" both become lookup_user). The tool already spelled with plain characters keeps the name; the
+// others get a short hash of their own name. Independent of the order the server lists its tools in, so a refresh cannot swap them.
+function _exposedNames(s: McpServer): Map<string, string> {
+    const tools = s.tools || [];
+    const base = new Map(tools.map(t => [t.name, mcpToolName(s.id, t.name)] as [string, string]));
+    const uses = new Map<string, number>();
+    for (const b of base.values()) uses.set(b, (uses.get(b) ?? 0) + 1);
+    const out = new Map<string, string>();
+    for (const t of tools) {
+        const b = base.get(t.name)!;
+        if ((uses.get(b) ?? 0) < 2 || /^[A-Za-z0-9_-]+$/.test(t.name)) out.set(t.name, b);
+        else out.set(t.name, `${b.slice(0, _MAX_NAME - 5)}_${_hash4(t.name)}`);
+    }
+    return out;
 }
 
 function _uniqueId(name: string, list: McpServer[]): string {
@@ -523,6 +556,7 @@ function mcpToolSpecs(): any[] {
     for (const s of getMcpServers()) {
         if (!s.enabled) continue;
         const on = new Set(s.enabledTools || []);
+        const names = _exposedNames(s);
         for (const t of s.tools || []) {
             if (!on.has(t.name)) continue;
             const note = s.toolNote ? `\n${s.toolNote}` : '';
@@ -530,7 +564,7 @@ function mcpToolSpecs(): any[] {
             let desc = `${s.name}: ${(t.description || t.name).trim()}`;
             if (desc.length > max) desc = desc.slice(0, max - 1) + '…';
             desc += note;
-            specs.push({ name: mcpToolName(s.id, t.name), description: desc, parameters: sanitizeMcpSchema(t.inputSchema || { type: 'object' }) });
+            specs.push({ name: names.get(t.name)!, description: desc, parameters: sanitizeMcpSchema(t.inputSchema || { type: 'object' }) });
         }
     }
     return specs;
@@ -545,7 +579,8 @@ function mcpServerInstructionsBlock(isAllowed: (toolName: string) => boolean = (
     for (const s of getMcpServers()) {
         if (!s.enabled || !s.instructions) continue;
         const on = new Set(s.enabledTools || []);
-        const names = (s.tools || []).filter(t => on.has(t.name)).map(t => mcpToolName(s.id, t.name)).filter(isAllowed);
+        const exposed = _exposedNames(s);
+        const names = (s.tools || []).filter(t => on.has(t.name)).map(t => exposed.get(t.name)!).filter(isAllowed);
         if (!names.length) continue;
         entries.push({ s, text: s.instructions.replace(/\n{3,}/g, '\n\n') });
     }
@@ -570,7 +605,8 @@ function mcpToolNames(): string[] {
 function _resolve(name: string): { server: McpServer; tool: McpToolInfo } | null {
     if (!String(name).startsWith('mcp__')) return null;
     for (const s of getMcpServers()) {
-        for (const t of s.tools || []) if (mcpToolName(s.id, t.name) === name) return { server: s, tool: t };
+        const names = _exposedNames(s);
+        for (const t of s.tools || []) if (names.get(t.name) === name) return { server: s, tool: t };
     }
     return null;
 }

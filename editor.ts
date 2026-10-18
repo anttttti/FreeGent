@@ -12,9 +12,7 @@ function _loadCM() {
         const BASE = 'https://esm.sh';
         // basic-setup is versioned as 0.x, not @6; pin @lezer/highlight@1 to avoid mismatches.
         const DEPS = '?deps=@codemirror/state@6,@codemirror/view@6,@codemirror/language@6,@lezer/highlight@1';
-        const [view, state, setup, js, py, htm, cssMod, md, json] = await Promise.all([
-            import(/* @vite-ignore */ `${BASE}/@codemirror/view@6`),
-            import(/* @vite-ignore */ `${BASE}/@codemirror/state@6`),
+        const [setup, js, py, htm, cssMod, md, json] = await Promise.all([
             import(/* @vite-ignore */ `${BASE}/@codemirror/basic-setup@0.20.0${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-javascript@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-python@6${DEPS}`),
@@ -23,10 +21,13 @@ function _loadCM() {
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-markdown@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-json@6${DEPS}`),
         ]);
+        // EditorView and EditorState must come from the same module instances as basicSetup's keymaps: esm.sh builds a
+        // package again for each ?deps= combination, so `@codemirror/view@6` imported on its own is a second copy, and a
+        // keymap made by the first copy is silently ignored by a view of the second (undo, indent, search: none worked).
         return {
             basicSetup: setup.basicSetup,
-            EditorView:  view.EditorView,
-            EditorState: state.EditorState,
+            EditorView:  setup.EditorView,
+            EditorState: setup.EditorState,
             langJS:   js.javascript,
             langPY:   py.python,
             langHTML: htm.html,

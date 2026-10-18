@@ -6,6 +6,7 @@ import { FG_VERSION } from './build-info.js';
 import { SESSION_ID } from './dev-log.js';
 import { escapeHtml } from './html-escape.js';
 import { redactText } from './secrets.js';
+import { getPrivacyLevel } from './privacy.js';
 import { getMcpServers } from './mcp.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
 
@@ -292,6 +293,7 @@ export async function buildRedactedChatJson(id: string): Promise<string> {
 async function sendChatLog(id) {
     if (!id) { alert('No chat to send.'); return; }
     const url = 'https://proxy.freegent.ai/log';
+    if (getPrivacyLevel() !== 'default') { alert('Sending logs is off at the Provider-only and Local privacy levels (Settings → Privacy). Download the chat instead.'); return; }
     if (!confirm('Send this chat (messages, tool calls and results) to the FreeGent developer for debugging? API keys are removed first. It is kept for 14 days.')) return;
     try {
         const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());

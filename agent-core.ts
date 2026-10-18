@@ -11,7 +11,9 @@ import { registry } from './session-registry.js';
 import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList, specHasKey, getProvider } from './config.js';
+import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider } from './config.js';
+import { getPrivacyLevel } from './privacy.js';
+import { acquireChatLease, releaseChatLease } from './chat-lease.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
@@ -32,15 +34,17 @@ const _CKPT_LIST_MAX = 50;
 
 // Lazy singleton — Turndown loaded from CDN; falls back to innerText if not yet available.
 function _htmlToMarkdown(elOrHtml: HTMLElement | string): string {
-    if (TurndownService) {
+    // The CDN script may not have loaded (offline, blocked): `TurndownService` is then not even a defined name.
+    if (typeof TurndownService !== 'undefined' && TurndownService) {
         const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
         const html = typeof elOrHtml === 'string' ? elOrHtml : elOrHtml.innerHTML;
         return td.turndown(html);
     }
     // Fallback: plain text
     if (typeof elOrHtml === 'string') {
-        const tmp = document.createElement('div'); tmp.innerHTML = elOrHtml;
-        return tmp.innerText;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = elOrHtml.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6]|tr|pre|blockquote)>/gi, '\n');
+        return (tmp.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     }
     return elOrHtml.innerText || '';
 }
@@ -1143,6 +1147,15 @@ function _pushHistoryMessage(
 // ── Main send / abort / clear ──────────────────────────────────────────────
 
 let _sendPreparing = false;
+// The send that is waiting for its attachments (and the chat it was started in). Escape cancels it; switching chats
+// meanwhile also ends it, because what the composer holds by then is another chat's text.
+let _prep: { chatId: string | null; cancelled: boolean; wake: () => void } | null = null;
+const _leaseIds = new Set<string>();   // chats whose turn lease the running send holds (chat-lease.ts)
+function cancelSendPreparation(): boolean {
+    if (!_prep) return false;
+    _prep.cancelled = true; _prep.wake();
+    return true;
+}
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // Busy turns still accept queued text. Only preparation (file reads, intent,
     // workspace context) is serialized so a double tap cannot start two turns.
@@ -1152,22 +1165,59 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     _sendPreparing = true;
     _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
     setAiJob('send-preparing');
+    const prep = { chatId: activeChatId as string | null, cancelled: false, wake: () => {} };
+    _prep = prep;
     try {
-        if (typeof waitForAttachments === 'function') await waitForAttachments();
+        if (typeof waitForAttachments === 'function')
+            await Promise.race([waitForAttachments(), new Promise<void>(r => { prep.wake = r; })]);
+        // Nothing was taken from the composer yet: a cancelled or abandoned send leaves the text and the files where they are.
+        if (prep.cancelled || activeChatId !== prep.chatId) return;
+        // One tab at a time runs a turn in a chat (chat-lease.ts): the tab that finished last used to overwrite the other's messages.
+        if (!acquireChatLease(activeChatId)) {
+            appendMessage('model', '<em>This chat is running a turn in another browser tab. Wait for it to finish, or start a new chat. Your message is still in the box.</em>', container);
+            return;
+        }
+        _leaseIds.add(activeChatId as string);
         await _agentSendReady(container);
     } catch (error) {
         console.error('[send]', error);
         if (agentStreaming) _tearDownTurn();
         appendMessage('model', `<em>Message was not sent: ${esc(error.message || String(error))}</em>`, container);
     } finally {
+        for (const id of _leaseIds) releaseChatLease(id);
+        _leaseIds.clear();
+        if (_prep === prep) _prep = null;
         if (aiJob === 'send-preparing') setAiJob('');
         _sendPreparing = false;
         _sendsActive--;
     }
 }
+/** The active chat is no longer in the shared chat list: it was deleted in another tab. Carry the message (text and files) to a
+ *  new chat instead of answering under an id that is not listed, where the reply vanished on reload. The old id is not brought back. */
+function _moveToNewChatIfDeletedElsewhere(container: HTMLElement | null): void {
+    if (!activeChatId || typeof getChatList !== 'function') return;
+    const here = activeChatId;
+    if (getChatList().some((c: any) => c.id === here)) return;
+    const hadMessages = chatHistoryLength() > 0;
+    const inp = document.getElementById('agent-input');
+    const html = inp?.innerHTML ?? '';
+    const att = typeof getPendingAttachments === 'function' ? getPendingAttachments() : { images: [], files: [] };
+    createNewChat();
+    try { localStorage.removeItem(chatKey.draft(here)); } catch {}
+    if (inp) inp.innerHTML = html;
+    for (const i of att.images) addImageAttachment?.(i.mimeType, i.base64, { name: i.name, workspacePath: i.workspacePath });
+    for (const f of att.files) restoreFileAttachment?.(f);
+    if (_prep) _prep.chatId = activeChatId;   // the send follows its message: this is not the reader switching chats
+    if (acquireChatLease(activeChatId)) _leaseIds.add(activeChatId as string);
+    if (hadMessages) appendMessage('model', '<em>The chat you were writing in was deleted in another browser tab. Your message goes to a new chat.</em>', container);
+}
+
 async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
     // Another tab may have saved this chat since this one loaded it: take its messages first.
+    const _preparedFor = _prep?.chatId;
     if (!agentStreaming) { try { await reloadChatIfChangedElsewhere(); } catch {} }
+    if (_prep && _preparedFor !== undefined && (_prep.cancelled || activeChatId !== _preparedFor)) return;   // cancelled, or the reader moved to another chat meanwhile
+    if (!agentStreaming) _moveToNewChatIfDeletedElsewhere(container);
     if (agentStreaming) {
         // The text-only queue cannot carry media. Preserve the complete submission
         // in the composer rather than queuing just its text and dropping its files.
@@ -1198,6 +1248,13 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     provider = _routing.provider;
     let _mediaGeminiModel = _routing.mediaGeminiModel;
     let _mediaOAIEndpoint = _routing.mediaOAIEndpoint;
+
+    // Settings → Privacy can rule out every model in the list: say so instead of silently opening Settings.
+    if (!getActiveMainModelList().length && getMainModelList().some(specBlockedByPrivacy)) {
+        throw new Error(getPrivacyLevel() === 'local'
+            ? 'Settings → Privacy is set to Local, which allows only models on this machine or your local network, and none is in your priority list. Add one under Settings → Models → Add custom model (for example http://localhost:11434/v1), or set Privacy to Default.'
+            : 'Settings → Privacy is set to Provider-only, and the models in your priority list (NVIDIA, Kilo) cannot be called from a browser without the Cloudflare Worker. Add another provider, or set Privacy to Default.');
+    }
 
     // Key guard: check local key AND CF Worker shared key via specHasKey.
     // When media routing kept the priority list's provider, check its first active spec: a
@@ -1509,9 +1566,12 @@ function stopNow(): void {
  *  land in whatever chat is open when they arrive. Returns false when the user declined to stop a running Autopilot, or when the turn did not wind down within 5 s (nothing is replaced then). */
 async function stopTurnAndWait(): Promise<boolean> {
     const busy = () => aiBusy() || turnsInFlight() > 0;
-    if (!busy()) return true;
     // Autopilot owns the chat: stopping the turn ends the whole run, so that is the user's call.
-    if (aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
+    if (busy() && aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
+    // Messages queued behind the running turn were written for the conversation that is being replaced: left in
+    // the queue they would start as soon as the stopped turn ends, in whatever chat and project is open then.
+    MsgQueue.clear();
+    if (!busy()) return true;
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
     if (busy()) {   // a tool that ignores cancellation: do not replace the conversation under it
@@ -1732,7 +1792,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { cancelSendPreparation, stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat, turnsInFlight, stopTurnAndWait };

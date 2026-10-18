@@ -16,7 +16,7 @@
 // - /api/execute runs with credentials stripped from the environment (secret-env.ts). It still runs
 //   as the user; see the approval defaults in config.ts.
 
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir, readdir, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { configDir, loadDotenv } from './dotenv.js';
@@ -675,13 +675,17 @@ export function createDevApi(opts: DevApiOptions) {
             else { jsonErr(res, 400, `Unsupported language: ${language}`); return; }
 
             tmpDir = await mkdtemp(join(tmpdir(), 'fg_'));
+            // What was copied in, by path inside the run directory: the bytes (to tell a changed file from an
+            // untouched one without decoding it) and the name the browser knows it by (to report deletions).
+            const sent = new Map<string, { bytes: Buffer; name: string }>();
             for (const [relPath, content] of Object.entries(files)) {
                 const safe = normalize(join(tmpDir, relPath));
                 if (!safe.startsWith(tmpDir + sep)) continue;
                 await mkdir(dirname(safe), { recursive: true });
                 // Binary files are tagged '\x00BIN\x00<base64>' by the browser
-                if (content.startsWith('\x00BIN\x00')) await writeFile(safe, Buffer.from(content.slice(5), 'base64'));
-                else await writeFile(safe, content, 'utf-8');
+                const bytes = content.startsWith('\x00BIN\x00') ? Buffer.from(content.slice(5), 'base64') : Buffer.from(content, 'utf-8');
+                await writeFile(safe, bytes);
+                sent.set(relative(tmpDir, safe), { bytes, name: relPath });
             }
 
             let stdout = '', stderr = '', exitCode = 0;
@@ -690,10 +694,10 @@ export function createDevApi(opts: DevApiOptions) {
                 const [bin, binArgs] = execIsolation() === 'bwrap'
                     ? ['bwrap', [...bwrapArgs(tmpDir, env.PATH ?? '', homedir()), '--', cmd[0], ...cmd[1]]]
                     : cmd;
-                const r = await execFileAsync(bin, binArgs, {
-                    cwd: tmpDir, timeout: EXECUTE_TIMEOUT_MS, env,
-                    maxBuffer: 10 * 1024 * 1024,
-                });
+                const running = spawnCapture(bin, binArgs, { cwd: tmpDir, timeout: EXECUTE_TIMEOUT_MS, env, maxBuffer: 10 * 1024 * 1024 });
+                // The browser went away (Stop, closed tab): end the command, and what it started, instead of letting it run on.
+                res.on('close', () => { if (!res.writableEnded) running.killTree(); });
+                const r = await running.result;
                 stdout = r.stdout; stderr = r.stderr;
             } catch (err: any) {
                 stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
@@ -702,11 +706,14 @@ export function createDevApi(opts: DevApiOptions) {
                 if (failure.note) stderr = stderr ? `${stderr}\n${failure.note}` : failure.note;
             }
 
-            const filesWritten: Record<string, string> = {};
+            if (res.destroyed || res.writableEnded) return;   // nobody is waiting for the result
+            const filesWritten: Record<string, string> = Object.create(null);
+            const seen = new Set<string>();   // every file still there after the run, whatever its kind
             const walk = async (dir: string): Promise<void> => {
                 for (const entry of await readdir(dir, { withFileTypes: true })) {
                     const abs = join(dir, entry.name);
                     if (entry.isDirectory()) { await walk(abs); continue; }
+                    seen.add(relative(tmpDir!, abs));
                     // Skip symlinks: agent code inside the sandbox can create a dangling symlink
                     // to any host path (e.g. ~/.config/freegent/credentials), and readFile would
                     // follow it outside the sandbox namespace. O_NOFOLLOW is a second line of
@@ -716,20 +723,18 @@ export function createDevApi(opts: DevApiOptions) {
                     try {
                         const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
                         const rawBytes = await fh.readFile().finally(() => fh.close());
-                        // Detect binary content by checking for null bytes in the first 8KB
-                        if (rawBytes.subarray(0, 8192).includes(0)) {
-                            const b64Tagged = '\x00BIN\x00' + rawBytes.toString('base64');
-                            if ((files[rel] ?? '') !== b64Tagged) filesWritten[rel] = b64Tagged;
-                        } else {
-                            const content = rawBytes.toString('utf-8');
-                            if (files[rel] !== content && ('\x00BIN\x00' + Buffer.from(content).toString('base64')) !== files[rel])
-                                filesWritten[rel] = content;
-                        }
+                        // Untouched files are recognised by their bytes. Decoding first replaced the invalid
+                        // bytes of a non-UTF-8 file with U+FFFD and then took that for a change.
+                        if (sent.get(rel)?.bytes.equals(rawBytes)) continue;
+                        const text = outputAsText(rawBytes);
+                        filesWritten[rel] = text ?? '\x00BIN\x00' + rawBytes.toString('base64');
                     } catch { /* unreadable */ }
                 }
             };
             await walk(tmpDir);
-            jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten });
+            // Files the run removed or renamed: the browser must not keep them.
+            const filesDeleted = [...sent].filter(([rel]) => !seen.has(rel)).map(([, v]) => v.name);
+            jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten, ...(filesDeleted.length ? { files_deleted: filesDeleted } : {}) });
         } catch (err: any) {
             jsonErr(res, 500, String(err));
         } finally {
@@ -921,6 +926,43 @@ export function createDevApi(opts: DevApiOptions) {
     }
 
     return { middleware };
+}
+
+/** Run a command and collect its output, like execFile, but in a process group of its own (not on Windows) so that the whole
+ *  tree can be ended: execFile does not pass `detached` on to spawn, and killing only the shell left what it started running.
+ *  Rejects like execFile does (code, signal, killed, stdout, stderr), so execFailure() reads the result the same way. */
+export function spawnCapture(bin: string, args: string[], opts: { cwd: string; env: Record<string, string>; timeout: number; maxBuffer: number }):
+    { result: Promise<{ stdout: string; stderr: string }>; killTree: () => void } {
+    const child = spawn(bin, args, { cwd: opts.cwd, env: opts.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', size = 0, timedOut = false, overflow = false;
+    const killTree = () => {
+        try { if (child.pid && process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); }
+        catch { try { child.kill('SIGKILL'); } catch {} }
+    };
+    const timer = setTimeout(() => { timedOut = true; killTree(); }, opts.timeout);
+    const collect = (isErr: boolean) => (chunk: string) => {
+        size += Buffer.byteLength(chunk);
+        if (size > opts.maxBuffer) { overflow = true; killTree(); return; }
+        if (isErr) stderr += chunk; else stdout += chunk;
+    };
+    child.stdout!.setEncoding('utf8').on('data', collect(false));
+    child.stderr!.setEncoding('utf8').on('data', collect(true));
+    const result = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        child.on('error', err => { clearTimeout(timer); reject(Object.assign(err, { stdout, stderr })); });
+        child.on('close', (code, signal) => {
+            clearTimeout(timer);
+            if (overflow) return reject(Object.assign(new Error('stdout/stderr maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', stdout, stderr }));
+            if (code === 0 && !signal) return resolve({ stdout, stderr });
+            reject(Object.assign(new Error(`Command failed (${signal ?? code})`), { code: code ?? undefined, signal: signal ?? undefined, killed: !!signal && (timedOut || signal === 'SIGKILL'), stdout, stderr }));
+        });
+    });
+    return { result, killTree };
+}
+
+/** A file's bytes as text when they are text (valid UTF-8 without NUL in the first 8 KB), else null: those travel as base64. */
+export function outputAsText(bytes: Buffer): string | null {
+    if (bytes.subarray(0, 8192).includes(0)) return null;
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
 }
 
 // How a failed execFile ended. A timeout rejects with { code: null, killed: true, signal } — not

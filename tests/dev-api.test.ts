@@ -203,6 +203,86 @@ describe('dev API over HTTP', () => {
         } finally { delete process.env.FG_TEST_SECRET_API_KEY; }
     });
 
+    describe('/api/execute file round trip (codex campaign 6, cases 036, 050-056)', () => {
+        const run = async (code: string, files: Record<string, string> = {}, language = 'bash') =>
+            (await api('/api/execute', { method: 'POST', body: JSON.stringify({ language, code, files }) })).json();
+        const BIN = '\x00BIN\x00';
+
+        it('an untouched non-UTF-8 file is not reported as changed, and a changed one keeps its exact bytes', async () => {
+            const bytes = Buffer.from([0xff, 0x80, 0xfd, 0xfe]);
+            const out = await run('cat nonutf8.bin >/dev/null; printf "\\377\\200" > made.bin', { 'nonutf8.bin': BIN + bytes.toString('base64'), 'text.txt': 'é' });
+            expect(out.files_written['nonutf8.bin']).toBeUndefined();
+            expect(out.files_written['text.txt']).toBeUndefined();
+            expect(Buffer.from(out.files_written['made.bin'].slice(5), 'base64')).toEqual(Buffer.from([0xff, 0x80]));
+            expect(out.files_written['made.bin'].startsWith(BIN)).toBe(true);
+        });
+
+        it('a non-UTF-8 byte after the first 8 KB is not lossy-decoded either', async () => {
+            const bytes = Buffer.concat([Buffer.alloc(8192, 0x41), Buffer.from([0x00, 0xff])]);
+            const out = await run('true', { 'big.bin': BIN + bytes.toString('base64') });
+            expect(out.files_written['big.bin']).toBeUndefined();
+            const nul = Buffer.concat([Buffer.alloc(8192, 0x41), Buffer.from([0xff])]);   // no NUL at all, invalid UTF-8
+            const out2 = await run('true', { 'late.bin': BIN + nul.toString('base64') });
+            expect(out2.files_written['late.bin']).toBeUndefined();
+        });
+
+        it('reports removed and renamed files', async () => {
+            const out = await run('rm gone.txt; mv from.txt to.txt', { 'gone.txt': 'a', 'from.txt': 'b', 'keep.txt': 'c' });
+            expect(out.files_deleted.sort()).toEqual(['from.txt', 'gone.txt']);
+            expect(out.files_written['to.txt']).toBe('b');
+            expect(out.files_written['keep.txt']).toBeUndefined();
+        });
+
+        it('an empty file sent with the run exists in it', async () => {
+            const out = await run('test -e pkg/__init__.py && echo HERE || echo MISSING', { 'pkg/__init__.py': '' });
+            expect(out.stdout).toContain('HERE');
+            expect(out.files_deleted).toBeUndefined();
+        });
+
+        it('spawnCapture ends the whole process tree, not only the shell (no bubblewrap needed)', async () => {
+            const { spawnCapture } = await import('../dev-api.ts');
+            const { execSync } = await import('node:child_process');
+            const alive = () => execSync('pgrep -f "[s]leep 31.7183" || true').toString().trim();
+            const run = spawnCapture('bash', ['-c', 'sleep 31.7183 & wait'], { cwd: '/tmp', env: { PATH: process.env.PATH! }, timeout: 60000, maxBuffer: 1 << 20 });
+            const rejected = run.result.then(() => 'ok', e => e);
+            for (let i = 0; i < 40 && !alive(); i++) await new Promise(r => setTimeout(r, 100));
+            expect(alive()).not.toBe('');
+            run.killTree();
+            await rejected;
+            for (let i = 0; i < 40 && alive(); i++) await new Promise(r => setTimeout(r, 100));
+            expect(alive()).toBe('');
+        }, 20000);
+
+        it('spawnCapture reports exit codes, timeouts and runaway output like execFile did', async () => {
+            const { spawnCapture, execFailure } = await import('../dev-api.ts');
+            const env = { PATH: process.env.PATH! };
+            const ok = await spawnCapture('bash', ['-c', 'echo out; echo err >&2'], { cwd: '/tmp', env, timeout: 5000, maxBuffer: 1 << 20 }).result;
+            expect(ok).toEqual({ stdout: 'out\n', stderr: 'err\n' });
+            const failed = await spawnCapture('bash', ['-c', 'echo partial; exit 7'], { cwd: '/tmp', env, timeout: 5000, maxBuffer: 1 << 20 }).result.catch(e => e);
+            expect(execFailure(failed).exit_code).toBe(7);
+            expect(failed.stdout).toBe('partial\n');
+            const slow = await spawnCapture('bash', ['-c', 'sleep 5'], { cwd: '/tmp', env, timeout: 300, maxBuffer: 1 << 20 }).result.catch(e => e);
+            expect(execFailure(slow).exit_code).toBe(124);
+            const loud = await spawnCapture('bash', ['-c', 'yes | head -c 200000'], { cwd: '/tmp', env, timeout: 5000, maxBuffer: 1000 }).result.catch(e => e);
+            expect(execFailure(loud).note).toMatch(/more than 10 MB/);
+            const missing = await spawnCapture('definitely-not-a-command', [], { cwd: '/tmp', env, timeout: 5000, maxBuffer: 1000 }).result.catch(e => e);
+            expect(execFailure(missing).note).toMatch(/Could not run: ENOENT/);
+        }, 20000);
+
+        it('ends the command when the browser goes away', async () => {
+            const { execSync } = await import('node:child_process');
+            const alive = () => execSync('pgrep -f "[s]leep 31.4159" || true').toString().trim();
+            const ac = new AbortController();
+            const p = realFetch(`http://127.0.0.1:${port}/api/execute`, { method: 'POST', signal: ac.signal,
+                headers: { 'Content-Type': 'application/json', 'X-FG-Token': TOKEN }, body: JSON.stringify({ language: 'bash', code: 'sleep 31.4159; echo done' }) }).catch(() => null);
+            for (let i = 0; i < 40 && !alive(); i++) await new Promise(r => setTimeout(r, 100));
+            expect(alive()).not.toBe('');
+            ac.abort(); await p;
+            for (let i = 0; i < 40 && alive(); i++) await new Promise(r => setTimeout(r, 100));
+            expect(alive()).toBe('');
+        }, 20000);
+    });
+
     it('GET proxy only reaches public addresses (it serves fetch_url and previews)', async () => {
         for (const u of ['http://127.0.0.1:8000/v1/models', 'http://192.168.1.1/admin', 'http://169.254.169.254/'])
             expect((await api(`/api/proxy?url=${encodeURIComponent(u)}`)).status, u).toBe(403);

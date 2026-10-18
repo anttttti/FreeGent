@@ -3,11 +3,17 @@
 import { escapeHtml } from './html-escape.js';
 import { judgeExpectation, summarizeExpectations, type Expectation, type ExpectResult } from './page-expect.js';
 import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
+import { previewKindOfName, mimeOfName } from './mime.js';
+import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
+import { sandboxCspMeta } from './privacy.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 
-// Escape for use inside a double-quoted attribute selector (file names may contain " or \).
-function _attrEsc(v: unknown): string { return String(v).replace(/["\\]/g, '\\$&'); }
+// Escape for use inside a double-quoted attribute selector. File names may contain " and \, and even line breaks, which
+// a selector string must not hold raw (the name "line\nbreak.txt" made querySelector throw while opening its tab).
+function _attrEsc(v: unknown): string {
+    return String(v).replace(/["\\]/g, '\\$&').replace(/[\n\r\f]/g, c => '\\' + c.charCodeAt(0).toString(16) + ' ').replace(/\0/g, '\uFFFD');
+}
 
 function activateTab(key) {
     // Rail nav button active state
@@ -76,7 +82,8 @@ function openFileTab(name) {
     // Shared reference: wired up in the .md loading block below.
     let _mdToggleBtn: HTMLButtonElement | null = null;
 
-    if (/\.(png|jpe?g|gif|webp|bmp|ico|avif|pdf|xlsx|xls|ods|pptx|ppt|docx|doc|odt)$/i.test(name)) {
+    const previewKind = previewKindOfName(name);
+    if (previewKind) {
         hdr.append(nameEl, dlBtn); // no save button for binary files
     } else if (/\.(html?|svg)$/i.test(name)) {
         const previewBtn = document.createElement('button');
@@ -106,7 +113,7 @@ function openFileTab(name) {
     document.getElementById('tab-content').appendChild(panel);
 
     // Binary/visual file types have no code editor — they display as a preview.
-    const isPreview = /\.(png|jpe?g|gif|webp|bmp|ico|avif|pdf|xlsx|xls|ods|pptx|ppt|docx|doc|odt)$/i.test(name);
+    const isPreview = !!previewKind;
     const ft: any = { tab, panel, editor: null, savedContent: '', isPreview };
     fileTabs.set(name, ft);
     activateTab(name);
@@ -187,7 +194,7 @@ function openFileTab(name) {
 
     if (/\.(xlsx|xls|ods)$/i.test(name)) {
         editorWrap.textContent = 'Loading…';
-        readWorkspaceFile?.(name).then(rec => {
+        readWorkspaceFile?.(name).then(async rec => {
             if (!rec?.content || !XLSX) {
                 editorWrap.textContent = 'Spreadsheet preview unavailable.';
                 return;
@@ -196,7 +203,7 @@ function openFileTab(name) {
                 ? _base64ToUint8?.(rec.content)
                 : new TextEncoder().encode(rec.content);
             if (!bytes) { editorWrap.textContent = 'Could not decode spreadsheet.'; return; }
-            const wb = XLSX.read(bytes, { type: 'array' });
+            const wb = XLSX.read(await fixXlsxCharRefs(bytes), { type: 'array' });
             editorWrap.textContent = '';
             editorWrap.style.cssText = 'flex:1;overflow:auto;padding:12px;';
             wb.SheetNames.forEach(sheetName => {
@@ -218,14 +225,86 @@ function openFileTab(name) {
         return;
     }
 
-    if (/\.(pptx|ppt)$/i.test(name)) {
+    if (previewKind === 'legacy-office') {
         editorWrap.textContent = '';
-        editorWrap.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;';
-        editorWrap.textContent = 'PowerPoint preview not available in the browser — download the file to open it.';
+        editorWrap.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;padding:16px;text-align:center;';
+        editorWrap.textContent = 'This legacy Office format cannot be previewed in the browser — download the file to open it, or ask the agent to convert it to .docx / .pptx / PDF.';
         return;
     }
 
-    if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(name)) {
+    if (previewKind === 'pptx' || previewKind === 'odf' || previewKind === 'docx') {
+        editorWrap.textContent = 'Loading…';
+        readWorkspaceFile?.(name).then(async rec => {
+            if (!rec?.content) { editorWrap.textContent = 'Preview unavailable — file is empty.'; return; }
+            const bytes = rec.encoding === 'base64' ? _base64ToUint8?.(rec.content) : new TextEncoder().encode(rec.content);
+            if (!bytes) { editorWrap.textContent = 'Could not decode the file.'; return; }
+            editorWrap.textContent = '';
+            editorWrap.style.cssText = 'flex:1;overflow:auto;padding:16px 20px;box-sizing:border-box;';
+            if (previewKind === 'docx') {
+                // mammoth's HTML goes into a script-less sandboxed frame, never into the page itself.
+                const mammoth = (globalThis as any).mammoth;
+                if (!mammoth) { editorWrap.textContent = 'Document reader could not load; check the connection and reopen the file.'; return; }
+                const html = (await mammoth.convertToHtml({ arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) })).value;
+                editorWrap.style.cssText = 'flex:1;display:flex;padding:0;overflow:hidden;height:100%;';
+                const frame = document.createElement('iframe');
+                frame.setAttribute('sandbox', '');
+                frame.style.cssText = 'flex:1;border:none;width:100%;height:100%;background:#fff;';
+                frame.srcdoc = '<!DOCTYPE html><meta charset="utf-8"><style>body{font:15px/1.55 system-ui,sans-serif;max-width:46em;margin:0 auto;padding:20px;color:#222}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px}</style>' + html;
+                editorWrap.appendChild(frame);
+                return;
+            }
+            if (previewKind === 'pptx') {
+                const slides = pptxSlides(bytes);
+                if (!slides.length) { editorWrap.textContent = 'No slides found in this presentation.'; return; }
+                slides.forEach((text, i) => {
+                    const card = document.createElement('div');
+                    card.style.cssText = 'border:1px solid var(--border,#444);border-radius:6px;padding:12px 16px;margin:0 0 12px;max-width:820px;';
+                    const h = document.createElement('div');
+                    h.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:6px;';
+                    h.textContent = `Slide ${i + 1}`;
+                    const body = document.createElement('div');
+                    body.style.cssText = 'white-space:pre-wrap;font-size:14px;';
+                    body.textContent = text || '(no text)';
+                    card.append(h, body);
+                    editorWrap.appendChild(card);
+                });
+                const note = document.createElement('div');
+                note.style.cssText = 'font-size:12px;color:var(--muted);';
+                note.textContent = 'Text outline only — download the file for layout, images and notes.';
+                editorWrap.appendChild(note);
+                return;
+            }
+            const pre = document.createElement('pre');
+            pre.style.cssText = 'margin:0;font-family:inherit;font-size:14px;white-space:pre-wrap;word-break:break-word;';
+            pre.textContent = odfText(bytes) || '(no text)';
+            editorWrap.appendChild(pre);
+        }).catch(e => { editorWrap.textContent = 'Error loading document: ' + e.message; });
+        return;
+    }
+
+    if (previewKind === 'audio' || previewKind === 'video') {
+        editorWrap.textContent = 'Loading…';
+        readWorkspaceFile?.(name).then(rec => {
+            if (!rec?.content) { editorWrap.textContent = 'Preview unavailable — file is empty.'; return; }
+            const bytes = rec.encoding === 'base64' ? _base64ToUint8?.(rec.content) : new TextEncoder().encode(rec.content);
+            if (!bytes) { editorWrap.textContent = 'Could not decode the file.'; return; }
+            const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mimeOfName(name) }));
+            ft._blobUrl = url;
+            editorWrap.textContent = '';
+            editorWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;box-sizing:border-box;overflow:auto;';
+            const el = document.createElement(previewKind) as HTMLMediaElement;
+            el.controls = true; el.preload = 'metadata'; el.src = url;
+            el.style.cssText = previewKind === 'video' ? 'max-width:100%;max-height:100%;border-radius:4px;background:#000;' : 'width:min(100%,520px);';
+            const fail = document.createElement('div');
+            fail.style.cssText = 'display:none;color:var(--muted);font-size:13px;text-align:center;';
+            fail.textContent = `Your browser cannot play this ${previewKind} format — download the file to open it.`;
+            el.onerror = () => { el.style.display = 'none'; fail.style.display = ''; };
+            editorWrap.append(el, fail);
+        }).catch(e => { editorWrap.textContent = `Error loading ${previewKind}: ` + e.message; });
+        return;
+    }
+
+    if (previewKind === 'image') {
         editorWrap.textContent = 'Loading…';
         (readFileAsDataUrl?.(name) ?? agentReadFile(name)).then(dataUrl => {
             editorWrap.textContent = '';
@@ -234,6 +313,10 @@ function openFileTab(name) {
             img.src = dataUrl;
             img.alt = name.split('/').pop();
             img.style.cssText = 'max-width:100%;height:auto;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+            img.onerror = () => {
+                editorWrap.textContent = 'Your browser cannot display this image format — download the file to open it.';
+                editorWrap.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;padding:16px;text-align:center;';
+            };
             editorWrap.appendChild(img);
         }).catch(e => {
             editorWrap.textContent = 'Error loading image: ' + e.message;
@@ -277,7 +360,9 @@ function openFileTab(name) {
                         editWrap.style.display = 'flex';
                         saveBtn.style.display = '';
                         if (!ft.editor) {
-                            ft.editor = await createEditor(editWrap, name, ft.savedContent, {
+                            // One editor however often the button is pressed while it loads (the editor library
+                            // comes from the network): a second press used to start a second editor in the same panel.
+                            ft._editorLoading ||= createEditor(editWrap, name, ft.savedContent, {
                                 onSave: doSave,
                                 onChange(newContent: string) {
                                     const dirty = newContent !== ft.savedContent;
@@ -285,6 +370,9 @@ function openFileTab(name) {
                                     saveBtn.classList.toggle('file-unsaved', dirty);
                                 },
                             });
+                            const made = await ft._editorLoading;
+                            ft._editorLoading = null;
+                            if (!ft.editor) ft.editor = made;
                             if (!ft.editor) saveBtn.style.display = 'none';
                         }
                     } else {
@@ -701,6 +789,9 @@ window.fetch=function(u,opts){
 </script>
 `;
     html = html.includes('</head>') ? html.replace('</head>', shimTag + '</head>') : shimTag + html;
+    // Local privacy level: the page's own fetch/XHR may reach only this machine (the CSP must precede the scripts).
+    const _csp = sandboxCspMeta();
+    if (_csp) html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + _csp) : _csp + html;
 
     return html;
 }
@@ -1048,6 +1139,64 @@ function notifyAgentFileWritten(path: string, content: string) {
     if (saveBtn) { saveBtn.textContent = '⚠ File changed'; saveBtn.title = 'The agent changed this file while you were editing it. Save asks before overwriting.'; }
 }
 
+/** Close every open file and preview tab at once, discarding unsaved editor buffers. For Clear project and project
+ *  import, after the user confirmed: the files those tabs show are gone. */
+function closeAllFileTabs() {
+    for (const [key, ft] of [...fileTabs]) {
+        try { ft.editor?.destroy(); } catch {}
+        if (ft._blobUrl) URL.revokeObjectURL(ft._blobUrl);
+        ft.tab.remove();
+        ft.panel.remove();
+        fileTabs.delete(key);
+    }
+    document.querySelectorAll('.workspace-file-row.tab-open').forEach(r => r.classList.remove('tab-open'));
+    document.body.classList.remove('preview-mode');
+    if (document.querySelector('#tab-content > .tab-panel.active') === null) activateTab('chat');
+}
+
+// The key of the tab on screen: a built-in panel's data-panel, or the name of an open file tab.
+function _activeTabKey(): string | null {
+    for (const [key, ft] of fileTabs) if (ft.panel?.classList.contains('active')) return key;
+    return document.querySelector('#tab-content > .tab-panel.active')?.getAttribute('data-panel') ?? null;
+}
+
+// A workspace file was written by anything (upload, shell, agent, another tab) while it is open in a tab: the tab
+// shows the new version. An editor with unsaved edits keeps them and says the file changed underneath.
+const _tabRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function refreshOpenFileTab(name: string) {
+    if (!fileTabs.has(name)) return;
+    clearTimeout(_tabRefreshTimers.get(name));
+    _tabRefreshTimers.set(name, setTimeout(async () => {
+        _tabRefreshTimers.delete(name);
+        const ft = fileTabs.get(name);
+        if (!ft) return;
+        const isMd = /\.md$/i.test(name);
+        if (ft.editor) {
+            const content = await agentReadFile(name).catch(() => null);
+            if (typeof content !== 'string' || !fileTabs.has(name)) return;
+            const doc = ft.editor.state.doc.toString();
+            const saveBtn = ft.panel.querySelector('.file-save-btn');
+            if (doc === content) { ft.savedContent = content; return; }   // the editor's own Save
+            if (doc !== ft.savedContent) {                                  // unsaved edits stay
+                if (saveBtn) { saveBtn.textContent = '⚠ File changed'; saveBtn.title = 'This file changed while you were editing it. Save asks before overwriting.'; }
+                return;
+            }
+            if (!isMd) {
+                setEditorContent(ft.editor, content);
+                ft.savedContent = content;
+                if (saveBtn) { saveBtn.textContent = '↑ Save'; saveBtn.classList.remove('file-unsaved'); }
+                return;
+            }
+        }
+        // Previews (image, document, rendered Markdown, …) and a clean Markdown tab are built from the file when the tab
+        // opens: build it again, and keep the tab the reader was looking at.
+        const shown = _activeTabKey();
+        closeFileTab(name);
+        openFileTab(name);
+        if (shown && shown !== name) activateTab(shown);
+    }, 150));
+}
+
 function notifyLocalFileChanged(fullPath, content) {
     scheduleArtifactRefresh(fullPath.replace(/^local\//, ''));
     const ft = fileTabs.get(fullPath);
@@ -1126,4 +1275,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { applyToolbarDefault, activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { applyToolbarDefault, activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, refreshOpenFileTab, closeAllFileTabs, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });

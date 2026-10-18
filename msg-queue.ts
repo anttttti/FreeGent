@@ -64,6 +64,8 @@ export function shift(): QueuedMsg | undefined {
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
+/** Drop every queued message (the conversation they were written for is being replaced). */
+export function clear(): void { if (_queue.length) { _queue.length = 0; _notify(); } }
 export function peek(): QueuedMsg | undefined           { return _queue[0]; }
 export function getAll(): readonly QueuedMsg[]          { return [..._queue]; }
 export function size(): number                          { return _queue.length; }

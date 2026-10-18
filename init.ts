@@ -1,7 +1,7 @@
 // init.js — FreeGent: DOMContentLoaded bootstrap, wires all modules together
 // Depends on: all other modules (loaded last)
 import { sanitizePastedHtml } from './paste-sanitize.js';
-import { installPassHeader } from './proxy.js';
+import { installPassHeader, installPrivacyGuard } from './proxy.js';
 import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
@@ -121,6 +121,7 @@ installDevLog();   // capture errors/warnings from the start; sends only while a
 
 document.addEventListener('DOMContentLoaded', async () => {
     installPassHeader();
+    installPrivacyGuard();
     await loadServerKeys(); // load env-var keys from Python server before anything else
     // Query the CF Worker for shared provider keys (non-blocking — re-renders model lists when done)
     loadCfWorkerKeys?.().catch(() => {});
@@ -289,6 +290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ── Input keydown — send, Tab-complete, ↑/↓ history recall, Cmd+K ────
     let _historyIdx = -1; // -1 = not navigating history
+    let _recalledText: string | null = null; // the message ↑/↓ last put in the composer
 
     const input = document.getElementById('agent-input');
     if (input) {
@@ -305,26 +307,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (accepted) { e.preventDefault(); autoResizeTextarea(input); _updateSendBtnVisibility?.(); }
             }
 
-            // ↑ / ↓ to walk through previous user messages (only when input is empty).
+            // ↑ / ↓ to walk through previous user messages: from an empty composer, and from a recalled message that has
+            // not been edited (so repeated ↑ goes further back; before, the first recalled message ended the walk).
             // Uses _userInputHistory (filled at send time) instead of the chat history so that
             // compaction — which rebuilds the history from scratch — never erases recall.
-            if (e.key === 'ArrowUp' && !(input.textContent?.trim())) {
+            const _text = () => (input.innerText ?? input.textContent ?? '').trim();
+            const _recalling = () => _historyIdx >= 0 && _recalledText !== null && _text() === _recalledText.trim();
+            // A recalled multi-line message keeps ↑ for moving inside it, until the caret is at its very start.
+            const _caretAtStart = () => {
+                const sel = window.getSelection();
+                if (!sel?.rangeCount || !sel.isCollapsed || !input.contains(sel.anchorNode)) return false;
+                const r = sel.getRangeAt(0).cloneRange();
+                r.selectNodeContents(input); r.setEnd(sel.anchorNode!, sel.anchorOffset);
+                return r.toString().length === 0;
+            };
+            if (e.key === 'ArrowUp' && (!input.textContent?.trim() || (_recalling() && (!_recalledText!.includes('\n') || _caretAtStart())))) {
+                if (!input.textContent?.trim()) _historyIdx = -1;   // an emptied composer starts again from the latest message
                 e.preventDefault();
                 const hist: string[] = (_userInputHistory ?? []);
                 if (!hist.length) return;
                 _historyIdx = Math.min(hist.length - 1, _historyIdx + 1);
-                _setInputText?.(input, hist[hist.length - 1 - _historyIdx] ?? '');
+                _recalledText = hist[hist.length - 1 - _historyIdx] ?? '';
+                _setInputText?.(input, _recalledText);
                 autoResizeTextarea(input);
                 _updateSendBtnVisibility?.();
             }
-            if (e.key === 'ArrowDown' && _historyIdx >= 0) {
+            if (e.key === 'ArrowDown' && _historyIdx >= 0 && _recalling()) {
                 e.preventDefault();
                 _historyIdx--;
                 if (_historyIdx < 0) {
+                    _recalledText = null;
                     _setInputText?.(input, '');
                 } else {
                     const hist: string[] = (_userInputHistory ?? []);
-                    _setInputText?.(input, hist[hist.length - 1 - _historyIdx] ?? '');
+                    _recalledText = hist[hist.length - 1 - _historyIdx] ?? '';
+                    _setInputText?.(input, _recalledText);
                 }
                 autoResizeTextarea(input);
                 _updateSendBtnVisibility?.();
@@ -387,6 +404,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Escape → stop generation
         if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey) {
             if (agentStreaming) { stopNow?.(); return; }
+            if ((window as any).cancelSendPreparation?.()) return;   // a send still waiting for its attachments
             // Also close message search if open
             if (document.getElementById('msg-search-modal')?.style.display !== 'none') {
                 closeMsgSearch(); return;
@@ -476,9 +494,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ── Message content search ─────────────────────────────────────────────
     let _msgSearchIdx = -1;
 
+    // Where the reader was typing or reading when search opened: closing the search returns there (a hidden modal's
+    // focused input leaves focus on BODY, and typing then goes nowhere until the composer is clicked).
+    let _msgSearchOpener: HTMLElement | null = null;
     function openMsgSearch(): void {
         const modal = document.getElementById('msg-search-modal');
         if (!modal) return;
+        const a = document.activeElement as HTMLElement | null;
+        _msgSearchOpener = a && a !== document.body && !modal.contains(a) ? a : null;
         modal.style.display = 'flex';
         const inp = document.getElementById('msg-search-input') as HTMLInputElement | null;
         inp?.focus();
@@ -488,9 +511,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         _msgSearchIdx = -1;
     }
 
-    function closeMsgSearch(): void {
+    function closeMsgSearch(restoreFocus = true): void {
         const modal = document.getElementById('msg-search-modal');
         if (modal) modal.style.display = 'none';
+        const back = _msgSearchOpener; _msgSearchOpener = null;
+        if (!restoreFocus) return;
+        const target = back && document.contains(back) ? back : document.getElementById('agent-input');
+        (target as HTMLElement | null)?.focus?.();
     }
 
     let _msgSearchSeq = 0;
@@ -539,9 +566,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function msgSearchSelect(chatId: string): void {
         if (!chatId) return;
-        closeMsgSearch();
-        if (chatId !== activeChatId)
-            switchToChat?.(chatId);
+        closeMsgSearch(false);
+        // The result is a conversation: show it, also when search was opened from Settings, Tasks or a file tab.
+        activateTab?.('chat');
+        const done = chatId !== activeChatId ? switchToChat?.(chatId) : undefined;
+        Promise.resolve(done).then(() => document.getElementById('agent-input')?.focus());
     }
 
     function _fmtDate(ts: number): string {
@@ -817,6 +846,10 @@ Object.assign(window, {
 // handlers run).
 const _FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const _modalOpeners = new Map<HTMLElement, HTMLElement | null>();
+// The last element focused outside any dialog. A dialog that focuses its own first field while it is being built (the task
+// and model-edit dialogs do) has already moved focus by the time _enhanceModal runs, so "the element focused now" would
+// record a field inside the dialog as its opener, and closing the dialog left focus on <body>.
+let _lastOutsideFocus: HTMLElement | null = null;
 
 // Name every form control that has no accessible name. The source order of the existing forms gives
 // the label: an associated <label>, the first cell of its table row, the closest preceding
@@ -839,7 +872,8 @@ export function labelControls(root: ParentNode = document): void {
 
 function _enhanceModal(ov: HTMLElement) {
     if (_modalOpeners.has(ov)) return;
-    _modalOpeners.set(ov, document.activeElement as HTMLElement | null);
+    const _now = document.activeElement as HTMLElement | null;
+    _modalOpeners.set(ov, _now && ov.contains(_now) ? _lastOutsideFocus : _now);
     const box = (ov.querySelector('.fg-modal') as HTMLElement) || ov;
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
@@ -882,6 +916,10 @@ function initModalA11y() {
         document.querySelectorAll(sel).forEach(el => new MutationObserver(relabel).observe(el, { childList: true, subtree: true }));
     document.querySelectorAll<HTMLElement>('.fg-modal-overlay').forEach(_enhanceModal);
     document.addEventListener('keydown', _modalKeydown, true);
+    document.addEventListener('focusin', e => {
+        const t = e.target as HTMLElement | null;
+        if (t && t !== document.body && !t.closest?.('.fg-modal-overlay')) _lastOutsideFocus = t;
+    }, true);
     new MutationObserver(muts => {
         for (const m of muts) {
             m.addedNodes.forEach(n => {
