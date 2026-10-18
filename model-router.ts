@@ -206,6 +206,16 @@ export function parseQuotaResetMs(msg: string, now: number = Date.now()): number
     const wait = at - now;
     return wait > 0 && wait <= 40 * 86_400_000 ? wait : null;
 }
+// A wait the error text asks for: "Retry after 40s", "retry in about 30 seconds", "try again in 2 minutes", or a JSON-style
+// `retry_after: 452` (seconds). Null when it names none or asks for more than a day (that is account quota, see above).
+export function parseRetryHintMs(msg: string): number | null {
+    const m = String(msg || '').match(/(?:retry|try again)(?:ing)?\s+(?:after|in)\s+(?:about\s+|approximately\s+|around\s+)?(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/i)
+          || String(msg || '').match(/retry_after\W{1,3}(\d+(?:\.\d+)?)()/i);
+    if (!m) return null;
+    const u = (m[2] || 's').toLowerCase();
+    const ms = parseFloat(m[1]) * (u.startsWith('ms') || u.startsWith('milli') ? 1 : u[0] === 'h' ? 3_600_000 : u[0] === 'm' ? 60_000 : 1_000);
+    return ms > 0 && ms <= 86_400_000 ? Math.ceil(ms) : null;
+}
 // Cool down every other free model of the endpoint's provider (same flat cooldown). Free = id ends in
 // ":free" / "-free", or, for a provider whose failing model carries no such suffix, any catalog model of it.
 function _cooldownFreeSiblings(endpoint: any, ms: number): void {
@@ -247,19 +257,21 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
     }
     // Escalate to 1h penalty when no successful request has landed since the last cooldown
     // on this endpoint — the provider is persistently refusing; back off hard.
+    // The provider names the wait (Retry-After header, or "retry after 40s" in the text): use it, whatever the history.
+    const named = exactMs ?? parseRetryHintMs(_msg);
     const hadSuccess = _endpointSuccessSinceCooldown.get(key) ?? false; // no entry = no prior success → penalty applies
     _endpointSuccessSinceCooldown.set(key, false); // reset; recordSuccess() will flip back on next hit
     // A user's own endpoint (custom / vLLM) has no shared quota to protect: back off exponentially
     // (capped at RATE_LIMIT_MAX_MS) so a persistent 429 never reads as "waiting 1.0h".
-    if (!hadSuccess && !isCustomEndpoint(endpoint)) {
+    if (!hadSuccess && named === null && !isCustomEndpoint(endpoint)) {
         _endpointCooldown.set(key, Date.now() + RATE_LIMIT_PENALTY_MS);
         return;
     }
     const hits = (_endpointHits.get(key) || 0) + 1;
     _endpointHits.set(key, hits);
     const base  = RATE_LIMIT_COOLDOWN_MS();
-    const delay = exactMs !== null
-        ? Math.max(exactMs, base)
+    const delay = named !== null
+        ? Math.max(named, base)
         : Math.min(base * Math.pow(2, hits - 1), RATE_LIMIT_MAX_MS);
     _endpointCooldown.set(key, Date.now() + delay);
 }

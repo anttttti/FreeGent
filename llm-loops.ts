@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -20,7 +20,7 @@ import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
-import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
+import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
 import { newVerification, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { runCompletionGates } from './completion-gates.js';
@@ -1949,7 +1949,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // HTTP 400 from a cloud provider = permanent availability failure (free-tier
                 // restriction, deprecated endpoint, etc.) — pause the model so it is skipped
                 // in future turns but remains visible in the model table for the user to manage.
-                if ((e as any).status === 400 && !isCustomEndpoint(_oEp)) {
+                if ((e as any).status === 400 && !isCustomEndpoint(_oEp) && !isProviderSide400(e.message)) {
                     const _pauseKey = `${_oEp.provider}|${_oEp.model}`;
                     if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {
                         const _paused = getPausedMainModels();
@@ -2539,6 +2539,10 @@ const FN_TAG_STRIP_BENCH_AT = 6;
 const FN_TAG_STRIP_BENCH_MS = 15 * 60_000;
 
 async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null, forceToolCall = false } = {}): Promise<any> {
+    // A saved priority list with no usable model (all paused, switched off or keyless) must not quietly fall back to the
+    // built-in Gemini default: the request would go to a model the user never listed.
+    if (!endpointOverride && !getActiveMainModelList().length && getMainModelList().length)
+        throw new Error('No model can be used: every model in the priority list is paused, switched off or has no API key. Resume one in Settings → Models.');
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;
     const provider = ep.provider ?? getProvider();

@@ -73,6 +73,14 @@ function isWeakProseTransient(e): boolean {
     return _WEAK_PROSE_RE.test(msg) && !_STRONG_PROSE_RE.test(msg);
 }
 
+// An HTTP 400 that says the provider failed, not that the request or the account is wrong (Vercel's stealth models:
+// "The stealth model could not complete the request"; the same request works a minute later). Such a 400 cools the model
+// down like a server error; it must not pause the model for good.
+export const ACCOUNT_PLAN_REFUSAL_RE = /free tier users do not have access|requires an active pro plan|requires available credits|balance is too low to use paid models/i;
+export function isProviderSide400(msg: string): boolean {
+    return /\bHTTP 400\b/.test(msg || '') && /could not complete the request|unable to process the request|try again|temporar|overload|at capacity|upstream/i.test(msg || '');
+}
+
 export function isTransient(e) {
     const msg = e.message || '';
     // Permanent configuration errors — model ID or endpoint wrong, retrying won't help
@@ -361,11 +369,15 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // also be about one request, or lift later.
         if (/HTTP 403/.test(e.message || '') && !_isLocalEp(ep) && !forWorker) {
             const refKey = `${ep.provider}|${ep.model}`;
-            if (noteRefusal(ep) >= REFUSAL_LIMIT) {
+            // "Free tier users do not have access" / "requires an active Pro plan": the account can never use this model, so
+            // there is nothing to count; skip it for a day at the first answer.
+            const planRefusal = ACCOUNT_PLAN_REFUSAL_RE.test(e.message || '');
+            if (noteRefusal(ep) >= REFUSAL_LIMIT || planRefusal) {
                 const next = _anyFreeSpecSameFormat(refKey);
                 if (next) {
-                    _markExactCooldown(ep, REFUSAL_COOLDOWN_MS);
-                    onNote(`[${refKey}][refused ${REFUSAL_LIMIT} times (HTTP 403): skipped for ${Math.round(REFUSAL_COOLDOWN_MS / 60_000)} min, using ${next}]`);
+                    const skipMs = planRefusal ? 24 * 3_600_000 : REFUSAL_COOLDOWN_MS;
+                    _markExactCooldown(ep, skipMs);
+                    onNote(`[${refKey}][${planRefusal ? 'not available to this account (HTTP 403)' : `refused ${REFUSAL_LIMIT} times (HTTP 403)`}: skipped for ${skipMs >= 3_600_000 ? Math.round(skipMs / 3_600_000) + ' h' : Math.round(skipMs / 60_000) + ' min'}, using ${next}]`);
                     setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next);
                     return 0;
                 }
@@ -467,11 +479,14 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
 // have said "rate limited" or "maximum context length" — this is what actually reaches them.
 // prefix: optional string prepended to the message (e.g. "[provider|model]").
 export async function _httpErrorFromResponse(resp, prefix = '') {
-    const retryAfterMs = _parseRetryAfter(resp);
+    let retryAfterMs = _parseRetryAfter(resp);
     const text = await resp.text().catch(() => '');
     let msg = `HTTP ${resp.status}`;
     try {
         const j = JSON.parse(text);
+        // Nous Portal's fair-share 429 gives the wait in the body ("retry_after": seconds), not in a header.
+        const bodyWait = Number(j.retry_after ?? j.error?.retry_after);
+        if (retryAfterMs === null && bodyWait > 0 && bodyWait < 86_400) retryAfterMs = Math.ceil(bodyWait) * 1000;
         const detail = j.message || j.detail || j.error?.message || (typeof j.error === 'string' ? j.error : '') || '';
         if (detail) msg += ': ' + detail;
         const raw = j.error?.metadata?.raw;
@@ -517,7 +532,7 @@ export function _parseRetryAfter(resp) {
 
 // Window bridge for free-variable access from sibling modules (house pattern).
 Object.assign(window, {
-    _isTimeoutError, isTransient, parseContextOverflow, retryDelay, fmtDelay,
+    _isTimeoutError, isTransient, isProviderSide400, parseContextOverflow, retryDelay, fmtDelay,
     sleepInterruptible, withRetry, _parseRetryAfter, _httpErrorFromResponse,
     _makeOAIRetryHandler,
 });
