@@ -24,7 +24,6 @@ export const caseCmd: Command = {
   name: "case",
   description: "Pattern matching (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "case: this is a shell language construct that must be interpreted by the shell\nUsage: case WORD in PATTERN) COMMANDS ;; esac\n";
     return 2;
   },
@@ -34,7 +33,6 @@ export const esac: Command = {
   name: "esac",
   description: "End case statement (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "esac: can only be used to close a case statement\n";
     return 2;
   },

@@ -3,8 +3,8 @@
  */
 
 import type { Command } from './index';
-import { bytesToText, textToBytes } from '../utils/bytes';
-import { parseArgs, readInput } from './flags';
+import { textToBytes } from '../utils/bytes';
+import { parseArgs } from './flags';
 
 // POSIX CRC32 lookup table (polynomial 0x04C11DB7, MSB-first)
 const crcTable = new Uint32Array(256);
@@ -42,7 +42,6 @@ export const cksumCmd: Command = {
 
       if (positional.length === 0) {
         // Read from stdin
-        const encoder = new TextEncoder();
         const data = textToBytes(ctx.stdin);
         const crc = posixCksum(data);
         ctx.stdout += `${crc} ${data.length}\n`;

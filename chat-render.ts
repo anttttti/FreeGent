@@ -748,7 +748,6 @@ export function createResponsePlaceholder(container: null | undefined = null, op
 
     let stepCount: number     = 0;
     let taskId: number        = 0;
-    let selectedBadge: Element | null = null;
 
     if (opts.continueFrom) {
         const { oldDiv, cutSeq } = opts.continueFrom;
@@ -957,12 +956,12 @@ export function createResponsePlaceholder(container: null | undefined = null, op
             badge.addEventListener('click', () => {
                 const pane = badge.closest('.agent-msg')?.querySelector<HTMLElement>('.seq-selected-detail') ?? selectedEl;
                 if (badge.classList.contains('seq-selected')) {
-                    badge.classList.remove('seq-selected'); pane.innerHTML = ''; selectedBadge = null;
+                    badge.classList.remove('seq-selected'); pane.innerHTML = '';
                 } else {
                     badge.closest('.agent-msg')?.querySelectorAll('.seq-task.seq-selected').forEach(b => b.classList.remove('seq-selected'));
                     pane.innerHTML = '';
                     pane.appendChild(colEl);
-                    badge.classList.add('seq-selected'); selectedBadge = badge;
+                    badge.classList.add('seq-selected');
                     requestAnimationFrame(() => pane.scrollIntoView({ block: 'nearest' }));
                 }
             });

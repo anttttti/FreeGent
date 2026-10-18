@@ -41,9 +41,6 @@ export const kill: Command = {
         return 0;
       }
     }
-
-    const signal = values.s || "TERM";
-
     if (positional.length === 0) {
       ctx.stderr += "kill: usage: kill [-s SIGNAL] PID...\n";
       return 1;

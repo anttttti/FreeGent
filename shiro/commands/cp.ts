@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { cannotCreate, parseArgs, readFileText, readdirEntries, statEntry } from './flags';
+import { cannotCreate, parseArgs, readdirEntries, statEntry } from './flags';
 export const cp: Command = {
   name: "cp",
   description: "Copy files and directories",

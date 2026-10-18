@@ -3,7 +3,7 @@
  */
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { parseArgs } from './flags';
 
 function primeFactors(n: number): number[] {
   if (n <= 1) return [];

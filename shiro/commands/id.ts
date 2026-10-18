@@ -13,8 +13,6 @@ export const id: Command = {
     const showGroup = flags.g || flags.group;
     const showGroups = flags.G || flags.groups;
     const showName = flags.n || flags.name;
-    const showReal = flags.r || flags.real;
-
     // In browser environment, we use mock values
     const uid = 1000;
     const gid = 1000;

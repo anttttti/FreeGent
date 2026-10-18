@@ -19,7 +19,7 @@ import * as Store from './tui-store.js';
 import { sendMessage, stopAgent, newSession, setMouseHandler, setScrollHandler, runCompact, listWorkspaceSessions, resumeSession } from './fg-tui.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
-import { SETTINGS_DEF, keyedFields, type FieldDef, type SectionDef } from './panel-defs.js';
+import { SETTINGS_DEF, keyedFields, type FieldDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { friendlyLabel } from './step-label.js';
 

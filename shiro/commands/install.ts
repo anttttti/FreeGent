@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readFileText, statEntry } from './flags';
+import { parseArgs, statEntry } from './flags';
 import { chmod } from './chmod';
 export const install: Command = {
   name: "install",

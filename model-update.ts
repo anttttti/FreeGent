@@ -318,10 +318,11 @@ async function _fetchGoogleModels(): Promise<FetchResult> {
 // Non-chat Groq model patterns: speech transcription, safety classifiers, TTS, meta-routers
 const _GROQ_EXCL = /^whisper|prompt-guard|canopylabs\/orpheus|^groq\/compound|safeguard/i;
 
-async function _fetchGroqModels(): Promise<FetchResult> {
+// Groq and NVIDIA list models the same way (OpenAI-style /v1/models); only the endpoint, key and
+// the non-chat pattern differ.
+async function _fetchExclFilteredModels(url: string, key: string, nonChat: RegExp): Promise<FetchResult> {
     try {
-        const key = typeof getGroqKey === 'function' ? getGroqKey() : (localStorage.getItem('fg_groq_key') ?? '');
-        const json = await _proxyBearer('https://api.groq.com/openai/v1/models', key);
+        const json = await _proxyBearer(url, key);
         if (!json) return { live: [], rejected: [] };
         const data: any[] = json?.data ?? [];
         const created = _createdReader(data);
@@ -331,7 +332,7 @@ async function _fetchGroqModels(): Promise<FetchResult> {
 
         for (const m of data) {
             const lm: LiveModel = { id: m.id as string, name: m.id as string, created: created(m) };
-            if (_GROQ_EXCL.test(m.id)) {
+            if (nonChat.test(m.id)) {
                 rejected.push({ model: lm, reason: 'non-chat' });
             } else {
                 live.push(lm);
@@ -341,6 +342,11 @@ async function _fetchGroqModels(): Promise<FetchResult> {
     } catch {
         return { live: [], rejected: [] };
     }
+}
+
+async function _fetchGroqModels(): Promise<FetchResult> {
+    const key = typeof getGroqKey === 'function' ? getGroqKey() : (localStorage.getItem('fg_groq_key') ?? '');
+    return _fetchExclFilteredModels('https://api.groq.com/openai/v1/models', key, _GROQ_EXCL);
 }
 
 // Non-chat / deprecated / duplicated NVIDIA NIM model patterns.
@@ -371,28 +377,8 @@ const _NVIDIA_EXCL = new RegExp(
 );
 
 async function _fetchNvidiaModels(): Promise<FetchResult> {
-    try {
-        const key = typeof getNvidiaKey === 'function' ? getNvidiaKey() : (localStorage.getItem('fg_nvidia_key') ?? '');
-        const json = await _proxyBearer('https://integrate.api.nvidia.com/v1/models', key);
-        if (!json) return { live: [], rejected: [] };
-        const data: any[] = json?.data ?? [];
-        const created = _createdReader(data);
-
-        const live: LiveModel[] = [];
-        const rejected: { model: LiveModel; reason: FilterKey }[] = [];
-
-        for (const m of data) {
-            const lm: LiveModel = { id: m.id as string, name: m.id as string, created: created(m) };
-            if (_NVIDIA_EXCL.test(m.id)) {
-                rejected.push({ model: lm, reason: 'non-chat' });
-            } else {
-                live.push(lm);
-            }
-        }
-        return { live, rejected };
-    } catch {
-        return { live: [], rejected: [] };
-    }
+    const key = typeof getNvidiaKey === 'function' ? getNvidiaKey() : (localStorage.getItem('fg_nvidia_key') ?? '');
+    return _fetchExclFilteredModels('https://integrate.api.nvidia.com/v1/models', key, _NVIDIA_EXCL);
 }
 
 // Non-chat Nous Portal patterns — embeddings, image-gen, TTS, video, multimodal-gen outputs

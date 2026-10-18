@@ -1,6 +1,6 @@
-import type { Command, CommandContext } from './index';
+import type { Command } from './index';
 import { sha256 } from './checksums';
-import { bytesToText, textToBytes } from '../utils/bytes';
+import { bytesToText } from '../utils/bytes';
 import { readOperandBytes as readBytes } from './flags';
 
 // GNU md5sum / sha1sum / sha256sum / sha512sum: "HASH  NAME" per file ("-" for stdin), -c to check

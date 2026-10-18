@@ -6,7 +6,7 @@
 import { CPU } from './cpu';
 import { VirtualMemory } from './memory';
 import { Decoder } from './decode';
-import { loadElf, parseElf64, elfInfoString } from './elf';
+import { loadElf } from './elf';
 import { LinuxSyscalls, X86Exit } from './syscalls';
 import type { FileSystem } from '../filesystem';
 

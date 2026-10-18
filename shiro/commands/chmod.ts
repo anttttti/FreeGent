@@ -4,7 +4,7 @@
  * Returns the new mode given the current mode, or null if invalid.
  */
 import type { Command } from './index';
-import { parseArgs, readdirEntries, statEntry } from './flags';
+import { readdirEntries, statEntry } from './flags';
 import { applySymbolicMode } from '../utils/permissions';
 
 export const chmod: Command = {

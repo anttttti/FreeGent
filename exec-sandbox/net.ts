@@ -1,6 +1,6 @@
 // exec-sandbox/net.ts — network access for code in the exec sandbox. entry.ts installs
 // sandboxFetch as the frame's fetch, so shiro's curl/wget/node/python3/npm and the JS runner all
-// use it; the Pyodide worker has its own copy of the fallback (pyodide-worker.ts).
+// use it; the JS and Pyodide workers share the same fallback in worker-fetch.ts.
 //
 // Requests go out directly first. The frame's origin is opaque (Origin: null), so only sites that
 // allow any origin (Access-Control-Allow-Origin: *) answer — npm, PyPI, raw.githubusercontent.com

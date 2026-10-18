@@ -25,7 +25,6 @@ export const forCmd: Command = {
   name: "for",
   description: "Iterate over list (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "for: this is a shell language construct that must be interpreted by the shell\nUsage: for VAR in LIST; do COMMANDS; done\n";
     return 2;
   },
@@ -35,7 +34,6 @@ export const inCmd: Command = {
   name: "in",
   description: "Part of for loop (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "in: can only be used as part of a for loop or case statement\n";
     return 2;
   },

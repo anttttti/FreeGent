@@ -78,7 +78,6 @@ export const set: Command = {
 
       // -exv... / +exv...
       if (arg.startsWith('-') && arg.length > 1 && arg[1] !== '-') {
-        const enable = true;
         for (let j = 1; j < arg.length; j++) {
           const ch = arg[j];
           const mapped = optionMap[ch];

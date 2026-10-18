@@ -413,7 +413,6 @@ export function createFsModule(deps: FsDeps): any {
       if (typeof flags === 'number') {
         const isWrite = (flags & 1) || (flags & 2); // O_WRONLY | O_RDWR
         const isAppend = flags & 1024; // O_APPEND
-        const isTrunc = flags & 512; // O_TRUNC
         f = isAppend ? 'a' : isWrite ? 'w' : 'r';
       } else {
         f = flags || 'r';

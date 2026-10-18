@@ -7,9 +7,6 @@ import type { Command } from './index';
 import { textToBytes } from '../utils/bytes';
 import { parseSize } from './flags';
 
-const enc = new TextEncoder();
-
-
 /** Suffix number → text: alphabetic (aa, ab …) or numeric / hex with a fixed width. */
 function suffix(i: number, len: number, kind: 'alpha' | 'num' | 'hex', from: number): string | null {
   if (kind === 'alpha') {

@@ -1,5 +1,5 @@
-import type { Command, CommandContext } from './index';
-import { bytesToText, textToBytes } from '../utils/bytes';
+import type { Command } from './index';
+import { bytesToText } from '../utils/bytes';
 import { readOperandBytes as readBytes } from './flags';
 
 // GNU base64: encode bytes, wrapped at 76 columns (-w N, 0 = no wrapping); -d decodes (-i ignores

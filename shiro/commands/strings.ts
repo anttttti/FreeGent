@@ -10,8 +10,6 @@ export const strings: Command = {
 
     const minLength = parseInt(values.n || values.bytes || "4", 10);
     const printFilename = flags.f;
-    const all = flags.a;
-
     try {
       const files = positional.length > 0 ? positional : ["-"];
       const output: string[] = [];

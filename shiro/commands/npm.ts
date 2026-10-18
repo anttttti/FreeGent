@@ -1,6 +1,6 @@
 import type { Command, CommandContext } from './index';
 import { extractTarGzToFS, type FileSystemWriter } from '../utils/tar-utils';
-import { maxSatisfying, satisfiesRange } from '../utils/semver-utils';
+import { maxSatisfying } from '../utils/semver-utils';
 
 /**
  * npm: Browser-native package manager for Node.js packages
@@ -314,37 +314,24 @@ async function resolveDependencyTree(
   return resolved;
 }
 
-/**
- * Download and extract a package tarball
- */
-async function installPackage(
-  pkg: ResolvedPackage,
-  ctx: CommandContext
-): Promise<void> {
-  ctx.stdout += `  + ${pkg.name}@${pkg.version}\n`;
+/** Split `name`, `name@range`, `@scope/name` or `@scope/name@range` into its parts (no range = "latest"). */
+function parsePackageSpec(spec: string): { name: string; version: string } {
+  const at = spec.lastIndexOf('@');
+  // A leading "@" is the scope marker, not a version separator.
+  if (at > 0) return { name: spec.slice(0, at), version: spec.slice(at + 1) };
+  return { name: spec, version: 'latest' };
+}
 
-  // Download tarball
+/** Download a package tarball and extract it into `packageDir` (created if missing). */
+async function downloadAndExtract(pkg: ResolvedPackage, ctx: CommandContext, packageDir: string): Promise<void> {
   const response = await fetch(pkg.tarballUrl);
   if (!response.ok) {
     throw new Error(`Failed to download ${pkg.name}: ${response.statusText}`);
   }
+  const tarballData = new Uint8Array(await response.arrayBuffer());
 
-  const arrayBuffer = await response.arrayBuffer();
-  const tarballData = new Uint8Array(arrayBuffer);
-
-  // Create node_modules directory if needed
-  const nodeModulesPath = ctx.fs.resolvePath('node_modules', ctx.cwd);
-  try {
-    await ctx.fs.mkdir(nodeModulesPath);
-  } catch {
-    // Already exists
-  }
-
-  // Create package directory
-  const packageDir = ctx.fs.resolvePath(`node_modules/${pkg.name}`, ctx.cwd);
   await ctx.fs.mkdir(packageDir, { recursive: true });
 
-  // Extract tarball to package directory
   let filesWritten = 0;
   const fsWriter: FileSystemWriter = {
     writeFile: async (path: string, data: Uint8Array) => {
@@ -362,6 +349,26 @@ async function installPackage(
 
   await extractTarGzToFS(tarballData, packageDir, fsWriter);
   ctx.stdout += `  ${filesWritten} files extracted\n`;
+}
+
+/**
+ * Download and extract a package tarball into node_modules
+ */
+async function installPackage(
+  pkg: ResolvedPackage,
+  ctx: CommandContext
+): Promise<void> {
+  ctx.stdout += `  + ${pkg.name}@${pkg.version}\n`;
+
+  // Create node_modules directory if needed
+  const nodeModulesPath = ctx.fs.resolvePath('node_modules', ctx.cwd);
+  try {
+    await ctx.fs.mkdir(nodeModulesPath);
+  } catch {
+    // Already exists
+  }
+
+  await downloadAndExtract(pkg, ctx, ctx.fs.resolvePath(`node_modules/${pkg.name}`, ctx.cwd));
 }
 
 /**
@@ -474,25 +481,7 @@ async function npmInstall(ctx: CommandContext): Promise<number> {
     if (!pkg[targetSection]) pkg[targetSection] = {};
 
     for (const spec of packagesToInstall) {
-      let name: string, version: string;
-      if (spec.startsWith('@')) {
-        // Scoped package: @scope/pkg or @scope/pkg@version
-        const lastAt = spec.lastIndexOf('@');
-        if (lastAt > 0) {
-          name = spec.slice(0, lastAt);
-          version = spec.slice(lastAt + 1);
-        } else {
-          name = spec;
-          version = 'latest';
-        }
-      } else if (spec.includes('@')) {
-        const atIdx = spec.indexOf('@');
-        name = spec.slice(0, atIdx);
-        version = spec.slice(atIdx + 1);
-      } else {
-        name = spec;
-        version = 'latest';
-      }
+      const { name, version } = parsePackageSpec(spec);
 
       depsToResolve[name] = version;
       pkg[targetSection]![name] = version === 'latest' ? '*' : version;
@@ -564,24 +553,7 @@ async function npmInstallGlobal(
 
   const depsToResolve: Record<string, string> = {};
   for (const spec of packagesToInstall) {
-    let name: string, version: string;
-    if (spec.startsWith('@')) {
-      const lastAt = spec.lastIndexOf('@');
-      if (lastAt > 0) {
-        name = spec.slice(0, lastAt);
-        version = spec.slice(lastAt + 1);
-      } else {
-        name = spec;
-        version = 'latest';
-      }
-    } else if (spec.includes('@')) {
-      const atIdx = spec.indexOf('@');
-      name = spec.slice(0, atIdx);
-      version = spec.slice(atIdx + 1);
-    } else {
-      name = spec;
-      version = 'latest';
-    }
+    const { name, version } = parsePackageSpec(spec);
     depsToResolve[name] = version;
   }
 
@@ -626,35 +598,7 @@ async function installPackageToDir(
   baseDir: string
 ): Promise<void> {
   ctx.stdout += `  + ${pkg.name}@${pkg.version}\n`;
-
-  const response = await fetch(pkg.tarballUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${pkg.name}: ${response.statusText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const tarballData = new Uint8Array(arrayBuffer);
-
-  const packageDir = `${baseDir}/${pkg.name}`;
-  await ctx.fs.mkdir(packageDir, { recursive: true });
-
-  let filesWritten = 0;
-  const fsWriter: FileSystemWriter = {
-    writeFile: async (path: string, data: Uint8Array) => {
-      await ctx.fs.writeFile(path, data);
-      filesWritten++;
-    },
-    mkdir: async (path: string) => {
-      try {
-        await ctx.fs.mkdir(path, { recursive: true });
-      } catch {
-        // Directory might exist
-      }
-    },
-  };
-
-  await extractTarGzToFS(tarballData, packageDir, fsWriter);
-  ctx.stdout += `  ${filesWritten} files extracted\n`;
+  await downloadAndExtract(pkg, ctx, `${baseDir}/${pkg.name}`);
 }
 
 /**
