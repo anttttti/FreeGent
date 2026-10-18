@@ -107,7 +107,7 @@ export const REPEAT_WINDOW = 12;
 // tried / seen: hashes of every call and every result of the turn (see _pathEscapeAvailable and
 // _creditProgress); pathEscapes: untried-query probes already let through per endpoint; credits:
 // refusals already forgiven for progress.
-export type RepeatGuard = {
+type RepeatGuard = {
     recent: Array<[callSig: string, resSig: string]>; refused: number;
     recentPaths?: Array<[pathSig: string, resSig: string]>;
     tried?: number[]; seen?: number[]; pathEscapes?: Record<string, number>; credits?: number;
@@ -190,7 +190,7 @@ export function _pathRepeatCount(g: RepeatGuard, pathSig: string | null): number
 // probes once the allowance is spent, are still refused; a probe that returns something different
 // restarts the endpoint's count by itself (_pathRepeatCount compares against the latest result).
 export const PATH_NOVEL_ESCAPES = 2;
-export function _pathEscapeAvailable(g: RepeatGuard, pathSig: string, callSig: string): boolean {
+function _pathEscapeAvailable(g: RepeatGuard, pathSig: string, callSig: string): boolean {
     if ((g.tried ?? []).includes(_fpHash(callSig))) return false;
     return (g.pathEscapes?.[pathSig] ?? 0) < PATH_NOVEL_ESCAPES;
 }
@@ -464,7 +464,7 @@ export function failureSignature(result: any): string {
 // re-running will not change it, and in SWE the error usually comes from the environment (v0.57
 // Verified xarray-4094: 13 identical pandas-2 `TypeError`s from the old xarray under test, stopped
 // at step 36 with no edit; v0.56 had resolved it). Worth one directed nudge before the stop.
-export const SAME_ERROR_GRACE_MIN = 4;
+const SAME_ERROR_GRACE_MIN = 4;
 export function sameErrorStreak(sigs: string[], n = SAME_ERROR_GRACE_MIN): string | null {
     if (sigs.length < n) return null;
     const last = sigs.slice(-n);

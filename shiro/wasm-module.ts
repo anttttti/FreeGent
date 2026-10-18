@@ -9,7 +9,7 @@
  * a matching one.
  */
 
-export interface MemoryImport { module: string; name: string; initial: number; maximum: number | undefined; wasShared: boolean }
+interface MemoryImport { module: string; name: string; initial: number; maximum: number | undefined; wasShared: boolean }
 
 /** Memory a compiled module expects the host to provide (set by compileWasm). */
 // Browsers may refuse structured-cloning a compiled module into an opaque-origin worker.

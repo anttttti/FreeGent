@@ -448,8 +448,8 @@ const _readLedgers = new WeakMap<Map<string, any>, _ReadLedger>();   // keyed by
 const _ledgerTicks = new WeakMap<_ReadLedger, number>();
 // A read of this file served in full this recently is still in context (compaction drops the
 // ledger): v0.59 re-served 219 of 245 repeat reads within 2 steps of a full copy.
-export const RECENT_READ_STEPS = 5;
-export const REDUNDANT_READS_BEFORE_REFUSAL = 3;
+const RECENT_READ_STEPS = 5;
+const REDUNDANT_READS_BEFORE_REFUSAL = 3;
 // Refusals per file before the guard gives way. A model that keeps asking for the same lines
 // after two refusals doesn't have them in view (pruned, compressed or compacted away): v0.56
 // Verified sympy-14531 was refused 25 of 36 reads, asking for 600–650 about 20 times until the
@@ -460,7 +460,7 @@ export const REDUNDANT_READ_REFUSALS_MAX = 2;
 // re-asked regardless — 13 times there, 45 in sympy-18189 — until the repeat guard stopped the run
 // with an empty patch. A fresh copy at the end of the context plus no read_file for a couple of
 // steps leaves editing, running code or answering.
-export const READ_STUBS_BEFORE_PAUSE = 2;
+const READ_STUBS_BEFORE_PAUSE = 2;
 // Whole-file reads longer than this may be cut down before the model sees them — not "covered".
 const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
 
@@ -699,11 +699,11 @@ export function _isReadOnlyCall(c: { name: string; args: any }): boolean {
 // copies, test-run output (report.xml, junit*.xml, .coverage, htmlcov/; v0.55 pytest-5692's whole
 // patch was an 87 KB report.xml). Never part of a fix: they should not be the only edit behind COMPLETED, and the
 // SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
-export const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
+const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
 // Test runner / packaging configuration. Edits to these are almost never the fix itself.
-export const _ENV_CONFIG_RE = /(?:^|\/)(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setup\.py|pyproject\.toml|\.coveragerc|requirements[\w.-]*\.txt)$/;
+const _ENV_CONFIG_RE = /(?:^|\/)(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setup\.py|pyproject\.toml|\.coveragerc|requirements[\w.-]*\.txt)$/;
 // Model-native tool-call markup left in a reply's text (Gemma-4: <|tool_call>, <tool_call|>, <|"|>).
-export const _BROKEN_CALL_RE = /<tool_call\|>|<\|tool_call>|<\|"\|>/;
+const _BROKEN_CALL_RE = /<tool_call\|>|<\|tool_call>|<\|"\|>/;
 export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
 
 // Test/packaging configuration changed in this run that the task doesn't name. Combines the loop's
@@ -758,7 +758,7 @@ let _turnExcludedTools: Set<string> | null = null;
 // with 5+ read stubs resolved 0 of 8, re-asking the same lines 13–45 times until the repeat guard
 // ended the run. Taking the tool away for a couple of steps forces a different action.
 let _stepPausedTools: Set<string> | null = null;
-export const TOOL_PAUSE_STEPS = 2;
+const TOOL_PAUSE_STEPS = 2;
 // A pause that expires after TOOL_PAUSE_STEPS changes nothing when the model's loop is longer than
 // that: v0.61 sympy-15875 re-asked for the same lines the step the pause ended, 33 pauses and 92
 // reads over 99 steps (3.0M tokens; v0.60 ended it at step 28 with 0.7M). So each further pause of
@@ -766,10 +766,10 @@ export const TOOL_PAUSE_STEPS = 2;
 export function pauseSteps(timesPausedBefore: number): number {
     return timesPausedBefore === 0 ? TOOL_PAUSE_STEPS : timesPausedBefore === 1 ? TOOL_PAUSE_STEPS * 2 : Infinity;
 }
-export const pauseText = (n: number): string => Number.isFinite(n) ? `for the next ${n} steps` : 'for the rest of this turn';
+const pauseText = (n: number): string => Number.isFinite(n) ? `for the next ${n} steps` : 'for the rest of this turn';
 // Below this share of the step budget a refused read still only pauses (there is room to recover);
 // past it the refusal counts toward the turn stop, which ends the turn with what the run has.
-export const READ_REFUSAL_FREE_SHARE = 0.6;
+const READ_REFUSAL_FREE_SHARE = 0.6;
 export function readRefusalIsFree(step: number, loopMax: number, timesPaused: number[]): boolean {
     return step < loopMax * READ_REFUSAL_FREE_SHARE && !timesPaused.some(n => n >= 3);
 }

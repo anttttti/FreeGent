@@ -17,7 +17,7 @@ const PT_INTERP = 3;
 const STACK_TOP = 0x7FFFFFF00000n;
 const STACK_SIZE = 0x200000; // 2MB stack
 
-export interface ElfInfo {
+interface ElfInfo {
   entryPoint: bigint;
   programHeaders: ProgramHeader[];
   isStaticLinked: boolean;
@@ -28,7 +28,7 @@ export interface ElfInfo {
   phNum: number;
 }
 
-export interface ProgramHeader {
+interface ProgramHeader {
   type: number;
   flags: number;
   offset: number;

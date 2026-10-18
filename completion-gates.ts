@@ -32,8 +32,8 @@ export interface GateContext {
     isScratchPath: (p: string) => boolean;
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
 }
-export interface GateHit { name: string; text: string; force: boolean }
-export interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
+interface GateHit { name: string; text: string; force: boolean }
+interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
 
 /** The preconditions every gate shares: a real COMPLETED, not a BLOCKED, with a step left to act on the nudge. */
 export function completionDeclared(c: GateContext): boolean {

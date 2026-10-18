@@ -64,7 +64,7 @@ NEXT: the next 1–3 concrete actions (tool + target), in order. Include exact c
 // tool call instead (fg-chat 2026-07-17: the "summary" was a bare <tool_call> fn-tag block);
 // that junk would replace the history and poison every later turn. compactHistory treats it as
 // a failed summary.
-export function _degenerateSummary(summary: string): boolean {
+function _degenerateSummary(summary: string): boolean {
     const t = (summary || '').trim();
     if (!t) return true;
     return /^\s*(?:<tool_call>|<function=|<invoke\b|\{["'](?:name|function)["']\s*:)/i.test(t);

@@ -11,7 +11,7 @@ import { isStaticHost } from './static-hosts.js';
 import { getPrivacyLevel, privacyBlockReason, proxiedTarget } from './privacy.js';
 
 export const DEFAULT_CF_WORKER = 'https://proxy.freegent.ai';
-export type ProxyKind = 'get' | 'post' | 'local';
+type ProxyKind = 'get' | 'post' | 'local';
 
 export function resolveProxy(kind: ProxyKind, manual = ''): string {
     // Settings → Privacy: below "Default" no hosted or custom Worker is used. The local server's own

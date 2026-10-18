@@ -18,72 +18,72 @@ import { memoryImports } from './wasm-module';
 
 // ── WASI errno constants ─────────────────────────────────────────────
 
-export const WASI_ESUCCESS      = 0;
-export const WASI_E2BIG         = 1;
-export const WASI_EACCES        = 2;
-export const WASI_EADDRINUSE    = 3;
-export const WASI_EBADF         = 8;
-export const WASI_EEXIST        = 20;
-export const WASI_EFAULT        = 21;
-export const WASI_EINVAL        = 28;
-export const WASI_EIO           = 29;
-export const WASI_EISDIR        = 31;
-export const WASI_ELOOP         = 32;
-export const WASI_ENAMETOOLONG  = 37;
-export const WASI_ENOENT        = 44;
-export const WASI_ENOSYS        = 52;
-export const WASI_ENOTDIR       = 54;
-export const WASI_ENOTEMPTY     = 55;
-export const WASI_EPERM         = 63;
-export const WASI_EAGAIN        = 6;
-export const WASI_ECHILD        = 12;
-export const WASI_EOVERFLOW     = 61;
-export const WASI_ESPIPE        = 70;
-export const WASI_ENOTCAPABLE   = 76;
+const WASI_ESUCCESS      = 0;
+const WASI_E2BIG         = 1;
+const WASI_EACCES        = 2;
+const WASI_EADDRINUSE    = 3;
+const WASI_EBADF         = 8;
+const WASI_EEXIST        = 20;
+const WASI_EFAULT        = 21;
+const WASI_EINVAL        = 28;
+const WASI_EIO           = 29;
+const WASI_EISDIR        = 31;
+const WASI_ELOOP         = 32;
+const WASI_ENAMETOOLONG  = 37;
+const WASI_ENOENT        = 44;
+const WASI_ENOSYS        = 52;
+const WASI_ENOTDIR       = 54;
+const WASI_ENOTEMPTY     = 55;
+const WASI_EPERM         = 63;
+const WASI_EAGAIN        = 6;
+const WASI_ECHILD        = 12;
+const WASI_EOVERFLOW     = 61;
+const WASI_ESPIPE        = 70;
+const WASI_ENOTCAPABLE   = 76;
 
 // ── WASI filetype constants ──────────────────────────────────────────
 
-export const WASI_FILETYPE_UNKNOWN          = 0;
-export const WASI_FILETYPE_BLOCK_DEVICE     = 1;
-export const WASI_FILETYPE_CHARACTER_DEVICE = 2;
-export const WASI_FILETYPE_DIRECTORY        = 3;
+const WASI_FILETYPE_UNKNOWN          = 0;
+const WASI_FILETYPE_BLOCK_DEVICE     = 1;
+const WASI_FILETYPE_CHARACTER_DEVICE = 2;
+const WASI_FILETYPE_DIRECTORY        = 3;
 export const WASI_FILETYPE_REGULAR_FILE     = 4;
-export const WASI_FILETYPE_SYMBOLIC_LINK    = 7;
+const WASI_FILETYPE_SYMBOLIC_LINK    = 7;
 
 // ── WASI fd flags / rights ───────────────────────────────────────────
 
-export const WASI_FDFLAG_APPEND   = 1;
-export const WASI_FDFLAG_DSYNC    = 2;
-export const WASI_FDFLAG_NONBLOCK = 4;
-export const WASI_FDFLAG_SYNC     = 16;
+const WASI_FDFLAG_APPEND   = 1;
+const WASI_FDFLAG_DSYNC    = 2;
+const WASI_FDFLAG_NONBLOCK = 4;
+const WASI_FDFLAG_SYNC     = 16;
 
 /** Every right bit defined by preview1 (0..28). Preopens and opened files advertise all of them so
  *  libc never refuses an open on capability grounds; real access control is the filesystem's. */
-export const WASI_RIGHTS_ALL              = (1n << 29n) - 1n;
-export const WASI_RIGHT_FD_READ             = 1n << 1n;
-export const WASI_RIGHT_FD_WRITE            = 1n << 6n;
-export const WASI_RIGHT_FD_SEEK             = 1n << 2n;
-export const WASI_RIGHT_FD_TELL             = 1n << 5n;
-export const WASI_RIGHT_FD_FILESTAT_GET     = 1n << 21n;
-export const WASI_RIGHT_PATH_OPEN           = 1n << 8n;
-export const WASI_RIGHT_PATH_CREATE_FILE    = 1n << 9n;
-export const WASI_RIGHT_PATH_CREATE_DIR     = 1n << 10n;
-export const WASI_RIGHT_PATH_READDIR        = 1n << 14n;
+const WASI_RIGHTS_ALL              = (1n << 29n) - 1n;
+const WASI_RIGHT_FD_READ             = 1n << 1n;
+const WASI_RIGHT_FD_WRITE            = 1n << 6n;
+const WASI_RIGHT_FD_SEEK             = 1n << 2n;
+const WASI_RIGHT_FD_TELL             = 1n << 5n;
+const WASI_RIGHT_FD_FILESTAT_GET     = 1n << 21n;
+const WASI_RIGHT_PATH_OPEN           = 1n << 8n;
+const WASI_RIGHT_PATH_CREATE_FILE    = 1n << 9n;
+const WASI_RIGHT_PATH_CREATE_DIR     = 1n << 10n;
+const WASI_RIGHT_PATH_READDIR        = 1n << 14n;
 
 // oflags
-export const WASI_O_CREAT     = 1;
-export const WASI_O_DIRECTORY = 2;
-export const WASI_O_EXCL      = 4;
-export const WASI_O_TRUNC     = 8;
+const WASI_O_CREAT     = 1;
+const WASI_O_DIRECTORY = 2;
+const WASI_O_EXCL      = 4;
+const WASI_O_TRUNC     = 8;
 
 // whence
-export const WASI_WHENCE_SET = 0;
-export const WASI_WHENCE_CUR = 1;
-export const WASI_WHENCE_END = 2;
+const WASI_WHENCE_SET = 0;
+const WASI_WHENCE_CUR = 1;
+const WASI_WHENCE_END = 2;
 
 // clock IDs
-export const WASI_CLOCK_REALTIME  = 0;
-export const WASI_CLOCK_MONOTONIC = 1;
+const WASI_CLOCK_REALTIME  = 0;
+const WASI_CLOCK_MONOTONIC = 1;
 
 // ── WasiExit — thrown to exit a WASM program ─────────────────────────
 
@@ -122,18 +122,18 @@ export interface ExecRequest {
   dirs?: string[];
 }
 /** Files and directory listings that changed behind a run's back (written by a program it exec'd). */
-export interface FsUpdates {
+interface FsUpdates {
   files: [string, Uint8Array | null, WasiFileStat][];
   dirs: [string, string[]][];
 }
 export interface ExecResult { stdout: string; stderr: string; code: number; updates?: FsUpdates }
 /** Thrown out of a program that called exec: it ends there and the driver runs the new program. */
-export class ExecSignal { constructor(public req: ExecRequest) {} }
+class ExecSignal { constructor(public req: ExecRequest) {} }
 
 // ── File descriptor abstraction ──────────────────────────────────────
 
 /** In-memory byte pipe shared by the two ends created by fd_pipe. */
-export interface PipeState { data: Uint8Array; len: number; readPos: number; writers: number }
+interface PipeState { data: Uint8Array; len: number; readPos: number; writers: number }
 
 export class FD {
   /** Absolute path in Shiro's virtual filesystem (null for stdio) */
@@ -216,7 +216,7 @@ export class FD {
 
 // ── Path normalization ───────────────────────────────────────────────
 
-export function normPath(p: string): string {
+function normPath(p: string): string {
   const parts = p.split('/');
   const stack: string[] = [];
   for (const part of parts) {
@@ -232,7 +232,7 @@ export function normPath(p: string): string {
 
 // ── WasiRT: the WASI runtime ────────────────────────────────────────
 
-export interface WasiFileStat {
+interface WasiFileStat {
   type:string; size:number; mtime:number; atime?:number; ctime?:number; mode?:number;
 }
 
@@ -279,7 +279,7 @@ export interface WasiJob {
   virtualCommandPaths?:string[];
 }
 
-export type WasiOperation =
+type WasiOperation =
     | {type:'write'; path:string; data:Uint8Array}
     | { type: 'delete'; path: string }
     | { type: 'mkdir'; path: string }

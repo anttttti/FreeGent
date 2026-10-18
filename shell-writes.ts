@@ -9,7 +9,7 @@
 // Not a shell parser: no variables, globs, functions or nested substitution. It errs toward fewer
 // paths, never toward inventing one from quoted text.
 
-export interface ShellWrites {
+interface ShellWrites {
     /** Files named as the target of a redirect, tee, sed -i or perl -i. */
     paths: string[];
     /** `patch` or `git apply` ran for real: the workspace changed whatever file the patch came from. */

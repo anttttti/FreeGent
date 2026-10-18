@@ -69,7 +69,7 @@ export function createNetModule(): any {
   };
 }
 
-export interface TlsDeps {
+interface TlsDeps {
   getBuiltinModule: (name: string) => any;
 }
 

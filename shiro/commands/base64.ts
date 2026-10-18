@@ -14,17 +14,13 @@ export function b64encode(bytes: Uint8Array): string {
   }
   return out;
 }
-export function b64decode(text: string): Uint8Array | null {
-  const r = b64decodeStream(text);
-  return r.ok ? r.bytes : null;
-}
 
 /**
  * Decodes as GNU base64 -d does: as a stream, every whole byte up to the first character outside
  * the alphabet (or a missing end of padding) comes out, then the input is "invalid" (ok = false).
  * Padding ends the data; whitespace (newlines) is skipped.
  */
-export function b64decodeStream(text: string): { bytes: Uint8Array; ok: boolean } {
+function b64decodeStream(text: string): { bytes: Uint8Array; ok: boolean } {
   const out: number[] = [];
   let acc = 0, bits = 0, chars = 0, ok = true, padded = false;
   for (const ch of text) {

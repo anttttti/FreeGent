@@ -22,15 +22,15 @@
 //
 // Phase 5 target — see agentharness_migration_v2.md Phase 5, §E four-store schema.
 
-export const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 1;
 export const MIGRATION_FLAG_KEY = 'fg:idb-migrated-v1';
 
 // ── Store key spaces ──────────────────────────────────────────────────────────
 
-export const STORE_SETTINGS          = 'settings';
-export const STORE_PROVIDER_KEYS     = 'providerKeys';
-export const STORE_SESSIONS          = 'sessions';
-export const STORE_CUSTOM_PROVIDERS  = 'customProviders';
+const STORE_SETTINGS          = 'settings';
+const STORE_PROVIDER_KEYS     = 'providerKeys';
+const STORE_SESSIONS          = 'sessions';
+const STORE_CUSTOM_PROVIDERS  = 'customProviders';
 
 // ── TypedStore ────────────────────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ export class TypedStore<T> {
 // ── AppStorage ────────────────────────────────────────────────────────────────
 
 /** Well-known key space for settings store. */
-export interface FWSettings {
+interface FWSettings {
     theme?:       'light' | 'dark' | 'system';
     promptMode?:  'minimal' | 'standard' | 'extended';
     language?:    string;

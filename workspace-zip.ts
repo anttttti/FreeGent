@@ -1,30 +1,12 @@
 // workspace-zip.ts — builds a ZIP archive from in-memory files (the Workspace "Download" button).
 // Deflated or stored entries, no ZIP64 (4 GiB limits), UTF-8 names.
 
-let _crcTable: Uint32Array | null = null;
-function crc32(data: Uint8Array): number {
-    if (!_crcTable) {
-        _crcTable = new Uint32Array(256);
-        for (let i = 0; i < 256; i++) {
-            let c = i;
-            for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-            _crcTable[i] = c >>> 0;
-        }
-    }
-    let c = 0xffffffff;
-    for (let i = 0; i < data.length; i++) c = _crcTable[(c ^ data[i]) & 0xff] ^ (c >>> 8);
-    return (c ^ 0xffffffff) >>> 0;
-}
+import { crc32 } from './shiro/commands/checksums';
+import { dosStamp } from './shiro/utils/dos-stamp';
 
 async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
     const out = new Blob([data as BlobPart]).stream().pipeThrough(new CompressionStream('deflate-raw'));
     return new Uint8Array(await new Response(out).arrayBuffer());
-}
-
-function dosStamp(ms: number): { time: number; date: number } {
-    const d = new Date(ms);
-    const y = Math.max(1980, d.getFullYear());
-    return { time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date: ((y - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate() };
 }
 
 export async function zipFiles(files: { name: string; data: Uint8Array; mtime?: number }[]): Promise<Uint8Array> {

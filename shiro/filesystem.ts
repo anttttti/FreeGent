@@ -53,7 +53,7 @@ const DB_NAME = 'shiro-fs';
 const DB_VERSION = 1;
 const STORE_NAME = 'files';
 
-export interface FSNode {
+interface FSNode {
   path: string;
   type: 'file' | 'dir' | 'symlink';
   content: Uint8Array | null;
@@ -111,13 +111,13 @@ function makeStat(node: FSNode): StatResult {
 }
 
 
-export type FSChangeEvent = 'write' | 'delete' | 'mkdir' | 'rename';
-export type FSChangeListener = (event: FSChangeEvent, path: string, newPath?: string) => void;
+type FSChangeEvent = 'write' | 'delete' | 'mkdir' | 'rename';
+type FSChangeListener = (event: FSChangeEvent, path: string, newPath?: string) => void;
 
 /**
  * Virtual filesystem provider for synthetic paths like /proc and /dev.
  */
-export interface VirtualFSProvider {
+interface VirtualFSProvider {
   /** Check if this provider handles the given path */
   handles(path: string): boolean;
   /** Read file content (returns null if path is a directory) */

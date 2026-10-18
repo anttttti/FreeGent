@@ -15,10 +15,10 @@ function _randomId(): string {
 
 /** One ID per page load. Carried by every error-log batch and every task chat log. */
 export const SESSION_ID: string = _randomId();
-export function getSessionId(): string { return SESSION_ID; }
-export function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'default'; }
 
-export interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
+function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'default'; }
+
+interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
 
 const MAX_TEXT = 2000;
 const MAX_QUEUE = 200;

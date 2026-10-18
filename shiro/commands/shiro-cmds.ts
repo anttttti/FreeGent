@@ -8,7 +8,7 @@ import type { Command } from './index';
 import { getAssociation } from '../file-associations';
 import { sha1sum, sha256sum, sha384sum, sha512sum } from './hashsum';
 
-export const rmCmd: Command = {
+const rmCmd: Command = {
   name: 'rm',
   description: 'Remove files or directories',
   async exec(ctx) {
@@ -38,7 +38,7 @@ export const rmCmd: Command = {
   },
 };
 
-export const lnCmd: Command = {
+const lnCmd: Command = {
   name: 'ln',
   description: 'Create links between files (requires native execution)',
   route:'native-only', parityScope:'capability-only', requirements:['filesystem links'],
@@ -67,7 +67,7 @@ export const lnCmd: Command = {
   },
 };
 
-export const colCmd:Command = {
+const colCmd:Command = {
   name:'col', description:'Filter reverse line feeds (requires a validated native-compatible utility)',
   route:'native-only', parityScope:'capability-only', requirements:['validated terminal filter'],
   async exec(ctx) {
@@ -76,7 +76,7 @@ export const colCmd:Command = {
   },
 };
 
-export const hostnameCmd: Command = {
+const hostnameCmd: Command = {
   name: 'hostname',
   description: 'Show system hostname',
   async exec(ctx) {
@@ -88,7 +88,7 @@ export const hostnameCmd: Command = {
 // Reports the userland the shell presents — Linux on x86-64, the ABI its static-binary emulator runs —
 // not the host it happens to run in. Scripts branch on `uname -s` (Linux vs Darwin) and `uname -m`;
 // "Shiro"/"wasm" matched none of their cases, and real bash prints Linux/x86_64 (coverage-uname-*).
-export const unameCmd: Command = {
+const unameCmd: Command = {
   name: 'uname',
   description: 'Print system information',
   async exec(ctx) {
@@ -108,7 +108,7 @@ export const unameCmd: Command = {
   },
 };
 
-export const whichCmd: Command = {
+const whichCmd: Command = {
   name: 'which',
   description: 'Locate a command',
   async exec(ctx) {
@@ -126,7 +126,7 @@ export const whichCmd: Command = {
   },
 };
 
-export const typeCmd: Command = {
+const typeCmd: Command = {
   name: 'type',
   description: 'Describe a command',
   async exec(ctx) {
@@ -137,7 +137,7 @@ export const typeCmd: Command = {
   },
 };
 
-export const rmdirCmd: Command = {
+const rmdirCmd: Command = {
   name: 'rmdir',
   description: 'Remove empty directories',
   async exec(ctx) {
@@ -185,7 +185,7 @@ export const rmdirCmd: Command = {
 };
 
 
-export const shasumCmd: Command = {
+const shasumCmd: Command = {
   name: 'shasum',
   description: 'Compute SHA checksums',
   async exec(ctx) {
@@ -212,7 +212,7 @@ export const shasumCmd: Command = {
   },
 };
 
-export const openCmd: Command = {
+const openCmd: Command = {
   name: 'open',
   description: 'Open files, directories, or URLs',
   parityScope:'integration-only',

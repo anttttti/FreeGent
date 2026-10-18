@@ -222,7 +222,7 @@ function stripParamAnnotations(params: string): string {
 // ── JSX Transform ──────────────────────────────────────────────────────────
 
 /** Quick check if source likely contains JSX */
-export function hasJSX(src: string): boolean {
+function hasJSX(src: string): boolean {
   return /<[A-Z]/.test(src) || /<[a-z]+[\s/>]/.test(src) || /<>/.test(src);
 }
 
@@ -587,7 +587,7 @@ export function stripShebang(src: string): string {
   return src;
 }
 
-export function transformBundledESM(src: string): string {
+function transformBundledESM(src: string): string {
   // Fast path for large bundled files (>500KB).
   // Bundled ESM files have thousands of string/template literals.
   // The full regex-based transform introduces quote characters in

@@ -117,7 +117,7 @@ async function _answerNet(d: any, target:Window): Promise<void> {
     }
 }
 
-export function sandboxScriptUrl(): string {
+function sandboxScriptUrl(): string {
     return new URL('fg-exec-sandbox.js', document.baseURI).href;
 }
 

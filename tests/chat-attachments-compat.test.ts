@@ -1,6 +1,6 @@
 import '../chat-attachments.ts';
 import * as postTurn from '../post-turn.ts';
-import { setMainAgentRole as setRoleObject } from '../state.ts';
+import { setMainAgentRoleObject as setRoleObject } from '../state.ts';
 import { setChatHistory } from '../chat-history.ts';
 import { buildRequestMessages } from '../payload-builder.ts';
 const W: any = window;

@@ -3,7 +3,7 @@
 // satisfies this interface.  The headless/bench path supplies NULL_RENDER_ADAPTER
 // so runTurn never touches DOM.
 
-export interface TaskHandle {
+interface TaskHandle {
     setModel(name: string): void;
     setPrompt(text: string): void;
     setRequest(json: string): void;

@@ -138,7 +138,7 @@ function _buildSrcdoc(body: string): string {
 
 // ── RuntimeMessageBridge ──────────────────────────────────────────────────────
 
-export type FrameMessageHandler = (msg: FrameToHostMessage) => void;
+type FrameMessageHandler = (msg: FrameToHostMessage) => void;
 
 /**
  * Typed postMessage forwarder between the host page and one sandboxed iframe.
@@ -202,7 +202,7 @@ export class RuntimeMessageBridge {
 
 // ── SandboxedOutputFrame ──────────────────────────────────────────────────────
 
-export interface SandboxedOutputFrameOptions {
+interface SandboxedOutputFrameOptions {
     /**
      * CSS height for the iframe. Default: 'auto' (no fixed height;
      * use a fixed value like '400px' for scrollable output).

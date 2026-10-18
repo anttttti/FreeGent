@@ -383,9 +383,9 @@ const _MAX_TURNS_PER_EPISODE = 5;
 // steps is not blocked: the next turn is a plain "Continue" (a fresh step budget, the chat history kept) until the task is
 // marked done or failed. Such turns do not count toward _MAX_TURNS_PER_EPISODE. The cap bounds a task that never converges
 // (this many full step budgets); past it the stop is handled as before, as a block.
-export const STEP_LIMIT_CONTINUE_PROMPT = 'Continue';
+const STEP_LIMIT_CONTINUE_PROMPT = 'Continue';
 export const MAX_STEP_LIMIT_CONTINUES = 25;
-export function shouldContinueAfterStepLimit(result: any, continuesSoFar: number): boolean {
+function shouldContinueAfterStepLimit(result: any, continuesSoFar: number): boolean {
     return !!result && typeof result === 'object' && isStepLimitStop(result.stop?.reason) && continuesSoFar < MAX_STEP_LIMIT_CONTINUES;
 }
 

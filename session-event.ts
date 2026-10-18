@@ -19,7 +19,7 @@ export type TurnEndReason =
     | { kind: 'max-turns' }
     | { kind: 'soft-stop' };
 
-export interface TokenUsage {
+interface TokenUsage {
     prompt_tokens: number;
     completion_tokens: number;
 }

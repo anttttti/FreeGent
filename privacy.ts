@@ -12,9 +12,8 @@
 // Libraries and runtimes that the page loads with <script> or import() (jsdelivr, esm.sh) are not fetch calls
 // and load at every level; the browser caches them afterwards.
 
-export type PrivacyLevel = 'default' | 'provider' | 'local';
-export const PRIVACY_LEVEL_KEY = 'fg_privacy_level';
-export const PRIVACY_LEVELS: readonly PrivacyLevel[] = ['default', 'provider', 'local'];
+type PrivacyLevel = 'default' | 'provider' | 'local';
+const PRIVACY_LEVEL_KEY = 'fg_privacy_level';
 
 export function parsePrivacyLevel(v: unknown): PrivacyLevel {
     return v === 'provider' || v === 'local' ? v : 'default';
@@ -84,7 +83,7 @@ export function privacyBlockReason(target: string, level: PrivacyLevel, ctx: Pri
 }
 
 /** Providers whose API sends no CORS headers (checked 2026-10-18), so a browser cannot call them without the Worker. */
-export const NO_BROWSER_CORS_PROVIDERS: ReadonlySet<string> = new Set(['nvidia', 'kilo']);
+const NO_BROWSER_CORS_PROVIDERS: ReadonlySet<string> = new Set(['nvidia', 'kilo']);
 
 /** True when a model cannot be used at this level, so it should not enter the rotation. */
 export function providerBlockedByPrivacy(provider: string, level: PrivacyLevel, opts: { staticHost: boolean; url?: string }): boolean {

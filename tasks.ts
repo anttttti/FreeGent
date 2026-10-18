@@ -190,7 +190,7 @@ function makeKanbanCard(task) {
 // the author a different title than they entered and made the title they meant next ("Call - supplier") collide with it
 // as a duplicate. A title with a colon is quoted, so a strict YAML reader takes it too; FreeGent's own reader takes
 // everything after the first colon and drops the quotes.
-export function fmTitleValue(title: string): string {
+function fmTitleValue(title: string): string {
     return title.includes(':') && !title.includes('"') ? `"${title}"` : title;
 }
 

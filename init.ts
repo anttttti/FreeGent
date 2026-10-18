@@ -854,7 +854,7 @@ let _lastOutsideFocus: HTMLElement | null = null;
 // Name every form control that has no accessible name. The source order of the existing forms gives
 // the label: an associated <label>, the first cell of its table row, the closest preceding
 // `.settings-label` of its section, then title / placeholder / the id as words.
-export function labelControls(root: ParentNode = document): void {
+function labelControls(root: ParentNode = document): void {
     root.querySelectorAll<HTMLInputElement>('input, select, textarea').forEach(el => {
         if (el.type === 'hidden' || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
         if (el.closest('label') || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`))) return;

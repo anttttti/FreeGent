@@ -12,7 +12,7 @@
 // CLOUDFLARE_API_TOKEN, AWS_ACCESS_KEY_ID, DB_PASSWORD — but not TOKENIZERS_PARALLELISM.
 const _SECRET_NAME_RE = /(^|_)(API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 
-export function isSecretEnvName(name: string): boolean {
+function isSecretEnvName(name: string): boolean {
     return _SECRET_NAME_RE.test(name);
 }
 

@@ -203,7 +203,7 @@ describe('R05 syntax checks do not run file names as shell code', () => {
         const savedNative = W.nativeExec;
         const state = await import('../state.ts');
         const savedRole = state.mainAgentRole;
-        state.setMainAgentRole({ name: 'test', tools: null });   // the default test role has no write tools
+        state.setMainAgentRoleObject({ name: 'test', tools: null });   // the default test role has no write tools
         W.nativeExec = async (_lang, code) => {
             const r = spawnSync('bash', ['-c', code], { cwd: dir, encoding: 'utf8' });
             return { exit_code: r.status, stdout: r.stdout, stderr: r.stderr };
@@ -220,7 +220,7 @@ describe('R05 syntax checks do not run file names as shell code', () => {
             expect(bad.syntax_error).toMatch(/SyntaxError/);
             const dash = await W.executeToolAsync('write_file', { path: '-bad.js', content: 'x = ;\n' });
             expect(dash.syntax_error).toMatch(/SyntaxError/);
-        } finally { W.nativeExec = savedNative; state.setMainAgentRole(savedRole); }
+        } finally { W.nativeExec = savedNative; state.setMainAgentRoleObject(savedRole); }
     });
 });
 
@@ -257,7 +257,7 @@ describe('R07 workers running code do not see each other\'s staged files', () =>
         const dir = mkdtempSync(join(tmpdir(), 'fg-run-'));
         const state = await import('../state.ts');
         const savedRole = state.mainAgentRole;
-        state.setMainAgentRole({ name: 'test', tools: null });
+        state.setMainAgentRoleObject({ name: 'test', tools: null });
         const savedNative = W.nativeExec;
         W.nativeExec = async (_l, code) => {
             await new Promise(r => setTimeout(r, 40));            // time for the other worker to stage over us
@@ -274,6 +274,6 @@ describe('R07 workers running code do not see each other\'s staged files', () =>
                 W.executeToolAsync('execute_code', { language: 'bash', code: 'cat shared.txt' }, ctx(who))));
             expect(a.stdout.trim()).toBe('worker-A');
             expect(b.stdout.trim()).toBe('worker-B');
-        } finally { W.nativeExec = savedNative; state.setMainAgentRole(savedRole); }
+        } finally { W.nativeExec = savedNative; state.setMainAgentRoleObject(savedRole); }
     });
 });

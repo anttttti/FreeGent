@@ -8,7 +8,7 @@
 import { WasiRT, type WasiJob, type WasiWrites, type ExecRequest, type ExecResult } from './wasi-runtime';
 import { memoryImports } from './wasm-module';
 
-export interface RunRequest { type: 'run'; module?: WebAssembly.Module; bytes?: Uint8Array; job: WasiJob; trace?: boolean }
+interface RunRequest { type: 'run'; module?: WebAssembly.Module; bytes?: Uint8Array; job: WasiJob; trace?: boolean }
 
 export type WorkerReply =
   | { type: 'stdout' | 'stderr' | 'trace'; text: string }
@@ -38,7 +38,7 @@ export function makeHandler(post: (m: WorkerReply) => void): (msg: HostMessage) 
   };
 }
 
-export async function handleRun(req: RunRequest, post: (m: WorkerReply) => void, exec?: (r: ExecRequest) => Promise<ExecResult>): Promise<void> {
+async function handleRun(req: RunRequest, post: (m: WorkerReply) => void, exec?: (r: ExecRequest) => Promise<ExecResult>): Promise<void> {
   try {
     const module = req.module ?? (req.bytes ? await WebAssembly.compile(req.bytes as unknown as BufferSource) : null);
     if (!module) throw new Error('WASM worker request has no module or bytes');

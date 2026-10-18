@@ -67,7 +67,7 @@ export function docKindOfExt(ext: string): string | undefined {
     return Object.values(DOC_KIND_BY_MIME).includes(k) ? k : undefined;
 }
 
-export type PreviewKind = 'image' | 'audio' | 'video' | 'pdf' | 'sheet' | 'docx' | 'odf' | 'pptx' | 'legacy-office';
+type PreviewKind = 'image' | 'audio' | 'video' | 'pdf' | 'sheet' | 'docx' | 'odf' | 'pptx' | 'legacy-office';
 const PREVIEW_EXTS: Record<PreviewKind, string> = {
     image: 'png|jpe?g|jfif|jpe|gif|webp|bmp|ico|avif|apng|heic|heif|tiff?',
     audio: 'mp3|wav|ogg|oga|opus|m4a|flac|aac|weba|aiff?',

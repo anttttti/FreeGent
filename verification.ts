@@ -14,12 +14,12 @@ import { shellWrites } from './shell-writes.js';
 
 const WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'undo_write', 'delete_file']);
 // Test runners, compilers and syntax checks. A script that merely ran is not a check.
-export const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|mvn\s+(?:-\S+\s+)*test|gradle\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
+const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|mvn\s+(?:-\S+\s+)*test|gradle\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
 // Collection and import failures of the environment, not of the code under test.
 const ENV_BROKEN_RE = /ModuleNotFoundError|ImportError|cannot import name|No module named|ERROR collecting|INTERNALERROR|conftest\.py.*(?:Error|error)|was removed in the NumPy|has no attribute '(?:Mapping|MutableMapping|Iterable|Callable|unicode_)'/;
 const SCRATCH_RE = /(?:^|\/)(?:tmp|temp|scratch|repro\w*|reproduc\w*|debug\w*|_probe\w*)(?:[_./-]|$)|\.(?:tmp|bak|orig|pyc)$|__pycache__|\.pytest_cache/i;
 
-export interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null }
+interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null }
 export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null });
 
 function _changed(call: any): boolean {

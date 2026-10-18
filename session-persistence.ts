@@ -16,7 +16,7 @@ import type { SessionEvent } from './session-event.js';
 // Bounds on what the event log keeps on disk. The in-memory session keeps every event whole; the
 // file is an audit log, so a field is cut at maxFieldChars (the event carries `truncated: true`),
 // a session file stops growing at maxFileBytes, and old files are pruned at startup.
-export interface PersistenceLimits {
+interface PersistenceLimits {
     maxFieldChars: number;   // longest string kept in one event field
     maxFileBytes:  number;   // size at which a session file stops taking events
 }
@@ -24,7 +24,7 @@ function _envInt(name: string, dflt: number): number {
     const n = Number((globalThis as any).process?.env?.[name]);
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
 }
-export function defaultPersistenceLimits(): PersistenceLimits {
+function defaultPersistenceLimits(): PersistenceLimits {
     return {
         maxFieldChars: _envInt('FG_EVENT_LOG_MAX_FIELD_CHARS', 65_536),
         maxFileBytes:  _envInt('FG_EVENT_LOG_MAX_FILE_BYTES', 20 * 1024 * 1024),

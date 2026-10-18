@@ -9,7 +9,7 @@ export type FinishSignal =
     | 'stopped'   // user / abort signal stopped the turn mid-flight
     | 'error';    // the turn threw; its prompt was rolled back — callers must not continue it
 
-export type StepRecord = {
+type StepRecord = {
     type: 'tool-call';
     toolName: string;
     args: unknown;
@@ -19,7 +19,7 @@ export type StepRecord = {
     text: string;
 };
 
-export type TurnUsage = {
+type TurnUsage = {
     inputTokens:  number;
     outputTokens: number;
     totalTokens:  number;

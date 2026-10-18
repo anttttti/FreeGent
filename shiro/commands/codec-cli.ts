@@ -4,7 +4,7 @@ import { bytesToText, textToBytes } from '../utils/bytes';
 
 export { concatBytes } from '../utils/bytes';
 
-export interface CodecSpec {
+interface CodecSpec {
   name: string;                 // command name, e.g. 'xz'
   suffixes: string[];           // accepted suffixes, first is the one appended: ['.xz', '.txz']
   defaultLevel?: number;        // compression level when none is given (bzip2: 9)

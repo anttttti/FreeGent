@@ -10,7 +10,7 @@ import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { omittedFileWriteMessage } from './exec-limits.js';
-import { isTextBytes } from './shiro/utils/bytes.js';
+import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
@@ -675,7 +675,7 @@ function _fuzzyScore(needle: string, haystack: string): number {
 // failed edits re-sent the same old_string; the single closest line (or the echoed window) did not show the
 // model what the text really is. Candidate starts are lines equal (trimmed) to some line of old_string, so
 // the cost is bounded; the score is the mean per-line similarity. null below 0.6.
-export function _bestRegion(lines: string[], oldText: string): { start: number; end: number; score: number; text: string } | null {
+function _bestRegion(lines: string[], oldText: string): { start: number; end: number; score: number; text: string } | null {
     const old = oldText.replace(/\r\n/g, '\n').split('\n');
     while (old.length && !old[old.length - 1].trim()) old.pop();
     if (!old.length || old.length > 60) return null;
@@ -2130,7 +2130,7 @@ const _STDERR_ERROR_RE = /Traceback \(most recent call last\)|^\w*(?:Error|Excep
 // without a language this picked 46, 45 of which had failed as Python-run-as-bash and none of
 // which had succeeded as bash.
 const _PY_LINE_RE = /^(?:import \w|from [\w.]+ import |def \w+\s*\(|class \w+[(:]|print\(|if __name__ ==)/m;
-export function _looksLikePython(code: string): boolean {
+function _looksLikePython(code: string): boolean {
     const s = (code || '').trimStart();
     if (s.startsWith('#!')) return /python/.test(s.split('\n', 1)[0]);
     if (code.includes('<<') || /\bpython3?\s+-c\b/.test(code)) return false;
@@ -2140,7 +2140,7 @@ export function _looksLikePython(code: string): boolean {
 // Python compile error at line 1 of the script itself (no Traceback: a SyntaxError raised while
 // importing another module has one) whose first line starts with a shell command.
 const _SHELL_FIRST_LINE_RE = /^\s*(?:sudo\s+)?(?:python3?|pip3?|curl|wget|cat|cd|ls|grep|find|echo|export|sed|awk|git|mkdir|rm|cp|mv|chmod|pytest|bash|sh|head|tail|wc|sort|source|apt(?:-get)?|npm|node)(?:\s|$)|^\s*\.\/\S/;
-export function _isShellCompileError(code: string, result: any): boolean {
+function _isShellCompileError(code: string, result: any): boolean {
     const err = String(result?.stderr ?? '');
     if (!result || result.error || !(result.exit_code > 0)) return false;
     if (!/SyntaxError/.test(err) || /Traceback/.test(err) || !/File "[^"]*", line 1\b/.test(err)) return false;
@@ -2414,7 +2414,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                         await agentWriteFile(path, text);
                         if (context?.staging) context.staging.set(path, text);
                     } else {
-                        await agentWriteFile(path, _bytesToBase64(content as Uint8Array), 'base64');   // binary
+                        await agentWriteFile(path, bytesToBase64(content as Uint8Array), 'base64');   // binary
                     }
                     _invalidateReadDedup(path);
                 } catch (e) {
@@ -2547,12 +2547,6 @@ const _utf8enc = new TextEncoder();
 function _byteLen(s: string): number { return _utf8enc.encode(s ?? '').length; }
 /** Bytes a base64 string decodes to. */
 function _base64Len(b64: string): number { const t = String(b64 ?? '').replace(/[^A-Za-z0-9+/]/g, ''); return Math.floor(t.length * 3 / 4); }
-
-function _bytesToBase64(bytes: Uint8Array): string {
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return btoa(bin);
-}
 
 // Hallucinated tool names mapped to the real tool and its arguments. Module-level so the role
 // filter can check the target tool: an alias is a request for that tool (`bash` → execute_code).

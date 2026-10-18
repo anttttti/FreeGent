@@ -1,11 +1,10 @@
 // workers.js — FreeGent: 3-way diff/merge + parallel worker agent system
 // Depends on: config.js, tools.js, llm-shared.js, state.js.
-// Note: workers.js defines setMainAgentRole(name) that takes a role-NAME string and
-// resolves it through rolesRegistry — this overrides state.js's same-named setter on window.
-// The state module's object-setter is imported under an alias for the direct-assignment sites.
+// Note: setMainAgentRole(name) here takes a role-NAME string and resolves it through rolesRegistry;
+// state.js's setMainAgentRoleObject(role) is the raw setter for direct-assignment sites.
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { setMainAgentRole as _setRoleObj, activePlaceholder, softStopPending, activeChatId, workflowMode } from './state.js';
+import { setMainAgentRoleObject, activePlaceholder, softStopPending, activeChatId, workflowMode } from './state.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
@@ -419,7 +418,7 @@ function inferWorkerTools(task: string): Set<string> {
 }
 
 let workerRole: any = null;       // module-level; set during worker runs, read by buildWorkerSystemPrompt()
-_setRoleObj(rolesRegistry.get('director') || null); // Director is the persistent default role
+setMainAgentRoleObject(rolesRegistry.get('director') || null); // Director is the persistent default role
 
 function _saveRoleForChat(name: string): void {
     try {
@@ -433,12 +432,12 @@ function _saveRoleForChat(name: string): void {
 }
 export function setMainAgentRole(name: string): void {
     const _name = name?.toLowerCase() ?? name;
-    _setRoleObj(rolesRegistry.get(_name) || null);
+    setMainAgentRoleObject(rolesRegistry.get(_name) || null);
     _saveRoleForChat(_name);
 }
 function clearMainAgentRole(): void {
     // Director is always the default; this restores it after a custom role is done.
-    _setRoleObj(rolesRegistry.get('director') || null);
+    setMainAgentRoleObject(rolesRegistry.get('director') || null);
     _saveRoleForChat('director');
 }
 function restoreRoleForChat(id: string): void {
@@ -446,7 +445,7 @@ function restoreRoleForChat(id: string): void {
         const name = localStorage.getItem(chatKey.role(id));
         // Always resolve to a role object — director is the default when nothing custom is saved.
         const role = (name && name !== 'director' && rolesRegistry.get(name)) || rolesRegistry.get('director');
-        _setRoleObj(role ?? null);
+        setMainAgentRoleObject(role ?? null);
     } catch {}
 }
 const _fileStallCounts = new Map(); // path → consecutive stall count — reset when a file is cleanly written
@@ -1372,7 +1371,7 @@ const _WORKER_MAX_STEPS = 30;
 // Longest a worker waits for a rate-limit cooldown before giving up. Free-tier daily quotas put
 // endpoints on cooldowns of hours (e.g. 34494 s); a worker should wait out a short limit — rather
 // than failing and being relaunched, as happened when every endpoint was cooling — but not that.
-export const WORKER_MAX_RETRY_WAIT_MS = 3 * 60_000;
+const WORKER_MAX_RETRY_WAIT_MS = 3 * 60_000;
 
 // Wraps a withRetry onRetry handler: a wait longer than WORKER_MAX_RETRY_WAIT_MS ends the retries.
 export function _capWorkerRetryWait(handler: (n: number, e: any, d: number) => any, note: (msg: string) => void) {
@@ -1784,7 +1783,6 @@ async function executeWorkers(args: any): Promise<any> {
 }
 
 // Window bridge — classic scripts and tests access these as globals.
-// setMainAgentRole here takes a role-NAME string (workers.js's API), overriding state.js's setter on window.
 Object.assign(window, {
     splitLines, diffRegions, loadRoles, rolesRegistry,
     setMainAgentRole, clearMainAgentRole, restoreRoleForChat, takeWorkspaceSnapshot,
