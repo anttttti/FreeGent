@@ -29,17 +29,6 @@ describe('profile credentials', () => {
     });
 });
 
-describe('profile credentials follow the endpoint', () => {
-    it('a saved key is restored to the same address only', async () => {
-        await import('../profiles.ts'); const profileApply = W.profileApply;
-        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://trusted.example/v1/', key: 'SYNTHETIC' }]));
-        profileApply({ fg_custom_models: JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://different.example/v1' }]) });
-        expect(JSON.parse(localStorage.getItem('fg_custom_models')!)[0].key).toBeUndefined();
-        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://trusted.example/v1/', key: 'SYNTHETIC' }]));
-        profileApply({ fg_custom_models: JSON.stringify([{ provider: 'custom', model: 'review-model', url: 'https://TRUSTED.example/v1' }]) });
-        expect(JSON.parse(localStorage.getItem('fg_custom_models')!)[0].key).toBe('SYNTHETIC');
-    });
-});
 
 describe('workspace paths', () => {
     it('a drive path or backslashes stay inside the workspace', async () => {

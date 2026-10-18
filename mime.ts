@@ -5,23 +5,31 @@ const MIME_BY_EXT: Record<string, string> = {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
     bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif', svg: 'image/svg+xml',
     heic: 'image/heic', heif: 'image/heif', tif: 'image/tiff', tiff: 'image/tiff',
+    jfif: 'image/jpeg', jpe: 'image/jpeg', apng: 'image/apng',
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     xls: 'application/vnd.ms-excel', ods: 'application/vnd.oasis.opendocument.spreadsheet',
+    doc: 'application/msword', ppt: 'application/vnd.ms-powerpoint',
+    odt: 'application/vnd.oasis.opendocument.text', odp: 'application/vnd.oasis.opendocument.presentation',
+    rtf: 'application/rtf',
+    csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain', md: 'text/markdown',
+    json: 'application/json', html: 'text/html', htm: 'text/html',
     mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
-    flac: 'audio/flac', aac: 'audio/aac', weba: 'audio/webm',
-    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
-    avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+    flac: 'audio/flac', aac: 'audio/aac', weba: 'audio/webm', oga: 'audio/ogg', opus: 'audio/ogg',
+    aif: 'audio/aiff', aiff: 'audio/aiff',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v', ogv: 'video/ogg',
+    avi: 'video/x-msvideo', mkv: 'video/x-matroska', mpeg: 'video/mpeg', mpg: 'video/mpeg', '3gp': 'video/3gpp',
     zip: 'application/zip', gz: 'application/gzip', tar: 'application/x-tar',
     wasm: 'application/wasm', bin: 'application/octet-stream',
 };
 
 const DOC_EXTS = new Set(['pdf', 'docx', 'doc', 'odt', 'xlsx', 'xls', 'ods', 'pptx', 'ppt', 'odp']);
 const BINARY_EXTS = new Set([...DOC_EXTS, 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp',
-    'avif', 'heic', 'heif', 'tif', 'tiff', 'm4a', 'flac', 'aac', 'weba', 'webm', 'mov', 'avi', 'mkv',
-    'mp3', 'mp4', 'wav', 'ogg', 'zip', 'gz', 'tar', 'wasm', 'bin']);
+    'avif', 'heic', 'heif', 'tif', 'tiff', 'jfif', 'jpe', 'apng', 'm4a', 'flac', 'aac', 'weba', 'webm', 'mov', 'avi', 'mkv',
+    'mp3', 'mp4', 'wav', 'ogg', 'oga', 'opus', 'aif', 'aiff', 'm4v', 'ogv', 'mpeg', 'mpg', '3gp',
+    'zip', 'gz', 'tar', 'wasm', 'bin']);
 
 // MIME type → document kind that extractDocumentText understands.
 const DOC_KIND_BY_MIME: Record<string, string> = {
@@ -30,6 +38,9 @@ const DOC_KIND_BY_MIME: Record<string, string> = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
     'application/vnd.ms-excel': 'xls',
     'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/vnd.oasis.opendocument.presentation': 'odp',
 };
 
 /** Lower-case extension of a file name or path, with the leading dot ('' if none). */
@@ -55,6 +66,25 @@ export function docKindOfExt(ext: string): string | undefined {
     const k = bare(ext);
     return Object.values(DOC_KIND_BY_MIME).includes(k) ? k : undefined;
 }
+
+export type PreviewKind = 'image' | 'audio' | 'video' | 'pdf' | 'sheet' | 'docx' | 'odf' | 'pptx' | 'legacy-office';
+const PREVIEW_EXTS: Record<PreviewKind, string> = {
+    image: 'png|jpe?g|jfif|jpe|gif|webp|bmp|ico|avif|apng|heic|heif|tiff?',
+    audio: 'mp3|wav|ogg|oga|opus|m4a|flac|aac|weba|aiff?',
+    video: 'mp4|m4v|webm|ogv|mov|mkv|avi|mpe?g|3gp',
+    pdf: 'pdf', sheet: 'xlsx|xls|ods', docx: 'docx', odf: 'odt|odp', pptx: 'pptx',
+    'legacy-office': 'doc|ppt',
+};
+const PREVIEW_RES = (Object.entries(PREVIEW_EXTS) as [PreviewKind, string][]).map(([k, e]) => [k, new RegExp(`\\.(?:${e})$`, 'i')] as const);
+
+/** How the file tab shows a binary / media file ('image', 'audio', 'video', 'pdf', …), or null for text and code files. */
+export function previewKindOfName(name: string): PreviewKind | null {
+    for (const [kind, re] of PREVIEW_RES) if (re.test(name)) return kind;
+    return null;
+}
+
+/** Image formats every vision model API accepts; other rasters are converted to PNG before they are sent. */
+export const MODEL_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 /** Image MIME type for a file name, or '' when the file is not an image. */
 export function imageMimeOfName(name: string): string {

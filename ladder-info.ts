@@ -2,30 +2,28 @@
 // model ranking prompt (settings-ui.ts) and the model update modal (model-update.ts).
 import { MODEL_LADDER, MODEL_LADDER_DATE, type LadderResult } from './model-ladder.js';
 
-const _ratio = (r: [number, number]) => `${r[0]}/${r[1]}`;
-const _score = (r: LadderResult) => {
-    const rounds = r.coding[1] + r.knowledge[1] + r.reasoning[1];
-    return rounds ? (r.coding[0] + r.knowledge[0] + r.reasoning[0]) / rounds : 0;
-};
+const _acc = (r: LadderResult) => (r.attempted ? r.correct / r.attempted : 0);
 
 // Best result over the given "provider|model" specs (one model is often served by several providers):
-// highest share of rounds solved, then the longest context held.
+// highest share of microtasks solved, then the largest context held.
 export function bestLadder(specs: string[], table: Record<string, LadderResult> = MODEL_LADDER): LadderResult | null {
     let best: LadderResult | null = null;
     for (const s of specs) {
         const r = table[s];
-        if (r && (!best || _score(r) > _score(best) || (_score(r) === _score(best) && Math.max(...r.capK) > Math.max(...best.capK)))) best = r;
+        if (r && (!best || _acc(r) > _acc(best) || (_acc(r) === _acc(best) && Math.max(...r.capK, 0) > Math.max(...best.capK, 0)))) best = r;
     }
     return best;
 }
 
-// "long chats: coding 55/66 (held 250K), knowledge 60/66 (held 250K), reasoning 40/66 (held 180K)" (+ "; free tier stopped a chat: <reason>").
-// One conversation per area; "held" is the largest prompt (K tokens) a task completed at in it, "(ceiling)" = the test ceiling, no provider limit hit.
+// "long chats: 182/195 microtasks solved, held 250K/250K tokens (test ceiling), 41 tok/s"
+// held = largest prompt a task completed at, per conversation (10K / 20K / 50K starts; a cap ends the test, so later ones may be missing);
+// a stop other than the test ceiling (free-tier quota, context limit) is named.
 export function formatLadder(r: LadderResult | null): string {
     if (!r) return '';
-    const part = (name: string, d: [number, number], capK: number) => `${name} ${_ratio(d)} (held ${capK}K${capK >= r.ceilingK ? ', ceiling' : ''})`;
-    const lim = r.limit ? `; free tier stopped a chat: ${r.limit.replace(/\s+/g, ' ').slice(0, 70)}` : '';
-    return `long chats: ${part('coding', r.coding, r.capK[0])}, ${part('knowledge', r.knowledge, r.capK[1])}, ${part('reasoning', r.reasoning, r.capK[2])}${lim}`;
+    const caps = r.capK.map(k => `${k}K`).join('/') || 'n/a';
+    const other = [...new Set(r.stops.filter(s => s !== 'ceiling'))];
+    const stop = other.length ? `; a chat was ended by the free tier's ${other.map(s => s === 'quota' ? 'quota' : s === 'context' ? 'context limit' : 'limit').join(' and ')}` : ' (test ceiling)';
+    return `long chats: ${r.correct}/${r.attempted} microtasks solved, held ${caps} tokens${stop}${r.tokPerS != null ? `, ${r.tokPerS} tok/s` : ''}`;
 }
 
 export { MODEL_LADDER_DATE };

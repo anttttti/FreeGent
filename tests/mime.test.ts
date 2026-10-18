@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extOf, mimeOfExt, mimeOfName, isBinaryExt, isDocExt, docKindOfExt, docKindOfMime, imageMimeOfName,
-    UNREADABLE_BINARY_RE, DISPLAY_LIBS_RE } from '../mime.js';
+    UNREADABLE_BINARY_RE, DISPLAY_LIBS_RE, previewKindOfName, MODEL_IMAGE_MIMES } from '../mime.js';
 
 describe('mime', () => {
     it('keeps every mapping the old workspace/chat-attachments/downloadFile tables had', () => {
@@ -23,7 +23,7 @@ describe('mime', () => {
         expect(extOf('dir/file.Tar.GZ')).toBe('.gz');
     });
     it('maps documents to extraction kinds', () => {
-        expect(docKindOfExt('pdf')).toBe('pdf'); expect(docKindOfExt('.docx')).toBe('docx'); expect(docKindOfExt('pptx')).toBeUndefined();
+        expect(docKindOfExt('pdf')).toBe('pdf'); expect(docKindOfExt('.docx')).toBe('docx'); expect(docKindOfExt('pptx')).toBe('pptx'); expect(docKindOfExt('ppt')).toBeUndefined();
         expect(docKindOfMime('application/vnd.ms-excel')).toBe('xls'); expect(docKindOfMime('text/plain')).toBeUndefined();
     });
     it('imageMimeOfName only returns image types', () => {
@@ -32,5 +32,25 @@ describe('mime', () => {
     it('exposes the read guard and display-library patterns', () => {
         expect(UNREADABLE_BINARY_RE.test('lib/x.so')).toBe(true); expect(UNREADABLE_BINARY_RE.test('x.ts')).toBe(false);
         expect(DISPLAY_LIBS_RE.test('import pygame\n')).toBe(true); expect(DISPLAY_LIBS_RE.test('import numpy')).toBe(false);
+    });
+    it('classifies preview kinds for the main media and document types', () => {
+        const cases: Record<string, string | null> = {
+            'a.PNG': 'image', 'p.heic': 'image', 'x.tiff': 'image', 'a.jfif': 'image', 'logo.svg': null,
+            'a.mp3': 'audio', 'v.opus': 'audio', 'v.m4a': 'audio', 'm.aiff': 'audio',
+            'a.mp4': 'video', 'a.MOV': 'video', 'a.webm': 'video', 'a.mkv': 'video',
+            'a.pdf': 'pdf', 'a.xlsx': 'sheet', 'a.ods': 'sheet', 'a.docx': 'docx', 'a.odt': 'odf', 'a.odp': 'odf',
+            'a.pptx': 'pptx', 'a.doc': 'legacy-office', 'a.ppt': 'legacy-office',
+            'a.ts': null, 'a.csv': null, 'notes': null, 'pdf': null, 'a.png.txt': null,
+        };
+        for (const [n, k] of Object.entries(cases)) expect(previewKindOfName(n), n).toBe(k);
+    });
+    it('treats every previewable media extension as binary and knows its MIME type', () => {
+        for (const n of ['a.opus', 'a.m4v', 'a.ogv', 'a.aiff', 'a.jfif', 'a.mpg', 'a.3gp']) {
+            expect(isBinaryExt(n), n).toBe(true);
+            expect(mimeOfName(n), n).not.toBe('application/octet-stream');
+        }
+        expect(mimeOfName('a.csv')).toBe('text/csv');
+        expect(MODEL_IMAGE_MIMES.has(mimeOfName('a.heic'))).toBe(false);
+        expect(MODEL_IMAGE_MIMES.has(mimeOfName('a.jpg'))).toBe(true);
     });
 });
