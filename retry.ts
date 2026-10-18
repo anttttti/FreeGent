@@ -408,7 +408,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         // preFlight: thrown by knownLimitWaitMs before any HTTP request — cooldown already set,
         // don't extend it. Just let the existing cooldown expire by sleeping retryAfterMs.
-        if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null);
+        if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null, e);
         else if (effectiveErr && !isStreamTimeout) _markFlatCooldown(ep);
         // Stream timeout on custom endpoint: the model was just slow. Retry locally, no fallback.
         if (isStreamTimeout && isCustom) {

@@ -12,34 +12,35 @@ beforeAll(async () => {
 });
 const e = (provider: string, model: string) =>
     ({ provider, model, label: model, released: '2026-10', contextK: 1000, params: 120, media: ['text'], tools: true, thinking: true, note: '' });
-const R = (c: [number, number], k: [number, number], r: [number, number], capK: [number, number, number], limit: string | null = null): LadderResult =>
-    ({ coding: c, knowledge: k, reasoning: r, capK, ceilingK: 250, limit, tokens: 1, medianS: 1 });
+const R = (correct: number, attempted: number, capK: number[], stops: string[], tokPerS: number | null = 40): LadderResult =>
+    ({ correct, attempted, capK, stops, ceilingK: 250, tokPerS, tokens: 1 });
 
 describe('generated model-ladder.ts', () => {
     it('has a date and sane numbers', () => {
         expect(MODEL_LADDER_DATE).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         for (const [spec, r] of Object.entries(MODEL_LADDER)) {
             expect(spec).toContain('|');
-            for (const d of [r.coding, r.knowledge, r.reasoning]) { expect(d[0]).toBeLessThanOrEqual(d[1]); expect(d[0]).toBeGreaterThanOrEqual(0); }
-            expect(r.capK.length).toBeGreaterThan(0);
+            expect(r.correct).toBeLessThanOrEqual(r.attempted);
+            expect(r.capK.length).toBe(r.stops.length);
         }
     });
 });
 
 describe('ladder-info', () => {
     const table = {
-        'a|m': R([4, 6], [6, 6], [3, 6], [250, 250, 250]),
-        'b|m': R([5, 6], [6, 6], [5, 6], [180, 180, 170], 'HTTP 429 daily quota'),
-        'c|other': R([1, 6], [2, 6], [0, 6], [60, 60, 60]),
+        'a|m': R(170, 195, [250, 250, 250], ['ceiling', 'ceiling', 'ceiling']),
+        'b|m': R(120, 130, [180, 90], ['quota', 'ceiling'], null),
+        'c|other': R(10, 60, [60], ['context']),
     };
-    it('formatLadder is empty without a result; states the domains, the context held and a stopping limit', () => {
+    it('formatLadder is empty without a result; states solved tasks, context held, speed and a stopping limit', () => {
         expect(formatLadder(null)).toBe('');
-        expect(formatLadder(table['a|m'])).toBe('long chats: coding 4/6 (held 250K, ceiling), knowledge 6/6 (held 250K, ceiling), reasoning 3/6 (held 250K, ceiling)');
-        expect(formatLadder(table['b|m'])).toBe('long chats: coding 5/6 (held 180K), knowledge 6/6 (held 180K), reasoning 5/6 (held 170K); free tier stopped a chat: HTTP 429 daily quota');
+        expect(formatLadder(table['a|m'])).toBe('long chats: 170/195 microtasks solved, held 250K/250K/250K tokens (test ceiling), 40 tok/s');
+        expect(formatLadder(table['b|m'])).toBe("long chats: 120/130 microtasks solved, held 180K/90K tokens; a chat was ended by the free tier's quota");
+        expect(formatLadder(table['c|other'])).toContain("ended by the free tier's context limit");
     });
     it('bestLadder takes the highest solve rate over all providers of a model and ignores unknown specs', () => {
         expect(bestLadder(['nope|nothing'], table)).toBeNull();
-        expect(bestLadder(['a|m', 'b|m', 'nope|x'], table)).toBe(table['b|m']);
+        expect(bestLadder(['a|m', 'b|m', 'nope|x'], table)).toBe(table['b|m']);   // 120/130 beats 170/195
         expect(bestLadder(['c|other'], table)).toBe(table['c|other']);
     });
 });
@@ -50,7 +51,7 @@ describe('ranking prompt line', () => {
         if (spec) {   // the generated table may be empty before the first run
             const [prov, model] = spec.split('|');
             const [g1] = M.buildModelRankGroups([e(prov, model)]);
-            expect(g1.ladder).toMatch(/^long chats: coding \d+\/\d+/);
+            expect(g1.ladder).toMatch(/^long chats: \d+\/\d+ microtasks solved/);
             expect(M.formatModelRankLine(1, g1)).toContain(`, ${g1.ladder}, not used here yet`);
         }
         const [g2] = M.buildModelRankGroups([e('kilo', 'untested/never-run-model:free')]);

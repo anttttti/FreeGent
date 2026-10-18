@@ -103,11 +103,11 @@ window.processImgSlots = processImgSlots;
 // Regex for strings that look like workspace file paths (with a meaningful extension).
 // Matches bare filenames (game.html) and relative paths (src/index.ts, data/out.json).
 // Deliberately conservative: no spaces, no absolute paths, no URLs.
-const _FILE_PATH_RE = /^[\w][\w\-.]*(?:\/[\w\-.]+)*\.(html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|pdf)$/i;
+const _FILE_PATH_RE = /^[\w][\w\-.]*(?:\/[\w\-.]+)*\.(html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov)$/i;
 
 // Regex for absolute /workspace/... paths the model may write without backticks.
 // Captures the portion after the /workspace/ prefix as the relative workspace path.
-const _WS_PATH_RE = /\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|pdf))/gi;
+const _WS_PATH_RE = /\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov))/gi;
 
 // Build an anchor element that opens a workspace file in a tab.
 function _makeFileLink(displayText: string, filePath: string): HTMLAnchorElement {
@@ -139,7 +139,7 @@ export function processFileLinks(container: any): void {
         if (codeEl.closest('pre') || codeEl.closest('a')) return; // skip blocks & already-linked
         const text = codeEl.textContent?.trim() ?? '';
         // Strip optional leading /workspace/ prefix for absolute workspace paths
-        const wsMatch = text.match(/^\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|pdf))$/i);
+        const wsMatch = text.match(/^\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov))$/i);
         const filePath = wsMatch ? wsMatch[1] : (_FILE_PATH_RE.test(text) ? text : null);
         if (!filePath) return;
 
@@ -181,7 +181,7 @@ export function processFileLinks(container: any): void {
     //    to the same in-app handler used by _makeFileLink so tapping works on mobile.
     (container.querySelectorAll('a[href]') as NodeListOf<HTMLAnchorElement>).forEach((a) => {
         const href = a.getAttribute('href') ?? '';
-        const wsMatch = href.match(/^\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|pdf))$/i);
+        const wsMatch = href.match(/^\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov))$/i);
         if (!wsMatch) return;
         const filePath = wsMatch[1];
         a.setAttribute('href', '#');

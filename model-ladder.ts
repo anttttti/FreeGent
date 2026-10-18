@@ -3,11 +3,12 @@
 // prompt (settings-ui.ts) and the model update modal (model-update.ts) through ladder-info.ts.
 
 export type LadderResult = {
-    coding: [number, number]; knowledge: [number, number]; reasoning: [number, number];   // [solved, rounds] per domain, all conversations
-    capK: [number, number, number];   // largest prompt (K tokens) a round completed at in the coding / knowledge / reasoning conversation
-    ceilingK: number;        // test ceiling (K tokens); a capK at the ceiling means no provider limit was hit
-    limit: string | null;    // first provider limit/quota error that ended a conversation; null when all reached the ceiling
-    tokens: number; medianS: number | null;
+    correct: number; attempted: number;   // graded microtasks solved / attempted over all conversations
+    capK: number[];          // largest prompt (K tokens) a task completed at, per conversation (starts of 10K / 20K / 50K)
+    stops: string[];         // what ended each conversation: "ceiling" | "quota" | "context" | "limit"
+    ceilingK: number;        // test ceiling (K tokens); a "ceiling" stop means no provider limit was hit up to there
+    tokPerS: number | null;  // generated tokens / request seconds over all tasks (not streamed: includes reading the prompt)
+    tokens: number;
     micro?: { solved: number; planned: number };   // 15-task baseline ladder, when it was run
 };
 export const MODEL_LADDER_DATE = '2026-10-17';

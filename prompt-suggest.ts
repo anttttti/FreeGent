@@ -173,7 +173,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
                 // until the rate-limit window clears.
                 const markCooldown = _markCooldown;
                 const retryAfterMs = (err as any)?.retryAfterMs ?? null;
-                if (typeof markCooldown === 'function') markCooldown(ep, retryAfterMs);
+                if (typeof markCooldown === 'function') markCooldown(ep, retryAfterMs, err);
                 console.log('[suggest] cooling (5xx/429):', spec);
             }
             continue;

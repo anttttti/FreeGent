@@ -164,7 +164,7 @@ function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = nu
             onNote(`[${key}][fetch timeout: server unresponsive, not retrying]`);
             return false;
         }
-        if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null);
+        if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null, e);
         else if (isErr) _markFlatCooldown(ep, null);
         if (is429 || isErr) {
             const list: string[] = typeof getActiveMainModelList === 'function' ? getActiveMainModelList() : [];

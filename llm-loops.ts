@@ -1934,7 +1934,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (_forceCompact && parseContextOverflow(e) !== null) { thinkTask.abort(); continue; }
             const _oEp = activeEndpoint ?? _defaultEndpoint();
             if (_isPermanent) throw e;
-            if (_is429) _markCooldown(_oEp, e.retryAfterMs ?? null);
+            if (_is429) _markCooldown(_oEp, e.retryAfterMs ?? null, e);
             else if (_isErr) {
                 // 4xx without a Retry-After header on custom/vLLM endpoints = transient
                 // per-request state (e.g. vLLM spec-decode returning 400 under load,
