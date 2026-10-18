@@ -48,7 +48,19 @@ export function _setRunnerChatIdForTest(id: string | null): void { _runnerChatId
 async function _runnerTurn(prompt: string): Promise<any> {
     if (_runnerChatId && activeChatId !== _runnerChatId) await switchToChat(_runnerChatId);
     appendMessage('user', renderMarkdown ? renderMarkdown(prompt) : esc(prompt).replace(/\n/g, '<br>'));
-    return runAgentTurn(prompt, null, undefined, { placeholder: createResponsePlaceholder() });
+    try { return await runAgentTurn(prompt, null, undefined, { placeholder: createResponsePlaceholder() }); }
+    finally { await _snapshotRunnerChat('end'); }   // whatever way the turn ended: the last snapshot is the chat's end state
+}
+
+// The workspace snapshots of an Autopilot task chat: one when the chat starts and one after every turn, the last of which is
+// the end state. They back "Reset workspace to start / end" on the Chats tab. A chat started from the message box takes its
+// snapshots when a message is sent (agent-core); the runner sends no such message, so its chats had none.
+async function _snapshotRunnerChat(which: 'start' | 'end'): Promise<void> {
+    const chatId = _runnerChatId;
+    if (!chatId || typeof saveCheckpointSnapshot !== 'function') return;
+    const ckptId = which === 'start' ? String(Date.now()) : `post_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try { await saveCheckpointSnapshot(chatId, ckptId); }
+    catch (e: any) { console.warn('[runner] workspace snapshot failed:', e?.message ?? e); }
 }
 
 // Run: try to complete the next task, then stop.
@@ -410,6 +422,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     const _taskLabel = `${task.fm.id ? '#' + task.fm.id + ' ' : ''}${task.fm.title || task.path}`;
     const _shortLabel = _taskLabel.length > 50 ? _taskLabel.slice(0, 50) + '…' : _taskLabel;
     if (typeof setChatName === 'function') setChatName(_runnerChatId, _shortLabel);
+    await _snapshotRunnerChat('start');   // the state this chat starts from, for "Reset workspace to start"
     _clearRunnerProcess(false);
     _clearHistory();
 

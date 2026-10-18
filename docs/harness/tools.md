@@ -1,6 +1,6 @@
 # Tools
 
-Tools are the actions the agent can take. Each can be turned on or off per [mode](/webui/chats/modes) in **Settings → Tools**. Fewer tools mean a shorter prompt and fewer wrong choices, which helps small models, so the defaults leave specialised tools off.
+Tools are the actions the agent can take. Each can be turned on or off per [mode](/webui/chats/modes) in **Settings → Tools**. Fewer tools mean a shorter prompt and fewer wrong choices, so the defaults leave specialised tools off.
 
 | Tool | What it does | Default |
 |---|---|---|
@@ -15,7 +15,7 @@ Tools are the actions the agent can take. Each can be turned on or off per [mode
 | `deep_research` | Multi-round research that plans sub-questions, reads sources and writes a cited report | off |
 | `academic_search`, `package_search`, `context7_docs` | Papers; npm and PyPI; library documentation from Context7 | off |
 | `repo_map`, `ast_query` | Compact code map; symbol queries with exact line numbers (`ast_query` needs the AST setting) | off |
-| `run_git` | Git in the project; needs the Local sandbox and the git setting | off |
+| `run_git` | Git in the repository the dev server runs in; needs the Local sandbox and the git setting | off |
 | `update_task_status` | Move a task on the board | on in Cowork only |
 | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, … | Drive a text-only browser through a Playwright bridge (CLI: `--browser-url`) | off |
 

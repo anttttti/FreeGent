@@ -155,8 +155,23 @@ dom.window._onQueueDequeue = (msg: { text: string }) => {
 // Wire up sendMessage for use by the Ink input handler.
 // Called once per user message; agent state is preserved across turns via
 // the in-memory history.
+// A session starts out named after its folder and start time. Like the WebUI, name it from its first message:
+// the first words at once, then a short title from the utility model.
+async function _nameSession(text: string): Promise<void> {
+    const g = globalThis as any;
+    const id = g.activeChatId;
+    if (!id || text.startsWith('/') || g.getChatHistory?.().length) return;
+    const list = g.getChatList?.() ?? [];
+    if (!list.some((c: any) => c.id === id)) {   // the session row lives in SQLite; setChatName edits the list entry
+        const now = Date.now();
+        g.saveChatList?.([...list, { id, name: 'New Chat', createdAt: now, lastAt: now }]);
+    }
+    g.autoNameChat?.(id, text)?.catch?.(() => {});
+}
+
 export async function sendMessage(text: string): Promise<void> {
     try {
+        await _nameSession(text);
         await (globalThis as any).runAgentTurn(text, null);
         dom.window.generateAndShowSuggestion?.().catch?.(() => {});
     } catch (e: any) {
@@ -292,11 +307,14 @@ async function main() {
     // equal Ink's yoga row 0, so coordinate-to-component mapping is exact.
     process.stdout.write('\x1b[?1000h');
 
-    render(React.createElement(TuiApp, { opts }), {
+    const app = render(React.createElement(TuiApp, { opts }), {
         stdin:           stdinFilter as any,
         exitOnCtrlC:     false,
         alternateScreen: true,
     });
+    // Quitting from the app (Ctrl+C when idle) only unmounts Ink; the heartbeat and the DOM's timers
+    // would keep the process alive, so end it here.
+    app.waitUntilExit().then(() => { _cleanup(); process.exit(0); }, () => { _cleanup(); process.exit(1); });
     _t('main:after_render');
     Store.setReady();
     _t('main:after_setReady');

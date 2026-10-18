@@ -10,7 +10,7 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 
 - **Model Priority**: the ordered list FreeGent tries. **✦ Populate** asks a model to rank the available ones and keeps the top ten, **Defaults** restores the shipped list and resumes paused models. See [Priority, fallbacks and retries](/models/rotation).
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
-- **Utility Model**: used for chat titles and prompt suggestions. "None" disables those calls.
+- **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
 - **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. They apply to custom endpoints only; other providers use their own defaults. A field you have never touched uses FreeGent's default (shown as its placeholder); clear a field and that parameter is left out of the request, so the server uses its own. [Profiles](#profiles) carry these values.
 - **API Credentials**: one field per provider, a paste box, **Extract from file**, and the Developer key. See [Default providers](/models/providers). Custom endpoints are added here too.
 - **Media Model Routing**: which models receive messages that contain images or audio.

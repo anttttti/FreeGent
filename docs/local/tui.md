@@ -28,12 +28,12 @@ The TUI loads `~/.config/freegent/credentials` and `.env` the same way the dev s
 | `--workspace <dir>` | Project directory (default: current directory) |
 | `--role <name>` | Start with a main role |
 | `--prompt <text>` | Send this as the first message |
-| `--resume [id]` | Resume the most recent session, or the one with this ID |
+| `--resume [id]` | Resume the most recent session that has messages, or the one with this ID |
 | `--log-file <path>` | Where to write the log (default `/tmp/fg-tui.log`) |
 
 ## Screen
 
-The status bar shows the model, whether the agent is running, throughput (`↑in ↓out`) and context usage (`ctx 4.2K/128K`, yellow at 70%, red at 90%). The event log fills the middle, and messages you send while the agent is busy appear in a queue above the input. Panels (12 rows) open below the log and close with `Esc` or the key that opened them.
+The status bar shows the model, whether the agent is running, throughput (`↑in ↓out`) and context usage (`ctx 4.2K/128K`, yellow at 70%, red at 90%). The event log fills the middle, and messages you send while the agent is busy appear in a queue above the input. Panels (12 rows) open below the log and close with `Esc` or the key that opened them. In the model and role panels, `↑`/`↓` move the marker and `Enter` (with an empty input line) uses the highlighted entry and closes the panel. In the Project and Settings panels `↑`/`↓` scroll.
 
 ## Key bindings
 
@@ -52,7 +52,7 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `Alt+A` | Agent panel |
 | `Alt+P` | Project files |
 | `Alt+T` | Tasks |
-| `Alt+,` | Settings |
+| `Alt+S` | Settings |
 | `Alt+H` | Help |
 
 ## Slash commands
@@ -64,10 +64,10 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `/compact` | Compact the history now |
 | `/rewind` | Rewind to the last checkpoint |
 | `/export` | Save the chat as a Markdown file in the workspace |
-| `/resume [N]` | List previous sessions, or restore one |
+| `/resume [N]` | List this folder's previous sessions (named from their first message, with message count), or restore one. Sessions that were never used are not listed |
 | `/model [provider\|model]` | Open the model panel, or switch model |
 | `/role [name]` | Open the role panel, or switch role |
-| `/set <key> <value>` | Set a setting (the same keys the WebUI stores, e.g. `fg_thinking_level`) |
+| `/set <key> [value]` | Set a setting by its key, shown next to each value in `/settings` (`/set` alone opens the panel; without a value the setting returns to its default). Other keys the WebUI stores also work, e.g. `fg_thinking_level` |
 | `/project`, `/tasks`, `/agent`, `/settings`, `/help` | Open that panel |
 | `/queue N`, `/steer N`, `/cancel N` | Change the Nth queued message: wait its turn, interrupt the current turn, or remove it |
 

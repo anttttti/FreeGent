@@ -26,6 +26,15 @@ Serve `dist/` from any static host. A static host has no `/api/proxy`, no Local 
 
 ### Deploy the Worker
 
+FreeGent uses a proxy Worker to enable request types that a browser cannot make on its own:
+
+- **Model calls** to providers that do not allow requests from web pages (NVIDIA, Kilo). On a static host at the default privacy level every provider call goes through it, which is also how shared keys are added.
+- **Web search** through Brave, and **`fetch_url`** and other plain page requests to sites that do not send CORS headers. The Worker fetches the page and returns it, for public HTTPS addresses only.
+- **Optional extras**: shared provider keys for sessions with a Developer key, and chat logs a user chooses to send.
+
+A static site without a Worker still loads, but these requests fail. Providers that do allow browser requests (Gemini, Groq, OpenRouter and others) work directly when [Settings → Privacy](/webui/settings#privacy) is set to Provider-only.
+
+
 1. Create a free Cloudflare account.
 2. In `cf-worker/wrangler.toml`, delete the `workers_dev = false` and `routes = …` lines. They bind the official Worker to `proxy.freegent.ai` and fail in other accounts. Change `name` if you want a different URL slug.
 3. Add your site's origin (for example `https://chat.example.com`) to `ALLOWED_ORIGINS` in `cf-worker/worker.js`. Requests from other origins get `403`.
@@ -58,7 +67,3 @@ npx wrangler secret put FG_DEV_KEY         # the Developer key
 Then paste the Developer key into Settings → Models → API Credentials → Developer key. Without a Developer key the Worker never injects its keys. Use is limited by a per-IP rate limit (`ratelimits` in `wrangler.toml`), and the Worker returns only `true`/`false` per provider from `/keys`, never the key values.
 
 Cloudflare's free plan allows 100,000 requests per day and 30 seconds of wall time per request, enough for most model calls.
-
-### GitHub Pages workflow
-
-`.github/workflows/deploy.yml` builds and publishes `dist/` to GitHub Pages on every push to `main`, after typecheck and tests. `.github/workflows/check.yml` runs the same checks on pull requests without deploying.

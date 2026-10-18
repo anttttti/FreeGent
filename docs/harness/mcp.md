@@ -1,6 +1,6 @@
 # MCP servers
 
-MCP (Model Context Protocol) servers give the agent extra tools, such as up-to-date library documentation or a company wiki. FreeGent is an MCP client over Streamable HTTP. Add a server under **Settings → MCP**, or pick one from the standard library (Context7, DeepWiki, Microsoft Learn, Hugging Face). Each server's tools start disabled; enable the ones the agent should see. Enabled tools appear to the model as `mcp__<server>__<tool>`, and a server's instructions are added to the prompt only when a role can call one of its tools.
+MCP (Model Context Protocol) servers give the agent extra tools, such as up-to-date library documentation or a company wiki. FreeGent is an MCP client over Streamable HTTP. Add a server under **Settings → MCP**, or pick one from the standard library (DeepWiki, Microsoft Learn, Hugging Face). Library documentation from Context7 is a separate built-in tool, `context7_docs`, which is off by default. Each server's tools start disabled; enable the ones the agent should see. Enabled tools appear to the model as `mcp__<server>__<tool>`, and a server's instructions are added to the prompt only when a role can call one of its tools.
 
 ## Connection and privacy
 

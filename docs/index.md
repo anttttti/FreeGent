@@ -18,7 +18,7 @@ features:
     link: /models/
     linkText: Providers and models
   - title: Built for diverse models
-    details: Small or large, cloud or local, each model gets the same reliable agent. History is compacted before the window fills, malformed tool calls are repaired, and steps are checked. Workers run subtasks in parallel.
+    details: Small or large, cloud or local, each model gets the same reliable agent. History is compacted before the window fills, malformed tool calls are repaired, and output is checked for known failure patterns. Workers run subtasks in parallel.
     link: /harness/
     linkText: Harness
   - title: WebUI, TUI and CLI
@@ -26,7 +26,7 @@ features:
     link: /overview#one-agent-core-three-interfaces
     linkText: The three interfaces
   - title: Runs code safely
-    details: The WebUI keeps a project filesystem and a bash terminal inside your browser, so JavaScript, Python and shell commands run in sandboxes there, not on a server. On your own machine, bash can run for real, isolated with bubblewrap.
+    details: The WebUI keeps a project filesystem and a bash terminal inside your browser, so JavaScript, Python and shell commands run in sandboxes there, not on a server. On your own machine, bash can run for real, optionally isolated.
     link: /code-execution/
     linkText: Code execution
 ---

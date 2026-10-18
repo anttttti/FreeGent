@@ -36,6 +36,7 @@ Speech input and spoken replies work where the browser supports them. **Settings
 The **Chats** tab lists every chat with its turn count, model and a snapshot of the workspace as it was. Open one to continue it.
 
 - Chats are stored in your browser only.
+- Every chat keeps the project files as they were when it started and after its last turn, Autopilot's task chats included. **Reset workspace to start** and **Reset workspace to end** on a chat's card in the Chats tab put the project files back to either state (it asks first, and removes files created since). The chat's messages are left alone. Each chat stores its own copy of the files, so a large project with many chats takes more browser storage.
 - Each chat has buttons to download it as JSON (messages, tool calls and results) or as readable Markdown. **Import** restores a JSON file.
 - **📤** sends the chat's log to the FreeGent developer to help fix a problem. It asks first, removes your saved API keys from the log, and the log is deleted after 14 days. Nothing is sent otherwise.
 - Several browser tabs can use FreeGent at once. A tab that sees a newer copy of a chat reloads it instead of overwriting it. Only one tab runs a turn in a given chat at a time: sending from a second tab while the first is still answering shows a note and keeps your message in the box. If the chat was deleted in another tab, your message goes to a new chat instead.
