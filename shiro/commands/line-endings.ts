@@ -3,7 +3,7 @@
  */
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { parseArgs } from './flags';
 
 export const dos2unixCmd: Command = {
   name: 'dos2unix',

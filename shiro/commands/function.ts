@@ -26,7 +26,6 @@ export const functionCmd: Command = {
   name: "function",
   description: "Define shell function (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "function: this is a shell language construct that must be interpreted by the shell\nUsage: function NAME { COMMANDS; } or NAME() { COMMANDS; }\n";
     return 2;
   },

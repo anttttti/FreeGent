@@ -6,7 +6,8 @@
 
 import type { CommandContext } from '../commands/index';
 import { iframeServer } from '../iframe-server';
-import { sha256sync, sha1sync, fnvHash } from '../commands/jseval/crypto';
+import { sha1sync, fnvHash } from '../commands/jseval/crypto';
+import { sha256 as sha256sync } from '../commands/checksums';
 import { ProcessExitError } from '../commands/jseval/utils';
 import { inspect } from 'node-inspect-extracted';
 import { transformESModules, transformTS, transformJSX } from '../commands/jseval/module-transform';
@@ -176,9 +177,6 @@ export async function executeNodeScript(
       createSqliteShim: () => createSqliteShim({ ctx }),
       createAutoStub,
     });
-
-    const fakeRequire = (moduleName: string) => requireModule(moduleName, ctx.cwd);
-
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
     // Transform TypeScript/JSX/ESM syntax for execution
     let transformedCode = code;

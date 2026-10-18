@@ -454,7 +454,6 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
         // Parse raw input into keypress events, handling ANSI escape sequences
         if (stream && stream.on && !stream._keypressListenerAdded) {
           stream._keypressListenerAdded = true;
-          let escBuf = '';
           stream.on('data', (data: any) => {
             const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
             let i = 0;

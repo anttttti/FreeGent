@@ -159,6 +159,12 @@ function _gemmaObject(s: string, i: number): [Record<string, any>, number] {
     return [obj, s.length];
 }
 
+/** A tool-argument value as written in text: JSON when it parses, the raw string otherwise. */
+function _looseJson(val: string): any {
+    try { return JSON.parse(val); } catch { return val; }
+}
+
+
 /** True when the user's request says a command is to be shown, not run ("do not execute it", "documentation
  *  only", "just show me an example"). A shell fence in the reply is then the answer, not a command to rescue. */
 export function userForbidsExecution(userText: unknown): boolean {
@@ -186,6 +192,11 @@ export function userForbidsExecution(userText: unknown): boolean {
 // opts.fenceRescue=false skips Format I-b (see userForbidsExecution).
 export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {}): { tool_calls: any[]; cleaned: any; } {
     const tool_calls = [];
+    const pushCall = (name: string, args: string) => tool_calls.push({
+        id: `call_${name}_${Date.now()}_${tool_calls.length}`,
+        type: 'function',
+        function: { name, arguments: args }
+    });
     let cleaned = text;
     const _known = _knownToolNames();
     const _knownAlt = [..._known].map(_reEsc).join('|');
@@ -201,11 +212,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             let stop = end;
             const tail = /^\s*<tool_call\|>/.exec(cleaned.slice(stop));
             if (tail) stop += tail[0].length;
-            tool_calls.push({
-                id: `call_${m[1]}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name: m[1], arguments: JSON.stringify(args) }
-            });
+            pushCall(m[1], JSON.stringify(args));
             out += cleaned.slice(last, m.index);
             last = stop;
             re.lastIndex = stop;
@@ -225,13 +232,9 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             let m: RegExpExecArray | null;
             while ((m = pairRe.exec(body)) !== null) {
                 const val = m[2].trim();
-                try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+                args[m[1]] = _looseJson(val);
             }
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) }
-            });
+            pushCall(name, JSON.stringify(args));
             return '';
         }
     );
@@ -248,11 +251,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
                 if (!name || typeof name !== 'string') return '';
                 const argsObj = parsed.arguments ?? parsed.parameters ?? {};
                 const argsStr = typeof argsObj === 'string' ? argsObj : JSON.stringify(argsObj);
-                tool_calls.push({
-                    id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                    type: 'function',
-                    function: { name, arguments: argsStr }
-                });
+                pushCall(name, argsStr);
             } catch { /* malformed JSON — drop block, don't push */ }
             return '';
         }
@@ -267,13 +266,9 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             let m: RegExpExecArray | null;
             while ((m = paramRe.exec(body)) !== null) {
                 const val = m[2].trim();
-                try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+                args[m[1]] = _looseJson(val);
             }
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) }
-            });
+            pushCall(name, JSON.stringify(args));
             return '';
         }
     );
@@ -293,24 +288,20 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
         let m: RegExpExecArray | null;
         while ((m = paramReA.exec(body)) !== null) {
             const val = m[2].trim();
-            try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+            args[m[1]] = _looseJson(val);
         }
         const paramReB = /<(\w+)>([\s\S]*?)<\/\1>/g;
         while ((m = paramReB.exec(body)) !== null) {
             if (m[1] === 'parameter') continue;
             const val = m[2].trim();
-            try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+            args[m[1]] = _looseJson(val);
         }
         return args;
     };
     cleaned = cleaned.replace(
         /<(invoke|call)\s+name="(\w+)">([\s\S]*?)<\/\1>/g,
         (_, _tag, name, body) => {
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(_parseInvokeBody(body)) }
-            });
+            pushCall(name, JSON.stringify(_parseInvokeBody(body)));
             return '';
         }
     );
@@ -328,11 +319,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
                 resolvedName = 'execute_code';
                 resolvedArgs = { language: 'bash', code: String(code) };
             }
-            tool_calls.push({
-                id: `call_${resolvedName}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name: resolvedName, arguments: JSON.stringify(resolvedArgs) }
-            });
+            pushCall(resolvedName, JSON.stringify(resolvedArgs));
             return '';
         }
     );
@@ -347,13 +334,9 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             let m: RegExpExecArray | null;
             while ((m = attrRe.exec(argsStr)) !== null) {
                 const val = m[2] ?? m[3] ?? '';
-                try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+                args[m[1]] = _looseJson(val);
             }
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) }
-            });
+            pushCall(name, JSON.stringify(args));
             return '';
         }
     );
@@ -368,11 +351,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
                 try { JSON.parse(args.trim()); parsedArgs = args.trim(); }
                 catch { parsedArgs = JSON.stringify({ input: args.trim() }); }
             }
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: parsedArgs }
-            });
+            pushCall(name, parsedArgs);
             return '';
         }
     );
@@ -386,11 +365,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
                 try { JSON.parse(argsText.trim()); parsedArgs = argsText.trim(); }
                 catch { parsedArgs = JSON.stringify({ input: argsText.trim() }); }
             }
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: parsedArgs }
-            });
+            pushCall(name, parsedArgs);
             return '';
         }
     );
@@ -407,15 +382,11 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             let m: RegExpExecArray | null;
             while ((m = attrRe.exec(attrStr)) !== null) {
                 const val = m[2] ?? m[3] ?? '';
-                try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+                args[m[1]] = _looseJson(val);
             }
             // Body content (between open/close tags) goes into a 'code' key if not already set
             if (body?.trim() && !('code' in args)) args['code'] = body.trim();
-            tool_calls.push({
-                id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) }
-            });
+            pushCall(name, JSON.stringify(args));
             return '';
         }
     );
@@ -428,13 +399,9 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
         let m: RegExpExecArray | null;
         while ((m = paramRe.exec(body)) !== null) {
             const val = m[2].trim();
-            try { args[m[1]] = JSON.parse(val); } catch { args[m[1]] = val; }
+            args[m[1]] = _looseJson(val);
         }
-        tool_calls.push({
-            id: `call_${name}_${Date.now()}_${tool_calls.length}`,
-            type: 'function',
-            function: { name, arguments: JSON.stringify(args) }
-        });
+        pushCall(name, JSON.stringify(args));
         return '';
     });
 
@@ -443,11 +410,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     cleaned = cleaned.replace(
         /<\|mask_start\|>([\s\S]*?)<\|mask_end\|>/g,
         (_, code) => {
-            tool_calls.push({
-                id: `call_execute_code_${Date.now()}_${tool_calls.length}`,
-                type: 'function',
-                function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: code.trim() }) }
-            });
+            pushCall('execute_code', JSON.stringify({ language: 'bash', code: code.trim() }));
             return '';
         }
     );
@@ -461,11 +424,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
         cleaned = cleaned.replace(
             /```(?:bash|sh|shell)\n([\s\S]*?)\n```/g,
             (_, code) => {
-                tool_calls.push({
-                    id: `call_execute_code_${Date.now()}_${tool_calls.length}`,
-                    type: 'function',
-                    function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: code.trim() }) }
-                });
+                pushCall('execute_code', JSON.stringify({ language: 'bash', code: code.trim() }));
                 return '';
             }
         );

@@ -84,13 +84,6 @@ function isValidElf(data: ArrayBuffer): boolean {
 
 // ── Public API ───────────────────────────────────────────────────────
 
-/** Get package metadata from manifest by name or alias */
-function findX86Package(name: string): X86Package | undefined {
-  return PACKAGE_MANIFEST.find(
-    p => p.name === name || p.aliases?.includes(name) || p.applets?.includes(name)
-  );
-}
-
 /** Get cached ELF binary. Returns null if not cached. */
 async function getCachedX86Package(name: string): Promise<ArrayBuffer | null> {
   return idbGet<ArrayBuffer>(X86_CACHE_STORE, name);

@@ -64,9 +64,6 @@ export const less: Command = {
         let searchInput = '';
 
         const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-
-        const visibleLength = (s: string) => stripAnsi(s).length;
-
         const formatLine = (line: string, lineNum: number): string => {
           let out = '';
           if (showNumbers) {

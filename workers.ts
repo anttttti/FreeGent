@@ -1105,8 +1105,6 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 // Labels of the two protocol-compliance judge mechanisms (step-validator.js's generic checks,
 // turn-protocol.js's post-COMPLETED verify). Every callLLMComplete call is logged (see below); this tells a
 // judge from the agent's own sub-task work (research:*, skill:*, worker:*, qa:*) where that matters.
-function _isJudgeLabel(label: string | null | undefined): boolean { return label === 'completion:verify' || !!label?.startsWith('validate:'); }
-
 // Central router for single-turn text completions (no tools, no history management). It is built on
 // llm-loops callLLM (shared request building, streaming decode and the OAI retry handler); what it
 // adds is judge/sub-task bookkeeping and the reasoning-room retry, so there is no second request path.

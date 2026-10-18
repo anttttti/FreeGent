@@ -21,7 +21,6 @@ export const whileCmd: Command = {
   name: "while",
   description: "Loop while condition is true (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "while: this is a shell language construct that must be interpreted by the shell\nUsage: while CONDITION; do COMMANDS; done\n";
     return 2;
   },
@@ -31,7 +30,6 @@ export const until: Command = {
   name: "until",
   description: "Loop until condition is true (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "until: this is a shell language construct that must be interpreted by the shell\nUsage: until CONDITION; do COMMANDS; done\n";
     return 2;
   },
@@ -41,7 +39,6 @@ export const doCmd: Command = {
   name: "do",
   description: "Start loop body (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "do: can only be used as part of a for/while/until loop\n";
     return 2;
   },
@@ -51,7 +48,6 @@ export const done: Command = {
   name: "done",
   description: "End loop (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "done: can only be used to close a for/while/until loop\n";
     return 2;
   },

@@ -2,9 +2,9 @@ import { FileSystem, withCreationMask } from './filesystem';
 import type { CommandRegistry, CommandContext } from './commands/index';
 import type { ShiroTerminal } from './terminal';
 import { recordCommand } from './favicon';
-import { isAvailableAsPackage, getCompiledModule, resolvePackageCommand, writePackageStubs, runPackageCommand } from './wasi-packages';
+import { isAvailableAsPackage, resolvePackageCommand, writePackageStubs, runPackageCommand } from './wasi-packages';
 import { ereToJs } from './utils/posix-regex';
-import { bytesToText, byteChar, normalizeBytes, textToBytes } from './utils/bytes';
+import { byteChar, normalizeBytes, textToBytes } from './utils/bytes';
 import { filesystemError } from './commands/flags';
 import { ULIMIT_UNAVAILABLE } from './commands/ulimit';
 import { processUmask } from './commands/umask';
@@ -5255,7 +5255,6 @@ export class Shell {
     }
 
     // Read selection from stdin (__PIPE_STDIN or REPLY)
-    const ps3 = this.env['PS3'] || '#? ';
     const hasPipeStdin = '__PIPE_STDIN' in this.env;
     let readInput = hasPipeStdin ? this.env['__PIPE_STDIN'] : '';
 

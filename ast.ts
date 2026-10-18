@@ -28,6 +28,19 @@ type AstCtx = {
     refMatch:  string | null;
 };
 
+/** Calls (`name(`) and bare references (`name`) of the queried symbol, shared by every language. */
+function _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch }: Pick<AstCtx, 'content' | 'lineOf' | 'results' | 'callMatch' | 'refMatch'>): void {
+    let m: RegExpExecArray | null;
+    if (callMatch) {
+        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
+        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
+    }
+    if (refMatch) {
+        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
+        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
+    }
+}
+
 function _astQueryJS({ content, lineOf, results, wantFn, wantCls, wantImp, wantExp, callMatch, refMatch }: AstCtx): void {
     let m: RegExpExecArray | null;
     if (wantFn) {
@@ -77,14 +90,7 @@ function _astQueryJS({ content, lineOf, results, wantFn, wantCls, wantImp, wantE
         while ((m = expConst.exec(content)) !== null) results.push({ name: m[1], type: 'export', line: lineOf(m.index) });
     }
 
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryPython({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -103,14 +109,7 @@ function _astQueryPython({ content, lineOf, results, wantFn, wantCls, wantImp, c
         const imp2 = /^from\s+\S+\s+import\s+.+/gm;
         while ((m = imp2.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryGo({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -127,14 +126,7 @@ function _astQueryGo({ content, lineOf, results, wantFn, wantCls, wantImp, callM
         const imp = /^import\s+(?:"[^"]+"|`[^`]+`|\([\s\S]*?\))/gm;
         while ((m = imp.exec(content)) !== null) results.push({ name: m[0].trim().split('\n')[0], type: 'import', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryRust({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -178,14 +170,7 @@ function _astQueryJava({ content, lineOf, results, wantFn, wantCls, wantImp, cal
         const imp = /^import\s+[\w.*]+;/gm;
         while ((m = imp.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryCSharp({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -205,14 +190,7 @@ function _astQueryCSharp({ content, lineOf, results, wantFn, wantCls, wantImp, c
         const use_ = /^using\s+[\w.]+;/gm;
         while ((m = use_.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'using', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryRuby({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -253,14 +231,7 @@ function _astQuerySwift({ content, lineOf, results, wantFn, wantCls, wantImp, ca
         const imp = /^import\s+\w+/gm;
         while ((m = imp.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryKotlin({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -277,14 +248,7 @@ function _astQueryKotlin({ content, lineOf, results, wantFn, wantCls, wantImp, c
         const imp = /^import\s+[\w.*]+/gm;
         while ((m = imp.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 function _astQueryCCpp({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
@@ -304,14 +268,7 @@ function _astQueryCCpp({ content, lineOf, results, wantFn, wantCls, wantImp, cal
         const inc = /^#include\s+[<"][^>"]+[>"]/gm;
         while ((m = inc.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'include', line: lineOf(m.index) });
     }
-    if (callMatch) {
-        const re = new RegExp(`\\b${_astEscape(callMatch)}\\s*\\(`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: callMatch, type: 'call', line: lineOf(m.index) });
-    }
-    if (refMatch) {
-        const re = new RegExp(`\\b${_astEscape(refMatch)}\\b`, 'g');
-        while ((m = re.exec(content)) !== null) results.push({ name: refMatch, type: 'reference', line: lineOf(m.index) });
-    }
+    _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
 // Dispatch table — maps language key to visitor function.

@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { bytesToText, textToBytes } from '../utils/bytes';
+import { textToBytes } from '../utils/bytes';
 import { parseArgs, filesystemError, quoteOperand } from './flags';
 
 // GNU wc output: one line per file and a "total" line for several files. Numbers are padded to

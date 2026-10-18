@@ -3,8 +3,7 @@
  */
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
-import { bytesToText, textToBytes } from '../utils/bytes';
+import { textToBytes } from '../utils/bytes';
 
 
 // GNU tac: the file is cut into records that each end with the separator (default newline; -b: begin
@@ -192,11 +191,3 @@ export const cmpCmd: Command = {
     return differ ? 1 : 0;
   },
 };
-
-function countLines(str: string, upTo: number): number {
-  let lines = 1;
-  for (let i = 0; i < upTo; i++) {
-    if (str[i] === '\n') lines++;
-  }
-  return lines;
-}

@@ -5,7 +5,7 @@
  * Every instruction is a TypeScript function — transparent, debuggable, moddable.
  */
 
-import { CPU, RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8, FLAG_CF, FLAG_ZF, FLAG_SF, FLAG_OF, FLAG_PF, FLAG_AF, FLAG_DF } from './cpu';
+import { CPU, RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 } from './cpu';
 import { VirtualMemory } from './memory';
 
 const MASK8 = 0xFFn;

@@ -25,7 +25,6 @@ export const ifCmd: Command = {
   name: "if",
   description: "Conditional execution (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "if: this is a shell language construct that must be interpreted by the shell\nUsage: if CONDITION; then COMMANDS; [elif CONDITION; then COMMANDS;] [else COMMANDS;] fi\n";
     return 2;
   },
@@ -35,7 +34,6 @@ export const then: Command = {
   name: "then",
   description: "Part of if/elif statement (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "then: can only be used as part of an if/elif statement\n";
     return 2;
   },
@@ -45,7 +43,6 @@ export const elif: Command = {
   name: "elif",
   description: "Else-if branch (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "elif: can only be used as part of an if statement\n";
     return 2;
   },
@@ -55,7 +52,6 @@ export const elseCmd: Command = {
   name: "else",
   description: "Else branch (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "else: can only be used as part of an if statement\n";
     return 2;
   },
@@ -65,7 +61,6 @@ export const fi: Command = {
   name: "fi",
   description: "End if statement (shell language construct)",
   async exec(ctx) {
-    const args = ctx.args;
     ctx.stderr += "fi: can only be used to close an if statement\n";
     return 2;
   },
