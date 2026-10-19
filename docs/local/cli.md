@@ -21,7 +21,7 @@ npx tsx fg-run.ts --task "Write unit tests for src/api.py" \
   --api-url http://localhost:8000/v1 --provider custom --model qwen3
 ```
 
-Exactly one of `--task` (alias `--workflow`), `--task-file` or `--prompt` is needed. Output goes to stdout, and every model turn is logged as JSON lines. Run `npx tsx fg-run.ts --help` for the authoritative list.
+Exactly one of `--task` (alias `--workflow`), `--task-file` or `--prompt` is needed; giving two is an error, as is an option that needs a value and has none. Output goes to stdout (only the answer, and for a task the metrics lines; progress and diagnostics go to stderr), and every model turn is logged as JSON lines. The workspace's `AGENTS.md` and `roles/*.md` are read, as in the web app. Run `npx tsx fg-run.ts --help` for the authoritative list.
 
 ## Keys
 
@@ -39,8 +39,8 @@ Exactly one of `--task` (alias `--workflow`), `--task-file` or `--prompt` is nee
 | `--api-key`, `--api-url` | | Also `FREEGENT_API_KEY`, `FREEGENT_API_URL` |
 | `--print-model` | | Print the resolved primary model and exit |
 | `--thinking-level` | `off` | `off`, `low`, `medium`, `high` |
-| `--temperature` | `0.2` | 0 to 2 |
-| `--timeout` | 1800000 | Abort after this many ms |
+| `--temperature` | `0.2` | 0 to 2; a value outside it is refused |
+| `--timeout` | 1800000 | Abort after this many ms (also for `--prompt`) |
 | `--context-window` | none | Total token budget; enables per-step clamping |
 | `--compaction-limit` | 20000 | Compact when the estimated history passes this many tokens |
 | `--retry-mode`, `--retry-fixed-ms` | `exponential`, 120000 | Retry delay style |

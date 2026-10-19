@@ -1675,7 +1675,7 @@ function setupSkillAutocomplete() {
             selectedIdx = Math.max(selectedIdx - 1, 0);
             items.forEach((it, i) => it.classList.toggle('selected', i === selectedIdx));
             (items[selectedIdx] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'Tab' || (e.key === 'Enter' && selectedIdx >= 0)) {
+        } else if (e.key === 'Tab' || (e.key === 'Enter' && selectedIdx >= 0 && !e.isComposing && e.keyCode !== 229)) {
             e.preventDefault();
             const sel = items[selectedIdx] ?? items[0];
             if (sel) applySkill((sel as HTMLElement).dataset.name);

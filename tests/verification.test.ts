@@ -38,3 +38,27 @@ describe('verification states', () => {
         expect(run([[{ name: 'replace_in_file', args: { path: 'a.py' }, result: { error: 'not found' } }]])).toBe('no_change');
     });
 });
+
+describe('a check that ran no test', () => {
+    const mk = (code: string, exit_code: number, stdout = '') => ({ name: 'execute_code', args: { code }, result: { exit_code, stdout } });
+    it('pytest exit 4 / "collected 0 items" (an id absent from the checkout) is unverified, not failed', () => {
+        const none = mk('pytest -xvs tests/test_new.py::test_x', 4, 'collected 0 items\n no tests ran in 0.03s');
+        expect(run([[edit], [none]])).toBe('unverified');
+    });
+    it('pytest exit 5 and a runner that is not installed are not checks', () => {
+        expect(run([[edit], [mk('python -m pytest -k nothing', 5, 'no tests ran')]])).toBe('unverified');
+        expect(run([[edit], [mk('pytest tests/', 127, '')]])).toBe('unverified');
+    });
+    it('"Ran 0 tests" with exit 0 is not a pass', () => {
+        expect(run([[edit], [mk('python -m unittest discover', 0, 'Ran 0 tests in 0.000s\n\nOK')]])).toBe('unverified');
+    });
+    it('a real failure that mentions "not found" in a test message still fails', () => {
+        expect(run([[edit], [mk('pytest tests/test_a.py', 1, '1 failed, 2 passed\nE   FileNotFoundError: x not found')]])).toBe('failed_verification');
+    });
+    it('a not-run check does not erase an earlier real failure or pass', () => {
+        const st = newVerification();
+        noteStep(st, { toolCalls: [edit] }); noteStep(st, { toolCalls: [pass] });
+        noteStep(st, { toolCalls: [mk('pytest nope.py', 4, 'collected 0 items')] });
+        expect(verdict(st)).toBe('verified');
+    });
+});

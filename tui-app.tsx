@@ -16,10 +16,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useWindowSize, useApp } from 'ink';
 import * as Store from './tui-store.js';
-import { sendMessage, stopAgent, newSession, setMouseHandler, setScrollHandler, runCompact, listWorkspaceSessions, resumeSession } from './fg-tui.js';
+import { sendMessage, stopAgent, startNewSession, showRestoredConversation, retryLast, rewindLast, setMouseHandler, setScrollHandler, runCompact, listWorkspaceSessions, resumeSession, isTurnBusy } from './fg-tui.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
-import { SETTINGS_DEF, keyedFields, type FieldDef } from './panel-defs.js';
+import { layoutWindow, wrapRows, cursorWindow } from './log-layout.js';
+import { prevBoundary, nextBoundary, deleteBackward, deleteForward } from './input-edit.js';
+import { SETTINGS_DEF, keyedFields, numberFieldError, type FieldDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { friendlyLabel } from './step-label.js';
 
@@ -286,7 +288,8 @@ function SectionContent({ step, section, width }: { step: Store.StepState; secti
 
     const lines    = raw.split('\n');
     const total    = lines.length;
-    const clamped  = Math.max(0, Math.min(scrollOffset, Math.max(0, total - MAX_SECTION_LINES)));
+    const maxOffset = Math.max(0, total - MAX_SECTION_LINES);
+    const clamped  = Math.max(0, Math.min(scrollOffset, maxOffset));
     const endIdx   = total - clamped;
     const startIdx = Math.max(0, endIdx - MAX_SECTION_LINES);
     const visible  = lines.slice(startIdx, endIdx);
@@ -304,7 +307,8 @@ function SectionContent({ step, section, width }: { step: Store.StepState; secti
         if (key === prevScrollKey.current) return;              // position unchanged — skip
         if (prevScrollKey.current) _scrollTargets.delete(prevScrollKey.current);
         // dir +1 = wheel up = show older lines (increase offset); -1 = wheel down = newer
-        _scrollTargets.set(key, (dir: 1 | -1) => setScrollOffset(o => Math.max(0, o + dir * 3)));
+        // Clamped at both ends: an offset beyond the oldest line only stored wheel events that moved nothing (case 069).
+        _scrollTargets.set(key, (dir: 1 | -1) => setScrollOffset(o => Math.max(0, Math.min(maxOffset, o + dir * 3))));
         prevScrollKey.current = key;
         return () => {
             if (prevScrollKey.current) { _scrollTargets.delete(prevScrollKey.current); prevScrollKey.current = null; }
@@ -372,12 +376,21 @@ function _buildFlatItems(entries: Store.Entry[]): FlatItem[] {
 }
 
 function EventLog({ height, width, entries, scrollOffset }: { height: number; width: number; entries: Store.Entry[]; scrollOffset: number }) {
-    if (height <= 0) return null;
     const items    = _buildFlatItems(entries);
-    // Each item is ~1 line (step/header); overflow="hidden" clips taller sections
-    const maxItems = Math.max(1, height);
-    const endIdx   = Math.max(maxItems, items.length - scrollOffset);
-    const visible  = items.slice(Math.max(0, endIdx - maxItems), endIdx);
+    // Items are as tall as their content (a final answer can be dozens of rows): choose by rows, not by count.
+    const finalRows = (it: Extract<FlatItem, { kind: 'final-text' }>) => wrapRows(_cleanFinalText(it.turn.finalText!), width - 2);
+    const heights  = items.map(it =>
+        it.kind === 'user'       ? wrapRows(`> ${it.text}`, width).length
+      : it.kind === 'final-text' ? 1 + finalRows(it).length
+      // An open section is a rule, up to MAX_SECTION_LINES lines and the two lines saying how many are above and below it.
+      : it.kind === 'step'       ? 1 + (it.step.openSection && !it.step.collapsed ? 3 + MAX_SECTION_LINES : 0)
+      : 1);
+    const win      = layoutWindow(heights, height, scrollOffset);
+    const visible  = items.slice(win.start, win.end);
+    const tailRows = win.tailRows;
+    useEffect(() => { Store.setScrollLimit(win.maxOffset); }, [win.maxOffset]);
+    if (height <= 0) return null;
+    scrollOffset = Math.min(scrollOffset, win.maxOffset);
 
     return (
         <Box flexDirection="column" height={height} overflow="hidden">
@@ -385,10 +398,13 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                 <Text dimColor>{`  ↑ scrolled up ${scrollOffset} (↓ to return)`}</Text>
             )}
             {visible.map((item, i) => {
+                const isLast = i === visible.length - 1;
                 if (item.kind === 'user') {
+                    // A message taller than the window shows its end, like a long answer.
+                    const rows = isLast && tailRows != null ? wrapRows(`> ${item.text}`, width).slice(-tailRows) : null;
                     return (
                         <Box key={item.id}>
-                            <Text color="cyan" bold>{`> ${item.text}`}</Text>
+                            <Text color="cyan" bold>{rows ? rows.join('\n') : `> ${item.text}`}</Text>
                         </Box>
                     );
                 }
@@ -399,10 +415,14 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                     return <StepView key={item.step.id} step={item.step} width={width} />;
                 }
                 if (item.kind === 'final-text') {
-                    const displayText = _cleanFinalText(item.turn.finalText!);
+                    const all = wrapRows(_cleanFinalText(item.turn.finalText!), width - 2);
+                    // Taller than the window: the last rows that fit, and a line saying how much is above (/export has all of it).
+                    const clipped = isLast && tailRows != null;
+                    const shown = clipped ? all.slice(-Math.max(1, tailRows! - 2)) : all;
                     return (
-                        <Box key={`ft-${item.turn.id}`} paddingLeft={2} paddingTop={1}>
-                            <Text wrap="wrap" bold>{displayText}</Text>
+                        <Box key={`ft-${item.turn.id}`} paddingLeft={2} paddingTop={1} flexDirection="column">
+                            {clipped && <Text dimColor>{`↑ ${all.length - shown.length} earlier lines (not shown; /export saves the whole answer)`}</Text>}
+                            <Text bold>{shown.join('\n')}</Text>
                         </Box>
                     );
                 }
@@ -414,7 +434,7 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-function ModelPanel() {
+function ModelPanel({ height }: { height: number }) {
     const [models, setModels] = useState<string[]>([]);
     const [paused, setPaused] = useState<string[]>([]);
     const cursor = useStore().panelCursor;
@@ -433,14 +453,16 @@ function ModelPanel() {
         return () => { clearInterval(t); _panelItems = { kind: null, items: [] }; };
     }, []);
 
+    // Room: the panel's rows less padding (2), the three heading lines and one line saying how many are out of view.
+    const modelWin = cursorWindow(models.length, cursor, Math.max(1, height - 6));
     return (
         <Box flexDirection="column">
-            <Text bold>Primary models</Text>
+            <Text bold>{models.length > modelWin.end - modelWin.start ? `Primary models  (${modelWin.start + 1}–${modelWin.end} of ${models.length}, ↑/↓ move)` : 'Primary models'}</Text>
             <Text dimColor>{`  profile: ${PROFILE_PATH}`}</Text>
             <Text dimColor>{'  ↑/↓ choose, Enter to use it, Esc to close  •  /model <provider>|<model> for one that is not listed  •  --model flag overrides on start'}</Text>
             {models.length === 0
                 ? <Text dimColor>  No models configured. Edit profile or use /model openai|gpt-4o</Text>
-                : models.map((m, i) => {
+                : models.map((m, i) => ({ m, i })).slice(modelWin.start, modelWin.end).map(({ m, i }) => {
                     const isPaused = paused.includes(m);
                     const [prov, ...rest] = m.split('|');
                     return (
@@ -458,7 +480,7 @@ function ModelPanel() {
     );
 }
 
-function RolePanel() {
+function RolePanel({ height }: { height: number }) {
     const [currentRole, setCurrentRole] = useState<any>(null);
     const [roles, setRoles] = useState<any[]>([]);
     const cursor = useStore().panelCursor;
@@ -477,6 +499,7 @@ function RolePanel() {
     }, []);
 
     const activeName = currentRole?.name ?? 'none';
+    const roleWin = cursorWindow(roles.length, cursor, Math.max(1, height - 5));
 
     return (
         <Box flexDirection="column">
@@ -486,7 +509,7 @@ function RolePanel() {
                 {currentRole?.description ? <Text dimColor>{`  — ${currentRole.description}`}</Text> : null}
             </Text>
             <Text dimColor>{'  ↑/↓ choose, Enter to use it, Esc to close  •  /role <name>  •  Reset to default: /role director'}</Text>
-            {roles.map((r, i) => (
+            {roles.map((r, i) => ({ r, i })).slice(roleWin.start, roleWin.end).map(({ r, i }) => (
                 <Text key={r.name}>
                     <Text color="yellow">{i === cursor ? '▸' : ' '}</Text>
                     <Text color={r.name === activeName ? 'cyan' : undefined} dimColor={r.name !== activeName}>
@@ -741,6 +764,43 @@ function ProjectPanel({ workspaceRoot, height }: { workspaceRoot: string; height
 
 // ── Panel wrapper — fills the full main area ──────────────────────────────────
 
+const HELP_LINES = [
+    'Keyboard shortcuts (Alt + key):',
+    '  Alt+N  new chat        Alt+M  model list',
+    '  Alt+T  tasks           Alt+A  agent info',
+    '  Alt+S  settings        Alt+R  role',
+    '  Alt+P  project files   Alt+H  this help',
+    '  Esc    close panel      ↑/↓   scroll log (or this list, when a panel is open)',
+    '',
+    'While agent runs:',
+    '  Ctrl+C  break after step (exit when idle)',
+    '  Alt+X   hard stop    Alt+B  soft break',
+    '  Alt+U   retry last turn',
+    '',
+    'Slash commands:',
+    '  /clear /compact /rewind',
+    '  /export  — save chat as markdown file',
+    '  /resume [N]  — list or restore a previous session',
+    '  /model <prov|model>    /role [name]',
+    '  /set <key> <value>     /tasks /help',
+    '  /steer N  /queue N  /cancel N',
+];
+
+// Help is longer than its panel: ↑/↓ scroll it (the arrows scroll the conversation otherwise, so the slash-command part was out of reach).
+function HelpPanel({ height }: { height: number }) {
+    const cursor = useStore().panelCursor;
+    const visible = Math.max(1, height - 4);   // padding (2), the heading, and one line for the scroll hint
+    const start = Math.min(cursor, Math.max(0, HELP_LINES.length - visible));
+    _panelItems = { kind: 'help', items: HELP_LINES.map((_, i) => String(i)) };
+    useEffect(() => () => { _panelItems = { kind: null, items: [] }; }, []);
+    return (
+        <Box flexDirection="column">
+            <Text bold>{HELP_LINES.length > visible ? `Help  (${start + 1}–${Math.min(HELP_LINES.length, start + visible)} of ${HELP_LINES.length}, ↑/↓ scroll)` : 'Help'}</Text>
+            <Text wrap="truncate">{HELP_LINES.slice(start, start + visible).join('\n')}</Text>
+        </Box>
+    );
+}
+
 function Panel({ name, height, workspaceRoot }: {
     name: string;
     height: number;
@@ -748,33 +808,14 @@ function Panel({ name, height, workspaceRoot }: {
 }) {
     const inner = (
         name === 'project'  ? <ProjectPanel workspaceRoot={workspaceRoot} height={height} /> :
-        name === 'model'    ? <ModelPanel /> :
-        name === 'role'     ? <RolePanel /> :
+        name === 'model'    ? <ModelPanel height={height} /> :
+        name === 'role'     ? <RolePanel height={height} /> :
         name === 'tasks'    ? <TasksPanel /> :
         name === 'agent'    ? <AgentPanel /> :
         name === 'settings' ? <SettingsPanel height={height} /> :
+        name === 'help'     ? <HelpPanel height={height} /> :
         (() => {
-            const content: Record<string, string> = {
-                help: 'Keyboard shortcuts (Alt + key):\n' +
-                      '  Alt+N  new chat        Alt+M  model list\n' +
-                      '  Alt+T  tasks           Alt+A  agent info\n' +
-                      '  Alt+S  settings        Alt+R  role\n' +
-                      '  Alt+P  project files   Alt+H  this help\n' +
-                      '  Esc    close panel      ↑/↓   scroll log\n' +
-                      '\n' +
-                      'While agent runs:\n' +
-                      '  Ctrl+C  break after step (exit when idle)\n' +
-                      '  Alt+X   hard stop    Alt+B  soft break\n' +
-                      '  Alt+U   retry last turn\n' +
-                      '\n' +
-                      'Slash commands:\n' +
-                      '  /clear /compact /rewind\n' +
-                      '  /export  — save chat as markdown file\n' +
-                      '  /resume [N]  — list or restore a previous session\n' +
-                      '  /model <prov|model>    /role [name]\n' +
-                      '  /set <key> <value>     /tasks /help\n' +
-                      '  /steer N  /queue N  /cancel N',
-            };
+            const content: Record<string, string> = {};
             return (
                 <>
                     <Text bold>{name.charAt(0).toUpperCase() + name.slice(1)}</Text>
@@ -804,10 +845,19 @@ function StatusBar({ agentRunning, ready }: {
 
     useEffect(() => {
         const refresh = () => {
-            try { setModel((dom.window.getMainModelList?.() ?? [])[0] ?? ''); } catch {}
+            // The model that will answer: the first of the list that is not paused (a paused first entry was shown while the second
+            // one served the turn, TUI report case 077).
+            let first = '';
+            try { const active = dom.window.getActiveMainModelList?.() ?? []; first = (active.length ? active : (dom.window.getMainModelList?.() ?? []))[0] ?? ''; setModel(first); } catch {}
             try {
                 const u = (dom.window as any).getContextUsage?.() as { used: number; limit: number } | undefined;
-                if (u) { setCtxUsed(u.used); setCtxLimit(u.limit); }
+                if (u) {
+                    // A custom endpoint's own window (probed at start, or set) is the limit that counts; the catalog's 128K was assumed for
+                    // a model it never heard of (case 076: the status said /128.0K for a 12K or 60K server).
+                    const endpointCtx = parseInt(_lsGet('fg_openai_context', ''), 10);
+                    const custom = first.startsWith('custom|') && Number.isFinite(endpointCtx) && endpointCtx > 0;
+                    setCtxUsed(u.used); setCtxLimit(custom ? endpointCtx : u.limit);
+                }
             } catch {}
         };
         refresh();
@@ -899,13 +949,19 @@ function QueueItemRow({ item, index, total }: { item: Store.QueuedMsg; index: nu
     );
 }
 
-function QueuePanel({ queue }: { queue: Store.QueuedMsg[] }) {
+/** Rows the queue panel may take: a third of the terminal, so many queued messages never push the composer off screen. */
+const queueShown = (n: number, rows: number) => Math.min(n, Math.max(1, Math.floor(rows / 3) - 2));
+
+function QueuePanel({ queue, rows }: { queue: Store.QueuedMsg[]; rows: number }) {
     if (!queue.length) return null;
+    const shown = queueShown(queue.length, rows);
+    const hidden = queue.length - shown;
     return (
         <Box flexDirection="column" paddingLeft={1} borderStyle="single" borderColor="gray">
-            {queue.map((item, i) => (
+            {queue.slice(0, shown).map((item, i) => (
                 <QueueItemRow key={item.id} item={item} index={i} total={queue.length} />
             ))}
+            {hidden > 0 && <Text dimColor>{`… ${hidden} more queued`}</Text>}
         </Box>
     );
 }
@@ -950,14 +1006,14 @@ function _setModel(spec: string): void {
 // The rows of the panel that is open and selectable (model or role), published by the panel so the key handler and the
 // composer know how many there are. ↑/↓ move the highlight, Enter on an empty composer chooses the highlighted row.
 // Settings and Project are not selectable; for them the cursor is the first visible row (↑/↓ scroll).
-let _panelItems: { kind: 'model' | 'role' | 'settings' | 'project' | null; items: string[] } = { kind: null, items: [] };
+let _panelItems: { kind: 'model' | 'role' | 'settings' | 'project' | 'help' | null; items: string[] } = { kind: null, items: [] };
 function _selectFromPanel(): boolean {
     const st = Store.getState();
     if (!st.activePanel || _panelItems.kind !== st.activePanel || (_panelItems.kind !== 'model' && _panelItems.kind !== 'role')) return false;
     const item = _panelItems.items[st.panelCursor];
     if (!item) return false;
     if (_panelItems.kind === 'model') _setModel(item);
-    else { try { (globalThis as any).setMainAgentRole(item); } catch {} }
+    else { try { if ((globalThis as any).setMainAgentRole(item) === false) Store.addNotice(`_Unknown role \`${item}\`._`); } catch {} }
     Store.setActivePanel(st.activePanel);   // choosing closes the list (the same call that Esc and Alt+M use)
     return true;
 }
@@ -992,16 +1048,27 @@ function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
         }
         if (key.meta) return;                         // Alt+key shortcuts: not text
         if (key.return) { onSubmit(v); return; }
-        if (key.leftArrow)  { setCursor(Math.max(0, c - 1)); return; }
-        if (key.rightArrow) { setCursor(Math.min(v.length, c + 1)); return; }
-        if (key.backspace || key.delete) {
-            if (c > 0) edit(v.slice(0, c - 1) + v.slice(c), c - 1);
-            return;
-        }
+        if (key.leftArrow)  { setCursor(prevBoundary(v, c)); return; }
+        if (key.rightArrow) { setCursor(nextBoundary(v, c)); return; }
+        // Whole characters: an emoji is two UTF-16 units, and half of one must never reach the model (case 019, 023). Delete is its own key
+        // (case 020: it deleted backwards).
+        if (key.backspace) { const r = deleteBackward(v, c); edit(r.text, r.cursor); return; }
+        if (key.delete)    { const r = deleteForward(v, c);  edit(r.text, r.cursor); return; }
         if (!input) return;
-        // Pasted text arrives as one chunk, line breaks included: they become spaces, and a paste never sends by itself.
-        const add = input.replace(/\s*[\r\n]+\s*/g, ' ').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-        if (add) edit(v.slice(0, c) + add + v.slice(c), c + add.length);
+        // Keys that arrive in one read (typing ahead, a pasted macro) reach Ink as one string. Ctrl+A / Ctrl+E / Ctrl+U inside it still act, in
+        // order with the text around them (TUI report case 079: Ctrl+E Ctrl+U sent together left the draft in place).
+        let tv = v, tc = c;
+        for (const part of input.split(/([\x01\x05\x15])/)) {
+            if (part === '\x01') tc = 0;
+            else if (part === '\x05') tc = tv.length;
+            else if (part === '\x15') { tv = tv.slice(tc); tc = 0; }
+            else if (part) {
+                // Pasted text arrives as one chunk, line breaks included: they become spaces, and a paste never sends by itself.
+                const add = part.replace(/\s*[\r\n]+\s*/g, ' ').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+                if (add) { tv = tv.slice(0, tc) + add + tv.slice(tc); tc += add.length; }
+            }
+        }
+        if (tv !== v) edit(tv, tc); else if (tc !== c) setCursor(tc);
     });
 
     if (!value) {
@@ -1009,7 +1076,8 @@ function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
             ? <Text><Text inverse>{placeholder[0]}</Text><Text dimColor>{placeholder.slice(1)}</Text></Text>
             : <Text inverse>{' '}</Text>;
     }
-    return <Text>{value.slice(0, cursor)}<Text inverse>{value[cursor] ?? ' '}</Text>{value.slice(cursor + 1)}</Text>;
+    const after = cursor < value.length ? nextBoundary(value, cursor) : cursor;
+    return <Text>{value.slice(0, cursor)}<Text inverse>{cursor < value.length ? value.slice(cursor, after) : ' '}</Text>{value.slice(after)}</Text>;
 }
 
 function InputLine({ ready, running, promptSuggestion }: {
@@ -1020,19 +1088,28 @@ function InputLine({ ready, running, promptSuggestion }: {
     const [value, setValue] = useState('');
     const [suggestions, setSuggestions] = useState<string[]>([]);
     // Message typed and submitted before startup finished — fired once ready.
-    const pendingRef = useRef<string | null>(null);
+    const pendingRef = useRef<string[]>([]);
+    // A message typed while no model was configured (see onSubmit): given back once one is.
+    const unsentRef = useRef<string>('');
+    const restoreDraftSoon = () => setTimeout(() => {
+        if (!unsentRef.current || !(dom.window.getActiveMainModelList?.() ?? []).length) return;
+        setValue(unsentRef.current); unsentRef.current = '';
+    }, 0);
 
     // As soon as startup completes, dispatch any message the user sent early.
     useEffect(() => {
-        if (!ready || !pendingRef.current) return;
-        const t = pendingRef.current;
-        pendingRef.current = null;
+        if (!ready || !pendingRef.current.length) return;
+        const early = pendingRef.current;
+        pendingRef.current = [];
         (async () => {
-            if (t.startsWith('/')) { await handleSlash(t); return; }   // commands need no model: /model is how one is chosen
-            const activeModels = dom.window.getActiveMainModelList?.() ?? [];
-            if (activeModels.length === 0) return;
-            Store.addUserMessage(t);
-            await sendMessage(t);
+            // Every early message is delivered in order (a second Enter before startup ended used to replace the first).
+            for (const t of early) {
+                if (t.startsWith('/')) { await handleSlash(t); continue; }   // commands need no model: /model is how one is chosen
+                const activeModels = dom.window.getActiveMainModelList?.() ?? [];
+                if (activeModels.length === 0) continue;
+                Store.addUserMessage(t);
+                await sendMessage(t);
+            }
         })();
     }, [ready]);
 
@@ -1048,26 +1125,40 @@ function InputLine({ ready, running, promptSuggestion }: {
 
     const onSubmit = useCallback(async (text: string) => {
         const t = text.trim();
-        if (!t) { _selectFromPanel(); return; }   // Enter on an empty composer chooses the highlighted model or role
-        setValue('');
-        setSuggestions([]);
-        Store.setPromptSuggestion('');
+        if (!t) { _selectFromPanel(); restoreDraftSoon(); return; }   // Enter on an empty composer chooses the highlighted model or role
+        // With no model to send to, the message used to be dropped without a word (TUI report case 008). Now it is kept aside, named in a
+        // note, and put back in the box as soon as a model is available (see below), so choosing one does not mean typing it again. It is
+        // kept out of the box meanwhile: typing "/model …" after it would have sent both as one message.
+        const accept = () => { setValue(''); setSuggestions([]); Store.setPromptSuggestion(''); };
+        const restoreDraft = () => {
+            if (!unsentRef.current || !(dom.window.getActiveMainModelList?.() ?? []).length) return;
+            setValue(unsentRef.current); unsentRef.current = '';
+        };
 
         if (!ready) {
+            accept();
             // Startup still in progress — buffer the message; useEffect fires it once ready.
-            pendingRef.current = t;
+            pendingRef.current.push(t);
             return;
         }
 
         // Slash commands first: with no usable model the placeholder says "/model <provider|id> to configure", and
         // dropping every input here made that, and /help and /settings, impossible.
         if (t.startsWith('/')) {
+            accept();
             await handleSlash(t);
+            restoreDraft();
             return;
         }
 
         const activeModels = dom.window.getActiveMainModelList?.() ?? [];
-        if (activeModels.length === 0) return; // no model configured — nothing to send a message to
+        if (activeModels.length === 0) {
+            unsentRef.current = t;
+            accept();
+            Store.addNotice(`_No model is configured, so nothing was sent. Your message is saved: ${t.length > 80 ? t.slice(0, 80) + '…' : t}. Choose a model with \`/model <provider>|<model>\` (or Alt+M) and it comes back into the box._`);
+            return;
+        }
+        accept();
 
         if (running) {
             // Agent busy — enqueue; the message appears in the queue panel, not the chat log yet.
@@ -1091,7 +1182,7 @@ function InputLine({ ready, running, promptSuggestion }: {
     const showSuggestion = ready && promptSuggestion && !value && !running;
     // Show pending indicator while startup finishes and the user has queued a message.
     const [_tick, _setTick] = useState(0);
-    const hasPending = !ready && !!pendingRef.current;
+    const hasPending = !ready && pendingRef.current.length > 0;
     useEffect(() => {
         if (!hasPending) return;
         const t = setInterval(() => _setTick(n => n + 1), 400);
@@ -1113,7 +1204,7 @@ function InputLine({ ready, running, promptSuggestion }: {
             )}
             {hasPending && (
                 <Box paddingLeft={2}>
-                    <Text color="yellow" dimColor>{`⟳ queued: ${pendingRef.current}`}</Text>
+                    <Text color="yellow" dimColor>{`⟳ queued: ${pendingRef.current.join(" · ")}`}</Text>
                 </Box>
             )}
             <Box>
@@ -1153,8 +1244,7 @@ async function runResume(arg?: string): Promise<void> {
     // No arg — print the list so the user can pick.
     if (!arg) {
         if (!sessions.length) {
-            const t = Store.addTurn();
-            Store.finalizeTurn(t, '_No previous sessions found for this workspace._');
+            Store.addNotice('_No previous sessions found for this workspace._');
             return;
         }
         const fmt = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
@@ -1162,23 +1252,29 @@ async function runResume(arg?: string): Promise<void> {
             '**Previous sessions** — use `/resume N` to restore one:\n',
             ...sessions.map((s, i) => `  **${i + 1}.** ${s.name}  _(${s.messages} message${s.messages === 1 ? '' : 's'}, last active ${fmt(s.lastAt)})_`),
         ];
-        const t = Store.addTurn();
-        Store.finalizeTurn(t, lines.join('\n'));
+        Store.addNotice(lines.join('\n'));
         return;
     }
 
     // Numeric arg — pick by index.
     const idx = parseInt(arg, 10) - 1;
     if (isNaN(idx) || idx < 0 || idx >= sessions.length) {
-        const t = Store.addTurn();
-        Store.finalizeTurn(t, `_Invalid session number. Use \`/resume\` to see the list._`);
+        Store.addNotice(`_Invalid session number. Use \`/resume\` to see the list._`);
         return;
     }
 
+    // A reply that is still running writes into whichever session is open when it ends: resuming now put session B's
+    // late answer into session A and dropped B's pending question (TUI report case 084). Switch only when idle.
+    if (isTurnBusy()) {
+        Store.addNotice('_A reply is still running — wait for it or stop it (Ctrl+C or /stop), then run /resume again._');
+        return;
+    }
+    // Messages queued behind a finished turn were written for the conversation that is being replaced.
+    try { (dom.window.msgQueue as any)?.clear?.(); } catch {}
     const session = sessions[idx];
     const ok = await resumeSession(session.id);
-    const t = Store.addTurn();
-    Store.finalizeTurn(t, ok
+    if (ok) showRestoredConversation();   // the screen and /export now show the conversation the model has
+    Store.addNotice(ok
         ? `Resumed session: **${session.name}**`
         : `_Could not restore session (no messages saved)._`);
 }
@@ -1195,9 +1291,8 @@ async function runExport(workspaceRoot: string): Promise<void> {
     const { join }      = await import('node:path');
 
     const entries = Store.getState().entries;
-    if (!entries.length) {
-        const t = Store.addTurn();
-        Store.finalizeTurn(t, '_Nothing to export — conversation is empty._');
+    if (!entries.some(e => e.type === 'user' || !e.turn.local)) {
+        Store.addNotice('_Nothing to export — conversation is empty._');
         return;
     }
 
@@ -1214,6 +1309,8 @@ async function runExport(workspaceRoot: string): Promise<void> {
     for (const entry of entries) {
         if (entry.type === 'user') {
             lines.push('---', '', `## User`, '', entry.text, '');
+        } else if (entry.turn.local) {
+            continue;   // a notice from the TUI (resumed, refused, exported), not part of the conversation
         } else {
             const text = entry.turn.finalText?.trim();
             if (text) {
@@ -1226,19 +1323,18 @@ async function runExport(workspaceRoot: string): Promise<void> {
     const outPath  = join(workspaceRoot, filename);
     await writeFile(outPath, lines.join('\n'), 'utf8');
 
-    const t = Store.addTurn();
-    Store.finalizeTurn(t, `Exported to \`${filename}\``);
+    Store.addNotice(`Exported to \`${filename}\``);
 }
 
 async function handleSlash(cmd: string) {
     const parts = cmd.split(' ');
     const base  = parts[0];
     switch (base) {
-        case '/clear':    newSession(); Store.getState().entries.splice(0); break;
+        case '/clear':    startNewSession(); break;
         case '/stop':     stopAgent(); break;
         case '/break':    try { dom.window.stopAfterStep?.(); } catch {} break;
-        case '/retry':    try { (globalThis as any).retryLastTurn?.();    } catch {} break;
-        case '/rewind':   try { (globalThis as any).rewindToCheckpoint?.(); } catch {} break;
+        case '/retry':    await retryLast(); break;
+        case '/rewind':   rewindLast(); break;
         case '/compact':  await runCompact(); break;
         case '/export':   await runExport(_workspaceRoot); break;
         case '/resume':   await runResume(parts[1]); break;
@@ -1253,19 +1349,26 @@ async function handleSlash(cmd: string) {
         }
         case '/role': {
             const roleName = parts[1];
-            if (roleName) { try { (globalThis as any).setMainAgentRole(roleName); } catch {} }
+            const say = (msg: string) => Store.addNotice(msg);
+            if (roleName) {
+                try { if ((globalThis as any).setMainAgentRole(roleName) === false) say(`_Unknown role \`${roleName}\`. \`/role\` lists the roles._`); } catch {}
+            }
             else Store.setActivePanel('role');
             break;
         }
         case '/set': {
             const [key, ...valParts] = parts.slice(1);
-            const say = (msg: string) => { const t = Store.addTurn(); Store.finalizeTurn(t, msg); };
+            const say = (msg: string) => Store.addNotice(msg);
             if (!key) { Store.setActivePanel('settings'); break; }
             const field = keyedFields(SETTINGS_DEF).find(f => f.key === key);
             if (!field && !(Object.values(KEYS) as string[]).includes(key)) { say(`_Unknown setting \`${key}\`. \`/settings\` lists the common ones with their keys._`); break; }
             const val = valParts.join(' ');
             if (field?.kind === 'select' && val && !field.options.some(o => o.value === val)) {
                 say(`_\`${key}\` takes one of: ${field.options.map(o => o.value || '(default)').join(', ')}._`); break;
+            }
+            if (field?.kind === 'number' && val) {
+                const why = numberFieldError(field, val);
+                if (why) { say(`_\`${key}\` ${why}${field.min != null && field.max != null ? ` (${field.min}–${field.max})` : ''}; the setting is unchanged._`); break; }
             }
             // Without a value the setting goes back to its default.
             if (val) _lsSet(key, val); else { try { dom.window.localStorage?.removeItem(key); } catch {} }
@@ -1305,7 +1408,7 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
 
     // Height partitioning (all rows accounted for):
     //   STATUS_HEIGHT + logH + panelH + queueH + INPUT_HEIGHT = rows
-    const queueH  = state.queue.length ? state.queue.length + 2 : 0;
+    const queueH  = state.queue.length ? queueShown(state.queue.length, rows) + (state.queue.length > queueShown(state.queue.length, rows) ? 1 : 0) + 2 : 0;
     const panelH  = state.activePanel ? PANEL_HEIGHT : 0;
     const logH    = Math.max(1, rows - STATUS_HEIGHT - INPUT_HEIGHT - panelH - queueH);
 
@@ -1324,7 +1427,7 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
         }
         // Alt+key panel toggles and agent controls
         if (key.meta) {
-            if (input === 'n') { Store.getState().entries.splice(0); Store.setActivePanel(null); newSession(); return; }
+            if (input === 'n') { Store.setActivePanel(null); startNewSession(); return; }
             if (input === 'p') { Store.setActivePanel('project');  return; }
             if (input === 't') { Store.setActivePanel('tasks');    return; }
             if (input === 'a') { Store.setActivePanel('agent');    return; }
@@ -1336,7 +1439,7 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
             if (input === 'h') { Store.setActivePanel('help');     return; }
             if (input === 'x') { stopAgent(); return; }
             if (input === 'b') { try { dom.window.stopAfterStep?.(); } catch {} return; }
-            if (input === 'u') { try { (globalThis as any).retryLastTurn?.(); } catch {} return; }
+            if (input === 'u') { void retryLast(); return; }
         }
         // A model or role list that is open: the arrows move its highlight (Enter on an empty composer chooses the row).
         if ((key.upArrow || key.downArrow) && state.activePanel && _panelItems.kind === state.activePanel && _panelItems.items.length) {
@@ -1373,7 +1476,7 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
             )}
 
             {/* Pending-message queue (collapses when empty) */}
-            <QueuePanel queue={state.queue} />
+            <QueuePanel queue={state.queue} rows={rows} />
 
             {/* Bottom: always-visible input line */}
             <InputLine

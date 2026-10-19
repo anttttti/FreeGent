@@ -10,6 +10,7 @@ import * as MsgQueue from './msg-queue.js';
 import { registry } from './session-registry.js';
 import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
+import { runtime } from './runtime.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider } from './config.js';
 import { getPrivacyLevel } from './privacy.js';
@@ -797,7 +798,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
 
     saveBtn.onclick = (e) => { e.stopPropagation(); doSave(); };
     ta.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSave(); }
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSave(); }   // Enter that confirms an IME composition is not a save
         if (e.key === 'Escape') { e.preventDefault(); cancelBtn.click(); }
     });
 }
@@ -1457,6 +1458,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         // the model answered and ran the command again). Say that it was stopped.
         if (finalText === '*(break)*' && getChatHistory().at(-1)?.role === 'user')
             appendChatMessage({ role: 'assistant', content: '[The user stopped this request before it was answered. Do not carry it out unless they ask for it again.]' });
+        _closeSoftStop(finalText);
         placeholder.finalize(_uiFinalText(finalText));
         _runCompleted = true;
     } catch (err) {
@@ -1544,11 +1546,25 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
     if (_regenCompleted) _fireSuggestion('retry');
 }
 
+/** A soft stop (Ctrl+C / "stop after this step") ends the turn right after the step's tool results were recorded. History repair
+ *  (repairHistoryArray) removes a trailing tool exchange as orphaned, so the next message would lose the completed step: its
+ *  output, and the fact that its command ran (TUI report cases 047-051, 072). A closing assistant line makes the exchange complete. */
+function _closeSoftStop(finalText: string, sess?: any): void {
+    if (finalText !== '*(break)*') return;
+    const note = { role: 'assistant', content: '[Stopped by the user after this step. The step finished and its tool results above are complete; continue from them only if asked.]' };
+    try {
+        if (sess) {   // an isolated (headless) session keeps its own log
+            const msgs = sess.deriveMessages?.() ?? [];
+            if (msgs.at(-1)?.role === 'tool') sess.append('user/message', note as any, { surfaceOp: 'append' } as any);
+        } else if (getChatHistory().at(-1)?.role === 'tool') appendChatMessage(note);
+    } catch {}
+}
+
 function stopAfterStep(): void {
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
     setSoftStopPending(true);
     // A partial stop finishes the active tool. Stop-now still aborts it immediately.
-    if (!sandboxBusy()) activeAbortController?.abort();
+    if (!sandboxBusy() && !runtime.nativeBusy) activeAbortController?.abort();
 }
 
 function stopNow(): void {
@@ -1614,7 +1630,8 @@ function createNewChat(): void {
     (window as any).closeChatViewer?.();
     (window as any)._flushDraft?.();   // the open chat's unsent text is saved under that chat first
     (window as any).parkPendingAttachments?.(activeChatId);   // and so are its pending attachments
-    const id  = 'chat_' + Date.now();
+    // A runner that lists chats by owner (the TUI: this workspace's sessions) names the new chat itself, so it stays discoverable.
+    const id  = ((window as any).fgNewChatId?.() as string | undefined) || 'chat_' + Date.now();
     const now = Date.now();
     const list = getChatList();
     list.push({ id, name: 'New Chat', createdAt: now, lastAt: now });
@@ -1751,7 +1768,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
         'running';
     try {
         finalText = await runTurn(null, placeholder, { session: _s, forceToolCall, maxSteps, excludeTools });
-        if (finalText === '*(break)*') _turnEndReason = { kind: 'soft-stop' };
+        if (finalText === '*(break)*') { _turnEndReason = { kind: 'soft-stop' }; _closeSoftStop(finalText, _s._session ?? _evtSess); }
         placeholder.finalize(_uiFinalText(finalText));
     } catch (err) {
         // Roll back the user message so the stale entry does not create consecutive user messages
@@ -1795,7 +1812,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { cancelSendPreparation, stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+Object.assign(window, { _processQueue, cancelSendPreparation, stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
-export { runAgentTurn, stopNow, createNewChat, turnsInFlight, stopTurnAndWait };
+export { runAgentTurn, stopNow, createNewChat, turnsInFlight, stopTurnAndWait, _closeSoftStop };

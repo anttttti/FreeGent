@@ -335,7 +335,7 @@
                     <div class="runner-process-empty">No active process.</div>
                 </div>
                 <div id="runner-interrupt-bar" class="runner-input-bar" style="display:none">
-                    <textarea id="runner-interrupt-input" class="runner-input" placeholder="Interrupt agent with instructions..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerInterrupt()}"></textarea>
+                    <textarea id="runner-interrupt-input" class="runner-input" placeholder="Interrupt agent with instructions..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing&&event.keyCode!==229){event.preventDefault();runnerInterrupt()}"></textarea>
                     <button class="send-btn send-btn-go" onclick="runnerInterrupt()" title="Send this message to the running task's agent now (cuts the current step short)">&#9654;</button>
                 </div>
                 <div class="runner-log-wrap">
@@ -347,7 +347,7 @@
                 <div id="runner-input-bar" class="runner-input-bar" style="display:none">
                     <textarea id="runner-unblock-input" class="runner-input"
                         placeholder="Reply to unblock the agent…" rows="2"
-                        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runnerSendUnblock()}"></textarea>
+                        onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing&&event.keyCode!==229){event.preventDefault();runnerSendUnblock()}"></textarea>
                     <button class="send-btn send-btn-go" onclick="runnerSendUnblock()" title="Send your reply so the blocked task can continue">&#9654;</button>
                 </div>
             </div>
@@ -496,7 +496,7 @@
                         <span class="settings-label">Save Current</span>
                         <p class="settings-hint" style="margin-bottom:8px">Snapshot all settings (except API keys) as a named profile.</p>
                         <div style="display:flex;gap:8px">
-                            <input class="settings-input" id="profile-name-input" type="text" value="current" style="flex:1" onkeydown="if(event.key==='Enter')profileSaveCurrent()">
+                            <input class="settings-input" id="profile-name-input" type="text" value="current" style="flex:1" onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)profileSaveCurrent()">
                             <button class="btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="profileSaveCurrent()">Save</button>
                         </div>
                         <div style="margin-top:8px">

@@ -208,6 +208,13 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
 
     // ── Read methods ───────────────────────────────────────────────────────────
 
+    /** The role saved on a chat row, or null (the default Director). */
+    async getChatRole(id: string): Promise<string | null> {
+        const db = await this._ensure();
+        const row = db.prepare('SELECT main_role FROM chats WHERE id = ?').get(id) as any;
+        return row?.main_role ?? null;
+    }
+
     async loadChatList(): Promise<{id: string; name: string; createdAt: number; lastAt: number}[]> {
         const db = await this._ensure();
         return db.prepare('SELECT id, name, created_at, last_at FROM chats WHERE archived = 0 ORDER BY last_at ASC')

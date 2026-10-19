@@ -2196,7 +2196,7 @@ function _comboKey(event: KeyboardEvent, comboId: string): void {
     } else if (event.key === 'ArrowUp') {
         event.preventDefault();
         cur = Math.max(cur - 1, 0);
-    } else if (event.key === 'Enter' && cur >= 0) {
+    } else if (event.key === 'Enter' && cur >= 0 && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         const val = items[cur]?.dataset.value ?? '';
         if (combo.dataset.addmode === 'true') _comboAddItem(comboId, val);

@@ -917,8 +917,18 @@ function _scheduleFileListRender() {
     _fileListRenderTimer = setTimeout(() => { _fileListRenderTimer = null; renderFileList().catch(() => {}); }, 120);
 }
 
+// What a changed file means to the agent's own setup: project instructions, roles and skills are read from the workspace, so writing one
+// takes effect for the next turn. The browser path did this after its write; an installed adapter (the TUI, the CLI) returned before it, so a
+// skill the agent wrote worked only after a restart (TUI report case 046).
+function _reloadAfterWorkspaceChange(path: string): void {
+    const p = String(path).replace(/^\.?\/+/, '');
+    if (p === 'AGENTS.md')       loadAgentsContext?.();
+    if (p.startsWith('roles/'))  loadRoles?.();
+    if (p.startsWith('skills/') || p.startsWith('rules/')) loadSkills?.();
+}
+
 export async function agentWriteFile(path, content, encoding = null) {
-    if (_wa) return _wa.agentWriteFile(path, content, encoding);
+    if (_wa) { const r = await _wa.agentWriteFile(path, content, encoding); _reloadAfterWorkspaceChange(path); return r; }
     const generation = _workspaceGeneration;
     path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
@@ -958,7 +968,7 @@ export async function agentWriteFile(path, content, encoding = null) {
 }
 
 export async function agentDeleteFile(path) {
-    if (_wa) return _wa.agentDeleteFile(path);
+    if (_wa) { const r = await _wa.agentDeleteFile(path); _reloadAfterWorkspaceChange(path); return r; }
     path = workspaceName(path);
     _refuseGitMetadata(path, 'delete');
     if (path.startsWith('local/')) {

@@ -5,7 +5,7 @@ import { runCompletionGates, COMPLETION_GATES, completionDeclared, type GateCont
 
 const ctx = (over: Partial<GateContext> = {}): GateContext => ({
     text: 'Done.\nCOMPLETED', step: 3, loopMax: 20, softStopPending: false, ps: {}, workflowMode: true,
-    editedPaths: new Set(), shellWrites: new Set(), editsThisRun: false, editEvents: 0, verdict: 'no_change',
+    editedPaths: new Set(), shellWrites: new Set(), editsThisRun: false, editEvents: 0, verdict: 'no_change', stateChanged: false, changeRequired: false,
     reactiveFired: new Set(), firstUserText: '', task: 'Answer the question.', editRequired: false,
     gradedTestIds: () => [], isScratchPath: p => /(^|\/)(tmp|repro)/.test(p), envConfigEdits: async () => [], ...over,
 });
@@ -13,7 +13,8 @@ const ctx = (over: Partial<GateContext> = {}): GateContext => ({
 describe('completion gates', () => {
     it('are tried in a fixed order', () => {
         expect(COMPLETION_GATES.map(g => g.name)).toEqual(
-            ['scratch_only_edits', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete']);
+            ['scratch_only_edits', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete',
+             'no_change_fix', 'blocked_untried_fix']);
     });
     it('never fire for BLOCKED, on the last step, or in soft stop', async () => {
         const c = { verdict: 'failed_verification' as const, editsThisRun: true };
@@ -60,5 +61,35 @@ describe('completion gates', () => {
         expect(hit?.force).toBe(true);
         expect(await runCompletionGates(c)).toBeNull();
         expect(await runCompletionGates(ctx())).toBeNull();     // not an edit task
+    });
+});
+
+describe('gates added after the v0.72 review', () => {
+    // changeRequired is the runner's word (FG_CHANGE_REQUIRED, from the grader); the task wording is never read.
+    const fix = { changeRequired: true, task: "Why can't I use sudo?? fix it." };
+    it('a change-required task completed with nothing changed bounces once', async () => {
+        const c = ctx(fix);
+        expect((await runCompletionGates(c))?.name).toBe('no_change_fix');
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('a file edit, a shell write or a state change (apt install, chmod) counts as a change', async () => {
+        expect(await runCompletionGates(ctx({ ...fix, editsThisRun: true }))).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, shellWrites: new Set(['/etc/sudoers']) }))).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, stateChanged: true }))).toBeNull();
+    });
+    it('without the runner flag the wording is not read, and code tasks stay with the no-edit gate', async () => {
+        expect(await runCompletionGates(ctx({ task: "Why can't I use sudo?? fix it." }))).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, editRequired: true }))).toMatchObject({ name: 'no_edit_complete' });
+        expect(await runCompletionGates(ctx({ ...fix, gradedTestIds: () => ['t.py::a'] }))).toMatchObject({ name: 'no_edit_complete' });
+    });
+    it('BLOCKED on a change-required task with nothing tried bounces once; BLOCKED elsewhere is left alone', async () => {
+        const text = 'BLOCKED: What is the exact error message you receive?';
+        const c = ctx({ ...fix, text });
+        expect((await runCompletionGates(c))?.name).toBe('blocked_untried_fix');
+        expect(await runCompletionGates(c)).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, text, stateChanged: true }))).toBeNull();
+        expect(await runCompletionGates(ctx({ text }))).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, text, step: 19 }))).toBeNull();
+        expect(await runCompletionGates(ctx({ ...fix, text: 'BLOCKED: x\nCOMPLETED' }))).toBeNull();
     });
 });

@@ -8,6 +8,10 @@
 //   unverified           changed, and no check ran after the last change
 //   verified             changed, and a test/compile check run after the last change exited 0
 //   failed_verification  changed, and the last check after the last change failed
+// A check that never ran a test (pytest exit 4/5 "collected 0 items", a command that was not found) is
+// neither: v0.72 Lite had 11 of 17 failed_verification runs whose last "check" was a graded test id that does
+// not exist in the checkout (the real tests arrive with the grader's patch) or a missing `pytest`. Such a run
+// is `unverified`.
 export type Verification = 'no_change' | 'unverified' | 'verified' | 'failed_verification';
 
 import { shellWrites } from './shell-writes.js';
@@ -47,10 +51,29 @@ function _changed(call: any): boolean {
     }
     return false;
 }
+// A runner that started and ran no test: pytest's "collected 0 items" / "no tests ran" (exit 4 usage error, 5 no
+// tests), unittest's "Ran 0 tests", Django's "Found 0 test(s)", a runner that is not installed (126/127).
+const NO_TESTS_RE = /collected 0 items|\bno tests ran\b|no tests collected|ERROR: (?:file or directory )?not found|\bRan 0 tests\b|Found 0 test\(s\)|command not found|: not found$/m;
+function _isCheckCall(call: any): boolean {
+    return call?.name === 'execute_code' && CHECK_RE.test(String(call.args?.code ?? ''));
+}
+/** The call was a check command, but nothing was tested (see the header). */
+export function checkDidNotRun(call: any): boolean {
+    if (!_isCheckCall(call)) return false;
+    const r = call.result;
+    if (!r || typeof r !== 'object' || r.exit_code == null) return false;
+    if (r.exit_code === 126 || r.exit_code === 127) return true;
+    const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+    // A failing run that happens to print "not found" in a test's own message is a failure; only the
+    // runner's own "nothing collected" banners count, and for exit 0 only when no test ran.
+    if ((r.exit_code === 4 || r.exit_code === 5) && /\b(?:pytest|py\.test)\b/.test(String(call.args?.code ?? ''))) return true;
+    return NO_TESTS_RE.test(out) && !/\b[1-9]\d* (?:passed|failed|errors?)\b/.test(out);
+}
 function _check(call: any): 'pass' | 'fail' | null {
-    if (call?.name !== 'execute_code' || !CHECK_RE.test(String(call.args?.code ?? ''))) return null;
+    if (!_isCheckCall(call)) return null;
     const r = call.result;
     if (!r || typeof r !== 'object' || r.exit_code == null) return null;
+    if (checkDidNotRun(call)) return null;
     const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
     // Exit 0 with a runner that printed failures (a wrapper that swallows the status) is not a pass.
     // "0 failed" and tsc's "Found 0 errors." are passes: the count must be non-zero.

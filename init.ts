@@ -555,7 +555,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             _msgSearchIdx = Math.max(_msgSearchIdx - 1, 0);
-        } else if (e.key === 'Enter' && _msgSearchIdx >= 0) {
+        } else if (e.key === 'Enter' && _msgSearchIdx >= 0 && !e.isComposing && e.keyCode !== 229) {
             const item = items[_msgSearchIdx];
             if (item) msgSearchSelect(item.dataset.chatId ?? '');
             return;

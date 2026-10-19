@@ -507,5 +507,17 @@ export function _updateEnvFailureDetector(
     return { envFailSig, envFailCount, envFailTotal, envFailMsg: null };
 }
 
+// ── State changes by shell command (AgentBench OS tasks graded on the system's state) ─
+// A task graded on the state of the system afterwards (runtime.changeRequired) is solved by changing it, not by
+// explaining it. v0.72 OS tasks 38, 40, 41 and 42 ("Why can't I use sudo?? fix it.", "Find it and fix it") were
+// passed by v0.70 (installed sudo, rewrote /etc/sudoers, removed a SUID bit) and failed by v0.72, which
+// diagnosed correctly and then answered with the diagnosis, or asked the user for the error message.
+// Commands that change the machine without writing a file the tool layer reports: packages, permissions,
+// ownership, accounts, services, moves and removals. Only successful runs are looked at by the caller.
+const _STATE_CHANGE_RE = /(?:^|[\s;&|(`])(?:sudo\s+)?(?:apt(?:-get)?\s+(?:install|remove|purge|upgrade|reinstall)\b|dpkg\s+-[ir]\b|pip3?\s+(?:install|uninstall)\b|(?:chmod|chown|chgrp|usermod|useradd|userdel|groupadd|adduser|passwd|visudo|setfacl|chattr|mkdir|touch|rm|mv|cp|ln|tee|kill|pkill|install)\s|systemctl\s+(?:start|stop|restart|enable|disable|reload|mask|unmask)\b|service\s+\S+\s+(?:start|stop|restart)\b|sysctl\s+-w\b|sed\s+(?:-\w+\s+)*-i\b)/;
+export function changesState(code: string): boolean {
+    return _STATE_CHANGE_RE.test(code ?? '');
+}
+
 // Window bridge for free-variable access from sibling modules (house pattern).
 Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });

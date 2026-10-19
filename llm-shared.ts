@@ -202,6 +202,7 @@ export function _userText(m: any): string {
 export async function compactHistory(placeholder: RenderAdapter, activeEndpoint: any = null, session?: AgentSession, effectiveHistory?: any[], prefix: { system: string; tools: any[] | null } | null = null): Promise<any[]> {
     const task = placeholder.addCompactStep();
     const _s = session ?? defaultSession;
+    const _sig = activeAbortController?.signal;   // the stop signal in force when compaction began
     // Reads come from effectiveHistory, else the session's event log. The compacted history is
     // returned, not written: the caller applies it (the loop shadows the surface with it, the
     // manual /compact replaces the chat's history).
@@ -307,6 +308,10 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     } catch (e: any) {
         failReason = e?.message || String(e);
     }
+
+    // Stopped while summarising: nothing was compacted, and no new generation is written for a summary nobody applies
+    // (TUI report case 055 saved a cancelled compaction's late summary as a success).
+    if (_sig?.aborted) { task.setPrompt('Compaction stopped'); task.complete(); return _hR; }
 
     // Rebuild: anchor + summary (or failure stub) + verbatim tail.
     const _preCompactHistory = [..._hR];
