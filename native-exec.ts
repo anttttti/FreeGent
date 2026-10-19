@@ -82,6 +82,10 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         // No interactive input: close stdin so a program that reads it gets EOF at once instead of
         // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
         child.stdin?.end();
+        // A stream decoder per pipe: a multi-byte character split across two reads (a slow writer, a pipe
+        // boundary) used to become two replacement characters, because each Buffer was decoded alone.
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
         child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
         child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
         child.on('close', (exitCode, signal) => {

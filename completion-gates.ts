@@ -6,8 +6,9 @@
 // table the order is explicit and a gate can be tested with a plain context object, no model loop.
 //
 // A gate is "once": the nudge is delivered, the counter set, and a second COMPLETED passes (the agent
-// may have a reason). BLOCKED declarations are never bounced.
-import { _BLOCKED_DECLARATION_RE, _isComplete } from './turn-protocol.js';
+// may have a reason). BLOCKED declarations are not bounced, with one exception: blocked_untried_fix (a fix
+// task, BLOCKED, nothing tried).
+import { _BLOCKED_DECLARATION_RE, _TERMINAL_RE, _isComplete } from './turn-protocol.js';
 import { runtime } from './runtime.js';
 import type { Verification } from './verification.js';
 import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths } from './detectors.js';
@@ -24,10 +25,12 @@ export interface GateContext {
     editsThisRun: boolean;
     editEvents: number;
     verdict: Verification;            // verification.ts state of the change
+    stateChanged: boolean;            // a successful command changed the system without writing a reported file (detectors.changesState)
     reactiveFired: Set<string>;
     firstUserText: string;            // the first user message (lists the supplied files)
     task: string;                     // the original task text
     editRequired: boolean;            // runtime.editRequired
+    changeRequired: boolean;          // runtime.changeRequired: graded on the system's state afterwards
     gradedTestIds: () => string[];
     isScratchPath: (p: string) => boolean;
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
@@ -122,8 +125,44 @@ const noEdit: CompletionGate = {
     },
 };
 
+
+// Tasks graded on the state of the system afterwards (AgentBench OS 38, 40, 41, 42 in v0.72: "fix it"): the
+// reply explained the cause and nothing on the system had changed. The runner says so (FG_CHANGE_REQUIRED);
+// the prompt wording is never read. Code tasks (editRequired, graded tests) belong to the no-edit gate. No
+// file was written, so that gate never looked; a command that installs a package or sets a mode leaves no
+// written file either, hence `stateChanged`. Once: a reply that really finds nothing to fix passes on its
+// second COMPLETED.
+const changeTask = (c: GateContext): boolean => c.changeRequired && !c.editRequired && c.gradedTestIds().length === 0;
+const noChangeFix: CompletionGate = {
+    name: 'no_change_fix',
+    run(c) {
+        if (!completionDeclared(c) || c.ps.noChangeFix) return null;
+        if (!changeTask(c) || c.editsThisRun || c.stateChanged || c.shellWrites.size) return null;
+        c.ps.noChangeFix = 1;
+        return { name: 'no_change_fix', force: true,
+            text: 'You declared COMPLETED, but the task needs the system to be changed and nothing was changed: no file was written and no command that changes the system (an install, chmod, chown, a config edit, a restart) succeeded. Explaining the cause is not the fix. Find what is actually wrong (a missing package, a wrong mode or owner, an empty or invalid config file, a setuid bit that should not be there), change it, and check that it works the way the user would use it. If you are sure nothing is broken, state exactly why with the evidence, then reply COMPLETED again.' };
+    },
+};
+
+// BLOCKED on a change-required task with nothing tried. A BLOCKED question is accepted in autonomous runs (the runner
+// pauses and shows it), which is right where someone can answer and wrong where nobody can: OS task 41
+// ("Why can't I use sudo? Help me fix it.") ended on "BLOCKED: What is the exact error message you
+// receive?" after reading an empty /etc/sudoers it could have repaired. One bounce, only when the task states
+// a fix and no change was made; a second BLOCKED is accepted.
+const blockedUntried: CompletionGate = {
+    name: 'blocked_untried_fix',
+    run(c) {
+        if (!_BLOCKED_DECLARATION_RE.test(c.text) || _TERMINAL_RE.test(c.text)) return null;
+        if (c.step >= c.loopMax - 1 || c.softStopPending || c.ps.blockedUntried) return null;
+        if (!changeTask(c) || c.editsThisRun || c.stateChanged || c.shellWrites.size) return null;
+        c.ps.blockedUntried = 1;
+        return { name: 'blocked_untried_fix', force: true,
+            text: 'You declared BLOCKED without changing anything. Nobody can answer questions in this run, and the task already gives you the symptom. Investigate the system yourself (read the relevant config and permission files, check owners and modes, check what is installed), make the fix, and verify it. Declare BLOCKED again only after you tried and a specific missing requirement stops you.' };
+    },
+};
+
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inventedData, envConfig, noEdit];
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inventedData, envConfig, noEdit, noChangeFix, blockedUntried];
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {

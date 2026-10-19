@@ -682,7 +682,7 @@ function startInlineRenameCurrentChat() {
         input.remove();
     }
     input.addEventListener('keydown', e => {
-        if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+        if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); commit(); }
         if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
     input.addEventListener('blur', commit);

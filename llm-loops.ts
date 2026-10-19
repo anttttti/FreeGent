@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, changesState, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -377,7 +377,11 @@ async function _getReplaceFailNudge(_replFails: Map<string, number>, _replNudge:
             const _patchTip = enabledTools.has('apply_patch')
                 ? ' Try apply_patch with a proper unified diff instead — it handles offset mismatches. If apply_patch also fails, spawn'
                 : ' Spawn';
-            return `[DELEGATE EDIT] replace_in_file has failed ${n} times on "${fp}".${_patchTip} a coder worker whose sole task is to make this edit, providing the exact change needed.`;
+            // A multi-line old_string that does not match usually differs in indentation or a wrapped line (Verified
+            // astropy-12907 sent the same failing block ten times and ended on the failure streak). A one-line anchor
+            // does not have that problem.
+            const _anchorTip = sent >= 1 ? ' Or change the code with a short Python script: read the file, str.replace ONE exact line (copy it from read_file with start_line/end_line), write it back.' : '';
+            return `[DELEGATE EDIT] replace_in_file has failed ${n} times on "${fp}".${_patchTip} a coder worker whose sole task is to make this edit, providing the exact change needed.${_anchorTip}`;
         }
         let content = '';
         try { content = await agentReadFile(fp); } catch {}
@@ -1263,6 +1267,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     const _verif = newVerification();         // state of the change, for the failed-check bounce at COMPLETED
     const _shellWrites = new Set<string>();   // paths a shell command redirected into (container runs report no files_written)
+    let _stateChanged = false;                // a successful command changed the system without a reported file (install, chmod, ...)
     let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
     let _execsThisRun = false;      // any successful execute_code (exit 0) — feeds step_validation advisory mode (T3.3/T3.7)
     let _emptyFsNudged = false;     // empty-FS fallback fires at most once per turn
@@ -1500,19 +1505,22 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
         }
         // One-shot checks at COMPLETED (scratch-only edits, failed check, invented data, test-environment
-        // edits, no edit on an edit task): completion-gates.ts, tried in a fixed order.
-        if (_isComplete(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent)) {
+        // edits, no edit on an edit task, no change on a fix task) and at a BLOCKED on a fix task with nothing
+        // tried: completion-gates.ts, tried in a fixed order. Each gate checks for itself whether it applies to
+        // a BLOCKED reply (all but blocked_untried_fix do not).
+        if (_isComplete(textContent)) {
             const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string');
             const _gate = await runCompletionGates({
                 text: textContent, step, loopMax: _loopMax, softStopPending, ps, workflowMode: !!_s.workflowMode,
                 editedPaths: _editedPaths, shellWrites: _shellWrites, editsThisRun: !!_editsThisRun, editEvents: _editEvents,
-                verdict: verificationVerdict(_verif), reactiveFired: _reactiveFired,
+                verdict: verificationVerdict(_verif), stateChanged: _stateChanged,
+                reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
-                editRequired: runtime.editRequired, gradedTestIds: () => _gradedTestIds(_task),
+                editRequired: runtime.editRequired, changeRequired: runtime.changeRequired, gradedTestIds: () => _gradedTestIds(_task),
                 isScratchPath, envConfigEdits,
             });
             if (_gate) {
-                _saveAnswer(ps, textContent);
+                if (!_BLOCKED_DECLARATION_RE.test(textContent)) _saveAnswer(ps, textContent);   // a bounced BLOCKED is not an answer
                 _emitNudge(_gate.name, nudge(_gate.text));
                 if (_gate.force) _forceToolCall = true;
                 return { do: 'continue' };
@@ -2365,6 +2373,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _editsThisRun = true;
         for (const r of results) if (r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0)
             for (const p of shellWritePaths(String(r.args?.code ?? ''))) _shellWrites.add(p);
+        if (!_stateChanged) _stateChanged = results.some(r => r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
+            && String(r.args?.language ?? 'bash') === 'bash' && changesState(String(r.args?.code ?? '')));
         noteVerification(_verif, { toolCalls: results.map(r => ({ name: r.name, args: r.args, result: r.result })) });
         // Which files changed this run — for the scratch-only completion check.
         for (const r of results) {

@@ -23,9 +23,23 @@ loadDotenv();
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
+// stdout is the answer (or the metrics lines); startup diagnostics such as the endpoint's context-window probe go to stderr.
+// Run before the probe prints: it came a moment after the reply and broke `--prompt … | jq` (TUI report case 025).
+console.log = console.info = (...a: unknown[]) => console.error(...a);
+// Every option that takes a value. A value-taking option followed by another option (or nothing) is an error, not a value:
+// `--prompt --temperature 0.3` used to send the text "--temperature" as the prompt (case 086).
+const _VALUE_FLAGS = new Set(['--api-key', '--api-url', '--browser-url', '--compaction-limit', '--context-window', '--disable-tools',
+    '--enable-tools', '--fetch-allow', '--llm', '--log', '--main-role', '--max-rounds', '--mcp-config', '--model', '--prompt', '--provider',
+    '--reply-channel-hint', '--retry-fixed-ms', '--retry-mode', '--sidecar-dir', '--task', '--task-file', '--temperature', '--thinking-level',
+    '--timeout', '--workflow', '--workspace']);
+const _OPTION_NAMES = new Set([..._VALUE_FLAGS, '--help', '-h', '--no-log', '--print-model']);
+const _fail = (msg: string): never => { console.error(`Error: ${msg}`); process.exit(2); };
 const _arg = (flag: any) => {
     const i = args.indexOf(flag);
-    return i >= 0 ? args[i + 1] ?? null : null;
+    if (i < 0) return null;
+    const v = args[i + 1];
+    if (v === undefined || (_VALUE_FLAGS.has(flag) && _OPTION_NAMES.has(v))) return _fail(`${flag} needs a value.`);
+    return v;
 };
 const _flag = (flag: any) => args.includes(flag);
 
@@ -76,6 +90,9 @@ if (args.length === 0) _usage(1);
 const promptText    = _arg('--prompt');
 const taskText      = _arg('--task') || _arg('--workflow');
 const taskFile      = _arg('--task-file');
+// Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006).
+if ([promptText, taskText, taskFile].filter(v => v != null).length > 1)
+    _fail('give exactly one of --prompt, --task/--workflow and --task-file.');
 const workspacePath = _arg('--workspace') || process.env.WORKSPACE_ROOT || process.cwd();
 
 // --llm PROVIDER|MODEL splits on the first '|'
@@ -108,6 +125,8 @@ if (mcpConfigFile) {
 const mainRole          = _arg('--main-role')          || '';
 const temperatureArg  = _arg('--temperature');
 const temperature     = temperatureArg != null ? parseFloat(temperatureArg) : null;
+// Documented range 0–2 (--help); 3.5 used to go to the provider as it was (case 031).
+if (temperature != null && !(temperature >= 0 && temperature <= 2)) _fail(`--temperature must be a number in the range 0–2 (got "${temperatureArg}").`);
 const thinkingLevel   = _arg('--thinking-level') || '';
 const retryMode       = _arg('--retry-mode')     || '';
 const retryFixedMs    = parseInt(_arg('--retry-fixed-ms') || '') || 0;

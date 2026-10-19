@@ -8,6 +8,7 @@
 // Never imported by browser code — Node.js only.
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
+import { isCredentialKey } from './profile-keys.js';
 import { KEYS } from './storage-keys.js';
 import { newVerification, noteStep, verdict } from './verification.js';
 import { appendLedger } from './request-ledger.js';
@@ -84,8 +85,8 @@ dom.window._fgHeadless = true;
 
 // Stub UI functions that agent-core.js or skills.js may call but don't matter headlessly.
 const _noop = () => {};
-for (const fn of ['showSettings', 'renderModelCatalogTable', 'loadRoles',
-                   'loadAgentsContext', 'refreshTasks', 'notifyLocalFileChanged', 'scheduleArtifactRefresh',
+for (const fn of ['showSettings', 'renderModelCatalogTable',
+                   'refreshTasks', 'notifyLocalFileChanged', 'scheduleArtifactRefresh',
                    'maybeRunInitAgent', 'openArtifactTab',
                    'renderSkillsList', 'renderSkillsChecklist', 'addVoiceButtons']) {
     // Assign through globalThis (not dom.window directly) so ES-module code that
@@ -206,7 +207,9 @@ function _configureHeadless(provider: any, model: any, apiKey: any, apiUrl: any,
 //   { name, version, savedAt, settings: { fg_*: value, ... } }
 // API keys are never written (blocklist below).
 export const PROFILE_PATH = join(__dir, 'fg-current-profile.json');
-const _KEY_BLOCKLIST = /key|token|secret|password/i;
+// The compaction threshold the endpoint probe chose, as opposed to one the user or a profile set: never written to the profile, so a
+// later run against a different model works it out again.
+let _autoCompactTokens: string | null = null;
 
 function loadProfile(): void {
     try {
@@ -228,8 +231,9 @@ export function saveProfile(): void {
     const settings: Record<string, string> = {};
     for (let i = 0; i < _ls.length; i++) {
         const k = _ls.key(i)!;
-        if (k.startsWith('fg_') && !_KEY_BLOCKLIST.test(k))
-            settings[k] = _ls.getItem(k)!;
+        if (!k.startsWith('fg_') || isCredentialKey(k)) continue;
+        if (k === 'fg_agent_compact_tokens' && _autoCompactTokens !== null && _ls.getItem(k) === _autoCompactTokens) continue;
+        settings[k] = _ls.getItem(k)!;
     }
     try {
         writeFileSync(PROFILE_PATH,
@@ -253,7 +257,8 @@ function _parseOpts(opts: any) {
         apiKey          : opts.apiKey          ?? (e.FREEGENT_API_KEY  || ''),
         apiUrl          : opts.apiUrl          ?? (e.FREEGENT_API_URL  || ''),
         timeoutMs       : opts.timeoutMs       ?? (parseInt(e.FREEGENT_TIMEOUT_MS ?? '') || 30 * 60 * 1000),
-        logFile         : opts.logFile         ?? e.FREEGENT_LOG_FILE ?? '/tmp/fg-agent.log',
+        // null is an explicit "no log" (--no-log); only undefined falls back to the environment and the default.
+        logFile         : opts.logFile === null ? null : (opts.logFile ?? e.FREEGENT_LOG_FILE ?? '/tmp/fg-agent.log'),
         sidecarDir      : opts.sidecarDir      ?? e.FREEGENT_SIDECAR_DIR ?? '',
         contextWindow   : opts.contextWindow   ?? (parseInt(e.FREEGENT_CONTEXT_WINDOW  ?? '') || 0),
         compactionLimit : opts.compactionLimit ?? (parseInt(e.FREEGENT_COMPACTION_LIMIT ?? '') || 0),
@@ -320,8 +325,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         try { if (existsSync(logFile) && statSync(logFile).size > 0) renameSync(logFile, `${logFile}.prev`); } catch {}
     }
     const _t = (step: string) => {
+        if (!logFile) return;   // --no-log: no timing file either
         const ms = Date.now() - _t0;
-        try { appendFileSync(logFile || '/tmp/fg-tui.log',
+        try { appendFileSync(logFile,
             JSON.stringify({ timing: { step, ms } }) + '\n', 'utf8'); } catch {}
     };
     _t('setup:start');
@@ -446,12 +452,18 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
                         console.error(`[headless] contextWindow=${contextWindow} exceeds endpoint max_model_len=${endpointLimit} — clamping`);
                         _ls.setItem('fg_openai_context', String(endpointLimit));
                     } else if (contextWindow === 0) {
-                        console.log(`[headless] auto-detected context window from endpoint: max_model_len=${endpointLimit}`);
+                        console.error(`[headless] auto-detected context window from endpoint: max_model_len=${endpointLimit}`);
                         _ls.setItem('fg_openai_context', String(endpointLimit));
                         if (!compactionLimit) {
                             const MIN_SUMMARY = 4000, SYS_OVERHEAD = 6500;
                             const safeLimit = Math.max(4000, Math.floor((endpointLimit - MIN_SUMMARY - 512) / 1.1) - SYS_OVERHEAD);
-                            _ls.setItem('fg_agent_compact_tokens',    String(safeLimit));
+                            // A threshold the user or the profile already chose is a working-history preference, not a guess: keep it
+                            // unless the window cannot hold it (TUI report case 028 replaced 8000 with the window-derived 96000).
+                            const chosen = parseInt(_ls.getItem('fg_agent_compact_tokens') ?? '', 10);
+                            const explicit = Number.isFinite(chosen) && chosen > 0 && _ls.getItem('fg_agent_compact_tokens') !== _autoCompactTokens;
+                            const value = String(explicit ? Math.min(chosen, safeLimit) : safeLimit);
+                            if (!explicit) _autoCompactTokens = value;
+                            _ls.setItem('fg_agent_compact_tokens',    value);
                             _ls.setItem('fg_agent_proactive_compact', 'true');
                         }
                     }
@@ -473,13 +485,20 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     _t('setup:before_loadSkills');
     await dom.window.loadSkills();
     _t('setup:after_loadSkills');
+    // Workspace roles (roles/*.md) and the project's AGENTS.md, as in the WebUI. Both were stubbed out here, so a role file was never
+    // registered (the agent ran with an empty system prompt) and AGENTS.md was never added to the context (TUI report cases 035, 041, 043).
+    try { await dom.window.loadRoles?.(); } catch {}
+    try { await dom.window.loadAgentsContext?.(); } catch {}
 
     if (typeof dom.window.setMainAgentRole === 'function') {
         // NOTE v0.24: pass the role NAME string (not the role object) — window.setMainAgentRole
         // is workers.ts's version which resolves the name→object via rolesRegistry internally.
         // v0.23 passed the role object here, but workers.ts then called rolesRegistry.get(object)
         // which returned undefined, leaving mainAgentRole null and the tool filter inactive.
-        dom.window.setMainAgentRole(mainRole || 'director');
+        if (mainRole && dom.window.setMainAgentRole(mainRole) === false) {
+            console.error(`[headless] unknown role "${mainRole}" — using Director. Known roles: ${[...(dom.window.rolesRegistry?.keys?.() ?? [])].join(', ')}`);
+            dom.window.setMainAgentRole('director');
+        } else if (!mainRole) dom.window.setMainAgentRole('director');
     }
     if (typeof dom.window.setWorkflowMode === 'function')
         dom.window.setWorkflowMode(workflowMode);
@@ -501,6 +520,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         const _wsPrefix = createHash('sha256').update(workspaceRoot).digest('hex').slice(0, 16);
         _sessionAdapter  = adapter;
         _workspacePrefix = _wsPrefix;
+        // Chats created later in this process (/clear, Alt+N) carry the workspace prefix, so /resume and bare --resume find them
+        // (they were named chat_<time> and skipped by the workspace filter: TUI report case 011).
+        (dom.window as any).fgNewChatId = () => `${_wsPrefix}${Date.now().toString(36).padStart(9, '0')}${randomBytes(3).toString('hex')}`;
         const _dirName  = workspaceRoot.split('/').filter(Boolean).pop() ?? 'headless';
 
         // Determine active chat ID:
@@ -529,6 +551,8 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             }]);
         }
         _t('setup:sqlite_syncChatList_fired');
+        // The role named at launch belongs to this chat (the role was chosen before the chat id existed, so it was saved on none).
+        if (mainRole) { try { dom.window.setMainAgentRole?.(mainRole); } catch {} }
 
         // Load history only when resuming an existing session.
         // Bench runs (workflowMode) and fresh sessions always start empty.
@@ -537,6 +561,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
             _t('setup:sqlite_loadHistory_done');
             if (history?.length && typeof dom.window.setChatHistory === 'function')
                 dom.window.setChatHistory(history);
+            // The chat's own role comes back with it, unless this launch named one (--role wins). The conversation came back with
+            // Director's prompt before (TUI report case 040).
+            if (!mainRole) await _restoreChatRole(adapter, chatId);
         }
     } catch (e: any) {
         console.warn('[headless] session store init failed:', e?.message);
@@ -573,6 +600,14 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
 /** Export dom so fg-tui can install its own placeholder factory after setup(). */
 export { dom };
 
+/** Put back the role saved on a chat (Director when none, or when the saved role is no longer registered). */
+async function _restoreChatRole(adapter: NodeSqliteAdapter, chatId: string): Promise<void> {
+    try {
+        const saved = await adapter.getChatRole(chatId);
+        if (!(saved && dom.window.setMainAgentRole?.(saved) !== false)) dom.window.setMainAgentRole?.('director');
+    } catch {}
+}
+
 /** List sessions belonging to this workspace, newest first. */
 export async function listWorkspaceSessions(): Promise<
     { id: string; name: string; createdAt: number; lastAt: number; messages: number; firstMessage: string }[]
@@ -606,6 +641,7 @@ export async function resumeSession(chatId: string): Promise<boolean> {
             dom.window.setActiveChatId(chatId);
         if (typeof dom.window.setChatHistory === 'function')
             dom.window.setChatHistory(history);
+        await _restoreChatRole(_sessionAdapter, chatId);
         // Update lastAt so this session sorts first next time.
         const all = await _sessionAdapter.loadChatList();
         const entry = all.find(c => c.id === chatId);
@@ -622,11 +658,17 @@ export async function resumeSession(chatId: string): Promise<boolean> {
 export async function prompt(text: string, opts: Record<string, any> = {}): Promise<{ output: string; error: any }> {
     if (!text?.trim()) return { output: '', error: 'empty prompt' };
     await setup(opts);
+    const { timeoutMs } = _parseOpts(opts);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-        const result = await (dom.window as any).callLLMComplete(text, { maxTokens: 4096 });
+        // --timeout applied to the workflow only; a direct prompt held for longer than requested returned its late reply with exit 0 (case 014).
+        const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Prompt timed out after ${timeoutMs} ms`)), timeoutMs); });
+        const result = await Promise.race([(dom.window as any).callLLMComplete(text, { maxTokens: 4096 }), deadline]);
         return { output: typeof result === 'string' ? result : '', error: null };
     } catch (e: any) {
         return { output: '', error: e?.message || String(e) };
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 }
 
@@ -758,7 +800,15 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             const _evtSess = session._session ?? null;
             const _finalHist = _evtSess ? _evtSess.deriveMessages() : [];
             convoLogTurn({ type: 'history_final', history: _finalHist });
+            _persistFinalHistory(_evtChatId, _finalHist);
         } catch {}
+    };
+    // The run's conversation also goes to the chat row in SQLite. The run uses its own session, so the chat-wide save found an empty history
+    // and left a chat row with no messages: a TUI resumed from it had no context (TUI report cases 057, 063).
+    let _persisting: Promise<unknown> = Promise.resolve();
+    const _persistFinalHistory = (chatId: string, hist: any[]) => {
+        if (!_sessionAdapter || !hist.length || !chatId) return;
+        _persisting = Promise.resolve(_sessionAdapter.replaceMessages(chatId, hist)).catch(() => {});
     };
     // Wait for the event log before exiting (it used to be dropped: exit ran before the write), but
     // not for long: the sender follows SIGTERM with SIGKILL.
@@ -807,6 +857,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         setMetricsWriter(null);
         process.off('SIGTERM', _sigtermHandler);
         _flushFinalHistory();
+        await _persisting;
         // flush any buffered event-log writes before the task result is returned.
         await registry.flush().catch(e => console.warn('[headless] event-log flush failed:', e?.message));
         if (_abortTimer != null) clearTimeout(_abortTimer);

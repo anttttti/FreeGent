@@ -26,7 +26,7 @@ The TUI loads `~/.config/freegent/credentials` and `.env` the same way the dev s
 | `--api-key <key>` | API key |
 | `--api-url <url>` | Base URL of an OpenAI-compatible server |
 | `--workspace <dir>` | Project directory (default: current directory) |
-| `--role <name>` | Start with a main role |
+| `--role <name>` | Start with a main role (built in, or a file in the workspace's `roles/`). An unknown name is reported and the Director is used. Without it, a resumed session keeps the role it had |
 | `--prompt <text>` | Send this as the first message |
 | `--resume [id]` | Resume the most recent session that has messages, or the one with this ID |
 | `--log-file <path>` | Where to write the log (default `/tmp/fg-tui.log`) |
@@ -45,7 +45,7 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `Ctrl+C` | Break after the current step while running; exit when idle |
 | `Alt+X` | Stop immediately |
 | `Alt+B` | Soft break (stop after the current step) |
-| `Alt+U` | Retry the last turn |
+| `Alt+U` | Retry the last turn: the last message is sent again in place of the last answer |
 | `Alt+N` | New session |
 | `Alt+M` | Model panel |
 | `Alt+R` | Role panel |
@@ -59,12 +59,12 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 
 | Command | Effect |
 |---|---|
-| `/clear` | New session |
+| `/clear` | New session. Refused while a reply is running |
 | `/stop`, `/break`, `/retry` | Same as `Alt+X`, `Alt+B`, `Alt+U` |
-| `/compact` | Compact the history now |
-| `/rewind` | Rewind to the last checkpoint |
+| `/compact` | Compact the history now. Refused while a reply is running: wait for it or stop it first |
+| `/rewind` | Go back before your last message: the conversation, the workspace's files (as far as a snapshot reaches: large files and `.git`, `node_modules` and build folders are left as they are) and the screen. Repeat to go back further; the last ten messages are kept |
 | `/export` | Save the chat as a Markdown file in the workspace |
-| `/resume [N]` | List this folder's previous sessions (named from their first message, with message count), or restore one. Sessions that were never used are not listed |
+| `/resume [N]` | List this folder's previous sessions (named from their first message, with message count), or restore one. Sessions that were never used are not listed. Restoring is refused while a reply is running: wait for it or stop it first |
 | `/model [provider\|model]` | Open the model panel, or switch model |
 | `/role [name]` | Open the role panel, or switch role |
 | `/set <key> [value]` | Set a setting by its key, shown next to each value in `/settings` (`/set` alone opens the panel; without a value the setting returns to its default). Other keys the WebUI stores also work, e.g. `fg_thinking_level` |

@@ -11,6 +11,15 @@ import { isCacheCapable, oaiEndpoint, _markFlatCooldown } from './model-router.j
 export { listWorkspaceSessions, resumeSession };
 import { makeTuiPlaceholder } from './tui-placeholder.js';
 import * as Store from './tui-store.js';
+import { createMouseSplitter } from './mouse-input.js';
+import { takeSnapshot, restoreSnapshot, dropSnapshot, type Snapshot } from './tui-checkpoint.js';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
+import { rmSync } from 'node:fs';
+import { aiBusy, setSoftStopPending, setActiveAbortController, setAgentStreaming, activeAbortController } from './state.js';
+import { setChatHistory, getChatHistory } from './chat-history.js';
+import { stripInjected } from './history-util.js';
+import { _stripTerminal } from './turn-protocol.js';
 import React from 'react';
 import { render } from 'ink';
 import { Transform } from 'node:stream';
@@ -28,35 +37,20 @@ let _heartbeatInterval:  ReturnType<typeof setInterval> | null = null;
 export function setMouseHandler (fn: (row: number, col: number) => void): void          { _mouseHandler  = fn; }
 export function setScrollHandler(fn: (row: number, col: number, dir: 1|-1) => void): void { _scrollHandler = fn; }
 
-// Transform that strips X10 mouse events from the byte stream before Ink reads.
-// Non-mouse bytes pass through unchanged.
+// Transform that strips X10 mouse events from the byte stream before Ink reads (mouse-input.ts holds a report that arrives in two
+// reads until it is complete). Non-mouse bytes pass through unchanged.
+const _mouse = createMouseSplitter((r, c) => _mouseHandler?.(r, c), (r, c, d) => _scrollHandler?.(r, c, d));
+let _mouseHoldTimer: ReturnType<typeof setTimeout> | null = null;
 const stdinFilter = new Transform({
     transform(chunk: Buffer, _enc, cb) {
-        const parts: Buffer[] = [];
-        let i = 0;
-        while (i < chunk.length) {
-            if (chunk.length - i >= 6 &&
-                chunk[i] === 0x1b && chunk[i+1] === 0x5b && chunk[i+2] === 0x4d) {
-                // X10 mouse event — dispatch by button byte
-                const col = chunk[i+4] - 33;   // 1-indexed → 0-indexed
-                const row = chunk[i+5] - 33;
-                if (chunk[i+3] === 32) {
-                    // left-press
-                    _mouseHandler?.(row, col);
-                } else if (chunk[i+3] === 96 || chunk[i+3] === 97) {
-                    // scroll wheel: 96 = up, 97 = down  →  dir +1 = up, -1 = down
-                    _scrollHandler?.(row, col, chunk[i+3] === 96 ? 1 : -1);
-                }
-                i += 6;
-            } else {
-                const start = i++;
-                while (i < chunk.length &&
-                       !(chunk.length - i >= 6 && chunk[i] === 0x1b &&
-                         chunk[i+1] === 0x5b && chunk[i+2] === 0x4d)) i++;
-                parts.push(chunk.slice(start, i));
-            }
+        if (_mouseHoldTimer) { clearTimeout(_mouseHoldTimer); _mouseHoldTimer = null; }
+        const out = _mouse.write(chunk);
+        if (_mouse.pending()) {
+            // A bare Escape (or a cut report that never finishes) goes to Ink after a moment.
+            _mouseHoldTimer = setTimeout(() => { _mouseHoldTimer = null; const rest = _mouse.flush(); if (rest.length) stdinFilter.push(rest); }, _mouse.holdMs());
+            (_mouseHoldTimer as any).unref?.();
         }
-        cb(null, parts.length ? Buffer.concat(parts) : undefined);
+        cb(null, out.length ? out : undefined);
     },
 });
 // Mirror TTY identity + socket lifecycle methods so Ink treats the filtered
@@ -149,8 +143,25 @@ setTimeout(() => {
 // Hook called by agent-core's _processQueue when a queued message is about to be sent.
 // Adds the user message to the TUI event log at the moment of actual dispatch.
 dom.window._onQueueDequeue = (msg: { text: string }) => {
+    _takeCheckpoint();
     Store.addUserMessage(msg.text);
 };
+
+// ── Checkpoints for /rewind ───────────────────────────────────────────────────
+// Before each message: where the history stood and a copy of the workspace's files (tui-checkpoint.ts). /rewind goes back one message at a
+// time. Kept in a temporary folder; the last few only.
+const _CKPT_KEEP = 10;
+const _ckptStore = joinPath(tmpdir(), `fg-tui-ckpt-${process.pid}`);
+const _ckpts: Array<{ snap: Snapshot; historyLen: number }> = [];
+let _ckptSeq = 0;
+function _takeCheckpoint(): void {
+    try {
+        const snap = takeSnapshot(opts.workspaceRoot, _ckptStore, String(++_ckptSeq));
+        _ckpts.push({ snap, historyLen: getChatHistory().length });
+        while (_ckpts.length > _CKPT_KEEP) dropSnapshot(_ckpts.shift()!.snap);
+    } catch { /* no checkpoint: /rewind will say there is nothing to go back to */ }
+}
+const _dropCheckpoints = () => { try { rmSync(_ckptStore, { recursive: true, force: true }); } catch {} };
 
 // Wire up sendMessage for use by the Ink input handler.
 // Called once per user message; agent state is preserved across turns via
@@ -169,16 +180,54 @@ async function _nameSession(text: string): Promise<void> {
     g.autoNameChat?.(id, text)?.catch?.(() => {});
 }
 
+// Sends the TUI has started and not finished: counted from the call, before the turn itself exists, so the status does
+// not read "ready" during the naming and prelude work that runs first.
+let _sendsActive = 0;
+
+/** A reply (or a send that is about to start one) is in flight. Things that replace the open conversation must not run now. */
+export function isTurnBusy(): boolean {
+    const turns = (globalThis as any).turnsInFlight?.() ?? 0;
+    return _sendsActive > 0 || turns > 0 || aiBusy();
+}
+// The status line and the input queue follow this, not whichever local notice happened to finish last.
+Store.setBusyProbe(isTurnBusy);
+
+/** Go back before the last message: the conversation, the workspace's files and the screen (/rewind). The files come back only as far as the
+ *  snapshot reached (size limits in tui-checkpoint.ts); what could not be restored is said. */
+export function rewindLast(): void {
+    if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before rewinding._'); return; }
+    const ck = _ckpts.pop();
+    if (!ck) { Store.addNotice('_Nothing to rewind to._'); return; }
+    let files = '';
+    try {
+        const r = restoreSnapshot(opts.workspaceRoot, ck.snap);
+        files = `${r.restored.length} file${r.restored.length === 1 ? '' : 's'} restored, ${r.removed.length} removed`
+              + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
+    } catch (e: any) { files = `files NOT restored: ${e?.message ?? e}`; }
+    dropSnapshot(ck.snap);
+    setChatHistory(getChatHistory().slice(0, ck.historyLen));
+    Store.dropFromLastUser();
+    try { (dom.window as any).saveHistory?.(); } catch {}
+    Store.addNotice(`Rewound to before your last message — ${files}.`);
+}
+
 export async function sendMessage(text: string): Promise<void> {
+    _takeCheckpoint();
+    // A Ctrl+C (stop after this step) is spent when its turn has ended. Left set, it answered the next fresh message with "*(break)*" and
+    // no request, until /stop cleared it (TUI report case 044). Only when nothing else is running: it must not cancel a stop that
+    // a still-unwinding turn has yet to see.
+    if (!isTurnBusy()) setSoftStopPending(false);
+    _sendsActive++;
     try {
         await _nameSession(text);
         await (globalThis as any).runAgentTurn(text, null);
         dom.window.generateAndShowSuggestion?.().catch?.(() => {});
     } catch (e: any) {
         // Surface errors through the store as a system message
-        const { addTurn, finalizeTurn } = await import('./tui-store.js');
-        const t = addTurn();
-        finalizeTurn(t, `Error: ${e?.message ?? String(e)}`);
+        Store.addNotice(`Error: ${e?.message ?? String(e)}`);
+    } finally {
+        _sendsActive--;
+        Store.syncRunning();
     }
 }
 
@@ -190,15 +239,72 @@ export function newSession(): void {
     try { dom.window.newChat?.(); } catch {}
 }
 
+/** Start a fresh session and clear the screen. Refused while a reply is running: the old turn would keep writing into the new chat, and
+ *  the screen would show a conversation the model still carried (TUI report case 012). */
+export function startNewSession(): boolean {
+    if (isTurnBusy()) {
+        Store.addNotice('_A reply is still running — wait for it or stop it (Ctrl+C or /stop) before starting a new session._');
+        return false;
+    }
+    newSession();
+    Store.replaceEntries([]);
+    return true;
+}
+
+/** Send the last user message again in place of the last exchange (/retry, Alt+U). The WebUI's retry reads state that only a browser
+ *  send sets, so in the TUI it never did anything, after a finished or a stopped turn alike (TUI report cases 009, 017). */
+export async function retryLast(): Promise<void> {
+    if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before retrying._'); return; }
+    const history = getChatHistory();
+    let idx = history.length - 1;
+    const textOf = (c: any): string => typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => p?.text ?? '').join('') : '';
+    while (idx >= 0 && !(history[idx]?.role === 'user' && !/^\s*<nudge>|^\[TASK/.test(textOf(history[idx].content)))) idx--;
+    const text = idx >= 0 ? stripInjected(textOf(history[idx].content)) : '';
+    if (!text) { Store.addNotice('_Nothing to retry._'); return; }
+    setChatHistory(history.slice(0, idx));   // the message and everything the model answered to it
+    Store.dropFromLastUser();
+    Store.addUserMessage(text);
+    await sendMessage(text);
+}
+
+/** Show the conversation that is now the chat's history (after a resume), so the screen, /export and the model agree. */
+export function showRestoredConversation(): void {
+    try {
+        Store.replaceEntries(Store.entriesFromHistory(getChatHistory(), { user: s => stripInjected(s), answer: s => _stripTerminal(s) }));
+    } catch {}
+}
+
 export async function runCompact(): Promise<void> {
+    // Compacting rewrites the history a running reply is appending to, and its end used to mark the TUI ready under it.
+    if (isTurnBusy()) {
+        Store.addNotice('_A reply is still running — wait for it or stop it (Ctrl+C or /stop) before /compact._');
+        return;
+    }
     Store.addUserMessage('/compact');
+    Store.beginLocalOp();
+    // Like the WebUI's /compact: its own stop signal (so Stop cancels it and the summary of a cancelled run is dropped), the streaming
+    // flag (so queued messages wait for it), and the rebuilt history applied to the chat and saved. It used to discard the returned history:
+    // the next ordinary send re-sent the old turns and overwrote the compacted generation (TUI report case 052).
+    const ctrl = new AbortController();
+    setActiveAbortController(ctrl);
+    setAgentStreaming(true);
     const ph = makeTuiPlaceholder() as any;
     try {
-        await (dom.window as any).compactHistory?.(ph);
-        ph.finalize?.('Compacted.');
+        const rebuilt = await (dom.window as any).compactHistory?.(ph);
+        if (ctrl.signal.aborted) ph.finalize?.('Compaction stopped.');
+        else {
+            if (Array.isArray(rebuilt)) setChatHistory(rebuilt);
+            try { (dom.window as any).saveHistory?.(); } catch {}
+            ph.finalize?.('Compacted.');
+        }
     } catch (e: any) {
-        const t = Store.addTurn();
-        Store.finalizeTurn(t, `Compaction error: ${e?.message ?? String(e)}`);
+        Store.addNotice(`Compaction error: ${e?.message ?? String(e)}`);
+    } finally {
+        if (activeAbortController === ctrl) setActiveAbortController(null);
+        setAgentStreaming(false);
+        Store.endLocalOp();
+        // Messages typed while it ran waited in the queue; nothing else would start them (case 053).
+        setTimeout(() => { try { (dom.window as any)._processQueue?.(); } catch {} }, 0);
     }
 }
 
@@ -285,12 +391,15 @@ async function main() {
     // Fires in the background — never awaited, never delays render or first user interaction.
     _doTUIWarmup().catch(() => {});
 
+    // --resume <id> restored its history inside setup(); put it on the screen as well.
+    if (_resumeId) showRestoredConversation();
+
     // Bare --resume (no explicit ID): resolve the most recent session now that the
     // adapter is initialised, then swap history in before the first render.
     if (_resumeRequested && !_resumeId) {
         const sessions = await listWorkspaceSessions();
         if (sessions.length) {
-            await resumeSession(sessions[0].id);
+            if (await resumeSession(sessions[0].id)) showRestoredConversation();
             _t('main:resume_done');
         }
     }
@@ -329,11 +438,13 @@ async function main() {
             JSON.stringify({ timing: { step: 'heartbeat', ms: now - _t0, gap } }) + '\n', 'utf8'); } catch {}
     }, 200);
 
-    if (initialPrompt) sendMessage(initialPrompt);
+    // The same path as a typed message: the user entry appears, the status reads running, and a message typed meanwhile
+    // waits in the queue instead of starting a second turn on the same session.
+    if (initialPrompt) { Store.addUserMessage(initialPrompt); sendMessage(initialPrompt); }
 }
 
 // Save settings on exit, clear timers, and disable mouse protocol.
-const _cleanup = () => { try { clearInterval(_heartbeatInterval); process.stdout.write('\x1b[?1000l'); saveProfile(); } catch {} };
+const _cleanup = () => { try { clearInterval(_heartbeatInterval); process.stdout.write('\x1b[?1000l'); saveProfile(); _dropCheckpoints(); } catch {} };
 process.on('exit',    _cleanup);
 process.on('SIGTERM', () => { _cleanup(); process.exit(0); });
 process.on('SIGINT',  () => { _cleanup(); process.exit(0); });

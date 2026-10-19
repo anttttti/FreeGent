@@ -430,10 +430,14 @@ function _saveRoleForChat(name: string): void {
         sessionSetChatRole?.(id, name && name !== 'director' ? name : null);
     } catch {}
 }
-export function setMainAgentRole(name: string): void {
+/** Select the main role by name. A name that is not in the registry is refused (false) and nothing changes: it used to be accepted,
+ *  leave the role null and run the agent with an empty system prompt, with the bad name saved on the chat (TUI report cases 035, 043). */
+export function setMainAgentRole(name: string): boolean {
     const _name = name?.toLowerCase() ?? name;
+    if (_name && !rolesRegistry.has(_name)) return false;
     setMainAgentRoleObject(rolesRegistry.get(_name) || null);
     _saveRoleForChat(_name);
+    return true;
 }
 function clearMainAgentRole(): void {
     // Director is always the default; this restores it after a custom role is done.
