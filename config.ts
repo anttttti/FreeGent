@@ -755,17 +755,19 @@ const _DEFAULT_MAIN_MODELS = [
     'kilo|minimax/minimax-m3.1-flash:free',
     'vercel|minimax/minimax-m3.1-flash',
     'openrouter|minimax/minimax-m3.1-flash:free',      // OpenRouter's free tier is ~50 requests/day, so last of the three
-    // Top tier. KiloBench (Terminal Bench 2.0): DeepSeek V4.1 Flash 75.3% (S tier). Step 5 Preview
+    // Ordered by the share of long-chat microtasks solved (bench/results/modelladder/convo-latest.md, 2026-10-20):
+    // GLM 5.3 98%, DeepSeek 92%, Step 5 90%, Longcat 88%, Nemotron Super VL 79%, Nemotron Ultra 69%.
+    'nvidia|z-ai/glm-5.3',
+    'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota
+    'nvidia|stepfun-ai/step-5-preview',                // same model on NVIDIA NIM; separate quota
+    'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
+    'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx; no key needed
+    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
+    // Notes on the top tier: KiloBench (Terminal Bench 2.0): DeepSeek V4.1 Flash 75.3% (S tier). Step 5 Preview
     // is the most used free model on the Kilo leaderboard (kilo.ai/leaderboard/llm.txt, 2026-10-17)
     // but Kilo itself withdrew it (HTTP 404 "unavailable_model"); it still answers on Nous and NVIDIA.
     // Ling 3.1 Flash is paid everywhere now (Kilo 402, Nous 404 "requires credits").
-    // Tool calls of every entry below were checked on 2026-10-17 (Nemotron Ultra only timed out).
-    'nvidia|stepfun-ai/step-5-preview',                // same model on NVIDIA NIM; separate quota
-    'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
-    'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota
-    'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx; no key needed
-    'nvidia|z-ai/glm-5.3',
-    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
+    // Tool calls of the entries above and below were checked on 2026-10-17 (Nemotron Ultra only timed out).
     'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
     // Large reasoning models
