@@ -26,6 +26,7 @@ declare global {
     var warnAttachmentSendBusy: () => void;
     var waitForAttachments: () => Promise<void>;
     var restoreFileAttachment: any;
+    var addWorkspaceAttachment: any;
     var getPendingAttachments: any;
     var setupChatDropZone: any;
     var _guessMime: any;

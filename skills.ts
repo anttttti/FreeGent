@@ -309,7 +309,7 @@ const BUILTIN_RULES = [
             const n = new Date();
             const pad = x => String(x).padStart(2, '0');
             const tz = n.toTimeString().match(/GMT[+-]\d{4}/)?.[0] ?? '';
-            return `Current date and time: ${n.toISOString().slice(0, 10)} ${pad(n.getHours())}:${pad(n.getMinutes())} local (${tz})`;
+            return `Current date and time: ${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())} ${pad(n.getHours())}:${pad(n.getMinutes())} local (${tz})`;
         },
     },
     {
