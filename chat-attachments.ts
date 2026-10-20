@@ -307,7 +307,13 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         } else contentType = 'binary';
     }
     if (!current()) return;
-    if (contentType === 'text' && content.length > 50_000) content = content.slice(0, 50_000) + '\n…[truncated — showing first 50,000 characters]';
+    if (contentType === 'text' && content.length > 50_000) {
+        // Do not cut between the two halves of a surrogate pair: a lone high surrogate is malformed Unicode in the request.
+        let cut = 50_000;
+        const last = content.charCodeAt(cut - 1);
+        if (last >= 0xd800 && last <= 0xdbff) cut--;
+        content = content.slice(0, cut) + '\n…[truncated — showing first 50,000 characters]';
+    }
     let workspacePath: string | undefined = existingPath;
     if (!existingPath && original && typeof agentWriteFile === 'function') {
         // Last path segment only, with dot-segments dropped, so a hostile name cannot leave attachments/.

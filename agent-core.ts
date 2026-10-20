@@ -80,13 +80,14 @@ function saveCheckpoint(userText: string): string {
         roleName:    (typeof mainAgentRole !== 'undefined') ? (mainAgentRole?.name ?? null) : null,
         userText,
     };
-    // Capture attachments. Binary files >500 KB are omitted; they will show as missing chips
-    // on rerun and need to be re-attached manually.
+    // Capture attachments. A binary file >500 KB is not copied into the checkpoint: one with a workspace path is
+    // re-attached from the workspace on rerun, one without is reported as omitted.
     const { images: _snapImages, files: _snapFiles } = getPendingAttachments();
     const images = _snapImages.map(img => ({ mimeType: img.mimeType, base64: img.base64, ...(img.name ? { name: img.name } : {}), ...(img.workspacePath ? { workspacePath: img.workspacePath } : {}) }));
     const files  = _snapFiles
-        .filter(f => f.contentType === 'text' || f.size < _ATTACH_BINARY_MAX)
-        .map(f => ({ name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: f.content, size: f.size, ...(f.workspacePath ? { workspacePath: f.workspacePath } : {}) }));
+        .map(f => f.contentType === 'text' || f.size < _ATTACH_BINARY_MAX
+            ? { name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: f.content, size: f.size, ...(f.workspacePath ? { workspacePath: f.workspacePath } : {}) }
+            : { name: f.name, mimeType: f.mimeType, contentType: f.contentType, content: '', size: f.size, bytesNotKept: true, ...(f.workspacePath ? { workspacePath: f.workspacePath } : {}) });
 
     const _commit = data => {
         localStorage.setItem(ckptKey(id), JSON.stringify(data));
@@ -122,6 +123,28 @@ function saveCheckpoint(userText: string): string {
 }
 
 // A checkpoint's attachments: inline (older checkpoints, or no session store) or in the store.
+// Put a checkpoint's files back into the pending attachments. A large binary was saved without its bytes: it is re-attached
+// from its workspace copy, and named in a notice when that copy is gone.
+async function _restoreCheckpointFiles(files: any[]): Promise<void> {
+    const lost: string[] = [];
+    for (const f of files) {
+        if (!f.bytesNotKept) { restoreFileAttachment(f); continue; }
+        try {
+            if (!f.workspacePath) throw new Error('no workspace copy');
+            await addWorkspaceAttachment(f.workspacePath);
+        } catch { lost.push(f.name); }
+    }
+    if (lost.length) appendMessage?.('model', `<em style="color:var(--muted)">Not re-attached (too large for the checkpoint and not in the workspace any more): ${lost.map(esc).join(', ')}. Attach again to include it.</em>`);
+}
+
+// Return keyboard focus to the composer when a turn ends, unless the reader is working in an open picker or dialog: moving focus
+// behind it sent their next keystrokes (and Enter) to the composer, which submitted its draft.
+function _focusComposer(el?: HTMLElement | null): void {
+    const a = document.activeElement as HTMLElement | null;
+    if (a && a.closest?.('.ws-pick-overlay, .fg-modal-overlay, #msg-search-modal, #input-model-picker')) return;
+    (el ?? document.getElementById('agent-input'))?.focus();
+}
+
 async function _checkpointAttachments(ckptId: string, ckpt: any): Promise<{ images: any[]; files: any[] }> {
     if (ckpt?.attachments && typeof sessionLoadCheckpointAttachments === 'function') {
         const stored = await sessionLoadCheckpointAttachments(ckptId);
@@ -531,7 +554,7 @@ async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Prom
     // Restore attachments into the pending arrays so agentSend() picks them up
     clearImageAttachments();
     for (const img of images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
-    for (const f of files)   restoreFileAttachment(f);
+    await _restoreCheckpointFiles(files);
     const input = document.getElementById('agent-input') as HTMLTextAreaElement | null;
     if (input) { _setInputText(input, userText || ''); autoResizeTextarea(input); }
     agentSend();
@@ -789,7 +812,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
             const { images, files } = await _checkpointAttachments(ckptId, d2);
             clearImageAttachments();
             for (const img of images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
-            for (const f of files) restoreFileAttachment(f);
+            await _restoreCheckpointFiles(files);
         } catch {}
         const inp = document.getElementById('agent-input') as HTMLTextAreaElement | null;
         if (inp) { _setInputText(inp, newText); autoResizeTextarea(inp); }
@@ -1333,7 +1356,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             setActiveAbortController(null);
             setAgentStreaming(false);
             setInputState(true);
-            input?.focus();
+            _focusComposer(input);
             return;
         }
     }
@@ -1405,6 +1428,14 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     // (NOT the displayed bubble, which already used rawText above). This keeps the
     // system prompt stable for prefix caching and carries the guidance across all
     // tool-call steps of this turn. Always-on skills stay in the system prompt.
+    // A parked or checkpointed attachment can name a workspace copy another chat has since renamed or deleted: do not
+    // tell the model its original is there, or its file tools follow the path into "File not found".
+    if (sendImages.some(i => i.workspacePath) || sendFiles.some(f => f.workspacePath)) {
+        try {
+            const present = new Set((await agentListFilesNoStat()).map(f => f.name));
+            for (const a of [...sendImages, ...sendFiles]) if (a.workspacePath && !present.has(a.workspacePath)) a.workspacePath = undefined;
+        } catch {}
+    }
     // Build text-file attachment blocks (injected for all providers)
     const _attachText = sendFiles
         .filter(f => f.contentType === 'text')
@@ -1482,7 +1513,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         saveHistory();
     } finally {
         _tearDownTurn();
-        input?.focus();
+        _focusComposer(input);
     }
 
     // Fire-and-forget post-turn agents (log review, memory, task extraction).
@@ -1541,7 +1572,7 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
         saveHistory();
     } finally {
         _tearDownTurn();
-        if (!container) document.getElementById('agent-input')?.focus();
+        if (!container) _focusComposer();
     }
     if (_regenCompleted) _fireSuggestion('retry');
 }

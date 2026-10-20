@@ -403,12 +403,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('keydown', e => {
         // Escape → stop generation
         if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey) {
+            // An open picker or search is dismissed first: the key was aimed at it, not at the reply running behind it.
+            const _pick = document.querySelector<HTMLElement>('.ws-pick-overlay');
+            if (_pick) { e.preventDefault(); _pick.querySelector<HTMLElement>('.ws-pick-footer button')?.click(); return; }
+            const _search = document.getElementById('msg-search-modal');
+            if (_search && _search.style.display !== 'none' && _search.style.display !== '') { closeMsgSearch(); return; }
             if (agentStreaming) { stopNow?.(); return; }
             if ((window as any).cancelSendPreparation?.()) return;   // a send still waiting for its attachments
-            // Also close message search if open
-            if (document.getElementById('msg-search-modal')?.style.display !== 'none') {
-                closeMsgSearch(); return;
-            }
         }
         // Cmd/Ctrl+K → open chat search
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -557,6 +558,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             _msgSearchIdx = Math.max(_msgSearchIdx - 1, 0);
         } else if (e.key === 'Enter' && _msgSearchIdx >= 0 && !e.isComposing && e.keyCode !== 229) {
             const item = items[_msgSearchIdx];
+            e.preventDefault();   // else the keypress lands in the composer that search focuses, and sends its draft
             if (item) msgSearchSelect(item.dataset.chatId ?? '');
             return;
         } else { return; }

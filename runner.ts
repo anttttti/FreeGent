@@ -47,6 +47,9 @@ export function _setRunnerChatIdForTest(id: string | null): void { _runnerChatId
 // render adapter (workflowMode is on), leaving the tab blank.
 async function _runnerTurn(prompt: string): Promise<any> {
     if (_runnerChatId && activeChatId !== _runnerChatId) await switchToChat(_runnerChatId);
+    // runnerSteer's soft stop cut the previous step short; that stop is spent once the step has unwound. A real Stop
+    // sets _runnerAbort, which every caller checks before reaching a turn.
+    setSoftStopPending(false);
     appendMessage('user', renderMarkdown ? renderMarkdown(prompt) : esc(prompt).replace(/\n/g, '<br>'));
     try { return await runAgentTurn(prompt, null, undefined, { placeholder: createResponsePlaceholder() }); }
     finally { await _snapshotRunnerChat('end'); }   // whatever way the turn ended: the last snapshot is the chat's end state
@@ -201,6 +204,7 @@ async function _runLoop() {
     setAiJob('runner');
     _runnerPaused        = false;
     _runnerAbort         = false;
+    setSoftStopPending(false);   // a stop left from an earlier run must not cancel this one's first turn
     _runnerConsecutiveFails = 0;
     _runnerPendingSteer.length = 0;
     _runnerDeferred.clear();

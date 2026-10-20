@@ -15,6 +15,11 @@ import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
 
+// How a workspace record is sent to the local sandbox: binary files as '\x00BIN\x00<base64>', text as is.
+function _localFileForm(rec: { content: string; encoding?: string | null }): string {
+    return rec.encoding === 'base64' && rec.content ? `\x00BIN\x00${rec.content}` : rec.content;
+}
+
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 60_000;      // the sandbox is for short scripts; longer work belongs in bash/Python in the background
 const JS_SANDBOX_NOTICE_MS  = 10_000;      // after this long, say that Stop cancels it
@@ -2456,9 +2461,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     for (const rec of (recs || [])) {
                         if (!rec?.name || typeof rec.content !== 'string') continue;
                         if (rec.content.length > 1_000_000) { omitted.add(rec.name); continue; }
-                        files[rec.name] = rec.encoding === 'base64' && rec.content
-                            ? `\x00BIN\x00${rec.content}`
-                            : rec.content;
+                        files[rec.name] = _localFileForm(rec);
                     }
                 } catch {}
                 const resp = await fetch('/api/execute', {
@@ -2471,8 +2474,14 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 execResult = await resp.json();
                 const deletedPaths: string[] = [];
                 const writeErrors: string[] = [];
+                // The run worked on the snapshot sent above. A file the user saved (or another tool changed) while it ran holds a
+                // newer revision: applying the run's write or deletion would replace it with output derived from the old one.
+                const nowForm = new Map<string, string>();
+                try { for (const rec of ((await listWorkspaceFiles()) || [])) if (rec?.name && typeof rec.content === 'string') nowForm.set(rec.name, _localFileForm(rec)); } catch {}
+                const changedMeanwhile = (path: string) => !omitted.has(path) && (nowForm.has(path) !== (path in files) || (nowForm.has(path) && nowForm.get(path) !== files[path]));
                 // Files the run removed or renamed away
                 for (const path of (execResult.files_deleted ?? []) as string[]) {
+                    if (changedMeanwhile(path)) { writeErrors.push(`delete ${path}: the file changed while the command ran; kept the newer version`); continue; }
                     try { await agentDeleteFile(path); } catch (e) { writeErrors.push(`delete ${path}: ${e.message ?? e}`); continue; }
                     if (context?.staging) context.staging.set(path, null);
                     _invalidateReadDedup(path);
@@ -2482,6 +2491,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     const writtenPaths = [];
                     for (const [path, content] of Object.entries(execResult.files_written as Record<string, string>)) {
                         if (omitted.has(path)) { writeErrors.push(omittedFileWriteMessage(path)); continue; }
+                        if (changedMeanwhile(path)) { writeErrors.push(`${path}: the file changed while the command ran; kept the newer version (the command's output was not applied)`); continue; }
                         const isBin = typeof content === 'string' && content.startsWith('\x00BIN\x00');
                         const enc   = isBin ? 'base64' : null;
                         const data  = isBin ? content.slice(5) : content;
