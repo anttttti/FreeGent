@@ -131,7 +131,7 @@ async function _restoreCheckpointFiles(files: any[]): Promise<void> {
         if (!f.bytesNotKept) { restoreFileAttachment(f); continue; }
         try {
             if (!f.workspacePath) throw new Error('no workspace copy');
-            await addWorkspaceAttachment(f.workspacePath);
+            await addWorkspaceAttachment(f.workspacePath, f.mimeType);
         } catch { lost.push(f.name); }
     }
     if (lost.length) appendMessage?.('model', `<em style="color:var(--muted)">Not re-attached (too large for the checkpoint and not in the workspace any more): ${lost.map(esc).join(', ')}. Attach again to include it.</em>`);
@@ -1265,6 +1265,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
 
     // Snapshot pending attachments early — used by media routing, early-return guard, and send.
     const { images: sendImages, files: sendFiles } = getPendingAttachments();
+    // Files whose read failed while this message was being prepared: the send goes ahead without them, and says so.
+    const _failedReadNotes: string[] = (window as any).takeAttachmentFailures?.() ?? [];
 
     // ── Media-capability routing ───────────────────────────────────────────
     // Check pending attachments before the key guard so we validate the right provider.
@@ -1394,7 +1396,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _fileChipsHtml = sendFiles.map(f =>
         `<span class="chat-file-chip">${_fileIcon(f.mimeType, f.name)} ${esc(f.name)}</span>`
     ).join('');
-    const _attachHtml = [_thumbsHtml, _fileChipsHtml].filter(Boolean).join('');
+    const _failedHtml = _failedReadNotes.map(n => `<span class="chat-file-chip media-warn-chip">⚠ ${esc(n)}</span>`).join('');
+    const _attachHtml = [_thumbsHtml, _fileChipsHtml, _failedHtml].filter(Boolean).join('');
     const _userMsgDiv = appendMessage('user', (_attachHtml ? _attachHtml + '<br>' : '') + (renderMarkdown ? renderMarkdown(rawText) : esc(rawText).replace(/\n/g, '<br>')), container);
     _userMsgDiv.dataset.checkpointId = ckptId;
     // Add a dedicated ✎ edit button inside the bubble (appears on hover, same as ⎘ copy).
@@ -1452,7 +1455,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         fileNames:   sendFiles.map(f => f.name),
     });
 
-    const historyText = [_prelude, _attachText, text].filter(Boolean).join('\n\n');
+    const _failedNote = _failedReadNotes.length ? `[Attachments that could not be read and are not included: ${_failedReadNotes.join('; ')}]` : '';
+    const historyText = [_prelude, _attachText, _failedNote, text].filter(Boolean).join('\n\n');
 
     const _binaryFiles = sendFiles.filter(f => f.contentType === 'binary');
 
@@ -1620,6 +1624,7 @@ async function stopTurnAndWait(): Promise<boolean> {
     // the queue they would start as soon as the stopped turn ends, in whatever chat and project is open then.
     MsgQueue.clear();
     if (!busy()) return true;
+    cancelSendPreparation();   // a send still reading its attachments is not a turn: cancel it (stopNow only reaches a stream) instead of timing out on it
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
     if (busy()) {   // a tool that ignores cancellation: do not replace the conversation under it

@@ -9,16 +9,12 @@ import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotWorkspace, staleGuard } from './exec-limits.js';
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
 
-// How a workspace record is sent to the local sandbox: binary files as '\x00BIN\x00<base64>', text as is.
-function _localFileForm(rec: { content: string; encoding?: string | null }): string {
-    return rec.encoding === 'base64' && rec.content ? `\x00BIN\x00${rec.content}` : rec.content;
-}
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
 const JS_SANDBOX_TIMEOUT_MS = 60_000;      // the sandbox is for short scripts; longer work belongs in bash/Python in the background
@@ -2376,8 +2372,11 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             // extraction), plus a synced local folder's files if one is open.
             const files: Record<string, string | { base64: string }> = Object.create(null);   // no prototype: __proto__ is a file name here
             const omitted = new Set<string>();   // too large to copy: the run cannot see them, so it may not replace them
+            let sentSnap = new Map<string, string>();
             try {
-                for (const rec of (await listWorkspaceFiles()) || []) {
+                const _recs = (await listWorkspaceFiles()) || [];
+                sentSnap = snapshotWorkspace(_recs);
+                for (const rec of _recs) {
                     if (!rec?.name || typeof rec.content !== 'string') continue;
                     if (rec.content.length > EXEC_FILE_MAX_CHARS) { omitted.add(rec.name); continue; }
                     files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content } : rec.content;
@@ -2403,14 +2402,19 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 return { stdout: '', stderr: `JS sandbox: ${m}${/timed out/.test(m) ? ' (an endless loop, or work that needs longer: run it as a background bash/Python job instead)' : ''}`, exit_code: 1 };
             }
             finally { if (_notice) clearTimeout(_notice); }
+            const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
+            const write_errors = [];
+            const deletedOk: string[] = [];
             for (const path of (run.deleted ?? []) as string[]) {
+                if (changedMeanwhile(path)) { write_errors.push(`${path}: not deleted, the file changed while the code ran; kept the newer version`); continue; }
                 await agentDeleteFile(path).catch(() => {});
                 if (context?.staging) context.staging.set(path, null);
                 _invalidateReadDedup(path);
+                deletedOk.push(path);
             }
-            const write_errors = [];
             for (const [path, content] of Object.entries(run.written as Record<string, string | Uint8Array>)) {
                 if (omitted.has(path)) { write_errors.push(omittedFileWriteMessage(path)); continue; }
+                if (changedMeanwhile(path)) { write_errors.push(`${path}: not written, the file changed while the code ran; kept the newer version`); continue; }
                 try {
                     // Bytes that are UTF-8 text (a Buffer of a text file) are stored as text; others
                     // (binary, Latin-1 …) as base64, so they come back unchanged.
@@ -2428,7 +2432,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             }
             const written_ok = Object.keys(run.written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
             const extra_stderr = write_errors.length ? (run.stderr ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
-            const deleted = (run.deleted ?? []) as string[];
+            const deleted = deletedOk;
             return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.exit_code || (write_errors.length && !written_ok.length ? 1 : 0), ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}) };
         })();
     } else if (runtime.hasNativeExec) {
@@ -2453,15 +2457,17 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             try {
                 const files = Object.create(null);
                 const omitted = new Set<string>();   // too large to send: the run cannot see them, so it may not replace them
+                let sentSnap = new Map<string, string>();
                 try {
                     // Use raw workspace records so binary files (encoding='base64') are sent
                     // as '\x00BIN\x00<base64>' instead of their text-extracted content.
                     // Empty files are sent too: an empty __init__.py makes a directory a package.
                     const recs = await listWorkspaceFiles();
+                    sentSnap = snapshotWorkspace(recs || []);
                     for (const rec of (recs || [])) {
                         if (!rec?.name || typeof rec.content !== 'string') continue;
                         if (rec.content.length > 1_000_000) { omitted.add(rec.name); continue; }
-                        files[rec.name] = _localFileForm(rec);
+                        files[rec.name] = rec.encoding === 'base64' && rec.content ? `\x00BIN\x00${rec.content}` : rec.content;
                     }
                 } catch {}
                 const resp = await fetch('/api/execute', {
@@ -2476,9 +2482,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const writeErrors: string[] = [];
                 // The run worked on the snapshot sent above. A file the user saved (or another tool changed) while it ran holds a
                 // newer revision: applying the run's write or deletion would replace it with output derived from the old one.
-                const nowForm = new Map<string, string>();
-                try { for (const rec of ((await listWorkspaceFiles()) || [])) if (rec?.name && typeof rec.content === 'string') nowForm.set(rec.name, _localFileForm(rec)); } catch {}
-                const changedMeanwhile = (path: string) => !omitted.has(path) && (nowForm.has(path) !== (path in files) || (nowForm.has(path) && nowForm.get(path) !== files[path]));
+                const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
                 // Files the run removed or renamed away
                 for (const path of (execResult.files_deleted ?? []) as string[]) {
                     if (changedMeanwhile(path)) { writeErrors.push(`delete ${path}: the file changed while the command ran; kept the newer version`); continue; }

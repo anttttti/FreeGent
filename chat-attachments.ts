@@ -28,7 +28,16 @@ function warnAttachmentSendBusy(): void {
     status.textContent = 'Finish or stop the current response before sending attachments. Your draft and files are kept here.';
     strip.appendChild(status); strip.style.display = 'flex';
 }
+// Attachments whose read failed, per chat, until the next send takes them: the warning chip goes away when the send clears the
+// composer, but the model and the transcript must still be told that the file did not arrive.
+const _failedReads: { owner: string | null; text: string }[] = [];
+function takeAttachmentFailures(): string[] {
+    const mine = _failedReads.filter(f => f.owner === _readerChat());
+    for (const f of mine) _failedReads.splice(_failedReads.indexOf(f), 1);
+    return mine.map(f => f.text);
+}
 function _attachmentError(name: string, error: any): void {
+    _failedReads.push({ owner: _readerChat(), text: `${name}: ${error?.message || 'Could not read attachment'}` });
     const strip = document.getElementById('img-strip');
     if (!strip) return;
     const warning = document.createElement('div');
@@ -175,7 +184,7 @@ function addImageAttachment(mimeType: string, base64: string, extra: { name?: st
 // A read that is still running belongs to the chat it was started in. Leaving the chat parks its attachments
 // (parkPendingAttachments), and a read in flight then survives: it finishes into that chat's parked set, so the
 // file is there when the reader comes back. Anything else that empties the composer (a send, Clear) cancels it.
-type _ReadToken = { owner: string | null; cancelled: boolean; survives: boolean };
+type _ReadToken = { owner: string | null; cancelled: boolean; survives: boolean; read?: Promise<void>; name?: string };
 const _readTokens = new Set<_ReadToken>();
 const _readerChat = (): string | null => (globalThis as any).activeChatId ?? null;
 
@@ -216,6 +225,24 @@ function restoreParkedAttachments(chatId: string | null | undefined): void {
     for (const img of parked.images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
     for (const f of parked.files) restoreFileAttachment(f);
 }
+// A read still running when the reader returns to its chat is waited for again and shown again, so a Send does not go out
+// without a file the reader already chose (the file would otherwise turn up afterwards, attached to a later turn).
+function resumePendingReads(chatId: string | null | undefined): void {
+    if (!chatId) return;
+    const strip = document.getElementById('img-strip');
+    for (const t of _readTokens) {
+        if (t.owner !== chatId || !t.survives || !t.read || t.cancelled) continue;
+        t.survives = false;
+        _attachmentReads.add(t.read);
+        if (strip) {
+            const chip = document.createElement('div');
+            chip.className = 'file-chip attachment-loading'; chip.setAttribute('role', 'status');
+            chip.textContent = `Reading ${t.name ?? 'file'}…`;
+            strip.appendChild(chip); strip.style.display = 'flex';
+            void t.read.then(() => chip.remove(), () => chip.remove());
+        }
+    }
+}
 
 // Returns snapshots of the pending arrays for callers that need to read state
 // (saveCheckpoint, agentSend) without exposing the mutable arrays directly.
@@ -242,6 +269,7 @@ function addFileAttachment(file: File, existingPath?: string): Promise<void> {
     loading.textContent = `Reading ${file.name}…`;
     if (strip) { strip.appendChild(loading); strip.style.display = 'flex'; }
     const read = _loadFileAttachment(file, token, existingPath);
+    token.read = read; token.name = file.name;
     _attachmentReads.add(read);
     // Attach a rejection handler even when the caller is an inline event handler.
     void read.then(() => { loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token); }, error => {
@@ -370,7 +398,24 @@ document.addEventListener('paste', e => {
 // ── Attach menu: Attach (device camera / photos) · Upload (any file) · Select (workspace file) ──
 function toggleAttachMenu(ev?: Event): void {
     ev?.stopPropagation();
-    document.getElementById('attach-menu')?.classList.toggle('open');
+    const menu = document.getElementById('attach-menu');
+    if (!menu) return;
+    menu.classList.toggle('open');
+    menu.style.bottom = '';
+    if (!menu.classList.contains('open') || menu.classList.contains('down')) return;
+    // Open it above the composer's text field rather than over it (on a phone the field sits right above the button, and the menu hid
+    // its top 44-65 px), when the screen has room for that.
+    const input = document.getElementById('agent-input');
+    const wrap = menu.parentElement;
+    if (!input || !wrap) return;
+    const wr = wrap.getBoundingClientRect(), ir = input.getBoundingClientRect();
+    const bottom = wr.bottom - ir.top + 4;
+    if (bottom > 48 && ir.top - menu.offsetHeight - 4 >= 0) menu.style.bottom = `${Math.round(bottom)}px`;
+    // Keep it inside the screen sideways too (on a 280 px display it ran 31 px off the right edge).
+    menu.style.left = '0px';
+    const mr = menu.getBoundingClientRect();
+    if (mr.right > innerWidth - 8) menu.style.left = `${Math.round(-(mr.right - (innerWidth - 8)))}px`;
+    else if (mr.left < 8) menu.style.left = `${Math.round(8 - mr.left)}px`;
 }
 function closeAttachMenu(): void { document.getElementById('attach-menu')?.classList.remove('open'); }
 document.addEventListener('click', e => {
@@ -457,11 +502,12 @@ async function saveFileToWorkspace(file: File): Promise<string> {
 }
 
 // Attach a file that is already in the workspace: same pipeline as an upload, no extra copy.
-function addWorkspaceAttachment(path: string): Promise<void> {
+// mimeType: the type the file was attached with, when known (a checkpoint keeps it); the name's extension is only a guess.
+function addWorkspaceAttachment(path: string, mimeType?: string): Promise<void> {
     return (async () => {
         const bytes = await agentReadFileBytes(path);
         const name = path.split('/').pop() || path;
-        const file = new File([bytes as BlobPart], name, { type: _guessMime(name.split('.').pop()?.toLowerCase() || '') });
+        const file = new File([bytes as BlobPart], name, { type: mimeType || _guessMime(name.split('.').pop()?.toLowerCase() || '') });
         await addFileAttachment(file, path);
     })();
 }
@@ -473,6 +519,6 @@ Object.assign(window, {
 
 Object.assign(window, {
     addImageAttachment, clearImageAttachments, parkPendingAttachments, restoreParkedAttachments, clearParkedAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
-    setupChatDropZone, restoreFileAttachment, getPendingAttachments,
+    setupChatDropZone, restoreFileAttachment, getPendingAttachments, takeAttachmentFailures, resumePendingReads,
     _guessMime, _fileIcon, _fmtSz, _LANG_MAP, _audioFmt,
 });

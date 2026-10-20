@@ -98,6 +98,23 @@ describe('searchMessages', () => {
         const hits = await window.searchMessages('needle');
         expect(hits.map((h: any) => h.chatId)).toEqual(['old']);
     });
+    it('keeps the 30 most recent matches, not the 30 first created', async () => {
+        const chats = Array.from({ length: 31 }, (_, i) => ({ id: `c${i}`, name: `C${i}`, createdAt: i, lastAt: i }));
+        localStorage.setItem('fg_chat_list', JSON.stringify(chats));
+        window.setSessionStore({ loadHistory: async () => [{ role: 'user', content: 'receipt term' }] } as any);
+        const hits = await window.searchMessages('receipt');
+        expect(hits).toHaveLength(30);
+        expect(hits[0].chatId).toBe('c30');
+        expect(hits.map((h: any) => h.chatId)).not.toContain('c0');
+    });
+    it('puts the excerpt and the highlight on the matched text when lowercasing changes lengths', async () => {
+        localStorage.setItem('fg_chat_list', JSON.stringify([{ id: 'tr', name: 'T', createdAt: 1, lastAt: 1 }]));
+        // 'İ'.toLowerCase() is two code units, which shifted every later offset in a lowercased copy.
+        const text = 'İ'.repeat(90) + ' the needle is here';
+        window.setSessionStore({ loadHistory: async () => [{ role: 'user', content: text }] } as any);
+        const hits = await window.searchMessages('needle');
+        expect(hits[0].excerptHtml).toContain('<mark>needle</mark>');
+    });
 });
 
 describe('chooseHistory: a stamp, not length, says which copy is newer', () => {

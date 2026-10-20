@@ -195,7 +195,9 @@ function openFileTab(name) {
     if (/\.(xlsx|xls|ods)$/i.test(name)) {
         editorWrap.textContent = 'Loading…';
         readWorkspaceFile?.(name).then(async rec => {
-            if (!rec?.content || !XLSX) {
+            // The reader is a script that may still be downloading (or have failed earlier): wait for it, retrying a failed one.
+            const XL = (globalThis as any).XLSX ?? await (window as any).documentLibrary?.('XLSX', 'script[src*="xlsx@"]').catch(() => null);
+            if (!rec?.content || !XL) {
                 editorWrap.textContent = 'Spreadsheet preview unavailable.';
                 return;
             }
@@ -203,7 +205,7 @@ function openFileTab(name) {
                 ? _base64ToUint8?.(rec.content)
                 : new TextEncoder().encode(rec.content);
             if (!bytes) { editorWrap.textContent = 'Could not decode spreadsheet.'; return; }
-            const wb = XLSX.read(await fixXlsxCharRefs(bytes), { type: 'array' });
+            const wb = XL.read(await fixXlsxCharRefs(bytes), { type: 'array' });
             editorWrap.textContent = '';
             editorWrap.style.cssText = 'flex:1;overflow:auto;padding:12px;';
             wb.SheetNames.forEach(sheetName => {
@@ -212,7 +214,7 @@ function openFileTab(name) {
                 label.textContent = sheetName;
                 editorWrap.appendChild(label);
                 // Built from cell values with DOM calls: sheet_to_html leaves cell text unescaped in an attribute.
-                const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: '' });
+                const rows = XL.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: '' });
                 const wrap = document.createElement('div');
                 wrap.style.cssText = 'overflow-x:auto;margin-bottom:12px;';
                 const style = document.createElement('style');

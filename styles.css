@@ -233,6 +233,7 @@ html, body {
     position: absolute;
     top: 7px; left: 4px;
     z-index: 5;
+    min-width: 24px; min-height: 24px;   /* a mouse target: the bare glyph was 13x14 px */
 }
 
 /* Background agent indicator */
@@ -644,7 +645,7 @@ html, body {
 .input-attach-btn:hover { background: var(--surface2); color: var(--text); }
 .attach-wrap { position: relative; flex-shrink: 0; }
 .attach-wrap input[type="file"] { display: none; }
-.attach-menu { display: none; position: absolute; bottom: 48px; left: 0; z-index: 50; min-width: 220px;
+.attach-menu { display: none; position: absolute; bottom: 48px; left: 0; z-index: 50; min-width: min(220px, calc(100vw - 16px)); max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto;
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px;
     box-shadow: 0 4px 16px rgba(0,0,0,.25); }
 .attach-menu.open { display: block; }
@@ -1119,7 +1120,7 @@ html, body {
 [data-theme="dark"] .sr-del-btn:hover { background: rgba(211,47,47,0.15); }
 
 /* ── Skill autocomplete ── */
-.skill-autocomplete { position: fixed; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 200; overflow: hidden; display: none; min-width: 280px; max-width: 520px; }
+.skill-autocomplete { position: fixed; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 200; overflow: hidden; display: none; min-width: min(280px, calc(100vw - 16px)); max-width: min(520px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; }
 .skill-ac-item { display: flex; align-items: baseline; gap: 10px; padding: 8px 14px; cursor: pointer; transition: background 0.1s; }
 .skill-ac-item:hover, .skill-ac-item.selected { background: #f0f4ff; }
 .skill-ac-name { font-family: 'SF Mono','Fira Code',monospace; font-size: 13px; font-weight: 600; color: var(--accent); white-space: nowrap; }
@@ -2041,4 +2042,9 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 @media (max-width: 1150px) {
     .kanban-col { min-width: 150px; }
     .kanban-board { gap: 8px; padding: 12px 10px; }
+}
+
+/* Very small screens (a folded phone's cover display, 400% zoom): the greeting stays clear of the composer. */
+@media (max-width: 340px), (max-height: 340px) {
+    #chat-welcome { top: calc(50% - 170px); }
 }

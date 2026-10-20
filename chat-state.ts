@@ -738,7 +738,9 @@ function renderChatsDropdown() {
         const info = document.createElement('div');
         info.className = 'chat-list-info';
         info.title = 'Open this chat';
-        info.onclick = () => { activateTab?.('chat'); switchToChat(chat.id); };
+        // The whole card opens the chat (on a phone ~70% of it was dead to taps); its buttons keep their own actions.
+        item.style.cursor = 'pointer';
+        item.onclick = e => { if ((e.target as HTMLElement).closest('button, a, input, textarea, select')) return; activateTab?.('chat'); switchToChat(chat.id); };
 
         const nameEl = document.createElement('div');
         nameEl.className   = 'chat-list-name';
@@ -977,7 +979,8 @@ async function switchToChat(id, force = false) {
     setInputState(true);
     // Restore composer draft for this chat (set by init.ts _saveDraft)
     window._restoreDraft?.(id);   // bridged late by init.ts — bare name can be undeclared
-    (window as any).restoreParkedAttachments?.(id);   // the attachments chosen in this chat before leaving it
+    (window as any).restoreParkedAttachments?.(id);
+    (window as any).resumePendingReads?.(id);   // the attachments chosen in this chat before leaving it
 }
 
 async function deleteChat(id) {
@@ -1074,9 +1077,15 @@ async function _historyForSearch(id: string): Promise<any[] | null> {
 // Search all chat histories for messages containing `query`.
 // Returns up to 30 results sorted newest-first with an HTML excerpt snippet.
 async function searchMessages(query: string): Promise<any[]> {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return [];
-    const list = getChatList();
+    // The match and the highlight both come from one case-insensitive expression run on the original text, so offsets always refer to
+    // what is shown (lowercasing a copy changes lengths for some letters, e.g. Turkish İ, and shifted the excerpt away from the match).
+    const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let re: RegExp;
+    try { re = new RegExp(safeQ, 'iu'); } catch { re = new RegExp(safeQ, 'i'); }
+    // Newest chats first, so the 30-result cap keeps the 30 most recent matches rather than the 30 first created.
+    const list = [...getChatList()].sort((a: any, b: any) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
     const results: any[] = [];
     for (const chat of list) {
         const history = await _historyForSearch(chat.id);
@@ -1086,24 +1095,26 @@ async function searchMessages(query: string): Promise<any[]> {
                 : Array.isArray(msg.content) ? msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
                 : '';
             if (!content) continue;
-            const lower = content.toLowerCase();
-            const idx = lower.indexOf(q);
-            if (idx === -1) continue;
-            const start = Math.max(0, idx - 60);
-            const end   = Math.min(content.length, idx + q.length + 80);
-            const raw   = (start > 0 ? '…' : '') + content.slice(start, end) + (end < content.length ? '…' : '');
-            // Highlight the match term in the excerpt
-            const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const m = re.exec(content);
+            if (!m) continue;
+            let start = Math.max(0, m.index - 60);
+            let end   = Math.min(content.length, m.index + m[0].length + 80);
+            // Do not cut a surrogate pair in half at either end of the excerpt.
+            const isLow = (i: number) => { const c = content.charCodeAt(i); return c >= 0xdc00 && c <= 0xdfff; };
+            if (start > 0 && isLow(start)) start--;
+            if (end < content.length && isLow(end)) end++;
+            const raw = (start > 0 ? '…' : '') + content.slice(start, end) + (end < content.length ? '…' : '');
             // Split the raw text on the query, then escape each piece: matching escaped text would
             // miss queries containing & < > " and could hit inside entities (e.g. "amp" in &amp;).
-            const excerptHtml = raw.split(new RegExp(`(${safeQ})`, 'gi'))
+            const reAll = new RegExp(`(${safeQ})`, re.flags + 'g');
+            const excerptHtml = raw.split(reAll)
                 .map((part, i) => i % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)).join('');
             results.push({ chatId: chat.id, chatName: chat.name, role: msg.role, excerptHtml, lastAt: chat.lastAt ?? 0 });
             break; // one match per chat per search
         }
         if (results.length >= 30) break;
     }
-    return results.sort((a, b) => b.lastAt - a.lastAt);
+    return results;
 }
 
 // ── Window bridge ─────────────────────────────────────────────────────────
