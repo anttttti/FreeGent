@@ -83,7 +83,9 @@ export async function generateAndShowSuggestion(): Promise<void> {
 
     let ctx = await _buildContext();
     if (seq !== _seq) return;
-    if (!ctx.trim()) ctx = 'AI coding assistant, no current session context';
+    // Nothing to predict a follow-up from (a fresh profile, a new empty chat): no request. It was a billable call on every page load that had
+    // no signal to go on, and a failing endpoint at that moment paused every model in the list.
+    if (!ctx.trim()) return;
 
     if (typeof callLLMComplete !== 'function') return;
     if (typeof isUtilityDisabled === 'function' && isUtilityDisabled()) return;
@@ -153,11 +155,13 @@ export async function generateAndShowSuggestion(): Promise<void> {
             const msg: string = err?.message ?? '';
             // 401 Unauthorized, 404 Not Found, 410 Gone — auth rejected or model removed.
             // Pause (not remove) so the model remains visible in the table for user review.
-            const isGone   = /HTTP 40[14]|HTTP 410/.test(msg);
+            // 404 is not here: it can be the proxy's own (route missing, deployment misconfigured), and a suggestion is optional anyway,
+            // so it only cools the model down like a transient failure.
+            const isGone   = /HTTP 401|HTTP 410/.test(msg);
             // 5xx — transient server failure; treat like 429 (cooldown), not a permanent remove.
             const isServer = /HTTP 5\d\d|service unavailable|bad gateway/i.test(msg);
             // 429 — rate limited; apply cooldown rather than removing permanently
-            const is429    = /HTTP 429|rate.?limit|too many requests/i.test(msg);
+            const is429    = /HTTP 404|HTTP 429|rate.?limit|too many requests/i.test(msg);
             if (isGone && ep.provider !== 'custom' && ep.provider !== 'vllm') {
                 // Pause the model so it is skipped in future turns but stays visible in the
                 // model table for the user to manage (resume / remove themselves).
@@ -167,7 +171,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
                         savePausedMainModels([..._paused, spec]);
                     }
                 }
-                console.log('[suggest] paused (401/404/410):', spec, msg.slice(0, 60));
+                console.log('[suggest] paused (401/410):', spec, msg.slice(0, 60));
             } else if ((isServer || is429) && ep.provider !== 'custom' && ep.provider !== 'vllm') {
                 // Transient: mark cooldown so subsequent suggest runs skip this model
                 // until the rate-limit window clears.

@@ -2676,12 +2676,22 @@ async function _gunzipToJson(buffer) {
 async function _documentLibrary(name: 'pdfjsLib' | 'mammoth' | 'XLSX', selector: string): Promise<any> {
     const value = () => (globalThis as any)[name];
     if (value()) return value();
-    const script = document.querySelector(selector) as HTMLScriptElement | null;
-    if (!script || script.dataset.loadFailed) throw new Error(`${name} document reader could not load; check the connection and attach again`);
+    let script = document.querySelector(selector) as HTMLScriptElement | null;
+    // A reader whose download failed is fetched again: its failed element would stay failed for the life of the page, so
+    // "check the connection and attach again" could never work without a reload.
+    if (script?.dataset.loadFailed) {
+        const fresh = document.createElement('script');
+        for (const a of ['src', 'integrity', 'crossorigin']) { const v = script.getAttribute(a); if (v != null) fresh.setAttribute(a, v); }
+        fresh.async = true;
+        fresh.onerror = () => { fresh.dataset.loadFailed = '1'; };
+        script.replaceWith(fresh);
+        script = fresh;
+    }
+    if (!script) throw new Error(`${name} document reader could not load; check the connection and attach again`);
     await new Promise<void>((resolve, reject) => {
         const clean = () => { clearTimeout(timer); script.removeEventListener('load', loaded); script.removeEventListener('error', failed); };
         const loaded = () => { clean(); value() ? resolve() : reject(new Error(`${name} document reader is unavailable`)); };
-        const failed = () => { clean(); reject(new Error(`${name} document reader could not load`)); };
+        const failed = () => { clean(); script!.dataset.loadFailed = '1'; reject(new Error(`${name} document reader could not load; check the connection and attach again`)); };
         const timer = setTimeout(() => { clean(); reject(new Error(`${name} document reader did not load within 20 seconds`)); }, 20_000);
         script.addEventListener('load', loaded, { once: true });
         script.addEventListener('error', failed, { once: true });
@@ -2822,6 +2832,15 @@ async function _restoreProjectData(data) {
         }
         try { localStorage.setItem(k, v as string); } catch {}
     }
+    // A restored chat that has no saved history is empty: its stored history, from before the restore or from later work, must go too
+    // (loadChatHistory reads the durable copy first, so it would bring that back).
+    if (typeof sessionSaveHistory === 'function') {
+        try {
+            for (const c of (typeof getChatList === 'function' ? getChatList() : [])) {
+                if (!(`fg_chat_${c.id}_oh` in (data.chatData || {}))) await sessionSaveHistory(c.id, []);
+            }
+        } catch {}
+    }
     // Update project name input
     const nameInput = document.getElementById('project-name-input') as HTMLInputElement | null;
     if (nameInput) nameInput.value = data.name || '';
@@ -2834,6 +2853,8 @@ async function _restoreProjectData(data) {
     // An import with no chat leaves no active chat: the replaced project's conversation must not stay in
     // memory, where the next message would send it to the model.
     if (!activeId) { clearChatHistory(); (window as any).cancelPendingApprovals?.(); (window as any).clearImageAttachments?.(); }
+    // The replaced conversation must not survive in memory when the restored chat is empty.
+    if (activeId) clearChatHistory();
     if (typeof loadChatHistory === 'function' && activeId) loadChatHistory(activeId);
     await renderFileList();
     const msgEl = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
@@ -2844,6 +2865,10 @@ async function _restoreProjectData(data) {
     }
     if (typeof updateChatNameBar  === 'function') updateChatNameBar();
     if (typeof updateTokenLabel   === 'function') updateTokenLabel();
+    // The restored active chat's unsent draft goes into the composer (an empty composer would later be flushed over the
+    // stored draft when the user switches chats), and the recent-chats rail lists the restored chats.
+    try { (window as any)._restoreDraft?.(activeId); } catch {}
+    try { (window as any).updateRailRecentChats?.(); } catch {}
     loadAgentsContext?.();
     loadSkills?.();
     // The board still showed the replaced workspace's tasks until something else refreshed it.
@@ -2953,6 +2978,14 @@ async function saveProject() {
     localStorage.setItem('fg_project_name', name);
     try {
         const data = await _collectProjectData(name);
+        // The id is the project's name reduced to letters and digits, so "Release 1.0" and "Release 1-0" share one. Saving the same
+        // name again updates its slot; a different name that maps to a taken id gets its own.
+        const base = data.id;
+        for (let n = 2; n < 1000; n++) {
+            const other = await _idbGetProject(data.id);
+            if (!other || other.name === data.name) break;
+            data.id = `${base}-${n}`;
+        }
         await _idbPutProject(data);
         const btn = document.querySelector('.project-save-btn');
         if (btn) { const t = btn.textContent; btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = t; }, 1500); }
@@ -3049,6 +3082,7 @@ async function importProject(inputEl) {
 // ── Window bridge ─────────────────────────────────────────────────────────────
 // fsaHandle is mutable module state — expose a live accessor, not a snapshot.
 Object.defineProperty(window, 'fsaHandle', { get: () => fsaHandle, configurable: true });
+Object.assign(window, { documentLibrary: _documentLibrary });
 Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
     getChatSnapshotInfo,

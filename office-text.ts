@@ -42,7 +42,7 @@ function slideOrder(zip: Map<string, () => Uint8Array>): string[] | null {
         const id = /\bId="([^"]*)"/.exec(m[0])?.[1], t = /\bTarget="([^"]*)"/.exec(m[0])?.[1];
         if (id && t) target.set(id, t.startsWith('/') ? t.slice(1) : 'ppt/' + t.replace(/^\.\//, ''));
     }
-    const ids = [...utf8(pres()).matchAll(/<p:sldId\b[^>]*\br:id="([^"]*)"/g)].map(m => target.get(m[1]));
+    const ids = [...canonicalPrefixes(utf8(pres())).matchAll(/<p:sldId\b[^>]*\br:id="([^"]*)"/g)].map(m => target.get(m[1]));
     const parts = ids.filter((t): t is string => !!t && zip.has(t));
     return parts.length ? parts : null;
 }
@@ -57,6 +57,26 @@ function decodeXml(s: string): string {
 }
 const utf8 = (b: Uint8Array) => new TextDecoder().decode(b);
 
+/** Rewrites a part's namespace prefixes to the ones the readers below match on. The same document can bind WordprocessingML,
+ *  PresentationML, DrawingML or the relationships namespace to another prefix; the readers look for `w:`/`p:`/`a:`/`r:` literally,
+ *  so such a file lost its soft breaks (Word) or its slide order (PowerPoint). */
+const OOXML_NS: Record<string, string[]> = {
+    w: ['http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'http://purl.oclc.org/ooxml/wordprocessingml/main'],
+    p: ['http://schemas.openxmlformats.org/presentationml/2006/main', 'http://purl.oclc.org/ooxml/presentationml/main'],
+    a: ['http://schemas.openxmlformats.org/drawingml/2006/main', 'http://purl.oclc.org/ooxml/drawingml/main'],
+    r: ['http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'http://purl.oclc.org/ooxml/officeDocument/relationships'],
+};
+function canonicalPrefixes(xml: string): string {
+    // Rename in two steps through a placeholder, so swapping prefixes (a file that binds w: to another namespace) cannot collide.
+    const renames: [string, string][] = [];
+    for (const m of xml.matchAll(/xmlns:([A-Za-z_][\w.-]*)="([^"]*)"/g)) {
+        for (const [canon, uris] of Object.entries(OOXML_NS)) if (uris.includes(m[2]) && m[1] !== canon) renames.push([m[1], canon]);
+    }
+    for (const [alias] of renames) xml = xml.replace(new RegExp(`(<\\/?|\\s)${alias}:(?=[\\w.-])`, 'g'), `$1\u0001${alias}\u0001:`);
+    for (const [alias, canon] of renames) xml = xml.split(`\u0001${alias}\u0001:`).join(`${canon}:`);
+    return xml;
+}
+
 /** Text of each slide of a .pptx, one string per slide (paragraphs separated by newlines), in the order the
  *  presentation shows them (which is not the numbering of the slide files once slides were moved). */
 export function pptxSlides(bytes: Uint8Array): string[] {
@@ -64,7 +84,7 @@ export function pptxSlides(bytes: Uint8Array): string[] {
     const slides = slideOrder(zip) ?? [...zip.keys()].filter(k => /^ppt\/slides\/slide\d+\.xml$/.test(k))
         .sort((a, b) => parseInt(a.match(/\d+/)![0], 10) - parseInt(b.match(/\d+/)![0], 10));
     return slides.map(k => {
-        const xml = utf8(zip.get(k)!());
+        const xml = canonicalPrefixes(utf8(zip.get(k)!()));
         const paras = xml.match(/<a:p[ >][\s\S]*?<\/a:p>/g) || [];
         // A soft line break (<a:br/>, Shift+Enter) ends a line inside the paragraph.
         return paras.map(p => decodeXml([...p.replace(/<a:br\b[^>]*?(?:\/>|>[\s\S]*?<\/a:br>)/g, '<a:t>\n</a:t>').matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map(m => m[1]).join('')))
@@ -77,7 +97,7 @@ export function pptxSlides(bytes: Uint8Array): string[] {
 export function docxText(bytes: Uint8Array): string {
     const entry = readZip(bytes).get('word/document.xml');
     if (!entry) throw new Error('No word/document.xml in this Word file');
-    const xml = utf8(entry());
+    const xml = canonicalPrefixes(utf8(entry()));
     const paras = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
     return paras.map(p => {
         let out = '';

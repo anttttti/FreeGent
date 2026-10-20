@@ -3,7 +3,7 @@
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotWorkspace, staleGuard } from './exec-limits.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
@@ -16,8 +16,13 @@ export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_a
 let agentsContext       = ''; // content of AGENTS.md, injected at top of system prompt
 let _pyodideImageStore: Record<string, any> = {}; // image store for browser UI rendering
 export const skillsRegistry     = new Map(); // name → { name, description, body, path }
-const activeSkills       = new Set(JSON.parse(localStorage.getItem(KEYS.ACTIVE_SKILLS) || '[]'));
-const disabledRoles      = new Set(JSON.parse(localStorage.getItem(KEYS.DISABLED_ROLES) || '[]'));
+// A stored JSON value that no longer parses (hand-edited, truncated by a full quota) must not stop the module from loading:
+// the page rendered but nothing could be sent, because the rest of the app is wired up after this file.
+function _storedJson(key: string, fallback: any): any {
+    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v ?? fallback; } catch { return fallback; }
+}
+const activeSkills       = new Set(_storedJson(KEYS.ACTIVE_SKILLS, []));
+const disabledRoles      = new Set(_storedJson(KEYS.DISABLED_ROLES, []));
 export function isRoleEnabled(name) { return !disabledRoles.has(name); }
 export function getRoleBody(name)   { return localStorage.getItem(roleBodyKey(name)) || null; }
 function setRoleBody(name, body) {
@@ -80,9 +85,9 @@ export const OPT_IN_TOOLS = new Set([
 // default to on instead of staying invisible until the user re-checks them. (A saved
 // fg_enabled_tools from an older build is migrated to the new key on first load.)
 export const enabledTools = (() => {
-    const disabled = JSON.parse(localStorage.getItem(KEYS.DISABLED_TOOLS) || 'null');
+    const disabled = _storedJson(KEYS.DISABLED_TOOLS, null);
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
-    const legacyEnabled = JSON.parse(localStorage.getItem(KEYS.ENABLED_TOOLS) || 'null');
+    const legacyEnabled = _storedJson(KEYS.ENABLED_TOOLS, null);
     if (legacyEnabled) {
         const legacyDisabled = ALL_TOOL_NAMES.filter(t => !legacyEnabled.includes(t));
         localStorage.setItem(KEYS.DISABLED_TOOLS, JSON.stringify(legacyDisabled));
@@ -99,7 +104,7 @@ export const enabledTools = (() => {
 // Saved preferences win: a user whose saved list already disables it keeps it off until they enable it.
 const COWORK_ONLY_DEFAULTS = new Set(['update_task_status', 'write_file', 'replace_in_file']);
 export const coworkEnabledTools = (() => {
-    const disabled = JSON.parse(localStorage.getItem(KEYS.DISABLED_TOOLS_COWORK) || 'null');
+    const disabled = _storedJson(KEYS.DISABLED_TOOLS_COWORK, null);
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
     // Fresh install: same as chat defaults, plus cowork-only defaults.
     return new Set(ALL_TOOL_NAMES.filter(t => !OPT_IN_TOOLS.has(t) || COWORK_ONLY_DEFAULTS.has(t)));
@@ -1168,6 +1173,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
     if (pyodideStatus === 'loading') await pyodideReadyPromise;
     if (pyodideStatus !== 'ready') throw new Error('Pyodide not loaded');
     const wsFiles = await listWorkspaceFiles();
+    const sentSnap = snapshotWorkspace(wsFiles);
     // Too large to copy into the run: the run cannot see them, so it may not replace them.
     const omitted = new Set<string>(wsFiles.filter(f => typeof f.content === 'string' && f.content.length > EXEC_FILE_MAX_CHARS).map(f => f.name));
     const files   = Object.fromEntries(
@@ -1196,7 +1202,9 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
             const imageNames = [];
             const writeErrors: string[] = [];
             if (data.changedFiles && Object.keys(data.changedFiles).length) {
+                const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
                 for (const [name, content] of Object.entries(data.changedFiles as Record<string, string | null>)) {
+                    if (changedMeanwhile(name)) { writeErrors.push(`${name}: ${content === null ? 'not deleted' : 'not written'}, the file changed while the code ran; kept the newer version`); continue; }
                     if (content === null) {
                         await agentDeleteFile(name).catch(e => writeErrors.push(`delete ${name}: ${(e as any).message ?? e}`));
                         continue;
