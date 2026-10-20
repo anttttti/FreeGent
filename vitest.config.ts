@@ -6,6 +6,6 @@ export default defineConfig({
         environment: 'jsdom',
         setupFiles:  ['./tests/setup.js'],
         include:     ['tests/**/*.{test,spec}.{js,ts}'],
-        exclude:     ['.claude/**', 'node_modules/**', 'tmp/**', 'FreeGent_refactored/**'],
+        exclude:     ['.claude/**', 'node_modules/**', 'tmp/**', 'tests/explore/**', 'FreeGent_refactored/**'],
     },
 });
