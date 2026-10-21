@@ -26,4 +26,16 @@ describe('guidance memory', () => {
         syncGuidanceMemory('C', 0);                 // everything removed
         expect(_reactiveFired.has('early')).toBe(false);
     });
+    it('forgets guidance when the chat history is replaced by another of equal length (cases 229/234)', () => {
+        const h1 = [{ role: 'user', content: 'first conversation' }, { role: 'assistant', content: 'reply one' }];
+        syncGuidanceMemory('D', 0, []);
+        _reactiveFired.add('documents');
+        syncGuidanceMemory('D', 2, h1);
+        h1.push({ role: 'user', content: 'next' }, { role: 'assistant', content: 'ok' });
+        syncGuidanceMemory('D', 4, h1);              // an ordinary longer history keeps what it was given
+        expect(_reactiveFired.has('documents')).toBe(true);
+        const other = [{ role: 'user', content: 'a different conversation' }, { role: 'assistant', content: 'x' }, { role: 'user', content: 'y' }, { role: 'assistant', content: 'z' }];
+        syncGuidanceMemory('D', 4, other);           // same chat id, same length, other messages
+        expect(_reactiveFired.has('documents')).toBe(false);
+    });
 });

@@ -175,4 +175,23 @@ describe('browser chat flow on the Session-backed history', () => {
         await say('follow-up');
         expect(roles().length).toBe(7);
     });
+
+    it('imported execution-log rows are persisted for the new chat, not only held in memory (codex 304-306)', async () => {
+        const exported = {
+            name: 'With log', openaiHistory: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
+            sessionLogTurns: [
+                { ts: '2026-10-20T01:00:00.000Z', chatId: 'old', model: 'm-one', step: 0, promptTokens: 5, responseTokens: 2 },
+                { ts: '2026-10-20T01:00:05.000Z', chatId: 'old', model: 'm-one', step: 1, promptTokens: 6, responseTokens: 3 },
+            ],
+        };
+        const input: any = { click() {}, files: [{ text: async () => JSON.stringify(exported) }] };
+        vi.spyOn(document, 'createElement').mockImplementationOnce(() => input);
+        await W.importChat();
+        await input.onchange();
+        const id = W.activeChatId;
+        const stored = JSON.parse(localStorage.getItem(`fg_chat_${id}_log`) ?? localStorage.getItem(Object.keys(localStorage).find(k => k.includes(id) && k.includes('log')) ?? '') ?? '[]');
+        expect(stored.map((e: any) => e.ts)).toEqual(['2026-10-20T01:00:00.000Z', '2026-10-20T01:00:05.000Z']);
+        expect(stored.every((e: any) => e.chatId === id)).toBe(true);
+        expect((await W.getChatStats(id)).models).toEqual([{ model: 'm-one', steps: 2 }]);
+    });
 });

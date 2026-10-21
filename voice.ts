@@ -52,6 +52,28 @@ function _getTtsList() {
 
 // ── STT ──────────────────────────────────────────────────────────────────────
 
+// A failed mic attempt used to be a console line only: the button looked untouched (cline report
+// 2026-10-19 D2). Non-blocking, announced to screen readers, gone after a few seconds.
+function _micNotice(msg: string) {
+    try {
+        document.getElementById('mic-notice')?.remove();
+        const el = document.createElement('div');
+        el.id = 'mic-notice'; el.className = 'mic-notice';
+        el.setAttribute('role', 'status');
+        el.textContent = msg;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 7000);
+    } catch {}
+}
+
+function _micErrorText(e: any): string {
+    const n = e?.name;
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone found.';
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'Microphone access was denied. Allow it in the browser\'s site settings and try again.';
+    if (n === 'NotReadableError') return 'The microphone is in use by another application.';
+    return 'Could not start the microphone' + (e?.message ? `: ${e.message}` : '.');
+}
+
 async function toggleVoiceInput() {
     if (_mediaRecorder?.state === 'recording') {
         _mediaRecorder.stop();
@@ -63,19 +85,20 @@ async function toggleVoiceInput() {
         const key = _providerKey(provider);
         if (key) { await _startMediaRecorder(key, provider, model); return; }
     }
-    alert('No STT provider available. Add a Groq or OpenRouter key in Settings → Models, or add Web Speech to the STT list.');
+    _micNotice('No speech-to-text provider available. Add a Groq or OpenRouter key in Settings → Models, or add Web Speech to the STT list.');
 }
 
 async function _startMediaRecorder(key, provider, model) {
     let stream: MediaStream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { console.error('[voice] mic access denied:', e); return; }
+    catch (e) { console.error('[voice] mic access denied:', e); _micNotice(_micErrorText(e)); return; }
 
     _audioChunks = [];
     try { _mediaRecorder = new MediaRecorder(stream); }
     catch (e) {
         stream.getTracks().forEach(t => t.stop()); // release the mic — otherwise it stays hot
         console.error('[voice] MediaRecorder init failed:', e);
+        _micNotice('This browser cannot record audio.');
         return;
     }
     _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
@@ -85,6 +108,7 @@ async function _startMediaRecorder(key, provider, model) {
         const blob = new Blob(_audioChunks, { type: 'audio/webm' });
         const text = await _apiTranscribe(blob, key, provider, model);
         if (text) _insertVoiceText(text);
+        else _micNotice('Transcription failed — nothing was inserted.');
     };
     _mediaRecorder.start();
     _setMicState(true);
@@ -93,7 +117,7 @@ async function _startMediaRecorder(key, provider, model) {
 function _startWebSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-        alert('Web Speech requires Chrome or Edge. Add a Groq/OpenRouter key for cross-browser STT.');
+        _micNotice('Web Speech needs Chrome or Edge. Add a Groq or OpenRouter key in Settings → Models for speech-to-text in this browser.');
         return;
     }
     const rec = new SR();
@@ -103,9 +127,12 @@ function _startWebSpeech() {
     if (lang) rec.lang = lang;
     rec.onstart  = () => _setMicState(true);
     rec.onend    = () => _setMicState(false);
-    rec.onerror  = () => _setMicState(false);
+    rec.onerror  = (ev: any) => {
+        _setMicState(false);
+        if (ev?.error && ev.error !== 'aborted' && ev.error !== 'no-speech') _micNotice(ev.error === 'not-allowed' || ev.error === 'service-not-allowed' ? _micErrorText({ name: 'NotAllowedError' }) : `Voice input failed (${ev.error}).`);
+    };
     rec.onresult = e => _insertVoiceText(e.results[0][0].transcript);
-    rec.start();
+    try { rec.start(); } catch (e) { _micNotice(_micErrorText(e)); }
 }
 
 async function _apiTranscribe(blob, key, provider, model) {

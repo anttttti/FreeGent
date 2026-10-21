@@ -1,4 +1,5 @@
 import { escapeHtml, jsArg } from './html-escape.js';
+import { turnSoundEnabled } from './turn-sound.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel } from './privacy.js';
 import { specBlockedByPrivacy } from './config.js';
@@ -1215,6 +1216,8 @@ function updateInputModelBtn(): void {
     btn.innerHTML  = active
         ? `<span class="ibtn-provider">${escapeHtml(trim(provider, 16))}</span><span class="ibtn-model">${escapeHtml(trim(modelId, 28))}${coolSfx}</span>`
         : `<span class="ibtn-model">no model</span>`;
+    // The visible text is only the model; the name also says what the button does.
+    btn.setAttribute('aria-label', active ? `Switch model (current: ${provider} ${modelId})` : 'Switch model (none selected)');
     // Send is enabled only while a model can answer: the model list just changed (paused, resumed, added, removed).
     (window as any)._updateSendBtnVisibility?.();
 }
@@ -1805,6 +1808,7 @@ function populateAgentSettings() {
     num('agent-max-rounds',       getAgentMaxSteps());
     num('rate-limit-cooldown-min', parseInt(ls('fg_rate_limit_cooldown_min', '2'), 10));
     cb('agent-lean-workers',      getAgentLeanWorkers());
+    cb('turn-sound',              turnSoundEnabled());
     cb('agent-worker-history',    getAgentWorkerHistory());
     cb('agent-worker-reduce',     getAgentWorkerReduce());
     cb('agent-role-model-routing',       getAgentRoleModelRouting());
@@ -2442,6 +2446,28 @@ async function submitAddMcpServer() {
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+// Another tab changed a setting while this tab's Settings form is on screen: refresh the form. saveSettings() writes the
+// whole form on any edit, so a stale control used to write its old value back over the other tab's change when an
+// unrelated field was edited (codex report 8, cases 243/244/248/253). A field being typed in is left alone.
+if (typeof window !== 'undefined' && window.addEventListener) {
+    let _t: ReturnType<typeof setTimeout> | null = null;
+    window.addEventListener('storage', (e: StorageEvent) => {
+        if (e.storageArea && e.storageArea !== localStorage) return;
+        if (e.key && /^fg_(chat|draft|ckpt|active_chat|project)/.test(e.key)) return;
+        if (_t) clearTimeout(_t);
+        _t = setTimeout(() => {
+            _t = null;
+            try {
+                const panel = document.querySelector('#tab-content [data-panel="settings"].active');
+                if (!panel) return;   // a hidden form is filled in again when Settings is opened
+                const a = document.activeElement as HTMLElement | null;
+                if (a && panel.contains(a) && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|range|button)$/.test((a as HTMLInputElement).type)))) return;
+                populateSettingsForm();
+            } catch (err) { console.warn('[settings] refresh after another tab changed a setting failed:', (err as any)?.message); }
+        }, 150);
+    });
 }
 
 Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

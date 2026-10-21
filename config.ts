@@ -8,6 +8,7 @@ import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
 import { isStaticHost } from './static-hosts.js';
+import { fmUnquote } from './yaml-scalar.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -1281,7 +1282,7 @@ function parseFrontmatter(content) {
         const col = line.indexOf(':');
         if (col === -1) continue;
         const key = line.slice(0, col).trim();
-        const val = line.slice(col + 1).trim().replace(/^["']|["']$/g, '');
+        const val = fmUnquote(line.slice(col + 1));
         if (key) fm[key] = val;
     }
     return fm;

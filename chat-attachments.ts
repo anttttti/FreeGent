@@ -217,8 +217,12 @@ const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pend
 function parkPendingAttachments(chatId: string | null | undefined): void {
     if (!chatId) return;
     for (const t of _readTokens) if (t.owner === chatId) t.survives = true;   // reads still running follow their chat
-    const warnings = _parkedAttachments.get(chatId)?.warnings ?? [];
-    if (_pendingImages.length || _pendingFiles.length || warnings.length) _parkedAttachments.set(chatId, { images: [..._pendingImages], files: [..._pendingFiles], warnings: [...warnings] });
+    // An entry that is still in the map was never restored (restore removes it): the chat was left again while its history
+    // was loading. What is pending now was chosen in the meantime; the old selection stays and the new one joins it, instead
+    // of replacing it or, with nothing pending, deleting it (codex report 8, cases 280/284).
+    const prev = _parkedAttachments.get(chatId);
+    const images = [...(prev?.images ?? []), ..._pendingImages], files = [...(prev?.files ?? []), ..._pendingFiles], warnings = [...(prev?.warnings ?? [])];
+    if (images.length || files.length || warnings.length) _parkedAttachments.set(chatId, { images, files, warnings });
     else _parkedAttachments.delete(chatId);
 }
 /** Forget every parked attachment and cancel every read (Clear project: they belong to the project that is going). */

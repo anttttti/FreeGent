@@ -103,4 +103,84 @@ describe('ledger follows the Tasks tab', () => {
         await W.syncLedgerWithTaskFiles();
         expect(files['fg-tasks/ledger.md']).toBeUndefined();
     });
+
+    it('a stale edit form does not bring back a task that was deleted meanwhile (codex 217/235)', async () => {
+        files['fg-tasks/001-first.md'] = '---\nid: 001\ntitle: First\nstatus: open\npriority: High\n---\n# First\nDesc\n## Acceptance Criteria\n## Log\n';
+        await W.refreshTasks();
+        document.querySelector('.kanban-card-edit').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-title')).toBeTruthy());
+        delete files['fg-tasks/001-first.md'];   // another tab deleted it
+        document.getElementById('atd-desc').value = 'edited description';
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-err').textContent).toMatch(/no longer be read/));
+        expect(files['fg-tasks/001-first.md']).toBeUndefined();
+        expect(document.getElementById('atd-ok').disabled).toBe(false);
+        document.getElementById('atd-close').click();
+    });
+
+    it('a description-only save keeps a title renamed elsewhere (codex 218)', async () => {
+        const base = t => `---\nid: 001\ntitle: ${t}\nstatus: open\npriority: High\n---\n# ${t}\nDesc\n## Acceptance Criteria\n## Log\n`;
+        files['fg-tasks/001-first.md'] = base('First');
+        await W.refreshTasks();
+        document.querySelector('.kanban-card-edit').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-title')).toBeTruthy());
+        files['fg-tasks/001-first.md'] = base('Renamed elsewhere');
+        document.getElementById('atd-desc').value = 'new description';
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());
+        const out = files['fg-tasks/001-first.md'];
+        expect(out).toContain('title: Renamed elsewhere');
+        expect(out).toContain('# Renamed elsewhere');
+        expect(out).toContain('new description');
+    });
+
+    it('titles with quotes, colons and backslashes survive create then edit (codex 207-209)', async () => {
+        for (const t of ['Prepare: "Quarterly report"', 'Review C:\\reports\\Q4', 'Ends with quote"']) {
+            W.openAddTaskDialog('todo');
+            document.getElementById('atd-title').value = t;
+            document.getElementById('atd-ok').click();
+            await vi.waitFor(() => expect(Object.values(files).some(c => c.includes(`# ${t}\n`))).toBe(true));
+            const path = Object.keys(files).find(k => files[k].includes(`# ${t}\n`));
+            await W.refreshTasks();
+            await W.openEditTaskDialog(path);
+            expect(document.getElementById('atd-title').value).toBe(t);
+            document.getElementById('atd-close').click();
+            delete files[path];
+        }
+    });
+});
+
+describe('task dialog uploads (codex 233, 236-240)', () => {
+    const pick = (name) => ({ files: [{ name }], value: 'x' });
+    it('a file finishing after Cancel is removed again, and later files of the batch are not stored', async () => {
+        const stored = [];
+        let release;
+        W.saveFileToWorkspace = (f) => new Promise(r => { release = () => { const p = `attachments/u/${f.name}`; files[p] = 'b'; stored.push(p); r(p); }; });
+        W.openAddTaskDialog('todo');
+        const input = document.getElementById('atd-file-any');
+        const batch = { files: [{ name: 'one.txt' }, { name: 'two.txt' }], value: 'x' };
+        const done = (async () => { input.onchange({ target: batch }); })();
+        await done;
+        document.getElementById('atd-cancel').click();       // Cancel while one.txt is still being stored
+        release();
+        await vi.waitFor(() => expect(files['attachments/u/one.txt']).toBeUndefined());
+        expect(stored).toEqual(['attachments/u/one.txt']);   // two.txt was never stored
+        delete W.saveFileToWorkspace;
+    });
+    it('Save is refused while a chosen file is still being stored', async () => {
+        let release;
+        W.saveFileToWorkspace = (f) => new Promise(r => { release = () => { files[`attachments/u/${f.name}`] = 'b'; r(`attachments/u/${f.name}`); }; });
+        W.openAddTaskDialog('todo');
+        document.getElementById('atd-title').value = 'Needs file';
+        document.getElementById('atd-file-any').onchange({ target: { files: [{ name: 'late.txt' }], value: 'x' } });
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-err').textContent).toMatch(/still being attached/));
+        expect(Object.keys(files).filter(k => /^fg-tasks\/\d/.test(k))).toEqual(['fg-tasks/001-first.md']);
+        release();
+        await vi.waitFor(() => expect(document.getElementById('atd-attached').textContent).toContain('late.txt'));
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(Object.keys(files).some(k => /^fg-tasks\/002/.test(k))).toBe(true));
+        expect(files[Object.keys(files).find(k => /^fg-tasks\/002/.test(k))]).toContain('attachments/u/late.txt');
+        delete W.saveFileToWorkspace;
+    });
 });

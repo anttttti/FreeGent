@@ -989,11 +989,16 @@ export async function loadSkills() {
     } catch {}
     // Apply per-entry overrides saved by the user (triggers + body)
     const _overrides = _getSkillTriggerOverrides();
+    // An override removed since the last load must not stay on a registry entry that outlives it.
+    for (const s of skillsRegistry.values()) { const d = (s as any).__defaults; if (d) { Object.assign(s, d); (s as any).__defaults = {}; } }
     for (const [name, ov] of Object.entries(_overrides)) {
         const s = skillsRegistry.get(name);
         if (!s) continue;
         const TFIELDS = ['trigger','trigger_on_filetype','trigger_on_tool','trigger_on_failure','trigger_on_event','trigger_on_media','trigger_on_file_present','trigger_on_message_pattern','trigger_on_history_tool','trigger_on_turn','trigger_on_repeat','body'];
-        for (const f of TFIELDS) { if (f in (ov as any)) (s as any)[f] = (ov as any)[f]; }
+        // The entry keeps its own defaults, so the editor can tell an override from the default it replaced (an unchanged
+        // Save used to compare against the overridden value and delete the override: codex report 8, cases 254/256).
+        const d = ((s as any).__defaults ??= {});
+        for (const f of TFIELDS) { if (f in (ov as any)) { if (!(f in d)) d[f] = (s as any)[f]; (s as any)[f] = (ov as any)[f]; } }
     }
     renderSkillsList();
     renderSkillsChecklist();
@@ -1200,7 +1205,8 @@ function _buildSkillTriggerEditor(skill) {
         const lbl = document.createElement('label');
         lbl.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em';
         lbl.textContent = label;
-        const defaultVal = key === 'body' ? (skill.body || '') : (skill[key] || '');
+        const dflt = skill.__defaults && key in skill.__defaults ? skill.__defaults[key] : skill[key];
+        const defaultVal = dflt || '';
         const currentVal = overrides[key] !== undefined ? overrides[key] : defaultVal;
         const ta = document.createElement('textarea');
         ta.className = 'skill-trigger-input' + (overrides[key] !== undefined ? ' skill-trigger-input-custom' : '');
@@ -1209,6 +1215,7 @@ function _buildSkillTriggerEditor(skill) {
         ta.rows = rows;
         ta.dataset.field = key;
         ta.dataset.default = defaultVal;
+        ta.dataset.initial = currentVal;   // what this editor showed when it was built: Save only touches fields changed since
         if (key === 'body') ta.style.fontFamily = '"SF Mono","Fira Code",monospace';
         ta.addEventListener('input', () => ta.classList.toggle('skill-trigger-input-custom', ta.value !== ta.dataset.default));
         row.append(lbl, ta);
@@ -1252,6 +1259,9 @@ function _buildSkillTriggerEditor(skill) {
         if (!all[skill.name]) all[skill.name] = {};
         for (const ta of (editor.querySelectorAll('textarea[data-field]') as NodeListOf<HTMLTextAreaElement>)) {
             const val = ta.value;   // preserve whitespace in body
+            // Untouched here: leave whatever is stored now, which another tab may have changed since this editor was built (case 257).
+            if (val === ta.dataset.initial) continue;
+            ta.dataset.initial = val;
             if (val !== ta.dataset.default) {
                 overrides[ta.dataset.field] = val;
                 all[skill.name][ta.dataset.field] = val;
@@ -1686,4 +1696,4 @@ function setupSkillAutocomplete() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { BUILTIN_SKILLS, BUILTIN_RULES, loadSkills, renderSkillsList, toggleSkill, installSkillFromFiles, switchSkillSubtab, createSkillFromForm, createRuleFromForm, _TRIGGER_FIELDS, renderSkillsChecklist, renderToolsChecklist, setupSkillAutocomplete });
+Object.assign(window, { BUILTIN_SKILLS, BUILTIN_RULES, loadSkills, renderSkillsList, toggleSkill, installSkillFromFiles, switchSkillSubtab, createSkillFromForm, createRuleFromForm, _TRIGGER_FIELDS, _buildSkillTriggerEditor, renderSkillsChecklist, renderToolsChecklist, setupSkillAutocomplete });
