@@ -181,10 +181,8 @@ export function processFileLinks(container: any): void {
     //    a URL that isn't served, breaking mobile where a new tab opens to a 404. Rewire them
     //    to the same in-app handler used by _makeFileLink so tapping works on mobile.
     (container.querySelectorAll('a[href]') as NodeListOf<HTMLAnchorElement>).forEach((a) => {
-        const href = a.getAttribute('href') ?? '';
-        const wsMatch = href.match(/^\/workspace\/([\w][\w\-.]*(?:\/[\w\-.]+)*\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov))$/i);
-        if (!wsMatch) return;
-        const filePath = wsMatch[1];
+        const filePath = _workspacePathFromHref(a.getAttribute('href') ?? '');
+        if (!filePath) return;
         a.setAttribute('href', '#');
         a.removeAttribute('target');
         a.removeAttribute('rel');
@@ -203,6 +201,20 @@ export function processFileLinks(container: any): void {
     });
 }
 window.processFileLinks = processFileLinks;
+
+// The workspace file a Markdown link points at: "/workspace/x.md" or a plain relative path, as the renderer percent-encodes it
+// (spaces, accents, any letter written as %xx), so the target is decoded before it is matched (codex 372/373). Links with a
+// scheme, protocol-relative or fragment-only hrefs, and paths with ".." are not workspace files.
+const _WS_LINK_EXT = /\.(?:html?|svg|js|ts|jsx|tsx|json|md|txt|py|css|csv|yaml|yml|toml|xml|ini|png|jpe?g|gif|webp|bmp|avif|pdf|docx|xlsx|xls|ods|odt|odp|pptx|mp3|wav|ogg|opus|m4a|flac|aac|mp4|m4v|webm|mov)$/i;
+export function _workspacePathFromHref(href: string): string | null {
+    let h = href.trim();
+    if (!h || h.startsWith('#') || h.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(h)) return null;
+    h = h.replace(/[?#].*$/, '');
+    try { h = decodeURIComponent(h); } catch { return null; }
+    h = h.replace(/^\/workspace\//, '').replace(/^\.\//, '');
+    if (!h || h.startsWith('/') || h.split('/').some(seg => seg === '..' || seg === '') || !_WS_LINK_EXT.test(h)) return null;
+    return h;
+}
 
 // Render tool output text, substituting [IMAGE:name] markers with media elements.
 function _renderOutputText(pre, text) {
@@ -236,6 +248,18 @@ const _SVG_FRAG_RE = new RegExp(
 
 export function renderMarkdown(text: any): any {
     _mdImgStore = [];
+
+    // Code is literal: fenced blocks and inline code are set aside while math, image and SVG markup are turned into placeholders,
+    // and put back before marked sees the text. Otherwise an SVG or `$$x$$` shown as source was replaced by its rendering or by
+    // an internal slot (codex 377/379/381).
+    const _codeParts: string[] = [];
+    {
+        let s: string = typeof text === 'string' ? text : String(text ?? '');
+        s = s.replace(/(^|\n)(([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]{0,3}\4[`~]*[ \t]*(?=\n|$)|$))/g, (_m, nl, block) => `${nl}%%FWCODE${_codeParts.push(block) - 1}%%`);
+        s = s.replace(/(`+)(?!`)[^\n]*?[^`\n]\1(?!`)/g, m => `%%FWCODE${_codeParts.push(m) - 1}%%`);
+        text = s;
+    }
+    const _restoreCode = (t: string): string => t.replace(/%%FWCODE(\d+)%%/g, (_, i) => _codeParts[+i] ?? '');
 
     // Step 0: Pre-render math expressions before marked.parse so that $$ / \( delimiters
     // are not escaped as text.  Rendered HTML is stashed and restored after DOMPurify.
@@ -332,6 +356,7 @@ export function renderMarkdown(text: any): any {
         preprocessed = preprocessed.slice(0, idx + placeholder.length) + after.slice(leaked.length);
     }
 
+    preprocessed = _restoreCode(preprocessed);
     if (typeof marked !== 'undefined' && marked) {
         try {
             const raw = marked.parse(preprocessed, { gfm: true, breaks: true });
@@ -486,7 +511,7 @@ export function buildResponseActionRow(responseEl: HTMLElement): HTMLElement {
     copyResponseBtn.textContent = '⎘';
     copyResponseBtn.title = 'Copy this response to clipboard';
     copyResponseBtn.onclick = () => {
-        copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
+        copyChatText(plainTextOf(responseEl, _RESPONSE_CONTROLS)).then(() => {
             copyResponseBtn.textContent = '✓';
             setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
         }).catch(() => {
@@ -516,6 +541,17 @@ export function userBubbleHtml(opts: { thumbsHtml?: string; chipsHtml?: string; 
     return attach && body ? attach + '<br>' + body : attach + body;
 }
 
+/** The text a reader would copy from a rendered bubble: line breaks kept (an element cloned off-screen has no layout, so its
+ *  innerText ran lines together), the bubble's own controls (copy/edit/Run/action row) left out (codex 375/380). */
+export function plainTextOf(el: Element, skip: string = 'button, [data-action]'): string {
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(skip).forEach(x => x.remove());
+    clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    clone.querySelectorAll('p, div, pre, li, h1, h2, h3, h4, h5, h6, tr, blockquote').forEach(b => b.append('\n'));
+    return (clone.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim();
+}
+const _RESPONSE_CONTROLS = 'button, [data-action], .artifact-run-btn, .agent-turn-diff-row';
+
 export function appendMessage(role: any, html: any, container: HTMLElement | null | undefined = null): HTMLDivElement {
     const msgs = container || getMessagesEl();
     const div  = document.createElement('div');
@@ -538,10 +574,7 @@ export function appendMessage(role: any, html: any, container: HTMLElement | nul
         // opens the edit dialog) from firing when the copy button is clicked.
         copyBtn.addEventListener('click', (e: MouseEvent) => {
             e.stopPropagation();
-            // Clone the bubble and strip the copy button to get only the message text.
-            const clone = bubble.cloneNode(true) as HTMLElement;
-            clone.querySelectorAll('[data-action="copy-user-message"], [data-action="edit-user-message"]').forEach(el => el.remove());
-            copyChatText((clone.innerText ?? clone.textContent ?? '').trim()).then(() => {
+            copyChatText(plainTextOf(bubble)).then(() => {
                 copyBtn.textContent = '✓';
                 setTimeout(() => { copyBtn.textContent = '⎘'; }, 1500);
             }).catch(() => {
@@ -611,7 +644,7 @@ function _addCodeBlockButtons(responseEl: HTMLElement): void {
         }
 
         // Run button — only for runnable languages
-        const cls = [...codeEl.classList].find(c => /^language-(html?|svg|jsx?|tsx?|py(?:thon)?)$/i.test(c));
+        const cls = [...codeEl.classList].find(c => /^language-(html?|svg|jsx?|tsx?|javascript|typescript|py(?:thon)?)$/i.test(c));
         if (!cls) return;
         const btn = document.createElement('button');
         btn.className = 'artifact-run-btn'; btn.textContent = '▶ Run';
@@ -635,7 +668,7 @@ function _addCodeBlockButtons(responseEl: HTMLElement): void {
                 }
             };
         } else {
-            const isJs = /^language-jsx?$|^language-tsx?$/i.test(cls);
+            const isJs = /^language-(?:jsx?|tsx?|javascript|typescript)$/i.test(cls);
             btn.onclick = () => {
                 const src = isJs
                     ? `<!DOCTYPE html><html><body><script>\n${codeEl.textContent}\n<\/script></body></html>`
@@ -1367,6 +1400,6 @@ export function initChatEmpty(): void {
 }
 
 // Window bridge for classic scripts.
-Object.assign(window, { buildResponseEl, buildResponseActionRow, appendModelTurn, userBubbleHtml, processImgSlots, processFileLinks, renderMarkdown, cleanResponse,
+Object.assign(window, { plainTextOf, buildResponseEl, buildResponseActionRow, appendModelTurn, userBubbleHtml, processImgSlots, processFileLinks, renderMarkdown, cleanResponse,
     getMessagesEl, scrollBottom, copyChatText, appendMessage, createResponsePlaceholder,
     _updateChatEmpty, initChatEmpty });

@@ -963,6 +963,11 @@ html, body {
 .ws-sort-btn.ws-col-size, .ws-sort-btn.ws-col-time { text-align: right; }
 .ws-sort-hdr::after { content: ''; width: 88px; flex-shrink: 0; }
 @media (max-width: 640px) { .ws-col-time { display: none; } }
+/* What fits is decided by the width of the column, not of the window: with the rail open at 800 px each of the two columns was
+   ~295 px, and the fixed size, time and action cells left the file name 0 px (codex 359/360). */
+.workspace-col { container-type: inline-size; container-name: wscol; }
+@container wscol (max-width: 430px) { .ws-col-time { display: none; } }
+@container wscol (max-width: 300px) { .ws-col-size { display: none; } }
 
 .ws-btn { background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted); font-size: 13px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; line-height: 1; transition: all 0.1s; }
 .ws-btn:hover { border-color: var(--border); background: #f0f0f0; }

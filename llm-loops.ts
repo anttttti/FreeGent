@@ -2175,6 +2175,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
             _callsOverflowNudge = `Your response included ${calls.length} tool calls; only the first ${_MAX_CALLS_PER_TURN} ran. Do not assume the remaining ${calls.length - _MAX_CALLS_PER_TURN} executed — they did not. In your next response issue ONLY the next batch of calls (≤${_MAX_CALLS_PER_TURN}); do not restate completed work or plan ahead.`;
             calls.length = _MAX_CALLS_PER_TURN;
+            // The assistant message in the history still lists every call the model made. Only the first ones get results, so
+            // the rest would be calls with no result in the next request, which a checking endpoint rejects (HTTP 400 on each
+            // retry, codex 419-421). The record keeps what ran.
+            _replaceLastAssistantSurface(_s, step, m => ({ ...m, tool_calls: (m.tool_calls ?? []).slice(0, _MAX_CALLS_PER_TURN) }), 'tool-call cap');
         } else {
             _overflowStreak = 0;
         }

@@ -125,6 +125,13 @@ describe('read_file', () => {
         expect(r).toMatchObject({ path: 'long.txt', start_line: 60, end_line: 140, total_lines: 200, lines_returned: 81 });
     });
 
+    it('an empty result counts no returned lines (codex 411/412)', async () => {
+        await W.agentWriteFile('empty.txt', '');
+        expect(await tool('read_file', { path: 'empty.txt' })).toMatchObject({ content: '', length: 0, lines_returned: 0 });
+        await W.agentWriteFile('short.txt', 'a\nb\nc');
+        expect(await tool('read_file', { path: 'short.txt', start_line: 90, end_line: 120 })).toMatchObject({ content: '', lines_returned: 0 });
+    });
+
     it('widens a narrow range to 50 lines around it, and reads on when the end is before the start', async () => {
         await W.agentWriteFile('long.txt', lines200);
         expect(lineSpan((await tool('read_file', { path: 'long.txt', start_line: 100, end_line: 101 })).content)).toEqual(['L76', 'L126', 51]);
@@ -218,6 +225,37 @@ describe('delete_file and undo_write', () => {
         await tool('write_file', { path: `${be.root()}/u.txt`, content: 'v2 ä' });
         expect(await tool('undo_write', { path: `${be.root()}/./u.txt` })).toMatchObject({ success: true, path: 'u.txt', bytes: 2 });
         expect(await stored('u.txt')).toBe('v1');
+    });
+
+    // codex report 8, cases 425-434
+    it('a rejected or failed write leaves no checkpoint, so Undo cannot delete or revert a later file', async () => {
+        await W.agentWriteFile('t.txt', 'original');
+        expect((await tool('replace_in_file', { path: 't.txt', old_string: 'absent text', new_string: 'x' })).error).toBeTruthy();
+        expect((await tool('undo_write', { path: 't.txt' })).error).toMatch(/no checkpoint/);
+        await W.agentWriteFile('t.txt', 'uploaded later');
+        expect((await tool('undo_write', { path: 't.txt' })).error).toBeTruthy();
+        expect(await stored('t.txt')).toBe('uploaded later');
+    });
+    it('a failed replacement does not consume the Undo of the earlier successful edit', async () => {
+        await W.agentWriteFile('c.txt', 'one two');
+        await tool('replace_in_file', { path: 'c.txt', old_string: 'two', new_string: '2' });
+        await tool('replace_in_file', { path: 'c.txt', old_string: 'absent', new_string: 'x' });
+        expect(await tool('undo_write', { path: 'c.txt' })).toMatchObject({ success: true });
+        expect(await stored('c.txt')).toBe('one two');
+    });
+    it('Undo refuses a file that changed after the write (upload, editor, other tab)', async () => {
+        await tool('write_file', { path: 'k.txt', content: 'agent version' });
+        await W.agentWriteFile('k.txt', 'someone else\'s version');
+        expect((await tool('undo_write', { path: 'k.txt' })).error).toMatch(/changed since/);
+        expect(await stored('k.txt')).toBe('someone else\'s version');
+    });
+    it('a checkpoint from before Clear or a project Load is not used in the new project', async () => {
+        const { bumpWorkspaceEpoch } = await import('../exec-limits.ts');
+        await tool('write_file', { path: 'p.txt', content: 'project A' });
+        bumpWorkspaceEpoch();                                   // Clear / Load / import
+        await W.agentWriteFile('p.txt', 'project A');           // same name and bytes in the new project
+        expect((await tool('undo_write', { path: 'p.txt' })).error).toMatch(/no checkpoint/);
+        expect(await stored('p.txt')).toBe('project A');
     });
 });
 

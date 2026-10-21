@@ -938,18 +938,23 @@ onPrefChange(/^fg_(active_skills|disabled_roles|builtin_skills|builtin_rules|ski
     loadSkills().catch(() => {});
 });
 
+// The registry is replaced in one step once every file is read. It used to be emptied first, so a turn that started while the files
+// were being read (after another tab toggled an unrelated rule) found its matching rule gone and went out without its guidance
+// (codex 343). A load that a newer one has overtaken does not swap.
+let _skillsLoadSeq = 0;
 export async function loadSkills() {
-    skillsRegistry.clear();
+    const seq = ++_skillsLoadSeq;
+    const next = new Map<string, any>();
     // Built-in skills (procedural; trigger-invoked like rules — there is no slash dispatcher)
     for (const skill of BUILTIN_SKILLS) {
         if (enabledBuiltinSkills.has(skill.name)) {
-            skillsRegistry.set(skill.name, { ...skill, type: 'skill', path: 'builtin' });
+            next.set(skill.name, { ...skill, type: 'skill', path: 'builtin' });
         }
     }
     // Built-in rules (standing context, trigger-injected)
     for (const rule of BUILTIN_RULES) {
         if (enabledBuiltinRules.has(rule.name)) {
-            skillsRegistry.set(rule.name, { ...rule, type: 'rule', path: 'builtin' });
+            next.set(rule.name, { ...rule, type: 'rule', path: 'builtin' });
         }
     }
     try {
@@ -986,7 +991,7 @@ export async function loadSkills() {
                 if (!fm.name) return;
                 const norm = content.replace(/\r\n/g, '\n');
                 const body = (splitFrontmatter(norm)?.body ?? norm).trim();
-                skillsRegistry.set(fm.name, { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type });
+                next.set(fm.name, { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type });
             } catch {}
         };
 
@@ -1004,6 +1009,9 @@ export async function loadSkills() {
             ...finalRuleFiles.map(f => _load(f, 'rule')),
         ]);
     } catch {}
+    if (seq !== _skillsLoadSeq) return;
+    skillsRegistry.clear();
+    for (const [k, v] of next) skillsRegistry.set(k, v);
     // Apply per-entry overrides saved by the user (triggers + body)
     const _overrides = _getSkillTriggerOverrides();
     // An override removed since the last load must not stay on a registry entry that outlives it.
@@ -1205,6 +1213,7 @@ function _buildSkillTriggerEditor(skill) {
     const overrides = _getSkillTriggerOverrides()[skill.name] || {};
     const wrap = document.createElement('div');
     wrap.className = 'skill-trigger-wrap';
+    wrap.dataset.skill = skill.name;
 
     const editBtn = document.createElement('button');
     editBtn.className = 'skill-trigger-edit-btn';
@@ -1513,9 +1522,50 @@ function _buildSkillTable(entries, isBuiltin, isRule) {
     return wrap;
 }
 
+// The list is drawn again whenever a rule or skill changes (a toggle here or in another tab, a reload of the registry). An editor
+// that is open, with text typed and not saved, is the reader's: it is put back into the new list (codex 342/344).
+type _EditorDraft = { rowOpen: boolean; editorOpen: boolean; fields: Record<string, string>; focus: { key: string; start: number | null; end: number | null } | null };
+function _captureEditorDrafts(root: HTMLElement): Map<string, _EditorDraft> {
+    const out = new Map<string, _EditorDraft>();
+    root.querySelectorAll<HTMLElement>('.skill-trigger-wrap[data-skill]').forEach(wrap => {
+        const row = wrap.closest('.sr-editor-row') as HTMLElement | null;
+        const editor = wrap.querySelector('.skill-trigger-editor') as HTMLElement | null;
+        const rowOpen = !!row && row.style.display !== 'none', editorOpen = !!editor && editor.style.display !== 'none';
+        const fields: Record<string, string> = {};
+        let focus: _EditorDraft['focus'] = null;
+        wrap.querySelectorAll<HTMLTextAreaElement>('textarea[data-field]').forEach(ta => {
+            if (ta.value !== ta.dataset.initial) fields[ta.dataset.field!] = ta.value;
+            if (document.activeElement === ta) focus = { key: ta.dataset.field!, start: ta.selectionStart, end: ta.selectionEnd };
+        });
+        if (rowOpen || editorOpen || Object.keys(fields).length) out.set(wrap.dataset.skill!, { rowOpen, editorOpen, fields, focus });
+    });
+    return out;
+}
+function _restoreEditorDrafts(root: HTMLElement, drafts: Map<string, _EditorDraft>): void {
+    root.querySelectorAll<HTMLElement>('.skill-trigger-wrap[data-skill]').forEach(wrap => {
+        const d = drafts.get(wrap.dataset.skill!);
+        if (!d) return;
+        const row = wrap.closest('.sr-editor-row') as HTMLElement | null;
+        if (d.rowOpen && row) { row.style.display = ''; row.previousElementSibling?.querySelector('.sr-name-btn')?.classList.add('sr-name-btn-open'); }
+        const editor = wrap.querySelector('.skill-trigger-editor') as HTMLElement | null;
+        if (d.editorOpen && editor) editor.style.display = '';
+        for (const [key, value] of Object.entries(d.fields)) {
+            const ta = wrap.querySelector<HTMLTextAreaElement>(`textarea[data-field="${key}"]`);
+            if (!ta) continue;
+            ta.value = value;
+            ta.classList.toggle('skill-trigger-input-custom', ta.value !== ta.dataset.default);
+        }
+        if (d.focus) {
+            const ta = wrap.querySelector<HTMLTextAreaElement>(`textarea[data-field="${d.focus.key}"]`);
+            if (ta) { ta.focus(); try { ta.setSelectionRange(d.focus.start ?? 0, d.focus.end ?? 0); } catch {} }
+        }
+    });
+}
+
 function renderSkillsChecklist() {
     const el = (document.getElementById('settings-skills-list') as HTMLInputElement);
     if (!el) return;
+    const _drafts = _captureEditorDrafts(el);
     el.innerHTML = '';
 
     const fileSkills = [...skillsRegistry.values()].filter(s => s.path !== 'builtin' && s.type !== 'rule');
@@ -1552,6 +1602,7 @@ function renderSkillsChecklist() {
     rulesSep2.className = 'sr-subsep';
     el.appendChild(rulesSep2);
     el.appendChild(_buildSkillTable(fileRules, false, true));
+    _restoreEditorDrafts(el, _drafts);
 }
 
 function renderToolsChecklist() {

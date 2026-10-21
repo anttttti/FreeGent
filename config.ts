@@ -730,10 +730,13 @@ function getAllModels() {
     const hidden = getHiddenModels();
     const _keep = (m: any) => !_REMOVED_PROVIDERS.has(m.provider) && !hidden.has(`${m.provider}|${m.model}`) && !isBlacklistedModel(`${m.provider}|${m.model}`);
     const builtins = MODEL_CATALOG.filter(_keep);
+    // "Hidden" is the removal of a built-in entry. A custom entry under the same key (the edited copy of a built-in) is the
+    // replacement, not a second removal: it stays visible (codex 350).
+    const _keepCustom = (m: any) => !_REMOVED_PROVIDERS.has(m.provider) && !isBlacklistedModel(`${m.provider}|${m.model}`);
     // Exclude custom models whose key duplicates a built-in (avoids duplicates after a
     // built-in is added then the same model is later promoted to the built-in catalog).
     const builtinKeys = new Set(builtins.map(m => `${m.provider}|${m.model}`));
-    const customs = getCustomModels().filter(m => _keep(m) && !builtinKeys.has(`${m.provider}|${m.model}`));
+    const customs = getCustomModels().filter(m => _keepCustom(m) && !builtinKeys.has(`${m.provider}|${m.model}`));
     return [...builtins, ...customs];
 }
 

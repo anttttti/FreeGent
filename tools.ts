@@ -9,7 +9,7 @@ import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, snapshotWorkspace, staleGuard } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotWorkspace, staleGuard, workspaceEpoch } from './exec-limits.js';
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
@@ -113,14 +113,18 @@ function _rmSymbols(filename, content, lang) {
 
 // path → what the file was before each write. `existed` keeps "the file was absent" apart from "the
 // file was empty", which a bare string could not (undoing a write to an empty file deleted it).
-const _fileCheckpoints = new Map<string, { existed: boolean; content: string }[]>();
+// A checkpoint is recorded only once its write has landed, and remembers what the write produced (`after`) and the project it
+// belongs to (`epoch`): Undo restores only a file that is still as that write left it, in the project it was made in. A write
+// that failed used to leave a checkpoint too, and a checkpoint outlived Clear and project Load, so Undo overwrote or deleted
+// files the write never touched (codex 425-434).
+const _fileCheckpoints = new Map<string, { existed: boolean; content: string; after: string; epoch: number }[]>();
 
 // Paths written by blocked workers that must be read back before any edit.
 const _requireReadBack = new Set();
 
-function _pushCheckpoint(path: string, content: string, existed: boolean = true) {
+function _pushCheckpoint(path: string, content: string, existed: boolean, after: string, epoch: number = workspaceEpoch()) {
     if (!_fileCheckpoints.has(path)) _fileCheckpoints.set(path, []);
-    _fileCheckpoints.get(path)!.push({ existed, content });
+    _fileCheckpoints.get(path)!.push({ existed, content, after, epoch });
 }
 
 // Normalize a path supplied to a file tool so that the model's use of the WASM bash
@@ -744,9 +748,17 @@ async function _handleRunGit(args: any) {
 async function _handleUndoWrite(args: any) {
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
     const stack = _fileCheckpoints.get(args.path);
+    // Checkpoints from another project (Clear, Load, import) are not this project's history.
+    if (stack) { const keep = stack.filter(c => c.epoch === workspaceEpoch()); stack.length = 0; stack.push(...keep); }
     if (!stack || !stack.length) return { error: `undo_write: no checkpoint for "${args.path}" in this session.` };
     // The checkpoint is consumed only once the restore has worked: a failed restore must stay retryable.
     const previous = stack[stack.length - 1];
+    // Only a file that is still as the write left it is restored: a later upload, edit or another tab's change is not undone.
+    let current: string | null = null;
+    try { current = await agentReadFile(args.path); } catch { current = null; }
+    if (current !== previous.after) {
+        return { error: `undo_write: "${args.path}" has changed since that write (edited, uploaded or deleted elsewhere), so it was not restored. Read the file to see what is there now.` };
+    }
     try {
         if (!previous.existed) {
             await agentDeleteFile(args.path);
@@ -1321,7 +1333,7 @@ async function _handleReadFile(args, context) {
             ? `start_line (${sl}) exceeds file length (${totalLines} lines) — no content returned.` : undefined;
         return {
             path, content: sliced, length: full.length,
-            lines_returned: sliced.split('\n').length,
+            lines_returned: sliced ? sliced.split('\n').length : 0,
             ...((sl || el) ? { total_lines: totalLines } : {}),
             ...(sl ? { start_line: sl } : {}),
             ...(el ? { end_line: el }   : {}),
@@ -1480,8 +1492,9 @@ async function _handleWriteFile(args, context) {
             if (!review.approved)
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
         }
-        _pushCheckpoint(args.path, previous, existed);
+        const _ep = workspaceEpoch();
         await agentWriteFile(args.path, args.content);
+        _pushCheckpoint(args.path, previous, existed, args.content, _ep);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path);
         const wfResult = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
@@ -1626,10 +1639,10 @@ async function _handleReplaceInFile(args, context) {
     try {
         let existed = true;
         const before = await agentReadFile(args.path).catch(() => { existed = false; return ''; });
-        _pushCheckpoint(args.path, before, existed);
+        const _ep = workspaceEpoch();
         const rif = await doReplace(
             () => Promise.resolve(before),
-            c  => agentWriteFile(args.path, c)
+            async c => { await agentWriteFile(args.path, c); _pushCheckpoint(args.path, before, existed, c, _ep); }
         );
         if (rif.success) {
             const synErr = await _syntaxCheck(args.path);

@@ -1253,7 +1253,9 @@ if(ec){const d=document.createElement('div');d.className='exit';d.textContent='e
 }
 
 async function downloadSelected() {
-    for (const name of selectedFiles) {
+    // The files chosen when Download was pressed: the selection can change while earlier files are still being read, and a live
+    // Set made the batch skip a file and add another (codex 361).
+    for (const name of [...selectedFiles]) {
         try { await downloadFile(name); } catch (e) { console.error('[workspace] download error:', name, e); }
     }
 }
@@ -2561,31 +2563,6 @@ function _chatKeys() {
     return keys;
 }
 
-// Snapshot every localStorage key that project operations must NOT touch.
-// Project scope = workspace files + chats (history, drafts, checkpoints) + project name.
-function _snapshotSettings() {
-    const snap = {};
-    for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (!k) continue;
-        if (_isProjectChatKey(k) || k.startsWith('fg_ckpt_') || k === 'fg_project_name' || k === WORKSPACE_EPOCH_KEY) continue;
-        snap[k] = localStorage.getItem(k);
-    }
-    return snap;
-}
-
-// Puts back what the operation itself wiped (a saveSettings() with empty form fields writes '' over keys or removes
-// them). A key that now holds a different non-empty value was changed by the user while the operation ran, in this page
-// or another tab, and is newer than the snapshot: restoring it undid sound, sampling and profile edits (codex report 8,
-// cases 298-303).
-export function _applySettingsSnapshot(snap: any) {
-    for (const [k, v] of Object.entries(snap)) {
-        if (v === null) continue;
-        const cur = localStorage.getItem(k);
-        if (cur === null || cur === '') localStorage.setItem(k, v as string);
-    }
-}
-
 async function _collectProjectData(name) {
     const wsFiles = await listWorkspaceFiles();
     const chatData = {};
@@ -2804,7 +2781,6 @@ async function _restoreProjectData(data) {
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
     // this ensures settings survive the operation regardless.
-    const _settingsSnap = _snapshotSettings();
 
     // Silently drop the local folder connection without triggering a premature renderFileList.
     // (closeFsaFolder() calls renderFileList() internally before we've written the new files.)
@@ -2886,8 +2862,6 @@ async function _restoreProjectData(data) {
     // The board still showed the replaced workspace's tasks until something else refreshed it.
     try { await (window as any).syncLedgerWithTaskFiles?.(); } catch { try { await (window as any).refreshTasks?.(); } catch {} }
 
-    // Restore settings unconditionally — project operations must never alter them.
-    _applySettingsSnapshot(_settingsSnap);
 }
 
 function _showFolderPrompt(projectName, folderName, projectId) {
@@ -2947,8 +2921,7 @@ async function clearProject() {
         if (!(await _stopTurnsBeforeReplace())) return;
         _workspaceGeneration++; bumpWorkspaceEpoch();
         _discardProjectUiState();
-        const _settingsSnap = _snapshotSettings();
-        // Clear workspace files
+            // Clear workspace files
         await ensureDB();
         await new Promise<void>((resolve, reject) => {
             const req = db.transaction(STORE, 'readwrite').objectStore(STORE).clear();
@@ -2977,8 +2950,6 @@ async function clearProject() {
         // Reset in-memory state and UI
         if (typeof createNewChat === 'function') createNewChat();
         await renderFileList();
-        // Restore settings — clear must never affect API keys or model config.
-        _applySettingsSnapshot(_settingsSnap);
         window.refreshStorageUsage?.();
     };
 }

@@ -877,59 +877,74 @@ function openEditModelDialog(key: string) {
 </div>`;
 
     document.body.appendChild(overlay);
+    overlay.dataset.base = JSON.stringify(_readEditModelForm());
     (document.getElementById('emd-label') as HTMLInputElement)?.focus();
 }
 
+// What the edit dialog's form holds, as strings and booleans (also what it held when it opened: Save writes only what changed since).
+function _readEditModelForm(): Record<string, string | boolean> {
+    const v = (id: string) => ((document.getElementById(id) as HTMLInputElement | null)?.value ?? '');
+    const c = (id: string) => !!(document.getElementById(id) as HTMLInputElement | null)?.checked;
+    const out: Record<string, string | boolean> = {
+        label: v('emd-label').trim(), params: v('emd-params').trim(), ctx: v('emd-ctx').trim(), released: v('emd-released').trim(),
+        rpm: v('emd-rpm').trim(), rpd: v('emd-rpd').trim(), tools: c('emd-tools'), thinking: c('emd-thinking'), note: v('emd-note').trim(),
+    };
+    if (document.getElementById('emd-url'))     out.url = v('emd-url').trim();
+    if (document.getElementById('emd-api-key')) out.key = v('emd-api-key').trim();
+    if (document.getElementById('emd-api-fmt')) out.apiFormat = v('emd-api-fmt');
+    return out;
+}
+
+// Save writes the fields this form changed, onto the entry as it is stored now. A form left open while another tab edited or
+// deleted the model used to write all its old values back (context and note reverted, codex 357), recreate a deleted model as a
+// hidden entry (349), or leave a cleared optional field at its old value (351).
 function saveEditModel() {
+    const dialog = document.getElementById('fg-edit-model-dialog');
     const key = (document.getElementById('emd-model-key') as HTMLInputElement)?.value;
     if (!key) return;
-
-    const label     = ((document.getElementById('emd-label')    as HTMLInputElement)?.value ?? '').trim();
-    const paramsRaw = ((document.getElementById('emd-params')   as HTMLInputElement)?.value ?? '').trim();
-    const contextK  = parseInt((document.getElementById('emd-ctx')      as HTMLInputElement)?.value || '128', 10);
-    const released  = ((document.getElementById('emd-released') as HTMLInputElement)?.value ?? '').trim();
-    const rpmRaw    = ((document.getElementById('emd-rpm')      as HTMLInputElement)?.value ?? '').trim();
-    const rpdRaw    = ((document.getElementById('emd-rpd')      as HTMLInputElement)?.value ?? '').trim();
-    const tools     = ((document.getElementById('emd-tools')    as HTMLInputElement)?.checked) ?? true;
-    const thinking  = ((document.getElementById('emd-thinking') as HTMLInputElement)?.checked) ?? false;
-    const note      = ((document.getElementById('emd-note')     as HTMLInputElement)?.value ?? '').trim();
-
-    // Optional custom-provider fields (only present when model is custom/vllm)
-    const urlEl    = document.getElementById('emd-url')     as HTMLInputElement | null;
-    const apiKeyEl = document.getElementById('emd-api-key') as HTMLInputElement | null;
-    const apiFmtEl = document.getElementById('emd-api-fmt') as HTMLInputElement | null;
+    let base: Record<string, string | boolean> = {};
+    try { base = JSON.parse(dialog?.dataset.base || '{}'); } catch {}
+    const cur = _readEditModelForm();
+    const changed = (k: string) => k in cur && cur[k] !== base[k];
 
     const sep      = key.indexOf('|');
     const provider = key.slice(0, sep);
     const model    = key.slice(sep + 1);
 
-    const updates: any = { provider, model, label, contextK, tools, thinking, note,
-        params:    paramsRaw ? parseFloat(paramsRaw) : null,
-        rpm:       rpmRaw   ? parseInt(rpmRaw, 10)  : null,
-        rpd:       rpdRaw   ? parseInt(rpdRaw, 10)  : null,
-        ...(released ? { released, releasedEstimated: false } : {}),
-    };
-    if (urlEl)    { const v = urlEl.value.trim();    if (v) updates.url       = v; }
-    if (apiKeyEl) { const v = apiKeyEl.value.trim(); if (v) updates.key       = v; }
-    if (apiFmtEl) { updates.apiFormat = apiFmtEl.value; }
-
-    // Strip null rpm/rpd (no limit set) from the final entry
-    if (updates.rpm  == null) delete updates.rpm;
-    if (updates.rpd  == null) delete updates.rpd;
-    if (updates.params == null) delete updates.params;
-
     const custom = getCustomModels();
     const idx    = custom.findIndex(c => `${c.provider}|${c.model}` === key);
+    const orig   = idx === -1 ? getAllModels().find(x => `${x.provider}|${x.model}` === key) : null;
+    if (idx === -1 && !orig) {
+        dialog?.remove();
+        alert('This model no longer exists (it was removed in another tab), so nothing was saved.');
+        renderModelCatalogTable(); renderMainModelList?.();
+        return;
+    }
+
+    const set: any = {}, drop: string[] = [];
+    if (changed('label'))    set.label = cur.label;
+    if (changed('ctx'))      set.contextK = parseInt(String(cur.ctx) || '128', 10) || 128;
+    if (changed('tools'))    set.tools = cur.tools;
+    if (changed('thinking')) set.thinking = cur.thinking;
+    if (changed('note'))     set.note = cur.note;
+    if (changed('released')) { if (cur.released) { set.released = cur.released; set.releasedEstimated = false; } else drop.push('released'); }
+    for (const [field, parse] of [['params', parseFloat], ['rpm', (x: string) => parseInt(x, 10)], ['rpd', (x: string) => parseInt(x, 10)]] as const) {
+        if (!changed(field)) continue;
+        const raw = String(cur[field]);
+        if (raw) set[field] = (parse as any)(raw); else drop.push(field);   // blank = unknown / no limit: the field leaves the entry
+    }
+    if (changed('url') && cur.url)       set.url = cur.url;
+    if (changed('key') && cur.key)       set.key = cur.key;
+    if (changed('apiFormat'))            set.apiFormat = cur.apiFormat;
+    const apply = (entry: any) => { const e = { ...entry, ...set }; for (const f of drop) delete e[f]; return e; };
+
     if (idx !== -1) {
         // Update existing custom entry, keeping fields not exposed in the form (e.g. cooldownMs)
-        custom[idx] = { ...custom[idx], ...updates };
+        custom[idx] = apply(custom[idx]);
         saveCustomModels(custom);
     } else {
-        // Built-in model: snapshot the original, hide it, push an edited custom copy
-        const orig   = getAllModels().find(x => `${x.provider}|${x.model}` === key) ?? {};
-        const merged = { ...orig, ...updates };
-        if (!updates.rpm) delete (merged as any).rpm;
-        if (!updates.rpd) delete (merged as any).rpd;
+        // Built-in model: hide the original and keep an edited custom copy under the same key
+        const merged = apply({ ...orig, provider, model });
         hideBuiltinModel?.(key);
         custom.push(merged);
         saveCustomModels(custom);

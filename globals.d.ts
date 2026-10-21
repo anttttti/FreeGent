@@ -135,6 +135,7 @@ declare global {
     var startInlineRenameCurrentChat: any;
     var switchToChat: any;
     var beginChatLoad: (id: string) => () => void;
+    var chatLoadSeq: () => number;
     var isChatLoading: () => boolean;
     var whenChatReady: () => Promise<void>;
     var reloadChatIfChangedElsewhere: any;

@@ -149,7 +149,12 @@ let _loadingChatId: string | null = null;
 const _loads: Array<{ id: string }> = [];
 let _readyWaiters: Array<() => void> = [];
 /** Marks `id` as loading; call the returned function when its restore has finished (always, e.g. in a finally block). */
+let _loadSeq = 0;
+/** Counts chat loads begun (every switch, restore and import). Work that waited across one of them has been overtaken by navigation,
+ *  even when the reader is back in the chat it started in (codex 322). */
+function chatLoadSeq(): number { return _loadSeq; }
 function beginChatLoad(id: string): () => void {
+    _loadSeq++;
     const token = { id };
     _loads.push(token);
     _loadingChatId = id;
@@ -577,7 +582,10 @@ async function restoreChatMessages(id) {
             msgEl.style.cursor = 'text';
             // Use onclick assignment (not addEventListener) — same pattern as checkpoint buttons
             // above; signals explicitly that no accumulation is possible on these elements.
-            msgEl.onclick = () => _startEditUserMsg?.(msgEl);
+            msgEl.onclick = (e: MouseEvent) => {
+                if ((e.target as Element | null)?.closest?.('button, a, [data-action]')) return;   // a control in the bubble (Copy) is not a request to edit
+                _startEditUserMsg?.(msgEl);
+            };
         });
         // Re-attach step-graph interactive handlers (addEventListener is not serialised).
         _reattachStepGraphHandlers(msgs);
@@ -759,6 +767,10 @@ function renderChatsDropdown() {
     const el = document.getElementById('chats-dropdown');
     if (!el) return;
     const list = getChatList().slice().reverse();
+    // Another tab renaming a chat redraws this list: the filter being typed, and the focus in it, are the reader's and stay
+    // (codex 327: the redraw emptied the filter and moved focus to BODY).
+    const prevInput = el.querySelector('#chat-search-input') as HTMLInputElement | null;
+    const prev = prevInput ? { value: prevInput.value, focused: document.activeElement === prevInput, start: prevInput.selectionStart, end: prevInput.selectionEnd } : null;
     el.innerHTML = '';
 
     const toolbar = document.createElement('div');
@@ -788,8 +800,15 @@ function renderChatsDropdown() {
     body.className = 'chats-list';
     el.appendChild(body);
 
+    const restoreFilter = () => {
+        if (!prev) return;
+        searchInput.value = prev.value;
+        if (prev.value) _filterChatsDropdown(prev.value);
+        if (prev.focused) { searchInput.focus(); try { searchInput.setSelectionRange(prev.start, prev.end); } catch {} }
+    };
     if (!list.length) {
         body.innerHTML = '<div class="chats-empty">No saved chats</div>';
+        restoreFilter();
         updateRailRecentChats();
         return;
     }
@@ -845,6 +864,7 @@ function renderChatsDropdown() {
         item.append(info, actions);
         body.appendChild(item);
     }
+    restoreFilter();
     updateRailRecentChats();
 }
 
@@ -1205,7 +1225,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, beginChatLoad, whenChatReady, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.
