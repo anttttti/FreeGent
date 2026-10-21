@@ -279,14 +279,14 @@ function restoreFileAttachment(att: { name: string; mimeType: string; contentTyp
     _addFileChip(att);
 }
 
-function addFileAttachment(file: File, existingPath?: string): Promise<void> {
-    const token: _ReadToken = { owner: _readerChat(), cancelled: false, survives: false };
+function addFileAttachment(file: File, existingPath?: string, owner: string | null = _readerChat()): Promise<void> {
+    const token: _ReadToken = { owner, cancelled: false, survives: false };
     _readTokens.add(token);
     const strip = document.getElementById('img-strip');
     const loading = document.createElement('div');
     loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
     loading.textContent = `Reading ${file.name}…`;
-    if (strip) { strip.appendChild(loading); strip.style.display = 'flex'; }
+    if (strip && owner === _readerChat()) { strip.appendChild(loading); strip.style.display = 'flex'; }
     const read = _loadFileAttachment(file, token, existingPath);
     token.read = read; token.name = file.name;
     _attachmentReads.add(read);
@@ -535,12 +535,28 @@ async function saveFileToWorkspace(file: File): Promise<string> {
 // Attach a file that is already in the workspace: same pipeline as an upload, no extra copy.
 // mimeType: the type the file was attached with, when known (a checkpoint keeps it); the name's extension is only a guess.
 function addWorkspaceAttachment(path: string, mimeType?: string): Promise<void> {
-    return (async () => {
-        const bytes = await agentReadFileBytes(path);
+    // The byte read is part of the attachment: it is owned by the chat the file was chosen in, and Clear/Send cancel it like any
+    // other read. Before this only the later File read had a token, so a workspace read that failed after Clear still put its
+    // warning in the fresh chat and its next request (codex report 8, case 219).
+    const token: _ReadToken = { owner: _readerChat(), cancelled: false, survives: false, name: path };
+    _readTokens.add(token);
+    const run = (async () => {
+        let bytes: Uint8Array | ArrayBuffer;
+        try { bytes = await agentReadFileBytes(path) as any; }
+        catch (e) {
+            const err = e && typeof e === 'object' ? e : new Error(String(e));
+            if (token.cancelled) _reportedErrors.add(err); else _attachmentError(path, err, token.owner);
+            throw err;
+        } finally { _readTokens.delete(token); }
+        if (token.cancelled) return;
         const name = path.split('/').pop() || path;
         const file = new File([bytes as BlobPart], name, { type: mimeType || _guessMime(name.split('.').pop()?.toLowerCase() || '') });
-        await addFileAttachment(file, path);
+        await addFileAttachment(file, path, token.owner);
     })();
+    token.read = run.then(() => {}, () => {});
+    _attachmentReads.add(token.read);
+    void token.read.then(() => _attachmentReads.delete(token.read!));
+    return run;
 }
 
 Object.assign(window, {

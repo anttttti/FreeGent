@@ -65,3 +65,19 @@ describe('repeated HTTP 403 from a cloud endpoint', () => {
         expect(notes.some(n => /refused \d+ times/.test(n))).toBe(true);
     });
 });
+
+describe('a local endpoint that answers with a web page (opencode §44)', () => {
+    it('is reported after CUSTOM_CLIENT_ERROR_ATTEMPTS answers, not retried for the whole wait limit', async () => {
+        const { decodeOAIResponse } = await import('../stream-decode.ts');
+        const resp: any = { headers: { get: () => 'text/html; charset=utf-8' }, json: async () => { throw new Error('Unexpected end of JSON input'); } };
+        const e: any = await decodeOAIResponse(resp, () => {}).catch((x: any) => x);
+        expect(e.message).toMatch(/answered with a web page/);
+        (window as any).getActiveMainModelList = () => ['custom|m-html'];
+        const { h, notes } = handler({ provider: 'custom', model: 'm-html', url: 'http://x/v1' });
+        const outs = [0, 1, 2].map(n => h(n, e, 5000));
+        expect(outs.slice(0, 2).every(o => o === 5000)).toBe(true);
+        expect(outs[2]).toBe(false);
+        expect(notes.at(-1)).toMatch(/not retrying/);
+        delete (window as any).getActiveMainModelList;
+    });
+});

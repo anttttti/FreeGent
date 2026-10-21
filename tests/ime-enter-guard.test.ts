@@ -20,7 +20,9 @@ describe('IME composition Enter', () => {
 
 describe('Escape ownership (campaign 8 cases 163/164/177/181)', () => {
     it('the dialog stack includes the workspace picker', () => {
-        expect(readFileSync('init.ts', 'utf8')).toMatch(/querySelectorAll<HTMLElement>\('\.fg-modal-overlay, \.ws-pick-overlay'\)/);
+        const src = readFileSync('init.ts', 'utf8');
+        expect(src).toContain("_MODAL_SEL = '.fg-modal-overlay, .ws-pick-overlay'");
+        expect(src).toMatch(/_modalKeydown[\s\S]{0,400}querySelectorAll<HTMLElement>\(_MODAL_SEL\)/);
     });
     it('an open model list or attach menu takes Escape before the stop-reply action', () => {
         const src = readFileSync('init.ts', 'utf8');

@@ -9,6 +9,13 @@ describe('F4 modal accessibility', () => {
         expect(s).toContain('initModalA11y();');
         for (const k of ["role', 'dialog'", "aria-modal", "e.key === 'Escape'", "e.key === 'Tab'", 'aria-label']) expect(s).toContain(k);
     });
+    it('the workspace file picker is a dialog layer too (role, name, focus returns to its opener)', () => {
+        const s = src('init.ts');
+        expect(s).toMatch(/_MODAL_SEL = '[^']*\.ws-pick-overlay/);
+        expect(s).toContain("'.fg-modal, .ws-pick-box'");
+        expect(s).toContain("'.fg-modal-title, .ws-pick-title'");
+        expect(s).not.toContain("closest?.('.fg-modal-overlay')");
+    });
 });
 
 describe('F6 privacy', () => {
