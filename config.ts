@@ -9,6 +9,7 @@ import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
 import { isStaticHost } from './static-hosts.js';
 import { parseFrontmatter } from './frontmatter.js';
+import { setPref } from './prefs.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -566,7 +567,7 @@ function getCustomModels() {
 function saveCustomModels(arr) {
     (globalThis as any).clearImageRefusals?.();   // a changed model list may mean a different server: ask about images again
     const val = JSON.stringify(arr);
-    const set = () => { try { localStorage.setItem(KEYS.CUSTOM_MODELS, val); return true; } catch { return false; } };
+    const set = () => { try { return setPref(KEYS.CUSTOM_MODELS, val); } catch { return false; } };
     if (set()) return;
     if (typeof evictOldChatCaches === 'function' && evictOldChatCaches(set)) return;
     throw new Error('Browser storage is full — could not save the model list. Delete some old chats and try again.');
@@ -819,11 +820,11 @@ export function getMainModelList() {
 }
 function saveMainModelList(arr) {
     const deduped = [...new Set((arr || []).filter(x => typeof x === 'string' && x.length > 0))];
-    try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(deduped)); }
+    try { setPref(KEYS.MAIN_MODELS, JSON.stringify(deduped)); }
     catch (e) {
         // Quota exceeded — clear and retry
         localStorage.removeItem(KEYS.MAIN_MODELS);
-        try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(deduped)); } catch {}
+        try { setPref(KEYS.MAIN_MODELS, JSON.stringify(deduped)); } catch {}
     }
 }
 
@@ -839,7 +840,7 @@ function getPausedMainModels() {
     try { const a = JSON.parse(ls(KEYS.PAUSED_MAIN, '[]')); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 function savePausedMainModels(arr) {
-    try { localStorage.setItem(KEYS.PAUSED_MAIN, JSON.stringify(arr || [])); } catch {}
+    try { setPref(KEYS.PAUSED_MAIN, JSON.stringify(arr || [])); } catch {}
 }
 
 // ── CF Worker shared-key cache ────────────────────────────────────────────────

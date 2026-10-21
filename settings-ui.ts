@@ -1,5 +1,6 @@
 import { escapeHtml, jsArg } from './html-escape.js';
 import { turnSoundEnabled } from './turn-sound.js';
+import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel } from './privacy.js';
 import { specBlockedByPrivacy } from './config.js';
@@ -215,7 +216,7 @@ function onSandboxProviderChange() {
     const sel = (document.getElementById('sandbox-provider') as HTMLInputElement);
     const val = sel?.value || 'none';
     _applySandboxProviderUI(val);
-    localStorage.setItem('fg_sandbox_provider', val);
+    setPref('fg_sandbox_provider', val);
     saveSettings();
 }
 
@@ -377,13 +378,26 @@ function saveSettings() {
         const val = el ? el.value.trim() : '';
         // A server-key placeholder is never stored: the server keeps the key.
         if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) return;
+        // Unchanged since the form was filled: not this control's write. A tab whose form was filled before another tab
+        // stored a newer key wrote its old key back whenever any other field was edited (codex 243/244).
+        if (el && el.dataset.fgBase !== undefined && val === el.dataset.fgBase) return;
         if (val) {
-            localStorage.setItem(lsKey, val);
+            setPref(lsKey, val);
+            if (el) el.dataset.fgBase = val;
         } else if (el?.dataset.fgLoaded) {
             // Field was shown with a value and user deliberately cleared it — honour that.
-            localStorage.setItem(lsKey, '');
+            setPref(lsKey, '');
+            el.dataset.fgBase = '';
         }
         // else: field never populated (race with keys endpoint) — leave stored value intact.
+    };
+    // The two provider selects the same way: written only when this form changed them.
+    const saveSelect = (lsKey: string, inputId: string, fallback: string) => {
+        const el = document.getElementById(inputId) as HTMLInputElement | null;
+        const val = el?.value || fallback;
+        if (el && el.dataset.fgBase !== undefined && val === el.dataset.fgBase) return;
+        setPref(lsKey, val);
+        if (el) el.dataset.fgBase = val;
     };
 
     saveKey('fg_gemini_key',        'gemini-key');
@@ -394,8 +408,8 @@ function saveSettings() {
     saveKey('fg_kilo_key',          'kilo-key');
     saveKey('fg_vercel_key',        'vercel-key');
     saveKey('fg_nous_key',          'nous-key');
-    localStorage.setItem('fg_sandbox_provider', (document.getElementById('sandbox-provider') as HTMLInputElement)?.value || 'wasm');
-    localStorage.setItem('fg_search_provider', (document.getElementById('search-provider') as HTMLInputElement)?.value || 'auto');
+    saveSelect('fg_sandbox_provider', 'sandbox-provider', 'wasm');
+    saveSelect('fg_search_provider', 'search-provider', 'auto');
     saveKey('fg_tavily_key',        'tavily-key');
     saveKey('fg_hf_key',            'hf-key');
     saveKey('fg_search_proxy',      'search-proxy');
@@ -425,6 +439,7 @@ function populateSettingsForm() {
             return;
         }
         el.value = val;
+        el.dataset.fgBase = String(val ?? '');   // what this form showed: saveSettings() writes a control only when it differs
         if (val) el.dataset.fgLoaded = '1';
     };
     set('dev-key',        getDevKey());
@@ -448,10 +463,11 @@ function populateSettingsForm() {
         let sbpVal = getSandboxProvider();
         if (!['none', 'local', 'wasm'].includes(sbpVal)) { sbpVal = 'wasm'; localStorage.setItem('fg_sandbox_provider', 'wasm'); }
         sbp.value = sbpVal;
+        sbp.dataset.fgBase = sbpVal;
     }
     _applySandboxProviderUI(sbp?.value || getSandboxProvider());
     const sp = (document.getElementById('search-provider') as HTMLInputElement);
-    if (sp) sp.value = getSearchProvider();
+    if (sp) { sp.value = getSearchProvider(); sp.dataset.fgBase = sp.value; }
     set('tavily-key',   getTavilyKey());
     set('hf-key',       getHFKey());
     set('search-proxy', getSearchProxy());
@@ -557,7 +573,7 @@ function hideModelCooldownPopup() {
 
 function applyHdrCompactTokens() {
     const val = (document.getElementById('hdr-compact-tokens') as HTMLSelectElement)?.value ?? '20000';
-    localStorage.setItem('fg_agent_compact_tokens', val);
+    setPref('fg_agent_compact_tokens', val);
     syncHdrCompactSelect();
     // Keep settings panel in sync
     const el = (document.getElementById('agent-compact-tokens') as HTMLInputElement);
@@ -566,12 +582,12 @@ function applyHdrCompactTokens() {
 
 function applyHdrReasoning() {
     const sel = (document.getElementById('hdr-reasoning') as HTMLInputElement);
-    if (sel) localStorage.setItem('fg_thinking_level', sel.value);
+    if (sel) setPref('fg_thinking_level', sel.value);
 }
 
 function saveSamplingSetting(key, value) {
     // An emptied field is kept as empty: the parameter is then not sent. Removing the key made FreeGent's default come back.
-    localStorage.setItem(key, value.trim());
+    setPref(key, value.trim());
 }
 function populateSamplingSettings() {
     const set = (id, lsKey, getter) => {
@@ -1787,7 +1803,7 @@ function _addPriorityItem(containerId) {
 
 function saveAgentSetting(key, value) {
     if (typeof value === 'boolean') value = value ? 'true' : 'false';
-    localStorage.setItem(key, String(value));
+    setPref(key, String(value));
     if (key === 'fg_agent_compact_tokens') { try { syncHdrCompactSelect(); } catch {} }
 }
 
@@ -1859,9 +1875,11 @@ function renderRolesTab() {
         cb.type = 'checkbox';
         cb.checked = isRoleEnabled(role.name);
         cb.addEventListener('change', () => {
+            // Change one role of what is stored now: another tab may have disabled a different one since this form was drawn.
+            try { disabledRoles.clear(); for (const n of JSON.parse(localStorage.getItem('fg_disabled_roles') || '[]')) disabledRoles.add(n); } catch {}
             if (cb.checked) disabledRoles.delete(role.name);
             else disabledRoles.add(role.name);
-            localStorage.setItem('fg_disabled_roles', JSON.stringify([...disabledRoles]));
+            setPref('fg_disabled_roles', JSON.stringify([...disabledRoles]));
         });
 
         const nameEl = document.createElement('span');
@@ -2448,14 +2466,12 @@ async function submitAddMcpServer() {
     }
 }
 
-// Another tab changed a setting while this tab's Settings form is on screen: refresh the form. saveSettings() writes the
-// whole form on any edit, so a stale control used to write its old value back over the other tab's change when an
-// unrelated field was edited (codex report 8, cases 243/244/248/253). A field being typed in is left alone.
-if (typeof window !== 'undefined' && window.addEventListener) {
+// Another tab changed a setting while this tab's Settings form is on screen: refresh the form (a field being typed in is left
+// alone). Writes from this tab's own form are not echoed back into it.
+{
     let _t: ReturnType<typeof setTimeout> | null = null;
-    window.addEventListener('storage', (e: StorageEvent) => {
-        if (e.storageArea && e.storageArea !== localStorage) return;
-        if (e.key && /^fg_(chat|draft|ckpt|active_chat|project)/.test(e.key)) return;
+    onPrefChange(k => !/^fg_(chat|draft|ckpt|active_chat|project)/.test(k), (_keys, origin) => {
+        if (origin !== 'remote') return;
         if (_t) clearTimeout(_t);
         _t = setTimeout(() => {
             _t = null;
@@ -2468,6 +2484,8 @@ if (typeof window !== 'undefined' && window.addEventListener) {
             } catch (err) { console.warn('[settings] refresh after another tab changed a setting failed:', (err as any)?.message); }
         }, 150);
     });
+    // The model button names the first usable model: it follows the list, pauses and custom models, here and in other tabs.
+    onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
 Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

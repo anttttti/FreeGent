@@ -3,6 +3,7 @@
 
 import { runtime } from './runtime.js';
 import { buildFrontmatter, splitFrontmatter } from './frontmatter.js';
+import { onPrefChange } from './prefs.js';
 const TOOL_LABELS = {
     list_files:                'List Files (list_files)',
     read_file:                 'Read File (read_file)',
@@ -922,6 +923,21 @@ const enabledBuiltinRules = new Set(
     _storedBuiltinRules !== null ? _storedBuiltinRules : BUILTIN_RULES.map(r => r.name)
 );
 
+// The in-memory sets are read from storage once, at load. A profile Apply (this tab) or another tab's change to the same
+// keys left them as they were, and the next toggle wrote the old set back over the new one (codex report 8, cases 251-255).
+function rehydrateSkillPrefs() {
+    const read = (k: string, dflt: any) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v ?? dflt; } catch { return dflt; } };
+    const fill = (set: Set<any>, names: any) => { set.clear(); for (const n of Array.isArray(names) ? names : []) set.add(n); };
+    fill(activeSkills, read('fg_active_skills', []));
+    fill(disabledRoles, read('fg_disabled_roles', []));
+    fill(enabledBuiltinSkills, read('fg_builtin_skills', BUILTIN_SKILLS.map(x => x.name)));
+    fill(enabledBuiltinRules, read('fg_builtin_rules', BUILTIN_RULES.map(x => x.name)));
+}
+onPrefChange(/^fg_(active_skills|disabled_roles|builtin_skills|builtin_rules|skill_triggers)$/, () => {
+    rehydrateSkillPrefs();
+    loadSkills().catch(() => {});
+});
+
 export async function loadSkills() {
     skillsRegistry.clear();
     // Built-in skills (procedural; trigger-invoked like rules — there is no slash dispatcher)
@@ -1053,6 +1069,7 @@ function renderSkillsList() {
 }
 
 function toggleSkill(name) {
+    rehydrateSkillPrefs();   // change one entry of what is stored now, not of what this tab loaded earlier
     if (activeSkills.has(name)) activeSkills.delete(name);
     else activeSkills.add(name);
     localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
@@ -1299,6 +1316,7 @@ function _skillIsOn(skill, isBuiltin) {
 }
 
 function _skillSetOn(skill, isBuiltin, on) {
+    rehydrateSkillPrefs();   // another tab may have toggled a different entry since this tab loaded its sets (case 253)
     if (isBuiltin) {
         if (skill.type === 'rule') {
             if (on) enabledBuiltinRules.add(skill.name); else enabledBuiltinRules.delete(skill.name);
@@ -1319,6 +1337,7 @@ async function _deleteSkillEntry(skill) {
     const isRule = skill.type === 'rule';
     try {
         await agentDeleteFile(`${isRule ? 'rules' : 'skills'}/${skill.name}/${isRule ? 'RULE' : 'SKILL'}.md`);
+        rehydrateSkillPrefs();
         activeSkills.delete(skill.name);
         localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
         await loadSkills();
