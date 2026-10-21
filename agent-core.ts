@@ -1411,8 +1411,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         `<span class="chat-file-chip">${_fileIcon(f.mimeType, f.name)} ${esc(f.name)}</span>`
     ).join('');
     const _failedHtml = _failedReadNotes.map(n => `<span class="chat-file-chip media-warn-chip">⚠ ${esc(n)}</span>`).join('');
-    const _attachHtml = [_thumbsHtml, _fileChipsHtml, _failedHtml].filter(Boolean).join('');
-    const _userMsgDiv = appendMessage('user', (_attachHtml ? _attachHtml + '<br>' : '') + (renderMarkdown ? renderMarkdown(rawText) : esc(rawText).replace(/\n/g, '<br>')), container);
+    const _userMsgDiv = appendMessage('user', userBubbleHtml({ thumbsHtml: _thumbsHtml, chipsHtml: _fileChipsHtml + _failedHtml, text: rawText }), container);
     _userMsgDiv.dataset.checkpointId = ckptId;
     // Add a dedicated ✎ edit button inside the bubble (appears on hover, same as ⎘ copy).
     // Using a button avoids the copy-vs-edit event-propagation clash that a whole-bubble

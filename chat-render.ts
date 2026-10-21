@@ -456,6 +456,66 @@ export function copyChatText(text: string): Promise<void> {
     } catch (error) { return Promise.reject(error); }
 }
 
+/** What the reader sees of a model reply, from its text: markdown, image slots, file links, ⎘/▶ buttons on code blocks. Live
+ *  replies (finalize) and replies rebuilt from saved history (renderTurn) both come from here, so they cannot drift apart. */
+export function buildResponseEl(text: string): HTMLElement {
+    const responseEl = document.createElement('div');
+    responseEl.className = 'agent-response-text';
+    // Guard: renderMarkdown / processImgSlots / processFileLinks / _addCodeBlockButtons can throw (e.g. malformed HTML, null DOM
+    // refs). Catch here so the copy button is always appended — a missing copy button is harder to debug than a render glitch.
+    try {
+        responseEl.innerHTML = renderMarkdown(text);
+        processImgSlots(responseEl);
+        processFileLinks(responseEl);
+        _addCodeBlockButtons(responseEl);
+    } catch (e) {
+        console.warn('[render] response error:', e);
+        if (!responseEl.innerHTML) responseEl.textContent = text; // fallback: plain text
+    }
+    return responseEl;
+}
+
+/** The row under a reply: starts with "Copy response"; _appendDiffButton() may later add "⊟ Diff" to it. data-action persists in
+ *  saved HTML so the delegation in init.ts can re-bind the click after a reload (JS properties do not survive serialization). */
+export function buildResponseActionRow(responseEl: HTMLElement): HTMLElement {
+    const actionRow = document.createElement('div');
+    actionRow.className = 'agent-turn-diff-row';
+    const copyResponseBtn = document.createElement('button');
+    copyResponseBtn.className = 'agent-ckpt-btn';
+    copyResponseBtn.dataset.action = 'copy-response';
+    copyResponseBtn.textContent = '⎘';
+    copyResponseBtn.title = 'Copy this response to clipboard';
+    copyResponseBtn.onclick = () => {
+        copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
+            copyResponseBtn.textContent = '✓';
+            setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
+        }).catch(() => {
+            copyResponseBtn.textContent = '✗';
+            setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
+        });
+    };
+    actionRow.appendChild(copyResponseBtn);
+    return actionRow;
+}
+
+/** A model turn as a finished bubble: the reply and its action row. Used for turns rebuilt from history. */
+export function appendModelTurn(text: string, container: HTMLElement | null = null): HTMLDivElement {
+    const div = appendMessage('model', '', container);
+    const bubble = div.querySelector('.agent-msg-bubble') as HTMLElement;
+    const responseEl = buildResponseEl(text);
+    bubble.appendChild(responseEl);
+    bubble.appendChild(buildResponseActionRow(responseEl));
+    return div;
+}
+
+/** The HTML of a user bubble: attachment thumbnails and chips, then the message as markdown. The live send and the rebuilt
+ *  history draw the same shape from different sources (the composer's files vs. the stored content parts). */
+export function userBubbleHtml(opts: { thumbsHtml?: string; chipsHtml?: string; text: string }): string {
+    const attach = [opts.thumbsHtml, opts.chipsHtml].filter(Boolean).join('');
+    const body = opts.text.trim() ? (renderMarkdown ? renderMarkdown(opts.text) : escapeHtml(opts.text).replace(/\n/g, '<br>')) : '';
+    return attach && body ? attach + '<br>' + body : attach + body;
+}
+
 export function appendMessage(role: any, html: any, container: HTMLElement | null | undefined = null): HTMLDivElement {
     const msgs = container || getMessagesEl();
     const div  = document.createElement('div');
@@ -1234,46 +1294,10 @@ export function createResponsePlaceholder(container: null | undefined = null, op
         // For tool-only turns (no text) the Pi harness calls finalize('') — show nothing rather
         // than a confusing "(no text response)" marker; the step graph already shows the tools.
         const toShow = (!cleaned || isStopMarker) ? (liveContent || cleaned || '') : cleaned;
-        const responseEl = document.createElement('div');
-        responseEl.className = 'agent-response-text';
-        // Guard: renderMarkdown / processImgSlots / processFileLinks / _addCodeBlockButtons
-        // can throw (e.g. malformed HTML, null DOM refs).  Catch here so the copy button
-        // is always appended — a missing copy button is harder to debug than a render glitch.
-        try {
-            responseEl.innerHTML = renderMarkdown(toShow);
-            processImgSlots(responseEl);
-            processFileLinks(responseEl);
-            // Add ⎘ Copy / ▶ Run buttons to every code block
-            _addCodeBlockButtons(responseEl);
-        } catch (e) {
-            console.warn('[finalize] render error:', e);
-            if (!responseEl.innerHTML) responseEl.textContent = toShow; // fallback: plain text
-        }
+        const responseEl = buildResponseEl(toShow);
         bubble.appendChild(responseEl);
-
-        // Action row — always present below the response text.
-        // Starts with a "Copy response" button; _appendDiffButton() may later
-        // append a "⊟ Diff" button to the same row after it saves the snapshot.
-        // data-action persists in saved HTML so delegation in init.ts can re-bind
-        // the onclick after page reload (JS properties don't survive serialization).
-        const actionRow = document.createElement('div');
-        actionRow.className = 'agent-turn-diff-row';
-        const copyResponseBtn = document.createElement('button');
-        copyResponseBtn.className = 'agent-ckpt-btn';
-        copyResponseBtn.dataset.action = 'copy-response';
-        copyResponseBtn.textContent = '⎘';
-        copyResponseBtn.title = 'Copy this response to clipboard';
-        copyResponseBtn.onclick = () => {
-            copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
-                copyResponseBtn.textContent = '✓';
-                setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
-            }).catch(() => {
-                copyResponseBtn.textContent = '✗';
-                setTimeout(() => { copyResponseBtn.textContent = '⎘'; }, 1500);
-            });
-        };
-        actionRow.appendChild(copyResponseBtn);
-        bubble.appendChild(actionRow);
+        // Action row — always present below the response text (see buildResponseActionRow).
+        bubble.appendChild(buildResponseActionRow(responseEl));
 
         scrollBottom(msgs);
     }
@@ -1343,6 +1367,6 @@ export function initChatEmpty(): void {
 }
 
 // Window bridge for classic scripts.
-Object.assign(window, { processImgSlots, processFileLinks, renderMarkdown, cleanResponse,
+Object.assign(window, { buildResponseEl, buildResponseActionRow, appendModelTurn, userBubbleHtml, processImgSlots, processFileLinks, renderMarkdown, cleanResponse,
     getMessagesEl, scrollBottom, copyChatText, appendMessage, createResponsePlaceholder,
     _updateChatEmpty, initChatEmpty });
