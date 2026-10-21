@@ -1,3 +1,4 @@
+import { patchPrefs } from './prefs.js';
 // profiles.js — FreeGent settings profiles
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
 import { escapeHtml } from './html-escape.js';
@@ -262,10 +263,10 @@ function getSavedProfiles() {
 
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
 function profileApply(settings) {
-    for (const key of PROFILE_KEYS) {
-        if (key in settings) localStorage.setItem(key, settings[key]);
-        else localStorage.removeItem(key);
-    }
+    // One patch: listeners (rule and skill sets, the model button, other tabs) see the profile's values, not the old ones.
+    const patch: Record<string, string | null> = {};
+    for (const key of PROFILE_KEYS) patch[key] = key in settings ? settings[key] : null;
+    patchPrefs(patch);
     _previewedId = null;
     if (typeof populateSettingsForm === 'function') populateSettingsForm();
     renderProfilesTab();
