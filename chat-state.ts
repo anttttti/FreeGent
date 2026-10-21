@@ -5,6 +5,7 @@ import { getChatHistory, setChatHistory } from './chat-history.js';
 import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './storage-usage.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { escapeHtml } from './html-escape.js';
+import { lease } from './lease.js';
 
 // ── Chat list helpers ──────────────────────────────────────────────────────
 
@@ -1091,7 +1092,6 @@ async function autoNameChat(chatId, firstUserMessage) {
     setChatName(chatId, draftName);
     // The title arrives seconds later; a name the user typed in between is theirs (codex report 8, cases 288/297).
     // Only a chat still carrying the draft name this call set is given the generated one (deleted chats: not at all).
-    const stillDraft = () => getChatList().find((c: any) => c.id === chatId)?.name === draftName;
 
     if (typeof isUtilityDisabled === 'function' && isUtilityDisabled()) return;
     const msg = `Chat title (2-5 words, no punctuation): "${firstUserMessage.slice(0, 200)}"`;
@@ -1102,6 +1102,7 @@ async function autoNameChat(chatId, firstUserMessage) {
     // themselves as steps to the streaming response (callLLMComplete's default). Both the
     // title call and the validation judge use the utility endpoint, not the main model.
     const _llm = (p: string, o: any) => callLLMComplete(p, { endpoint: _uep, ...o }, NULL_TASK_HANDLE);
+    const title = lease('title', { chat: chatId, check: () => getChatList().find((c: any) => c.id === chatId)?.name === draftName });
     try {
         let name: string | null = await _llm(msg, { temperature: 0.3, maxTokens: 16, maxAttempts: 3 });
         if (name) {
@@ -1111,9 +1112,10 @@ async function autoNameChat(chatId, firstUserMessage) {
             const fired = typeof validateOutput === 'function'
                 ? await validateOutput(name, _NAME_CHECKS, { llm: typeof callLLMComplete === 'function' ? _llm : null })
                 : (_NAME_ECHO_RE.test(name) || name.split(/\s+/).length > 8) || null;
-            if (!fired && stillDraft()) setChatName(chatId, name);
+            if (!fired && title.valid()) setChatName(chatId, name);
         }
     } catch (e) { console.warn('[autoNameChat]', e.message); }
+    finally { title.finish(); }
 }
 
 // ── Chat search (Cmd+K) ───────────────────────────────────────────────────

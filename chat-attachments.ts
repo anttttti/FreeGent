@@ -1,3 +1,4 @@
+import { lease, revokeLeases, liveLeases, type Lease } from './lease.js';
 import { mimeOfExt, docKindOfExt, docKindOfMime, MODEL_IMAGE_MIMES } from './mime.js';
 // chat-attachments.ts — pending image/file attachment state and UI (thumbnails, chips, drag-drop, paste).
 // Depends on: nothing (pure DOM + state).
@@ -194,13 +195,14 @@ function addImageAttachment(mimeType: string, base64: string, extra: { name?: st
 // A read that is still running belongs to the chat it was started in. Leaving the chat parks its attachments
 // (parkPendingAttachments), and a read in flight then survives: it finishes into that chat's parked set, so the
 // file is there when the reader comes back. Anything else that empties the composer (a send, Clear) cancels it.
-type _ReadToken = { owner: string | null; cancelled: boolean; survives: boolean; read?: Promise<void>; name?: string };
-const _readTokens = new Set<_ReadToken>();
+type _ReadMeta = { survives: boolean; read?: Promise<void>; name?: string };
+type _ReadToken = Lease<_ReadMeta>;
+const _newRead = (owner: string | null, name: string): _ReadToken => lease<_ReadMeta>('read', { chat: owner, meta: { survives: false, name } });
 const _readerChat = (): string | null => (globalThis as any).activeChatId ?? null;
 
 function clearImageAttachments(): void {
     _attachmentGeneration++;
-    for (const t of _readTokens) if (!t.survives) t.cancelled = true;
+    revokeLeases<_ReadMeta>('read', t => !t.meta.survives);
     _attachmentReads.clear();
     _pendingImages = [];
     _pendingFiles  = [];
@@ -216,7 +218,7 @@ function clearImageAttachments(): void {
 const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pendingFiles; warnings: string[] }>();
 function parkPendingAttachments(chatId: string | null | undefined): void {
     if (!chatId) return;
-    for (const t of _readTokens) if (t.owner === chatId) t.survives = true;   // reads still running follow their chat
+    for (const t of liveLeases<_ReadMeta>('read')) if (t.chat === chatId) t.meta.survives = true;   // reads still running follow their chat
     // An entry that is still in the map was never restored (restore removes it): the chat was left again while its history
     // was loading. What is pending now was chosen in the meantime; the old selection stays and the new one joins it, instead
     // of replacing it or, with nothing pending, deleting it (codex report 8, cases 280/284).
@@ -229,7 +231,7 @@ function parkPendingAttachments(chatId: string | null | undefined): void {
 function clearParkedAttachments(): void {
     _parkedAttachments.clear();
     _failedReads.length = 0;
-    for (const t of _readTokens) t.cancelled = true;
+    revokeLeases('read');
 }
 function _parkFor(chatId: string): { images: _Img[]; files: typeof _pendingFiles; warnings: string[] } {
     let p = _parkedAttachments.get(chatId);
@@ -249,16 +251,17 @@ function restoreParkedAttachments(chatId: string | null | undefined): void {
 function resumePendingReads(chatId: string | null | undefined): void {
     if (!chatId) return;
     const strip = document.getElementById('img-strip');
-    for (const t of _readTokens) {
-        if (t.owner !== chatId || !t.survives || !t.read || t.cancelled) continue;
-        t.survives = false;
-        _attachmentReads.add(t.read);
+    for (const t of liveLeases<_ReadMeta>('read')) {
+        const read = t.meta.read;
+        if (t.chat !== chatId || !t.meta.survives || !read) continue;
+        t.meta.survives = false;
+        _attachmentReads.add(read);
         if (strip) {
             const chip = document.createElement('div');
             chip.className = 'file-chip attachment-loading'; chip.setAttribute('role', 'status');
-            chip.textContent = `Reading ${t.name ?? 'file'}…`;
+            chip.textContent = `Reading ${t.meta.name ?? 'file'}…`;
             strip.appendChild(chip); strip.style.display = 'flex';
-            void t.read.then(() => chip.remove(), () => chip.remove());
+            void read.then(() => chip.remove(), () => chip.remove());
         }
     }
 }
@@ -280,20 +283,19 @@ function restoreFileAttachment(att: { name: string; mimeType: string; contentTyp
 }
 
 function addFileAttachment(file: File, existingPath?: string, owner: string | null = _readerChat()): Promise<void> {
-    const token: _ReadToken = { owner, cancelled: false, survives: false };
-    _readTokens.add(token);
+    const token = _newRead(owner, file.name);
     const strip = document.getElementById('img-strip');
     const loading = document.createElement('div');
     loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
     loading.textContent = `Reading ${file.name}…`;
     if (strip && owner === _readerChat()) { strip.appendChild(loading); strip.style.display = 'flex'; }
     const read = _loadFileAttachment(file, token, existingPath);
-    token.read = read; token.name = file.name;
+    token.meta.read = read;
     _attachmentReads.add(read);
     // Attach a rejection handler even when the caller is an inline event handler.
-    void read.then(() => { loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token); }, error => {
-        loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token);
-        if (!token.cancelled) _attachmentError(file.name, error, token.owner);
+    void read.then(() => { loading.remove(); _attachmentReads.delete(read); token.finish(); }, error => {
+        loading.remove(); _attachmentReads.delete(read);
+        if (token.finish()) _attachmentError(file.name, error, token.chat);
     });
     return read;
 }
@@ -307,7 +309,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         || _TEXT_EXTS.has(ext);
     const docExt = docKindOfExt(ext) ?? (!_TEXT_EXTS.has(ext) ? docKindOfMime(mimeType) : undefined);
     if (!isText && file.size > 25 * 1024 * 1024) throw new Error('Binary attachment exceeds the 25 MB limit');
-    const current = () => !token.cancelled;
+    const current = () => token.valid();
     let imageUrl: string | undefined, sendImage: { mimeType: string; base64: string } | undefined;
     if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {
         imageUrl = await _readAttachment(file, 'readAsDataURL');
@@ -332,7 +334,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
             } catch { workspacePath = undefined; }
         }
         const extra = { name, ...(workspacePath ? { workspacePath } : {}) };
-        if (token.owner !== _readerChat()) _parkFor(token.owner!).images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });   // finished in another chat
+        if (token.chat !== _readerChat()) _parkFor(token.chat!).images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });   // finished in another chat
         else addImageAttachment(sendImage.mimeType, sendImage.base64, extra);
         return;
     }
@@ -371,7 +373,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
-    if (token.owner !== _readerChat()) { _parkFor(token.owner!).files.push(att); return; }   // finished in another chat
+    if (token.chat !== _readerChat()) { _parkFor(token.chat!).files.push(att); return; }   // finished in another chat
     _pendingFiles.push(att);
     _addFileChip(att);
 }
@@ -538,24 +540,24 @@ function addWorkspaceAttachment(path: string, mimeType?: string): Promise<void> 
     // The byte read is part of the attachment: it is owned by the chat the file was chosen in, and Clear/Send cancel it like any
     // other read. Before this only the later File read had a token, so a workspace read that failed after Clear still put its
     // warning in the fresh chat and its next request (codex report 8, case 219).
-    const token: _ReadToken = { owner: _readerChat(), cancelled: false, survives: false, name: path };
-    _readTokens.add(token);
+    const token = _newRead(_readerChat(), path);
     const run = (async () => {
         let bytes: Uint8Array | ArrayBuffer;
         try { bytes = await agentReadFileBytes(path) as any; }
         catch (e) {
             const err = e && typeof e === 'object' ? e : new Error(String(e));
-            if (token.cancelled) _reportedErrors.add(err); else _attachmentError(path, err, token.owner);
+            if (token.finish()) _attachmentError(path, err, token.chat); else _reportedErrors.add(err);
             throw err;
-        } finally { _readTokens.delete(token); }
-        if (token.cancelled) return;
+        }
+        if (!token.finish()) return;     // the File read below takes over with a lease of its own
         const name = path.split('/').pop() || path;
         const file = new File([bytes as BlobPart], name, { type: mimeType || _guessMime(name.split('.').pop()?.toLowerCase() || '') });
-        await addFileAttachment(file, path, token.owner);
+        await addFileAttachment(file, path, token.chat);
     })();
-    token.read = run.then(() => {}, () => {});
-    _attachmentReads.add(token.read);
-    void token.read.then(() => _attachmentReads.delete(token.read!));
+    const settled = run.then(() => {}, () => {});
+    token.meta.read = settled;
+    _attachmentReads.add(settled);
+    void settled.then(() => { _attachmentReads.delete(settled); token.finish(); });
     return run;
 }
 
