@@ -184,3 +184,82 @@ describe('task dialog uploads (codex 233, 236-240)', () => {
         delete W.saveFileToWorkspace;
     });
 });
+
+describe('concurrent task edits and creation (codex 331-339)', () => {
+    const base = (extra = '', crit = '', desc = 'Desc') => `---\nid: 001\ntitle: First\nstatus: open\npriority: High\n---\n# First\n${desc}\n## Acceptance Criteria\n${crit}${extra}## Log\n`;
+    const edit = async () => {
+        await W.refreshTasks();
+        document.querySelector('.kanban-card-edit').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-title')).toBeTruthy());
+    };
+    it('removing one attachment keeps another editor\'s added one (331)', async () => {
+        files['fg-tasks/001-first.md'] = base('## Attachments\n- a.txt\n- b.txt\n');
+        await edit();
+        files['fg-tasks/001-first.md'] = base('## Attachments\n- a.txt\n- b.txt\n- c.txt\n');   // the other editor added c
+        document.getElementById('atd-attached').querySelector('[data-path="a.txt"], button')?.click?.();
+        // remove a.txt through the form's own list
+        const rm = [...document.querySelectorAll('#atd-attached button')].find(b => /a\.txt/.test(b.getAttribute('aria-label') || b.title || '') || /a\.txt/.test(b.parentElement?.textContent || ''));
+        rm?.click();
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());
+        const out = files['fg-tasks/001-first.md'];
+        expect(out).toContain('c.txt'); expect(out).toContain('b.txt'); expect(out).not.toContain('- a.txt');
+    });
+    it('a criterion added elsewhere survives this form\'s own addition (338)', async () => {
+        files['fg-tasks/001-first.md'] = base('', '- [ ] one\n');
+        await edit();
+        files['fg-tasks/001-first.md'] = base('', '- [x] one\n- [ ] D from elsewhere\n');
+        document.getElementById('atd-criteria').value = 'one\nC from this form';
+        document.getElementById('atd-ok').click();
+        await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());
+        const out = files['fg-tasks/001-first.md'];
+        expect(out).toContain('- [x] one'); expect(out).toContain('D from elsewhere'); expect(out).toContain('C from this form');
+    });
+    it('two dialogs saving at once get different ids and files, even with equal slugs (332/334)', async () => {
+        let hold; const gate = new Promise(r => { hold = r; });
+        const list = W.agentListFiles;
+        W.agentListFiles = async () => { await gate; return list(); };
+        for (const t of ['Résumé', 'Resume']) {
+            W.openAddTaskDialog('todo');
+            document.getElementById('atd-title').value = t;
+            document.getElementById('atd-ok').click();
+            await new Promise(r => setTimeout(r, 5));
+            document.getElementById('atd-ok')?.parentElement; // dialog stays until saved
+        }
+        hold(); W.agentListFiles = list;
+        await vi.waitFor(() => expect(Object.keys(files).filter(k => /^fg-tasks\/\d+-/.test(k) && !k.includes('first'))).toHaveLength(2));
+        const names = Object.keys(files).filter(k => /^fg-tasks\/\d+-/.test(k));
+        expect(new Set(names.map(n => n.match(/\/(\d+)-/)[1])).size).toBe(names.length);
+    });
+    it('Cancel while a Save is writing does not close the form or delete what it references (333)', async () => {
+        files['fg-tasks/001-first.md'] = base();
+        await edit();
+        let release; const gate = new Promise(r => { release = r; });
+        const read = W.agentReadFile;
+        W.agentReadFile = async (p) => { await gate; return read(p); };
+        document.getElementById('atd-desc').value = 'changed';
+        document.getElementById('atd-ok').click();
+        await new Promise(r => setTimeout(r, 5));
+        document.getElementById('atd-cancel').click();
+        expect(document.getElementById('atd-ok')).not.toBeNull();       // still open
+        release(); W.agentReadFile = read;
+        await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());
+        expect(files['fg-tasks/001-first.md']).toContain('changed');
+    });
+    it('a Save that was reading when the project was cleared writes nothing (336/339)', async () => {
+        const { bumpWorkspaceEpoch } = await import('../exec-limits.ts');
+        files['fg-tasks/001-first.md'] = base();
+        await edit();
+        let release; const gate = new Promise(r => { release = r; });
+        const read = W.agentReadFile;
+        W.agentReadFile = async (p) => { await gate; return read(p); };
+        document.getElementById('atd-desc').value = 'old project edit';
+        document.getElementById('atd-ok').click();
+        await new Promise(r => setTimeout(r, 5));
+        bumpWorkspaceEpoch();                                           // Clear / Load
+        release(); W.agentReadFile = read;
+        await vi.waitFor(() => expect(document.getElementById('atd-err').textContent).toMatch(/cleared or replaced/));
+        expect(files['fg-tasks/001-first.md']).not.toContain('old project edit');
+        document.getElementById('atd-close').click();
+    });
+});

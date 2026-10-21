@@ -1,6 +1,7 @@
 // tabs.js — FreeGent: tab management, file tabs, notify local file changed
 // Depends on: config.js, settings-ui.js, skills.js, tasks.js, editor.js
 import { escapeHtml } from './html-escape.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { judgeExpectation, summarizeExpectations, type Expectation, type ExpectResult } from './page-expect.js';
 import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 import { previewKindOfName, mimeOfName } from './mime.js';
@@ -8,6 +9,12 @@ import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
 import { sandboxCspMeta } from './privacy.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
+// The editor holds a file's text with "\n" line breaks, whatever the file has. Whether it is "changed" is judged on the text, not on
+// the line-break style: an untouched CRLF file used to count as edited (Close warned, an agent update was not adopted, and Save
+// rewrote the file with LF; codex 413/414). Saving gives back the style the file had.
+const _lf = (t: string): string => t.replace(/\r\n?/g, '\n');
+const _sameText = (a: string, b: string): boolean => a === b || _lf(a) === _lf(b);
+const _withEolOf = (text: string, original: string): string => /\r\n/.test(original) && !/\r/.test(text) ? text.replace(/\n/g, '\r\n') : text;
 
 // Escape for use inside a double-quoted attribute selector. File names may contain " and \, and even line breaks, which
 // a selector string must not hold raw (the name "line\nbreak.txt" made querySelector throw while opening its tab).
@@ -37,7 +44,9 @@ function activateTab(key) {
     if (key === 'tasks')    { refreshTasks(); initRunner?.(); }
     if (key === 'chats')    renderChatsDropdown?.();
     if (key === 'skills')   loadSkills();
-    if (key === 'workspace') pollFsaChanges?.();
+    // The workspace lives in storage shared by every tab: what another tab added or deleted since this list was drawn shows when the
+    // tab is opened (codex 364: it stayed empty or kept a deleted row until a reload).
+    if (key === 'workspace') { pollFsaChanges?.(); (window as any).renderFileList?.(); }
     if (key === 'chat')     _updateChatEmpty?.();
 }
 
@@ -117,30 +126,49 @@ function openFileTab(name) {
 
     // Binary/visual file types have no code editor — they display as a preview.
     const isPreview = !!previewKind;
-    const ft: any = { tab, panel, editor: null, savedContent: '', isPreview };
+    const ft: any = { tab, panel, editor: null, savedContent: '', isPreview, epoch: workspaceEpoch() };
     fileTabs.set(name, ft);
     activateTab(name);
 
+    // A Save is one compare-and-write on the stored file, under a per-file lock shared by every tab (two editors that
+    // started from the same bytes used to both pass the comparison and the second silently replaced the first, codex 365),
+    // and it belongs to the project and the tab it started in: a Save still waiting on its read when the project was
+    // cleared or replaced, or the tab closed, writes nothing (406-408).
+    const _syncDirty = () => {
+        const dirty = !!ft.editor && !_sameText(ft.editor.state.doc.toString(), ft.savedContent);
+        saveBtn.textContent = dirty ? '↑ Save ●' : '↑ Save';
+        saveBtn.classList.toggle('file-unsaved', dirty);
+    };
     async function doSave(content) {
+        const locks = (navigator as any).locks;
+        const exclusive = <T,>(fn: () => Promise<T>): Promise<T> => locks?.request ? locks.request(`fg-file:${name}`, fn) : fn();
         try {
-            // Saving a buffer must not silently undo a newer write (the agent's, or another tab's): when the
-            // stored file no longer matches what this tab opened, the user decides.
-            const current = await agentReadFile(name).catch(() => null);
-            if (typeof current === 'string' && current !== ft.savedContent && current !== content) {
-                if (!confirm(`"${name}" was changed since you opened it (by the agent or another tab).\n\nOK overwrites it with the version in this editor; Cancel keeps the newer file and leaves your edits in the editor.`)) {
-                    saveBtn.textContent = '⚠ File changed';
-                    saveBtn.title = 'The file changed since this tab opened it. Copy your edits if you need them, then reopen the file.';
-                    return;
+            const outcome = await exclusive(async () => {
+                // Saving a buffer must not silently undo a newer write (the agent's, or another tab's): when the
+                // stored file no longer matches what this tab opened, the user decides.
+                const current = await agentReadFile(name).catch(() => null);
+                if (fileTabs.get(name) !== ft || workspaceEpoch() !== ft.epoch) return 'stale';
+                if (typeof current === 'string' && !_sameText(current, ft.savedContent) && !_sameText(current, content)) {
+                    if (!confirm(`"${name}" was changed since you opened it (by the agent or another tab).\n\nOK overwrites it with the version in this editor; Cancel keeps the newer file and leaves your edits in the editor.`)) {
+                        saveBtn.textContent = '⚠ File changed';
+                        saveBtn.title = 'The file changed since this tab opened it. Copy your edits if you need them, then reopen the file.';
+                        return 'declined';
+                    }
+                    if (fileTabs.get(name) !== ft || workspaceEpoch() !== ft.epoch) return 'stale';
                 }
-            }
-            await agentWriteFile(name, content);
-            ft.savedContent = content;
-            saveBtn.textContent = '✓ Saved';
-            saveBtn.classList.remove('file-unsaved');
-            setTimeout(() => { saveBtn.textContent = '↑ Save'; }, 1500);
+                await agentWriteFile(name, _withEolOf(content, ft.savedContent));
+                return 'saved';
+            });
+            if (outcome !== 'saved') return;
+            ft.savedContent = _withEolOf(content, ft.savedContent);
+            // Typing went on while the Save was pending: the newer text is still unsaved and must say so.
+            const dirty = !!ft.editor && !_sameText(ft.editor.state.doc.toString(), content);
+            saveBtn.classList.toggle('file-unsaved', dirty);
+            saveBtn.textContent = dirty ? '↑ Save ●' : '✓ Saved';
+            setTimeout(() => { if (saveBtn.textContent === '✓ Saved') _syncDirty(); }, 1500);
         } catch (e) {
             saveBtn.textContent = '✗ Error';
-            setTimeout(() => { saveBtn.textContent = '↑ Save'; }, 2000);
+            setTimeout(() => { if (saveBtn.textContent === '✗ Error') _syncDirty(); }, 2000);
         }
     }
 
@@ -370,7 +398,7 @@ function openFileTab(name) {
                             ft._editorLoading ||= createEditor(editWrap, name, ft.savedContent, {
                                 onSave: doSave,
                                 onChange(newContent: string) {
-                                    const dirty = newContent !== ft.savedContent;
+                                    const dirty = !_sameText(newContent, ft.savedContent);
                                     saveBtn.textContent = dirty ? '↑ Save ●' : '↑ Save';
                                     saveBtn.classList.toggle('file-unsaved', dirty);
                                 },
@@ -419,7 +447,7 @@ function openFileTab(name) {
         ft.editor = await createEditor(editorWrap, name, content, {
             onSave: doSave,
             onChange(newContent) {
-                const dirty = newContent !== ft.savedContent;
+                const dirty = !_sameText(newContent, ft.savedContent);
                 saveBtn.textContent = dirty ? '↑ Save ●' : '↑ Save';
                 saveBtn.classList.toggle('file-unsaved', dirty);
             },
@@ -439,11 +467,23 @@ function openFileTab(name) {
     });
 }
 
+// Coming back to this tab after working in another one: the shared workspace may have changed in between.
+if (typeof window !== 'undefined') window.addEventListener('focus', () => {
+    if (document.querySelector('#tab-content > .tab-panel.active[data-panel="workspace"]')) (window as any).renderFileList?.();
+});
+
+// Reloading or closing the page throws every editor buffer away just as Close does, and Close asks first (codex 382/383).
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', e => {
+    for (const ft of fileTabs.values()) {
+        if (ft.editor && !_sameText(ft.editor.state.doc.toString(), ft.savedContent)) { e.preventDefault(); (e as any).returnValue = ''; return; }
+    }
+});
+
 function closeFileTab(name) {
     const ft = fileTabs.get(name);
     if (!ft) return;
     // Closing throws the editor buffer away: a buffer that differs from the saved file needs the user's say.
-    if (ft.editor && ft.editor.state.doc.toString() !== ft.savedContent
+    if (ft.editor && !_sameText(ft.editor.state.doc.toString(), ft.savedContent)
         && !confirm(`"${name}" has unsaved changes.\n\nOK closes the tab and discards them; Cancel keeps the tab open so you can save.`)) {
         activateTab(name);
         return;
@@ -1139,7 +1179,7 @@ function scheduleArtifactRefresh(changedName = '') {
 function notifyAgentFileWritten(path: string, content: string) {
     const ft = fileTabs.get(path);
     if (!ft?.editor) return;
-    if (ft.editor.state.doc.toString() === ft.savedContent) { notifyLocalFileChanged(path, content); return; }
+    if (_sameText(ft.editor.state.doc.toString(), ft.savedContent)) { notifyLocalFileChanged(path, content); return; }
     const saveBtn = ft.panel.querySelector('.file-save-btn');
     if (saveBtn) { saveBtn.textContent = '⚠ File changed'; saveBtn.title = 'The agent changed this file while you were editing it. Save asks before overwriting.'; }
 }
@@ -1181,8 +1221,8 @@ function refreshOpenFileTab(name: string) {
             if (typeof content !== 'string' || !fileTabs.has(name)) return;
             const doc = ft.editor.state.doc.toString();
             const saveBtn = ft.panel.querySelector('.file-save-btn');
-            if (doc === content) { ft.savedContent = content; return; }   // the editor's own Save
-            if (doc !== ft.savedContent) {                                  // unsaved edits stay
+            if (_sameText(doc, content)) { ft.savedContent = content; return; }   // the editor's own Save
+            if (!_sameText(doc, ft.savedContent)) {                                  // unsaved edits stay
                 if (saveBtn) { saveBtn.textContent = '⚠ File changed'; saveBtn.title = 'This file changed while you were editing it. Save asks before overwriting.'; }
                 return;
             }

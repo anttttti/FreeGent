@@ -71,4 +71,21 @@ describe('Chats tab', () => {
         await new Promise(r => setTimeout(r, 250));
         expect(names()).toContain('Renamed in tab 2');
     });
+
+    it('a redraw from another tab keeps the filter being typed and its focus (codex 327)', async () => {
+        W.renderChatsDropdown();
+        const input = () => document.getElementById('chat-search-input') as HTMLInputElement;
+        input().focus(); input().value = 'Second'; input().oninput!(new Event('input'));
+        const visible = () => [...document.querySelectorAll('#chats-dropdown .chat-list-item')].filter(e => (e as HTMLElement).style.display !== 'none').length;
+        expect(visible()).toBe(1);
+        localStorage.setItem('fg_chat_list', JSON.stringify([
+            { id: 'a', name: 'Renamed in tab 2', createdAt: 1, lastAt: 2 },
+            { id: 'b', name: 'Second chat', createdAt: 3, lastAt: 4 },
+        ]));
+        window.dispatchEvent(new StorageEvent('storage', { key: 'fg_chat_list', storageArea: localStorage }));
+        await new Promise(r => setTimeout(r, 250));
+        expect(input().value).toBe('Second');
+        expect(visible()).toBe(1);
+        expect(document.activeElement).toBe(input());
+    });
 });

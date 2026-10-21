@@ -66,3 +66,42 @@ describe('deleting a custom rule (259)', () => {
         expect(stored().r).toEqual({ trigger: 'old words' });
     });
 });
+
+describe('an open editor survives a redraw of the list (342/344)', () => {
+    it('keeps its open state, unsaved text and focus when an unrelated rule is toggled', () => {
+        document.body.innerHTML = '<div id="settings-skills-list"></div><div id="skills-list"></div>';
+        W.skillsRegistry.clear();
+        W.skillsRegistry.set('mine', { name: 'mine', type: 'rule', path: 'rules/mine/RULE.md', description: '', trigger: 'kw', body: 'original body' });
+        W.renderSkillsChecklist();
+        const nameBtn = () => document.querySelector('.sr-name-btn[class*="sr-name-btn"]') as HTMLElement;
+        const mineBtn = [...document.querySelectorAll('.sr-name-btn')].find(b => b.textContent === '/mine') as HTMLElement;
+        mineBtn.click();
+        (document.querySelector('.skill-trigger-wrap[data-skill="mine"] .skill-trigger-edit-btn') as HTMLElement).click();
+        const ta = () => document.querySelector('.skill-trigger-wrap[data-skill="mine"] textarea[data-field="body"]') as HTMLTextAreaElement;
+        ta().value = 'unsaved edit'; ta().focus();
+        W.renderSkillsChecklist();                                        // another tab toggled an unrelated rule
+        expect(ta().value).toBe('unsaved edit');
+        expect((ta().closest('.sr-editor-row') as HTMLElement).style.display).not.toBe('none');
+        expect((ta().closest('.skill-trigger-editor') as HTMLElement).style.display).not.toBe('none');
+        expect(document.activeElement).toBe(ta());
+        void nameBtn;
+    });
+});
+
+describe('the registry is replaced in one step (343)', () => {
+    it('a matching rule is still there while the files are being read again', async () => {
+        const real = (await import('../skills.ts')).loadSkills;
+        W.skillsRegistry.clear();
+        W.skillsRegistry.set('kw-rule', { name: 'kw-rule', type: 'rule', path: 'rules/kw-rule/RULE.md', trigger: 'kw', body: 'B' });
+        let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+        W.agentListFilesInDir = async (d: string) => { await gate; return d === 'rules' ? [{ name: 'kw-rule/RULE.md' }] : []; };
+        W.agentReadFile = async () => '---\nname: kw-rule\ntrigger: kw\n---\nB';
+        W.parseFrontmatter = (t: string) => ({ name: 'kw-rule', trigger: 'kw' });
+        const loading = real();
+        await new Promise(r => setTimeout(r, 5));
+        expect(W.skillsRegistry.has('kw-rule')).toBe(true);     // not emptied while reading
+        release(); await loading;
+        expect(W.skillsRegistry.has('kw-rule')).toBe(true);
+        delete W.agentListFilesInDir;
+    });
+});

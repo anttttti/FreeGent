@@ -291,11 +291,16 @@ function addFileAttachment(file: File, existingPath?: string, owner: string | nu
     if (strip && owner === _readerChat()) { strip.appendChild(loading); strip.style.display = 'flex'; }
     const read = _loadFileAttachment(file, token, existingPath);
     token.meta.read = read;
-    _attachmentReads.add(read);
+    // A read of another chat's file (a second stage that starts after the reader left) must not hold this chat's Send: it is parked
+    // with its chat and waited for again when the reader returns (codex 391).
+    if (owner === _readerChat()) _attachmentReads.add(read); else token.meta.survives = true;
     // Attach a rejection handler even when the caller is an inline event handler.
     void read.then(() => { loading.remove(); _attachmentReads.delete(read); token.finish(); }, error => {
         loading.remove(); _attachmentReads.delete(read);
+        // Reported here by the read's owner, or dropped because its composer was cleared: callers further out (the Select picker)
+        // must not report the same error again against whatever chat is open now (codex 219/393).
         if (token.finish()) _attachmentError(file.name, error, token.chat);
+        else if (error && typeof error === 'object') _reportedErrors.add(error);
     });
     return read;
 }

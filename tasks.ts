@@ -248,6 +248,26 @@ function attachmentsBlock(paths: string[]): string {
     return paths.length ? `## Attachments\n${paths.map(p => `- ${p}`).join('\n')}\n` : '';
 }
 
+// Three-way merge of a list the form edits (attachments, criteria): what this form removed leaves the newer list, what it added
+// joins it, and anything another editor changed meanwhile stays (codex 331/338). An untouched list is simply the newer one.
+function mergeList(base: string[], mine: string[], theirs: string[]): string[] {
+    if (JSON.stringify(mine) === JSON.stringify(base)) return theirs;
+    const removed = new Set(base.filter(x => !mine.includes(x)));
+    const added = mine.filter(x => !base.includes(x) && !theirs.includes(x));
+    return [...theirs.filter(x => !removed.has(x)), ...added];
+}
+
+// Creating a task picks the next id and a free file name, and writes it: one step at a time per project, across tabs too. Two
+// dialogs saving together used to read the same list, take the same id and, with equal slugs, overwrite each other (332/334).
+let _taskCreateChain: Promise<unknown> = Promise.resolve();
+function withTaskCreateLock<T>(fn: () => Promise<T>): Promise<T> {
+    const locks = (navigator as any).locks;
+    const run = () => (locks?.request ? locks.request('fg-task-create', fn) : fn()) as Promise<T>;
+    const next = _taskCreateChain.then(run, run);
+    _taskCreateChain = next.catch(() => {});
+    return next;
+}
+
 function openTaskDialog(opts: { status?: string; path?: string; content?: string }) {
     const editing = opts.path !== undefined;
     const parsed = editing ? parseTaskForEdit(opts.content || '') : null;
@@ -262,10 +282,12 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     const uploaded = new Set<string>();
     let saved = false;
     let pendingUploads = 0;
+    let saving = false;   // a Save is writing: Cancel would delete the uploads it is about to reference (case 333)
     // Uploads belong to the project they were stored in. After Clear or an import the same paths may name a restored file
     // that the form never owned, so a late cleanup must leave them (codex report 8, cases 233/238).
     const epoch = workspaceEpoch();
     const dismiss = () => {
+        if (saving) return;
         overlay.remove();
         if (!saved && workspaceEpoch() === epoch) for (const p of uploaded) void agentDeleteFile?.(p).catch(() => {});
     };
@@ -367,6 +389,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     $('atd-attach-ws').onclick = async () => {
         menu.classList.remove('open');
         addPaths(await (window as any).pickWorkspaceFiles('Attach files to the task'));
+        if (overlay.isConnected) $('atd-attach-btn')?.focus();   // back in the form, on the control that opened the picker
     };
     $('atd-file-device').onchange = (e: Event) => upload(e.target as HTMLInputElement);
     $('atd-file-any').onchange = (e: Event) => upload(e.target as HTMLInputElement);
@@ -383,6 +406,8 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
         // A file still being stored is not in the list yet; saving now dropped it silently (cases 237/240).
         if (pendingUploads > 0) { $('atd-err').textContent = 'A file is still being attached. Save again when it has finished.'; return; }
         $('atd-ok').disabled = true;
+        saving = true;
+        $('atd-cancel').setAttribute('disabled', ''); $('atd-close').setAttribute('disabled', '');
         try {
             if (parsed && opts.path) {
                 const stripBullet = (l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '');
@@ -396,14 +421,15 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                     // Writing the form's old copy would bring it back (codex report 8, cases 217/235).
                     throw new Error(`${opts.path} can no longer be read (${e?.message || e}). It was probably deleted or its project was replaced, so nothing was saved.`);
                 }
+                // The project was cleared or replaced while this form was open or its Save was reading: that task is not this project's.
+                if (workspaceEpoch() !== epoch) throw new Error('The project was cleared or replaced while this form was open, so nothing was saved.');
                 if (typeof nowText === 'string' && nowText.replace(/\r\n/g, '\n') !== (opts.content || '').replace(/\r\n/g, '\n')) latest = parseTaskForEdit(nowText);
                 const typedCriteria = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
-                const criteriaEdited = typedCriteria.join('\n') !== parsed.criteria.map(c => c.text).join('\n');
-                const crit = criteriaEdited || latest === parsed ? typedCriteria : latest.criteria.map(c => c.text);
+                const crit = latest === parsed ? typedCriteria : mergeList(parsed.criteria.map(c => c.text), typedCriteria, latest.criteria.map(c => c.text));
                 const checked = new Set(latest.criteria.filter(c => c.checked).map(c => c.text));
                 const descEdited = $('atd-desc').value.trim() !== parsed.desc.trim();
                 const descOut = descEdited ? $('atd-desc').value.trim() : latest.desc.trim();
-                const attachedOut = JSON.stringify(attached) !== JSON.stringify(parsed.attachments) ? attached : latest.attachments;
+                const attachedOut = latest === parsed ? attached : mergeList(parsed.attachments, attached, latest.attachments);
                 // A title renamed elsewhere stays unless this form changed it too (case 218).
                 const titleEdited = title !== (parsed.fm.title || parsed.heading).trim().replace(/\s+/g, ' ');
                 const titleOut = titleEdited ? title : (latest.fm.title || latest.heading || title);
@@ -428,21 +454,29 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 await syncLedgerWithTaskFiles();
                 return;
             }
-            const existing = await loadTaskFiles();
-            const nextId = Math.max(0, ...existing.map(t => Number(t.fm.id) || 0),
-                ...existing.map(t => Number((t.path.match(/\/(\d+)-/) || [])[1]) || 0)) + 1;
-            const id = String(nextId).padStart(3, '0');
-            const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
             const criteria = $('atd-criteria').value.split('\n').map((l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '')).filter(Boolean);
             const today = new Date().toISOString().slice(0, 10);
-            const content = `${buildFrontmatter({ id, title, status: $('atd-status').value, priority: $('atd-priority').value, created: today })}# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
-            await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
+            const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
+            await withTaskCreateLock(async () => {
+                const existing = await loadTaskFiles();
+                if (workspaceEpoch() !== epoch) throw new Error('The project was cleared or replaced while this form was open, so nothing was saved.');
+                let nextId = Math.max(0, ...existing.map(t => Number(t.fm.id) || 0),
+                    ...existing.map(t => Number((t.path.match(/\/(\d+)-/) || [])[1]) || 0)) + 1;
+                // The id is the next free one; a file already at that path (written by a tab that has not shown up in the
+                // list yet) moves it on instead of being replaced.
+                let id = String(nextId).padStart(3, '0');
+                while (await agentReadFile(`fg-tasks/${id}-${slug}.md`).then(() => true, () => false)) { nextId++; id = String(nextId).padStart(3, '0'); }
+                const content = `${buildFrontmatter({ id, title, status: $('atd-status').value, priority: $('atd-priority').value, created: today })}# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
+                await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
+            });
             saved = true;
             overlay.remove();
             await syncLedgerWithTaskFiles();   // new row in the ledger, then refresh the board
         } catch (e: any) {
             $('atd-err').textContent = `Failed to ${editing ? 'save' : 'add'} task: ` + (e?.message || e);
+            saving = false;
             $('atd-ok').disabled = false;
+            $('atd-cancel').removeAttribute('disabled'); $('atd-close').removeAttribute('disabled');
         }
     };
     overlay.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });

@@ -31,6 +31,41 @@ const SSE_IDLE_TIMEOUT_MS = 90_000;
 const SSE_MIDSTREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 
+/** Turns SSE lines into JSON payloads. Events end at a blank line and may carry several `data:` lines, which join with "\n" (the
+ *  spec; codex 402). A payload that is complete JSON on its own is delivered at once, so servers that never send the blank
+ *  line between events still stream. `:` comments and other fields are ignored. */
+export class SSEPayloads {
+    private pending: string[] = [];
+    /** One line, without its line break. Returns the payloads (parsed JSON) it completes, or the string "[DONE]". */
+    line(raw: string): any[] {
+        if (raw === '') return this.dispatch();
+        if (raw.startsWith(':') || !raw.startsWith('data:')) return [];
+        // "data:" then one optional space
+        const payload = raw.slice(5).replace(/^ /, '');
+        if (payload === '[DONE]' && !this.pending.length) return ['[DONE]'];
+        this.pending.push(payload);
+        const joined = this.pending.join('\n');
+        if (!joined.trim()) { this.pending = []; return []; }       // keep-alive / empty data line
+        try { const v = JSON.parse(joined); this.pending = []; return [v]; } catch { return []; }   // incomplete: wait for more lines
+    }
+    /** The event ended (blank line or end of stream): whatever is pending is parsed as is, else line by line. */
+    dispatch(): any[] {
+        if (!this.pending.length) return [];
+        const parts = this.pending; this.pending = [];
+        const joined = parts.join('\n');
+        try { return [JSON.parse(joined)]; } catch { /* fall through */ }
+        const out: any[] = [];
+        for (const part of parts) {
+            if (!part.trim()) continue;
+            if (part === '[DONE]') { out.push('[DONE]'); continue; }
+            try { out.push(JSON.parse(part)); } catch (err) { console.warn('[SSE] JSON parse error:', String(err), 'payload:', part.slice(0, 120)); }
+        }
+        return out;
+    }
+}
+// A line break is CRLF, CR or LF (SSE spec). A CR at the very end of the buffer may be half of a CRLF: it waits for the next chunk.
+const _SSE_BREAK = /\r\n|\r(?!$)|\n/;
+
 export async function* readSSE(resp: any) {
     // Safari < 14.1: response.body (ReadableStream) is null for fetch responses.
     // The Streams API was wired up to fetch only in Safari 14.1 (March 2021).
@@ -38,18 +73,15 @@ export async function* readSSE(resp: any) {
     // accumulated text. No incremental chunks, but correct on Safari 12 / iOS 12.
     if (!resp.body) {
         const text = await resp.text();
-        for (const line of text.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') return;
-            try { yield JSON.parse(payload); } catch {}
-        }
+        const ev = new SSEPayloads();
+        for (const line of [...text.split(/\r\n|\r|\n/), '']) for (const v of ev.line(line)) { if (v === '[DONE]') return; yield v; }
         return;
     }
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer: string = '';
     let gotData = false;
+    const events = new SSEPayloads();
     // Stop must end the read even where the engine does not reject a pending read() when the request is aborted: with WebKit the
     // turn then never unwound, and every later send was refused as "already preparing" until the page was reloaded (campaign 5).
     const signal: AbortSignal | undefined = activeAbortController?.signal;
@@ -77,25 +109,12 @@ export async function* readSSE(resp: any) {
             if (done) break;
             gotData = true;
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
+            const lines = buffer.split(_SSE_BREAK);
             buffer = lines.pop()!;
-            for (const line of lines) {
-                if (!line.startsWith('data:')) continue;
-                // SSE spec: strip "data:" then one optional space; strip trailing \r for CRLF streams
-                const payload = line.slice(5).replace(/^ /, '').replace(/\r$/, '');
-                if (!payload) continue; // keep-alive / empty data line
-                if (payload === '[DONE]') return;
-                try { yield JSON.parse(payload); }
-                catch (err) { console.warn('[SSE] JSON parse error:', String(err), 'payload:', payload.slice(0, 120)); }
-            }
+            for (const line of lines) for (const v of events.line(line)) { if (v === '[DONE]') return; yield v; }
         }
-        // Flush any final event that had no trailing newline
-        if (buffer.startsWith('data:')) {
-            const payload = buffer.slice(5).replace(/^ /, '').replace(/\r$/, '');
-            if (payload && payload !== '[DONE]') {
-                try { yield JSON.parse(payload); } catch {}
-            }
-        }
+        // End of stream: a last line without its break, then the event it belongs to
+        for (const line of [buffer.replace(/\r$/, ''), '']) for (const v of events.line(line)) { if (v === '[DONE]') return; yield v; }
     } finally { if (onAbort) signal?.removeEventListener('abort', onAbort); try { reader.releaseLock(); } catch {} }
 }
 
@@ -390,7 +409,7 @@ export async function decodeOAIResponse(resp: any, onChunk: any) {
     // A 200 web page (proxy error page, captive portal, wrong URL) is not a reply: say so instead of the JSON parser's
     // "Unexpected end of JSON input", which was retried as a server fault for as long as the retry limit allowed.
     if (/text\/html/i.test(ct)) throw new Error(`HTTP 200: the endpoint answered with a web page (${ct.split(';')[0].trim()}), not an API response. Check the endpoint URL and any proxy in front of it.`);
-    return ct.includes('text/event-stream')
+    return /text\/event-stream/i.test(ct)
         ? streamOAICompat(resp, onChunk)
         : nonStreamOAICompat(resp, onChunk);
 }

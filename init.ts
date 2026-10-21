@@ -583,6 +583,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function msgSearchSelect(chatId: string): void {
         if (!chatId) return;
+        // The result may name a chat another tab deleted since the search ran: opening it showed an empty unlisted chat
+        // (codex 341). Say so and search again instead.
+        if (typeof getChatList === 'function' && !getChatList().some((c: any) => c.id === chatId)) {
+            const q = (document.getElementById('msg-search-input') as HTMLInputElement | null)?.value ?? '';
+            void runMsgSearch(q).then(() => {
+                const results = document.getElementById('msg-search-results');
+                if (results) results.insertAdjacentHTML('afterbegin', '<div class="msg-search-empty" role="status">That chat was deleted in another tab. Results refreshed.</div>');
+            });
+            return;
+        }
         closeMsgSearch(false);
         // The result is a conversation: show it, also when search was opened from Settings, Tasks or a file tab.
         activateTab?.('chat');
@@ -634,20 +644,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (action === 'copy-response') {
             const responseEl = btn.closest('.agent-msg-bubble')?.querySelector('.agent-response-text') as HTMLElement | null;
             if (!responseEl) return;
-            copyChatText(responseEl.innerText ?? responseEl.textContent ?? '').then(() => {
-                (btn as HTMLElement).textContent = '✓';
-                setTimeout(() => { (btn as HTMLElement).textContent = '⎘'; }, 1500);
-            }).catch(() => {});
-            return;
-        }
-
-        // "Copy user message" — reads bubble text, excluding the copy button itself.
-        if (action === 'copy-user-message') {
-            const bubble = btn.closest('.agent-msg-bubble') as HTMLElement | null;
-            if (!bubble) return;
-            const clone = bubble.cloneNode(true) as HTMLElement;
-            clone.querySelectorAll('[data-action="copy-user-message"], [data-action="edit-user-message"]').forEach(el => el.remove());
-            copyChatText((clone.innerText ?? clone.textContent ?? '').trim()).then(() => {
+            copyChatText((window as any).plainTextOf(responseEl, 'button, [data-action], .artifact-run-btn, .agent-turn-diff-row')).then(() => {
                 (btn as HTMLElement).textContent = '✓';
                 setTimeout(() => { (btn as HTMLElement).textContent = '⎘'; }, 1500);
             }).catch(() => {});
@@ -684,6 +681,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!span || span.dataset.op === 'delete') return;
         const ckptId = (span.closest('.agent-turn-diff-row') as HTMLElement | null)?.dataset.checkpointId;
         if (ckptId) (window as any).showCheckpointFileDiff?.(ckptId, span.dataset.name);
+    });
+
+    // "Copy user message" delegation. The button is .user-msg-copy-btn, not .agent-ckpt-btn, so the handler above never saw it:
+    // after a reload, an Edit → Cancel or a return to the chat (the bubble is rebuilt from saved HTML and loses its onclick) the
+    // button did nothing, and the click reached the bubble's click-to-edit instead (codex 380).
+    getMessagesEl()?.addEventListener('click', e => {
+        const btn = (e.target as Element).closest('.user-msg-copy-btn[data-action="copy-user-message"]') as HTMLElement | null;
+        if (!btn) return;
+        e.stopPropagation();
+        const bubble = btn.closest('.agent-msg-bubble') as HTMLElement | null;
+        if (!bubble) return;
+        copyChatText((window as any).plainTextOf(bubble)).then(() => {
+            btn.textContent = '✓';
+            setTimeout(() => { btn.textContent = '⎘'; }, 1500);
+        }).catch(() => {});
     });
 
     // User-message edit button delegation — handles clicks after page reload.
@@ -868,7 +880,17 @@ const _modalOpeners = new Map<HTMLElement, HTMLElement | null>();
 // The last element focused outside any dialog. A dialog that focuses its own first field while it is being built (the task
 // and model-edit dialogs do) has already moved focus by the time _enhanceModal runs, so "the element focused now" would
 // record a field inside the dialog as its opener, and closing the dialog left focus on <body>.
-let _lastOutsideFocus: HTMLElement | null = null;
+// The last few elements that held focus. A dialog opened from another dialog (the file picker over the task form) returns focus to
+// the control in the dialog below, not to the page behind both (codex 384-386: focus went to the board's Add button, and Enter there
+// replaced the unsaved form).
+const _focusTrail: HTMLElement[] = [];
+const _openerFor = (ov: HTMLElement): HTMLElement | null => {
+    for (let i = _focusTrail.length - 1; i >= 0; i--) {
+        const el = _focusTrail[i];
+        if (el.isConnected && !ov.contains(el) && el.getClientRects().length > 0) return el;
+    }
+    return null;
+};
 
 // Name every form control that has no accessible name. The source order of the existing forms gives
 // the label: an associated <label>, the first cell of its table row, the closest preceding
@@ -892,7 +914,7 @@ function labelControls(root: ParentNode = document): void {
 function _enhanceModal(ov: HTMLElement) {
     if (_modalOpeners.has(ov)) return;
     const _now = document.activeElement as HTMLElement | null;
-    _modalOpeners.set(ov, _now && ov.contains(_now) ? _lastOutsideFocus : _now);
+    _modalOpeners.set(ov, _now && _now !== document.body && !ov.contains(_now) ? _now : _openerFor(ov));
     const box = (ov.querySelector('.fg-modal, .ws-pick-box') as HTMLElement) || ov;
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
@@ -939,7 +961,7 @@ function initModalA11y() {
     document.addEventListener('keydown', _modalKeydown, true);
     document.addEventListener('focusin', e => {
         const t = e.target as HTMLElement | null;
-        if (t && t !== document.body && !t.closest?.(_MODAL_SEL)) _lastOutsideFocus = t;
+        if (t && t !== document.body) { const i = _focusTrail.indexOf(t); if (i >= 0) _focusTrail.splice(i, 1); _focusTrail.push(t); if (_focusTrail.length > 8) _focusTrail.shift(); }
     }, true);
     new MutationObserver(muts => {
         for (const m of muts) {

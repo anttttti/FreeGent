@@ -139,7 +139,7 @@ function _answerTo(msg: any, id: any): any {
 
 // Pick the JSON-RPC response for `id` out of a JSON or SSE body.
 function _parseRpcBody(text: string, contentType: string, id: any): any {
-    if (contentType.includes('text/event-stream')) {
+    if (/text\/event-stream/i.test(contentType)) {
         // An event is a block of lines ended by a blank line; all its data: lines make one message, joined by newlines
         // (a server may pretty-print its JSON over several data: lines).
         for (const event of text.split(/\r?\n\r?\n/)) {
