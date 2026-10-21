@@ -13,6 +13,7 @@ beforeEach(() => {
     localStorage.clear();
     document.body.innerHTML = '<div id="img-strip"></div><div id="agent-input" contenteditable></div><div id="agent-messages"></div>';
     W.clearImageAttachments(); W.setAgentStreaming(false); W.setAiJob('');
+    W.addVoiceButtons ??= () => {};
 });
 afterEach(() => { W.clearImageAttachments(); vi.restoreAllMocks(); });
 
@@ -38,16 +39,40 @@ describe('parked attachments survive leaving a chat before it finished loading (
 });
 
 describe('Send and New Chat while a chat loads (277/283/285)', () => {
-    it('Send keeps the text and starts nothing while the history is loading', async () => {
+    it('Send waits for the load, then goes out with the chat\'s context', async () => {
+        const end = W.beginChatLoad('B');
+        expect(W.isChatLoading()).toBe(true);
+        W.activeChatId = 'B';
+        let ran = false;
+        const origStream = W.agentStreaming;
+        const p = W.agentSend().then(() => { ran = true; });
+        await new Promise(r => setTimeout(r, 20));
+        expect(ran).toBe(false);                     // still waiting
+        end();
+        await p;
+        expect(W.isChatLoading()).toBe(false);
+        void origStream;
+    });
+    it('a Send is dropped when the reader moved to another chat while it waited', async () => {
+        const end = W.beginChatLoad('B');
+        W.activeChatId = 'B';
         const input = document.getElementById('agent-input')!;
         input.textContent = 'hello';
-        W.isChatLoading = () => true;
-        const before = localStorage.length;
-        await W.agentSend();
-        expect(input.textContent).toBe('hello');
-        expect(W.getAiJob?.() ?? '').toBe('');
-        delete W.isChatLoading;
-        void before;
+        const p = W.agentSend();
+        W.activeChatId = 'C';
+        end();
+        await p;
+        expect(input.textContent).toBe('hello');     // nothing was taken from the composer
+    });
+    it('overlapping loads: ready only when the last has finished, saves are held for the newest', async () => {
+        const e1 = W.beginChatLoad('A'), e2 = W.beginChatLoad('B');
+        let ready = false; W.whenChatReady().then(() => { ready = true; });
+        e1(); await Promise.resolve();
+        expect(ready).toBe(false); expect(W.isChatLoading()).toBe(true);
+        e2(); await Promise.resolve();
+        expect(ready).toBe(true); expect(W.isChatLoading()).toBe(false);
+        e2();   // ending twice is harmless
+        expect(W.isChatLoading()).toBe(false);
     });
 });
 

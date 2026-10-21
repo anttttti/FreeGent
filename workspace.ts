@@ -2854,6 +2854,9 @@ async function _restoreProjectData(data) {
     localStorage.setItem('fg_project_name', data.name || '');
     // Refresh in-memory state
     const activeId = localStorage.getItem('fg_active_chat') || '';
+    // Loading until the restored chat's history and messages are in place (no Send, no save of the emptied history meanwhile).
+    const endChatLoad = activeId && typeof (window as any).beginChatLoad === 'function' ? (window as any).beginChatLoad(activeId) as () => void : () => {};
+    try {
     setActiveChatId(activeId);
     lastUserMessageText = '';
     setLastProvider('');
@@ -2871,6 +2874,7 @@ async function _restoreProjectData(data) {
         const ok = await restoreChatMessages(activeId);
         if (!ok && typeof renderHistoryFallback === 'function') renderHistoryFallback();
     }
+    } finally { endChatLoad(); }
     if (typeof updateChatNameBar  === 'function') updateChatNameBar();
     if (typeof updateTokenLabel   === 'function') updateTokenLabel();
     // The restored active chat's unsent draft goes into the composer (an empty composer would later be flushed over the
