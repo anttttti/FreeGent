@@ -3,6 +3,7 @@
 import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
 import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
 import { syncGuidanceMemory } from './skill-guidance.js';
+import { lease, type Lease } from './lease.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
@@ -1176,11 +1177,11 @@ function _pushHistoryMessage(
 let _sendPreparing = false;
 // The send that is waiting for its attachments (and the chat it was started in). Escape cancels it; switching chats
 // meanwhile also ends it, because what the composer holds by then is another chat's text.
-let _prep: { chatId: string | null; cancelled: boolean; wake: () => void } | null = null;
+let _prep: { lease: Lease; wake: () => void } | null = null;
 const _leaseIds = new Set<string>();   // chats whose turn lease the running send holds (chat-lease.ts)
 function cancelSendPreparation(): boolean {
     if (!_prep) return false;
-    _prep.cancelled = true; _prep.wake();
+    _prep.lease.revoke(); _prep.wake();
     return true;
 }
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
@@ -1201,13 +1202,13 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     _sendPreparing = true;
     _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
     setAiJob('send-preparing');
-    const prep = { chatId: activeChatId as string | null, cancelled: false, wake: () => {} };
+    const prep = { lease: lease('send-prep', { chat: activeChatId as string | null, activeChat: true }), wake: () => {} };
     _prep = prep;
     try {
         if (typeof waitForAttachments === 'function')
             await Promise.race([waitForAttachments(), new Promise<void>(r => { prep.wake = r; })]);
         // Nothing was taken from the composer yet: a cancelled or abandoned send leaves the text and the files where they are.
-        if (prep.cancelled || activeChatId !== prep.chatId) return;
+        if (!prep.lease.valid()) return;
         // One tab at a time runs a turn in a chat (chat-lease.ts): the tab that finished last used to overwrite the other's messages.
         if (!acquireChatLease(activeChatId)) {
             appendMessage('model', '<em>This chat is running a turn in another browser tab. Wait for it to finish, or start a new chat. Your message is still in the box.</em>', container);
@@ -1222,6 +1223,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     } finally {
         for (const id of _leaseIds) releaseChatLease(id);
         _leaseIds.clear();
+        prep.lease.finish();
         if (_prep === prep) _prep = null;
         if (aiJob === 'send-preparing') setAiJob('');
         _sendPreparing = false;
@@ -1243,16 +1245,16 @@ function _moveToNewChatIfDeletedElsewhere(container: HTMLElement | null): void {
     if (inp) inp.innerHTML = html;
     for (const i of att.images) addImageAttachment?.(i.mimeType, i.base64, { name: i.name, workspacePath: i.workspacePath });
     for (const f of att.files) restoreFileAttachment?.(f);
-    if (_prep) _prep.chatId = activeChatId;   // the send follows its message: this is not the reader switching chats
+    if (_prep) _prep.lease.rebind(activeChatId);   // the send follows its message: this is not the reader switching chats
     if (acquireChatLease(activeChatId)) _leaseIds.add(activeChatId as string);
     if (hadMessages) appendMessage('model', '<em>The chat you were writing in was deleted in another browser tab. Your message goes to a new chat.</em>', container);
 }
 
 async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
     // Another tab may have saved this chat since this one loaded it: take its messages first.
-    const _preparedFor = _prep?.chatId;
+    const _preparedFor = _prep?.lease.chat;
     if (!agentStreaming) { try { await reloadChatIfChangedElsewhere(); } catch {} }
-    if (_prep && _preparedFor !== undefined && (_prep.cancelled || activeChatId !== _preparedFor)) return;   // cancelled, or the reader moved to another chat meanwhile
+    if (_prep && _preparedFor !== undefined && (!_prep.lease.valid() || activeChatId !== _preparedFor)) return;   // cancelled, or the reader moved to another chat meanwhile
     if (!agentStreaming) _moveToNewChatIfDeletedElsewhere(container);
     if (agentStreaming) {
         // The text-only queue cannot carry media. Preserve the complete submission

@@ -5,6 +5,7 @@ import { installPassHeader, installPrivacyGuard } from './proxy.js';
 import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
+import { lease, revokeLeases } from './lease.js';
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
 // data-theme is set by an inline <script> in <head> (before styles.css) to
@@ -517,7 +518,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (modal.style.display === 'flex') { inp?.focus(); inp?.select(); return; }
         const a = document.activeElement as HTMLElement | null;
         _msgSearchOpener = a && a !== document.body && !modal.contains(a) ? a : null;
-        _msgSearchSeq++;   // a search still reading from storage belongs to the previous opening
+        revokeLeases('msg-search');   // a search still reading from storage belongs to the previous opening
         modal.style.display = 'flex';
         inp?.focus();
         inp && (inp.value = '');
@@ -530,22 +531,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         const modal = document.getElementById('msg-search-modal');
         if (modal) modal.style.display = 'none';
         const back = _msgSearchOpener; _msgSearchOpener = null;
-        _msgSearchSeq++;   // its pending results must not appear in a modal opened later (cases 269/270)
+        revokeLeases('msg-search');   // its pending results must not appear in a modal opened later (cases 269/270)
         if (!restoreFocus) return;
         const target = back && document.contains(back) ? back : document.getElementById('agent-input');
         (target as HTMLElement | null)?.focus?.();
     }
 
-    let _msgSearchSeq = 0;
     async function runMsgSearch(query: string): Promise<void> {
         const results = document.getElementById('msg-search-results');
         if (!results) return;
         _msgSearchIdx = -1;
-        const seq = ++_msgSearchSeq;
-        if (!query.trim()) { results.innerHTML = ''; return; }
+        const t = lease('msg-search', { latest: true });   // a newer keystroke supersedes this search; open/close revoke it
+        if (!query.trim()) { t.finish(); results.innerHTML = ''; return; }
         // Async: chats without a localStorage cache are read from IndexedDB.
         const hits = (await searchMessages?.(query)) ?? [];
-        if (seq !== _msgSearchSeq) return;  // a newer keystroke started another search
+        if (!t.finish()) return;
         if (!hits.length) {
             results.innerHTML = `<div class="msg-search-empty">No results for "${escapeHtml(query)}"</div>`;
             return;

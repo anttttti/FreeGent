@@ -138,8 +138,8 @@ describe('message search lifecycle (codex 269-272, 275) — source-level, the co
         const s = src();
         const open = s.slice(s.indexOf('function openMsgSearch'), s.indexOf('function closeMsgSearch'));
         const close = s.slice(s.indexOf('function closeMsgSearch'), s.indexOf('async function runMsgSearch'));
-        expect(open).toContain('_msgSearchSeq++');
-        expect(close).toContain('_msgSearchSeq++');
+        expect(open).toContain("revokeLeases('msg-search')");
+        expect(close).toContain("revokeLeases('msg-search')");
         expect(open.indexOf("modal.style.display === 'flex'")).toBeLessThan(open.indexOf('_msgSearchOpener ='));
         expect(s).toMatch(/e\.key\.toLowerCase\(\) === 'f' && !e\.defaultPrevented/);
     });

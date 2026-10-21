@@ -3,6 +3,7 @@
 
 import { splitFrontmatter, parseFmLines, setFmLines, buildFrontmatter } from './frontmatter.js';
 import { workspaceEpoch } from './exec-limits.js';
+import { lease } from './lease.js';
 import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
 
 function parseLastLogEntry(content) {
@@ -339,21 +340,21 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
         const files = [...(input.files || [])];
         input.value = '';
         for (const f of files) {
-            // The form was closed (Cancel, Clear, an import) before this file's turn: store nothing (case 239).
-            if (!overlay.isConnected) return;
+            // Each file holds a lease on the form: closed (Cancel, Clear, an import) before this file's turn or while it was being
+            // stored, nothing is stored or kept (cases 236-239).
+            const t = lease('task-upload', { node: overlay });
+            if (!t.valid()) return;
             pendingUploads++;
             try {
                 const path = await (window as any).saveFileToWorkspace(f);
-                if (!overlay.isConnected) {
-                    // Closed while this file was being stored: an orphan unless the form was saved (cases 236/238). The path is
-                    // new (saveFileToWorkspace makes a unique folder), so it cannot be a file the replacement project restored.
-                    if (!saved) void agentDeleteFile?.(path).catch(() => {});
-                    return;
-                }
+                // An orphan unless the form was saved. The path is new (saveFileToWorkspace makes a unique folder), so it cannot
+                // be a file the replacement project restored.
+                t.onInvalid(() => { if (!saved) void agentDeleteFile?.(path).catch(() => {}); });
+                if (!t.finish()) return;
                 uploaded.add(path);
                 addPaths([path]);
             } catch (e: any) {
-                if (overlay.isConnected) $('atd-err').textContent = `Failed to attach ${f.name}: ${e?.message || e}`;
+                if (t.finish()) $('atd-err').textContent = `Failed to attach ${f.name}: ${e?.message || e}`;
             } finally { pendingUploads--; }
         }
     };
