@@ -172,10 +172,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // to a non-director role only when one was explicitly saved for this chat.
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
     if (activeChatId) {
-        const loaded   = await loadChatHistory(activeChatId);
-        const restored = await restoreChatMessages(activeChatId);
-        if (!restored && loaded) renderHistoryFallback();
-        if (typeof restoreRoleForChat === 'function') restoreRoleForChat(activeChatId);
+        const endLoad = beginChatLoad(activeChatId);   // no Send, and no save of the still-empty history, until the chat is restored
+        try {
+            const loaded   = await loadChatHistory(activeChatId);
+            const restored = await restoreChatMessages(activeChatId);
+            if (!restored && loaded) renderHistoryFallback();
+            if (typeof restoreRoleForChat === 'function') restoreRoleForChat(activeChatId);
+        } finally { endLoad(); }
     }
 
     initChatEmpty?.();

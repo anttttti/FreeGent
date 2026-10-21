@@ -130,6 +130,9 @@ declare global {
     var setChatName: any;
     var startInlineRenameCurrentChat: any;
     var switchToChat: any;
+    var beginChatLoad: (id: string) => () => void;
+    var isChatLoading: () => boolean;
+    var whenChatReady: () => Promise<void>;
     var reloadChatIfChangedElsewhere: any;
     var chatChangedElsewhere: any;
     var toggleChatsDropdown: any;

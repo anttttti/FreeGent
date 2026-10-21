@@ -138,10 +138,34 @@ async function _deleteHtml(chatId) {
 // Chat whose history switchToChat is still loading. Until the load lands, the chat history is empty
 // and the messages view is blank, so a save in that window (e.g. a turn finishing after
 // stopNow released agentStreaming) would overwrite the chat's stored history with nothing.
+// A chat is either ready or loading: while its history, log, messages and draft are being restored, the id is active but its
+// content is not there yet. Everything that would act on "the open chat" (Send, New Chat, saving history, reload from another
+// tab) asks first. Several loads can overlap (rapid navigation); the chat is ready when the last one has finished.
+// A turn started in between ran without that history and the restore then removed the new message (codex report 8, cases
+// 276-285, 277/285 in particular).
 let _loadingChatId: string | null = null;
-// True while a chat's history is being restored. A turn started then would run without that history and the restore
-// would drop the new message (codex report 8, cases 277/285); New Chat must not take the still-empty history for a blank chat (283).
-function isChatLoading(): boolean { return _loadingChatId !== null; }
+const _loads: Array<{ id: string }> = [];
+let _readyWaiters: Array<() => void> = [];
+/** Marks `id` as loading; call the returned function when its restore has finished (always, e.g. in a finally block). */
+function beginChatLoad(id: string): () => void {
+    const token = { id };
+    _loads.push(token);
+    _loadingChatId = id;
+    let ended = false;
+    return () => {
+        if (ended) return;
+        ended = true;
+        const i = _loads.indexOf(token);
+        if (i >= 0) _loads.splice(i, 1);
+        _loadingChatId = _loads.length ? _loads[_loads.length - 1].id : null;
+        if (!_loads.length) { const w = _readyWaiters; _readyWaiters = []; for (const f of w) f(); }
+    };
+}
+function isChatLoading(): boolean { return _loads.length > 0; }
+/** Resolves when no chat is loading (at once when none is). */
+function whenChatReady(): Promise<void> {
+    return _loads.length ? new Promise<void>(r => { _readyWaiters.push(r); }) : Promise.resolve();
+}
 
 // localStorage copies of a chat's history (_oh) and message HTML (_msgs) are a cache: a
 // synchronous write that survives the tab dying before the async IndexedDB save lands, and a
@@ -995,7 +1019,7 @@ async function switchToChat(id, force = false) {
         if (typeof clearImageAttachments === 'function') clearImageAttachments();
     }
     activeChatId        = id;
-    _loadingChatId      = id;
+    const endLoad       = beginChatLoad(id);
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
     setChatHistory([]);
     lastProvider        = '';
@@ -1017,7 +1041,7 @@ async function switchToChat(id, force = false) {
         try { await loadChatLog?.(id); } catch (e) { console.warn('[switchToChat] log restore failed:', (e as any)?.message); }
         try { restored = await restoreChatMessages(id); } catch (e) { console.warn('[switchToChat] message restore failed:', (e as any)?.message); }
     } finally {
-        if (_loadingChatId === id) _loadingChatId = null;
+        endLoad();
     }
     // Guard: if another chat switch (or createNewChat) fired during the async restore,
     // this switchToChat is now stale — don't touch UI or state further.
@@ -1172,7 +1196,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, beginChatLoad, whenChatReady, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

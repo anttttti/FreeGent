@@ -1188,7 +1188,15 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // workspace context) is serialized so a double tap cannot start two turns.
     if (agentStreaming) return _agentSendReady(container);
     if (_sendPreparing || aiJob) return;
-    if ((window as any).isChatLoading?.()) return;   // history still loading: the text stays in the box, a Send moments later goes out with the chat's context
+    // History still loading: the Send waits for it (the text stays in the box meanwhile) and goes out with the chat's context,
+    // unless the reader has moved to another chat in the meantime.
+    if ((window as any).isChatLoading?.()) {
+        const id = activeChatId;
+        // A load that never finishes (a storage read that hangs) must not leave Send waiting silently for ever.
+        const ready = await Promise.race([(window as any).whenChatReady?.().then(() => true), new Promise<boolean>(r => setTimeout(() => r(false), 10_000))]);
+        if (!ready) { appendMessage('model', '<em>This chat is still loading, so your message was not sent. It is still in the box; try again in a moment.</em>', container); return; }
+        if (activeChatId !== id) return;
+    }
     (window as any).reopenApprovals?.();   // a Stop or New Chat before this turn refused the old batch's asks; this turn may ask again
     _sendPreparing = true;
     _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
