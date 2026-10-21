@@ -87,6 +87,10 @@ declare global {
     var marked: any;
     // ── bridged by chat-render.ts ──
     var appendMessage: any;
+    var appendModelTurn: any;
+    var userBubbleHtml: any;
+    var buildResponseEl: any;
+    var buildResponseActionRow: any;
     var cleanResponse: any;
     var createResponsePlaceholder: any;
     var getMessagesEl: any;

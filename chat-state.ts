@@ -6,6 +6,7 @@ import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './stor
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { escapeHtml } from './html-escape.js';
 import { lease } from './lease.js';
+import { _stripTerminal } from './turn-protocol.js';
 
 // ── Chat list helpers ──────────────────────────────────────────────────────
 
@@ -634,15 +635,21 @@ function renderHistoryFallback() {
                 // Text-tag tool-calling path's synthetic result message — raw JSON tool output,
                 // not user input. Skip (it renders as noise).
             } else if (cleaned.trim() || userThumbs) {
-                const body = cleaned.trim() ? (renderMarkdown ? renderMarkdown(cleaned) : esc(cleaned).replace(/\n/g,'<br>')) : '';
-                appendMessage('user', userThumbs && body ? userThumbs + '<br>' + body : userThumbs + body);
+                // The live bubble shows an attached file as a chip; its stored form is a note line ("[Attached file: name, size; ...]").
+                const chips: string[] = [];
+                const text = cleaned.replace(/^\[(?:Attached (?:file|audio|video)|PDF attached|Binary file attached|(?:Audio|Video) attached): ([^,\]]+?)(?:, [^\]]*)?\]\s*$/gm, (_m, name) => {
+                    const icon = (window as any)._fileIcon?.('', name) ?? '📝';
+                    chips.push(`<span class="chat-file-chip">${icon} ${esc(name)}</span>`);
+                    return '';
+                });
+                appendMessage('user', userBubbleHtml({ thumbsHtml: userThumbs, chipsHtml: chips.join(''), text }));
             }
         }
         else if (role === 'assistant') {
             // Show any text content in the assistant message.
             if (typeof msg.content === 'string' && msg.content) {
-                const t = cleanResponse(msg.content);
-                if (t) { const el = appendMessage('model', renderMarkdown(t)); processImgSlots?.(el); }
+                const t = _stripTerminal(cleanResponse(msg.content));
+                if (t.trim()) appendModelTurn(t);
             }
             // Show tool calls as a compact summary so the conversation thread is readable.
             if (msg.tool_calls?.length) {
@@ -666,8 +673,8 @@ function renderHistoryFallback() {
         } else if (role === 'model') {
             const parts = (msg.parts || []).filter((p: any) => p.text && !p.thought);
             if (parts.length) {
-                const t = cleanResponse(parts.map((p: any) => p.text).join(''));
-                if (t) { const el = appendMessage('model', renderMarkdown(t)); processImgSlots?.(el); }
+                const t = _stripTerminal(cleanResponse(parts.map((p: any) => p.text).join('')));
+                if (t.trim()) appendModelTurn(t);
             }
         }
         // role='tool' / 'function' results are skipped — they're raw JSON and add noise.

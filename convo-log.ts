@@ -84,6 +84,15 @@ function _persistLogRecord(record: ConvoLogEntry): void {
     sessionLogTurn?.(record);
 }
 
+/** The one way a turn record enters the log: memory (capped), this tab's session copy, the chat's persisted log and the session
+ *  store. Live turns and imported chats both come through here, so a record is never in memory without being persisted. */
+function commitLogRecord(record: ConvoLogEntry): void {
+    conversationLog.push(record);
+    if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
+    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+    _persistLogRecord(record);
+}
+
 export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
     const record = {
         ts:             new Date().toISOString(),
@@ -91,10 +100,7 @@ export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
         chatName:       (() => { try { return getChatList().find(c => c.id === activeChatId)?.name ?? null; } catch { return null; } })(),
         ...entry,
     };
-    conversationLog.push(record);
-    if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
-    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
-    _persistLogRecord(record);
+    commitLogRecord(record);
     _headlessWriter?.(record);
     _metricsWriter?.(record);
 }
@@ -389,13 +395,7 @@ async function importChat() {
             const id = activeChatId;
             // Persisted like any logged turn (original timestamps kept): in memory alone the imported rows were gone after
             // a reload and the chat's model statistics started empty (codex report 8, cases 304-306).
-            for (const t of data.sessionLogTurns) {
-                const rec = { ...t, chatId: id };
-                conversationLog.push(rec);
-                _persistLogRecord(rec);
-            }
-            if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
-            try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+            for (const t of data.sessionLogTurns) commitLogRecord({ ...t, chatId: id });
             _updateLogBadge();
         }
 
