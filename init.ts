@@ -862,6 +862,8 @@ Object.assign(window, {
 // restored to the opener on close), Tab kept inside, Escape = the dialog's own Close/Cancel (so cleanup
 // handlers run).
 const _FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// Every dialog layer. The workspace file picker is one: it opens above the task form and needs the same role, name and focus return.
+const _MODAL_SEL = '.fg-modal-overlay, .ws-pick-overlay';
 const _modalOpeners = new Map<HTMLElement, HTMLElement | null>();
 // The last element focused outside any dialog. A dialog that focuses its own first field while it is being built (the task
 // and model-edit dialogs do) has already moved focus by the time _enhanceModal runs, so "the element focused now" would
@@ -891,10 +893,10 @@ function _enhanceModal(ov: HTMLElement) {
     if (_modalOpeners.has(ov)) return;
     const _now = document.activeElement as HTMLElement | null;
     _modalOpeners.set(ov, _now && ov.contains(_now) ? _lastOutsideFocus : _now);
-    const box = (ov.querySelector('.fg-modal') as HTMLElement) || ov;
+    const box = (ov.querySelector('.fg-modal, .ws-pick-box') as HTMLElement) || ov;
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
-    const title = ov.querySelector('.fg-modal-title') as HTMLElement | null;
+    const title = ov.querySelector('.fg-modal-title, .ws-pick-title') as HTMLElement | null;
     if (title) {
         if (!title.id) title.id = `fg-modal-title-${_modalOpeners.size}-${Date.now().toString(36)}`;
         box.setAttribute('aria-labelledby', title.id);
@@ -909,7 +911,7 @@ function _enhanceModal(ov: HTMLElement) {
 function _modalKeydown(e: KeyboardEvent) {
     // The workspace file picker sits above whatever opened it (the task form), so it takes part in the same stack: with only
     // .fg-modal-overlay counted, Tab and Escape aimed at the picker were handled by the dialog behind it.
-    const all = document.querySelectorAll<HTMLElement>('.fg-modal-overlay, .ws-pick-overlay');
+    const all = document.querySelectorAll<HTMLElement>(_MODAL_SEL);
     const ov = all[all.length - 1];          // only the topmost dialog reacts
     if (!ov) return;
     if (e.key === 'Escape') {
@@ -933,18 +935,18 @@ function initModalA11y() {
     const relabel = () => { clearTimeout(_lblTimer); _lblTimer = setTimeout(() => labelControls(document), 250); };
     for (const sel of ['#tab-content [data-panel="settings"]', '.chat-toolbar', '#hdr-bar'])
         document.querySelectorAll(sel).forEach(el => new MutationObserver(relabel).observe(el, { childList: true, subtree: true }));
-    document.querySelectorAll<HTMLElement>('.fg-modal-overlay').forEach(_enhanceModal);
+    document.querySelectorAll<HTMLElement>(_MODAL_SEL).forEach(_enhanceModal);
     document.addEventListener('keydown', _modalKeydown, true);
     document.addEventListener('focusin', e => {
         const t = e.target as HTMLElement | null;
-        if (t && t !== document.body && !t.closest?.('.fg-modal-overlay')) _lastOutsideFocus = t;
+        if (t && t !== document.body && !t.closest?.(_MODAL_SEL)) _lastOutsideFocus = t;
     }, true);
     new MutationObserver(muts => {
         for (const m of muts) {
             m.addedNodes.forEach(n => {
                 if (!(n instanceof HTMLElement)) return;
-                if (n.classList.contains('fg-modal-overlay')) _enhanceModal(n);
-                else n.querySelectorAll?.('.fg-modal-overlay').forEach(o => _enhanceModal(o as HTMLElement));
+                if (n.matches(_MODAL_SEL)) _enhanceModal(n);
+                else n.querySelectorAll?.(_MODAL_SEL).forEach(o => _enhanceModal(o as HTMLElement));
             });
             m.removedNodes.forEach(n => {
                 if (!(n instanceof HTMLElement) || !_modalOpeners.has(n)) return;

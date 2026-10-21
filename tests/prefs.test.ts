@@ -86,3 +86,21 @@ describe('rules and skills follow stored preferences (251-255)', () => {
         await vi.waitFor(() => expect(W.skillsRegistry.has(other)).toBe(true));
     });
 });
+
+describe('the model button follows another tab\'s model change (250)', () => {
+    beforeAll(async () => {
+        W.matchMedia ??= () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+        await import('../settings-ui.ts'); await import('../config.ts');
+    });
+    it('a storage event for the model list re-renders the button', async () => {
+        localStorage.setItem('fg_groq_key', 'k');
+        document.body.innerHTML = '<button id="input-model-btn"></button>';
+        W.updateInputModelBtn();
+        const before = document.getElementById('input-model-btn')!.textContent;
+        const next = 'groq|openai/gpt-oss-120b';
+        localStorage.setItem('fg_main_models', JSON.stringify([next]));
+        window.dispatchEvent(new StorageEvent('storage', { key: 'fg_main_models', newValue: JSON.stringify([next]), storageArea: localStorage }));
+        await vi.waitFor(() => expect(document.getElementById('input-model-btn')!.textContent).not.toBe(before));
+        expect(document.getElementById('input-model-btn')!.textContent).toMatch(/gpt-oss/i);
+    });
+});

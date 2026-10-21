@@ -1337,6 +1337,9 @@ async function _deleteSkillEntry(skill) {
     const isRule = skill.type === 'rule';
     try {
         await agentDeleteFile(`${isRule ? 'rules' : 'skills'}/${skill.name}/${isRule ? 'RULE' : 'SKILL'}.md`);
+        // Deleting is deliberate: the customisation (keywords, body overrides) goes with it. Kept by name, it would mask the
+        // content of a later rule created under the same name (codex report 8, case 259).
+        _resetSkillTriggerOverrides(skill.name);
         rehydrateSkillPrefs();
         activeSkills.delete(skill.name);
         localStorage.setItem('fg_active_skills', JSON.stringify([...activeSkills]));
@@ -1716,4 +1719,4 @@ function setupSkillAutocomplete() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { BUILTIN_SKILLS, BUILTIN_RULES, loadSkills, renderSkillsList, toggleSkill, installSkillFromFiles, switchSkillSubtab, createSkillFromForm, createRuleFromForm, _TRIGGER_FIELDS, _buildSkillTriggerEditor, renderSkillsChecklist, renderToolsChecklist, setupSkillAutocomplete });
+Object.assign(window, { BUILTIN_SKILLS, BUILTIN_RULES, loadSkills, renderSkillsList, toggleSkill, installSkillFromFiles, switchSkillSubtab, createSkillFromForm, createRuleFromForm, _TRIGGER_FIELDS, _buildSkillTriggerEditor, _deleteSkillEntry, renderSkillsChecklist, renderToolsChecklist, setupSkillAutocomplete });

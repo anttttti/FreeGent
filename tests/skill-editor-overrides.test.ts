@@ -50,3 +50,19 @@ describe('skill and rule editor', () => {
         expect(stored().r).toEqual({ trigger: 'custom words' });
     });
 });
+
+describe('deleting a custom rule (259)', () => {
+    it('removes its stored customisation, so a rule created under the same name starts from its own file', async () => {
+        W.agentDeleteFile = async () => {};
+        localStorage.setItem('fg_skill_triggers', JSON.stringify({ r: { body: 'old body', trigger: 'old words' }, other: { trigger: 'keep' } }));
+        await W._deleteSkillEntry({ name: 'r', type: 'rule' });
+        expect(stored()).toEqual({ other: { trigger: 'keep' } });
+    });
+    it('a failed delete keeps the customisation', async () => {
+        W.agentDeleteFile = async () => { throw new Error('nope'); };
+        W.alert = () => {};
+        localStorage.setItem('fg_skill_triggers', JSON.stringify({ r: { trigger: 'old words' } }));
+        await W._deleteSkillEntry({ name: 'r', type: 'rule' });
+        expect(stored().r).toEqual({ trigger: 'old words' });
+    });
+});

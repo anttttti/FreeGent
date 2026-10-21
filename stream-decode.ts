@@ -387,6 +387,9 @@ export async function nonStreamOAICompat(resp: any, onChunk: any) {
 // the content-type branch.
 export async function decodeOAIResponse(resp: any, onChunk: any) {
     const ct = resp.headers?.get?.('content-type') ?? '';
+    // A 200 web page (proxy error page, captive portal, wrong URL) is not a reply: say so instead of the JSON parser's
+    // "Unexpected end of JSON input", which was retried as a server fault for as long as the retry limit allowed.
+    if (/text\/html/i.test(ct)) throw new Error(`HTTP 200: the endpoint answered with a web page (${ct.split(';')[0].trim()}), not an API response. Check the endpoint URL and any proxy in front of it.`);
     return ct.includes('text/event-stream')
         ? streamOAICompat(resp, onChunk)
         : nonStreamOAICompat(resp, onChunk);
