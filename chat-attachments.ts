@@ -36,16 +36,26 @@ function takeAttachmentFailures(): string[] {
     for (const f of mine) _failedReads.splice(_failedReads.indexOf(f), 1);
     return mine.map(f => f.text);
 }
-function _attachmentError(name: string, error: any): void {
-    _failedReads.push({ owner: _readerChat(), text: `${name}: ${error?.message || 'Could not read attachment'}` });
+// One read can fail on two paths (the reader's own rejection and the caller that awaited it): report it once.
+const _reportedErrors = new WeakSet<object>();
+function _showAttachmentWarning(text: string): void {
     const strip = document.getElementById('img-strip');
     if (!strip) return;
     const warning = document.createElement('div');
     warning.className = 'file-chip media-warn-chip';
     warning.setAttribute('role', 'alert');
-    warning.textContent = `${name}: ${error?.message || 'Could not read attachment'}`;
+    warning.textContent = text;
     strip.appendChild(warning);
     strip.style.display = 'flex';
+}
+// `owner`: the chat the file was chosen in. A read that fails after the reader moved to another chat belongs to the chat it was
+// started in (its chip and its note to the model), not to the one that happens to be open when the failure arrives.
+function _attachmentError(name: string, error: any, owner: string | null = _readerChat()): void {
+    if (error && typeof error === 'object') { if (_reportedErrors.has(error)) return; _reportedErrors.add(error); }
+    const text = `${name}: ${error?.message || 'Could not read attachment'}`;
+    _failedReads.push({ owner, text });
+    if (owner !== _readerChat() && owner) { _parkFor(owner).warnings.push(text); return; }   // shown when the reader comes back
+    _showAttachmentWarning(text);
 }
 function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL'): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -194,6 +204,8 @@ function clearImageAttachments(): void {
     _attachmentReads.clear();
     _pendingImages = [];
     _pendingFiles  = [];
+    // Failure notes still waiting for the next send belong to the composer being emptied (a send has taken its own already).
+    for (let i = _failedReads.length - 1; i >= 0; i--) if (_failedReads[i].owner === _readerChat()) _failedReads.splice(i, 1);
     const strip = document.getElementById('img-strip');
     if (strip) { strip.innerHTML = ''; strip.style.display = 'none'; }
 }
@@ -201,21 +213,23 @@ function clearImageAttachments(): void {
 // Pending attachments belong to the chat they were chosen in: switching chats parks them (in memory, per chat)
 // and switching back puts the chips back, like the text draft. Before this the draft came back and the file
 // did not, so a restored draft was sent without the attachment its author had chosen.
-const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pendingFiles }>();
+const _parkedAttachments = new Map<string, { images: _Img[]; files: typeof _pendingFiles; warnings: string[] }>();
 function parkPendingAttachments(chatId: string | null | undefined): void {
     if (!chatId) return;
     for (const t of _readTokens) if (t.owner === chatId) t.survives = true;   // reads still running follow their chat
-    if (_pendingImages.length || _pendingFiles.length) _parkedAttachments.set(chatId, { images: [..._pendingImages], files: [..._pendingFiles] });
+    const warnings = _parkedAttachments.get(chatId)?.warnings ?? [];
+    if (_pendingImages.length || _pendingFiles.length || warnings.length) _parkedAttachments.set(chatId, { images: [..._pendingImages], files: [..._pendingFiles], warnings: [...warnings] });
     else _parkedAttachments.delete(chatId);
 }
 /** Forget every parked attachment and cancel every read (Clear project: they belong to the project that is going). */
 function clearParkedAttachments(): void {
     _parkedAttachments.clear();
+    _failedReads.length = 0;
     for (const t of _readTokens) t.cancelled = true;
 }
-function _parkFor(chatId: string): { images: _Img[]; files: typeof _pendingFiles } {
+function _parkFor(chatId: string): { images: _Img[]; files: typeof _pendingFiles; warnings: string[] } {
     let p = _parkedAttachments.get(chatId);
-    if (!p) { p = { images: [], files: [] }; _parkedAttachments.set(chatId, p); }
+    if (!p) { p = { images: [], files: [], warnings: [] }; _parkedAttachments.set(chatId, p); }
     return p;
 }
 function restoreParkedAttachments(chatId: string | null | undefined): void {
@@ -224,6 +238,7 @@ function restoreParkedAttachments(chatId: string | null | undefined): void {
     _parkedAttachments.delete(chatId!);
     for (const img of parked.images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
     for (const f of parked.files) restoreFileAttachment(f);
+    for (const w of parked.warnings) _showAttachmentWarning(w);
 }
 // A read still running when the reader returns to its chat is waited for again and shown again, so a Send does not go out
 // without a file the reader already chose (the file would otherwise turn up afterwards, attached to a later turn).
@@ -274,7 +289,7 @@ function addFileAttachment(file: File, existingPath?: string): Promise<void> {
     // Attach a rejection handler even when the caller is an inline event handler.
     void read.then(() => { loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token); }, error => {
         loading.remove(); _attachmentReads.delete(read); _readTokens.delete(token);
-        if (!token.cancelled && token.owner === _readerChat()) _attachmentError(file.name, error);
+        if (!token.cancelled) _attachmentError(file.name, error, token.owner);
     });
     return read;
 }
@@ -421,7 +436,12 @@ function closeAttachMenu(): void { document.getElementById('attach-menu')?.class
 document.addEventListener('click', e => {
     if (!(e.target as HTMLElement | null)?.closest?.('.attach-wrap')) closeAttachMenu();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAttachMenu(); });
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    // Claim the key when the menu was open, so the global Escape (stop the reply) does not also act on it.
+    if (document.getElementById('attach-menu')?.classList.contains('open')) e.preventDefault();
+    closeAttachMenu();
+});
 
 // "Attach": the device's own attachment sheet (Photo Library / Take Photo / Files on phones).
 function attachFromDevice(): void { closeAttachMenu(); (document.getElementById('attach-device-input') as HTMLInputElement | null)?.click(); }
@@ -462,7 +482,8 @@ async function pickWorkspaceFiles(heading = 'Attach files from the workspace'): 
         const render = () => {
             const q = filter.value.trim().toLowerCase();
             list.innerHTML = '';
-            const shown = files.filter(f => !q || f.name.toLowerCase().includes(q)).slice(0, 300);
+            const matching = files.filter(f => !q || f.name.toLowerCase().includes(q));
+            const shown = matching.slice(0, 300);
             if (!shown.length) { list.textContent = files.length ? 'No matching files.' : 'The workspace has no files.'; return; }
             for (const f of shown) {
                 const row = document.createElement('label');
@@ -475,6 +496,12 @@ async function pickWorkspaceFiles(heading = 'Attach files from the workspace'): 
                 row.append(cb, nm);
                 if (typeof f.size === 'number') { const sz = document.createElement('span'); sz.className = 'ws-pick-size'; sz.textContent = _fmtSz(f.size); row.appendChild(sz); }
                 list.appendChild(row);
+            }
+            if (matching.length > shown.length) {
+                const more = document.createElement('div');
+                more.className = 'ws-pick-size';
+                more.textContent = `Showing ${shown.length} of ${matching.length} files. Type in the filter to find the others.`;
+                list.appendChild(more);
             }
         };
         filter.oninput = render;

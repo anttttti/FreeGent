@@ -2,6 +2,7 @@
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
 import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
 import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
+import { syncGuidanceMemory } from './skill-guidance.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
@@ -988,7 +989,7 @@ async function _processQueue(): Promise<void> {
 // Reset per-turn bookkeeping. history is the conversation array for this session
 // (the chat's history for the default session, the session's own for isolated ones).
 function _resetPerTurnState(history: readonly any[]): void {
-    if (history.length === 0) setReactiveFired(new Set());
+    syncGuidanceMemory(activeChatId, history.length);
     setFailureCounts({});
     setToolCallHistory([]);
 }

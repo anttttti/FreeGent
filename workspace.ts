@@ -10,6 +10,7 @@ import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
+import { bumpWorkspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -2567,7 +2568,7 @@ function _snapshotSettings() {
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
-        if (_isProjectChatKey(k) || k.startsWith('fg_ckpt_') || k === 'fg_project_name') continue;
+        if (_isProjectChatKey(k) || k.startsWith('fg_ckpt_') || k === 'fg_project_name' || k === WORKSPACE_EPOCH_KEY) continue;
         snap[k] = localStorage.getItem(k);
     }
     return snap;
@@ -2792,7 +2793,7 @@ function _discardProjectUiState(): void {
 async function _restoreProjectData(data) {
     validateProjectData(data);
     if (!(await _stopTurnsBeforeReplace())) throw new Error('Import cancelled: Autopilot is still running.');
-    _workspaceGeneration++;
+    _workspaceGeneration++; bumpWorkspaceEpoch();
     _discardProjectUiState();
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
     // Something in the restore chain can trigger saveSettings() with empty form fields;
@@ -2933,7 +2934,7 @@ async function clearProject() {
         // A running turn belongs to the project being cleared: its tool calls would write into the empty project and its
         // messages into the next chat. Import and chat deletion stop it first; so does this.
         if (!(await _stopTurnsBeforeReplace())) return;
-        _workspaceGeneration++;
+        _workspaceGeneration++; bumpWorkspaceEpoch();
         _discardProjectUiState();
         const _settingsSnap = _snapshotSettings();
         // Clear workspace files
@@ -2981,7 +2982,11 @@ async function saveProject() {
         // The id is the project's name reduced to letters and digits, so "Release 1.0" and "Release 1-0" share one. Saving the same
         // name again updates its slot; a different name that maps to a taken id gets its own.
         const base = data.id;
-        for (let n = 2; n < 1000; n++) {
+        // A name that is already saved keeps its slot, wherever it is: after the slot that took the plain id was deleted, the same name
+        // saved again used to land on the freed id and show up twice.
+        const sameName = (await _idbGetAllProjects()).find(p => p.name === data.name);
+        if (sameName) data.id = sameName.id;
+        else for (let n = 2; n < 1000; n++) {
             const other = await _idbGetProject(data.id);
             if (!other || other.name === data.name) break;
             data.id = `${base}-${n}`;
@@ -3002,9 +3007,9 @@ async function loadProjectUI() {
     ov.className = 'fg-modal-overlay';
     const rows = projects.map(p =>
         `<div class="fg-proj-row" data-id="${p.id}">
-           <span class="fg-proj-name">${escapeHtml(p.name)}</span>
+           <button class="fg-proj-name fg-proj-load" title="Load this project" style="background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer">${escapeHtml(p.name)}</button>
            <span class="fg-proj-date">${p.savedAt?.slice(0,16).replace('T',' ') || ''}</span>
-           <button class="fg-proj-delete ws-action-btn" data-del="${p.id}">✕</button>
+           <button class="fg-proj-delete ws-action-btn" data-del="${p.id}" aria-label="Delete ${escapeHtml(p.name)}" title="Delete this saved project">✕</button>
          </div>`
     ).join('');
     ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">Load Project</span><button class="fg-modal-close">✕</button></div>
@@ -3017,8 +3022,11 @@ async function loadProjectUI() {
         (btn as HTMLElement).onclick = async e => {
             e.stopPropagation();
             await _idbDeleteProject((btn as HTMLElement).dataset.del);
-            btn.closest('.fg-proj-row').remove();
+            const row = btn.closest('.fg-proj-row');
+            const next = (row.nextElementSibling ?? row.previousElementSibling) as HTMLElement | null;
+            row.remove();
             if (!ov.querySelector('.fg-proj-row')) ov.remove();
+            else next?.querySelector<HTMLElement>('.fg-proj-load')?.focus();   // focus left with the removed row, so the dialog's keys went nowhere
         };
     });
 

@@ -408,6 +408,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (_pick) { e.preventDefault(); _pick.querySelector<HTMLElement>('.ws-pick-footer button')?.click(); return; }
             const _search = document.getElementById('msg-search-modal');
             if (_search && _search.style.display !== 'none' && _search.style.display !== '') { closeMsgSearch(); return; }
+            // So is an open popup (model list, attach menu): Escape closes it and leaves the reply running.
+            if (e.defaultPrevented) return;
+            const _models = document.getElementById('input-model-picker');
+            if (_models?.classList.contains('picker-open')) { _models.classList.remove('picker-open'); document.getElementById('input-model-btn')?.focus(); return; }
+            const _attach = document.getElementById('attach-menu');
+            if (_attach?.classList.contains('open')) { _attach.classList.remove('open'); return; }
             if (agentStreaming) { stopNow?.(); return; }
             if ((window as any).cancelSendPreparation?.()) return;   // a send still waiting for its attachments
         }
@@ -892,12 +898,14 @@ function _enhanceModal(ov: HTMLElement) {
 }
 
 function _modalKeydown(e: KeyboardEvent) {
-    const all = document.querySelectorAll<HTMLElement>('.fg-modal-overlay');
+    // The workspace file picker sits above whatever opened it (the task form), so it takes part in the same stack: with only
+    // .fg-modal-overlay counted, Tab and Escape aimed at the picker were handled by the dialog behind it.
+    const all = document.querySelectorAll<HTMLElement>('.fg-modal-overlay, .ws-pick-overlay');
     const ov = all[all.length - 1];          // only the topmost dialog reacts
     if (!ov) return;
     if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation();
-        const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel');
+        const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel, .ws-pick-footer button');
         if (btn) btn.click(); else ov.remove();
     } else if (e.key === 'Tab') {
         const f = Array.from(ov.querySelectorAll<HTMLElement>(_FOCUSABLE)).filter(x => x.offsetParent !== null || x === document.activeElement);

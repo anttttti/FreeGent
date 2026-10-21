@@ -715,7 +715,7 @@
                         </select>
                         <p class="settings-hint agent-hint">Before executing fetch_url, write_file, execute_code, or delete_file, screen the call for prompt injection. Heuristic: fast regex patterns (injection phrases, unsafe paths). LLM-based: also asks a model whether the call follows from your request, but only after content from the web, search or an external server has been read in the turn; adds a model call per risky call.</p>
                         <label class="settings-input-label" style="margin-top:8px">Tool approval</label>
-                        <select class="settings-input" id="tool-approval" style="width:auto" onchange="saveAgentSetting('fg_tool_approval', this.value)">
+                        <select class="settings-input" id="tool-approval" style="width:auto;max-width:100%" onchange="saveAgentSetting('fg_tool_approval', this.value)">
                             <option value="off">Off (default)</option>
                             <option value="high">High-risk only (delete, execute)</option>
                             <option value="all">All writes</option>

@@ -17,3 +17,14 @@ describe('IME composition Enter', () => {
         for (const m of html.matchAll(/onkeydown="if\(event\.key==='Enter'([^"]*)"/g)) expect(m[1]).toContain('isComposing');
     });
 });
+
+describe('Escape ownership (campaign 8 cases 163/164/177/181)', () => {
+    it('the dialog stack includes the workspace picker', () => {
+        expect(readFileSync('init.ts', 'utf8')).toMatch(/querySelectorAll<HTMLElement>\('\.fg-modal-overlay, \.ws-pick-overlay'\)/);
+    });
+    it('an open model list or attach menu takes Escape before the stop-reply action', () => {
+        const src = readFileSync('init.ts', 'utf8');
+        expect(src.indexOf("picker-open')) {")).toBeGreaterThan(0);
+        expect(src.indexOf("picker-open')) {")).toBeLessThan(src.indexOf('if (agentStreaming) { stopNow?.(); return; }'));
+    });
+});
