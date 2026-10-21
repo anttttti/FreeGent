@@ -1266,7 +1266,7 @@ function _renderInputModelPicker(picker: HTMLElement): void {
             if (e.key === 'ArrowDown') { e.preventDefault(); opts[Math.min(i + 1, opts.length - 1)]?.focus(); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); opts[Math.max(i - 1, 0)]?.focus(); }
             else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (document.activeElement as HTMLElement)?.click(); }
-            else if (e.key === 'Escape') { picker.classList.remove('picker-open'); document.getElementById('input-model-btn')?.focus(); }
+            else if (e.key === 'Escape') { e.preventDefault(); picker.classList.remove('picker-open'); document.getElementById('input-model-btn')?.focus(); }
         });
     }
 }

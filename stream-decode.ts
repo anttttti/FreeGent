@@ -17,7 +17,7 @@
 //
 // Follows the step-validator/…/model-router pattern: ES module, exports, window bridge.
 
-import { softStopPending } from './state.js';
+import { softStopPending, activeAbortController } from './state.js';
 import { asTransportError } from './retry.js';
 
 // 90 s between any SSE bytes — safe for even the slowest streaming models (chunks arrive
@@ -50,10 +50,22 @@ export async function* readSSE(resp: any) {
     const decoder = new TextDecoder();
     let buffer: string = '';
     let gotData = false;
+    // Stop must end the read even where the engine does not reject a pending read() when the request is aborted: with WebKit the
+    // turn then never unwound, and every later send was refused as "already preparing" until the page was reloaded (campaign 5).
+    const signal: AbortSignal | undefined = activeAbortController?.signal;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+        if (!signal) return;
+        const fail = () => { reader.cancel().catch(() => {}); reject(new DOMException('The operation was aborted.', 'AbortError')); };
+        if (signal.aborted) { fail(); return; }
+        onAbort = fail; signal.addEventListener('abort', fail, { once: true });
+    });
+    aborted.catch(() => {});   // never an unhandled rejection when the read ends first
     try {
         while (true) {
             let timerId: ReturnType<typeof setTimeout>;
             const { done, value } = await Promise.race([
+                aborted,
                 reader.read().catch(e => { throw asTransportError(e); }), // a broken stream, not a bug
                 new Promise((_, reject) => {
                     timerId = setTimeout(() => {
@@ -84,7 +96,7 @@ export async function* readSSE(resp: any) {
                 try { yield JSON.parse(payload); } catch {}
             }
         }
-    } finally { try { reader.releaseLock(); } catch {} }
+    } finally { if (onAbort) signal?.removeEventListener('abort', onAbort); try { reader.releaseLock(); } catch {} }
 }
 
 // ── Thinking-tag helpers ──────────────────────────────────────────────────────

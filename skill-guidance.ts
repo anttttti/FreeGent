@@ -3,7 +3,7 @@
 // Depends on: config.js globals (skillsRegistry, activeSkills),
 //             state.js (currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts).
 import { runtime } from './runtime.js';
-import { currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts, _toolCallHistory } from './state.js';
+import { currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts, _toolCallHistory, setReactiveFired } from './state.js';
 
 // R5 — single role-exclusion predicate. roleName is lowercased or null.
 function _skillExcludedForRole(skill, roleName) {
@@ -116,6 +116,36 @@ export function evaluateSkillTriggers(registry: any, seed: any, inputs: any): Se
     return fired;
 }
 
+// Guidance already given to the model is remembered in _reactiveFired so it is not repeated every turn. That memory is only true while
+// the text it describes is still in the conversation the model sees, and it was kept page-wide, cleared only when a turn started on an
+// empty history. So guidance fired in chat A was withheld from chat B that never got it, and after a rewind removed the guided turn
+// it was withheld from the replacement (campaign 8 cases 190-200). Now the fired set belongs to a chat and to the history it was
+// given in: each name remembers the history length when its turn started, and a history that has been cut back to that point forgets it.
+type _GuidanceMemory = { fired: Set<string>; since: Map<string, number>; lastLen: number };
+const _guidanceMemory = new Map<string, _GuidanceMemory>();
+let _guidanceOwner: string | null = null;
+const _guidanceBodies = new Map<string, string>();   // `${chat}\0${name}` → the body that was given
+export function syncGuidanceMemory(chatKey: string | null | undefined, historyLen: number): void {
+    const key = chatKey ?? '';
+    if (_guidanceOwner !== key) {
+        // Leaving a chat: keep its set where it is; the next one starts from its own (or an empty) set.
+        if (_guidanceOwner !== null) { const m = _guidanceMemory.get(_guidanceOwner); if (m) m.fired = _reactiveFired; }
+        let m = _guidanceMemory.get(key);
+        if (!m) { m = { fired: new Set(), since: new Map(), lastLen: 0 }; _guidanceMemory.set(key, m); }
+        _guidanceOwner = key;
+        setReactiveFired(m.fired);
+    }
+    const m = _guidanceMemory.get(key)!;
+    m.fired = _reactiveFired;
+    // Names added since the last turn started were given in that turn: they sit at its first message or later.
+    for (const n of m.fired) if (!m.since.has(n)) m.since.set(n, m.lastLen);
+    for (const [n, at] of m.since) {
+        if (!m.fired.has(n)) { m.since.delete(n); continue; }
+        if (historyLen === 0 || at >= historyLen) { m.fired.delete(n); m.since.delete(n); _guidanceBodies.delete(`${key}\0${n}`); }
+    }
+    m.lastLen = historyLen;
+}
+
 export function buildTriggeredGuidance(): string {
     if (!currentTurnSkills.size) return '';
     const parts = [];
@@ -126,12 +156,15 @@ export function buildTriggeredGuidance(): string {
         // when history is empty — i.e. at task/session start).  If this skill already fired
         // as a prelude on an earlier turn, the guidance is already in the model's context;
         // re-injecting it every turn adds token cost with no benefit.
-        if (_reactiveFired.has(n)) continue;
         const s = skillsRegistry.get(n);
+        const bodyKey = `${_guidanceOwner ?? ''}\0${n}`;
+        // Given before: skip it, unless its text depends on the setup (document guidance names the available runtime) and that changed.
+        if (_reactiveFired.has(n) && (!s || !_guidanceBodies.has(bodyKey) || (typeof s.body_fn === 'function' ? s.body_fn() : s.body) === _guidanceBodies.get(bodyKey))) continue;
         if (!s || _skillExcludedForRole(s, _role) || _skillExcludedForMode(s)) continue;
         const body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) continue; // body_fn may return '' when tools/env conditions aren't met (e.g. 'documents' without execute_code)
         parts.push(`### ${s.name}\n${body}`);
+        _guidanceBodies.set(bodyKey, body);
         _reactiveFired.add(n);  // shared dedup: prelude-injected skills won't re-fire as reactive nudges or prelude on later turns
     }
     if (!parts.length) return '';

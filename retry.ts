@@ -210,6 +210,10 @@ function _retryNote(ep: any, n: number, e: any, waitMs: number): string {
 
 export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverride = null, onFailure = null) {
     let weakProse = 0;
+    // This call's own turn: activeAbortController is replaced when the next turn starts, and softStopPending is cleared by that send,
+    // so a request that was stopped and is still unwinding must not look like a network abort by then (it was retried, and its answer
+    // landed after the next message: campaign 5 OC7-ABORT-RESEND).
+    const _turnSignal = activeAbortController?.signal;
     for (let attempt = 0; ; attempt++) {
         try { return await fn(); }
         catch (e) {
@@ -218,7 +222,7 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
             try { onFailure?.(e); } catch {}
             // Soft-stop is active (timeout or UI stop button): never retry — the caller will
             // see the error and return *(break)* or propagate it cleanly.
-            if (softStopPending) throw e;
+            if (softStopPending || _turnSignal?.aborted) throw e;
             // AbortErrors when softStopPending=false are timeouts or network aborts — not user
             // aborts. Genuine user aborts are caught above (line 90 fires first). Retrying
             // is correct: AbortSignal.any propagates the timeout reason as AbortError in some

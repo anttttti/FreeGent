@@ -380,25 +380,37 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
         try {
             if (parsed && opts.path) {
                 const stripBullet = (l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '');
-                const crit = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
-                const checked = new Set(parsed.criteria.filter(c => c.checked).map(c => c.text));
+                // The file may have changed since the dialog opened (another tab, the agent: status, ticked criteria, log lines). The
+                // dialog only replaces what the user edited in it; everything else comes from the file as it is now.
+                let latest = parsed;
+                try {
+                    const nowText = await agentReadFile(opts.path);
+                    if (typeof nowText === 'string' && nowText.replace(/\r\n/g, '\n') !== (opts.content || '').replace(/\r\n/g, '\n')) latest = parseTaskForEdit(nowText);
+                } catch {}
+                const typedCriteria = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
+                const criteriaEdited = typedCriteria.join('\n') !== parsed.criteria.map(c => c.text).join('\n');
+                const crit = criteriaEdited || latest === parsed ? typedCriteria : latest.criteria.map(c => c.text);
+                const checked = new Set(latest.criteria.filter(c => c.checked).map(c => c.text));
+                const descEdited = $('atd-desc').value.trim() !== parsed.desc.trim();
+                const descOut = descEdited ? $('atd-desc').value.trim() : latest.desc.trim();
+                const attachedOut = JSON.stringify(attached) !== JSON.stringify(parsed.attachments) ? attached : latest.attachments;
                 const set: Record<string, string> = {
                     title: fmTitleValue(title),
-                    priority: $('atd-priority').value,
+                    priority: $('atd-priority').value === curPrio && latest.fm.priority ? latest.fm.priority : $('atd-priority').value,
                     updated: new Date().toISOString().slice(0, 10),
                 };
                 const seen = new Set<string>();
                 const lines: string[] = [];
-                for (const l of parsed.fmLines) {
+                for (const l of latest.fmLines) {
                     const k = l.slice(0, Math.max(l.indexOf(':'), 0)).trim();
                     if (k in set) { if (!seen.has(k)) { lines.push(`${k}: ${set[k]}`); seen.add(k); } }
                     else lines.push(l);
                 }
                 for (const k of Object.keys(set)) if (!seen.has(k)) lines.push(`${k}: ${set[k]}`);
-                const out = `---\n${lines.join('\n')}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n`
+                const out = `---\n${lines.join('\n')}\n---\n# ${title}\n${descOut}\n## Acceptance Criteria\n`
                     + crit.map(c => `- [${checked.has(c) ? 'x' : ' '}] ${c}`).join('\n') + (crit.length ? '\n' : '')
-                    + attachmentsBlock(attached)
-                    + (parsed.rest || '## Log\n');
+                    + attachmentsBlock(attachedOut)
+                    + (latest.rest || '## Log\n');
                 await agentWriteFile(opts.path, out);
                 saved = true;
                 // A status change goes through the same gates as dragging the card to another column.

@@ -897,7 +897,7 @@ html, body {
 
 .ws-action-btn { background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 12px; padding: 3px 10px; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
 .ws-action-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-.ws-col-hdr-btn { margin-left: auto; background: none; border: 1px solid #ddd; border-radius: 4px; color: #999; font-size: 11px; padding: 2px 8px; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.ws-col-hdr-btn { margin-left: auto; background: none; border: 1px solid #ddd; border-radius: 4px; color: #6b6b6b; font-size: 11px; padding: 2px 8px; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
 .ws-col-hdr-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .ws-col-hdr-close-btn { margin-left: 4px; padding: 2px 6px; font-size: 13px; line-height: 1; }
 .ws-col-hdr-close-btn:hover { background: #c0392b; border-color: #c0392b; }
@@ -923,7 +923,7 @@ html, body {
 
 .workspace-col { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; }
 .workspace-col:last-child { border-right: none; }
-.workspace-col-hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px; min-height: 34px; font-size: 10px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.07em; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); flex-shrink: 0; box-sizing: border-box; }
+.workspace-col-hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px; min-height: 34px; font-size: 10px; font-weight: 700; color: #6b6b6b; text-transform: uppercase; letter-spacing: 0.07em; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); flex-shrink: 0; box-sizing: border-box; }
 .workspace-col-hdr-name { flex: 1; font-size: 11px; font-weight: 500; color: var(--muted); text-transform: none; letter-spacing: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'SF Mono','Fira Code',monospace; }
 .workspace-col-body { flex: 1; overflow-y: auto; padding: 4px 0; transition: background 0.15s; }
 .workspace-col.drag-over .workspace-col-body { background: rgba(74,124,247,0.06); outline: 2px dashed var(--accent); outline-offset: -3px; }
@@ -2047,4 +2047,10 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 /* Very small screens (a folded phone's cover display, 400% zoom): the greeting stays clear of the composer. */
 @media (max-width: 340px), (max-height: 340px) {
     #chat-welcome { top: calc(50% - 170px); }
+}
+
+/* Narrow screens: a select sized to its widest option ran past a 280 px panel; Windows high-contrast mode drew no focus cue on the composer. */
+.settings-row select.settings-input, .settings-row input.settings-input { max-width: 100%; }
+@media (forced-colors: active) {
+    #agent-input:focus, #agent-input:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
