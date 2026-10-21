@@ -121,22 +121,36 @@ export function evaluateSkillTriggers(registry: any, seed: any, inputs: any): Se
 // empty history. So guidance fired in chat A was withheld from chat B that never got it, and after a rewind removed the guided turn
 // it was withheld from the replacement (campaign 8 cases 190-200). Now the fired set belongs to a chat and to the history it was
 // given in: each name remembers the history length when its turn started, and a history that has been cut back to that point forgets it.
-type _GuidanceMemory = { fired: Set<string>; since: Map<string, number>; lastLen: number };
+type _GuidanceMemory = { fired: Set<string>; since: Map<string, number>; lastLen: number; fpFirst: string; fpLast: string };
 const _guidanceMemory = new Map<string, _GuidanceMemory>();
 let _guidanceOwner: string | null = null;
 const _guidanceBodies = new Map<string, string>();   // `${chat}\0${name}` → the body that was given
-export function syncGuidanceMemory(chatKey: string | null | undefined, historyLen: number): void {
+// A short identity for one history message: enough to tell a replaced conversation from a longer one.
+function _msgFp(history: readonly any[] | undefined, i: number): string {
+    const m = history?.[i];
+    if (!m) return '';
+    const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? m.tool_calls ?? '');
+    return `${m.role}:${c.length}:${c.slice(0, 64)}:${c.slice(-64)}`;
+}
+
+/** `history` (optional) lets a replacement of equal or greater length be noticed: the same chat reloaded from a backup or a
+ *  saved project has other messages at the places where this memory recorded guidance (codex report 8, cases 229/234). */
+export function syncGuidanceMemory(chatKey: string | null | undefined, historyLen: number, history?: readonly any[]): void {
     const key = chatKey ?? '';
     if (_guidanceOwner !== key) {
         // Leaving a chat: keep its set where it is; the next one starts from its own (or an empty) set.
         if (_guidanceOwner !== null) { const m = _guidanceMemory.get(_guidanceOwner); if (m) m.fired = _reactiveFired; }
         let m = _guidanceMemory.get(key);
-        if (!m) { m = { fired: new Set(), since: new Map(), lastLen: 0 }; _guidanceMemory.set(key, m); }
+        if (!m) { m = { fired: new Set(), since: new Map(), lastLen: 0, fpFirst: '', fpLast: '' }; _guidanceMemory.set(key, m); }
         _guidanceOwner = key;
         setReactiveFired(m.fired);
     }
     const m = _guidanceMemory.get(key)!;
     m.fired = _reactiveFired;
+    if (history && m.lastLen > 0 && historyLen >= m.lastLen && (_msgFp(history, 0) !== m.fpFirst || _msgFp(history, m.lastLen - 1) !== m.fpLast)) {
+        for (const n of m.fired) _guidanceBodies.delete(`${key}\0${n}`);
+        m.fired.clear(); m.since.clear(); m.lastLen = 0;
+    }
     // Names added since the last turn started were given in that turn: they sit at its first message or later.
     for (const n of m.fired) if (!m.since.has(n)) m.since.set(n, m.lastLen);
     for (const [n, at] of m.since) {
@@ -144,6 +158,7 @@ export function syncGuidanceMemory(chatKey: string | null | undefined, historyLe
         if (historyLen === 0 || at >= historyLen) { m.fired.delete(n); m.since.delete(n); _guidanceBodies.delete(`${key}\0${n}`); }
     }
     m.lastLen = historyLen;
+    if (history) { m.fpFirst = _msgFp(history, 0); m.fpLast = _msgFp(history, historyLen - 1); }
 }
 
 export function buildTriggeredGuidance(): string {

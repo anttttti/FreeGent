@@ -2574,9 +2574,15 @@ function _snapshotSettings() {
     return snap;
 }
 
-function _applySettingsSnapshot(snap: any) {
+// Puts back what the operation itself wiped (a saveSettings() with empty form fields writes '' over keys or removes
+// them). A key that now holds a different non-empty value was changed by the user while the operation ran, in this page
+// or another tab, and is newer than the snapshot: restoring it undid sound, sampling and profile edits (codex report 8,
+// cases 298-303).
+export function _applySettingsSnapshot(snap: any) {
     for (const [k, v] of Object.entries(snap)) {
-        if (v !== null) localStorage.setItem(k, v as string);
+        if (v === null) continue;
+        const cur = localStorage.getItem(k);
+        if (cur === null || cur === '') localStorage.setItem(k, v as string);
     }
 }
 
@@ -2856,7 +2862,8 @@ async function _restoreProjectData(data) {
     if (!activeId) { clearChatHistory(); (window as any).cancelPendingApprovals?.(); (window as any).clearImageAttachments?.(); }
     // The replaced conversation must not survive in memory when the restored chat is empty.
     if (activeId) clearChatHistory();
-    if (typeof loadChatHistory === 'function' && activeId) loadChatHistory(activeId);
+    // Awaited: the view is rebuilt from this history below, and a still-loading one left a notice-only blank chat (codex 309/310).
+    if (typeof loadChatHistory === 'function' && activeId) await loadChatHistory(activeId);
     await renderFileList();
     const msgEl = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
     if (msgEl) msgEl.innerHTML = '';

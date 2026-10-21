@@ -860,6 +860,16 @@ export function _gradedTestFailed(output: string, gradedIds: string[]): boolean 
     return failed.some(f => gradedIds.some(g => g.includes('::') ? nameOf(f) === nameOf(g) : f.includes(g)));
 }
 
+// The synthesis request has no tools, but a confused model may still answer with a tool call
+// (fg-chat 2026-10-20: minimax wrote "…]<]minimax[>[<tool_call> > execute_code {…}" and that became
+// the turn's final text). Keep the prose before the first call marker; none left → the caller falls back.
+const _SYNTH_CALL_MARKER_RE = /\]?<\]minimax\[>\[|<\|?tool_call\|?>|<function=|<invoke\b|<\|DSML\|/i;
+export function _stripSynthesisToolCall(text: string): string {
+    const t = String(text ?? '');
+    const m = _SYNTH_CALL_MARKER_RE.exec(t);
+    return (m ? t.slice(0, m.index) : t).trim();
+}
+
 export async function _gracefulSynthesis(reason: string, lastContent: string = ''): Promise<string> {
     // A forced stop is otherwise invisible in the step log: the run just ends on a tool call
     // (v0.56: 12 failure-streak stops and 13 step-cap stops read as "completed").
@@ -883,7 +893,7 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
             `${task}${outs}${ctx}An autonomous agent working on this task was force-stopped (${reason}). If the task asks for a specific answer (a value, name, flag, path, command or query) and the tool outputs above show it, reply with only that answer, in the form the task asks for. Otherwise summarise in 1-2 sentences what was accomplished and why it stopped.`,
             { maxTokens: 300, label: 'termination:synthesis', maxAttempts: 1 }
         );
-        return withBlocked(text?.trim() || _stopFallbackText(reason));
+        return withBlocked(_stripSynthesisToolCall(text) || _stopFallbackText(reason));
     } catch { return withBlocked(_stopFallbackText(reason)); }
 }
 

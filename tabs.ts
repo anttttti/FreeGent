@@ -30,6 +30,9 @@ function activateTab(key) {
     if (ft) { ft.tab.classList.add('active'); ft.panel.classList.add('active'); }
     // Hide the sidebar entirely when a preview tab (artifact iframe, image, PDF, …) is active.
     document.body.classList.toggle('preview-mode', !!(ft?.isPreview));
+    // On a phone the expanded rail is an overlay: choosing a destination leaves it, otherwise it stayed over the new panel
+    // (opencode report 51; closeMobileRail() had no caller).
+    if (window.innerWidth <= 700) document.getElementById('left-rail')?.classList.remove('expanded');
     if (key === 'settings') { populateSettingsForm(); switchSettingsTab('profiles'); renderProfilesTab(); }
     if (key === 'tasks')    { refreshTasks(); initRunner?.(); }
     if (key === 'chats')    renderChatsDropdown?.();
@@ -1217,12 +1220,8 @@ function notifyLocalFileChanged(fullPath, content) {
 function toggleRailExpanded() {
     const rail = document.getElementById('left-rail');
     if (!rail) return;
-    // On mobile: expand-btn toggles between minimized (icon strip) and expanded (overlay)
-    if (rail.classList.contains('mobile-open')) {
-        rail.classList.toggle('expanded');
-    } else {
-        rail.classList.toggle('expanded');
-    }
+    // Desktop: wide/narrow rail. Mobile: minimized icon strip <-> expanded overlay.
+    rail.classList.toggle('expanded');
     const btn = document.getElementById('rail-expand-btn') as HTMLButtonElement | null;
     if (btn) btn.title = rail.classList.contains('expanded') ? 'Shrink sidebar' : 'Expand sidebar';
 }

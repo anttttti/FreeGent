@@ -32,6 +32,22 @@ describe('_gracefulSynthesis', () => {
     });
 });
 
+describe('_gracefulSynthesis drops a tool call the summariser emitted as text', () => {
+    it('keeps the prose before minimax tool-call markup', async () => {
+        (globalThis as any).callLLMComplete = vi.fn(async () => 'I am locating the spindash transition.]<]minimax[>[<tool_call>\n> execute_code\n{"code":"ls"}');
+        const t = await L._gracefulSynthesis('step cap (60 steps) reached');
+        expect(t).toMatch(BLOCKED_RE);
+        expect(t).toContain('I am locating the spindash transition.');
+        expect(t).not.toMatch(/minimax|tool_call|execute_code/);
+    });
+    it('a reply that is only a tool call falls back to the stop text', async () => {
+        (globalThis as any).callLLMComplete = vi.fn(async () => '<tool_call><function=execute_code><parameter=code>ls</parameter></function></tool_call>');
+        const t = await L._gracefulSynthesis('step cap (60 steps) reached');
+        expect(t).toMatch(BLOCKED_RE);
+        expect(t).not.toMatch(/tool_call|execute_code/);
+    });
+});
+
 describe('_gracefulSynthesis keeps an answer on the last line (v0.58 CTF 48)', () => {
     it('BLOCKED comes first, so the graded last line is the summary or answer', async () => {
         (globalThis as any).callLLMComplete = vi.fn(async () => 'picoCTF{c0nv3rt1ng_fr0m_ba5e_64_e3152bf4}');

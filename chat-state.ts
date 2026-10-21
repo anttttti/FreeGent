@@ -139,6 +139,9 @@ async function _deleteHtml(chatId) {
 // and the messages view is blank, so a save in that window (e.g. a turn finishing after
 // stopNow released agentStreaming) would overwrite the chat's stored history with nothing.
 let _loadingChatId: string | null = null;
+// True while a chat's history is being restored. A turn started then would run without that history and the restore
+// would drop the new message (codex report 8, cases 277/285); New Chat must not take the still-empty history for a blank chat (283).
+function isChatLoading(): boolean { return _loadingChatId !== null; }
 
 // localStorage copies of a chat's history (_oh) and message HTML (_msgs) are a cache: a
 // synchronous write that survives the tab dying before the async IndexedDB save lands, and a
@@ -190,6 +193,20 @@ if (typeof window !== 'undefined') {
         if (!activeChatId || e.key !== chatKey.rev(activeChatId)) return;
         clearTimeout(_xTabTimer);
         _xTabTimer = setTimeout(() => { reloadChatIfChangedElsewhere().catch(() => {}); }, 200);
+    });
+}
+
+// A chat renamed, added or deleted in another tab: this tab's list and name bar were stale until a reload (hermes report F7).
+let _xListTimer: any = null;
+if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (e: StorageEvent) => {
+        if (e.key !== 'fg_chat_list') return;
+        clearTimeout(_xListTimer);
+        _xListTimer = setTimeout(() => {
+            try { updateChatNameBar?.(); } catch {}
+            try { renderChatsDropdown?.(); } catch {}
+            try { updateRailRecentChats?.(); } catch {}
+        }, 100);
     });
 }
 
@@ -566,12 +583,20 @@ function renderHistoryFallback() {
     const history = getChatHistory();
     for (const msg of history) {
         const role = msg.role === 'model' ? 'model' : msg.role;
-        if (role === 'user' && typeof msg.content === 'string') {
+        // A turn with an attached image is stored as [{image_url}, {text}] parts. Only string content used to be drawn, so
+        // the whole turn was missing from a reconstructed chat (codex report 8, cases 307/308).
+        const userParts: any[] | null = role === 'user' && Array.isArray(msg.content) ? msg.content : null;
+        const userText: string | null = typeof msg.content === 'string' ? msg.content
+            : userParts ? userParts.filter(p => p?.type === 'text' && typeof p.text === 'string').map(p => p.text).join('\n\n') : null;
+        const userThumbs = userParts ? userParts.map(p => p?.image_url?.url).filter((u: any) => typeof u === 'string' && /^data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+$/.test(u))
+            .map((u: string) => `<img src="${u}" class="chat-img-thumb" alt="image">`).join('') : '';
+        if (role === 'user' && userText !== null) {
             // Strip injected blocks (skill guidance, handover context, memory, project instructions,
             // the first-turn workspace listing) so raw framework text isn't shown. stripInjected
             // (history-util.ts) owns the list of injected block types.
-            const cleaned = typeof stripInjected === 'function' ? stripInjected(msg.content)
-                : msg.content
+            const shown = userParts ? userText.replace(/^\[Attached image:[^\]]*\]\s*/gm, '') : userText;   // the thumbnail stands for the note
+            const cleaned = typeof stripInjected === 'function' ? stripInjected(shown)
+                : shown
                     .replace(/^<active_guidance>[\s\S]*?<\/active_guidance>\n*/, '')
                     .replace(/^<handover_context>[\s\S]*?<\/handover_context>\n*/, '')
                     .replace(/<relevant_memory>[\s\S]*?<\/relevant_memory>\n*/, '');
@@ -583,8 +608,9 @@ function renderHistoryFallback() {
             } else if (cleaned.startsWith('<tool_response>')) {
                 // Text-tag tool-calling path's synthetic result message — raw JSON tool output,
                 // not user input. Skip (it renders as noise).
-            } else if (cleaned.trim()) {
-                appendMessage('user', renderMarkdown ? renderMarkdown(cleaned) : esc(cleaned).replace(/\n/g,'<br>'));
+            } else if (cleaned.trim() || userThumbs) {
+                const body = cleaned.trim() ? (renderMarkdown ? renderMarkdown(cleaned) : esc(cleaned).replace(/\n/g,'<br>')) : '';
+                appendMessage('user', userThumbs && body ? userThumbs + '<br>' + body : userThumbs + body);
             }
         }
         else if (role === 'assistant') {
@@ -718,7 +744,12 @@ function renderChatsDropdown() {
     importBtn.className = 'ws-action-btn'; importBtn.textContent = '⬆ Import';
     importBtn.title = 'Import a chat from a JSON file exported earlier';
     importBtn.onclick = () => importChat();
-    toolbar.append(title, searchInput, importBtn);
+    // Message-content search was reachable only by its shortcut (hermes report F9).
+    const msgSearchBtn = document.createElement('button');
+    msgSearchBtn.className = 'ws-action-btn'; msgSearchBtn.textContent = '🔍 Messages';
+    msgSearchBtn.title = 'Search the text of every message in every chat (Ctrl/Cmd+Shift+F)';
+    msgSearchBtn.onclick = () => (window as any).openMsgSearch?.();
+    toolbar.append(title, searchInput, msgSearchBtn, importBtn);
     el.appendChild(toolbar);
 
     const body = document.createElement('div');
@@ -882,6 +913,22 @@ function _chatSwitchRefused(why: string) {
 // or steer a turn; this view renders the other chat's saved messages and sends nothing.
 let _viewingChatId: string | null = null;
 
+// A turn (or the task runner) is still running in the chat that owns the composer.
+function _turnRunning(): boolean {
+    return !!agentStreaming || (typeof isRunnerRunning === 'function' && !!isRunnerRunning());
+}
+
+// The viewer's Stop must only ever stop. It used to click the hidden main action button, which becomes
+// Send once the run has ended, so a later click submitted the owner chat's unsent draft and files
+// (codex report 8, cases 281/282/296). Called when a run ends: the bar stops claiming one is running.
+function refreshChatViewer() {
+    const viewer = document.getElementById('fg-chat-viewer');
+    if (!viewer || _turnRunning()) return;
+    viewer.querySelector('#fg-chat-viewer-stop')?.remove();
+    const label = viewer.querySelector('.fg-chat-viewer-bar span');
+    if (label) label.textContent = `${(label.textContent || '').split(' — ')[0]} — the turn has finished. Go back to the chat to continue.`;
+}
+
 function closeChatViewer() {
     _viewingChatId = null;
     document.body.classList.remove('fg-viewing-other');
@@ -912,7 +959,7 @@ async function viewChatReadOnly(id: string) {
     stop.id = 'fg-chat-viewer-stop';
     stop.textContent = 'Stop';
     stop.title = 'Stop the running turn';
-    stop.onclick = () => (document.getElementById('agent-action-btn') as HTMLElement | null)?.click();
+    stop.onclick = () => { if (_turnRunning()) (window as any).stopNow?.(); else refreshChatViewer(); };
     bar.append(label, stop, back);
     const body = document.createElement('div');
     body.className = 'fg-chat-viewer-body';
@@ -957,6 +1004,9 @@ async function switchToChat(id, force = false) {
     if (typeof restoreRoleForChat === 'function') restoreRoleForChat(id);
     const msgs = getMessagesEl();
     if (msgs) msgs.innerHTML = '';
+    // The composer shows this chat's draft from the start. Restored only after the load it replaced whatever was typed
+    // meanwhile, and the old chat's text stayed in the box to be saved under this chat's ID (cases 276/278).
+    window._restoreDraft?.(id);
     let loaded = false, restored = false;
     try {
         loaded   = await loadChatHistory(id);
@@ -977,8 +1027,6 @@ async function switchToChat(id, force = false) {
     updateRailRecentChats();
     updateTokenLabel();
     setInputState(true);
-    // Restore composer draft for this chat (set by init.ts _saveDraft)
-    window._restoreDraft?.(id);   // bridged late by init.ts — bare name can be undeclared
     (window as any).restoreParkedAttachments?.(id);
     (window as any).resumePendingReads?.(id);   // the attachments chosen in this chat before leaving it
 }
@@ -1015,7 +1063,11 @@ async function autoNameChat(chatId, firstUserMessage) {
     if (!firstUserMessage || !chatId) return;
     // Immediately set a draft name from the first words — guarantees naming even if the API call fails.
     const draft = firstUserMessage.trim().replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' ');
-    setChatName(chatId, draft.length > 60 ? draft.slice(0, 60) + '…' : draft);
+    const draftName = draft.length > 60 ? draft.slice(0, 60) + '…' : draft;
+    setChatName(chatId, draftName);
+    // The title arrives seconds later; a name the user typed in between is theirs (codex report 8, cases 288/297).
+    // Only a chat still carrying the draft name this call set is given the generated one (deleted chats: not at all).
+    const stillDraft = () => getChatList().find((c: any) => c.id === chatId)?.name === draftName;
 
     if (typeof isUtilityDisabled === 'function' && isUtilityDisabled()) return;
     const msg = `Chat title (2-5 words, no punctuation): "${firstUserMessage.slice(0, 200)}"`;
@@ -1035,7 +1087,7 @@ async function autoNameChat(chatId, firstUserMessage) {
             const fired = typeof validateOutput === 'function'
                 ? await validateOutput(name, _NAME_CHECKS, { llm: typeof callLLMComplete === 'function' ? _llm : null })
                 : (_NAME_ECHO_RE.test(name) || name.split(/\s+/).length > 8) || null;
-            if (!fired) setChatName(chatId, name);
+            if (!fired && stillDraft()) setChatName(chatId, name);
         }
     } catch (e) { console.warn('[autoNameChat]', e.message); }
 }
@@ -1120,7 +1172,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

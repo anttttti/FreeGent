@@ -911,8 +911,9 @@ html, body {
   .workspace-col:last-child { border-bottom: none; }
 }
 
-.ws-selection-bar { display: none; align-items: center; gap: 8px; padding: 0 14px; height: 32px; font-size: 12px; background: #e8f0fe; border-bottom: 1px solid #c5d8fc; flex-shrink: 0; }
-.ws-selection-bar.active { display: flex; }
+/* Always in the layout (hidden, not display:none): inserting it on the first click shifted every row ~32 px and a double-click landed on the row above (opencode report 48). */
+.ws-selection-bar { display: flex; visibility: hidden; align-items: center; gap: 8px; padding: 0 14px; height: 32px; font-size: 12px; background: #e8f0fe; border-bottom: 1px solid #c5d8fc; flex-shrink: 0; }
+.ws-selection-bar.active { visibility: visible; }
 .ws-sel-count { flex: 1; color: var(--accent); font-weight: 600; font-size: 12px; }
 .ws-sel-btn { background: none; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.12s; white-space: nowrap; }
 .ws-sel-btn:hover { background: var(--accent); color: #fff; }
@@ -1612,6 +1613,7 @@ html, body {
 
 /* ── Image attachments ── */
 .img-strip {
+    position: relative; z-index: 6;   /* above .toolbar-toggle-btn (z-index 5): on a phone the toggle covered the remove button */
     display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 0;
     background: var(--model-bg); border-top: 1px solid var(--border);
 }
@@ -2053,4 +2055,11 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 .settings-row select.settings-input, .settings-row input.settings-input { max-width: 100%; }
 @media (forced-colors: active) {
     #agent-input:focus, #agent-input:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+}
+
+.mic-notice {
+    position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 400;
+    max-width: min(92vw, 460px); padding: 10px 14px; border-radius: 8px;
+    background: var(--sidebar-bg); color: var(--text, inherit); border: 1px solid var(--border);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 13px; line-height: 1.4;
 }

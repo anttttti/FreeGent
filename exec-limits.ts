@@ -30,6 +30,8 @@ let _localEpoch = 0;
 const _epochNow = (): number => {
     try { return Number(localStorage.getItem(WORKSPACE_EPOCH_KEY)) || 0; } catch { return _localEpoch; }
 };
+/** The project generation: changes when the project is cleared or replaced, in this tab or another. */
+export const workspaceEpoch = (): number => _epochNow();
 export const bumpWorkspaceEpoch = (): void => {
     _localEpoch = Math.max(_localEpoch, _epochNow()) + 1;
     try { localStorage.setItem(WORKSPACE_EPOCH_KEY, String(_localEpoch)); } catch {}

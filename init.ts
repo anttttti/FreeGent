@@ -423,7 +423,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             focusChatSearch?.();
         }
         // Cmd/Ctrl+Shift+F → open message content search
-        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        // A file editor that already took the key for its own Find (CodeMirror prevents the default) keeps it: one key opened two searches.
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f' && !e.defaultPrevented) {
             e.preventDefault();
             openMsgSearch();
         }
@@ -507,10 +508,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     function openMsgSearch(): void {
         const modal = document.getElementById('msg-search-modal');
         if (!modal) return;
+        const inp = document.getElementById('msg-search-input') as HTMLInputElement | null;
+        // Pressed again inside the open search: stay in it. Recording the search's own input as the opener replaced the
+        // real one with null, and Escape then left focus on BODY (codex report 8, cases 271/272).
+        if (modal.style.display === 'flex') { inp?.focus(); inp?.select(); return; }
         const a = document.activeElement as HTMLElement | null;
         _msgSearchOpener = a && a !== document.body && !modal.contains(a) ? a : null;
+        _msgSearchSeq++;   // a search still reading from storage belongs to the previous opening
         modal.style.display = 'flex';
-        const inp = document.getElementById('msg-search-input') as HTMLInputElement | null;
         inp?.focus();
         inp && (inp.value = '');
         const results = document.getElementById('msg-search-results');
@@ -522,6 +527,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const modal = document.getElementById('msg-search-modal');
         if (modal) modal.style.display = 'none';
         const back = _msgSearchOpener; _msgSearchOpener = null;
+        _msgSearchSeq++;   // its pending results must not appear in a modal opened later (cases 269/270)
         if (!restoreFocus) return;
         const target = back && document.contains(back) ? back : document.getElementById('agent-input');
         (target as HTMLElement | null)?.focus?.();

@@ -48,4 +48,27 @@ describe('Chats tab', () => {
         expect(document.querySelector('[data-panel="chats"]')!.classList.contains('active')).toBe(true);
         expect(document.querySelectorAll('#chats-dropdown .chat-card')).toHaveLength(2);
     });
+
+    it('has a visible entry point for message search (hermes F9)', () => {
+        let opened = 0; W.openMsgSearch = () => { opened++; };
+        W.renderChatsDropdown();
+        const btn = [...document.querySelectorAll('#chats-dropdown .chats-toolbar button')].find(b => /Messages/.test(b.textContent || '')) as HTMLElement;
+        expect(btn).toBeTruthy();
+        btn.click();
+        expect(opened).toBe(1);
+        delete W.openMsgSearch;
+    });
+
+    it('refreshes the list when another tab changes fg_chat_list (hermes F7)', async () => {
+        W.renderChatsDropdown();
+        const names = () => [...document.querySelectorAll('#chats-dropdown .chat-list-name')].map(n => n.textContent);
+        expect(names()).toContain('First chat');
+        localStorage.setItem('fg_chat_list', JSON.stringify([
+            { id: 'a', name: 'Renamed in tab 2', createdAt: 1, lastAt: 2 },
+            { id: 'b', name: 'Second chat', createdAt: 3, lastAt: 4 },
+        ]));
+        window.dispatchEvent(new StorageEvent('storage', { key: 'fg_chat_list', storageArea: localStorage }));
+        await new Promise(r => setTimeout(r, 250));
+        expect(names()).toContain('Renamed in tab 2');
+    });
 });

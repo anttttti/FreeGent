@@ -1,6 +1,8 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
+import { fmQuote, fmUnquote } from './yaml-scalar.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
 
 function parseLastLogEntry(content) {
@@ -186,12 +188,11 @@ function makeKanbanCard(task) {
     return card;
 }
 
-// A task title as written in front matter. It is kept exactly as typed: a colon used to be rewritten to " -", which showed
-// the author a different title than they entered and made the title they meant next ("Call - supplier") collide with it
-// as a duplicate. A title with a colon is quoted, so a strict YAML reader takes it too; FreeGent's own reader takes
-// everything after the first colon and drops the quotes.
+// A task title as written in front matter. It is kept exactly as typed (a colon used to be rewritten to " -", which showed
+// the author a different title than they entered). Anything a strict YAML reader would misparse is double-quoted with
+// backslash and quote escaped; FreeGent's own reader undoes exactly that (yaml-scalar.ts).
 function fmTitleValue(title: string): string {
-    return title.includes(':') && !title.includes('"') ? `"${title}"` : title;
+    return fmQuote(title);
 }
 
 function openAddTaskDialog(status: string) {
@@ -218,7 +219,7 @@ function parseTaskForEdit(content: string) {
     const fm: Record<string, string> = {};
     for (const l of fmLines) {
         const i = l.indexOf(':');
-        if (i > 0) fm[l.slice(0, i).trim()] = l.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+        if (i > 0) fm[l.slice(0, i).trim()] = fmUnquote(l.slice(i + 1));
     }
     const critIdx = body.search(/^## Acceptance Criteria[ \t]*$/im);
     const head = critIdx === -1 ? body : body.slice(0, critIdx);
@@ -270,9 +271,13 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     const attached: string[] = parsed ? [...parsed.attachments] : [];
     const uploaded = new Set<string>();
     let saved = false;
+    let pendingUploads = 0;
+    // Uploads belong to the project they were stored in. After Clear or an import the same paths may name a restored file
+    // that the form never owned, so a late cleanup must leave them (codex report 8, cases 233/238).
+    const epoch = workspaceEpoch();
     const dismiss = () => {
         overlay.remove();
-        if (!saved) for (const p of uploaded) void agentDeleteFile?.(p).catch(() => {});
+        if (!saved && workspaceEpoch() === epoch) for (const p of uploaded) void agentDeleteFile?.(p).catch(() => {});
     };
     overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
     const lbl = 'padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:80px;vertical-align:top';
@@ -345,13 +350,22 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
         const files = [...(input.files || [])];
         input.value = '';
         for (const f of files) {
+            // The form was closed (Cancel, Clear, an import) before this file's turn: store nothing (case 239).
+            if (!overlay.isConnected) return;
+            pendingUploads++;
             try {
                 const path = await (window as any).saveFileToWorkspace(f);
+                if (!overlay.isConnected) {
+                    // Closed while this file was being stored: an orphan unless the form was saved (cases 236/238). The path is
+                    // new (saveFileToWorkspace makes a unique folder), so it cannot be a file the replacement project restored.
+                    if (!saved) void agentDeleteFile?.(path).catch(() => {});
+                    return;
+                }
                 uploaded.add(path);
                 addPaths([path]);
             } catch (e: any) {
-                $('atd-err').textContent = `Failed to attach ${f.name}: ${e?.message || e}`;
-            }
+                if (overlay.isConnected) $('atd-err').textContent = `Failed to attach ${f.name}: ${e?.message || e}`;
+            } finally { pendingUploads--; }
         }
     };
     $('atd-attach-btn').onclick = (e: Event) => { e.stopPropagation(); menu.classList.toggle('open'); };
@@ -376,6 +390,8 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     $('atd-ok').onclick = async () => {
         const title = $('atd-title').value.trim().replace(/\s+/g, ' ');
         if (!title) { $('atd-err').textContent = 'Title is required.'; return; }
+        // A file still being stored is not in the list yet; saving now dropped it silently (cases 237/240).
+        if (pendingUploads > 0) { $('atd-err').textContent = 'A file is still being attached. Save again when it has finished.'; return; }
         $('atd-ok').disabled = true;
         try {
             if (parsed && opts.path) {
@@ -383,10 +399,14 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 // The file may have changed since the dialog opened (another tab, the agent: status, ticked criteria, log lines). The
                 // dialog only replaces what the user edited in it; everything else comes from the file as it is now.
                 let latest = parsed;
-                try {
-                    const nowText = await agentReadFile(opts.path);
-                    if (typeof nowText === 'string' && nowText.replace(/\r\n/g, '\n') !== (opts.content || '').replace(/\r\n/g, '\n')) latest = parseTaskForEdit(nowText);
-                } catch {}
+                let nowText: unknown;
+                try { nowText = await agentReadFile(opts.path); }
+                catch (e: any) {
+                    // A task that cannot be read now was deleted, or its project was cleared or replaced, since this form opened.
+                    // Writing the form's old copy would bring it back (codex report 8, cases 217/235).
+                    throw new Error(`${opts.path} can no longer be read (${e?.message || e}). It was probably deleted or its project was replaced, so nothing was saved.`);
+                }
+                if (typeof nowText === 'string' && nowText.replace(/\r\n/g, '\n') !== (opts.content || '').replace(/\r\n/g, '\n')) latest = parseTaskForEdit(nowText);
                 const typedCriteria = $('atd-criteria').value.split('\n').map(stripBullet).filter(Boolean);
                 const criteriaEdited = typedCriteria.join('\n') !== parsed.criteria.map(c => c.text).join('\n');
                 const crit = criteriaEdited || latest === parsed ? typedCriteria : latest.criteria.map(c => c.text);
@@ -394,8 +414,11 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 const descEdited = $('atd-desc').value.trim() !== parsed.desc.trim();
                 const descOut = descEdited ? $('atd-desc').value.trim() : latest.desc.trim();
                 const attachedOut = JSON.stringify(attached) !== JSON.stringify(parsed.attachments) ? attached : latest.attachments;
+                // A title renamed elsewhere stays unless this form changed it too (case 218).
+                const titleEdited = title !== (parsed.fm.title || parsed.heading).trim().replace(/\s+/g, ' ');
+                const titleOut = titleEdited ? title : (latest.fm.title || latest.heading || title);
                 const set: Record<string, string> = {
-                    title: fmTitleValue(title),
+                    title: fmTitleValue(titleOut),
                     priority: $('atd-priority').value === curPrio && latest.fm.priority ? latest.fm.priority : $('atd-priority').value,
                     updated: new Date().toISOString().slice(0, 10),
                 };
@@ -407,7 +430,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                     else lines.push(l);
                 }
                 for (const k of Object.keys(set)) if (!seen.has(k)) lines.push(`${k}: ${set[k]}`);
-                const out = `---\n${lines.join('\n')}\n---\n# ${title}\n${descOut}\n## Acceptance Criteria\n`
+                const out = `---\n${lines.join('\n')}\n---\n# ${titleOut}\n${descOut}\n## Acceptance Criteria\n`
                     + crit.map(c => `- [${checked.has(c) ? 'x' : ' '}] ${c}`).join('\n') + (crit.length ? '\n' : '')
                     + attachmentsBlock(attachedOut)
                     + (latest.rest || '## Log\n');

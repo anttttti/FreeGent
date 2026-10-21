@@ -110,6 +110,7 @@ if (typeof document !== 'undefined') {
 export function setAgentStreaming(v: any): void {
     agentStreaming = v;
     (window as any).updateRailRecentChats?.();
+    if (!v) (window as any).refreshChatViewer?.();
     if (v) _acquireWakeLock();
     else if (_wakeLock) { try { _wakeLock.release?.().catch?.(() => {}); } catch {} _wakeLock = null; }
 }

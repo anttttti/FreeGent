@@ -67,18 +67,9 @@ export function metricsNote(record: { type: string; promptTokens?: number; respo
     try { _metricsWriter?.(record); } catch {}
 }
 
-export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
-    const record = {
-        ts:             new Date().toISOString(),
-        chatId:         activeChatId ?? null,
-        chatName:       (() => { try { return getChatList().find(c => c.id === activeChatId)?.name ?? null; } catch { return null; } })(),
-        ...entry,
-    };
-    conversationLog.push(record);
-    if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
-    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
-    // Per-chat localStorage persistence so the log survives full page reloads, unless the
-    // session store keeps it (sessionLogTurn below). loadChatLog() reads it back on chat switch.
+// Per-chat localStorage persistence so the log survives full page reloads, unless the session store keeps it
+// (sessionLogTurn below). loadChatLog() reads it back on chat switch.
+function _persistLogRecord(record: ConvoLogEntry): void {
     if (record.chatId && !(typeof sessionHas === 'function' && sessionHas('loadTurnLog'))) {
         try {
             const key = chatKey.log(record.chatId);
@@ -91,6 +82,19 @@ export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
     // Additive: also persist to the session-store adapter (SQLite in daemon/headless mode)
     // for durable, queryable turn history. No-op when no adapter is injected.
     sessionLogTurn?.(record);
+}
+
+export function convoLogTurn(entry: Partial<ConvoLogEntry>): void {
+    const record = {
+        ts:             new Date().toISOString(),
+        chatId:         activeChatId ?? null,
+        chatName:       (() => { try { return getChatList().find(c => c.id === activeChatId)?.name ?? null; } catch { return null; } })(),
+        ...entry,
+    };
+    conversationLog.push(record);
+    if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
+    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+    _persistLogRecord(record);
     _headlessWriter?.(record);
     _metricsWriter?.(record);
 }
@@ -383,7 +387,16 @@ async function importChat() {
         // Restore conversation log turns if present.
         if (Array.isArray(data.sessionLogTurns)) {
             const id = activeChatId;
-            for (const t of data.sessionLogTurns) conversationLog.push({ ...t, chatId: id });
+            // Persisted like any logged turn (original timestamps kept): in memory alone the imported rows were gone after
+            // a reload and the chat's model statistics started empty (codex report 8, cases 304-306).
+            for (const t of data.sessionLogTurns) {
+                const rec = { ...t, chatId: id };
+                conversationLog.push(rec);
+                _persistLogRecord(rec);
+            }
+            if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
+            try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+            _updateLogBadge();
         }
 
         saveHistory?.();

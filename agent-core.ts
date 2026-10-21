@@ -19,6 +19,7 @@ import { acquireChatLease, releaseChatLease } from './chat-lease.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
+import { playTurnSound } from './turn-sound.js';
 import { escapeHtml } from './html-escape.js';
 
 // Max binary-attachment size to include in a checkpoint snapshot (bytes).
@@ -673,6 +674,7 @@ async function rerunFromStep(btn: HTMLElement): Promise<void> {
     } finally {
         _tearDownTurn();
     }
+    playTurnSound();
     runPostTurnAgents().catch(() => {});
     setTimeout(() => _processQueue(), 0);
 }
@@ -989,7 +991,7 @@ async function _processQueue(): Promise<void> {
 // Reset per-turn bookkeeping. history is the conversation array for this session
 // (the chat's history for the default session, the session's own for isolated ones).
 function _resetPerTurnState(history: readonly any[]): void {
-    syncGuidanceMemory(activeChatId, history.length);
+    syncGuidanceMemory(activeChatId, history.length, history);
     setFailureCounts({});
     setToolCallHistory([]);
 }
@@ -1186,6 +1188,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // workspace context) is serialized so a double tap cannot start two turns.
     if (agentStreaming) return _agentSendReady(container);
     if (_sendPreparing || aiJob) return;
+    if ((window as any).isChatLoading?.()) return;   // history still loading: the text stays in the box, a Send moments later goes out with the chat's context
     (window as any).reopenApprovals?.();   // a Stop or New Chat before this turn refused the old batch's asks; this turn may ask again
     _sendPreparing = true;
     _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
@@ -1522,6 +1525,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     }
 
     // Fire-and-forget post-turn agents (log review, memory, task extraction).
+    playTurnSound();
     runPostTurnAgents().catch(() => {});
     _fireSuggestion('post-turn');
 
@@ -1704,7 +1708,8 @@ function newChat(): void {
     if (aiBusy()) return;
     // A chat another tab has written since this one loaded it is not empty, whatever this tab holds.
     const stale = typeof chatChangedElsewhere === 'function' && chatChangedElsewhere();
-    const hasHistory = chatHistoryLength() > 0 || stale;
+    // While a chat's history loads it reads as empty; that is not a blank chat to reuse.
+    const hasHistory = chatHistoryLength() > 0 || stale || !!(window as any).isChatLoading?.();
     if (!hasHistory) {
         const msgs = getMessagesEl();
         if (msgs) msgs.innerHTML = '';
