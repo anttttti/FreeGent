@@ -3,6 +3,7 @@
 
 
 import { canonTaskStatus, TASK_DIRS } from './task-status.js';
+import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput } from './step-validator.js';
 
 const QA_DEFAULT_GATES = {
@@ -76,32 +77,15 @@ async function setTaskStatus(taskPath, newStatus) {
             // The final agentWriteFile below will create it with the correct status.
             const title = taskPath.replace(/^.*\/\d+-/, '').replace(/\.md$/, '').replace(/-/g, ' ');
             const date  = new Date().toISOString().slice(0, 10);
-            content = `---\nstatus: todo\ntitle: ${title}\ncreated: ${date}\n---\n\n# ${title}\n`;
+            content = `${buildFrontmatter({ status: 'todo', title, created: date })}\n# ${title}\n`;
         }
         // Edit the frontmatter block only. Detecting "no status line" by comparing the text before
         // and after the replace is wrong when the status is already `newStatus` (the replace
         // changes nothing): that inserted another `status:` line on every same-status write —
         // the runner re-marks an in-progress task in-progress on each retry/resume.
-        const fmRe = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/;
-        const fmMatch = content.match(fmRe);
-        if (fmMatch) {
-            // One status line: the first is rewritten, any duplicates (from that bug) are dropped.
-            const lines: string[] = [];
-            let seen = false;
-            for (const l of fmMatch[1].split(/\r?\n/)) {
-                if (/^status:/.test(l)) { if (!seen) { lines.push(`status: ${newStatus}`); seen = true; } }
-                else lines.push(l);
-            }
-            if (!seen) {
-                lines.unshift(`status: ${newStatus}`);
-                console.warn(`[QA] setTaskStatus: inserted missing status field into "${taskPath}"`);
-            }
-            content = `---\n${lines.join('\n')}\n---${fmMatch[2] ? '\n' : ''}` + content.slice(fmMatch[0].length);
-        } else {
-            // No frontmatter — prepend a minimal block so the file is now valid.
-            content = `---\nstatus: ${newStatus}\n---\n\n${content}`;
-            console.warn(`[QA] setTaskStatus: inserted missing status field into "${taskPath}"`);
-        }
+        const hadStatus = !!splitFrontmatter(content)?.lines.some(l => /^status:/.test(l));
+        content = setFrontmatterFields(content, { status: newStatus }, { missing: 'top' });
+        if (!hadStatus) console.warn(`[QA] setTaskStatus: inserted missing status field into "${taskPath}"`);
         const date = new Date().toISOString().slice(0, 10);
         const logLine = `\n### ${date} — status: ${newStatus}\n`;
         if (!content.includes(logLine.trim())) {
@@ -157,9 +141,8 @@ async function _updateLedgerRow(taskPath, newStatus) {
 }
 
 function _setFrontmatterField(content, key, value) {
-    const re = new RegExp(`^${key}:[ \\t]*.+$`, 'm');
-    if (re.test(content)) return content.replace(re, `${key}: ${value}`);
-    return content.replace(/^(---[\s\S]*?)(^---[ \t]*$)/m, `$1${key}: ${value}\n$2`);
+    // Only a document that already has front matter is changed (the old regex also rewrote a matching line in the body).
+    return splitFrontmatter(content) ? setFrontmatterFields(content, { [key]: value }) : content;
 }
 
 async function appendGateNote(taskPath, text) {

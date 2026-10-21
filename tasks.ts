@@ -1,7 +1,7 @@
 // tasks.js — FreeGent: task file loading and Kanban board rendering
 // Depends on: config.js, tabs.js
 
-import { fmQuote, fmUnquote } from './yaml-scalar.js';
+import { splitFrontmatter, parseFmLines, setFmLines, buildFrontmatter } from './frontmatter.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
 
@@ -188,13 +188,6 @@ function makeKanbanCard(task) {
     return card;
 }
 
-// A task title as written in front matter. It is kept exactly as typed (a colon used to be rewritten to " -", which showed
-// the author a different title than they entered). Anything a strict YAML reader would misparse is double-quoted with
-// backslash and quote escaped; FreeGent's own reader undoes exactly that (yaml-scalar.ts).
-function fmTitleValue(title: string): string {
-    return fmQuote(title);
-}
-
 function openAddTaskDialog(status: string) {
     openTaskDialog({ status });
 }
@@ -213,14 +206,10 @@ async function openEditTaskDialog(path: string) {
 // Split a task file into the parts the dialog edits and the rest, which is written back untouched.
 function parseTaskForEdit(content: string) {
     const norm = content.replace(/\r\n/g, '\n');
-    const m = norm.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/);
-    const fmLines = m ? m[1].split('\n') : [];
-    const body = m ? norm.slice(m[0].length) : norm;
-    const fm: Record<string, string> = {};
-    for (const l of fmLines) {
-        const i = l.indexOf(':');
-        if (i > 0) fm[l.slice(0, i).trim()] = fmUnquote(l.slice(i + 1));
-    }
+    const split = splitFrontmatter(norm);
+    const fmLines = split ? split.lines : [];
+    const body = split ? split.body : norm;
+    const fm: Record<string, string> = parseFmLines(fmLines);
     const critIdx = body.search(/^## Acceptance Criteria[ \t]*$/im);
     const head = critIdx === -1 ? body : body.slice(0, critIdx);
     let rest = '';
@@ -417,19 +406,11 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 // A title renamed elsewhere stays unless this form changed it too (case 218).
                 const titleEdited = title !== (parsed.fm.title || parsed.heading).trim().replace(/\s+/g, ' ');
                 const titleOut = titleEdited ? title : (latest.fm.title || latest.heading || title);
-                const set: Record<string, string> = {
-                    title: fmTitleValue(titleOut),
+                const lines = setFmLines(latest.fmLines, {
+                    title: titleOut,
                     priority: $('atd-priority').value === curPrio && latest.fm.priority ? latest.fm.priority : $('atd-priority').value,
                     updated: new Date().toISOString().slice(0, 10),
-                };
-                const seen = new Set<string>();
-                const lines: string[] = [];
-                for (const l of latest.fmLines) {
-                    const k = l.slice(0, Math.max(l.indexOf(':'), 0)).trim();
-                    if (k in set) { if (!seen.has(k)) { lines.push(`${k}: ${set[k]}`); seen.add(k); } }
-                    else lines.push(l);
-                }
-                for (const k of Object.keys(set)) if (!seen.has(k)) lines.push(`${k}: ${set[k]}`);
+                });
                 const out = `---\n${lines.join('\n')}\n---\n# ${titleOut}\n${descOut}\n## Acceptance Criteria\n`
                     + crit.map(c => `- [${checked.has(c) ? 'x' : ' '}] ${c}`).join('\n') + (crit.length ? '\n' : '')
                     + attachmentsBlock(attachedOut)
@@ -453,7 +434,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
             const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
             const criteria = $('atd-criteria').value.split('\n').map((l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '')).filter(Boolean);
             const today = new Date().toISOString().slice(0, 10);
-            const content = `---\nid: ${id}\ntitle: ${fmTitleValue(title)}\nstatus: ${$('atd-status').value}\npriority: ${$('atd-priority').value}\ncreated: ${today}\n---\n# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
+            const content = `${buildFrontmatter({ id, title, status: $('atd-status').value, priority: $('atd-priority').value, created: today })}# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
             await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
             saved = true;
             overlay.remove();

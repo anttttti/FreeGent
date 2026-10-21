@@ -17,6 +17,8 @@ describe('front-matter title scalars (codex report 8, cases 207-209)', () => {
         expect(fmQuote('Fix #12')).toBe('"Fix #12"');   // " #" starts a YAML comment
         expect(fmQuote('Fix#12')).toBe('Fix#12');
         expect(fmQuote('a #b')).toBe('"a #b"');
+        expect(fmQuote('No')).toBe('"No"');   // a YAML reader would take it for false
+        expect(fmQuote('Notes')).toBe('Notes');
     });
     it('reads literal boundary punctuation and old files', () => {
         expect(fmUnquote('Title"')).toBe('Title"');

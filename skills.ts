@@ -2,6 +2,7 @@
 // Depends on: config.js, workspace.js
 
 import { runtime } from './runtime.js';
+import { buildFrontmatter, splitFrontmatter } from './frontmatter.js';
 const TOOL_LABELS = {
     list_files:                'List Files (list_files)',
     read_file:                 'Read File (read_file)',
@@ -968,7 +969,7 @@ export async function loadSkills() {
                 const fm = parseFrontmatter(content);
                 if (!fm.name) return;
                 const norm = content.replace(/\r\n/g, '\n');
-                const body = norm.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*\n/, '').trim();
+                const body = (splitFrontmatter(norm)?.body ?? norm).trim();
                 skillsRegistry.set(fm.name, { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type });
             } catch {}
         };
@@ -1108,7 +1109,7 @@ async function createSkillFromForm() {
     if (!name) { if (msgEl) { msgEl.textContent = '⚠ Skill name is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
     if (!body) { if (msgEl) { msgEl.textContent = '⚠ Skill content is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
 
-    const frontmatter = `---\nname: ${name}${desc ? `\ndescription: ${desc}` : ''}\n---\n\n`;
+    const frontmatter = buildFrontmatter({ name, description: desc }) + '\n';
     const content = frontmatter + body;
 
     try {
@@ -1139,7 +1140,7 @@ async function createRuleFromForm() {
     if (!name) { if (msgEl) { msgEl.textContent = '⚠ Rule name is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
     if (!body) { if (msgEl) { msgEl.textContent = '⚠ Rule content is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
 
-    const frontmatter = `---\nname: ${name}${desc ? `\ndescription: ${desc}` : ''}${trigger ? `\ntrigger: ${trigger}` : ''}\n---\n\n`;
+    const frontmatter = buildFrontmatter({ name, description: desc, trigger }) + '\n';
     try {
         await agentWriteFile(`rules/${name}/RULE.md`, frontmatter + body);
         if (nameEl) nameEl.value = '';
@@ -1462,7 +1463,7 @@ function _appendAddRow(tbody, isRule) {
         const err = (t) => { msg.textContent = t; msg.style.color = '#d32f2f'; msg.style.display = ''; };
         if (!name) return err('Name is required.');
         if (!body) return err('Content is required.');
-        const fm  = `---\nname: ${name}${desc ? `\ndescription: ${desc}` : ''}${trigger ? `\ntrigger: ${trigger}` : ''}\n---\n\n`;
+        const fm  = buildFrontmatter({ name, description: desc, trigger }) + '\n';
         const path = isRule ? `rules/${name}/RULE.md` : `skills/${name}/SKILL.md`;
         try {
             await agentWriteFile(path, fm + body);

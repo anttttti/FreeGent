@@ -2,6 +2,7 @@
 // Depends on: config.js, tools.js, llm-shared.js, state.js.
 // Note: setMainAgentRole(name) here takes a role-NAME string and resolves it through rolesRegistry;
 // state.js's setMainAgentRoleObject(role) is the raw setter for direct-assignment sites.
+import { splitFrontmatter, parseFmLines } from './frontmatter.js';
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { setMainAgentRoleObject, activePlaceholder, softStopPending, activeChatId, workflowMode } from './state.js';
@@ -371,13 +372,13 @@ ${toolSection}
 const rolesRegistry = new Map(BUILTIN_ROLES.map(r => [r.name, r]));
 
 function _parseRoleFile(content: string) {
-    const m = content.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*\n([\s\S]*)$/);
-    if (!m) return null;
-    const fm = m[1], body = m[2].trim();
-    const name        = (fm.match(/^name:\s*(.+)$/m)        || [])[1]?.trim();
-    const description = (fm.match(/^description:\s*(.+)$/m) || [])[1]?.trim() || '';
-    const toolsStr    = (fm.match(/^tools:\s*(.+)$/m)       || [])[1]?.trim() || '';
-    const tier       = (fm.match(/^tier:\s*(.+)$/m)         || [])[1]?.trim() || 'execution';
+    const split = splitFrontmatter(content);
+    if (!split || !split.closing) return null;   // a role file needs a line break after the closing fence
+    const fm = parseFmLines(split.lines), body = split.body.trim();
+    const name        = fm.name?.trim();
+    const description = fm.description?.trim() || '';
+    const toolsStr    = fm.tools?.trim() || '';
+    const tier        = fm.tier?.trim() || 'execution';
     if (!name) return null;
     const tools = new Set(toolsStr.split(/[,\s]+/).filter(Boolean));
     // Wrap the static body in body_fn so all registry entries share one interface.

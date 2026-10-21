@@ -8,7 +8,7 @@ import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
 import { isStaticHost } from './static-hosts.js';
-import { fmUnquote } from './yaml-scalar.js';
+import { parseFrontmatter } from './frontmatter.js';
 export { KEYS } from './storage-keys.js';
 
 export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_agent_max_rounds; default 100)
@@ -1272,21 +1272,7 @@ async function runWithWasm(code: string, onProgress?: (message: string) => void)
 }
 
 // ── Shared utilities ──────────────────────────────────────────────────────
-// YAML frontmatter parser — used by both skills.js and tasks.js
-function parseFrontmatter(content) {
-    const norm  = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const match = norm.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/);
-    if (!match) return {};
-    const fm = {};
-    for (const line of match[1].split('\n')) {
-        const col = line.indexOf(':');
-        if (col === -1) continue;
-        const key = line.slice(0, col).trim();
-        const val = fmUnquote(line.slice(col + 1));
-        if (key) fm[key] = val;
-    }
-    return fm;
-}
+// Front matter parsing lives in frontmatter.ts (imported above; still on window for the classic scripts).
 
 // ── Window bridge ─────────────────────────────────────────────────────────
 // Mutable primitives: defineProperty so bare assignments in classic scripts trigger the setter.

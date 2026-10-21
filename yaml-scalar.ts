@@ -6,10 +6,13 @@
 // Plain scalars can't start with these, can't hold ": " or " #", and lose edge whitespace.
 const _NEEDS_QUOTES = /^[\s"'\[\]{}>|*&!%@`,?#-]|[\s:]$|: |:$| #|^$|\s$/;
 
+// Words a YAML reader turns into a boolean or null instead of text.
+const _RESERVED = /^(?:true|false|null|yes|no|on|off|y|n|~)$/i;
+
 /** `title` as a YAML value: plain when that reads back identically, otherwise double-quoted with `\\` and `\"` escaped. */
 export function fmQuote(value: string): string {
     const v = String(value ?? '');
-    if (!v.includes(':') && !_NEEDS_QUOTES.test(v)) return v;
+    if (!v.includes(':') && !_NEEDS_QUOTES.test(v) && !_RESERVED.test(v)) return v;
     return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
