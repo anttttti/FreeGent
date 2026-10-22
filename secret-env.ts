@@ -12,8 +12,13 @@
 // CLOUDFLARE_API_TOKEN, AWS_ACCESS_KEY_ID, DB_PASSWORD — but not TOKENIZERS_PARALLELISM.
 const _SECRET_NAME_RE = /(^|_)(API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 
+// Names with no separator, or a segment of their own: the standard database password variables (PGPASSWORD, MYSQL_PWD; set so a password stays off
+// the command line), the cloud SDKs' secrets, and *_PWD / *_PASS / *_PASSPHRASE. A bare PWD is the working directory every shell exports, not a secret
+// (hermes C4).
+const _SECRET_EXTRA_RE = /^(PGPASSWORD|PGPASSFILE|PGSSLKEY|MYSQL_PWD|REDISCLI_AUTH|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AZURE_CLIENT_SECRET|GOOGLE_APPLICATION_CREDENTIALS|NPM_CONFIG__AUTH)$|(^|_)(PWD|PASS|PASSPHRASE|PRIVATE_?KEY|AUTH_?TOKEN)$/i;
 function isSecretEnvName(name: string): boolean {
-    return _SECRET_NAME_RE.test(name);
+    if (name.toUpperCase() === 'PWD' || name.toUpperCase() === 'OLDPWD') return false;
+    return _SECRET_NAME_RE.test(name) || _SECRET_EXTRA_RE.test(name);
 }
 
 // FG_EXEC_KEEP_ENV=HF_TOKEN,GH_TOKEN passes the named variables through anyway, for tasks that

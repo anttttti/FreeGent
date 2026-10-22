@@ -9,6 +9,7 @@ import { run, prompt as llmPrompt, getHeadlessPrimaryModel } from './headless-ru
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadDotenv } from './dotenv.js';
+import { defaultLogPath } from './safe-log.js';
 
 // ── .env loader ───────────────────────────────────────────────────────────────
 // Reads KEY=VALUE pairs from .env files and sets any key not already present
@@ -76,7 +77,7 @@ Options:
   --api-key   <key>     API key (or FREEGENT_API_KEY env var)
   --api-url   <url>     Base URL for OpenAI-compatible endpoints
   --timeout     <ms>    Abort agent after this many ms (default: 1800000 = 30 min)
-  --log         <path>  JSONL log of every LLM turn (default: /tmp/fg-agent.log)
+  --log         <path>  JSONL log of every LLM turn (default: ~/.freegent/fg-agent.log)
   --no-log              Disable LLM turn logging
   --sidecar-dir     <path>  Redirect fg-tasks/ and memory/ writes here (keeps workspace git tree clean)
   --context-window  <n>     Total token budget (input+output); enables per-step clamping (default: none)
@@ -129,7 +130,7 @@ const apiUrl        = _arg('--api-url')   || process.env.FREEGENT_API_URL  || ''
 // Explicit non-positive/invalid --timeout falls back to the default deliberately (0 is not "no timeout").
 const _timeoutRaw   = parseInt(_arg('--timeout') ?? '', 10);
 const timeoutMs     = Number.isFinite(_timeoutRaw) && _timeoutRaw > 0 ? _timeoutRaw : undefined;
-const logFile       = _flag('--no-log') ? null : (_arg('--log') || '/tmp/fg-agent.log');
+const logFile       = _flag('--no-log') ? null : (_arg('--log') || defaultLogPath('fg-agent.log'));
 const sidecarDir      = _arg('--sidecar-dir') || '';
 const contextWindow   = parseInt(_arg('--context-window') || '') || 0;
 const compactionLimit = parseInt(_arg('--compaction-limit') || '') || 0;

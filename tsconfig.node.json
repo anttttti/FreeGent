@@ -23,6 +23,7 @@
     "headless-runner.ts",
     "native-exec.ts",
     "workspace-scan.ts",
+    "safe-log.ts",
     "loop-watch.ts",
     "mouse-input.ts",
     "tui-checkpoint.ts",

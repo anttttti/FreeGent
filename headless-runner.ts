@@ -12,7 +12,8 @@ import { isCredentialKey } from './profile-keys.js';
 import { KEYS } from './storage-keys.js';
 import { newVerification, noteStep, verdict } from './verification.js';
 import { appendLedger } from './request-ledger.js';
-import { readFileSync, appendFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
+import { logAppend, defaultLogPath } from './safe-log.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -258,7 +259,7 @@ function _parseOpts(opts: any) {
         apiUrl          : opts.apiUrl          ?? (e.FREEGENT_API_URL  || ''),
         timeoutMs       : opts.timeoutMs       ?? (parseInt(e.FREEGENT_TIMEOUT_MS ?? '') || 30 * 60 * 1000),
         // null is an explicit "no log" (--no-log); only undefined falls back to the environment and the default.
-        logFile         : opts.logFile === null ? null : (opts.logFile ?? e.FREEGENT_LOG_FILE ?? '/tmp/fg-agent.log'),
+        logFile         : opts.logFile === null ? null : (opts.logFile ?? e.FREEGENT_LOG_FILE ?? defaultLogPath('fg-agent.log')),
         sidecarDir      : opts.sidecarDir      ?? e.FREEGENT_SIDECAR_DIR ?? '',
         contextWindow   : opts.contextWindow   ?? (parseInt(e.FREEGENT_CONTEXT_WINDOW  ?? '') || 0),
         compactionLimit : opts.compactionLimit ?? (parseInt(e.FREEGENT_COMPACTION_LIMIT ?? '') || 0),
@@ -327,7 +328,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     const _t = (step: string) => {
         if (!logFile) return;   // --no-log: no timing file either
         const ms = Date.now() - _t0;
-        try { appendFileSync(logFile,
+        try { logAppend(logFile,
             JSON.stringify({ timing: { step, ms } }) + '\n', 'utf8'); } catch {}
     };
     _t('setup:start');
@@ -574,13 +575,13 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
         _loggingInstalled = true;
         setConvoLogWriter(record => {
             if ((record as any)?.type === 'validation') return;
-            try { appendFileSync(logFile, JSON.stringify(record) + '\n', 'utf8'); } catch {}
+            try { logAppend(logFile, JSON.stringify(record) + '\n', 'utf8'); } catch {}
         });
         virtualConsole.on('error', (...args: any[]) => {
-            try { appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
+            try { logAppend(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
         });
         virtualConsole.on('warn', (...args: any[]) => {
-            try { appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
+            try { logAppend(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: args.join(' ') }) + '\n', 'utf8'); } catch {}
         });
     }
 
