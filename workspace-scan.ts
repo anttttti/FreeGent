@@ -98,7 +98,7 @@ export function ignoredDirs(root: string): (rel: string, name: string) => boolea
 
 interface WalkResult { files: Map<string, string>; complete: boolean }
 /** Regular files under `root` (relative path → signature when `withStat`, else ''), within an entry and time budget. */
-async function _walk(root: string, opts: { skipDirs?: ReadonlySet<string>; maxEntries: number; deadlineMs: number; withStat: boolean }): Promise<WalkResult> {
+async function _walk(root: string, opts: { skipDirs?: ReadonlySet<string>; skipEntry?: (name: string, isDir: boolean) => boolean; maxEntries: number; deadlineMs: number; withStat: boolean }): Promise<WalkResult> {
     const files = new Map<string, string>();
     const skip = ignoredDirs(root);
     const t0 = Date.now();
@@ -117,7 +117,7 @@ async function _walk(root: string, opts: { skipDirs?: ReadonlySet<string>; maxEn
         try { ents = await slot(() => readdir(d, { withFileTypes: true })); } catch { return; }
         const work: Promise<void>[] = [];
         for (const ent of ents) {
-            if (ent.name === '.git') continue;
+            if (ent.name === '.git' || opts.skipEntry?.(ent.name, ent.isDirectory())) continue;
             const r = rel ? `${rel}/${ent.name}` : ent.name;
             if (ent.isFile()) {
                 seen++;
@@ -180,12 +180,12 @@ export async function changedSince(root: string, before: Marks, after: Marks): P
 
 // ── file lists (checkpoints) ─────────────────────────────────────────────────
 
-export interface FileListing { files: string[]; complete: boolean }
+export interface FileListing { files: string[]; complete: boolean; via: 'git' | 'walk' }
 /**
  * The project's files (relative paths): tracked and untracked-but-not-ignored in a git repository, otherwise a budgeted walk.
  * `complete` is false when the list was cut at `maxEntries` or `deadlineMs`. Folders named in `skipDirs` are left out either way.
  */
-export function listFiles(root: string, opts: { maxEntries: number; deadlineMs?: number; skipDirs?: ReadonlySet<string> }): Promise<FileListing> {
+export function listFiles(root: string, opts: { maxEntries: number; deadlineMs?: number; skipDirs?: ReadonlySet<string>; skipEntry?: (name: string, isDir: boolean) => boolean }): Promise<FileListing> {
     const deadlineMs = opts.deadlineMs ?? 5_000;
     return trackOp(`file list (${root})`, _scanSlot(async (): Promise<FileListing> => {
         const cdup = await _cdup(root);
@@ -195,15 +195,17 @@ export function listFiles(root: string, opts: { maxEntries: number; deadlineMs?:
                 const seen = new Set<string>();
                 for (const p of r.out.split('\0')) {
                     if (!p || p.endsWith('/')) continue;
-                    if (opts.skipDirs && p.split('/').slice(0, -1).some(c => opts.skipDirs!.has(c))) continue;
+                    const parts = p.split('/');
+                    if (opts.skipDirs && parts.slice(0, -1).some(c => opts.skipDirs!.has(c))) continue;
+                    if (opts.skipEntry && parts.some((c, i) => opts.skipEntry!(c, i < parts.length - 1))) continue;
                     seen.add(p);
                 }
                 // A truncated read ends mid-entry: its last name may be cut.
                 const files = [...seen]; if (r.truncated) files.pop();
-                return { files, complete: r.ok };
+                return { files, complete: r.ok, via: 'git' };
             }
         }
-        const w = await _walk(root, { skipDirs: opts.skipDirs, maxEntries: opts.maxEntries, deadlineMs, withStat: false });
-        return { files: [...w.files.keys()], complete: w.complete };
+        const w = await _walk(root, { skipDirs: opts.skipDirs, skipEntry: opts.skipEntry, maxEntries: opts.maxEntries, deadlineMs, withStat: false });
+        return { files: [...w.files.keys()], complete: w.complete, via: 'walk' };
     }));
 }
