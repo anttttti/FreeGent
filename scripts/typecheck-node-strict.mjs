@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 
 const STRICT = ['dev-api', 'native-exec', 'node-fs-adapter', 'node-sqlite-adapter', 'secret-env', 'request-ledger',
-    'dotenv', 'fg-run', 'headless-runner', 'bootstrap-jsdom', 'workspace-scan', 'loop-watch', 'tui-checkpoint'];
+    'dotenv', 'fg-run', 'headless-runner', 'bootstrap-jsdom', 'workspace-scan', 'loop-watch', 'tui-checkpoint', 'safe-log'];
 const r = spawnSync('npx', ['tsc', '-p', 'tsconfig.node-strict.json'], { encoding: 'utf8' });
 const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
 const mine = out.split('\n').filter(l => STRICT.some(f => l.startsWith(`${f}.ts(`)));

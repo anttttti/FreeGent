@@ -19,6 +19,7 @@ import { rmSync } from 'node:fs';
 import { startGoal, resumeGoal, stopGoal, loadGoal, clearGoal, describeGoal, parseGoalCommand, GOAL_PATH, type GoalHost } from './goal.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { startLoopWatch, stallAnnouncer } from './loop-watch.js';
+import { logAppend, defaultLogPath } from './safe-log.js';
 import { aiBusy, setAiJob, activeChatId, setSoftStopPending, setActiveAbortController, setAgentStreaming, activeAbortController } from './state.js';
 import { setChatHistory, getChatHistory } from './chat-history.js';
 import { stripInjected } from './history-util.js';
@@ -112,7 +113,7 @@ const opts = {
     apiKey:          _flag('--api-key') || _detected?.apiKey || '',
     apiUrl:          _flag('--api-url'),
     workspaceRoot:   _flag('--workspace', process.cwd()),
-    logFile:         _flag('--log-file', '/tmp/fg-tui.log'),
+    logFile:         _flag('--log-file', defaultLogPath('fg-tui.log')),
     mainRole:        _flag('--role', ''),
     // Passed to setup() only when an explicit ID was given; bare --resume is resolved in main().
     resumeSessionId: _resumeId,
@@ -490,7 +491,7 @@ async function _doTUIWarmup(): Promise<void> {
 async function main() {
     // Redirect console output to log file immediately — before Ink or setup,
     // so nothing from module initialisation leaks to stdout/stderr.
-    const { appendFileSync } = await import('node:fs');
+    const appendFileSync = (p: string, line: string, _enc?: string) => logAppend(p, line);   // never through a symlink, private to the user (hermes C10)
     const _log = (...a: any[]) =>
         appendFileSync(opts.logFile, JSON.stringify({ ts: new Date().toISOString(), msg: a.join(' ') }) + '\n', 'utf8');
     console.log   = _log;
