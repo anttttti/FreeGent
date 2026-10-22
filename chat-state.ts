@@ -373,6 +373,16 @@ function saveHistory() {
     refreshStorageUsage();
 }
 
+// Is the localStorage copy of a chat's history newer than what the session store holds? The cache is written first and stamped; the stamp is marked
+// acknowledged once the session store has taken that same save. A cache whose last save was never acknowledged (the store failed, or the page died
+// before it answered) is newer. A trimmed cache is not usable as the history. (Length never says which is newer: a rewind shortens, an edit keeps it:
+// codex R15, opencode §11.)
+function chatCacheIsNewer(id: string): boolean {
+    const st = _readStamp(id);
+    return !!(st && st.rev && st.acked !== st.rev && !st.trimmed && localStorage.getItem(chatKey.oh(id)));
+}
+(window as any).chatCacheIsNewer = chatCacheIsNewer;
+
 async function loadChatHistory(id: string): Promise<boolean> {
     _noteSeenRev(id);
     try {
@@ -381,7 +391,7 @@ async function loadChatHistory(id: string): Promise<boolean> {
         // Another chat became active during the await (New Chat, runner episode): assigning
         // now would put this chat's history into that one.
         if (activeChatId !== id) return false;
-        if (sqliteHistory && sqliteHistory.length > 0) {
+        if (sqliteHistory && sqliteHistory.length > 0 && !chatCacheIsNewer(id)) {
             setChatHistory(sqliteHistory);
             return true;
         }

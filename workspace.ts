@@ -236,7 +236,7 @@ async function listWorkspaceFileNames(): Promise<string[]> {
 
 // Writes and deletes in ONE transaction: all of it commits or none of it does, including when the tab closes or the browser dies
 // half-way (separate transactions left a mix of restored, deleted and untouched files). Used by the checkpoint restore.
-async function applyWorkspaceBatch(writes: Array<{ name: string; content: string; encoding?: string | null }>, deletes: string[]): Promise<void> {
+async function applyWorkspaceBatch(writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }>, deletes: string[], opts: { clearAll?: boolean } = {}): Promise<void> {
     await ensureDB();
     return new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE, 'readwrite');
@@ -250,11 +250,12 @@ async function applyWorkspaceBatch(writes: Array<{ name: string; content: string
         try {
             const store = tx.objectStore(STORE);
             const now = Date.now();
+            if (opts.clearAll) store.clear();   // queued in the same transaction: the clear and the puts commit together or not at all
             for (const w of writes) {
                 const size = w.encoding === 'base64'
                     ? Math.floor(String(w.content || '').replace(/[^A-Za-z0-9+/]/g, '').length * 3 / 4)
                     : new TextEncoder().encode(w.content || '').length;
-                const record: any = { name: w.name, content: w.content, lastModified: now, size };
+                const record: any = { name: w.name, content: w.content, lastModified: w.lastModified || now, size };
                 if (w.encoding) record.encoding = w.encoding;
                 store.put(record);
             }
@@ -739,13 +740,23 @@ async function readFsaFile(name, asBase64 = false) {
     return decodeTextBytes(new Uint8Array(await file.arrayBuffer())) ?? await file.text();
 }
 
-async function writeFsaFile(name, content) {
+async function writeFsaFile(name, content, encoding: string | null = null) {
     if (!fsaHandle) throw new Error('No local folder is synced — "local/…" paths are unavailable. Use the plain workspace path without the "local/" prefix (e.g. "src/main.js").');
     const { dir, filename } = await fsaNavigate(name, true);
     const handle   = await dir.getFileHandle(filename, { create: true });
     const writable = await handle.createWritable();
-    await writable.write(content);
+    // A binary record holds base64 text; the bytes go to the file (writing the text put the encoding's characters there while the tool said the
+    // decoded size was written: codex R31-001).
+    await writable.write(encoding === 'base64' ? base64ToBytes(String(content ?? '')) : content);
     await writable.close();
+}
+function _fsaMissing(e: any): boolean { return e?.name === 'NotFoundError' || /not[ _-]?found|could not be found|no such/i.test(String(e?.message ?? '')); }
+/** Does the synced folder have this file? A folder that cannot be asked (the permission lapsed) is treated as having nothing: the workspace copy is
+ *  then the only one, as before. Only a file that IS there and cannot be changed is an error (opencode §12). */
+async function _fsaHas(name: string): Promise<boolean> {
+    if (!fsaHandle) return false;
+    try { const { dir, filename } = await fsaNavigate(name); await dir.getFileHandle(filename); return true; }
+    catch (e: any) { if (_fsaMissing(e) || e?.name === 'NotAllowedError' || e?.name === 'SecurityError') return false; throw e; }
 }
 
 async function deleteFsaFile(name) {
@@ -897,6 +908,8 @@ export async function agentReadFile(path) {
         return await readFsaFile(name);
     };
     if (path.startsWith('local/')) {
+        // With a folder synced, local/… IS the folder: a file it does not have is not found, whatever an old snapshot in the workspace holds.
+        if (fsaHandle) { try { return await _fsaRead(path.slice(6)); } catch { throw new Error(`File not found: ${path}`); } }
         try { return await _fsaRead(path.slice(6)); } catch {}
         const rec = await readWorkspaceFile(path);
         if (rec) return rec.encoding === 'base64' ? await _readBase64Record(path, rec.content) : rec.content;
@@ -980,7 +993,7 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
     _assertEpoch('write', path, opts);
     if (path.startsWith('local/')) {
         if (fsaHandle) {
-            await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
+            await writeFsaFile(path.slice(6), content, encoding);
         } else {
             // local/ is reserved for a synced folder. Without one, only an imported snapshot of it
             // (local/ files already in IDB) takes writes; otherwise a look-alike folder would be made.
@@ -996,9 +1009,10 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
         // worker's migration loop then re-reads IDB on the next execute_code call and
         // overwrites the correctly-persisted IDBFS content with the stale IDB version —
         // making Python-written files disappear between calls.
-        if (fsaHandle) {
-            try { await readFsaFile(path); await writeFsaFile(path, content); } catch {}
-        }
+        // A file the synced folder has is written there too, and a failure to write it (read-only, no room) is the write's failure: the workspace
+        // copy is not changed either, so the two cannot differ while the tool says it worked (opencode §12). A file the folder does not have stays a
+        // workspace file; `local/` is the way to put one on disk.
+        if (await _fsaHas(path)) await writeFsaFile(path, content, encoding);
         await writeWorkspaceFile(path, content, null, encoding);
     }
     _scheduleFileListRender();
@@ -1017,17 +1031,11 @@ export async function agentDeleteFile(path, opts?: WriteOpts) {
     path = workspaceName(path);
     _refuseGitMetadata(path, 'delete');
     _assertEpoch('delete', path, opts);
-    if (path.startsWith('local/')) {
-        try { await deleteFsaFile(path.slice('local/'.length)); }
-        catch { await deleteWorkspaceFile(path); } // fall back for orphaned IDB local/ files
-    } else {
-        // Mirror agentReadFile: if bare name exists in FSA, delete there
-        let deletedFromFsa = false;
-        if (fsaHandle) {
-            try { await deleteFsaFile(path); deletedFromFsa = true; } catch {}
-        }
-        if (!deletedFromFsa) await deleteWorkspaceFile(path);
-    }
+    // The file goes from the folder (when it has it; a failure there is the delete's failure and nothing else changes) and from the workspace store,
+    // both: a snapshot record left behind brought a deleted file back on the next read, and the export (opencode §4.2, §4.3, §12).
+    const rel = path.startsWith('local/') ? path.slice('local/'.length) : path;
+    if (fsaHandle && await _fsaHas(rel)) await deleteFsaFile(rel);
+    await deleteWorkspaceFile(path);
     await renderFileList();
     if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
 }
@@ -2619,9 +2627,10 @@ async function _collectProjectData(name) {
             const h = await sessionLoadHistory(c.id);
             if (!h?.length) continue;
             // A cached copy may be a trimmed snapshot of the stored history; keep the longer one.
-            let cachedLen = -1;
-            if (chatData[k] != null) { try { cachedLen = JSON.parse(chatData[k]).length; } catch { cachedLen = 0; } }
-            if (h.length >= cachedLen) chatData[k] = JSON.stringify(h);
+            // The cache is kept only when it is newer than the stored copy (its last save was not acknowledged by the store): comparing lengths picked the
+            // older, longer history after a rewind, or the old answer after an edit (codex R15-001).
+            if (chatData[k] != null && (window as any).chatCacheIsNewer?.(c.id)) continue;
+            chatData[k] = JSON.stringify(h);
         }
     }
     return {
@@ -2638,9 +2647,13 @@ async function _collectProjectData(name) {
 async function _idbPutProject(data) {
     await ensureDB();
     return new Promise<void>((resolve, reject) => {
-        const req = db.transaction(PROJ_STORE, 'readwrite').objectStore(PROJ_STORE).put(data);
-        req.onsuccess = () => resolve();
-        req.onerror   = () => reject(req.error);
+        // Resolved when the transaction has committed, not when the request was queued: an abort after that (quota) left the old backup while the
+        // caller said "Saved" (codex R17-001).
+        const tx = db.transaction(PROJ_STORE, 'readwrite');
+        tx.objectStore(PROJ_STORE).put(data);
+        tx.oncomplete = () => resolve();
+        tx.onabort    = () => reject(tx.error ?? new Error('The project could not be saved (storage full?)'));
+        tx.onerror    = () => { /* the abort that follows rejects */ };
     });
 }
 
@@ -2821,6 +2834,10 @@ function _discardProjectUiState(): void {
 async function _restoreProjectData(data) {
     validateProjectData(data);
     if (!(await _stopTurnsBeforeReplace())) throw new Error('Import cancelled: Autopilot is still running.');
+    // The new workspace replaces the old one in ONE transaction: the clear and every file commit together, or the old workspace stays exactly as it was
+    // (the clear was its own transaction, then one per file: a failure part-way left the new project half in and the old one gone, and an aborted
+    // clear was taken for a successful one: codex R30-001, opencode §10). Before anything else is touched, so a failure leaves the page as it was.
+    await applyWorkspaceBatch((data.workspace || []).map((f: any) => ({ name: f.name, content: f.content, encoding: f.encoding || null, lastModified: f.lastModified })), [], { clearAll: true });
     _workspaceGeneration++; bumpWorkspaceEpoch();
     _discardProjectUiState();
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
@@ -2836,18 +2853,8 @@ async function _restoreProjectData(data) {
         clearFsaHandle().catch(() => {});
         updateFsaBadge();
     }
-    // Clear existing workspace files
-    await ensureDB();
-    await new Promise<void>((resolve, reject) => {
-        const req = db.transaction(STORE, 'readwrite').objectStore(STORE).clear();
-        req.onsuccess = () => resolve();
-        req.onerror   = () => reject(req.error);
-    });
-    // Write restored workspace files
-    for (const f of (data.workspace || [])) {
-        await writeWorkspaceFile(f.name, f.content, f.lastModified, f.encoding || null);
-    }
     // Restore chat data to localStorage
+    const replacedChatIds: string[] = typeof getChatList === 'function' ? getChatList().map((c: any) => c.id) : [];
     for (const k of _chatKeys()) localStorage.removeItem(k);
     for (const [k, v] of Object.entries(data.chatData || {})) {
         if (typeof v !== 'string') continue;
@@ -2860,6 +2867,13 @@ async function _restoreProjectData(data) {
         }
         try { localStorage.setItem(k, v as string); } catch {}
     }
+    // The session store still held the replaced project's chats and, after a reload, brought them back next to the restored ones (opencode §10):
+    // the chats that are not in the restored project are deleted there, and the list it keeps is the restored one.
+    try {
+        const kept = new Set((typeof getChatList === 'function' ? getChatList() : []).map((c: any) => c.id));
+        for (const id of replacedChatIds) if (!kept.has(id)) sessionDeleteChat?.(id);
+        sessionSyncChatList?.(typeof getChatList === 'function' ? getChatList() : []);
+    } catch {}
     // A restored chat that has no saved history is empty: its stored history, from before the restore or from later work, must go too
     // (loadChatHistory reads the durable copy first, so it would bring that back).
     if (typeof sessionSaveHistory === 'function') {
@@ -3065,7 +3079,8 @@ async function loadProjectUI() {
             if (!confirm('Load this project? Current workspace and chat history will be replaced.')) return;
             const data = await _idbGetProject(id);
             if (!data) { alert('Project not found.'); return; }
-            await _restoreProjectData(data);
+            try { await _restoreProjectData(data); }
+            catch (err: any) { alert('Load failed: ' + (err?.message ?? err)); return; }   // an unhandled rejection said nothing
             if (data.localFolderName) _showFolderPrompt(data.name, data.localFolderName, data.id);
         };
     });
