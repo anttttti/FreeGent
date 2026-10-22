@@ -25,6 +25,21 @@ export interface StepState {
     elapsed:         number;
     openSection:     StepSection | null;
     collapsed:       boolean;
+    /** Length of the chat history the model call of this step started from (the Rerun button's anchor); null for steps that cannot be rerun. */
+    histLen:         number | null;
+    /** The step Rerun cuts from: the model call itself, or for a tool step the model call that made it (it reruns too). */
+    anchor:          StepState | null;
+}
+
+/** The user message a turn answers, as it stood when it was sent: what Rewind and Rerun go back to. */
+export interface TurnOrigin {
+    text:       string;
+    /** Chat history length before the message (a rewind cuts the history back to it). */
+    historyLen: number;
+    /** The workspace copy taken before the message (fg-tui keeps the last few), or null. */
+    ckptId:     number | null;
+    /** provider · model the message was sent with. */
+    model:      string;
 }
 
 export interface TurnState {
@@ -37,6 +52,14 @@ export interface TurnState {
     startTime:   number;
     /** A notice from the TUI itself ("Resumed session", a refusal, an export path): shown, never part of the conversation or its export. */
     local?:      boolean;
+    /** Set for a turn started by a message the user sent: it gets the Rewind and Rerun buttons. */
+    origin?:     TurnOrigin;
+}
+
+/** A question waiting for one keypress or click (a rewind, a rerun from a step). */
+export interface Confirm {
+    text:    string;
+    choices: Array<{ key: string; label: string; run: () => void }>;
 }
 
 export type Entry =
@@ -52,6 +75,7 @@ export interface AppState {
     promptSuggestion: string;   // ghost text shown in the input line after each turn
     queue:            QueuedMsg[];  // pending messages mirrored from JSDOM msg-queue
     ready:            boolean;     // false while setup() is running; input is disabled
+    confirm:          Confirm | null;
 }
 
 const _state: AppState = {
@@ -63,6 +87,7 @@ const _state: AppState = {
     promptSuggestion: '',
     queue:            [],
     ready:            false,
+    confirm:          null,
 };
 
 let _nextId = 1;
@@ -116,6 +141,43 @@ export function addTurn(): TurnState {
     return turn;
 }
 
+// The origin of the next turn: fg-tui sets it when a message is sent, makeTuiPlaceholder takes it for the turn it creates.
+let _nextOrigin: TurnOrigin | null = null;
+export function setNextTurnOrigin(o: TurnOrigin | null): void { _nextOrigin = o; }
+export function takeTurnOrigin(): TurnOrigin | undefined { const o = _nextOrigin; _nextOrigin = null; return o ?? undefined; }
+
+/** Take away a turn's steps from `step` on (a rerun from it), and everything shown after the turn; the turn is open again. */
+export function truncateFromStep(turn: TurnState, step: StepState): void {
+    const i = turn.steps.indexOf(step);
+    if (i < 0) return;
+    turn.steps.splice(i);
+    turn.done = false; turn.finalText = null; turn.collapsed = false;
+    const at = _state.entries.findIndex(e => e.type === 'turn' && e.turn === turn);
+    if (at >= 0) _state.entries.splice(at + 1);
+    _notify();
+}
+
+/** Take a turn, the user message before it and everything after off the screen (a rewind to before that message). */
+export function truncateFromTurn(turn: TurnState): void {
+    const at = _state.entries.findIndex(e => e.type === 'turn' && e.turn === turn);
+    if (at < 0) return;
+    const from = at > 0 && _state.entries[at - 1].type === 'user' ? at - 1 : at;
+    _state.entries.splice(from);
+    _state.scrollOffset = 0;
+    _notify();
+}
+
+/** The last turn started by a message the user sent. */
+export function lastOriginTurn(): TurnState | null {
+    for (let i = _state.entries.length - 1; i >= 0; i--) {
+        const e = _state.entries[i];
+        if (e.type === 'turn' && e.turn.origin) return e.turn;
+    }
+    return null;
+}
+
+export function askConfirm(c: Confirm | null): void { _state.confirm = c; _notify(); }
+
 /** A local notice: shown like a reply, but not part of the conversation (it is left out of /export). */
 export function addNotice(text: string): void {
     const t = addTurn();
@@ -145,14 +207,16 @@ export function entriesFromHistory(history: any[], clean: { user: (s: string) =>
         : Array.isArray(c) ? c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join('') : '';
     const out: Entry[] = [];
     let answer: string | null = null;
+    let origin: TurnOrigin | undefined;
     const flush = () => {
         if (answer) {
-            const turn: TurnState = { id: _nextId++, steps: [], systemSteps: [], collapsed: false, done: true, finalText: answer, startTime: Date.now() };
+            const turn: TurnState = { id: _nextId++, steps: [], systemSteps: [], collapsed: false, done: true, finalText: answer, startTime: Date.now(), origin };
             out.push({ type: 'turn', turn });
         }
-        answer = null;
+        answer = null; origin = undefined;
     };
-    for (const m of history) {
+    for (let hi = 0; hi < history.length; hi++) {
+        const m = history[hi];
         if (!m) continue;
         if (m.role === 'user') {
             const raw = textOf(m.content);
@@ -161,6 +225,8 @@ export function entriesFromHistory(history: any[], clean: { user: (s: string) =>
             if (!text) continue;
             flush();
             out.push({ type: 'user', id: _nextId++, text });
+            // A resumed conversation can be rewound and rerun from its messages too (the history is known; the workspace copy is not).
+            origin = { text, historyLen: hi, ckptId: null, model: '' };
         } else if (m.role === 'assistant') {
             const text = clean.answer(textOf(m.content)).trim();
             // The lines the harness adds to close a stopped request are not answers.
@@ -171,7 +237,7 @@ export function entriesFromHistory(history: any[], clean: { user: (s: string) =>
     return out;
 }
 
-export function addStep(turn: TurnState, label: string): StepState {
+export function addStep(turn: TurnState, label: string, rerun?: { histLen: number; anchor: StepState | null }): StepState {
     const step: StepState = {
         id: _nextId++, label, model: null,
         tokens: { inp: null, out: null },
@@ -180,7 +246,9 @@ export function addStep(turn: TurnState, label: string): StepState {
         status: 'running', truncatedReason: null,
         startTime: Date.now(), elapsed: 0,
         openSection: null, collapsed: false,
+        histLen: rerun?.histLen ?? null, anchor: null,
     };
+    step.anchor = rerun ? (rerun.anchor ?? step) : null;
     turn.steps.push(step);
     _notify();
     return step;

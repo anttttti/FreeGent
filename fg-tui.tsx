@@ -147,24 +147,30 @@ setTimeout(() => {
 // Hook called by agent-core's _processQueue when a queued message is about to be sent.
 // Adds the user message to the TUI event log at the moment of actual dispatch.
 dom.window._onQueueDequeue = async (msg: { text: string }) => {
-    await _takeCheckpoint();
+    await _takeCheckpoint(msg.text);
     Store.addUserMessage(msg.text);
 };
 
-// ── Checkpoints for /rewind ───────────────────────────────────────────────────
-// Before each message: where the history stood and a copy of the workspace's files (tui-checkpoint.ts). /rewind goes back one message at a
-// time. Kept in a temporary folder; the last few only.
+// ── Checkpoints: Rewind and Rerun ──────────────────────────────────────────────
+// Before each message: where the history stood and a copy of the workspace's files (tui-checkpoint.ts). The turn that answers the message
+// carries that as its origin (tui-store.ts TurnOrigin), which is what the Rewind and Rerun buttons of a turn, and a step's Rerun, go back to.
+// The conversation can always be taken back; the workspace copies are kept for the last few messages only, in a temporary folder.
 const _CKPT_KEEP = 10;
 const _ckptStore = joinPath(tmpdir(), `fg-tui-ckpt-${process.pid}`);
-const _ckpts: Array<{ snap: Snapshot; historyLen: number }> = [];
+interface Ckpt { id: number; snap: Snapshot | null; historyLen: number }
+const _ckpts: Ckpt[] = [];
 let _ckptSeq = 0;
-async function _takeCheckpoint(): Promise<void> {
-    try {
-        const historyLen = getChatHistory().length;   // before the awaits: the history as the message found it
-        const snap = await takeSnapshot(opts.workspaceRoot, _ckptStore, String(++_ckptSeq));
-        _ckpts.push({ snap, historyLen });
-        while (_ckpts.length > _CKPT_KEEP) void dropSnapshot(_ckpts.shift()!.snap);
-    } catch { /* no checkpoint: /rewind will say there is nothing to go back to */ }
+function _modelLabel(): string {
+    try { const spec: string = (dom.window as any).getActiveMainModelList?.()?.[0] ?? ''; return spec.replace('|', ' · '); } catch { return ''; }
+}
+async function _takeCheckpoint(text: string): Promise<void> {
+    const historyLen = getChatHistory().length;   // before the awaits: the history as the message found it
+    const id = ++_ckptSeq;
+    let snap: Snapshot | null = null;
+    try { snap = await takeSnapshot(opts.workspaceRoot, _ckptStore, String(id)); } catch { /* no workspace copy: the conversation can still be taken back */ }
+    _ckpts.push({ id, snap, historyLen });
+    while (_ckpts.length > _CKPT_KEEP) { const old = _ckpts.shift()!; if (old.snap) void dropSnapshot(old.snap); }
+    Store.setNextTurnOrigin({ text, historyLen, ckptId: id, model: _modelLabel() });
 }
 const _dropCheckpoints = () => { try { rmSync(_ckptStore, { recursive: true, force: true }); } catch {} };
 
@@ -197,24 +203,86 @@ export function isTurnBusy(): boolean {
 // The status line and the input queue follow this, not whichever local notice happened to finish last.
 Store.setBusyProbe(isTurnBusy);
 
-/** Go back before the last message: the conversation, the workspace's files and the screen (/rewind). The files come back only as far as the
- *  snapshot reached (size limits in tui-checkpoint.ts); what could not be restored is said. */
-export async function rewindLast(): Promise<void> {
-    if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before rewinding._'); return; }
-    const ck = _ckpts.pop();
-    if (!ck) { Store.addNotice('_Nothing to rewind to._'); return; }
-    let files = '';
+/** Put the workspace back to the copy taken before a turn's message (if it is still kept) and say what came of it. */
+async function _restoreTurnWorkspace(o: Store.TurnOrigin): Promise<string> {
+    const ck = _ckpts.find(c => c.id === o.ckptId);
+    if (!ck) return 'the workspace was not restored (its copy is gone)';
+    if (!ck.snap) return 'the workspace was not restored (it could not be copied)';
     try {
         const r = await restoreSnapshot(opts.workspaceRoot, ck.snap);
-        files = `${r.restored.length} file${r.restored.length === 1 ? '' : 's'} restored, ${r.removed.length} removed`
-              + (r.createdNotRemoved ? '; the workspace has too many files to find the ones the reply created, so those were left' : '')
-              + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
-    } catch (e: any) { files = `files NOT restored: ${e?.message ?? e}`; }
-    await dropSnapshot(ck.snap);
-    setChatHistory(getChatHistory().slice(0, ck.historyLen));
-    Store.dropFromLastUser();
-    try { (dom.window as any).saveHistory?.(); } catch {}
-    Store.addNotice(`Rewound to before your last message — ${files}.`);
+        return `${r.restored.length} file${r.restored.length === 1 ? '' : 's'} restored, ${r.removed.length} removed`
+            + (r.createdNotRemoved ? '; the workspace has too many files to find the ones the reply created, so those were left' : '')
+            + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
+    } catch (e: any) { return `files NOT restored: ${e?.message ?? e}`; }
+}
+/** The copies of the messages from `o` on belong to a conversation that is being cut: drop them (`keepOwn`: not the one of `o` itself). */
+async function _dropCheckpointsFrom(o: Store.TurnOrigin, keepOwn: boolean): Promise<void> {
+    const from = _ckpts.findIndex(c => c.id === o.ckptId);
+    if (from < 0) return;
+    for (const c of _ckpts.splice(keepOwn ? from + 1 : from)) if (c.snap) await dropSnapshot(c.snap);
+}
+
+/** Go back to before a turn's message: the conversation, the workspace's files and the screen (the Rewind button, /rewind). The files come back only as
+ *  far as the copy reached (size limits in tui-checkpoint.ts); what could not be restored is said. Returns false when nothing was rewound. */
+export async function rewindToTurn(turn: Store.TurnState, opts2: { announce?: boolean } = {}): Promise<boolean> {
+    if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before rewinding._'); return false; }
+    const o = turn.origin;
+    if (!o) { Store.addNotice('_Nothing to rewind to._'); return false; }
+    const history = getChatHistory();
+    if (o.historyLen > history.length) { Store.addNotice('_This message can no longer be rewound to: the conversation was compacted, rewound or cleared since._'); return false; }
+    _sendsActive++;
+    try {
+        const files = await _restoreTurnWorkspace(o);
+        await _dropCheckpointsFrom(o, false);
+        setChatHistory(history.slice(0, o.historyLen));
+        Store.truncateFromTurn(turn);
+        try { (dom.window as any).saveHistory?.(); } catch {}
+        if (opts2.announce !== false) Store.addNotice(`Rewound to before that message — ${files}.`);
+        return true;
+    } finally { _sendsActive--; Store.syncRunning(); }
+}
+
+/** /rewind, Alt+key: the last message. */
+export async function rewindLast(): Promise<void> {
+    const turn = Store.lastOriginTurn();
+    if (!turn) { Store.addNotice('_Nothing to rewind to._'); return; }
+    await rewindToTurn(turn);
+}
+
+/** The Rerun button of a turn: rewind to before its message and send that message again. */
+export async function rerunTurn(turn: Store.TurnState): Promise<void> {
+    const text = turn.origin?.text;
+    if (!text) { Store.addNotice('_Nothing to rerun._'); return; }
+    if (!await rewindToTurn(turn, { announce: false })) return;
+    Store.addUserMessage(text);
+    await sendMessage(text);
+}
+
+/** The Rerun button of a step: cut the conversation back to where that step's model call started and run the turn on from there, keeping the
+ *  steps before it. `resetWorkspace` also puts the files back to how they were when the turn began. */
+export async function rerunFromStep(turn: Store.TurnState, step: Store.StepState, o: { resetWorkspace: boolean }): Promise<void> {
+    if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before rerunning._'); return; }
+    const anchor = step.anchor ?? step;
+    const histLen = anchor.histLen;
+    const history = getChatHistory();
+    if (histLen == null || histLen < 1 || histLen > history.length) {
+        Store.addNotice('_This step can no longer be rerun: the conversation it started from is gone (compacted, rewound or cleared)._');
+        return;
+    }
+    _sendsActive++;
+    try {
+        if (o.resetWorkspace) {
+            if (turn.origin) Store.addNotice(`Workspace reset to the start of the turn — ${await _restoreTurnWorkspace(turn.origin)}.`);
+            else Store.addNotice('_The workspace copy from the start of the turn is not available; the workspace was left as it is._');
+        }
+        if (turn.origin) await _dropCheckpointsFrom(turn.origin, true);   // the messages after this turn are cut
+        setChatHistory(history.slice(0, histLen));
+        Store.truncateFromStep(turn, anchor);
+        await (globalThis as any).rerunTurnFromHistory(() => makeTuiPlaceholder({ continueTurn: turn }));
+    } catch (e: any) {
+        if (!turn.done) Store.finalizeTurn(turn, '');   // the cut turn must not stay open
+        Store.addNotice(`Error: ${e?.message ?? String(e)}`);
+    } finally { _sendsActive--; Store.syncRunning(); }
 }
 
 export async function sendMessage(text: string): Promise<void> {
@@ -224,7 +292,7 @@ export async function sendMessage(text: string): Promise<void> {
     if (!isTurnBusy()) setSoftStopPending(false);
     _sendsActive++;
     try {
-        await _takeCheckpoint();   // counted as busy from the call: the copy is awaited, and the status must not read "ready" meanwhile
+        await _takeCheckpoint(text);   // counted as busy from the call: the copy is awaited, and the status must not read "ready" meanwhile
         await _nameSession(text);
         await (globalThis as any).runAgentTurn(text, null);
         dom.window.generateAndShowSuggestion?.().catch?.(() => {});
@@ -233,6 +301,7 @@ export async function sendMessage(text: string): Promise<void> {
         Store.addNotice(`Error: ${e?.message ?? String(e)}`);
     } finally {
         _sendsActive--;
+        Store.setNextTurnOrigin(null);   // a send that never reached a turn must not pass its origin on to the next one
         Store.syncRunning();
     }
 }
