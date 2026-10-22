@@ -16,7 +16,9 @@ import { takeSnapshot, restoreSnapshot, dropSnapshot, type Snapshot } from './tu
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import { rmSync } from 'node:fs';
-import { aiBusy, setSoftStopPending, setActiveAbortController, setAgentStreaming, activeAbortController } from './state.js';
+import { startGoal, resumeGoal, stopGoal, loadGoal, clearGoal, describeGoal, parseGoalCommand, GOAL_PATH, type GoalHost } from './goal.js';
+import { workspaceEpoch } from './exec-limits.js';
+import { aiBusy, setAiJob, activeChatId, setSoftStopPending, setActiveAbortController, setAgentStreaming, activeAbortController } from './state.js';
 import { setChatHistory, getChatHistory } from './chat-history.js';
 import { stripInjected } from './history-util.js';
 import { _stripTerminal } from './turn-protocol.js';
@@ -229,6 +231,57 @@ export async function sendMessage(text: string): Promise<void> {
         _sendsActive--;
         Store.syncRunning();
     }
+}
+
+
+// ── /goal ─────────────────────────────────────────────────────────────────────
+// goal.ts owns the loop (shared with the WebUI); this is the terminal's end of it: a turn in the open session, the record in the workspace,
+// notices on the screen.
+function goalHost(): GoalHost {
+    const epoch = workspaceEpoch();
+    const session = activeChatId;
+    return {
+        async runTurn(prompt, { visible }) {
+            // The goal belongs to the session it started in; a turn sent to another one would land in the wrong conversation.
+            if (activeChatId !== session) return { text: 'the session was switched', finishSignal: 'stopped' };
+            _takeCheckpoint();
+            setSoftStopPending(false);
+            Store.addUserMessage(visible);
+            const r: any = await (globalThis as any).runAgentTurn(prompt, null);
+            return { text: String(r?.text ?? ''), finishSignal: r?.finishSignal ?? 'running', edited: r?.stop?.edited };
+        },
+        read: () => (dom.window as any).agentReadFile(GOAL_PATH).catch(() => null),
+        write: (c) => (dom.window as any).agentWriteFile(GOAL_PATH, c, null, { epoch }),
+        notify: (m) => Store.addNotice(m.includes('\n') ? m : `_${m}_`),
+        async waitQuiet() {
+            const t0 = Date.now();
+            while (((globalThis as any).turnsInFlight?.() ?? 0) > 0 || ((dom.window as any).msgQueue?.size?.() ?? 0) > 0) {
+                if (Date.now() - t0 > 300_000) return false;
+                await new Promise(r => setTimeout(r, 200));
+            }
+            return true;
+        },
+    };
+}
+/** `/goal …`: start, resume, show, stop or clear the standing goal. Resolves when a started loop ends. */
+export async function runGoal(arg: string): Promise<void> {
+    const cmd = parseGoalCommand(arg);
+    const host = goalHost();
+    if (cmd.op === 'status') { Store.addNotice(describeGoal(await loadGoal(host))); return; }
+    if (cmd.op === 'stop') {
+        if (!stopGoal('stopped by you')) Store.addNotice('_No goal is running._');
+        else stopAgent();
+        return;
+    }
+    if (cmd.op === 'clear') { if (await clearGoal(host)) Store.addNotice('_Goal cleared._'); return; }
+    if (isTurnBusy()) { Store.addNotice('_A reply is still running — wait for it or stop it (Ctrl+C or /stop), then run /goal again._'); return; }
+    if (!(dom.window.getActiveMainModelList?.() ?? []).length) { Store.addNotice('_No model is configured. Choose one with `/model <provider>|<model>`, then run /goal again._'); return; }
+    setAiJob('goal'); Store.syncRunning();
+    try {
+        const loop = cmd.op === 'resume' ? (await resumeGoal(host))?.done ?? null : startGoal(cmd.text, host);
+        if (loop) await loop;
+    } catch (e: any) { Store.addNotice(`Error: ${e?.message ?? String(e)}`); }
+    finally { setAiJob(''); Store.syncRunning(); }
 }
 
 export function stopAgent(): void {

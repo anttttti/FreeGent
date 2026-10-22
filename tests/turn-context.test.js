@@ -148,3 +148,16 @@ describe('codex campaign 7 findings', () => {
     });
 });
 
+
+describe('forceSkillsNextTurn (/skill in the TUI)', () => {
+    it('adds the named skill to the next turn only, and ignores a name that is not registered', async () => {
+        const { forceSkillsNextTurn } = await import('../turn-context.ts');
+        W.skillsRegistry.set('commit', skill({ name: 'commit' }));
+        forceSkillsNextTurn(['commit', 'nosuchskill']);
+        W.applyTurnTriggers({ rawText: 'hello there', history: [], wsPaths: [] });
+        expect(W.currentTurnSkills.has('commit')).toBe(true);
+        expect(W.currentTurnSkills.has('nosuchskill')).toBe(false);
+        W.applyTurnTriggers({ rawText: 'hello again', history: [], wsPaths: [] });
+        expect(W.currentTurnSkills.has('commit')).toBe(false);   // taken by the first turn
+    });
+});

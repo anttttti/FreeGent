@@ -2068,3 +2068,9 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
     background: var(--sidebar-bg); color: var(--text, inherit); border: 1px solid var(--border);
     box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 13px; line-height: 1.4;
 }
+
+/* /goal: one line above the composer while a goal runs or waits (agent-core.ts _setGoalStatus) */
+.goal-status { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, transparent); font-size: 12px; color: var(--muted); }
+.goal-status-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goal-status-text b { color: var(--accent); }
+.goal-status button { flex: none; font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }

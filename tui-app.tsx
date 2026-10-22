@@ -16,7 +16,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useWindowSize, useApp } from 'ink';
 import * as Store from './tui-store.js';
-import { sendMessage, stopAgent, startNewSession, showRestoredConversation, retryLast, rewindLast, setMouseHandler, setScrollHandler, runCompact, listWorkspaceSessions, resumeSession, isTurnBusy } from './fg-tui.js';
+import { sendMessage, stopAgent, startNewSession, showRestoredConversation, retryLast, rewindLast, setMouseHandler, setScrollHandler, runCompact, runGoal, listWorkspaceSessions, resumeSession, isTurnBusy } from './fg-tui.js';
+import { goalRunning, steerGoal } from './goal.js';
+import { forceSkillsNextTurn } from './turn-context.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
 import { layoutWindow, wrapRows, cursorWindow } from './log-layout.js';
@@ -781,9 +783,13 @@ const HELP_LINES = [
     '  /clear /compact /rewind',
     '  /export  — save chat as markdown file',
     '  /resume [N]  — list or restore a previous session',
+    '  /goal <text> — keep working until the goal is met',
+    '  /goal resume · stop · clear · (alone: show it)',
+    '  /<skill> [text] — run a skill (see /skills)',
     '  /model <prov|model>    /role [name]',
     '  /set <key> <value>     /tasks /help',
     '  /steer N  /queue N  /cancel N',
+    '  Ctrl+X Ctrl+S — steer: send the next waiting message now',
 ];
 
 // Help is longer than its panel: ↑/↓ scroll it (the arrows scroll the conversation otherwise, so the slash-command part was out of reach).
@@ -970,7 +976,7 @@ function QueuePanel({ queue, rows }: { queue: Store.QueuedMsg[]; rows: number })
 
 const SLASH_COMMANDS = [
     '/clear', '/stop', '/break', '/retry', '/rewind', '/compact',
-    '/export', '/resume',
+    '/export', '/resume', '/goal',
     '/project', '/tasks', '/agent', '/model', '/role',
     '/set', '/skills', '/settings', '/help',
     '/steer', '/queue', '/cancel',
@@ -1021,9 +1027,11 @@ function _selectFromPanel(): boolean {
 // The composer's text field. ink-text-input inserts whatever letter arrives, so every Alt+key shortcut (Alt+P, Alt+T, …)
 // opened its panel and also typed its letter into the message. This one ignores Alt and Ctrl combinations (the app's own
 // key handler takes those) and edits with the arrows, backspace/delete and Ctrl+A (start), Ctrl+E (end), Ctrl+U (clear).
-function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
-    value: string; onChange: (v: string) => void; onSubmit: (v: string) => void; placeholder?: string;
+function PromptInput({ value, onChange, onSubmit, onSteer, placeholder = '' }: {
+    value: string; onChange: (v: string) => void; onSubmit: (v: string) => void; onSteer?: (v: string) => void; placeholder?: string;
 }) {
+    // Ctrl+X then Ctrl+S (within 2 s) sends the next waiting message into the running work now (steerNextQueued).
+    const chordAt = useRef(0);
     const [cursor, setCursorState] = useState(value.length);
     // The latest text and cursor, updated at once: keys that arrive faster than the screen is redrawn (typing ahead,
     // a paste, Enter right after the last letter) would otherwise each be applied to a stale copy and lose characters.
@@ -1044,6 +1052,8 @@ function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
             if (input === 'a') setCursor(0);
             else if (input === 'e') setCursor(v.length);
             else if (input === 'u') edit(v.slice(c), 0);
+            else if (input === 'x') chordAt.current = Date.now();
+            else if (input === 's' && Date.now() - chordAt.current < 2000) { chordAt.current = 0; onSteer?.(v); }
             return;                                   // Ctrl+C and the rest belong to the app
         }
         if (key.meta) return;                         // Alt+key shortcuts: not text
@@ -1058,8 +1068,10 @@ function PromptInput({ value, onChange, onSubmit, placeholder = '' }: {
         // Keys that arrive in one read (typing ahead, a pasted macro) reach Ink as one string. Ctrl+A / Ctrl+E / Ctrl+U inside it still act, in
         // order with the text around them (TUI report case 079: Ctrl+E Ctrl+U sent together left the draft in place).
         let tv = v, tc = c;
-        for (const part of input.split(/([\x01\x05\x15])/)) {
-            if (part === '\x01') tc = 0;
+        for (const part of input.split(/([\x01\x05\x15\x18\x13])/)) {
+            if (part === '\x18') chordAt.current = Date.now();
+            else if (part === '\x13') { if (Date.now() - chordAt.current < 2000) { chordAt.current = 0; onSteer?.(tv); } }
+            else if (part === '\x01') tc = 0;
             else if (part === '\x05') tc = tv.length;
             else if (part === '\x15') { tv = tv.slice(tc); tc = 0; }
             else if (part) {
@@ -1123,6 +1135,14 @@ function InputLine({ ready, running, promptSuggestion }: {
         }
     }, []);
 
+    // Ctrl+X Ctrl+S: the first waiting message (or, with none, the text in the box) is sent into the running work now.
+    const onSteer = useCallback((text: string) => {
+        const r = (dom.window as any).steerNextQueued?.(text);
+        if (!r || r.did === 'none') { Store.addNotice('_Nothing waiting to steer. Type a message while the agent works, then press Ctrl+X Ctrl+S._'); return; }
+        if (r.did === 'composer' || r.did === 'goal') { setValue(''); setSuggestions([]); }
+        Store.addNotice(`_Steering now: ${r.text.length > 80 ? r.text.slice(0, 77) + '…' : r.text}_`);
+    }, []);
+
     const onSubmit = useCallback(async (text: string) => {
         const t = text.trim();
         if (!t) { _selectFromPanel(); restoreDraftSoon(); return; }   // Enter on an empty composer chooses the highlighted model or role
@@ -1159,6 +1179,12 @@ function InputLine({ ready, running, promptSuggestion }: {
             return;
         }
         accept();
+
+        // A message while a /goal runs steers it: it goes into the next turn's prompt, not into the queue.
+        if (goalRunning() && steerGoal(t)) {
+            Store.addNotice(`_Added to the goal's next turn: ${t.length > 120 ? t.slice(0, 120) + '…' : t}_`);
+            return;
+        }
 
         if (running) {
             // Agent busy — enqueue; the message appears in the queue panel, not the chat log yet.
@@ -1220,6 +1246,7 @@ function InputLine({ ready, running, promptSuggestion }: {
                                 value={value}
                                 onChange={onChange}
                                 onSubmit={onSubmit}
+                                onSteer={onSteer}
                                 placeholder={
                                     !ready      ? 'starting… (you can type now)' :
                                     running     ? 'agent running…' :
@@ -1338,6 +1365,7 @@ async function handleSlash(cmd: string) {
         case '/compact':  await runCompact(); break;
         case '/export':   await runExport(_workspaceRoot); break;
         case '/resume':   await runResume(parts[1]); break;
+        case '/goal':     await runGoal(cmd.slice(base.length).trim()); break;
         case '/project':  Store.setActivePanel('project'); break;
         case '/tasks':    Store.setActivePanel('tasks'); break;
         case '/agent':    Store.setActivePanel('agent'); break;
@@ -1389,6 +1417,20 @@ async function handleSlash(cmd: string) {
                 else mq?.setMode(item.id, base === '/steer' ? 'steering' : 'queued');
             }
             break;
+        }
+        default: {
+            // /<skill> [text]: the skill's guidance is added to that turn, as in the browser. Anything else is named, not dropped.
+            const name = base.slice(1).toLowerCase();
+            if (name && (dom.window as any).skillsRegistry?.has?.(name)) {
+                if (isTurnBusy()) { Store.addNotice('_A reply is still running — wait for it or stop it (Ctrl+C or /stop), then run the skill again._'); break; }
+                forceSkillsNextTurn([name]);
+                const rest = cmd.slice(base.length).trim();
+                const text = rest || `Invoke the /${name} skill.`;
+                Store.addUserMessage(text);
+                await sendMessage(text);
+            } else {
+                Store.addNotice(`_Unknown command \`${base}\`. \`/help\` lists the commands._`);
+            }
         }
     }
 }
