@@ -67,3 +67,27 @@ describe('TUI checkpoints', () => {
         expect(readdirSync(store)).toEqual([]);
     });
 });
+
+describe('codex R13-001: rewind never removes a file that was already there', () => {
+    it('a pre-existing file hidden by an ignore rule survives when the turn clears the rule', async () => {
+        const { execFileSync } = await import('node:child_process');
+        const root = tmp('fg-ws-'), store = tmp('fg-ck-');
+        const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: root, stdio: 'pipe' });
+        git('init', '-q');
+        writeFileSync(join(root, '.gitignore'), 'archive/\n'); writeFileSync(join(root, 'tracked.txt'), 'T');
+        mkdirSync(join(root, 'archive')); writeFileSync(join(root, 'archive', 'preexisting.txt'), 'PRECIOUS');
+        git('add', '-A'); git('commit', '-qm', 'i');
+        const snap = await takeSnapshot(root, store, '1');
+        expect(snap.files).not.toContain('archive/preexisting.txt');            // hidden by the rule of the time
+        await new Promise(r => setTimeout(r, 15));
+        writeFileSync(join(root, '.gitignore'), '');                              // the turn clears the rule …
+        writeFileSync(join(root, 'made-by-turn.txt'), 'new');                     // … and creates a file
+        const r = await restoreSnapshot(root, snap);
+        expect(existsSync(join(root, 'archive', 'preexisting.txt'))).toBe(true);   // not deleted
+        expect(readFileSync(join(root, 'archive', 'preexisting.txt'), 'utf8')).toBe('PRECIOUS');
+        expect(existsSync(join(root, 'made-by-turn.txt'))).toBe(false);            // what the turn made is still removed
+        expect(r.kept).toBe(1);
+        expect(r.ignoreRulesChanged).toBe(true);
+        expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe('archive/\n');
+    });
+});

@@ -175,11 +175,12 @@ export function sleepInterruptible(ms: number, signal?: AbortSignal | null) {
 
 // Resolve once the page is visible and the browser reports online (max 10 min, abort-aware).
 // Mobile browsers freeze hidden pages and bring the network back a moment after wake.
-async function _waitUntilReachable(): Promise<void> {
+async function _waitUntilReachable(turnSignal?: AbortSignal): Promise<void> {
     if (typeof document === 'undefined') return;
     const ready = () => !document.hidden && (typeof navigator === 'undefined' || navigator.onLine !== false);
     if (ready()) return;
-    const signal = activeAbortController?.signal;
+    // The turn's own signal, not whichever controller is current when the wait ends: a later turn's controller must not decide this wait.
+    const signal = turnSignal ?? activeAbortController?.signal;
     await new Promise<void>(resolve => {
         const done = () => {
             document.removeEventListener('visibilitychange', check);
@@ -240,7 +241,10 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
             // onRetry may return a number to override the delay (e.g. 0 after an endpoint switch)
             await sleepInterruptible(typeof bail === 'number' ? bail : delay);
             // Phone locked / radio asleep: retrying now just burns attempts against a dead network.
-            if (isTransient(e)) await _waitUntilReachable();
+            if (isTransient(e)) await _waitUntilReachable(_turnSignal);
+            // The wait ends early on Stop (it resolves, it does not reject), and the loop would go straight back to fn(): the cancelled attempt ran
+            // again (codex R2-001). Look at the turn's signal once more before every attempt.
+            if (softStopPending || _turnSignal?.aborted) throw e;
         }
     }
 }

@@ -24,6 +24,7 @@ import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
 import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, renderFileList } from './workspace.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { sessionSetChatRole, sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent } from './session-store.js';
 import { convoLogTurn, metricsNote } from './convo-log.js';
 import { registry } from './session-registry.js';
@@ -1399,11 +1400,17 @@ async function reduceWorkerOutputs(outputs: Array<{id: string; text: string}>, h
     return await callLLMComplete(prompt, { temperature: 0.3, maxTokens: 2048 }, handle);
 }
 
-function parseWorkerStatus(text: string): { status: string; note: string | null; footer: string | null } {
-    const match = text.match(/STATUS:\s*(complete|blocked|partial)\s*(?:—\s*(.*))?$/im);
-    if (!match) return { status: 'complete', note: null, footer: null };
-    const [footer, status, note] = match;
-    return { status, note: note?.trim() || null, footer };
+// The worker's final report ends with "STATUS: complete|blocked|partial". The LAST such line outside a fenced block is the footer: an earlier line
+// (a quoted example, documentation the worker read, a fenced sample) used to win, so a worker that ended "STATUS: partial" was reported complete
+// (codex R26-001). `index` is where the footer starts, so removing it never touches an identical earlier line.
+function parseWorkerStatus(text: string): { status: string; note: string | null; footer: string | null; index: number } {
+    const fenced: Array<[number, number]> = [...text.matchAll(/```[\s\S]*?(?:```|$)/g)].map(m => [m.index!, m.index! + m[0].length]);
+    const inFence = (i: number) => fenced.some(([from, to]) => i >= from && i < to);
+    let last: RegExpMatchArray | null = null;
+    for (const m of text.matchAll(/STATUS:\s*(complete|blocked|partial)\s*(?:—\s*(.*))?$/gim)) if (!inFence(m.index!)) last = m;
+    if (!last) return { status: 'complete', note: null, footer: null, index: -1 };
+    const [footer, status, note] = last;
+    return { status: status.toLowerCase(), note: note?.trim() || null, footer, index: last.index! };
 }
 
 // Missing STATUS footer: parseWorkerStatus defaults to 'complete' when the
@@ -1466,6 +1473,21 @@ async function executeWorkers(args: any): Promise<any> {
     // v0.55/v0.56); the registry lookup then missed and the worker ran with no role prompt.
     agents = agents.map(a => typeof a.role === 'string' ? { ...a, role: _normWorkerRole(a.role, rolesRegistry) } : a);
 
+    // Two workers with the same id would collapse into one entry in the reports and in the file-conflict table (the first one's edit vanished while
+    // the run reported complete: codex R24-001). Every worker keeps its task; a repeated id gets a suffix, and the result says so.
+    const idsRenamed: Record<string, string> = {};
+    {
+        const used = new Set(agents.map(a => String(a.id))), seen = new Set<string>();
+        agents = agents.map(a => {
+            const id = String(a.id);
+            if (!seen.has(id)) { seen.add(id); return a; }
+            let k = 2, nid = `${id}-${k}`;
+            while (used.has(nid)) nid = `${id}-${++k}`;
+            used.add(nid); seen.add(nid); idsRenamed[nid] = id;
+            return { ...a, id: nid };
+        });
+    }
+
     // Dedup: block an identical run_workers call if the last one failed due to context overflow.
     // Fingerprint = sorted agent ids + task strings (model/role changes are allowed to retry).
     const _callSig = JSON.stringify(agents.map(a => ({ id: a.id, task: a.task })).sort((a, b) => a.id < b.id ? -1 : 1));
@@ -1507,6 +1529,9 @@ async function executeWorkers(args: any): Promise<any> {
 
     // Sub-worker calls reuse the parent's snapshot so they share the same consistent view.
     console.log(`[executeWorkers] starting ${agents.length} agents: ${agents.map(a=>a.id).join(',')}`);
+    // The project this run belongs to. Its edits are staged and applied at the end; if the project was cleared or replaced meanwhile (another tab, Load),
+    // they are not applied to the new one (codex R7-001).
+    const epoch = workspaceEpoch();
     const snapshot = args._parentSnapshot || await takeWorkspaceSnapshot();
     console.log(`[executeWorkers] snapshot taken (${snapshot.size} files), launching workers`);
     const labels   = agents.map(a => a.role ? `worker:${a.id}:${a.role}` : `worker:${a.id}`);
@@ -1547,7 +1572,8 @@ async function executeWorkers(args: any): Promise<any> {
         const staging = new Map();
         // binary: base64 write_file content, held back like staging (which holds text only).
         const binary = new Map<string, string>();
-        const context = { snapshot, staging, binary, depth } as any;
+        // codeBinary: binary files the worker's own code wrote. They are on disk already, so they are reported, not applied.
+        const context = { snapshot, staging, binary, depth, codeBinary: new Set<string>() } as any;
         const handle  = handles[i];
         const _agentStart = Date.now();
         handle.setPrompt(agent.task);
@@ -1561,9 +1587,9 @@ async function executeWorkers(args: any): Promise<any> {
                 const role = agent.role ? ((isRoleEnabled(agent.role) ? rolesRegistry.get(agent.role) : null) || null) : null;
                 const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase, getEndpointRotation(), !!agent.model);
                 let output = _rawOut;
-                let { status, note, footer } = parseWorkerStatus(output || '');
+                let { status, note, footer, index: _footerAt } = parseWorkerStatus(output || '');
                 if (footer) {
-                    output = output.replace(footer, '').trim();
+                    output = (output.slice(0, _footerAt) + output.slice(_footerAt + footer.length)).trim();
                 }
                 // Treat known failure sentinels as errors — show red badge, not green
                 const FAILURE_RE = /^\*\((stall|loop detected|break|stopped:.*|max steps reached)\)\*$/i;
@@ -1589,7 +1615,7 @@ async function executeWorkers(args: any): Promise<any> {
                     startedAt: _agentStart, finishedAt: Date.now(),
                     staged: [...staging].map(([path, content]) => ({ path, content })),
                 });
-                return { id: agent.id, output: output || '', staging, binary, error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
+                return { id: agent.id, output: output || '', staging, binary, codeBinary: [...context.codeBinary] as string[], error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
             } catch (e) {
                 lastError = e;
                 // Permanent failures (bad auth, model discontinued, no tool support) — don't retry.
@@ -1616,8 +1642,20 @@ async function executeWorkers(args: any): Promise<any> {
             output: '', error: _errMsg, status: 'blocked', note: _errMsg,
             startedAt: _agentStart, finishedAt: Date.now(), staged: [],
         });
-        return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
+        return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), codeBinary: [] as string[], error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
     }));
+
+    // Every write the run makes at the end goes through here: stamped with the run's project, and a failure is recorded, not swallowed (a failed
+    // binary write or delete used to leave the run "complete" with the path listed as applied: codex R10-001) and not thrown (one bad file used to
+    // lose the report of every other worker).
+    const failedCommits: Array<{ path: string; error: string }> = [];
+    const commit = async (path: string, content: string | null, encoding: string | null = null): Promise<boolean> => {
+        try {
+            if (content === null) await agentDeleteFile(path, { epoch });
+            else await agentWriteFile(path, content, encoding, { epoch });
+            return true;
+        } catch (e: any) { failedCommits.push({ path, error: String(e?.message ?? e) }); return false; }
+    };
 
     const fileAuthors = new Map();
     for (const { id, staging } of agentResults) {
@@ -1627,19 +1665,7 @@ async function executeWorkers(args: any): Promise<any> {
         }
     }
 
-    const clean = {}, conflicts = {};
-    for (const [path, authors] of fileAuthors) {
-        if (authors.length === 1) clean[path] = authors[0].content;
-        else conflicts[path] = Object.fromEntries(authors.map(a => [a.id, a.content]));
-    }
-
-    for (const [path, content] of Object.entries(clean)) {
-        if (content === null) { try { await agentDeleteFile(path); } catch {} }
-        else await agentWriteFile(path, content);
-    }
-
-    // Binary assets cannot be merged: a path written by one worker is applied, a path written by
-    // several is left alone and reported.
+    // Binary assets cannot be merged: a path written by one worker is applied, a path written by several is left alone and reported.
     const binaryAuthors = new Map<string, { id: any; content: string }[]>();
     for (const { id, binary } of agentResults as any[]) {
         for (const [path, content] of binary as Map<string, string>) {
@@ -1647,11 +1673,26 @@ async function executeWorkers(args: any): Promise<any> {
             binaryAuthors.get(path)!.push({ id, content });
         }
     }
-    const binaryApplied: string[] = [], binaryConflicts: string[] = [];
+    // A path one worker wrote as text and another as bytes is a conflict too, whichever kind would be committed second (it replaced the first without a word:
+    // codex R6-001).
+    const mixedKind = new Set<string>();
+    for (const path of binaryAuthors.keys()) if (fileAuthors.has(path)) mixedKind.add(path);
+    for (const path of mixedKind) fileAuthors.delete(path);
+
+    const clean = {}, conflicts = {};
+    for (const [path, authors] of fileAuthors) {
+        if (authors.length === 1) clean[path] = authors[0].content;
+        else conflicts[path] = Object.fromEntries(authors.map(a => [a.id, a.content]));
+    }
+
+    const cleanApplied: string[] = [];
+    for (const [path, content] of Object.entries(clean)) if (await commit(path, content as string | null)) cleanApplied.push(path);
+
+    const binaryApplied: string[] = [], binaryConflicts: string[] = [...mixedKind];
     for (const [path, authors] of binaryAuthors) {
-        if (authors.length === 1) {
-            try { await agentWriteFile(path, authors[0].content, 'base64'); binaryApplied.push(path); } catch {}
-        } else binaryConflicts.push(path);
+        if (mixedKind.has(path)) continue;
+        if (authors.length === 1) { if (await commit(path, authors[0].content, 'base64')) binaryApplied.push(path); }
+        else binaryConflicts.push(path);
     }
 
     let resolvedFiles: Record<string, any> = {};
@@ -1666,8 +1707,9 @@ async function executeWorkers(args: any): Promise<any> {
             resolvedFiles = resolved;
             pickedFiles = picked;
             unresolvedFiles = unresolved;
-            for (const [path, content] of Object.entries(resolved))
-                await agentWriteFile(path, content);
+            for (const [path, content] of Object.entries(resolved)) {
+                if (!await commit(path, content as string)) delete resolved[path];   // not written: not claimed as resolved
+            }
             const parts = [];
             if (stats.auto > 0) parts.push(`auto: ${stats.auto}`);
             if (stats.llm  > 0) parts.push(`llm: ${stats.llm}`);
@@ -1722,14 +1764,16 @@ async function executeWorkers(args: any): Promise<any> {
     // The whole call: blocked when every worker blocked; complete only when every worker completed
     // and every file it wrote was applied or merged. Anything else is partial.
     const runStatus = _workerRunStatus(agentResults.map(r => r.status),
-        Object.keys(pickedFiles).length + unresolvedFiles.length + binaryConflicts.length);
+        Object.keys(pickedFiles).length + unresolvedFiles.length + binaryConflicts.length + failedCommits.length);
 
     // Files written by blocked workers may be incomplete or wrong — keep separate from applied.
     const blockedFiles = new Set(
-        agentResults.filter(r => r.status === 'blocked').flatMap(r => [...r.staging.keys(), ...(r as any).binary.keys()])
+        agentResults.filter(r => r.status === 'blocked').flatMap(r => [...r.staging.keys(), ...(r as any).binary.keys(), ...((r as any).codeBinary ?? [])])
     );
-    const applied    = [...Object.keys(clean), ...binaryApplied].filter(p => !blockedFiles.has(p));
-    const incomplete = [...Object.keys(clean), ...binaryApplied].filter(p =>  blockedFiles.has(p));
+    // Binary files a worker's own code made are on disk already; they count as applied (and, from a blocked worker, as incomplete).
+    const codeBinary = [...new Set(agentResults.flatMap(r => (r as any).codeBinary ?? []))].filter(p => !binaryApplied.includes(p) && !cleanApplied.includes(p));
+    const applied    = [...cleanApplied, ...binaryApplied, ...codeBinary].filter(p => !blockedFiles.has(p));
+    const incomplete = [...cleanApplied, ...binaryApplied, ...codeBinary].filter(p =>  blockedFiles.has(p));
 
     // If every worker blocked due to context overflow, record the call signature so the next
     // identical run_workers call is blocked immediately with a clear explanation.
@@ -1766,13 +1810,16 @@ async function executeWorkers(args: any): Promise<any> {
             : {}),
         status:            runStatus,
         agents:            agentResults
-            .map(r => ({ id: r.id, error: r.error, wrote: [...r.staging.keys(), ...(r as any).binary.keys()], status: r.status, note: r.note,
+            .map(r => ({ id: r.id, error: r.error, wrote: [...r.staging.keys(), ...(r as any).binary.keys(), ...((r as any).codeBinary ?? [])], status: r.status, note: r.note,
                          ...(r.toolCalls?.length ? { toolCalls: r.toolCalls } : {}) })),
         applied,
         ...(incomplete.length > 0 ? { incomplete } : {}),
         ...(Object.keys(incompleteContents).length > 0 ? { incomplete_contents: incompleteContents } : {}),
         conflictsFound:    [...Object.keys(conflicts), ...binaryConflicts],
-        ...(binaryConflicts.length > 0 ? { binaryConflicts: `${binaryConflicts.join(', ')}: written by more than one worker; not applied (binary files cannot be merged)` } : {}),
+        ...(binaryConflicts.length > 0 ? { binaryConflicts: `${binaryConflicts.join(', ')}: written by more than one worker (as text by one and bytes by another, or as bytes by several); not applied (binary files cannot be merged)` } : {}),
+        ...(failedCommits.length > 0 ? { failedCommits: failedCommits.map(f => `${f.path}: ${f.error}`),
+            ...(workspaceEpoch() !== epoch ? { superseded: 'The project was cleared or replaced while the workers ran; their edits were not applied to the new project.' } : {}) } : {}),
+        ...(Object.keys(idsRenamed).length > 0 ? { idsRenamed } : {}),
         conflictsResolved: Object.keys(resolvedFiles).filter(p => !(p in pickedFiles)),
         ...(Object.keys(notMerged).length > 0 ? { conflictsNotMerged: notMerged } : {}),
         ...(unresolvedFiles.length > 0 ? { conflictsUnresolved: `${unresolvedFiles.join(', ')}: edited by more than one worker and the merge failed; none of those edits were applied to ${unresolvedFiles.length === 1 ? 'this file' : 'these files'}.` } : {}),

@@ -32,6 +32,8 @@ export interface GoalRecord {
     updated: string;
     /** One line per finished turn, newest last. */
     progress: string[];
+    /** Notes from the user not yet in a prompt (the goal ended first): kept for the next resume instead of being lost. */
+    steer?: string[];
 }
 export interface GoalTurn {
     text: string;
@@ -44,6 +46,8 @@ export interface GoalHost {
     runTurn(prompt: string, opts: { kind: 'work' | 'verify' | 'steer'; visible: string }): Promise<GoalTurn>;
     read(): Promise<string | null>;
     write(content: string): Promise<void>;
+    /** Delete the record (Clear). Without it the record is overwritten with nothing. */
+    remove?(): Promise<void>;
     /** One line for the person: progress, the verdict, a refusal. */
     notify(message: string): void;
     /** Resolve true when nothing else is running in the chat (a queued message, a stream winding down); false if it never was. */
@@ -57,24 +61,37 @@ export interface GoalHost {
 
 const STATUSES: GoalStatus[] = ['active', 'paused', 'done', 'blocked', 'cap'];
 export function serializeGoal(g: GoalRecord): string {
-    return `---\nstatus: ${g.status}\nturns: ${g.turns}\nmax_turns: ${g.maxTurns}\nupdated: ${g.updated}\nnote: ${JSON.stringify(g.note)}\n---\n`
+    const steer = g.steer?.length ? `steer: ${JSON.stringify(g.steer)}\n` : '';
+    return `---\nstatus: ${g.status}\nturns: ${g.turns}\nmax_turns: ${g.maxTurns}\nupdated: ${g.updated}\nnote: ${JSON.stringify(g.note)}\n${steer}---\n`
         + `# Goal\n${g.text.trim()}\n\n## Progress\n${g.progress.slice(-KEEP_PROGRESS).map(p => `- ${p}`).join('\n')}\n`;
 }
+const PROGRESS_HEAD = '\n\n## Progress';
 export function parseGoal(src: string | null | undefined): GoalRecord | null {
     if (!src) return null;
     const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(src.replace(/\r\n/g, '\n'));
     if (!m) return null;
     const fm: Record<string, string> = {};
     for (const line of m[1].split('\n')) { const i = line.indexOf(':'); if (i > 0) fm[line.slice(0, i).trim()] = line.slice(i + 1).trim(); }
-    const body = /^# Goal\n([\s\S]*?)(?:\n\n## Progress\n([\s\S]*))?$/.exec(m[2].trim());
-    const text = body?.[1]?.trim();
+    const body = m[2].replace(/^\n+/, '');
+    if (!body.startsWith('# Goal\n')) return null;
+    // The progress list is the LAST "## Progress" of the record: the goal's own words may contain one, and an empty list is still there as a bare
+    // heading (parsing a trimmed body lost it, and the heading became part of the goal and then progress: codex R1-001).
+    const at = body.lastIndexOf(PROGRESS_HEAD);
+    const hasProgress = at >= 0 && /^(?:\n|$)/.test(body.slice(at + PROGRESS_HEAD.length));
+    const text = (hasProgress ? body.slice('# Goal\n'.length, at) : body.slice('# Goal\n'.length)).trim();
     if (!text) return null;
+    const progressText = hasProgress ? body.slice(at + PROGRESS_HEAD.length).replace(/^\n/, '') : '';
     let note = ''; try { note = JSON.parse(fm.note ?? '""'); } catch { note = fm.note ?? ''; }
+    let steer: string[] = []; try { const v = JSON.parse(fm.steer ?? '[]'); if (Array.isArray(v)) steer = v.filter(x => typeof x === 'string' && x.trim()).map(x => x.slice(0, 1000)); } catch {}
     const status = STATUSES.includes(fm.status as GoalStatus) ? fm.status as GoalStatus : 'paused';
+    // A hand-edited or damaged record must not make the loop run more turns than the cap says: counts are whole numbers, the cap is positive.
+    const turns = Number(fm.turns), cap = Number(fm.max_turns);
     return {
         text, status, note: typeof note === 'string' ? note : '',
-        turns: Number(fm.turns) || 0, maxTurns: Number(fm.max_turns) || DEFAULT_MAX_TURNS, updated: fm.updated || '',
-        progress: (body?.[2] ?? '').split('\n').map(l => l.replace(/^- /, '').trim()).filter(Boolean),
+        turns: Number.isFinite(turns) && turns > 0 ? Math.floor(turns) : 0,
+        maxTurns: Number.isFinite(cap) && cap >= 1 ? Math.floor(cap) : DEFAULT_MAX_TURNS, updated: fm.updated || '',
+        progress: progressText.split('\n').map(l => l.replace(/^- /, '').trim()).filter(Boolean),
+        ...(steer.length ? { steer } : {}),
     };
 }
 
@@ -82,8 +99,9 @@ export function parseGoal(src: string | null | undefined): GoalRecord | null {
 
 const ENDING = 'When the goal is fully met, finish your reply with COMPLETED. If you cannot go on without something only the user can give '
     + '(a credential, a choice, a missing fact), do not guess: finish with a line "BLOCKED: <your question, one sentence>".';
-const firstPrompt = (text: string) => `Goal: ${text}\n\nWork toward this goal until it is met. Use your tools; check the result against the goal itself, not against your own plan. ${ENDING}`;
-const resumePrompt = (g: GoalRecord) => `Resuming this goal: ${g.text}\n\nProgress so far:\n${g.progress.slice(-KEEP_PROGRESS).map(p => `- ${p}`).join('\n') || '- (none recorded)'}\n\n`
+const noteBlock = (notes: string[]) => notes.length ? `The user added:\n${notes.map(n => `- ${n}`).join('\n')}\n\n` : '';
+const firstPrompt = (text: string, notes: string[] = []) => `Goal: ${text}\n\n${noteBlock(notes)}Work toward this goal until it is met. Use your tools; check the result against the goal itself, not against your own plan. ${ENDING}`;
+const resumePrompt = (g: GoalRecord, notes: string[] = []) => `Resuming this goal: ${g.text}\n\nProgress so far:\n${g.progress.slice(-KEEP_PROGRESS).map(p => `- ${p}`).join('\n') || '- (none recorded)'}\n\n${noteBlock(notes)}`
     + `Look at the project as it is now, then take the next concrete step. ${ENDING}`;
 const continuePrompt = (g: GoalRecord, notes: string[]) => `The goal is not met yet: ${g.text}\n\n${notes.length ? `The user added:\n${notes.map(n => `- ${n}`).join('\n')}\n\n` : ''}`
     + CONTINUE_END;
@@ -125,18 +143,23 @@ async function _save(r: Run, patch: Partial<GoalRecord> = {}): Promise<boolean> 
 
 async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
     const { rec, host } = r;
+    r.steer.push(...(rec.steer ?? [])); delete rec.steer;   // notes kept from an earlier run join this one's first prompt
     let errors = 0, still = 0, lastText = '', verifying = false, first = true;
     try {
         if (!await _save(r, { status: 'active', note: '' })) return rec;
         while (!r.stop) {
-            if (rec.turns >= rec.maxTurns) { await _save(r, { status: 'cap', note: `${rec.maxTurns} turns used without the goal being met` }); break; }
-            if (host.waitQuiet && !await host.waitQuiet()) { await _save(r, { status: 'paused', note: 'the chat did not become free' }); break; }
+            // The cap limits turns of work. The verification that follows the last one is not a turn of work (it used to be skipped, and a goal that
+            // finished on its last allowed turn was reported as out of turns: codex R1-003).
+            if (!verifying && rec.turns >= rec.maxTurns) { await _save(r, { status: 'cap', note: `${rec.maxTurns} turns used without the goal being met` }); break; }
+            let quiet = false;
+            try { quiet = !host.waitQuiet || await host.waitQuiet(); } catch { /* a host that fails to say is not quiet */ }
+            if (!quiet) { await _save(r, { status: 'paused', note: 'the chat did not become free' }); break; }
             if (r.stop) break;
 
             // Messages the user sent while it worked are part of the next prompt: a steer, not a separate conversation.
             const notes = r.steer.splice(0);
             const kind = verifying ? 'verify' : 'work';
-            const prompt = verifying ? verifyPrompt(rec, notes) : first ? (resuming ? resumePrompt(rec) : firstPrompt(rec.text)) : continuePrompt(rec, notes);
+            const prompt = verifying ? verifyPrompt(rec, notes) : first ? (resuming ? resumePrompt(rec, notes) : firstPrompt(rec.text, notes)) : continuePrompt(rec, notes);
             const visible = verifying ? 'Goal: checking that it is met…' : first ? (resuming ? `Goal (resumed): ${rec.text}` : `Goal: ${rec.text}`) : `Goal: turn ${rec.turns + 1} of ${rec.maxTurns}…`;
             if (!verifying) rec.turns++;
             first = false;
@@ -150,7 +173,7 @@ async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
             const line = firstLine(t.text);
             if (!verifying && signal !== 'error') rec.progress.push(`turn ${rec.turns}: ${line || `(${signal})`}`);
 
-            if (signal === 'stopped') { await _save(r, { status: 'paused', note: 'stopped' }); break; }
+            if (signal === 'stopped') { await _save(r, { status: 'paused', note: t.text.trim().slice(0, 120) || 'stopped' }); break; }
             if (signal === 'error') {
                 if (!verifying) rec.turns--;   // a failed request is not a turn of work
                 if (++errors >= MAX_ERRORS_IN_A_ROW) { await _save(r, { status: 'paused', note: `the model failed ${errors} turns in a row: ${line}` }); break; }
@@ -160,8 +183,9 @@ async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
             errors = 0;
             if (signal === 'blocked') { await _save(r, { status: 'blocked', note: t.text.trim().slice(0, 400) || 'needs your input' }); break; }
             if (signal === 'complete') {
-                if (verifying) { await _save(r, { status: 'done', note: '' }); break; }
-                verifying = true; await _save(r); continue;
+                // A note the user added while this turn ran has not been read by the agent: the goal is not done on an answer that predates it.
+                if (verifying && !r.steer.length) { await _save(r, { status: 'done', note: '' }); break; }
+                verifying = !verifying; await _save(r); continue;
             }
             // Not finished. A verification that did not confirm sends the loop back to work.
             verifying = false;
@@ -173,12 +197,15 @@ async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
             if (!await _save(r)) break;
         }
         if (r.stop && rec.status === 'active') await _save(r, { status: 'paused', note: r.stopNote || 'stopped' });
+        // Notes the loop ended before delivering stay with the record, for the next resume (they were acknowledged as "added to the next turn").
+        if (r.steer.length && rec.status !== 'done') await _save(r, { steer: r.steer.splice(0) });
     } finally {
         const done = rec.status;
-        const verdict = done === 'done' ? `Goal met after ${rec.turns} turn${rec.turns === 1 ? '' : 's'}.`
+        const kept = rec.steer?.length ? ` ${rec.steer.length === 1 ? 'Your note was' : `${rec.steer.length} notes were`} kept for /goal resume.` : '';
+        const verdict = (done === 'done' ? `Goal met after ${rec.turns} turn${rec.turns === 1 ? '' : 's'}.`
             : done === 'blocked' ? `Goal blocked: ${rec.note}`
             : done === 'cap' ? `Goal stopped: ${rec.note}. /goal resume to give it more turns.`
-            : `Goal paused${rec.note ? ` (${rec.note})` : ''}. /goal resume continues it.`;
+            : `Goal paused${rec.note ? ` (${rec.note})` : ''}. /goal resume continues it.`) + kept;
         try { host.notify(verdict); } catch {}
         _run = null;
     }
@@ -233,7 +260,14 @@ export async function loadGoal(host: GoalHost): Promise<GoalRecord | null> {
 }
 export async function clearGoal(host: GoalHost): Promise<boolean> {
     if (_run) { host.notify('Stop the goal first (/goal stop).'); return false; }
-    try { await host.write(''); } catch {}
+    // Remove the record; "cleared" is only said when it is gone (a failed write used to be swallowed, and the goal came back on the next load: codex R1-004).
+    try {
+        if (!await host.read().catch(() => null)) { host.onChange?.(null); return true; }   // nothing stored: already clear
+        if (host.remove) await host.remove(); else await host.write('');
+    } catch (e: any) {
+        host.notify(`The goal could not be cleared (${e?.message ?? e}); it is still stored.`);
+        return false;
+    }
     host.onChange?.(null);
     return true;
 }
