@@ -66,3 +66,16 @@ describe('the key chords', () => {
         expect(src).toContain('Ctrl+X Ctrl+S');
     });
 });
+
+describe('TUI composer keys', () => {
+    const src = readFileSync('tui-app.tsx', 'utf8');
+    it('Home and End move the cursor to the start and end of the message', () => {
+        expect(src).toContain('if (key.home) { setCursor(0); return; }');
+        expect(src).toContain('if (key.end)  { setCursor(v.length); return; }');
+    });
+    it('Home / End sequences that arrive inside a typed-ahead chunk act too, and other key sequences are not typed as text', () => {
+        expect(src).toContain('{ tc = 0; continue; }');
+        expect(src).toContain('{ tc = tv.length; continue; }');
+        expect(src).toContain('never typed as text');
+    });
+});
