@@ -19,7 +19,7 @@ const _sameText = (a: string, b: string): boolean => a === b || _lf(a) === _lf(b
 const _withEolOf = (text: string, original: string): string => {
     if (/\r/.test(text)) return text;
     if (_lf(original) === text) return original;
-    const crlf = (original.match(/\r\n/g) || []).length, cr = (original.match(/\r(?!\n)/g) || []).length, lf = (original.match(/(?<!\r)\n/g) || []).length;
+    const crlf = (original.match(/\r\n/g) || []).length, cr = (original.match(/\r(?!\n)/g) || []).length, lf = (original.match(/\n/g) || []).length - crlf;
     return crlf >= lf && crlf >= cr && crlf > 0 ? text.replace(/\n/g, '\r\n') : cr > lf && cr > crlf ? text.replace(/\n/g, '\r') : text;
 };
 
