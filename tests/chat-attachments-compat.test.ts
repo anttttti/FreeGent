@@ -46,7 +46,7 @@ describe('attachment delivery', () => {
         const file=W.getPendingAttachments().files[0];
         expect(file.contentType).toBe('text'); expect(file.content).toContain('revenue: 42');
         expect(file.workspacePath).toMatch(/^attachments\//);
-        expect(write).toHaveBeenCalledWith(file.workspacePath,expect.any(String),'base64');
+        expect(write).toHaveBeenCalledWith(file.workspacePath,expect.any(String),'base64',expect.anything());
     });
     it('recognizes document MIME types even when the picker omits the extension',async()=>{
         const reader=vi.spyOn(W,'extractDocumentText').mockResolvedValue('Document text');
@@ -119,7 +119,7 @@ describe('attachment delivery', () => {
         localStorage.setItem('fg_main_models',JSON.stringify(['nvidia|nvidia/nemotron-3-ultra-550b-a55b']));
         const show=vi.spyOn(W,'showSettings').mockImplementation(()=>{});
         const send=W.agentSend();
-        expect(W.aiBusy()).toBe(true);expect(W.aiJob).toBe('send-preparing');
+        expect(W.aiBusy()).toBe(true);expect(W.aiJob).toBe('');
         await W.agentSend();expect(show).not.toHaveBeenCalled();
         complete!();await send;
         expect(show).toHaveBeenCalledTimes(1); expect(W.aiJob).toBe('');

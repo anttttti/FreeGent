@@ -37,6 +37,8 @@ export const bumpWorkspaceEpoch = (): void => {
     try { localStorage.setItem(WORKSPACE_EPOCH_KEY, String(_localEpoch)); } catch {}
 };
 const _snapEpoch = new WeakMap<Map<string, string>, number>();
+/** The project generation a snapshot was taken in (undefined for a map that did not come from snapshotWorkspace). Pass it as `{ epoch }` to agentWriteFile/agentDeleteFile when applying a run's result. */
+export const snapshotEpoch = (snap: Map<string, string>): number | undefined => _snapEpoch.get(snap);
 export function snapshotWorkspace(recs: Iterable<{ name?: string; content?: unknown; encoding?: string | null } | null | undefined>): Map<string, string> {
     const snap = new Map<string, string>();
     _snapEpoch.set(snap, _epochNow());

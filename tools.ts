@@ -9,7 +9,7 @@ import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, snapshotWorkspace, staleGuard, workspaceEpoch } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch } from './exec-limits.js';
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
@@ -761,11 +761,11 @@ async function _handleUndoWrite(args: any) {
     }
     try {
         if (!previous.existed) {
-            await agentDeleteFile(args.path);
+            await agentDeleteFile(args.path, { epoch: previous.epoch });
             stack.pop();
             return { success: true, path: args.path, note: 'File deleted (it did not exist before the write).' };
         }
-        await agentWriteFile(args.path, previous.content);
+        await agentWriteFile(args.path, previous.content, null, { epoch: previous.epoch });
         stack.pop();
         return { success: true, path: args.path, bytes: _byteLen(previous.content), note: 'Restored previous content.' };
     } catch (e) { return { error: `undo_write: ${e.message}` }; }
@@ -806,9 +806,10 @@ async function _handleAppendFile(args: any, context: any) {
         );
     }
     try {
+        const _ep = workspaceEpoch();
         return doAppend(
             () => agentReadFile(args.path),
-            c  => agentWriteFile(args.path, c)
+            c  => agentWriteFile(args.path, c, null, { epoch: _ep })
         );
     } catch (e) { return { error: e.message }; }
 }
@@ -1425,7 +1426,7 @@ async function _handleWriteFile(args, context) {
                 context.binary.set(args.path, args.content);
                 return { success: true, path: args.path, bytes: _base64Len(args.content), staged: true };
             }
-            await agentWriteFile(args.path, args.content, 'base64');
+            await agentWriteFile(args.path, args.content, 'base64', { epoch: workspaceEpoch() });
             return { success: true, path: args.path, bytes: _base64Len(args.content) };
         } catch (e) { return { error: e.message }; }
     }
@@ -1493,7 +1494,7 @@ async function _handleWriteFile(args, context) {
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
         }
         const _ep = workspaceEpoch();
-        await agentWriteFile(args.path, args.content);
+        await agentWriteFile(args.path, args.content, null, { epoch: _ep });
         _pushCheckpoint(args.path, previous, existed, args.content, _ep);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path);
@@ -1642,7 +1643,7 @@ async function _handleReplaceInFile(args, context) {
         const _ep = workspaceEpoch();
         const rif = await doReplace(
             () => Promise.resolve(before),
-            async c => { await agentWriteFile(args.path, c); _pushCheckpoint(args.path, before, existed, c, _ep); }
+            async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, existed, c, _ep); }
         );
         if (rif.success) {
             const synErr = await _syntaxCheck(args.path);
@@ -1726,9 +1727,10 @@ async function _handleApplyPatch(args, context) {
         );
     }
     try {
+        const _ep = workspaceEpoch();
         const ap = await doApply(
             () => agentReadFile(args.path),
-            c  => agentWriteFile(args.path, c)
+            c  => agentWriteFile(args.path, c, null, { epoch: _ep })
         );
         if ('success' in ap && ap.success) {
             const synErr = await _syntaxCheck(args.path);
@@ -2420,7 +2422,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const deletedOk: string[] = [];
             for (const path of (run.deleted ?? []) as string[]) {
                 if (changedMeanwhile(path)) { write_errors.push(`${path}: not deleted, the file changed while the code ran; kept the newer version`); continue; }
-                await agentDeleteFile(path).catch(() => {});
+                await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }).catch(() => {});
                 if (context?.staging) context.staging.set(path, null);
                 _invalidateReadDedup(path);
                 deletedOk.push(path);
@@ -2433,10 +2435,10 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     // (binary, Latin-1 …) as base64, so they come back unchanged.
                     const text = typeof content === 'string' ? content : isTextBytes(content) ? _utf8.decode(content) : null;
                     if (text !== null) {
-                        await agentWriteFile(path, text);
+                        await agentWriteFile(path, text, null, { epoch: snapshotEpoch(sentSnap) });
                         if (context?.staging) context.staging.set(path, text);
                     } else {
-                        await agentWriteFile(path, bytesToBase64(content as Uint8Array), 'base64');   // binary
+                        await agentWriteFile(path, bytesToBase64(content as Uint8Array), 'base64', { epoch: snapshotEpoch(sentSnap) });   // binary
                     }
                     _invalidateReadDedup(path);
                 } catch (e) {
@@ -2499,7 +2501,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 // Files the run removed or renamed away
                 for (const path of (execResult.files_deleted ?? []) as string[]) {
                     if (changedMeanwhile(path)) { writeErrors.push(`delete ${path}: the file changed while the command ran; kept the newer version`); continue; }
-                    try { await agentDeleteFile(path); } catch (e) { writeErrors.push(`delete ${path}: ${e.message ?? e}`); continue; }
+                    try { await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }); } catch (e) { writeErrors.push(`delete ${path}: ${e.message ?? e}`); continue; }
                     if (context?.staging) context.staging.set(path, null);
                     _invalidateReadDedup(path);
                     deletedPaths.push(path);
@@ -2512,7 +2514,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                         const isBin = typeof content === 'string' && content.startsWith('\x00BIN\x00');
                         const enc   = isBin ? 'base64' : null;
                         const data  = isBin ? content.slice(5) : content;
-                        try { await agentWriteFile(path, data, enc); }
+                        try { await agentWriteFile(path, data, enc, { epoch: snapshotEpoch(sentSnap) }); }
                         catch (e) { writeErrors.push(`${path}: ${e.message ?? e}`); continue; }   // not claimed as written
                         if (context?.staging) context.staging.set(path, data);
                         // Invalidate dedup so a subsequent read_file sees the new content

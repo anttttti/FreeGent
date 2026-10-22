@@ -1,4 +1,5 @@
 import { lease, revokeLeases, liveLeases, type Lease } from './lease.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { mimeOfExt, docKindOfExt, docKindOfMime, MODEL_IMAGE_MIMES } from './mime.js';
 // chat-attachments.ts — pending image/file attachment state and UI (thumbnails, chips, drag-drop, paste).
 // Depends on: nothing (pure DOM + state).
@@ -315,6 +316,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
     const docExt = docKindOfExt(ext) ?? (!_TEXT_EXTS.has(ext) ? docKindOfMime(mimeType) : undefined);
     if (!isText && file.size > 25 * 1024 * 1024) throw new Error('Binary attachment exceeds the 25 MB limit');
     const current = () => token.valid();
+    const _readEpoch = workspaceEpoch();   // the project this read began in: a write after Clear or Load is refused by the workspace
     let imageUrl: string | undefined, sendImage: { mimeType: string; base64: string } | undefined;
     if (mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') {
         imageUrl = await _readAttachment(file, 'readAsDataURL');
@@ -334,7 +336,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
             const basename = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'image';
             workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
             try {
-                await agentWriteFile(workspacePath, base64, 'base64');
+                await agentWriteFile(workspacePath, base64, 'base64', { epoch: _readEpoch });
                 if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
             } catch { workspacePath = undefined; }
         }
@@ -374,7 +376,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         const basename = name.replace(/\\/g, '/').split('/').filter(p => p && p !== '.' && p !== '..').pop() || 'attachment';
         workspacePath = `attachments/${Date.now()}-${Math.random().toString(36).slice(2, 10)}/${basename}`;
         if (!current()) return;   // composer was cleared while reading: don't write a file nothing references
-        await agentWriteFile(workspacePath, original, 'base64');
+        await agentWriteFile(workspacePath, original, 'base64', { epoch: _readEpoch });
         if (!current()) { await agentDeleteFile?.(workspacePath).catch(() => {}); return; }
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };

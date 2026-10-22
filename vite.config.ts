@@ -273,7 +273,8 @@ export default defineConfig(() => {
         },
       } : {}),
       watch: {
-        ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/bench/**'],
+        // notes/ is a gitignored scratch area whose campaign artifacts run to thousands of files: watching them exhausts inotify and the server dies
+        ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/bench/**', '**/notes/**', '**/test-results/**'],
       },
       // HMR isolation policy:
       //   localhost-only (BIND=127.0.0.1): single-user, developer machine — keep HMR

@@ -3,7 +3,7 @@
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, snapshotWorkspace, staleGuard } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard } from './exec-limits.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
@@ -1213,7 +1213,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                 for (const [name, content] of Object.entries(data.changedFiles as Record<string, string | null>)) {
                     if (changedMeanwhile(name)) { writeErrors.push(`${name}: ${content === null ? 'not deleted' : 'not written'}, the file changed while the code ran; kept the newer version`); continue; }
                     if (content === null) {
-                        await agentDeleteFile(name).catch(e => writeErrors.push(`delete ${name}: ${(e as any).message ?? e}`));
+                        await agentDeleteFile(name, { epoch: snapshotEpoch(sentSnap) }).catch(e => writeErrors.push(`delete ${name}: ${(e as any).message ?? e}`));
                         continue;
                     }
                     if (omitted.has(name)) { writeErrors.push(omittedFileWriteMessage(name)); continue; }
@@ -1221,7 +1221,7 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                     const { data: fileData, encoding, imageMime } = decodeOutputFile(content);
                     try {
                         // agentWriteFile routes local/ paths to FSA, bare names to IDB
-                        await agentWriteFile(name, fileData, encoding);
+                        await agentWriteFile(name, fileData, encoding, { epoch: snapshotEpoch(sentSnap) });
                     } catch (e) {
                         writeErrors.push(`write ${name}: ${(e as any).message ?? e}`);
                         continue;

@@ -10,7 +10,7 @@ import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
-import { bumpWorkspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
+import { bumpWorkspaceEpoch, workspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
@@ -928,13 +928,22 @@ function _reloadAfterWorkspaceChange(path: string): void {
     if (p.startsWith('skills/') || p.startsWith('rules/')) loadSkills?.();
 }
 
-export async function agentWriteFile(path, content, encoding = null) {
+/** `opts.epoch` stamps the write with the project it was meant for (workspaceEpoch() when the caller's work began). The check is made here, at
+ *  the storage call, so a caller cannot forget it: a write whose project was cleared or replaced (in this tab or another) is refused instead of
+ *  bringing an old file into the new project (codex report 8, 336/339/406-408/425-430). Without it the write is unconditional. */
+export interface WriteOpts { epoch?: number }
+function _assertEpoch(what: string, path: string, opts?: WriteOpts): void {
+    if (opts?.epoch !== undefined && workspaceEpoch() !== opts.epoch) throw new Error(`${what}: the project was cleared or replaced while this was pending, so ${path} was not changed`);
+}
+export async function agentWriteFile(path, content, encoding = null, opts?: WriteOpts) {
+    _assertEpoch('write', path, opts);
     if (_wa) { const r = await _wa.agentWriteFile(path, content, encoding); _reloadAfterWorkspaceChange(path); return r; }
     const generation = _workspaceGeneration;
     path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
     await _refuseDuplicateTask(path, content);
     if (generation !== _workspaceGeneration) throw new Error(`write: the project was cleared or replaced while this write of ${path} was pending; it was not applied`);
+    _assertEpoch('write', path, opts);
     if (path.startsWith('local/')) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content); // binary to FSA not yet supported
@@ -968,10 +977,12 @@ export async function agentWriteFile(path, content, encoding = null) {
     if (isTaskPath(path)) refreshTasks?.();
 }
 
-export async function agentDeleteFile(path) {
+export async function agentDeleteFile(path, opts?: WriteOpts) {
+    _assertEpoch('delete', path, opts);
     if (_wa) { const r = await _wa.agentDeleteFile(path); _reloadAfterWorkspaceChange(path); return r; }
     path = workspaceName(path);
     _refuseGitMetadata(path, 'delete');
+    _assertEpoch('delete', path, opts);
     if (path.startsWith('local/')) {
         try { await deleteFsaFile(path.slice('local/'.length)); }
         catch { await deleteWorkspaceFile(path); } // fall back for orphaned IDB local/ files

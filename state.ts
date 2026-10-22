@@ -1,3 +1,4 @@
+import { preparing } from './turn-owner.js';
 import { chatSession, clearChatHistory, setChatHistory, getChatHistory } from './chat-history.js';
 
 // state.js — shared mutable state (ES module).
@@ -88,7 +89,7 @@ export let _lastTurnBlockedToken: boolean = false; // set when a turn accepts a 
 export let _sessionToolFilter: Set<string> | null = null; // classifier output; null = use full active tool set
 // Background AI job that owns the chat between its turns: 'runner' | 'init' | ''.
 // One AI job at a time — aiBusy() gates every entry point that would start another.
-export let aiJob: string = '';
+export let aiJob: string = '';   // 'runner' | 'init' | ''. A send or dequeued turn still preparing is turn-owner.ts's, not a job.
 
 // Keep the screen on while a turn streams: on mobile, screen-off freezes the page and kills the
 // SSE connection ("Network error"). The lock is released by the browser when the page is hidden,
@@ -139,7 +140,7 @@ export function setLastTurnDoneToken(v: any): void     { _lastTurnDoneToken    =
 export function setLastTurnBlockedToken(v: any): void  { _lastTurnBlockedToken = v; }
 export function setSessionToolFilter(v: Set<string> | null): void { _sessionToolFilter = v; }
 export function setAiJob(v: string): void              { aiJob                 = v; }
-export function aiBusy(): boolean                      { return agentStreaming || !!aiJob; }
+export function aiBusy(): boolean                      { return agentStreaming || !!aiJob || preparing(); }
 
 // defaultSession proxies the module-level globals — existing call sites that pass no
 // session get exactly the same behaviour as before A2.
