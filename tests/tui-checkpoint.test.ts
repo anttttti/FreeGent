@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { takeSnapshot, restoreSnapshot, dropSnapshot, MAX_FILE_BYTES } from '../tui-checkpoint.ts';
 
 const dirs: string[] = [];
+// A turn takes longer than the file clock's resolution; a file made in the same instant as the copy is not claimed as the turn's (rewind keeps those).
+const turnStarts = () => new Promise(r => setTimeout(r, 30));
 const tmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push(d); return d; };
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
@@ -14,7 +16,7 @@ describe('TUI checkpoints', () => {
         writeFileSync(join(root, 'note.txt'), 'ORIGINAL');
         mkdirSync(join(root, 'sub')); writeFileSync(join(root, 'sub', 'keep.txt'), 'KEEP');
         writeFileSync(join(root, 'gone.txt'), 'WILL BE DELETED');
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         expect(snap.files.sort()).toEqual(['gone.txt', 'note.txt', join('sub', 'keep.txt')].sort());
         // the turn
         writeFileSync(join(root, 'note.txt'), 'CHANGED');
@@ -36,7 +38,7 @@ describe('TUI checkpoints', () => {
         mkdirSync(join(root, 'node_modules')); writeFileSync(join(root, 'node_modules', 'x.js'), '1');
         writeFileSync(join(root, 'a.txt'), 'A');
         symlinkSync(join(root, 'a.txt'), join(root, 'link.txt'));
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         expect(snap.files).toEqual(['a.txt']);
         writeFileSync(join(root, '.git', 'HEAD'), 'changed'); writeFileSync(join(root, 'node_modules', 'y.js'), '2');
         await restoreSnapshot(root, snap);
@@ -47,7 +49,7 @@ describe('TUI checkpoints', () => {
         const root = tmp('fg-ws-'), store = tmp('fg-ck-');
         writeFileSync(join(root, 'big.bin'), Buffer.alloc(MAX_FILE_BYTES + 1, 1));
         writeFileSync(join(root, 'a.txt'), 'A');
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         expect(snap.skippedLarge).toEqual(['big.bin']);
         const r = await restoreSnapshot(root, snap);
         expect(existsSync(join(root, 'big.bin'))).toBe(true);
@@ -55,14 +57,14 @@ describe('TUI checkpoints', () => {
     });
     it('an unusable snapshot is refused, not half-restored', async () => {
         const root = tmp('fg-ws-'), store = tmp('fg-ck-');
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         snap.tooBig = true;
         await expect(restoreSnapshot(root, snap)).rejects.toThrow(/too large/);
     });
     it('dropSnapshot removes the copies', async () => {
         const root = tmp('fg-ws-'), store = tmp('fg-ck-');
         writeFileSync(join(root, 'a.txt'), 'A');
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         await dropSnapshot(snap);
         expect(readdirSync(store)).toEqual([]);
     });
@@ -77,7 +79,7 @@ describe('codex R13-001: rewind never removes a file that was already there', ()
         writeFileSync(join(root, '.gitignore'), 'archive/\n'); writeFileSync(join(root, 'tracked.txt'), 'T');
         mkdirSync(join(root, 'archive')); writeFileSync(join(root, 'archive', 'preexisting.txt'), 'PRECIOUS');
         git('add', '-A'); git('commit', '-qm', 'i');
-        const snap = await takeSnapshot(root, store, '1');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
         expect(snap.files).not.toContain('archive/preexisting.txt');            // hidden by the rule of the time
         await new Promise(r => setTimeout(r, 15));
         writeFileSync(join(root, '.gitignore'), '');                              // the turn clears the rule …

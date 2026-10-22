@@ -159,7 +159,9 @@ describe('fn-tag projection', () => {
         expect(out[2].content).toBe(
             '<tool_response>\n<tool_name>list_files</tool_name>\n<result>\n{"x":1}\n</result>\n</tool_response>\n\n' +
             '<tool_response>\n<tool_name>web_search</tool_name>\n<result>\n[EXIT CODE 1]\n{"y":2}\n</result>\n</tool_response>');
-        expect(out[3]).toEqual({ role: 'assistant', content: 'ok' });
+        // the earlier calls are in the request as the text tags the model writes (codex R38-001): the results alone did not say which call made them
+        expect(out[1].content).toBe('<function=list_files>{}</function>\n<function=web_search>{}</function>');
+        expect(out[3]).toEqual({ role: 'assistant', content: 'ok\n<function=list_files>{}</function>' });
     });
 
     it('leaves a history without tool messages as it is', () => {

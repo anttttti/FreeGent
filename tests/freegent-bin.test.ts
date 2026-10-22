@@ -51,7 +51,7 @@ describe('codex R8-001 and R9-001', () => {
         for (const extra of [['--task', 'OWN_TASK'], ['--prompt', 'OWN_PROMPT'], ['--task-file', 'own-task.txt']]) {
             const r = run('-p', 'OWN_PRINT', ...extra);
             expect(r.status, extra.join(' ')).not.toBe(0);
-            expect(r.stderr).toMatch(/exactly one input/);
+            expect(r.stderr).toMatch(/exactly one of/);
         }
     }, 120_000);
     it('tsx, which the command needs to start either program, is a runtime dependency', async () => {
