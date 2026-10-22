@@ -4,19 +4,32 @@
 // included. Oldest first; the position shown is n/total, the newest being total/total. Browsing starts with ↑ (the text being
 // typed is kept as the draft), ↓ past the newest gives the draft back, and editing a recalled message ends the browsing.
 import { stripInjected } from './history-util.js';
+import { isGoalPrompt } from './goal.js';
 
 export interface Browse { index: number; draft: string }
 
-/** The user's messages in a chat history, oldest first, without the text the harness injected and without consecutive repeats. */
+// Messages the harness itself puts in a chat's history with the role "user": nudges, text-mode tool results, the compaction summary and its
+// notes, the task pin, and the turns the /goal loop sends. No one typed them, so ↑/↓ must not offer them.
+const SYNTHETIC_PREFIXES = ['<nudge>', '<tool_response>', '[SYSTEM', '[Files read before compaction', 'No results from "ls"', '~~~guidance'];
+const TASK_PIN = '[TASK — do not lose track of this]\n';   // llm-shared.ts: the first message, re-stated after a compaction (it IS the user's)
+
+/** The text of a typed user message, or null when the message is one the harness wrote. */
+export function typedText(m: any): string | null {
+    if (m?.role !== 'user') return null;
+    const raw = typeof m.content === 'string' ? m.content
+        : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text').map((p: any) => p.text).join('\n') : '';
+    let text = String(stripInjected(raw) ?? raw).trim();
+    if (text.startsWith(TASK_PIN)) text = text.slice(TASK_PIN.length).trim();
+    if (!text || SYNTHETIC_PREFIXES.some(p => text.startsWith(p)) || isGoalPrompt(text)) return null;
+    return text;
+}
+
+/** The user's own messages in a chat history, oldest first, without consecutive repeats. */
 export function userMessages(history: readonly any[] | null | undefined): string[] {
     const out: string[] = [];
     for (const m of history ?? []) {
-        if (m?.role !== 'user') continue;
-        const raw = typeof m.content === 'string' ? m.content
-            : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text').map((p: any) => p.text).join('\n') : '';
-        const text = String(stripInjected(raw) ?? raw).trim();
-        if (!text || text.startsWith('<nudge>')) continue;
-        if (out[out.length - 1] !== text) out.push(text);
+        const text = typedText(m);
+        if (text !== null && out[out.length - 1] !== text) out.push(text);
     }
     return out;
 }

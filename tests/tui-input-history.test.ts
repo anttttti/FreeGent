@@ -27,6 +27,39 @@ describe('what the list holds', () => {
     });
 });
 
+describe('only the user\'s own turns', () => {
+    const u = (content: any) => ({ role: 'user', content });
+    it('leaves out nudges, the compaction summary and its notes, tool results in text mode, and the /goal loop\'s turns', () => {
+        const h = [
+            u('<workspace_files>\n1 file:\nA.md\n</workspace_files>\nfix the login bug'),
+            u('<nudge>~~~guidance\nReactive guidance triggered by recent tool activity\n~~~</nudge>'),
+            u('<nudge>You declared COMPLETED with no answer body.</nudge>'),
+            u('<tool_response>{"ok":true}</tool_response>'),
+            u('[SYSTEM: The conversation history above has been compacted. The following is a read-only summary]'),
+            u('[SYSTEM: Continue where you left off.]'),
+            u('[Files read before compaction — last-read content retained so you can verify fix state without re-reading:\n\na.ts:\nx]'),
+            u('No results from "ls", results from "ls -la":\ntotal 0'),
+            u('~~~guidance\nThe following capabilities and rules apply to the request below.\n~~~\n\nthen add a test'),
+            { role: 'assistant', content: 'done' },
+        ];
+        expect(userMessages(h)).toEqual(['fix the login bug', 'then add a test']);
+    });
+    it('leaves out every turn the goal loop sends, and keeps a message that merely starts like one', () => {
+        const END = 'When the goal is fully met, finish your reply with COMPLETED. If you cannot go on without something only the user can give (a credential, a choice, a missing fact), do not guess: finish with a line "BLOCKED: <your question, one sentence>".';
+        const h = [
+            u('Goal: ship the report\n\nWork toward this goal until it is met. Use your tools; check the result against the goal itself, not against your own plan. ' + END),
+            u('Resuming this goal: ship the report\n\nProgress so far:\n- turn 1: outline\n\nLook at the project as it is now, then take the next concrete step. ' + END),
+            u('The goal is not met yet: ship the report\n\nContinue: take the next concrete step with tools now, without restating the plan. Finish with COMPLETED only when the goal is met.'),
+            u('You said the goal is complete: ship the report\n\nVerify it now against that wording: run the check, read the result, look at the files. If it is met, reply with the evidence and finish with COMPLETED. If something is missing, say what and keep working.'),
+            u('Goal: I want to understand the build'),            // typed by a person
+        ];
+        expect(userMessages(h)).toEqual(['Goal: I want to understand the build']);
+    });
+    it('the task re-stated after a compaction is the user\'s first message, without its pin', () => {
+        expect(userMessages([u('[TASK — do not lose track of this]\nReview the source code'), u('[SYSTEM: summary]')])).toEqual(['Review the source code']);
+    });
+});
+
 describe('↑ and ↓', () => {
     const E = ['one', 'two', 'three'];
     const up = (b: Browse | null, cur = '') => step(b, 'older', E, cur);
