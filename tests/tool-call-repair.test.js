@@ -274,3 +274,16 @@ describe('_repairLongcatPseudoCalls — <longcat_tool_call> markup in the reply 
         expect(r('just text')).toBeNull();
     });
 });
+
+describe('hermes C13: a malformed entry does not discard the batch', () => {
+    it('no .function, a null .function and a null entry each become an empty call and the others are untouched', () => {
+        const good = { id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"x"}' } };
+        for (const bad of [{ id: 'b' }, { id: 'c', function: null }, null, { id: 'd', name: 'list_files' }]) {
+            const raw = [good, bad];
+            const r = window.repairAllToolCalls(raw);
+            expect(r.norm.length).toBe(2);
+            expect(r.norm[0]).toEqual({ name: 'read_file', args: { path: 'x' } });
+            expect(typeof r.norm[1].name).toBe('string');
+        }
+    });
+});

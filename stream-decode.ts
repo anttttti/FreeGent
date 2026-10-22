@@ -36,6 +36,7 @@ const SSE_MIDSTREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
  *  line between events still stream. `:` comments and other fields are ignored. */
 export class SSEPayloads {
     private pending: string[] = [];
+    private pendingChars = 0;
     /** One line, without its line break. Returns the payloads (parsed JSON) it completes, or the string "[DONE]". */
     line(raw: string): any[] {
         if (raw === '') return this.dispatch();
@@ -44,25 +45,35 @@ export class SSEPayloads {
         const payload = raw.slice(5).replace(/^ /, '');
         if (payload === '[DONE]' && !this.pending.length) return ['[DONE]'];
         this.pending.push(payload);
+        this.pendingChars += payload.length + 1;
+        // A stream of lines that never forms JSON must not grow without end (nor be re-joined and re-parsed in full on every line: that was
+        // quadratic; hermes C11). One event is never this large.
+        if (this.pending.length > MAX_EVENT_LINES || this.pendingChars > MAX_EVENT_CHARS) { this.reset(); console.warn('[SSE] an event grew past its limit without forming JSON; dropped'); return []; }
+        // Only an event that begins like a JSON object or array, and a line that can end one, is worth a parse attempt; the others wait for the blank line.
+        if (!/^\s*[{[]/.test(this.pending[0]) || !/[}\]]\s*$/.test(payload)) return [];
         const joined = this.pending.join('\n');
-        if (!joined.trim()) { this.pending = []; return []; }       // keep-alive / empty data line
-        try { const v = JSON.parse(joined); this.pending = []; return [v]; } catch { return []; }   // incomplete: wait for more lines
+        if (!joined.trim()) { this.reset(); return []; }       // keep-alive / empty data line
+        try { const v = JSON.parse(joined); this.reset(); return _chunks([v]); } catch { return []; }   // incomplete: wait for more lines
     }
+    private reset(): void { this.pending = []; this.pendingChars = 0; }
     /** The event ended (blank line or end of stream): whatever is pending is parsed as is, else line by line. */
     dispatch(): any[] {
         if (!this.pending.length) return [];
-        const parts = this.pending; this.pending = [];
+        const parts = this.pending; this.reset();
         const joined = parts.join('\n');
-        try { return [JSON.parse(joined)]; } catch { /* fall through */ }
+        try { return _chunks([JSON.parse(joined)]); } catch { /* fall through */ }
         const out: any[] = [];
         for (const part of parts) {
             if (!part.trim()) continue;
             if (part === '[DONE]') { out.push('[DONE]'); continue; }
-            try { out.push(JSON.parse(part)); } catch (err) { console.warn('[SSE] JSON parse error:', String(err), 'payload:', part.slice(0, 120)); }
+            try { out.push(..._chunks([JSON.parse(part)])); } catch (err) { console.warn('[SSE] JSON parse error:', String(err), 'payload:', part.slice(0, 120)); }
         }
         return out;
     }
 }
+const MAX_EVENT_LINES = 1000, MAX_EVENT_CHARS = 1 << 20;
+/** Chunks of a stream are JSON objects. A parsed string such as "[DONE]" is data, not the end marker the callers look for. */
+const _chunks = (vs: any[]): any[] => vs.filter(v => v !== null && typeof v === 'object');
 // A line break is CRLF, CR or LF (SSE spec). A CR at the very end of the buffer may be half of a CRLF: it waits for the next chunk.
 const _SSE_BREAK = /\r\n|\r(?!$)|\n/;
 
