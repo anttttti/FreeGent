@@ -128,6 +128,8 @@ const _llmParts     = llmSpec.indexOf('|') >= 0 ? llmSpec.split('|') : [];
 const provider      = (_llmParts[0] || _arg('--provider') || process.env.FREEGENT_PROVIDER || 'openai');
 const model         = (_llmParts.slice(1).join('|') || _arg('--model') || process.env.FREEGENT_MODEL || '');
 const apiKey        = _arg('--api-key')   || process.env.FREEGENT_API_KEY  || '';
+// A key on the command line is visible to every local user in the process list (`ps`). The environment, ./.env and ~/.config/freegent/credentials are not (hermes C10 note).
+if (_arg('--api-key')) console.error('freegent: --api-key puts the key in the process list where other users of this machine can read it; prefer the environment, ./.env or ~/.config/freegent/credentials.');
 const apiUrl        = _arg('--api-url')   || process.env.FREEGENT_API_URL  || '';
 // Explicit non-positive/invalid --timeout falls back to the default deliberately (0 is not "no timeout").
 const _timeoutRaw   = parseInt(_arg('--timeout') ?? '', 10);
