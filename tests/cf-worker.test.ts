@@ -22,6 +22,17 @@ describe('CF Worker', () => {
         vi.stubGlobal('fetch', upstream);
     });
 
+    it('hermes C7: only the listed hosts, not their subdomains, are proxied (the shared key is injected before the request leaves)', async () => {
+        const env = { OPENROUTER_API_KEY: 'shared', OPENAI_API_KEY: 'shared2', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+        for (const url of ['https://evil.openrouter.ai/api/v1/x', 'https://x.api.openai.com/v1/x', 'https://a.ai-gateway.vercel.sh/v1/x', 'https://openrouter.ai.evil.com/x']) {
+            const r = await worker.fetch(post({ ...LLM, url }), env);
+            expect(r.status, url).toBe(403);
+        }
+        expect(upstream).not.toHaveBeenCalled();
+        expect((await worker.fetch(post(LLM), env)).status).toBe(200);          // the listed host still works
+        expect((await worker.fetch(post({ ...LLM, url: 'https://openrouter.ai./api/v1/x' }), env)).status).toBe(200);   // a trailing dot is the same host
+    });
+
     it('rejects requests without an Origin header', async () => {
         const r = await worker.fetch(post(LLM, null), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw' });
         expect(r.status).toBe(403);
