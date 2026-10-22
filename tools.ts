@@ -1281,7 +1281,7 @@ async function _handleListFiles(args, context) {
         }
         const listed = _cap(applyFilter(await agentListFiles()));
         if (!hidden.length || pathFilter) return { path: pathFilter, ...listed };
-        const hiddenNote = `Not listed (build/cache/dependency directories that exist): ${hidden.map(d => d + '/').join(', ')}. Pass one as path to list it.`;
+        const hiddenNote = `Not listed (build/cache/dependency/git-ignored directories that exist): ${hidden.map(d => d + '/').join(', ')}. Pass one as path to list it.`;
         return { path: pathFilter, ...listed, note: [listed.note, hiddenNote].filter(Boolean).join(' ') };
     }
     catch (e) { return { error: e.message }; }

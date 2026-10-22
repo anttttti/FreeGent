@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir, unlink, readdir, stat } from 'node:fs/promi
 import { execFile } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import type { WorkspaceAdapter } from './workspace.js';
+import { listFiles } from './workspace-scan.js';
 
 const _LOCAL = 'local/';
 const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__']);
@@ -95,6 +96,30 @@ async function _walkFiles(root: string, { skipNoise = true, maxDepth = Infinity,
     return files;
 }
 
+// What the listing leaves out, by entry: the noise directories, and dot-entries other than the project's own.
+const _skipEntry = (name: string, isDir: boolean): boolean => _SKIP.has(name) || (name.startsWith('.') && !isListedDotEntry(name, isDir));
+// A listing is bounded: in a git repository it is the project's files (tracked, and untracked but not ignored — `git ls-files`), whatever
+// the size of the folders .gitignore leaves out; elsewhere a walk with a budget. A TUI run in a repo with 160k files in ignored folders spent
+// most of its time in the unbounded stat-walk that every worker command, every turn end and every list_files made of the whole tree.
+const _LIST_MAX_ENTRIES = 30_000, _LIST_DEADLINE_MS = 3_000;
+const _TRUNCATED_NOTE = (n: number) => `[listing truncated at ${n} entries — use execute_code bash \`find\` or \`ls\` for full coverage]`;
+async function _projectFiles(root: string, withStat: boolean): Promise<{ listing: Awaited<ReturnType<typeof listFiles>>; files: Array<{ name: string; size?: number; lastModified?: number }> }> {
+    const listing = await listFiles(root, { maxEntries: _LIST_MAX_ENTRIES, deadlineMs: _LIST_DEADLINE_MS, skipEntry: _skipEntry });
+    const files: Array<{ name: string; size?: number; lastModified?: number }> = listing.files.map(name => ({ name }));
+    if (withStat) {
+        // A few at a time: enough to keep the disk busy without starving the rest of the program.
+        let next = 0;
+        const worker = async () => {
+            for (let i = next++; i < files.length; i = next++) {
+                try { const s = await stat(join(root, files[i].name)); files[i].size = s.size; files[i].lastModified = s.mtimeMs; }
+                catch { files[i].size = 0; files[i].lastModified = 0; }   // a file git still lists but that is gone: listed, as the walk listed a failed stat
+            }
+        };
+        await Promise.all(Array.from({ length: 32 }, worker));
+    }
+    return { listing, files };
+}
+
 export class NodeFsAdapter implements WorkspaceAdapter {
     _root: string;
     root: string;
@@ -139,7 +164,9 @@ export class NodeFsAdapter implements WorkspaceAdapter {
     }
 
     async agentListFiles() {
-        return (await _walkFiles(this._root, { withStat: true })) as Array<{name: string; size: number; lastModified: number}>;
+        const { listing, files } = await _projectFiles(this._root, true);
+        if (!listing.complete) files.push({ name: _TRUNCATED_NOTE(files.length), size: 0, lastModified: 0 });
+        return files as Array<{name: string; size: number; lastModified: number}>;
     }
 
     /** Full workspace walk with _SKIP exclusions, WITHOUT stat() calls, and with a
@@ -153,6 +180,9 @@ export class NodeFsAdapter implements WorkspaceAdapter {
      *  count to a few thousand regardless of how large tmp/, bench/, logs/ etc. grow.
      */
     async agentListFilesNoStat(maxDepth = 4): Promise<Array<{name: string}>> {
+        // In a git repository the project's own files are the answer, at any depth; elsewhere the depth cap keeps the walk small.
+        const { listing, files } = await _projectFiles(this._root, false);
+        if (listing.via === 'git') return files.map(f => ({ name: f.name }));
         return _walkFiles(this._root, { maxDepth });
     }
 
@@ -162,8 +192,19 @@ export class NodeFsAdapter implements WorkspaceAdapter {
      *  dependencies). list_files names them so "no build/ directory" is never concluded from a listing. */
     async agentHiddenDirs(): Promise<string[]> {
         try {
-            return (await readdir(this._root, { withFileTypes: true }))
-                .filter(e => e.isDirectory() && _SKIP.has(e.name)).map(e => e.name).sort();
+            const dirs = (await readdir(this._root, { withFileTypes: true })).filter(e => e.isDirectory() && !e.name.startsWith('.'));
+            const hidden = new Set(dirs.filter(e => _SKIP.has(e.name)).map(e => e.name));
+            // In a git repository, a folder .gitignore leaves out has no listed files: say so too, or "there is no bench/ here" is concluded from the listing.
+            const { listing } = await _projectFiles(this._root, false);
+            if (listing.via === 'git') {
+                const shown = new Set(listing.files.map(f => f.split('/')[0]));
+                for (const e of dirs) {
+                    if (shown.has(e.name)) continue;
+                    // An empty folder is not "hidden"; only one with something in it that the listing leaves out.
+                    try { if ((await readdir(join(this._root, e.name))).length) hidden.add(e.name); } catch {}
+                }
+            }
+            return [...hidden].sort();
         } catch { return []; }
     }
 
