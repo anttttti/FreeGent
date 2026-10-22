@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -20,7 +20,7 @@ import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
-import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
+import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
 import { newVerification, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { runCompletionGates } from './completion-gates.js';
@@ -223,9 +223,7 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
 //   FR_ERROR   — server-side error surfaced as finish_reason inside a 200 response.
 //   NORMAL     — well-formed completion; no retry action.
 // 'repetition': stream-decode stopped a degenerate (repeating) output early — handled as a cut-off.
-const _FR_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'other', 'repetition']);
-const _FR_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
-const _FR_ERROR     = new Set(['error', 'abort']);
+const _FR_TOKEN_CAP = FINISH_TOKEN_CAP, _FR_FILTERED = FINISH_FILTERED, _FR_ERROR = FINISH_ERROR;
 // Set by stream-decode when the stream went silent mid-response (SSE idle timeout).
 const _FR_STOP_OK = new Set(['stop', 'end_turn', 'STOP', 'completed']);   // a provider declaring the reply complete
 const _FR_STALLED   = new Set(['idle_timeout']);
@@ -2606,7 +2604,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
             toolCount:       hasTools ? (activeTools?.() ?? []).length : 0,
         });
     }
-    const thinkBudget = isNvidia && !endpointOverride && modelSupportsThinking(provider, model)
+    // Whether the endpoint was chosen by the default route or handed in (rotation, fallback, media, a worker) does not change what the model is: the same model gets
+    // the same thinking controls (codex R4-001).
+    const thinkBudget = isNvidia && modelSupportsThinking(provider, model)
         ? (forWorker ? getWorkerThinkingBudget() : thinkingLevelBudget('nvidia')) : 0;
     const customThinkBudget = isCustom ? thinkingLevelBudget('custom') : 0; // 0 = off
     // The history is the event log's projection (deriveMessages). A fn-tag model gets the text-tag
@@ -2623,7 +2623,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // causing the estimate to run 15–25% low — a 10% buffer produces frequent 400s on benchmarks.
     let effectiveMaxTokens = maxTokens ?? defaultMaxTokens;
     if (isCustom) {
-        const ctxWindow = getOAIContextTokens();
+        const ctxWindow = getEndpointContextTokens(ep);
         // Build once; used by both branches below.
         const msgs = [{ role: 'system', content: sysPrompt }, ..._effectiveHist.filter(m => !(m.role === 'assistant' && m.content == null && !m.tool_calls?.length))];
         let estInput;

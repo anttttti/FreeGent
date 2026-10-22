@@ -99,7 +99,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
             let raw = '';
             let _utilityFailed400 = false;
             try {
-                raw = await callLLMComplete(prompt, { maxTokens: 40, temperature: 0.4, maxAttempts: 1, label: 'suggest', endpoint: uep });
+                raw = await callLLMComplete(prompt, { maxTokens: 40, temperature: 0.4, maxAttempts: 1, label: 'suggest', endpoint: uep, allowPartial: true });
             } catch (err: any) {
                 const _msg = (err?.message ?? '').slice(0, 120);
                 const _status = (err as any)?.status ?? 0;
@@ -146,7 +146,7 @@ export async function generateAndShowSuggestion(): Promise<void> {
         if (!ep) continue;
         let raw = '';
         try {
-            raw = await callLLMComplete(prompt, { maxTokens: 40, temperature: 0.4, maxAttempts: 1, label: 'suggest', endpoint: ep });
+            raw = await callLLMComplete(prompt, { maxTokens: 40, temperature: 0.4, maxAttempts: 1, label: 'suggest', endpoint: ep, allowPartial: true });
         } catch (err: any) {
             // withRetry throws immediately on the first error when maxAttempts:1, so the
             // _makeOAIRetryHandler inside callLLMComplete never runs its removal/cooldown

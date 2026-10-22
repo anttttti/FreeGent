@@ -1137,7 +1137,7 @@ function _pushHistoryMessage(
         // Only use input_audio / video_url content types for providers that implement
         // the OpenAI multimodal content-type spec. NVIDIA NIM and Groq use
         // different API surfaces and silently drop unknown content types.
-        const _OAI_MEDIA_PROVIDERS = new Set(['openrouter', 'custom', 'openai']);
+        const _OAI_MEDIA_PROVIDERS = new Set(['openrouter', 'custom', 'vllm', 'openai']);   // vllm: selected as capable, so its audio/video parts must be sent (codex R46-001)
         const _oaiSpec = mediaOAIEndpoint
             ? `${mediaOAIEndpoint.provider}|${mediaOAIEndpoint.model}`
             : (getActiveMainModelList()[0] || '');

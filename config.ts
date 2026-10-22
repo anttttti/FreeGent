@@ -241,6 +241,16 @@ export function getGeminiModel()    {
 function getOAIUrl()         { return ls('fg_openai_url', 'https://api.openai.com/v1').replace(/\/$/, ''); }
 function getOAIKey()         { return ls('fg_openai_key'); }
 function getOAIModel()       { return ls('fg_openai_model', 'gpt-5.4-mini'); }
+/** The input window for a request to this endpoint: the smaller of the shared "max input tokens" setting and the model's own window when the catalog knows it. A small
+ *  custom model (8K) behind a shared setting of 50,000 was asked for an output larger than its whole context (codex R5-001). */
+export function getEndpointContextTokens(ep: { provider?: string; model?: string } | null | undefined): number {
+    const shared = getOAIContextTokens();
+    try {
+        const entry = ep?.model ? getAllModels().find((x: any) => x.provider === ep.provider && x.model === ep.model) : null;
+        if (entry && entry.contextK > 0) return Math.min(shared, entry.contextK * 1000);
+    } catch { /* no catalog yet: the shared setting */ }
+    return shared;
+}
 export function getOAIContextTokens()   { const n = parseInt(ls('fg_openai_context',  '50000'), 10); return Number.isFinite(n) && n > 0 ? n : 50000; }
 function getGroqKey()        { return ls('fg_groq_key'); }
 function getNvidiaKey()      { return ls('fg_nvidia_key'); }
@@ -954,9 +964,13 @@ export function specBlockedByPrivacy(spec: string): boolean {
 function getMediaCapableSpec(requiredMedia) {
     if (!requiredMedia.length) return null;
     // Prefer explicitly configured media model if it covers all required types
+    // Each media type has its own override. The one for the media being sent comes first: they used to be tried in a fixed order, image first, so an
+    // image model that also takes audio and video shadowed the audio and video models chosen for those (codex R44-001).
+    const _byType: Array<[string, string]> = [['image', ls('fg_image_model', '')], ['audio', ls('fg_audio_model', '')], ['video', ls('fg_video_model', '')]];
     const _configured = [
-        ls('fg_image_model', ''), ls('fg_audio_model', ''), ls('fg_video_model', ''),
-    ].filter(Boolean);
+        ..._byType.filter(([t]) => requiredMedia.includes(t)),
+        ..._byType.filter(([t]) => !requiredMedia.includes(t)),
+    ].map(([, spec]) => spec).filter(Boolean);
     const all = getAllModels();
     for (const spec of _configured) {
         const bar   = spec.indexOf('|');
@@ -986,7 +1000,7 @@ function getMediaCapableSpec(requiredMedia) {
     // Not for someone running their own server: their attachment would go to a hosted provider they never
     // set up (found with a local vLLM profile: an image went to Gemini, hung for 30 s, and left the user's
     // own model out of the turn). They get the "no image model" chip and a text-only turn instead.
-    if (getProvider() === 'custom') return null;
+    if (getProvider() === 'custom' || getProvider() === 'vllm') return null;   // both are "their own server" (the second fell through to a hosted model: codex R45-001)
     const _catalogFallback = all.find(m => requiredMedia.every(t => (m.media || ['text']).includes(t)));
     return _catalogFallback ? `${_catalogFallback.provider}|${_catalogFallback.model}` : null;
 }
@@ -1299,7 +1313,7 @@ Object.assign(window, {
     getMode, setMode, isToolActive,
     isRoleEnabled, getRoleBody, setRoleBody, getRoleBodyFn, setRoleBodyFn, getProvider,
     getGeminiKey, getGeminiModel,
-    getOAIUrl, getOAIKey, getOAIModel, getOAIContextTokens,
+    getOAIUrl, getOAIKey, getOAIModel, getOAIContextTokens, getEndpointContextTokens,
     getGroqKey,
     getNvidiaKey, getNvidiaModel, getOpenRouterKey, getOpenRouterModel, getTokenHarborKey, getKiloKey, getVercelKey, getNousKey,
     getSearchProvider, getThinkingLevel, thinkingLevelBudget, getTemperature,

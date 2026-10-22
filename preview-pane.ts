@@ -49,7 +49,7 @@ async function _utilityPick(candidates: string[]): Promise<string | null> {
     const prompt = `These files are in a project workspace:\n${candidates.join('\n')}\n\n`
         + `Which single file is best to show as the project's preview (the page, app, document or image a user would want to open first)? `
         + `Answer with the exact file path only.`;
-    return callLLMComplete(prompt, { endpoint: uep, maxTokens: 40, temperature: 0, maxAttempts: 1, label: 'preview:pick' }, NULL_TASK_HANDLE);
+    return callLLMComplete(prompt, { endpoint: uep, maxTokens: 40, temperature: 0, maxAttempts: 1, label: 'preview:pick', allowPartial: true }, NULL_TASK_HANDLE);
 }
 
 // The utility model is asked again only when the candidate list changes.

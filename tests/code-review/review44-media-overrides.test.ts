@@ -1,0 +1,7 @@
+import {afterAll,it,expect} from 'vitest';
+const W=window as any,observations:any[]=[];
+it.each([{needed:'image',imageOverride:true,expected:'own-image'},{needed:'audio',imageOverride:true,expected:'own-audio'},{needed:'video',imageOverride:true,expected:'own-video'},{needed:'audio',imageOverride:false,expected:'own-audio'},{needed:'video',imageOverride:false,expected:'own-video'}])('$needed honors its own override; image override=$imageOverride',c=>{
+ localStorage.clear();const entries=[{model:'own-image',media:['text','image','audio','video']},{model:'own-audio',media:['text','audio']},{model:'own-video',media:['text','video']},{model:'own-main',media:['text']}].map(m=>({...m,provider:'custom',contextK:128,tools:true,url:'http://own-fixture.invalid/v1',key:'own-synthetic-key'}));
+ localStorage.setItem('fg_custom_models',JSON.stringify(entries));localStorage.setItem('fg_main_models',JSON.stringify(['custom|own-main']));localStorage.setItem('fg_image_model',c.imageOverride?'custom|own-image':'');localStorage.setItem('fg_audio_model','custom|own-audio');localStorage.setItem('fg_video_model','custom|own-video');for(const m of entries)expect(W.getAllModels().some((x:any)=>x.provider==='custom'&&x.model===m.model)).toBe(true);
+ const selected=W.getMediaCapableSpec([c.needed]);observations.push({...c,settings:{image:W.getImageModel(),audio:W.getAudioModel(),video:W.getVideoModel()},selected,entries});expect(selected).toBe('custom|'+c.expected);
+});

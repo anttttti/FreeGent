@@ -386,7 +386,7 @@ async function gate_acceptance_review(taskPath, content) {
     // Record what the reviewer said (or that it could not answer) for the task file and the reason.
     let reply = '', unavailable = false;
     const llm = async (p: string, o: any) => {
-        try { reply = await callLLMComplete(p, o); return reply; }
+        try { reply = await callLLMComplete(p, { ...o, allowPartial: true }); return reply; }   // a judge's first line is the answer; it is cut on purpose
         catch (e) { unavailable = true; throw e; }
     };
     const hit = await validateOutput(fileContents || '(no files available)', _ACCEPTANCE_CHECKS, {

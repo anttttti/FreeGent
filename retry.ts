@@ -81,6 +81,11 @@ export function isProviderSide400(msg: string): boolean {
     return /\bHTTP 400\b/.test(msg || '') && /could not complete the request|unable to process the request|try again|temporar|overload|at capacity|upstream/i.test(msg || '');
 }
 
+// finish_reason values that say the reply is not a finished one. Shared by the main loop and the auxiliary completions (codex R28-001).
+export const FINISH_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', 'OTHER', 'other', 'repetition']);
+export const FINISH_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
+export const FINISH_ERROR     = new Set(['error', 'abort']);
+
 export function isTransient(e) {
     const msg = e.message || '';
     // Permanent configuration errors — model ID or endpoint wrong, retrying won't help
