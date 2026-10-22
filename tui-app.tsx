@@ -25,6 +25,9 @@ import { layoutWindow, wrapRows, cursorWindow } from './log-layout.js';
 import { prevBoundary, nextBoundary, deleteBackward, deleteForward } from './input-edit.js';
 import { SETTINGS_DEF, keyedFields, numberFieldError, type FieldDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
+import * as InputHistory from './tui-input-history.js';
+import { getChatHistory } from './chat-history.js';
+import { activeChatId } from './state.js';
 import { friendlyLabel } from './step-label.js';
 
 // ── Click registry ─────────────────────────────────────────────────────────────
@@ -773,7 +776,8 @@ const HELP_LINES = [
     '  Alt+T  tasks           Alt+A  agent info',
     '  Alt+S  settings        Alt+R  role',
     '  Alt+P  project files   Alt+H  this help',
-    '  Esc    close panel      ↑/↓   scroll log (or this list, when a panel is open)',
+    '  Esc    close panel      ↑/↓   earlier / later messages (n/total shown); in a list: move',
+    '  PgUp/PgDn scroll the log (mouse wheel too)',
     '',
     'While agent runs:',
     '  Ctrl+C  break after step (exit when idle)',
@@ -783,7 +787,7 @@ const HELP_LINES = [
     'Slash commands:',
     '  /clear /compact /rewind',
     '  /export  — save chat as markdown file',
-    '  /resume [N]  — list or restore a previous session',
+    '  /resume  — choose a previous session from a list  (/resume N: by number)',
     '  /goal <text> — keep working until the goal is met',
     '  /goal resume · stop · clear · (alone: show it)',
     '  /<skill> [text] — run a skill (see /skills)',
@@ -808,6 +812,47 @@ function HelpPanel({ height }: { height: number }) {
     );
 }
 
+// The sessions of this workspace, most recent first, to choose one to continue (--resume and /resume). ↑/↓ move, Enter on an empty
+// composer opens the highlighted one, Esc closes. Starting without --resume is a new chat as always.
+type SessionRow = { id: string; name: string; lastAt: number; messages: number; firstMessage: string };
+let _resumeRows = new Map<string, SessionRow>();
+const _sessionDate = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+function ResumePanel({ height }: { height: number }) {
+    const [rows, setRows] = useState<SessionRow[] | null>(null);
+    const cursor = useStore().panelCursor;
+    useEffect(() => {
+        let alive = true;
+        listWorkspaceSessions().then(list => {
+            if (!alive) return;
+            _resumeRows = new Map(list.map(s => [s.id, s]));
+            setRows(list);
+            _panelItems = { kind: 'resume', items: list.map(s => s.id) };
+        }).catch(() => { if (alive) setRows([]); });
+        return () => { alive = false; _panelItems = { kind: null, items: [] }; };
+    }, []);
+    const win = cursorWindow(rows?.length ?? 0, cursor, Math.max(1, height - 5));
+    return (
+        <Box flexDirection="column">
+            <Text bold>{rows && rows.length > win.end - win.start ? `Resume a session  (${win.start + 1}–${win.end} of ${rows.length})` : 'Resume a session'}</Text>
+            <Text dimColor>{'  ↑/↓ choose, Enter to open it, Esc to cancel (and stay in the new chat)'}</Text>
+            {rows === null ? <Text dimColor>  Loading…</Text>
+                : rows.length === 0 ? <Text dimColor>  No previous sessions for this workspace.</Text>
+                : rows.map((s, i) => ({ s, i })).slice(win.start, win.end).map(({ s, i }) => {
+                    const generic = !s.name || /^new chat$/i.test(s.name);
+                    const title = generic ? (s.firstMessage || s.name) : s.name;
+                    return (
+                        <Text key={s.id} wrap="truncate">
+                            <Text color="yellow">{i === cursor ? '▸' : ' '}</Text>
+                            <Text dimColor>{` ${i + 1}. `}</Text>
+                            <Text color={i === cursor ? 'cyan' : undefined}>{title}</Text>
+                            <Text dimColor>{`  ${s.messages} message${s.messages === 1 ? '' : 's'} · ${_sessionDate(s.lastAt)}`}</Text>
+                        </Text>
+                    );
+                })}
+        </Box>
+    );
+}
+
 function Panel({ name, height, workspaceRoot }: {
     name: string;
     height: number;
@@ -817,6 +862,7 @@ function Panel({ name, height, workspaceRoot }: {
         name === 'project'  ? <ProjectPanel workspaceRoot={workspaceRoot} height={height} /> :
         name === 'model'    ? <ModelPanel height={height} /> :
         name === 'role'     ? <RolePanel height={height} /> :
+        name === 'resume'   ? <ResumePanel height={height} /> :
         name === 'tasks'    ? <TasksPanel /> :
         name === 'agent'    ? <AgentPanel /> :
         name === 'settings' ? <SettingsPanel height={height} /> :
@@ -1013,13 +1059,14 @@ function _setModel(spec: string): void {
 // The rows of the panel that is open and selectable (model or role), published by the panel so the key handler and the
 // composer know how many there are. ↑/↓ move the highlight, Enter on an empty composer chooses the highlighted row.
 // Settings and Project are not selectable; for them the cursor is the first visible row (↑/↓ scroll).
-let _panelItems: { kind: 'model' | 'role' | 'settings' | 'project' | 'help' | null; items: string[] } = { kind: null, items: [] };
+let _panelItems: { kind: 'model' | 'role' | 'resume' | 'settings' | 'project' | 'help' | null; items: string[] } = { kind: null, items: [] };
 function _selectFromPanel(): boolean {
     const st = Store.getState();
-    if (!st.activePanel || _panelItems.kind !== st.activePanel || (_panelItems.kind !== 'model' && _panelItems.kind !== 'role')) return false;
+    if (!st.activePanel || _panelItems.kind !== st.activePanel || (_panelItems.kind !== 'model' && _panelItems.kind !== 'role' && _panelItems.kind !== 'resume')) return false;
     const item = _panelItems.items[st.panelCursor];
     if (!item) return false;
     if (_panelItems.kind === 'model') _setModel(item);
+    else if (_panelItems.kind === 'resume') void resumeChosen(item);
     else { try { if ((globalThis as any).setMainAgentRole(item) === false) Store.addNotice(`_Unknown role \`${item}\`._`); } catch {} }
     Store.setActivePanel(st.activePanel);   // choosing closes the list (the same call that Esc and Alt+M use)
     return true;
@@ -1099,12 +1146,29 @@ function PromptInput({ value, onChange, onSubmit, onSteer, placeholder = '' }: {
     return <Text>{value.slice(0, cursor)}<Text inverse>{cursor < value.length ? value.slice(cursor, after) : ' '}</Text>{value.slice(after)}</Text>;
 }
 
+// ↑/↓ in the composer: the open chat's earlier messages (tui-input-history.ts). One list per chat, made the first time it is needed from the
+// chat's history (a resumed chat has its past) and added to by what is submitted after that, slash commands included.
+const _histories = new Map<string, string[]>();
+function _historyList(): string[] {
+    const chat = String(activeChatId ?? '');
+    let list = _histories.get(chat);
+    if (!list) { list = InputHistory.userMessages(getChatHistory()); _histories.set(chat, list); }
+    return list;
+}
+
 function InputLine({ ready, running, promptSuggestion }: {
     ready:           boolean;
     running:         boolean;
     promptSuggestion: string;
 }) {
-    const [value, setValue] = useState('');
+    const [value, setValueState] = useState('');
+    // The text as of the latest key, updated at once (the state follows after a redraw): the arrows read it for the draft.
+    const valueRef = useRef('');
+    const setValue = useCallback((v: string) => { valueRef.current = v; setValueState(v); }, []);
+    // ↑/↓ browsing of earlier messages; null when not browsing.
+    const [browse, setBrowse] = useState<InputHistory.Browse | null>(null);
+    const browseRef = useRef<InputHistory.Browse | null>(null);
+    const setBrowsing = (b: InputHistory.Browse | null) => { browseRef.current = b; setBrowse(b); };
     const [suggestions, setSuggestions] = useState<string[]>([]);
     // Message typed and submitted before startup finished — fired once ready.
     const pendingRef = useRef<string[]>([]);
@@ -1134,6 +1198,8 @@ function InputLine({ ready, running, promptSuggestion }: {
 
     const onChange = useCallback((v: string) => {
         setValue(v);
+        // Typing into a recalled message makes it the draft: browsing ends (the next ↑ starts again from the newest).
+        if (browseRef.current) setBrowsing(null);
         if (v) Store.setPromptSuggestion('');
         if (v.startsWith('/')) {
             setSuggestions(SLASH_COMMANDS.filter(c => c.startsWith(v)));
@@ -1156,7 +1222,7 @@ function InputLine({ ready, running, promptSuggestion }: {
         // With no model to send to, the message used to be dropped without a word (TUI report case 008). Now it is kept aside, named in a
         // note, and put back in the box as soon as a model is available (see below), so choosing one does not mean typing it again. It is
         // kept out of the box meanwhile: typing "/model …" after it would have sent both as one message.
-        const accept = () => { setValue(''); setSuggestions([]); Store.setPromptSuggestion(''); };
+        const accept = () => { setValue(''); setSuggestions([]); Store.setPromptSuggestion(''); setBrowsing(null); InputHistory.record(_historyList(), t); };
         const restoreDraft = () => {
             if (!unsentRef.current || !(dom.window.getActiveMainModelList?.() ?? []).length) return;
             setValue(unsentRef.current); unsentRef.current = '';
@@ -1209,6 +1275,14 @@ function InputLine({ ready, running, promptSuggestion }: {
             setValue(promptSuggestion);
             Store.setPromptSuggestion('');
         }
+        // ↑/↓ recall earlier messages. A panel with a list owns the arrows while it is open.
+        if ((key.upArrow || key.downArrow) && !Store.getState().activePanel) {
+            const r = InputHistory.step(browseRef.current, key.upArrow ? 'older' : 'newer', _historyList(), valueRef.current);
+            if (!r) return;
+            setBrowsing(r.browse);
+            setSuggestions([]);
+            setValue(r.text);
+        }
     });
 
 
@@ -1224,6 +1298,12 @@ function InputLine({ ready, running, promptSuggestion }: {
 
     return (
         <Box flexDirection="column">
+            {browse && (
+                <Box paddingLeft={2}>
+                    <Text color="cyan">{`message ${InputHistory.position(browse, _historyList().length)}`}</Text>
+                    <Text dimColor>{'  ↑ older · ↓ newer · past the newest: back to your draft · typing edits it'}</Text>
+                </Box>
+            )}
             {suggestions.length > 0 && (
                 <Box paddingLeft={2}>
                     <Text dimColor>{suggestions.join('  ')}</Text>
@@ -1275,18 +1355,13 @@ function InputLine({ ready, running, promptSuggestion }: {
 async function runResume(arg?: string): Promise<void> {
     const sessions = await listWorkspaceSessions();
 
-    // No arg — print the list so the user can pick.
+    // No arg — a list to choose from (↑/↓, Enter).
     if (!arg) {
         if (!sessions.length) {
             Store.addNotice('_No previous sessions found for this workspace._');
             return;
         }
-        const fmt = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
-        const lines = [
-            '**Previous sessions** — use `/resume N` to restore one:\n',
-            ...sessions.map((s, i) => `  **${i + 1}.** ${s.name}  _(${s.messages} message${s.messages === 1 ? '' : 's'}, last active ${fmt(s.lastAt)})_`),
-        ];
-        Store.addNotice(lines.join('\n'));
+        if (Store.getState().activePanel !== 'resume') Store.setActivePanel('resume');
         return;
     }
 
@@ -1297,6 +1372,16 @@ async function runResume(arg?: string): Promise<void> {
         return;
     }
 
+    await restoreSession(sessions[idx]);
+}
+
+/** Open a session chosen from the list. */
+async function resumeChosen(id: string): Promise<void> {
+    const row = _resumeRows.get(id);
+    await restoreSession({ id, name: row?.name || row?.firstMessage || id });
+}
+
+async function restoreSession(session: { id: string; name: string }): Promise<void> {
     // A reply that is still running writes into whichever session is open when it ends: resuming now put session B's
     // late answer into session A and dropped B's pending question (TUI report case 084). Switch only when idle.
     if (isTurnBusy()) {
@@ -1305,7 +1390,6 @@ async function runResume(arg?: string): Promise<void> {
     }
     // Messages queued behind a finished turn were written for the conversation that is being replaced.
     try { (dom.window.msgQueue as any)?.clear?.(); } catch {}
-    const session = sessions[idx];
     const ok = await resumeSession(session.id);
     if (ok) showRestoredConversation();   // the screen and /export now show the conversation the model has
     Store.addNotice(ok
@@ -1495,9 +1579,14 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
             Store.movePanelCursor(key.upArrow ? -1 : 1, _panelItems.items.length);
             return;
         }
-        // Scroll event log
-        if (key.upArrow)   Store.scroll(1);
-        if (key.downArrow) Store.scroll(-1);
+        // Scroll the event log: PgUp/PgDn by a page; the arrows only while a panel without a list is open (they recall messages otherwise,
+        // in the composer).
+        if (key.pageUp)   Store.scroll(Math.max(1, logH - 2));
+        if (key.pageDown) Store.scroll(-Math.max(1, logH - 2));
+        if (state.activePanel) {
+            if (key.upArrow)   Store.scroll(1);
+            if (key.downArrow) Store.scroll(-1);
+        }
     });
 
     const workspaceRoot: string = opts?.workspaceRoot ?? process.cwd();

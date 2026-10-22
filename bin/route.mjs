@@ -24,7 +24,7 @@ export const HELP = `freegent — the FreeGent agent in your terminal
   freegent -p "request" --no-tools plain model call, no tools
 
 Common options (both modes):  --provider <id>  --model <id>  --api-key <key>  --api-url <url>  --workspace <dir>
-Terminal UI:   --resume [id]   --prompt "message sent at start"   --role <name>
+Terminal UI:   --resume [id] (no id: choose from a list)   --prompt "message sent at start"   --role <name>
 With -p:       --llm <provider|model>  --timeout <ms>  --disable-tools <list>  --max-rounds <n>  --no-log   (see: npx tsx fg-run.ts --help)
 
 Keys are read from the environment, ./.env and ~/.config/freegent/credentials.`;

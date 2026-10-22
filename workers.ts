@@ -11,7 +11,7 @@ import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { sleepInterruptible, withRetry, _makeOAIRetryHandler } from './retry.js';
+import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
@@ -867,7 +867,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 ...extra,
             }), msg => { console.warn(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
             100,
-            () => isCustomEndpoint(endpoint ?? oaiEndpoint()));
+            e => isCustomEndpoint(endpoint ?? oaiEndpoint()) || (!explicitModel && isModelGone(e, endpoint ?? oaiEndpoint())));
 
     const maxSteps = _WORKER_MAX_STEPS;
     // Match the main loop: keep a per-worker rotation counter and advance through the
@@ -1202,7 +1202,7 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
             getEp: () => ep,
             setEp: e => { ep = e; handle.setModel(modelFriendlyName(`${e.provider}|${e.model}`)); },
             onNote: () => {},
-        }), maxAttempts, e => e.isTruncated || isCustomEndpoint(ep));
+        }), maxAttempts, e => e.isTruncated || isCustomEndpoint(ep) || isModelGone(e, ep));
         result = data.content || '';
         handle.setOutput(result || '(empty)');
         if (_own) result.trim() ? handle.complete() : handle.abort();

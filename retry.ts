@@ -251,6 +251,13 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
 // rules did not apply.
 export function _isLocalEp(ep: any): boolean { return !!ep && (ep.provider === 'custom' || ep.provider === 'vllm'); }
 
+// A cloud provider answering HTTP 404 — "The requested model 'x' does not exist", a model the provider dropped or renamed. withRetry
+// treats that wording as a permanent configuration error and throws before the retry handler runs, so the handler's own answer to it
+// (pause the model, rotate to the next one in the pool) was never reached: a turn ended on the first dead model while the rest of the pool
+// worked. Callers add this to the transient override so the handler sees it. With nothing to rotate to the handler gives up and
+// the error is reported as before; a custom/local endpoint's 404 stays permanent (the route or model is wrong, retrying cannot fix it).
+export function isModelGone(e: any, ep: any): boolean { return !_isLocalEp(ep) && /\bHTTP 404\b/.test(String(e?.message ?? '')); }
+
 // HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
 export const SAME_ENDPOINT_WAIT_LIMIT_MS = 20 * 60_000;
 const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b|answered with a web page/;

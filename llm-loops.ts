@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -1855,7 +1855,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     }
                 }),
                 Infinity,
-                e => e.isTruncated || isCustomEndpoint(activeEndpoint ?? oaiEndpoint()),
+                e => e.isTruncated || isCustomEndpoint(activeEndpoint ?? oaiEndpoint()) || isModelGone(e, activeEndpoint ?? oaiEndpoint()),
                 e => {
                     const ep = activeEndpoint ?? oaiEndpoint();
                     sessionSaveRawMessage?.(activeChatId, {
