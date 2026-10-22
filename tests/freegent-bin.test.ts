@@ -43,3 +43,20 @@ describe('fg-run -p', () => {
         expect(pkg.bin.freegent).toBe('bin/freegent.mjs');
     });
 });
+
+describe('codex R8-001 and R9-001', () => {
+    it('-p together with --task, --prompt or --task-file is refused before anything runs', async () => {
+        const { spawnSync } = await import('node:child_process');
+        const run = (...a: string[]) => spawnSync(process.execPath, ['--import', 'tsx', 'fg-run.ts', ...a], { cwd: process.cwd(), encoding: 'utf8', input: '', timeout: 60_000 });
+        for (const extra of [['--task', 'OWN_TASK'], ['--prompt', 'OWN_PROMPT'], ['--task-file', 'own-task.txt']]) {
+            const r = run('-p', 'OWN_PRINT', ...extra);
+            expect(r.status, extra.join(' ')).not.toBe(0);
+            expect(r.stderr).toMatch(/exactly one input/);
+        }
+    }, 120_000);
+    it('tsx, which the command needs to start either program, is a runtime dependency', async () => {
+        const pkg = JSON.parse((await import('node:fs')).readFileSync('package.json', 'utf8'));
+        expect(pkg.dependencies.tsx).toBeTruthy();
+        expect(pkg.devDependencies?.tsx).toBeUndefined();
+    });
+});

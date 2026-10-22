@@ -112,12 +112,14 @@ if (printMode && !process.stdin.isTTY) {
 }
 const printRequest = [printText, stdinText].filter(Boolean).join('\n\n');
 if (printMode && !printRequest) _fail('-p needs a request: freegent -p "what to do", or pipe text in.');
-const promptText    = printMode && _flag('--no-tools') ? printRequest : _arg('--prompt');
+const promptArg    = _arg('--prompt');
+const promptText    = printMode && _flag('--no-tools') ? printRequest : promptArg;
 const taskText      = _arg('--task') || _arg('--workflow');
 const taskFile      = _arg('--task-file');
-// Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006).
-if ([promptText, taskText, taskFile].filter(v => v != null).length > 1)
-    _fail('give exactly one of --prompt, --task/--workflow and --task-file.');
+// Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006). The -p request (its
+// text and what is piped in) is an input too: it won over --task and --prompt, which were dropped without a word (codex R8-001).
+if ([printMode ? printRequest : null, promptArg, taskText, taskFile].filter(v => v != null && v !== '').length > 1)
+    _fail('give exactly one input: -p/--print (with text piped in), --prompt, --task/--workflow or --task-file.');
 const workspacePath = _arg('--workspace') || process.env.WORKSPACE_ROOT || process.cwd();
 
 // --llm PROVIDER|MODEL splits on the first '|'
