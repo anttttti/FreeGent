@@ -14,7 +14,14 @@ const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 // rewrote the file with LF; codex 413/414). Saving gives back the style the file had.
 const _lf = (t: string): string => t.replace(/\r\n?/g, '\n');
 const _sameText = (a: string, b: string): boolean => a === b || _lf(a) === _lf(b);
-const _withEolOf = (text: string, original: string): string => /\r\n/.test(original) && !/\r/.test(text) ? text.replace(/\n/g, '\r\n') : text;
+// A zero-edit Save gives back the file's own bytes (CR-only and mixed endings included, codex 455/456). An edited file keeps
+// its dominant style: CRLF, or CR-only when it has no LF at all.
+const _withEolOf = (text: string, original: string): string => {
+    if (/\r/.test(text)) return text;
+    if (_lf(original) === text) return original;
+    const crlf = (original.match(/\r\n/g) || []).length, cr = (original.match(/\r(?!\n)/g) || []).length, lf = (original.match(/(?<!\r)\n/g) || []).length;
+    return crlf >= lf && crlf >= cr && crlf > 0 ? text.replace(/\n/g, '\r\n') : cr > lf && cr > crlf ? text.replace(/\n/g, '\r') : text;
+};
 
 // Escape for use inside a double-quoted attribute selector. File names may contain " and \, and even line breaks, which
 // a selector string must not hold raw (the name "line\nbreak.txt" made querySelector throw while opening its tab).
