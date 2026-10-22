@@ -638,7 +638,7 @@ function renderHistoryFallback() {
             // Strip injected blocks (skill guidance, handover context, memory, project instructions,
             // the first-turn workspace listing) so raw framework text isn't shown. stripInjected
             // (history-util.ts) owns the list of injected block types.
-            const shown = userParts ? userText.replace(/^\[Attached image:[^\]]*\]\s*/gm, '') : userText;   // the thumbnail stands for the note
+            const shown = userParts ? userText.replace(/^\[Attached image: .+?, \d+(?:\.\d+)? (?:B|KB|MB)(?:; original available at .*)?\]\s*$/gm, '') : userText;   // the thumbnail stands for the note
             const cleaned = typeof stripInjected === 'function' ? stripInjected(shown)
                 : shown
                     .replace(/^<active_guidance>[\s\S]*?<\/active_guidance>\n*/, '')
@@ -654,12 +654,9 @@ function renderHistoryFallback() {
                 // not user input. Skip (it renders as noise).
             } else if (cleaned.trim() || userThumbs) {
                 // The live bubble shows an attached file as a chip; its stored form is a note line ("[Attached file: name, size; ...]").
-                const chips: string[] = [];
-                const text = cleaned.replace(/^\[(?:Attached (?:file|audio|video)|PDF attached|Binary file attached|(?:Audio|Video) attached): ([^,\]]+?)(?:, [^\]]*)?\]\s*$/gm, (_m, name) => {
-                    const icon = (window as any)._fileIcon?.('', name) ?? '📝';
-                    chips.push(`<span class="chat-file-chip">${icon} ${esc(name)}</span>`);
-                    return '';
-                });
+                const ex = extractAttachmentNames?.(cleaned) ?? { text: cleaned, names: [] as string[] };
+                const chips: string[] = ex.names.map(name => `<span class="chat-file-chip">${(window as any)._fileIcon?.('', name) ?? '📝'} ${esc(name)}</span>`);
+                const text = ex.text;
                 appendMessage('user', userBubbleHtml({ thumbsHtml: userThumbs, chipsHtml: chips.join(''), text }));
             }
         }

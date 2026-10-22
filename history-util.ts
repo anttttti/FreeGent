@@ -16,6 +16,21 @@ export function msgText(m: any): any {
 const _HU_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory|project_instructions|workspace_files)>[\s\S]*?<\/\1>\n*/g;
 export function stripInjected(s: any): any { return (s || '').replace(_HU_INJECTED_RE, '').trim(); }
 
+// A user turn's stored attachment notes ("[Attached file: name, 8 B; original available at path]", the <file name="..."> text
+// blocks) back to the file names, so a reconstructed or imported chat shows chips as the live bubble did. The names are
+// free text: a ']' or ',' in one must not end it early (codex report 8, cases 469-471), so a note is matched from its end,
+// where the size (and the optional mime type or workspace path) are fixed in form.
+const _HU_SIZE = String.raw`\d+(?:\.\d+)? (?:B|KB|MB)`;
+const _HU_NOTE_RE = new RegExp(String.raw`^\[(?:Attached (?:file|audio|video)|PDF attached|Binary file attached|(?:Audio|Video) attached): (.+?)(?:, [\w.+-]+\/[\w.+-]+)?, ${_HU_SIZE}(?:(?:; original available at |[ ]— ).*)?\]\s*$`, 'gm');
+const _HU_FILE_RE = /<file name="([^\n]*?)">(?:\nOriginal file: [^\n]*)?\n```[^\n]*\n[\s\S]*?\n```\n<\/file>\n*/g;
+const _HU_UNESC: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&#x27;': "'" };
+export function extractAttachmentNames(s: string): { text: string; names: string[] } {
+    const names: string[] = [];
+    let text = s.replace(_HU_FILE_RE, (_m, n) => { names.push(n.replace(/&(?:amp|lt|gt|quot|#39|#x27);/g, (e: string) => _HU_UNESC[e])); return ''; });
+    text = text.replace(_HU_NOTE_RE, (_m, n) => { names.push(n); return ''; });
+    return { text: text.trim(), names };
+}
+
 // True when m is a real user turn — plain text, not tool results, not a framework <nudge> nudge.
 // <tool_response> is the text-tag tool-calling path's synthetic result message (llm-loops.js
 // pushes it as role:'user' since some models/providers only support system at turn 0) — it's
@@ -51,4 +66,4 @@ export function parseArgs(s: string): any {
 }
 
 // Window bridge: classic scripts access these as globals until they are converted to modules.
-Object.assign(window, { activeHistory, msgText, stripInjected, isRealUserMessage, lastExchange });
+Object.assign(window, { extractAttachmentNames, activeHistory, msgText, stripInjected, isRealUserMessage, lastExchange });

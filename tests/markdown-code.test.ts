@@ -10,7 +10,7 @@ beforeAll(async () => {
     // The jsdom renderer has no marked: use a tiny stand-in that keeps fences and inline code, so what the preprocessing does to
     // code is visible in the output.
     W.marked = { parse: (t: string) => t.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, l, c) => `<pre><code class="language-${l}">${c.replace(/</g, '&lt;')}</code></pre>`)
-        .replace(/`([^`\n]+)`/g, (_m, c) => `<code>${c.replace(/</g, '&lt;')}</code>`) };
+        .replace(/`([^`]+)`/g, (_m, c) => `<code>${c.replace(/</g, '&lt;')}</code>`) };
     W.DOMPurify = { sanitize: (h: string) => h };
     W.katex = { renderToString: (e: string) => `<span class="katex">${e}</span>` };
 });
@@ -97,5 +97,21 @@ describe('model SVG in a message', () => {
         const frame = el.querySelector('iframe') as HTMLIFrameElement;
         expect(frame).toBeTruthy();
         expect(frame.getAttribute('sandbox')).toBe('');
+    });
+});
+
+describe('code that spans lines stays literal (459-461)', () => {
+    it('a multiline inline code span with SVG is not turned into an image slot', () => {
+        const html = W.renderMarkdown('Before `SVG_START <svg width="10">\n<text>x</text></svg> END` after');
+        expect(html).not.toContain('md-img-slot');
+        expect(html).toContain('&lt;svg width="10">');
+    });
+    it('a blank line ends the search for a closing backtick', () => {
+        expect(W.renderMarkdown('a ` b\n\n<svg width="10"><g/></svg> c ` d')).toContain('md-img-slot');
+    });
+    it('four-space indented SVG is code, not an image slot', () => {
+        const html = W.renderMarkdown('Intro\n\n    <svg width="10"><circle r="4"/></svg>\n\nafter');
+        expect(html).not.toContain('md-img-slot');
+        expect(html).toContain('<svg width="10">');
     });
 });
