@@ -1684,7 +1684,7 @@ function handleSendButton(): void {
 // (task runner, init agent), a user turn — or a queued message dequeued after the
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
-    if (preparing()) return;
+    if (preparing() && !_turnPreparing()) return;   // a send already preparing owns the composer; a dequeued turn being prepared lets new text queue behind it (codex 465/466)
     // Steer the task runner: the message goes to the running task's agent after the current step.
     if (aiJob === 'runner' && typeof runnerSteer === 'function') {
         const inp  = document.getElementById('agent-input') as HTMLElement | null;
