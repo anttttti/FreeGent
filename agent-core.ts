@@ -1,9 +1,10 @@
 // agent-core.js — FreeGent: checkpoints, input state, main send/abort/clear, textarea resize
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
 import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
-import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
+import { beginPreparation, endPreparation, cancelPreparation, currentPreparation, preparing, type Preparation } from './turn-owner.js';
+import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, aiBusy } from './state.js';
 import { syncGuidanceMemory } from './skill-guidance.js';
-import { lease, type Lease } from './lease.js';
+import { type Lease } from './lease.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
@@ -949,7 +950,7 @@ async function _processQueue(): Promise<void> {
         return;
     }
     // A dequeued message is being prepared: the next one waits for that turn to finish, as for a streaming one (codex 354).
-    if (aiJob === 'turn-preparing') return;
+    if (preparing()) return;
     const msg = MsgQueue.shift();
     if (!msg) return;
     // A steer-interrupt sets softStopPending=true to abort the current turn; clear it so the
@@ -1176,37 +1177,26 @@ function _pushHistoryMessage(
 
 // ── Main send / abort / clear ──────────────────────────────────────────────
 
-let _sendPreparing = false;
-// The send that is waiting for its attachments (and the chat it was started in). Escape cancels it; switching chats
-// meanwhile also ends it, because what the composer holds by then is another chat's text.
-let _prep: { lease: Lease; wake: () => void } | null = null;
 const _leaseIds = new Set<string>();   // chats whose turn lease the running send holds (chat-lease.ts)
-// A queued message that has been dequeued is prepared (workspace scan, intent check, prelude) before its turn streams. That is
-// a preparation like a send's: Escape cancels it, New chat and Send see the chat as busy (codex 352, 354, 355).
-let _turnPrep: Lease | null = null;
-function cancelSendPreparation(): boolean {
-    let did = false;
-    if (_prep) { _prep.lease.revoke(); _prep.wake(); did = true; }
-    if (_turnPrep?.valid()) { _turnPrep.revoke(); did = true; }
-    return did;
-}
+// A send waiting for its attachments, and a dequeued message being prepared (workspace scan, intent check, prelude), are the one
+// preparation slot of turn-owner.ts: Escape cancels it, New chat and Send see the chat as busy, leaving the chat abandons it.
+/** A dequeued turn (not this send) is being prepared: new text queues behind it like behind a streaming turn. */
+const _turnPreparing = (): boolean => currentPreparation()?.kind === 'turn';
+function cancelSendPreparation(): boolean { return cancelPreparation(); }
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // Busy turns still accept queued text. Only preparation (file reads, intent,
     // workspace context) is serialized so a double tap cannot start two turns.
-    if (agentStreaming || aiJob === 'turn-preparing') return _agentSendReady(container);
-    if (_sendPreparing || aiJob) return;
+    if (agentStreaming || _turnPreparing()) return _agentSendReady(container);
+    if (aiJob || preparing()) return;
     // The send owns the composer from this click on, including any wait for the chat's history: a second click, Escape and
     // navigation all act on this one preparation (codex 319-322, 329). It used to be created only after that wait, so each click
     // waiting on a loading chat crossed the guard and started a turn of its own.
-    _sendPreparing = true;
     _sendsActive++;   // an interactive turn counts as in flight until its send has fully unwound (turnsInFlight / stopTurnAndWait)
-    setAiJob('send-preparing');
     const loadSeq = (window as any).chatLoadSeq?.() ?? 0;
     // Valid while the reader stays in this chat and no other chat load has begun since the click (leaving and coming back
     // makes the chat id equal again but the composer is a different one by then).
-    const prep = { lease: lease('send-prep', { chat: activeChatId as string | null, activeChat: true,
-        check: () => ((window as any).chatLoadSeq?.() ?? 0) === loadSeq }), wake: () => {} };
-    _prep = prep;
+    const prep = beginPreparation('send', { chat: activeChatId as string | null, check: () => ((window as any).chatLoadSeq?.() ?? 0) === loadSeq });
+    if (!prep) { _sendsActive--; return; }
     try {
         // History still loading: the Send waits for it (the text stays in the box meanwhile) and goes out with the chat's context.
         if ((window as any).isChatLoading?.()) {
@@ -1235,10 +1225,7 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
     } finally {
         for (const id of _leaseIds) releaseChatLease(id);
         _leaseIds.clear();
-        prep.lease.finish();
-        if (_prep === prep) _prep = null;
-        if (aiJob === 'send-preparing') setAiJob('');
-        _sendPreparing = false;
+        endPreparation(prep);
         _sendsActive--;
     }
 }
@@ -1257,18 +1244,19 @@ function _moveToNewChatIfDeletedElsewhere(container: HTMLElement | null): void {
     if (inp) inp.innerHTML = html;
     for (const i of att.images) addImageAttachment?.(i.mimeType, i.base64, { name: i.name, workspacePath: i.workspacePath });
     for (const f of att.files) restoreFileAttachment?.(f);
-    if (_prep) _prep.lease.rebind(activeChatId);   // the send follows its message: this is not the reader switching chats
+    currentPreparation()?.lease.rebind(activeChatId);   // the send follows its message: this is not the reader switching chats
     if (acquireChatLease(activeChatId)) _leaseIds.add(activeChatId as string);
     if (hadMessages) appendMessage('model', '<em>The chat you were writing in was deleted in another browser tab. Your message goes to a new chat.</em>', container);
 }
 
 async function _agentSendReady(container: HTMLElement | null = null): Promise<void> {
     // Another tab may have saved this chat since this one loaded it: take its messages first.
+    const _prep = currentPreparation();
     const _preparedFor = _prep?.lease.chat;
-    if (!agentStreaming && aiJob !== 'turn-preparing') { try { await reloadChatIfChangedElsewhere(); } catch {} }
+    if (!agentStreaming && !_turnPreparing()) { try { await reloadChatIfChangedElsewhere(); } catch {} }
     if (_prep && _preparedFor !== undefined && (!_prep.lease.valid() || activeChatId !== _preparedFor)) return;   // cancelled, or the reader moved to another chat meanwhile
-    if (!agentStreaming && aiJob !== 'turn-preparing') _moveToNewChatIfDeletedElsewhere(container);
-    if (agentStreaming || aiJob === 'turn-preparing') {
+    if (!agentStreaming && !_turnPreparing()) _moveToNewChatIfDeletedElsewhere(container);
+    if (agentStreaming || _turnPreparing()) {
         // The text-only queue cannot carry media. Preserve the complete submission
         // in the composer rather than queuing just its text and dropping its files.
         if (typeof hasPendingAttachments === 'function' && hasPendingAttachments()) {
@@ -1365,7 +1353,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         } else if (cmd === 'compact') {
             input.innerHTML = '';
             autoResizeTextarea(input);
-            if (aiJob === 'send-preparing') setAiJob('');
+            endPreparation(_prep);
             setAgentStreaming(true);
             setInputState(false);
             const _ph: RenderAdapter = workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container);
@@ -1400,7 +1388,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     _currentUserIntent  = rawText; // used by intent validation in executeToolAsync
     (window as any).resetIntentTaint?.();   // a new request: nothing external has been read yet
     if (rawText.trim()) _userInputHistory.push(rawText);
-    if (aiJob === 'send-preparing') setAiJob('');
+    endPreparation(_prep);
     setAgentStreaming(true);
     setInputState(false);
 
@@ -1634,6 +1622,7 @@ function stopNow(): void {
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
     setSoftStopPending(false);
     (window as any).cancelPendingApprovals?.();   // an approval left on screen would still run its tool
+    cancelPreparation();   // a send or dequeued turn that has not started streaming has no stream to abort: it ends here
     activeAbortController?.abort();
     setAgentStreaming(false);
     setInputState(true);
@@ -1650,7 +1639,6 @@ async function stopTurnAndWait(): Promise<boolean> {
     // the queue they would start as soon as the stopped turn ends, in whatever chat and project is open then.
     MsgQueue.clear();
     if (!busy()) return true;
-    cancelSendPreparation();   // a send still reading its attachments is not a turn: cancel it (stopNow only reaches a stream) instead of timing out on it
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
     if (busy()) {   // a tool that ignores cancellation: do not replace the conversation under it
@@ -1669,7 +1657,7 @@ function handleSendButton(): void {
 // (task runner, init agent), a user turn — or a queued message dequeued after the
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
-    if (aiJob === 'send-preparing') return;
+    if (preparing()) return;
     // Steer the task runner: the message goes to the running task's agent after the current step.
     if (aiJob === 'runner' && typeof runnerSteer === 'function') {
         const inp  = document.getElementById('agent-input') as HTMLElement | null;
@@ -1759,19 +1747,15 @@ async function runAgentTurn(prompt: string, container: HTMLElement | null = null
     _turnsActive++;
     // An interactive turn that nobody else owns (a dequeued message) is "preparing" until it starts streaming: the chat reads as
     // busy, Escape and Stop cancel it, and leaving the chat abandons it. Runner and headless turns have their own owner.
-    const own = !aiJob && (session ?? defaultSession) === defaultSession && !(session ?? defaultSession).workflowMode;
-    if (own) { setAiJob('turn-preparing'); _turnPrep = lease('turn-prep', { chat: activeChatId as string | null, activeChat: true }); }
-    const prepLease = own ? _turnPrep : null;
-    try { return await _runAgentTurn(prompt, container, session, opts, prepLease); }
-    finally {
-        _turnsActive--;
-        if (own) { prepLease?.finish(); if (_turnPrep === prepLease) _turnPrep = null; if (aiJob === 'turn-preparing') setAiJob(''); }
-    }
+    const prep = !aiJob && !preparing() && (session ?? defaultSession) === defaultSession && !(session ?? defaultSession).workflowMode
+        ? beginPreparation('turn', { chat: activeChatId as string | null }) : null;
+    try { return await _runAgentTurn(prompt, container, session, opts, prep?.lease ?? null, prep); }
+    finally { _turnsActive--; endPreparation(prep); }
 }
 async function _runAgentTurn(prompt: string, container: HTMLElement | null = null, session?: AgentSession,
                             { placeholder: _reusePh = null as RenderAdapter | null, forceToolCall = false,
                               maxSteps = undefined as number | undefined, excludeTools = undefined as string[] | undefined } = {},
-                            prepLease: Lease | null = null): Promise<TurnResult> {
+                            prepLease: Lease | null = null, prep: Preparation | null = null): Promise<TurnResult> {
     const _s = session ?? defaultSession;
     // The request this turn serves (a task prompt for Autopilot), for the intent check on risky tool calls.
     if (_s === defaultSession) { _currentUserIntent = prompt; (window as any).resetIntentTaint?.(); }
@@ -1797,7 +1781,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
         setTimeout(() => _processQueue(), 0);
         return { text: '', finishSignal: 'stopped', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, steps: [] } as any;
     }
-    if (aiJob === 'turn-preparing') setAiJob('');
+    endPreparation(prep);
 
     // increment turn counter and emit turn/start.
     const _evtTurn = (_s._evtTurn ?? -1) + 1;

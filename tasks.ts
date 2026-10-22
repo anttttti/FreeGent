@@ -442,7 +442,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                     + crit.map(c => `- [${checked.has(c) ? 'x' : ' '}] ${c}`).join('\n') + (crit.length ? '\n' : '')
                     + attachmentsBlock(attachedOut)
                     + (latest.rest || '## Log\n');
-                await agentWriteFile(opts.path, out);
+                await agentWriteFile(opts.path, out, null, { epoch });
                 saved = true;
                 // A status change goes through the same gates as dragging the card to another column.
                 const newStatus = $('atd-status').value;
@@ -467,7 +467,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 let id = String(nextId).padStart(3, '0');
                 while (await agentReadFile(`fg-tasks/${id}-${slug}.md`).then(() => true, () => false)) { nextId++; id = String(nextId).padStart(3, '0'); }
                 const content = `${buildFrontmatter({ id, title, status: $('atd-status').value, priority: $('atd-priority').value, created: today })}# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
-                await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content);
+                await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content, null, { epoch });
             });
             saved = true;
             overlay.remove();

@@ -156,7 +156,7 @@ function openFileTab(name) {
                     }
                     if (fileTabs.get(name) !== ft || workspaceEpoch() !== ft.epoch) return 'stale';
                 }
-                await agentWriteFile(name, _withEolOf(content, ft.savedContent));
+                await agentWriteFile(name, _withEolOf(content, ft.savedContent), null, { epoch: ft.epoch });
                 return 'saved';
             });
             if (outcome !== 'saved') return;
