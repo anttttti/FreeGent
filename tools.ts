@@ -1217,7 +1217,15 @@ async function _handleRunWorkers(args, context) {
         // top-level commit phase sees them for conflict detection.
         const written = [...(result.applied || []), ...(result.conflictsResolved || []), ...Object.keys(result.conflictsNotMerged || {})];
         await Promise.all(written.map(async path => {
-            try { context.staging.set(path, await agentReadFile(path)); } catch {}
+            try {
+                // By bytes: a binary file a sub-worker wrote was read back as text and staged, and the top-level commit wrote that text over the file
+                // (hermes C16). Valid UTF-8 without NULs is text; anything else goes to the held-back binary map.
+                const bytes = await agentReadFileBytes(path);
+                let text: string | null = null;
+                if (!bytes.includes(0)) { try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = null; } }
+                if (text !== null) context.staging.set(path, text);
+                else if (context.binary) { context.staging.delete(path); context.binary.set(path, bytesToBase64(bytes)); }
+            } catch {}
         }));
         return result;
     }

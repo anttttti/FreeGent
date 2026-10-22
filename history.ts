@@ -112,7 +112,7 @@ function _extractCodeBlocks(result: any, threshold: number): any {
         const numbered = lines.map((l, i) => `${startLine + i}: ${l}`).join('\n');
         const note = `[${path} (L${startLine}–${startLine + lines.length - 1}). Content too large for block extraction — showing raw with line numbers.]\n`;
         const full = note + numbered;
-        return { path, start_line: startLine, content: full.length <= threshold
+        return { ...result, path, start_line: startLine, content: full.length <= threshold
             ? full
             : full.slice(0, threshold) + `\n[…truncated. Use start_line/end_line to read a smaller section.]` };
     }
@@ -120,7 +120,7 @@ function _extractCodeBlocks(result: any, threshold: number): any {
         out += `[Omitted ${omitted.length} block(s): ${omitted.join('; ')}. Re-read with start_line/end_line.]`;
     }
 
-    return { path, start_line: startLine, content: out };
+    return { ...result, path, start_line: startLine, content: out };   // the rest of the result (end_line, ...) stays: the read bookkeeping keys on end_line (hermes C15)
 }
 
 // originalResult: raw tool output. truncatedResult: already processed by truncateResultForHistory.

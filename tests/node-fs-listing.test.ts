@@ -72,3 +72,12 @@ describe('a big ignored folder costs nothing', () => {
         expect(Date.now() - t0).toBeLessThan(2_000);
     }, 120_000);
 });
+
+describe('hermes C16: bytes of a binary file survive a nested worker commit', () => {
+    it('the adapter gives the bytes of a file that is not text', async () => {
+        const d = tmp(); writeFileSync(join(d, 'a.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255]));
+        const b = await new NodeFsAdapter(d).agentReadFileBytes('a.bin');
+        expect([...b]).toEqual([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255]);
+        await expect(new NodeFsAdapter(d).agentReadFileBytes('missing.bin')).rejects.toThrow();
+    });
+});
