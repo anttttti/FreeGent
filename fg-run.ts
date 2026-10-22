@@ -119,7 +119,7 @@ const taskFile      = _arg('--task-file');
 // Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006). The -p request (its
 // text and what is piped in) is an input too: it won over --task and --prompt, which were dropped without a word (codex R8-001).
 if ([printMode ? printRequest : null, promptArg, taskText, taskFile].filter(v => v != null && v !== '').length > 1)
-    _fail('give exactly one input: -p/--print (with text piped in), --prompt, --task/--workflow or --task-file.');
+    _fail('give exactly one of -p/--print (with text piped in), --prompt, --task/--workflow and --task-file.');
 const workspacePath = _arg('--workspace') || process.env.WORKSPACE_ROOT || process.cwd();
 
 // --llm PROVIDER|MODEL splits on the first '|'

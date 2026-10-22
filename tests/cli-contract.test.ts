@@ -56,7 +56,7 @@ describe('fg-run argument contract', () => {
         for (const a of [['--task', 't', '--prompt', 'p'], ['--prompt', 'p', '--task-file', 'x.txt']]) {
             const r = await run([...std(), ...a]);
             expect(r.code).toBe(2);
-            expect(r.err).toMatch(/exactly one of --prompt/);
+            expect(r.err).toMatch(/exactly one of .*--prompt/);
         }
     }, 60_000);
     it('--temperature outside 0–2, or not a number, is refused with the range', async () => {
