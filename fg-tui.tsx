@@ -233,7 +233,7 @@ export async function rewindToTurn(turn: Store.TurnState, opts2: { announce?: bo
     const o = turn.origin;
     if (!o) { Store.addNotice('_Nothing to rewind to._'); return false; }
     const history = getChatHistory();
-    if (o.historyLen > history.length) { Store.addNotice('_This message can no longer be rewound to: the conversation was compacted, rewound or cleared since._'); return false; }
+    if (!Store.originStillValid(o, history)) { Store.addNotice('_This message can no longer be rewound to: the conversation was compacted, rewound or cleared since._'); return false; }
     _sendsActive++;
     try {
         const files = await _restoreTurnWorkspace(o);
@@ -269,7 +269,8 @@ export async function rerunFromStep(turn: Store.TurnState, step: Store.StepState
     const anchor = step.anchor ?? step;
     const histLen = anchor.histLen;
     const history = getChatHistory();
-    if (histLen == null || histLen < 1 || histLen > history.length) {
+    // The step belongs to a turn whose message must still stand where it was (length alone says nothing once a compaction has been followed by new messages).
+    if (histLen == null || histLen < 1 || histLen > history.length || !Store.originStillValid(turn.origin, history)) {
         Store.addNotice('_This step can no longer be rerun: the conversation it started from is gone (compacted, rewound or cleared)._');
         return;
     }
