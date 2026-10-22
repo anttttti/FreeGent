@@ -259,7 +259,29 @@ export function renderMarkdown(text: any): any {
     {
         let s: string = typeof text === 'string' ? text : String(text ?? '');
         s = s.replace(/(^|\n)(([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]{0,3}\4[`~]*[ \t]*(?=\n|$)|$))/g, (_m, nl, block) => `${nl}%%FWCODE${_codeParts.push(block) - 1}%%`);
-        s = s.replace(/(`+)(?!`)[^\n]*?[^`\n]\1(?!`)/g, m => `%%FWCODE${_codeParts.push(m) - 1}%%`);
+        // Indented code: a run of 4-space/tab lines after a blank line (or the start), not inside a list item's continuation.
+        s = s.replace(/(^|\n[ \t]*\n)((?:(?: {4}|\t)[^\n]*(?:\n|$)(?:[ \t]*\n(?=(?: {4}|\t)))*)+)/g, (_m, pre, block) => `${pre}%%FWCODE${_codeParts.push(block.replace(/\n+$/, '')) - 1}%%${/\n$/.test(block) ? '\n' : ''}`);
+        // Inline code spans may run over line ends, but not over a blank line (CommonMark): pair each backtick run with the next
+        // run of the same length.
+        {
+            let out = '', i = 0;
+            while (i < s.length) {
+                if (s[i] !== '`') { out += s[i++]; continue; }
+                let j = i; while (s[j] === '`') j++;
+                const run = s.slice(i, j);
+                let k = j, end = -1;
+                while (k < s.length) {
+                    const q = s.indexOf('`', k);
+                    if (q < 0) break;
+                    let r = q; while (s[r] === '`') r++;
+                    if (r - q === run.length) { end = r; break; }
+                    k = r;
+                }
+                if (end < 0 || /\n[ \t]*\n/.test(s.slice(j, end))) { out += run; i = j; continue; }
+                out += `%%FWCODE${_codeParts.push(s.slice(i, end)) - 1}%%`; i = end;
+            }
+            s = out;
+        }
         text = s;
     }
     const _restoreCode = (t: string): string => t.replace(/%%FWCODE(\d+)%%/g, (_, i) => _codeParts[+i] ?? '');

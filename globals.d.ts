@@ -326,6 +326,7 @@ declare global {
     var lastExchange: any;
     var msgText: any;
     var stripInjected: any;
+    var extractAttachmentNames: ((s: string) => { text: string; names: string[] }) | undefined;
     // ── bridged by init.ts ──
     var _addPriorityItem: any;
     var _addVoiceItem: any;
