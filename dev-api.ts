@@ -110,14 +110,27 @@ function _hostAllowed(host: string, allowed: string[]): boolean {
 const _tokenFailures = new Map<string, { count: number; resetAt: number }>();
 const _TOKEN_FAIL_MAX = 30;
 const _TOKEN_FAIL_WINDOW_MS = 60_000;
-function _checkTokenThrottle(ip: string): boolean {
+export function _checkTokenThrottle(ip: string): boolean {
     const now = Date.now();
     const rec = _tokenFailures.get(ip);
     return !!(rec && now < rec.resetAt && rec.count >= _TOKEN_FAIL_MAX);
 }
-function _recordTokenFailure(ip: string): void {
+// The throttle's key. A client chooses its own X-Forwarded-For, so the header counts only when the peer is a reverse proxy on this machine (the
+// loopback), and then it is the address that proxy appended last; from any other peer it is ignored. Keyed on the header alone, every request got
+// a fresh bucket: the throttle never fired and the map grew without end (opencode §3.1).
+export function _throttleKey(peer: string | undefined, forwardedFor: string | string[] | undefined): string {
+    const p = peer ?? 'unknown';
+    if (!/^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(p)) return p;
+    const last = (Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor ?? '').split(',').pop()?.trim();
+    return last ? `${p}|${last.slice(0, 64)}` : p;
+}
+const _TOKEN_MAP_MAX = 5000;
+let _lastTokenPrune = 0;
+export function _recordTokenFailure(ip: string): void {
     const now = Date.now();
-    if (_tokenFailures.size > 1000) for (const [k, v] of _tokenFailures) if (now >= v.resetAt) _tokenFailures.delete(k);
+    // Expired entries go at most once a second (a scan per failed request was a cost of its own); the map has a hard size.
+    if (_tokenFailures.size > 1000 && now - _lastTokenPrune > 1000) { _lastTokenPrune = now; for (const [k, v] of _tokenFailures) if (now >= v.resetAt) _tokenFailures.delete(k); }
+    while (_tokenFailures.size >= _TOKEN_MAP_MAX) _tokenFailures.delete(_tokenFailures.keys().next().value as string);   // oldest first
     const rec = _tokenFailures.get(ip);
     if (!rec || now >= rec.resetAt) _tokenFailures.set(ip, { count: 1, resetAt: now + _TOKEN_FAIL_WINDOW_MS });
     else rec.count++;
@@ -469,7 +482,12 @@ const _ETC_EXPOSE = [
     '/etc/mime.types',                                    // MIME type mappings
 ];
 // Under $HOME, these hold secrets or personal data, so they're never exposed as a toolchain.
-const _HOME_PRIVATE = ['.config', '.ssh', '.gnupg', '.aws', '.kube', '.docker', '.netrc', '.mozilla', '.password-store'];
+const _HOME_PRIVATE = ['.config', '.ssh', '.gnupg', '.aws', '.kube', '.docker', '.netrc', '.mozilla', '.password-store',
+    '.gem', '.npm', '.m2', '.gradle', '.pki', '.java', '.azure', '.pypirc', '.git-credentials', '.terraform.d', '.helm', '.vault-token'];
+// Dot-directories that are toolchain installs and hold no credentials of their own: bound whole, as for any non-dot prefix. Another dot-directory
+// on PATH (~/.cargo/bin: ~/.cargo/credentials.toml holds the crates.io token) gets only the PATH entry itself, so a secret kept beside the
+// binaries is not exposed with them (hermes C12).
+const _HOME_TOOLCHAIN_DOT = new Set(['.pyenv', '.nvm', '.rbenv', '.asdf', '.volta', '.sdkman', '.rustup', '.conda', '.deno', '.bun', '.nodenv', '.goenv', '.jenv']);
 
 // Read-only paths that make the user's toolchains work: for each PATH entry under $HOME, the
 // install prefix (…/anaconda3 for …/anaconda3/bin) — except $HOME itself, ~/.local (only its
@@ -485,6 +503,11 @@ export function toolchainBinds(pathVar: string, home: string): string[] {
         if (top === '.local') { out.add(join(home, '.local', 'bin')); out.add(join(home, '.local', 'lib')); continue; }
         const prefix = basename(p) === 'bin' ? dirname(p) : p;
         if (prefix === home) { out.add(p); continue; }
+        if (top.startsWith('.') && !_HOME_TOOLCHAIN_DOT.has(top)) {
+            out.add(p);
+            if (top === '.cargo') { const rustup = join(home, '.rustup'); out.add(rustup); }   // cargo's proxies run the toolchains kept there
+            continue;
+        }
         out.add(prefix);
     }
     for (const extra of (process.env.FG_EXEC_BIND ?? '').split(',').map(x => x.trim()).filter(Boolean)) out.add(extra);
@@ -547,6 +570,49 @@ const _GIT_SUB_EXEC: Record<string, RegExp> = {
 };
 //   Anywhere: writing output to a path, or reading paths outside the repository.
 const _GIT_ANY_REFUSED = /^(--output|--no-index)(=|$)/;
+
+/** The subcommand and what follows it, found the way gitArgsRefusal finds it: after the leading options. (The network-bound gate read raw positions, so
+ *  `git --no-pager status` was refused as if it were a mutation: hermes C5.) */
+export function gitSubcommand(args: string[]): { sub: string; rest: string[]; index: number } {
+    let i = 0;
+    while (i < args.length && args[i].startsWith('-')) i++;
+    return { sub: args[i] ?? '', rest: args.slice(i + 1), index: i };
+}
+
+// Options that only list, per subcommand, for the network-bound server. `branch`, `tag` and `reflog` also write (branch -D, tag -d, reflog expire),
+// so being on the subcommand list was not enough (opencode §3.2).
+const _LIST_ONLY_OPTS: Record<string, RegExp> = {
+    branch: /^(-a|-r|-v|-vv|-l|--all|--remotes|--verbose|--list|--show-current|--no-color|--color(=.*)?|--sort=.*|--format=.*|--contains(=.*)?|--no-contains(=.*)?|--merged(=.*)?|--no-merged(=.*)?|--points-at(=.*)?|--abbrev(=.*)?|--column|--no-column)$/,
+    tag:    /^(-l|-n\d*|--list|--no-color|--color(=.*)?|--sort=.*|--format=.*|--contains(=.*)?|--no-contains(=.*)?|--merged(=.*)?|--no-merged(=.*)?|--points-at(=.*)?|--column|--no-column)$/,
+};
+/** Null when a read-only command is allowed on a network-bound server; otherwise why not. */
+export function gitReadOnlyRefusal(args: string[]): string | null {
+    const { sub, rest } = gitSubcommand(args);
+    const sub2 = rest[0] ?? 'list';   // bare `git stash` lists
+    const allowed = _GIT_READONLY.has(sub)
+        && (sub !== 'stash'    || _GIT_READONLY_STASH_OPS.has(sub2))
+        && (sub !== 'worktree' || _GIT_READONLY_WORKTREE_OPS.has(sub2))
+        && (sub !== 'remote'   || _GIT_READONLY_REMOTE_OPS.has(sub2))
+        && (sub !== 'reflog'   || rest.length === 0 || (rest[0] === 'show' && !rest.some(a => /^--(expire|delete|rewrite|updateref|stale-fix)/.test(a))) || rest[0] === 'exists');
+    if (!allowed) return `git ${sub}: mutating git commands are disabled when the server is network-bound (multiple clients share one working tree). Use a local sandbox or access via localhost.`;
+    const listOnly = _LIST_ONLY_OPTS[sub];
+    if (listOnly) {
+        const listing = rest.some(a => a === '-l' || a === '--list');
+        // a bare name creates a branch or tag; names are patterns only with --list
+        const bad = rest.find(a => a.startsWith('-') ? !listOnly.test(a) : !listing);
+        if (bad) return `git ${sub} ${bad}: only listing is allowed when the server is network-bound (multiple clients share one working tree).`;
+    }
+    return null;
+}
+
+/** Arguments for running git as a data-only reader of this project: no program named by repository config (an external diff driver, a text
+ *  conversion filter, a filesystem monitor hook) is run by diff, show, log or status (opencode §3.2). */
+export function hardenGitArgs(args: string[]): string[] {
+    const { sub, index } = gitSubcommand(args);
+    const out = ['-c', 'core.fsmonitor=false', ...args];
+    if (sub === 'diff' || sub === 'show' || sub === 'log') out.splice(2 + index + 1, 0, '--no-ext-diff', '--no-textconv');
+    return out;
+}
 
 export function gitArgsRefusal(args: string[]): string | null {
     let i = 0;
@@ -753,17 +819,8 @@ export function createDevApi(opts: DevApiOptions) {
         if (refusal) { jsonErr(res, 403, refusal); return; }
         // Network-bound: clients share one working tree, so only read-only subcommands.
         if (lan) {
-            const sub = args[0] ?? '';
-            const sub2 = args[1] ?? 'list';  // bare `git stash` lists
-            const allowed = _GIT_READONLY.has(sub)
-                && (sub !== 'stash'    || _GIT_READONLY_STASH_OPS.has(sub2))
-                && (sub !== 'worktree' || _GIT_READONLY_WORKTREE_OPS.has(sub2))
-                && (sub !== 'remote'   || _GIT_READONLY_REMOTE_OPS.has(sub2));
-            if (!allowed) {
-                jsonErr(res, 403, `git ${sub}: mutating git commands are disabled when the server is network-bound ` +
-                    `(multiple clients share one working tree). Use a local sandbox or access via localhost.`);
-                return;
-            }
+            const why = gitReadOnlyRefusal(args);
+            if (why) { jsonErr(res, 403, why); return; }
         }
         // With bubblewrap, git sees only the system directories and this repository (read-write):
         // hooks and repo config it runs can't reach your home directory. Remote operations that
@@ -771,8 +828,8 @@ export function createDevApi(opts: DevApiOptions) {
         const repo = process.cwd();
         const env = { ...scrubEnv(process.env), ..._gitIdentityEnv(repo) };
         const [bin, binArgs] = execIsolation() === 'bwrap'
-            ? ['bwrap', [...bwrapArgs(repo, env.PATH ?? '', homedir()), '--setenv', 'HOME', '/tmp', '--', 'git', ...args]]
-            : ['git', args];
+            ? ['bwrap', [...bwrapArgs(repo, env.PATH ?? '', homedir()), '--setenv', 'HOME', '/tmp', '--', 'git', ...hardenGitArgs(args)]]
+            : ['git', hardenGitArgs(args)];
         let stdout = '', stderr = '', returncode = 0;
         try {
             const r = await execFileAsync(bin, binArgs, { cwd: repo, maxBuffer: 10 * 1024 * 1024, env });
@@ -892,10 +949,8 @@ export function createDevApi(opts: DevApiOptions) {
             res.end(); return;
         }
         if (origin && !allowedOrigins.has(origin)) { jsonErr(res, 403, 'Cross-origin request rejected'); return; }
-        // Behind a reverse proxy every client shares the socket peer; the proxy appends the real address last.
-        const fwd = req.headers['x-forwarded-for'];
-        const fwdLast = (Array.isArray(fwd) ? fwd.join(',') : fwd ?? '').split(',').pop()?.trim();
-        const clientIp = (req.socket.remoteAddress ?? 'unknown') + (fwdLast ? `|${fwdLast}` : '');
+        // Behind a reverse proxy every client shares the socket peer; the proxy appends the real address last (see _throttleKey).
+        const clientIp = _throttleKey(req.socket.remoteAddress, req.headers['x-forwarded-for']);
         if (_checkTokenThrottle(clientIp)) { jsonErr(res, 429, 'Too many failed token attempts'); return; }
         const given = req.headers['x-fg-token'];
         if (!_tokenOk(Array.isArray(given) ? given[0] : given, token)) {

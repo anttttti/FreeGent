@@ -347,8 +347,9 @@ function _httpsNoCreds(target) {
 function _hostOk(target) {
     try {
         const { hostname } = new URL(target);
-        if (ALLOWED_HOSTS.has(hostname)) return true;
-        return [...ALLOWED_HOSTS].some(h => hostname === h || hostname.endsWith('.' + h));
+        // Exactly the listed hosts. A suffix match let evil.api.openai.com through, and the operator's shared key is injected into the request
+        // before it is sent (hermes C7); the dev server matches exactly too.
+        return ALLOWED_HOSTS.has(hostname.toLowerCase().replace(/\.$/, ''));
     } catch { return false; }
 }
 

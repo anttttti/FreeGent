@@ -444,3 +444,68 @@ describe('POST proxy connect guard (review 2026-10-14, opencode M2)', async () =
         } finally { srv.close(); }
     });
 });
+
+describe('opencode §3.1: the failed-token throttle cannot be dodged with a header', () => {
+    it('a direct client has one bucket whatever X-Forwarded-For it sends; a local reverse proxy distinguishes its clients', async () => {
+        const { _throttleKey } = await import('../dev-api.ts');
+        expect(_throttleKey('192.168.1.50', 'a')).toBe('192.168.1.50');
+        expect(_throttleKey('192.168.1.50', 'b, c')).toBe('192.168.1.50');
+        expect(_throttleKey('127.0.0.1', '203.0.113.7')).toBe('127.0.0.1|203.0.113.7');
+        expect(_throttleKey('127.0.0.1', 'spoofed, 203.0.113.8')).toBe('127.0.0.1|203.0.113.8');      // the proxy's own, last entry
+    });
+    it('30 failures from one peer lock it out however it varies the header, and the table cannot grow past its bound', async () => {
+        const { _throttleKey, _recordTokenFailure, _checkTokenThrottle } = await import('../dev-api.ts');
+        for (let i = 0; i < 30; i++) _recordTokenFailure(_throttleKey('10.1.1.1', `fake-${i}`));
+        expect(_checkTokenThrottle(_throttleKey('10.1.1.1', 'another-fake'))).toBe(true);
+        for (let i = 0; i < 12_000; i++) _recordTokenFailure(`10.9.${i >> 8}.${i & 255}`);
+        expect(_checkTokenThrottle(_throttleKey('10.1.1.1', 'x'))).toBe(false);       // the oldest entries were dropped to make room: bounded, not unbounded
+    });
+});
+
+describe('hermes C5 and opencode §3.2: the read-only git gate', () => {
+    it('finds the subcommand after the global options, so `git --no-pager status` is a read', async () => {
+        const { gitReadOnlyRefusal, gitSubcommand } = await import('../dev-api.ts');
+        expect(gitSubcommand(['--no-pager', 'log', '-1'])).toMatchObject({ sub: 'log', rest: ['-1'] });
+        for (const a of [['status'], ['--no-pager', 'status'], ['-p', 'status'], ['--no-pager', 'log', '-1'], ['--no-pager', 'stash', 'list'], ['--no-pager', 'remote', '-v'], ['worktree', 'list']])
+            expect(gitReadOnlyRefusal(a), a.join(' ')).toBeNull();
+    });
+    it('branch, tag and reflog only list', async () => {
+        const { gitReadOnlyRefusal } = await import('../dev-api.ts');
+        for (const a of [['branch'], ['branch', '-a'], ['branch', '--list', 'feat*'], ['branch', '--show-current'], ['tag'], ['tag', '-l', 'v*'], ['reflog'], ['reflog', 'show', 'HEAD']])
+            expect(gitReadOnlyRefusal(a), a.join(' ')).toBeNull();
+        for (const a of [['branch', '-D', 'main'], ['branch', 'new-branch'], ['branch', '-m', 'x'], ['tag', '-d', 'v1'], ['tag', 'v2'], ['tag', '-a', 'v3', '-m', 'x'],
+                         ['reflog', 'expire', '--expire=now', '--all'], ['reflog', 'delete', 'HEAD@{0}'], ['--no-pager', 'branch', '-D', 'main'], ['commit', '-m', 'x'], ['push']])
+            expect(gitReadOnlyRefusal(a), a.join(' ')).not.toBeNull();
+    });
+    it('diff, show and log never run a program named by repository config', async () => {
+        const { hardenGitArgs } = await import('../dev-api.ts');
+        expect(hardenGitArgs(['diff', 'HEAD'])).toEqual(['-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
+        expect(hardenGitArgs(['--no-pager', 'log', '-1'])).toEqual(['-c', 'core.fsmonitor=false', '--no-pager', 'log', '--no-ext-diff', '--no-textconv', '-1']);
+        expect(hardenGitArgs(['status'])).toEqual(['-c', 'core.fsmonitor=false', 'status']);
+    });
+});
+
+describe('hermes C12: a credential file kept beside the toolchain binaries is not bound into the sandbox', () => {
+    const makeHome = async (dirs: string[]) => {
+        const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs');
+        const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+        const home = realpathSync(mkdtempSync(join(tmpdir(), 'fg-home-')));
+        for (const d of dirs) mkdirSync(join(home, d), { recursive: true });
+        return home;
+    };
+    it('~/.cargo/bin binds the bin directory (and ~/.rustup), not ~/.cargo with credentials.toml', async () => {
+        const { toolchainBinds } = await import('../dev-api.ts');
+        const home = await makeHome(['.cargo/bin', 'anaconda3/bin', '.gem/ruby/bin']);
+        const b = toolchainBinds(`/usr/bin:${home}/.cargo/bin:${home}/anaconda3/bin:${home}/.gem/ruby/bin`, home);
+        expect(b).toContain(`${home}/.cargo/bin`);
+        expect(b).toContain(`${home}/.rustup`);
+        expect(b).not.toContain(`${home}/.cargo`);
+        expect(b).toContain(`${home}/anaconda3`);                       // an ordinary install prefix is still bound whole
+        expect(b.some(x => x.startsWith(`${home}/.gem`))).toBe(false);   // a private dot-directory is never bound
+    });
+    it('a toolchain manager\'s own dot-directory is still bound whole', async () => {
+        const { toolchainBinds } = await import('../dev-api.ts');
+        const home = await makeHome(['.pyenv/shims', '.nvm/versions/node/v22/bin']);
+        expect(toolchainBinds(`${home}/.pyenv/shims:${home}/.nvm/versions/node/v22/bin`, home)).toEqual(expect.arrayContaining([`${home}/.pyenv/shims`, `${home}/.nvm/versions/node/v22`]));
+    });
+});
