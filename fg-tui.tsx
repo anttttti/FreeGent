@@ -451,11 +451,15 @@ async function main() {
     // --resume <id> restored its history inside setup(); put it on the screen as well.
     if (_resumeId) showRestoredConversation();
 
-    // Bare --resume (no explicit ID): resolve the most recent session now that the
-    // adapter is initialised, then swap history in before the first render.
+    // Bare --resume: a list of this workspace's sessions to choose from (↑/↓, Enter; Esc keeps the new chat). Without the flag a launch
+    // is a new chat. FREEWORKER_RESUME (scripted runs, no one to choose) still continues the most recent one.
     if (_resumeRequested && !_resumeId) {
         const sessions = await listWorkspaceSessions();
-        if (sessions.length) {
+        if (!sessions.length) {
+            Store.addNotice('_No previous sessions for this workspace: this is a new chat._');
+        } else if (_resumeIdx >= 0) {
+            Store.setActivePanel('resume');
+        } else {
             if (await resumeSession(sessions[0].id)) showRestoredConversation();
             _t('main:resume_done');
         }
