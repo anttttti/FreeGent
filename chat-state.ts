@@ -1074,6 +1074,7 @@ async function switchToChat(id, force = false) {
     // Guard: if another chat switch (or createNewChat) fired during the async restore,
     // this switchToChat is now stale — don't touch UI or state further.
     if (activeChatId !== id) return;
+    (window as any).refreshGoalStatus?.();   // a /goal left over from an earlier visit is shown (paused) in the chat that is now open
     if (!restored && loaded) renderHistoryFallback();
     updateChatNameBar();
     updateRailRecentChats();

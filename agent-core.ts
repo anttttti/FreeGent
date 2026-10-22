@@ -2,9 +2,11 @@
 // Depends on: config.js, chat-render.js, chat-state.js, llm-loops.js, chat-attachments.js
 import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
 import { beginPreparation, endPreparation, cancelPreparation, currentPreparation, preparing, type Preparation } from './turn-owner.js';
-import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, aiBusy } from './state.js';
+import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
 import { syncGuidanceMemory } from './skill-guidance.js';
 import { type Lease } from './lease.js';
+import { GOAL_PATH, startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, describeGoal, parseGoalCommand, type GoalHost, type GoalRecord } from './goal.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { type TurnResult, type FinishSignal } from './types.js';
 import { _BLOCKED_DECLARATION_RE } from './turn-protocol.js';
 import { type RenderAdapter, NULL_RENDER_ADAPTER } from './render-adapter.js';
@@ -1347,6 +1349,14 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             autoResizeTextarea(input);
             showModelUpdateModal?.();
             return;
+        } else if (cmd === 'goal') {
+            input.innerHTML = '';
+            autoResizeTextarea(input);
+            window.clearInputDraft?.();
+            endPreparation(_prep);   // this send is over; the goal takes the chat once it has unwound
+            const goalArg = spaceIdx === -1 ? '' : rawText.slice(spaceIdx + 1);
+            setTimeout(() => { void runGoalCommand(goalArg); }, 0);
+            return;
         } else if (skillsRegistry.has(cmd)) {
             currentTurnSkills.add(cmd);
             text = spaceIdx === -1 ? `Invoke the /${cmd} skill.` : rawText.slice(spaceIdx + 1).trim();
@@ -1611,6 +1621,7 @@ function _closeSoftStop(finalText: string, sess?: any): void {
 
 function stopAfterStep(): void {
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
+    if (aiJob === 'goal') stopGoal('stopped by you');
     setSoftStopPending(true);
     // A partial stop finishes the active tool. Stop-now still aborts it immediately.
     if (!sandboxBusy() && !runtime.nativeBusy) activeAbortController?.abort();
@@ -1620,6 +1631,7 @@ function stopNow(): void {
     // Stopping while the task runner owns the chat must end the runner too; aborting only the
     // stream let its loop carry on with the next turn / task.
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();
+    if (aiJob === 'goal') stopGoal('stopped by you');   // the loop would otherwise start the next turn
     setSoftStopPending(false);
     (window as any).cancelPendingApprovals?.();   // an approval left on screen would still run its tool
     cancelPreparation();   // a send or dequeued turn that has not started streaming has no stream to abort: it ends here
@@ -1668,8 +1680,20 @@ function userSend(): void {
         runnerSteer(text);
         return;
     }
+    // A message while a /goal runs steers it: it is added to the next turn's prompt, not queued as a conversation of its own.
+    if (aiJob === 'goal') {
+        const inp  = document.getElementById('agent-input') as HTMLElement | null;
+        const text = _readInputText(inp);
+        if (!text) return;
+        if (typeof hasPendingAttachments === 'function' && hasPendingAttachments()) { warnAttachmentSendBusy(); return; }
+        if (/^\/goal\b/i.test(text)) { if (inp) { inp.innerHTML = ''; autoResizeTextarea(inp as any); } void runGoalCommand(text.replace(/^\/goal\b/i, '').trim()); return; }
+        if (inp) { inp.innerHTML = ''; autoResizeTextarea(inp as any); }
+        steerGoal(text);
+        appendMessage?.('model', `<em style="color:var(--muted)">Added to the goal's next turn: ${esc(text.slice(0, 200))}</em>`);
+        return;
+    }
     if (aiJob) {
-        const what = { runner: 'The task runner', init: 'The project-init agent' }[aiJob] || 'An AI task';
+        const what = { runner: 'The task runner', init: 'The project-init agent', goal: 'A goal' }[aiJob] || 'An AI task';
         appendMessage?.('model', `<em style="color:var(--muted)">${what} is running — stop it or wait for it to finish before sending.</em>`);
         return;
     }
@@ -1874,7 +1898,112 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
 }
 
 // Window bridge for module consumers and inline handlers (ESM migration).
-Object.assign(window, { _processQueue, cancelSendPreparation, stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
+
+/** Ctrl+X Ctrl+S: send a waiting message into the running work now. The first message still waiting its turn becomes a steering message and
+ *  goes to the head, which interrupts the turn after its current step (the queue's existing 'steering' mode); with nothing queued, the text in
+ *  the box is sent as one. A running /goal takes it as guidance for its next turn. Returns what was steered, for the caller's notice. */
+function steerNextQueued(composerText = ''): { did: 'queued' | 'composer' | 'goal' | 'none'; text: string } {
+    const text = composerText.trim();
+    const items = MsgQueue.getAll();
+    const target = items.find(m => m.mode !== 'steering');
+    if (target) {
+        while (MsgQueue.getAll()[0]?.id !== target.id) MsgQueue.move(target.id, -1);   // steering acts when the message reaches the head
+        MsgQueue.setMode(target.id, 'steering');
+        return { did: 'queued', text: target.text };
+    }
+    if (items.length) return { did: 'queued', text: items[0].text };   // already steering
+    if (!text) return { did: 'none', text };
+    if (aiJob === 'goal') return steerGoal(text) ? { did: 'goal', text } : { did: 'none', text };
+    if (!aiBusy()) return { did: 'none', text };   // nothing is running: Enter sends it
+    MsgQueue.enqueue(text, 'steering');
+    return { did: 'composer', text };
+}
+
+// ── /goal ───────────────────────────────────────────────────────────────────
+// goal.ts owns the loop; this is the browser's end of it: a turn in the open chat, the record in the workspace, a line on the screen.
+const GOAL_WAIT_MS = 300_000;
+function _goalNote(msg: string): void {
+    appendMessage?.('model', `<em style="color:var(--muted)">${esc(msg).replace(/\n/g, '<br>')}</em>`);
+}
+function _setGoalStatus(rec: GoalRecord | null): void {
+    let el = document.getElementById('goal-status');
+    const active = !!rec && (rec.status === 'active' || rec.status === 'paused' || rec.status === 'blocked' || rec.status === 'cap');
+    if (!active) { el?.remove(); return; }
+    if (!el) {
+        const inp = document.getElementById('agent-input');
+        if (!inp?.parentElement) return;
+        el = document.createElement('div');
+        el.id = 'goal-status'; el.className = 'goal-status';
+        el.addEventListener('click', e => {
+            const b = (e.target as HTMLElement).closest('button[data-goal]') as HTMLElement | null;
+            if (b) void runGoalCommand(b.dataset.goal!);
+        });
+        inp.parentElement.insertBefore(el, inp);
+    }
+    const running = rec!.status === 'active' && goalRunning();
+    const label = running ? `Goal · turn ${rec!.turns}/${rec!.maxTurns}` : rec!.status === 'blocked' ? 'Goal · waiting for you' : `Goal · ${rec!.status === 'cap' ? 'out of turns' : 'paused'}`;
+    el.innerHTML = `<span class="goal-status-text" title="${escapeHtml(rec!.text)}"><b>${label}</b> — ${escapeHtml(rec!.text.slice(0, 120))}</span>`
+        + (running ? `<button type="button" data-goal="stop">Stop</button>` : `<button type="button" data-goal="resume">Resume</button><button type="button" data-goal="clear">Clear</button>`);
+}
+async function _goalIdle(): Promise<boolean> {
+    const t0 = Date.now();
+    while (agentStreaming || preparing() || MsgQueue.size() > 0) {
+        if (Date.now() - t0 > GOAL_WAIT_MS) return false;
+        await new Promise(r => setTimeout(r, 200));
+    }
+    return true;
+}
+function _webGoalHost(chat: string | null): GoalHost {
+    const epoch = workspaceEpoch();   // a Clear or Load while it runs makes the next save fail, which ends the loop
+    return {
+        async runTurn(prompt, { visible }) {
+            // The goal belongs to the chat it started in. Turns sent to whatever chat the reader moved to would land in the wrong conversation.
+            if (activeChatId !== chat) return { text: 'the chat was switched', finishSignal: 'stopped' };
+            setSoftStopPending(false);
+            appendMessage('user', renderMarkdown ? renderMarkdown(visible) : esc(visible));
+            const r: any = await runAgentTurn(prompt, null);
+            return { text: String(r?.text ?? ''), finishSignal: r?.finishSignal ?? 'running', edited: r?.stop?.edited };
+        },
+        read: () => agentReadFile(GOAL_PATH).catch(() => null),
+        write: (c) => agentWriteFile(GOAL_PATH, c, null, { epoch }),
+        notify: _goalNote,
+        waitQuiet: _goalIdle,
+        onChange: _setGoalStatus,
+    };
+}
+/** `/goal …` from the composer. `text` is what follows the command. */
+async function runGoalCommand(text: string, _container: HTMLElement | null = null): Promise<void> {
+    const cmd = parseGoalCommand(text);
+    const host = _webGoalHost(activeChatId as string | null);
+    if (cmd.op === 'status') { const g = await loadGoal(host); _goalNote(describeGoal(g)); _setGoalStatus(g); return; }
+    if (cmd.op === 'stop') {
+        if (!stopGoal('stopped by you')) { _goalNote('No goal is running.'); return; }
+        try { dom_stopNowForGoal(); } catch {}
+        return;
+    }
+    if (cmd.op === 'clear') { if (await clearGoal(host)) _goalNote('Goal cleared.'); return; }
+    // start / resume: the loop is a background job that owns the chat between its turns, like Autopilot.
+    if (aiBusy()) { _goalNote('Something is already running in this chat. Stop it, or wait for it to finish, then run /goal again.'); return; }
+    if (!getActiveMainModelList().length) { _goalNote('No model is configured. Choose one in Settings, then run /goal again.'); return; }
+    if (!acquireChatLease(activeChatId)) { _goalNote('This chat is running a turn in another browser tab.'); return; }
+    const chat = activeChatId as string | null;
+    setAiJob('goal');
+    let loop: Promise<GoalRecord> | null = null;
+    try { loop = cmd.op === 'resume' ? (await resumeGoal(host))?.done ?? null : startGoal(cmd.text, host); }
+    catch (e: any) { _goalNote(`The goal could not start: ${e?.message ?? e}`); }
+    if (!loop) { setAiJob(''); releaseChatLease(chat); return; }
+    try { await loop; }
+    finally { setAiJob(''); releaseChatLease(chat); _setGoalStatus(await loadGoal(host)); setTimeout(() => _processQueue(), 0); }
+}
+// A stop that reaches a turn in progress as well as the loop.
+function dom_stopNowForGoal(): void { if (agentStreaming) stopNow(); }
+/** Shows a goal left over from an earlier visit (paused: it never restarts by itself). Called when a chat is shown. */
+async function refreshGoalStatus(): Promise<void> {
+    if (goalRunning()) return;
+    try { _setGoalStatus(await loadGoal(_webGoalHost(activeChatId as string | null))); } catch {}
+}
+
+Object.assign(window, { steerNextQueued, runGoalCommand, refreshGoalStatus, _processQueue, cancelSendPreparation, stopTurnAndWait, turnsInFlight, restoreChatWorkspace, _htmlToMarkdown, _readInputText, _setInputText, showCheckpointDiff, rewindToCheckpoint, rerunCheckpoint, clearCheckpoints, deleteChatCheckpoints, migrateCheckpointAttachments, setInputState, _updateSendBtnVisibility, autoResizeTextarea, agentSend, userSend, runAgentTurn, retryLastTurn, stopAfterStep, stopNow, handleSendButton, createNewChat, newChat, _startEditUserMsg, msgQueue: MsgQueue, _userInputHistory });
 
 // §7: named ES module exports alongside window bridge (headless / harness adapter paths).
 export { runAgentTurn, stopNow, createNewChat, turnsInFlight, stopTurnAndWait, _closeSoftStop };

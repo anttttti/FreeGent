@@ -107,6 +107,10 @@ export async function collectWorkspacePaths(): Promise<string[]> {
 }
 
 // ── Per-turn trigger evaluation ────────────────────────────────────────────
+// Skills the user asked for by name (/commit, /plan …) for the next turn. applyTurnTriggers rebuilds currentTurnSkills from the
+// triggers at the start of every turn, so a name added earlier would be lost; this set survives until that turn has taken it.
+const _forcedSkills = new Set<string>();
+export function forceSkillsNextTurn(names: Iterable<string>): void { for (const n of names) _forcedSkills.add(n); }
 // Sets currentTurnSkills for the turn about to run. Call before pushing the user message.
 export function applyTurnTriggers({
     rawText,
@@ -138,7 +142,7 @@ export function applyTurnTriggers({
     const _coworkSeed = (typeof getMode === 'function' && getMode() === 'cowork' && _coworkSkills.length)
         ? new Set([...activeSkills, ..._coworkSkills])
         : activeSkills;
-    setCurrentTurnSkills(evaluateSkillTriggers(skillsRegistry, _coworkSeed, {
+    const _fired = evaluateSkillTriggers(skillsRegistry, _coworkSeed, {
         roleName:         mainAgentRole?.name?.toLowerCase() ?? null,
         lowerText:        rawText.toLowerCase(),
         rawText,
@@ -146,7 +150,10 @@ export function applyTurnTriggers({
         isTaskCompletion: isTaskCompletion ?? _isCompletionRequest(rawText),
         turn:             Math.floor(history.length / 2),
         wsExts, wsNames, wsAllPaths, msgMedia, histTools,
-    }));
+    });
+    for (const n of _forcedSkills) if (skillsRegistry.has(n)) _fired.add(n);
+    _forcedSkills.clear();
+    setCurrentTurnSkills(_fired);
 }
 
 // ── Turn prelude ───────────────────────────────────────────────────────────

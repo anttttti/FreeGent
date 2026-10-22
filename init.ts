@@ -181,6 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (typeof restoreRoleForChat === 'function') restoreRoleForChat(activeChatId);
         } finally { endLoad(); }
     }
+    (window as any).refreshGoalStatus?.();   // a /goal left over from an earlier visit is shown (paused); it never restarts by itself
 
     initChatEmpty?.();
     updateInputModelBtn?.();
@@ -404,6 +405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // ── Global keyboard shortcuts ──────────────────────────────────────────
+    let _steerChordAt = 0;
     document.addEventListener('keydown', e => {
         // Escape → stop generation
         if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey) {
@@ -420,6 +422,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (_attach?.classList.contains('open')) { _attach.classList.remove('open'); return; }
             if (agentStreaming) { stopNow?.(); return; }
             if ((window as any).cancelSendPreparation?.()) return;   // a send still waiting for its attachments
+        }
+        // Ctrl+X then Ctrl+S (within 2 s): send the next waiting message into the running work now, as coding-agent terminals do.
+        // Ctrl+X is claimed only while something runs and nothing is selected, so Cut keeps working the rest of the time.
+        if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'x') {
+            const busy = agentStreaming || !!(window as any).aiJob || (window as any).msgQueue?.size?.() > 0;
+            if (busy && window.getSelection()?.isCollapsed !== false) { e.preventDefault(); _steerChordAt = Date.now(); }
+            return;
+        }
+        if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's' && Date.now() - _steerChordAt < 2000) {
+            e.preventDefault(); _steerChordAt = 0;
+            const inp = document.getElementById('agent-input');
+            const r = (window as any).steerNextQueued?.((window as any)._readInputText?.(inp) ?? '');
+            if (r?.did === 'composer' || r?.did === 'goal') { if (inp) { inp.innerHTML = ''; (window as any).autoResizeTextarea?.(inp); } }
+            const short = (r?.text ?? '').length > 80 ? r.text.slice(0, 77) + '…' : (r?.text ?? '');
+            (window as any).appendMessage?.('model', `<em style="color:var(--muted)">${r?.did === 'none' ? 'Nothing waiting to steer. Type a message while the agent works, then press Ctrl+X Ctrl+S.' : `Steering now: ${esc(short)}`}</em>`);
+            return;
         }
         // Cmd/Ctrl+K → open chat search
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
