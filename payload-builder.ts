@@ -84,7 +84,14 @@ export function fnTagMessages(hist: any[]): any[] {
             continue;
         }
         flush();
-        if (m.role === 'assistant' && m.tool_calls?.length) { const { tool_calls: _tc, ...rest } = m; out.push(rest); }
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+            // The calls go back as the text tags the model writes them in. Dropping them left only the results, and two calls with the same output (a
+            // different path, a different query) were indistinguishable in the request (codex R38-001).
+            const { tool_calls: _tc, ...rest } = m;
+            const calls = m.tool_calls.map((tc: any) => `<function=${tc.function?.name ?? ''}>${tc.function?.arguments || '{}'}</function>`).join('\n');
+            const text = typeof rest.content === 'string' ? rest.content : '';
+            out.push({ ...rest, content: text ? `${text}\n${calls}` : calls });
+        }
         else out.push(m);
     }
     flush();
