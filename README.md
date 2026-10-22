@@ -11,8 +11,10 @@ FreeGent reads and edits files, runs code, searches the web, splits work across 
 | | What it is | Start it |
 |---|---|---|
 | **WebUI** | Chat, project files, task board, settings. Runs in the browser. | [freegent.ai](https://freegent.ai), or `npm run dev` |
-| **TUI** | Interactive terminal session on the same agent core. | `npm run tui` |
-| **CLI** | One-off or scripted runs, for CI and benchmarks. | `npx tsx fg-run.ts --task "…"` |
+| **TUI** | Interactive terminal session on the same agent core. | `freegent` (or `npm run tui`) |
+| **CLI** | One-off or scripted runs, for CI and benchmarks. | `freegent -p "…"` (or `npx tsx fg-run.ts --task "…"`) |
+
+The `freegent` command comes from `npm link` (or `npm install -g .`) in the repository. With no arguments it opens the TUI; `-p` runs the agent once and prints only the answer, and text piped in is added to the request (`git diff | freegent -p "review this"`). Without a terminal on either side it behaves as `-p`.
 
 ## Hosted site or your own machine?
 

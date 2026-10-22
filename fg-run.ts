@@ -23,6 +23,16 @@ loadDotenv();
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
+// `-p [text]` / `--print [text]` (the `freegent -p` pipeline form): run the agent on the text and the piped input, print only the answer.
+// The text is optional because the input may come entirely from stdin; it is taken out of `args` here so the option checks below never see it.
+let printMode = false, printText = '';
+for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '-p' && args[i] !== '--print') continue;
+    printMode = true;
+    const next = args[i + 1];
+    if (next !== undefined && !next.startsWith('-')) { printText = next; args.splice(i, 2); } else args.splice(i, 1);
+    break;
+}
 // stdout is the answer (or the metrics lines); startup diagnostics such as the endpoint's context-window probe go to stderr.
 // Run before the probe prints: it came a moment after the reply and broke `--prompt … | jq` (TUI report case 025).
 console.log = console.info = (...a: unknown[]) => console.error(...a);
@@ -32,7 +42,9 @@ const _VALUE_FLAGS = new Set(['--api-key', '--api-url', '--browser-url', '--comp
     '--enable-tools', '--fetch-allow', '--llm', '--log', '--main-role', '--max-rounds', '--mcp-config', '--model', '--prompt', '--provider',
     '--reply-channel-hint', '--retry-fixed-ms', '--retry-mode', '--sidecar-dir', '--task', '--task-file', '--temperature', '--thinking-level',
     '--timeout', '--workflow', '--workspace']);
-const _OPTION_NAMES = new Set([..._VALUE_FLAGS, '--help', '-h', '--no-log', '--print-model']);
+const _OPTION_NAMES = new Set([..._VALUE_FLAGS, '--help', '-h', '--no-log', '--print-model', '--no-tools', '-p', '--print']);
+// Progress banners go to stderr; in -p mode only errors do.
+const _note = (m: string) => { if (!printMode) console.error(m); };
 const _fail = (msg: string): never => { console.error(`Error: ${msg}`); process.exit(2); };
 const _arg = (flag: any) => {
     const i = args.indexOf(flag);
@@ -49,6 +61,10 @@ function _usage(code = 1) {
   npx tsx fg-run.ts --workflow "Do something"     Full agent workflow with tools
   npx tsx fg-run.ts --task "Task description"     Alias for --workflow
   npx tsx fg-run.ts --task-file path/to/task.txt  Read task from file (workflow)
+  freegent -p "Do something"                      Agent run for pipelines: only the answer on stdout. Text piped in is
+                                                  added to the request:  git diff | freegent -p "review this"
+                                                  (-p alone reads the whole request from stdin; --no-tools = a plain
+                                                  model call without tools; no metrics line, no progress banners)
 
 Options:
   --llm <provider|model>    Combined LLM selector (e.g. google|gemini-2.5-flash,
@@ -85,9 +101,17 @@ Options:
 }
 
 if (_flag('--help') || _flag('-h')) _usage(0);
-if (args.length === 0) _usage(1);
+if (args.length === 0 && !printMode) _usage(1);
 
-const promptText    = _arg('--prompt');
+let stdinText = '';
+if (printMode && !process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const c of process.stdin) chunks.push(c as Buffer);
+    stdinText = Buffer.concat(chunks).toString('utf8').trim();
+}
+const printRequest = [printText, stdinText].filter(Boolean).join('\n\n');
+if (printMode && !printRequest) _fail('-p needs a request: freegent -p "what to do", or pipe text in.');
+const promptText    = printMode && _flag('--no-tools') ? printRequest : _arg('--prompt');
 const taskText      = _arg('--task') || _arg('--workflow');
 const taskFile      = _arg('--task-file');
 // Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006).
@@ -132,7 +156,7 @@ const retryMode       = _arg('--retry-mode')     || '';
 const retryFixedMs    = parseInt(_arg('--retry-fixed-ms') || '') || 0;
 const maxRounds       = parseInt(_arg('--max-rounds')     || '') || 0;
 
-let task = taskText;
+let task = printMode && !_flag('--no-tools') ? printRequest : taskText;
 if (!task && taskFile) {
     try { task = readFileSync(taskFile, 'utf8').trim(); }
     catch (e: any) { console.error(`Cannot read task file: ${taskFile} — ${e.message}`); process.exit(1); }
@@ -151,28 +175,28 @@ if (_flag('--print-model')) {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-console.error(`[fg-run] workspace: ${workspaceRoot}`);
-console.error(`[fg-run] provider:  ${provider}${model ? ` / ${model}` : ''}${llmSpec ? ` (--llm ${llmSpec})` : ''}`);
+_note(`[fg-run] workspace: ${workspaceRoot}`);
+_note(`[fg-run] provider:  ${provider}${model ? ` / ${model}` : ''}${llmSpec ? ` (--llm ${llmSpec})` : ''}`);
 
 if (promptText) {
-    console.error(`[fg-run] mode:      prompt (direct LLM call)`);
-    console.error(`[fg-run] prompt:    ${promptText.slice(0, 120)}${promptText.length > 120 ? '…' : ''}`);
-    if (logFile) console.error(`[fg-run] log:       ${logFile}`);
+    _note(`[fg-run] mode:      prompt (direct LLM call)`);
+    _note(`[fg-run] prompt:    ${promptText.slice(0, 120)}${promptText.length > 120 ? '…' : ''}`);
+    if (logFile) _note(`[fg-run] log:       ${logFile}`);
     const { output, error } = await llmPrompt(promptText, sharedOpts);
     if (error) await new Promise<void>(resolve => process.stderr.write(`[fg-run] Error: ${error}\n`, () => resolve()));
     await new Promise<void>(resolve => process.stdout.write(output + '\n', () => resolve()));
     process.exit(error ? 1 : 0);
 } else {
-    console.error(`[fg-run] mode:      workflow (agent loop)`);
-    console.error(`[fg-run] task:      ${task!.slice(0, 120)}${task!.length > 120 ? '…' : ''}`);
-    if (logFile) console.error(`[fg-run] log:       ${logFile}`);
+    _note(`[fg-run] mode:      workflow (agent loop)`);
+    _note(`[fg-run] task:      ${task!.slice(0, 120)}${task!.length > 120 ? '…' : ''}`);
+    if (logFile) _note(`[fg-run] log:       ${logFile}`);
     // Piped stdout (benchmark containers): print running totals after every LLM step so a task
     // killed by the wall-clock limit still leaves its token counts. Consumers take the last line.
-    const onMetrics = process.stdout.isTTY ? undefined
+    const onMetrics = process.stdout.isTTY || printMode ? undefined
         : (m: unknown) => { process.stdout.write(`__FG_METRICS__:${JSON.stringify(m)}\n`); };
     const { output, error, metrics } = await run(task!, { ...sharedOpts, workflowMode: true, onMetrics });
     if (error) await new Promise<void>(resolve => process.stderr.write(`[fg-run] Error: ${error}\n`, () => resolve()));
-    process.stdout.write(`__FG_METRICS__:${JSON.stringify(metrics)}\n`);
+    if (!printMode) process.stdout.write(`__FG_METRICS__:${JSON.stringify(metrics)}\n`);
     await new Promise<void>(resolve => process.stdout.write(output + '\n', () => resolve()));
     process.exit(error ? 1 : 0);
 }
