@@ -231,13 +231,39 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
     }
     if (id === undefined) { await resp.body?.cancel().catch(() => {}); return null; }
 
-    msg = msg ?? _parseRpcBody(await resp.text(), ct, id);
+    msg = msg ?? (/text\/event-stream/i.test(ct) && typeof resp.body?.getReader === 'function'
+        ? await _readSseAnswer(resp, id)
+        : _parseRpcBody(await resp.text(), ct, id));
     if (msg.error) {
         const m = msg.error.message || JSON.stringify(msg.error);
         if (_isSessionError(msg.error, method)) throw new McpSessionExpired(m);
         throw new Error(m);
     }
     return msg.result;
+}
+
+// The reply as soon as its event is complete, without waiting for the response body to end: a server may keep a POST stream open after the answer (for
+// notifications, keep-alives) and the finished call waited for it to close (codex R23-001). The rest of the body is dropped.
+async function _readSseAnswer(resp: Response, id: any): Promise<any> {
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const scan = (event: string): any => {
+        const data = event.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+        if (!data.trim()) return null;
+        try { return _answerTo(JSON.parse(data), id); } catch { return null; }
+    };
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (value) buffer += decoder.decode(value, { stream: !done });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() ?? '';
+            for (const ev of events) { const hit = scan(ev); if (hit) return hit; }
+            if (done) { const hit = scan(buffer); if (hit) return hit; break; }
+        }
+    } finally { reader.cancel().catch(() => {}); }
+    throw new Error('MCP: no matching response in SSE stream');
 }
 
 let _rpcId = 1;
@@ -287,7 +313,13 @@ function _resultText(result: any): string {
         else if (c.type === 'resource') parts.push(c.resource?.text ?? `[resource ${c.resource?.uri || ''}]`);
         else if (c.type === 'resource_link') parts.push(`[resource link: ${c.uri}${c.name ? ` — ${c.name}` : ''}]`);
     }
-    if (!parts.length && result?.structuredContent !== undefined) return JSON.stringify(result.structuredContent);
+    // structuredContent is the tool's data. A text summary or a placeholder for an image beside it does not replace it; text that already holds the same data does.
+    if (result?.structuredContent !== undefined) {
+        const data = JSON.stringify(result.structuredContent);
+        if (!parts.length) return data;
+        const repeated = parts.some(p => { try { return JSON.stringify(JSON.parse(p)) === data; } catch { return false; } });
+        if (!repeated) parts.push(`structuredContent: ${data}`);
+    }
     return parts.join('\n');
 }
 
@@ -356,32 +388,48 @@ function _uniqueId(name: string, list: McpServer[]): string {
 
 // Discover a server's tools and cache them on its entry. Returns the updated entry.
 async function refreshMcpServer(id: string): Promise<McpServer> {
-    const list = getMcpServers();
-    const s = list.find(x => x.id === id);
-    if (!s) throw new Error(`MCP server not found: ${id}`);
-    try {
-        const { tools, instructions } = await _listTools(s);
-        s.tools = tools; s.lastSync = Date.now(); delete s.error;
-        if (instructions) s.instructions = instructions; else delete s.instructions;
-        // Forget enabled tools the server no longer has.
-        s.enabledTools = (s.enabledTools || []).filter(t => tools.some(x => x.name === t));
-    } catch (e) {
-        s.error = redactMcpSecrets(e.message, s.headers);
-        saveMcpServers(list);
-        throw new Error(s.error);
+    const asked = getMcpServers().find(x => x.id === id);
+    if (!asked) throw new Error(`MCP server not found: ${id}`);
+    // Discovery takes a while, and the registry can change meanwhile (a tool switched off, a server added or removed, another tab). The outcome is applied
+    // to the registry as it is when the answer arrives, touching only this server's discovered fields: writing back the list read before the request
+    // undid the user's edits and brought a removed server back (codex R19-001).
+    let found: Awaited<ReturnType<typeof _listTools>>;
+    try { found = await _listTools(asked); }
+    catch (e) {
+        const message = redactMcpSecrets(e.message, asked.headers);
+        const list = getMcpServers(); const cur = list.find(x => x.id === id);
+        if (cur) { cur.error = message; saveMcpServers(list); }
+        throw new Error(message);
     }
+    const list = getMcpServers();
+    const cur = list.find(x => x.id === id);
+    if (!cur) return asked;                          // removed while refreshing: nothing to update, and it must not come back
+    const { tools, instructions, incomplete } = found;
+    if (incomplete) {
+        // Only the first pages were read. What the server lists beyond them is unknown, not gone: the tools already known stay, and so do the user's choices.
+        const have = new Set(tools.map(t => t.name));
+        cur.tools = [...tools, ...(cur.tools || []).filter(t => !have.has(t.name))];
+        cur.error = `Only the first ${_MAX_TOOL_PAGES} pages of the tool list were read (the server has more); tools beyond them were not checked.`;
+    } else {
+        cur.tools = tools; delete cur.error;
+        // Forget enabled tools the server no longer has.
+        cur.enabledTools = (cur.enabledTools || []).filter(t => tools.some(x => x.name === t));
+    }
+    cur.lastSync = Date.now();
+    if (instructions) cur.instructions = instructions; else delete cur.instructions;
     saveMcpServers(list);
-    return s;
+    return cur;
 }
 
 // Fresh handshake + tools/list. Also returns the server's `instructions` from initialize.
-async function _listTools(server: { url: string; headers?: Record<string, string> }): Promise<{ tools: McpToolInfo[]; instructions: string }> {
+const _MAX_TOOL_PAGES = 20;
+async function _listTools(server: { url: string; headers?: Record<string, string> }): Promise<{ tools: McpToolInfo[]; instructions: string; incomplete: boolean }> {
     _conn(server).ready = false;     // fresh handshake: headers may have changed
     const init = await _ensureSession(server);
     const instructions = typeof init?.instructions === 'string' ? init.instructions.trim().slice(0, _MAX_INSTRUCTIONS_STORED) : '';
     const tools: McpToolInfo[] = [];
     let cursor: string | undefined;
-    for (let page = 0; page < 20; page++) {
+    for (let page = 0; page < _MAX_TOOL_PAGES; page++) {
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
         for (const t of r?.tools || []) {
             if (t && typeof t.name === 'string')
@@ -390,7 +438,8 @@ async function _listTools(server: { url: string; headers?: Record<string, string
         cursor = r?.nextCursor;
         if (!cursor) break;
     }
-    return { tools, instructions };
+    // The bound is reasonable; presenting what lies beyond it as nonexistent is not: `incomplete` lets the caller keep what it knew.
+    return { tools, instructions, incomplete: !!cursor };
 }
 
 // Plain http:// carries the server's credentials and every tool result in clear text, and a tampered
@@ -525,8 +574,15 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
         type = nonNull[0] || 'string';
     }
     if (!type && Array.isArray(schema.anyOf ?? schema.oneOf)) {   // take the first concrete branch
-        const branch = (schema.anyOf ?? schema.oneOf).find((b: any) => b && (b.type || b.$ref) && b.type !== 'null');
-        if (branch) return sanitizeMcpSchema({ ...branch, description: schema.description ?? branch.description }, depth, root, refStack);
+        const branches = schema.anyOf ?? schema.oneOf;
+        const branch = branches.find((b: any) => b && (b.type || b.$ref) && b.type !== 'null');
+        if (branch) {
+            // A null alternative makes the parameter nullable, and the parent's default stays: flattening to the one concrete branch used to turn "string or
+            // null" into a required string with no default, a different contract from the same schema written as ["string","null"] (codex R22-001).
+            const nullable = branches.some((b: any) => b && (b.type === 'null' || (Array.isArray(b.type) && b.type.includes('null'))));
+            const flat = sanitizeMcpSchema({ ...branch, description: schema.description ?? branch.description, ...(schema.default !== undefined ? { default: schema.default } : {}) }, depth, root, refStack);
+            return nullable ? { ...flat, nullable: true } : flat;
+        }
     }
     if (!type) type = schema.properties ? 'object' : schema.items ? 'array' : 'string';
     out.type = type;
@@ -561,7 +617,9 @@ function mcpToolSpecs(): any[] {
             if (!on.has(t.name)) continue;
             const note = s.toolNote ? `\n${s.toolNote}` : '';
             const max = _MAX_DESC - note.length;
-            let desc = `${s.name}: ${(t.description || t.name).trim()}`;
+            // The description is the server's own text, in the list the model takes for its capabilities: said to be that, like the server's usage notes
+            // (hermes C18).
+            let desc = `${s.name} (external MCP server; its own description): ${(t.description || t.name).trim()}`;
             if (desc.length > max) desc = desc.slice(0, max - 1) + '…';
             desc += note;
             specs.push({ name: names.get(t.name)!, description: desc, parameters: sanitizeMcpSchema(t.inputSchema || { type: 'object' }) });
