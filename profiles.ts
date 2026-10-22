@@ -262,11 +262,46 @@ function getSavedProfiles() {
 }
 
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
+const _originOf = (u: string | null | undefined): string => { try { return new URL(u || 'https://api.openai.com/v1').origin; } catch { return String(u ?? ''); } };
+/** Removes the global key (and the keys of custom models that use the global address) when `patch` moves the endpoint to another origin. Returns what was removed. */
+function _dropKeysIfEndpointMoves(patch: Record<string, string | null>, settings: Record<string, any>): string[] {
+    // Only an address the profile NAMES counts: a profile that says nothing about it resets the address to the default, which is not a destination chosen by its author.
+    if (!settings?.fg_openai_url) return [];
+    const before = _originOf(localStorage.getItem('fg_openai_url')), after = _originOf(patch.fg_openai_url);
+    if (before === after) return [];
+    const cleared: string[] = [];
+    if (localStorage.getItem('fg_openai_key')) { localStorage.removeItem('fg_openai_key'); cleared.push('the endpoint key'); }
+    try {
+        const models = JSON.parse(localStorage.getItem('fg_custom_models') || '[]');
+        let n = 0;
+        if (Array.isArray(models)) {
+            for (const m of models) if (m && m.key && !m.url) { delete m.key; n++; }
+            if (n) { localStorage.setItem('fg_custom_models', JSON.stringify(models)); cleared.push(`${n} custom model key${n > 1 ? 's' : ''}`); }
+        }
+    } catch {}
+    return cleared;
+}
+
 function profileApply(settings) {
     // One patch: listeners (rule and skill sets, the model button, other tabs) see the profile's values, not the old ones.
     const patch: Record<string, string | null> = {};
-    for (const key of PROFILE_KEYS) patch[key] = key in settings ? settings[key] : null;
+    // A list setting has to be a JSON array: other JSON ("{}") was stored and then stopped the settings module from loading at the next start
+    // (codex R18-001). Such a key is left as it is, and the person is told.
+    const refused: string[] = [];
+    for (const key of PROFILE_KEYS) {
+        if (!(key in settings)) { patch[key] = null; continue; }
+        if ((PROFILE_KEY_META as any)[key]?.isList && settings[key] != null && settings[key] !== '') {
+            let ok = false; try { ok = Array.isArray(JSON.parse(String(settings[key]))); } catch {}
+            if (!ok) { refused.push(key); continue; }
+        }
+        patch[key] = settings[key];
+    }
+    // A profile can change where requests go but never carries a key, so the key already stored would be sent to whatever address the profile names
+    // (opencode §8). When the endpoint's ORIGIN changes, the keys that were entered for the old one are removed and must be entered again.
+    const clearedKeys = _dropKeysIfEndpointMoves(patch, settings);
     patchPrefs(patch);
+    if (clearedKeys.length) { try { alert(`This profile points the OpenAI-compatible endpoint somewhere else, so the stored API key${clearedKeys.length > 1 ? 's' : ''} for it (${clearedKeys.join(', ')}) ${clearedKeys.length > 1 ? 'were' : 'was'} removed. Enter ${clearedKeys.length > 1 ? 'them' : 'it'} again if you trust the new address.`); } catch {} }
+    if (refused.length) { try { alert(`Not applied (not a list): ${refused.join(', ')}`); } catch {} }
     _previewedId = null;
     if (typeof populateSettingsForm === 'function') populateSettingsForm();
     renderProfilesTab();

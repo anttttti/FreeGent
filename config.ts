@@ -20,11 +20,13 @@ let _pyodideImageStore: Record<string, any> = {}; // image store for browser UI 
 export const skillsRegistry     = new Map(); // name → { name, description, body, path }
 // A stored JSON value that no longer parses (hand-edited, truncated by a full quota) must not stop the module from loading:
 // the page rendered but nothing could be sent, because the rest of the app is wired up after this file.
-function _storedJson(key: string, fallback: any): any {
-    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v ?? fallback; } catch { return fallback; }
+// `array`: the setting is a list. Valid JSON of another shape ("{}", a number) is as unusable as broken JSON and takes the fallback; used as the list it
+// stopped this module from loading at all (codex R18-001).
+function _storedJson(key: string, fallback: any, array = false): any {
+    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v == null || (array && !Array.isArray(v)) ? fallback : v; } catch { return fallback; }
 }
-const activeSkills       = new Set(_storedJson(KEYS.ACTIVE_SKILLS, []));
-const disabledRoles      = new Set(_storedJson(KEYS.DISABLED_ROLES, []));
+const activeSkills       = new Set(_storedJson(KEYS.ACTIVE_SKILLS, [], true));
+const disabledRoles      = new Set(_storedJson(KEYS.DISABLED_ROLES, [], true));
 export function isRoleEnabled(name) { return !disabledRoles.has(name); }
 export function getRoleBody(name)   { return localStorage.getItem(roleBodyKey(name)) || null; }
 function setRoleBody(name, body) {
@@ -87,9 +89,9 @@ export const OPT_IN_TOOLS = new Set([
 // default to on instead of staying invisible until the user re-checks them. (A saved
 // fg_enabled_tools from an older build is migrated to the new key on first load.)
 export const enabledTools = (() => {
-    const disabled = _storedJson(KEYS.DISABLED_TOOLS, null);
+    const disabled = _storedJson(KEYS.DISABLED_TOOLS, null, true);
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
-    const legacyEnabled = _storedJson(KEYS.ENABLED_TOOLS, null);
+    const legacyEnabled = _storedJson(KEYS.ENABLED_TOOLS, null, true);
     if (legacyEnabled) {
         const legacyDisabled = ALL_TOOL_NAMES.filter(t => !legacyEnabled.includes(t));
         localStorage.setItem(KEYS.DISABLED_TOOLS, JSON.stringify(legacyDisabled));
@@ -106,7 +108,7 @@ export const enabledTools = (() => {
 // Saved preferences win: a user whose saved list already disables it keeps it off until they enable it.
 const COWORK_ONLY_DEFAULTS = new Set(['update_task_status', 'write_file', 'replace_in_file']);
 export const coworkEnabledTools = (() => {
-    const disabled = _storedJson(KEYS.DISABLED_TOOLS_COWORK, null);
+    const disabled = _storedJson(KEYS.DISABLED_TOOLS_COWORK, null, true);
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
     // Fresh install: same as chat defaults, plus cowork-only defaults.
     return new Set(ALL_TOOL_NAMES.filter(t => !OPT_IN_TOOLS.has(t) || COWORK_ONLY_DEFAULTS.has(t)));

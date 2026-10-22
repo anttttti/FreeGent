@@ -33,6 +33,22 @@ describe('model edit dialog', () => {
         W.openEditModelDialog('custom|mine');
         expect((document.getElementById('emd-rpm') as HTMLInputElement).value).toBe('');
     });
+    it('clearing the API key and the address removes them (opencode §9)', () => {
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ ...stored()[0], key: 'OLD-CUSTOM-KEY' }]));
+        W.openEditModelDialog('custom|mine');
+        set('emd-api-key', ''); set('emd-url', '');
+        W.saveEditModel();
+        const e = stored()[0];
+        expect('key' in e).toBe(false);
+        expect('url' in e).toBe(false);
+    });
+    it('an unrelated edit leaves the key and address alone', () => {
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ ...stored()[0], key: 'KEEP-ME' }]));
+        W.openEditModelDialog('custom|mine');
+        set('emd-label', 'Renamed');
+        W.saveEditModel();
+        expect(stored()[0]).toMatchObject({ key: 'KEEP-ME', url: 'http://x/v1', label: 'Renamed' });
+    });
     it('Save after the model was deleted elsewhere writes nothing (349)', () => {
         W.openEditModelDialog('custom|mine');
         localStorage.setItem('fg_custom_models', '[]');

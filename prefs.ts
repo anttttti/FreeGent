@@ -8,6 +8,9 @@ export type PrefListener = (keys: string[], origin: PrefOrigin) => void;
 type Match = string | RegExp | ((key: string) => boolean);
 
 const _subs: Array<{ match: Match; fn: PrefListener }> = [];
+// Every key this module has written or been asked to watch: when another tab clears ALL storage, the keys are gone from it and cannot be listed,
+// but the copies in memory still hold their values (codex R16-001).
+const _known = new Set<string>();
 
 const _matches = (m: Match, k: string): boolean =>
     typeof m === 'string' ? (m.endsWith('*') ? k.startsWith(m.slice(0, -1)) : k === m) : m instanceof RegExp ? m.test(k) : m(k);
@@ -25,6 +28,7 @@ function _notify(keys: string[], origin: PrefOrigin): void {
  *  Returns an unsubscribe function. */
 export function onPrefChange(match: Match, fn: PrefListener): () => void {
     const s = { match, fn };
+    if (typeof match === 'string' && !match.endsWith('*')) _known.add(match);
     _subs.push(s);
     return () => { const i = _subs.indexOf(s); if (i >= 0) _subs.splice(i, 1); };
 }
@@ -40,6 +44,7 @@ export function patchPrefs(map: Record<string, string | number | boolean | null>
     let ok = true;
     for (const [k, v] of Object.entries(map)) {
         try {
+            _known.add(k);
             const before = localStorage.getItem(k);
             if (v === null) { if (before !== null) { localStorage.removeItem(k); changed.push(k); } }
             else { const s = String(v); if (before !== s) { localStorage.setItem(k, s); changed.push(k); } }
@@ -54,9 +59,9 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('storage', (e: StorageEvent) => {
         if (e.storageArea && e.storageArea !== localStorage) return;
         if (e.key == null) {
-            const keys: string[] = [];
-            try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k) keys.push(k); } } catch {}
-            _notify(keys, 'remote');
+            const keys = new Set<string>(_known);
+            try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k) keys.add(k); } } catch {}
+            _notify([...keys], 'remote');
         } else _notify([e.key], 'remote');
     });
 }
