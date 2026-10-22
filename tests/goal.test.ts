@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, parseGoal, serializeGoal, parseGoalCommand, describeGoal, _resetGoalForTest, type GoalHost, type GoalTurn } from '../goal.ts';
+import { startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, parseGoal, serializeGoal, parseGoalCommand, describeGoal, isGoalPrompt, _resetGoalForTest, type GoalHost, type GoalTurn } from '../goal.ts';
 
 function host(script: Array<GoalTurn | ((prompt: string, kind: string) => GoalTurn | Promise<GoalTurn>)>) {
     const h = {
@@ -39,6 +39,21 @@ describe('goal loop', () => {
         expect(rec.status).toBe('done');
         expect(h.prompts.map(p => p[0])).toEqual(['work', 'verify', 'work', 'work', 'verify']);
         expect(rec.turns).toBe(3);   // three turns of work; the two verifications are not counted
+    });
+    it('isGoalPrompt recognises every turn the loop sends (the TUI keeps them out of its message history), but not a person\'s own text', async () => {
+        const h = host([work('a'), complete(), work('missing'), complete(), complete()]);
+        await startGoal('make it pass', h as GoalHost, { maxTurns: 6 })!;
+        const kinds = new Set(h.prompts.map(p => p[1].split(':')[0]));
+        expect(h.prompts.length).toBeGreaterThanOrEqual(4);
+        for (const [, prompt] of h.prompts) expect(isGoalPrompt(prompt)).toBe(true);
+        expect(kinds.size).toBeGreaterThanOrEqual(3);                // first/continue/verify shapes all seen
+        const h2 = host([complete(), complete()]); h2.file = h.file;
+        // a resumed goal's first turn
+        const g = parseGoal(h.file)!; g.status = 'paused'; h2.file = serializeGoal(g);
+        await (await resumeGoal(h2 as GoalHost))!.done;
+        expect(isGoalPrompt(h2.prompts[0][1])).toBe(true);
+        expect(isGoalPrompt('Goal: I want to understand the build')).toBe(false);
+        expect(isGoalPrompt('You said the goal is complete: yes')).toBe(false);
     });
     it('BLOCKED stops with the question', async () => {
         const h = host([work(), { text: 'Which database should I use?', finishSignal: 'blocked' }]);

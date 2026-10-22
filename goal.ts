@@ -86,9 +86,20 @@ const firstPrompt = (text: string) => `Goal: ${text}\n\nWork toward this goal un
 const resumePrompt = (g: GoalRecord) => `Resuming this goal: ${g.text}\n\nProgress so far:\n${g.progress.slice(-KEEP_PROGRESS).map(p => `- ${p}`).join('\n') || '- (none recorded)'}\n\n`
     + `Look at the project as it is now, then take the next concrete step. ${ENDING}`;
 const continuePrompt = (g: GoalRecord, notes: string[]) => `The goal is not met yet: ${g.text}\n\n${notes.length ? `The user added:\n${notes.map(n => `- ${n}`).join('\n')}\n\n` : ''}`
-    + `Continue: take the next concrete step with tools now, without restating the plan. Finish with COMPLETED only when the goal is met.`;
+    + CONTINUE_END;
 const verifyPrompt = (g: GoalRecord, notes: string[]) => `You said the goal is complete: ${g.text}\n\n${notes.length ? `The user added:\n${notes.map(n => `- ${n}`).join('\n')}\n\n` : ''}Verify it now against that wording: run the check, read the result, look at the files. `
-    + `If it is met, reply with the evidence and finish with COMPLETED. If something is missing, say what and keep working.`;
+    + VERIFY_END;
+
+const CONTINUE_END = 'Continue: take the next concrete step with tools now, without restating the plan. Finish with COMPLETED only when the goal is met.';
+const VERIFY_END = 'If it is met, reply with the evidence and finish with COMPLETED. If something is missing, say what and keep working.';
+/** A message the goal loop itself sent as a turn (first, resume, continue, verify) — in a chat's history it looks like a user message, but no one typed it. */
+export function isGoalPrompt(text: string): boolean {
+    const t = String(text ?? '').trim();
+    return (t.startsWith('Goal: ') && t.endsWith(ENDING))
+        || (t.startsWith('Resuming this goal: ') && t.endsWith(ENDING))
+        || (t.startsWith('The goal is not met yet: ') && t.endsWith(CONTINUE_END))
+        || (t.startsWith('You said the goal is complete: ') && t.endsWith(VERIFY_END));
+}
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
