@@ -1048,6 +1048,9 @@ function PromptInput({ value, onChange, onSubmit, onSteer, placeholder = '' }: {
     useInput((input, key) => {
         if (key.upArrow || key.downArrow || key.tab || key.escape) return;   // the app's handler (scroll, panels, suggestion, Esc)
         const v = text.current, c = cur.current;
+        // Home / End (and Ctrl+Home / Ctrl+End): start and end of the message, as Ctrl+A / Ctrl+E.
+        if (key.home) { setCursor(0); return; }
+        if (key.end)  { setCursor(v.length); return; }
         if (key.ctrl) {
             if (input === 'a') setCursor(0);
             else if (input === 'e') setCursor(v.length);
@@ -1068,7 +1071,10 @@ function PromptInput({ value, onChange, onSubmit, onSteer, placeholder = '' }: {
         // Keys that arrive in one read (typing ahead, a pasted macro) reach Ink as one string. Ctrl+A / Ctrl+E / Ctrl+U inside it still act, in
         // order with the text around them (TUI report case 079: Ctrl+E Ctrl+U sent together left the draft in place).
         let tv = v, tc = c;
-        for (const part of input.split(/([\x01\x05\x15\x18\x13])/)) {
+        for (const part of input.split(/([\x01\x05\x15\x18\x13]|\x1b(?:\[[0-9;]*[HF~]|O[HF]))/)) {
+            if (/^\x1b(?:\[(?:1|7)?(?:;[0-9]+)?[H~]|OH)$/.test(part)) { tc = 0; continue; }
+            if (/^\x1b(?:\[(?:4|8)?(?:;[0-9]+)?[F~]|OF)$/.test(part)) { tc = tv.length; continue; }
+            if (part.length > 1 && part.startsWith('\x1b') && /^\x1b(?:\[[0-9;]*[A-Za-z~]|O[A-Za-z])$/.test(part)) continue;   // another key's sequence (Delete, Insert …): never typed as text
             if (part === '\x18') chordAt.current = Date.now();
             else if (part === '\x13') { if (Date.now() - chordAt.current < 2000) { chordAt.current = 0; onSteer?.(tv); } }
             else if (part === '\x01') tc = 0;
