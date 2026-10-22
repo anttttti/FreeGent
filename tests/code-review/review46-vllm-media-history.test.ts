@@ -1,0 +1,16 @@
+import {beforeAll,afterEach,afterAll,it,expect,vi} from 'vitest';
+import * as postTurn from '../../post-turn.ts';
+import {setMainAgentRoleObject} from '../../state.ts';
+import {setChatHistory} from '../../chat-history.ts';
+const W=window as any,observations:any[]=[];
+beforeAll(async()=>{W.matchMedia??=()=>({matches:false,addEventListener(){},removeEventListener(){}});await import('../../chat-attachments.ts');await import('../../settings-ui.ts');await import('../../agent-core.ts')});
+afterEach(()=>{W.clearImageAttachments();W.setAgentStreaming(false);W.setAiJob('');vi.restoreAllMocks()});
+it.each(['custom','vllm'].flatMap(provider=>['audio','video'].map(media=>({provider,media}))))('$provider $media capability produces native media content',async c=>{
+ localStorage.clear();document.body.innerHTML='<div id="img-strip"></div><div id="agent-input" contenteditable></div><div id="agent-messages"></div>';W.clearImageAttachments();W.setAgentStreaming(false);W.setAiJob('');W.setActiveChatId(null);setMainAgentRoleObject(null);setChatHistory([]);
+ const model='own-media-'+c.provider,spec=c.provider+'|'+model;localStorage.setItem('fg_custom_models',JSON.stringify([{provider:c.provider,model,media:['text','audio','video'],contextK:128,tools:true,url:'http://own-fixture.invalid/v1',key:'own-synthetic-key'}]));localStorage.setItem('fg_main_models',JSON.stringify([spec]));localStorage.setItem('fg_utility_model','none');expect(W.getMediaCapableSpec([c.media])).toBe(spec);
+ vi.spyOn(W,'isTaskCompletionRequest').mockResolvedValue(false);vi.spyOn(W,'collectWorkspacePaths').mockResolvedValue([]);vi.spyOn(W,'applyTurnTriggers').mockImplementation(()=>{});vi.spyOn(W,'buildTurnPrelude').mockResolvedValue('');vi.spyOn(postTurn,'repairLedgerIfBroken').mockResolvedValue(undefined);vi.spyOn(postTurn,'runPostTurnAgents').mockResolvedValue(undefined);
+ for(const name of ['addVoiceButtons','saveHistory','updateChatMetaLastAt','_updateLogBadge','generateAndShowSuggestion','_resetModelWarmup','clearSuggestion'])W[name]=()=>{};
+ W.fetch=vi.fn(async()=>{throw Error('UNEXPECTED_NETWORK')});let captured:any;W.runTurn=vi.fn(async(ep:any)=>{captured={endpoint:ep,messages:structuredClone(W.getChatHistory())};return 'Own attachment handling checked.'});
+ const data=Buffer.from('OWN_SYNTHETIC_MEDIA_BYTES').toString('base64');W.restoreFileAttachment({name:c.media==='audio'?'own.wav':'own.mp4',mimeType:c.media==='audio'?'audio/wav':'video/mp4',contentType:'binary',content:data,size:25});W._setInputText(document.getElementById('agent-input'),'Inspect the own attached media.');expect(W._readInputText(document.getElementById('agent-input'))).toBe('Inspect the own attached media.');
+ await W.agentSend();observations.push({...c,spec,captured,body:document.body.textContent,runCalls:W.runTurn.mock.calls.length,networkCalls:W.fetch.mock.calls.length});expect(W.runTurn).toHaveBeenCalledOnce();expect(W.fetch).not.toHaveBeenCalled();const users=captured.messages.filter((m:any)=>m.role==='user');expect(JSON.stringify(users)).toContain('Inspect the own attached media.');const parts=users.flatMap((m:any)=>Array.isArray(m.content)?m.content:[]);expect(parts.some((p:any)=>p.type===(c.media==='audio'?'input_audio':'video_url'))).toBe(true);
+},10000);

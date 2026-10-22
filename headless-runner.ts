@@ -664,7 +664,7 @@ export async function prompt(text: string, opts: Record<string, any> = {}): Prom
     try {
         // --timeout applied to the workflow only; a direct prompt held for longer than requested returned its late reply with exit 0 (case 014).
         const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Prompt timed out after ${timeoutMs} ms`)), timeoutMs); });
-        const result = await Promise.race([(dom.window as any).callLLMComplete(text, { maxTokens: 4096 }), deadline]);
+        const result = await Promise.race([(dom.window as any).callLLMComplete(text, { maxTokens: 4096, allowPartial: true }), deadline]);
         return { output: typeof result === 'string' ? result : '', error: null };
     } catch (e: any) {
         return { output: '', error: e?.message || String(e) };

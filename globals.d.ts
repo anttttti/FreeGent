@@ -222,6 +222,7 @@ declare global {
     var getVercelKey: any;
     var getNousKey: any;
     var getOAIContextTokens: any;
+    var getEndpointContextTokens: any;
     var getOAIModel: any;
     var getOAIUrl: any;
     var getOpenRouterKey: any;
@@ -679,7 +680,7 @@ declare global {
     // ── bridged by workers.ts ──
     var _filterRoleBody: any;
     var buildWorkerSystemPrompt: any;
-    var callLLMComplete: (prompt: string, opts?: { temperature?: number; maxTokens?: number; endpoint?: any; label?: string; history?: any[] | null; maxAttempts?: number }, handle?: any) => Promise<string>;
+    var callLLMComplete: (prompt: string, opts?: { temperature?: number; maxTokens?: number; endpoint?: any; label?: string; history?: any[] | null; maxAttempts?: number; allowPartial?: boolean }, handle?: any) => Promise<string>;
     var clearMainAgentRole: any;
     var diffRegions: any;
     var executeWorkers: any;

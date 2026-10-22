@@ -409,7 +409,7 @@ async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; re
     _ivLlmChecks++;
     // A lighter model when one is set; two attempts at most, so a rate-limited judge cannot hold up the turn.
     const uep = typeof utilityEndpoint === 'function' ? utilityEndpoint() : null;
-    const llm = (p: string, o: any) => callLLMComplete(p, { ...o, maxAttempts: 2, ...(uep ? { endpoint: uep } : {}) });
+    const llm = (p: string, o: any) => callLLMComplete(p, { ...o, maxAttempts: 2, allowPartial: true, ...(uep ? { endpoint: uep } : {}) });
     let hit: any = null;
     try { hit = await validateOutput(callText, _INTENT_CHECKS, { llm, ctx: { intent }, maxTokens: 200, budget: 1500 }); }
     catch { hit = null; }
@@ -594,7 +594,7 @@ async function _disambiguatePatchHunk(filePath, hunk, candidateLines, fileLines)
     }).join('\n\n');
     const prompt = `A patch for "${filePath}" removes:\n\`\`\`\n${removed}\n\`\`\`\nand adds:\n\`\`\`\n${added}\n\`\`\`\n\nThis content was found at multiple places. Reply with only the candidate number (1, 2, …) that is the correct edit target.\n\n${candidateBlocks}`;
     try {
-        const text = await callLLMComplete(prompt, { temperature: 0, maxTokens: 8, label: 'worker:locate:locate' });
+        const text = await callLLMComplete(prompt, { temperature: 0, maxTokens: 8, label: 'worker:locate:locate', allowPartial: true });
         const n = parseInt(text.trim());
         return (!isNaN(n) && n >= 1 && n <= candidateLines.length) ? candidateLines[n - 1] : null;
     } catch { return null; }

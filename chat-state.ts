@@ -1139,7 +1139,7 @@ async function autoNameChat(chatId, firstUserMessage) {
     // Runs in parallel with the chat turn: pass a no-op handle so these calls don't attach
     // themselves as steps to the streaming response (callLLMComplete's default). Both the
     // title call and the validation judge use the utility endpoint, not the main model.
-    const _llm = (p: string, o: any) => callLLMComplete(p, { endpoint: _uep, ...o }, NULL_TASK_HANDLE);
+    const _llm = (p: string, o: any) => callLLMComplete(p, { endpoint: _uep, allowPartial: true, ...o }, NULL_TASK_HANDLE);
     const title = lease('title', { chat: chatId, check: () => getChatList().find((c: any) => c.id === chatId)?.name === draftName });
     try {
         let name: string | null = await _llm(msg, { temperature: 0.3, maxTokens: 16, maxAttempts: 3 });

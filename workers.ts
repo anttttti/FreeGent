@@ -11,7 +11,7 @@ import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone } from './retry.js';
+import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
@@ -19,7 +19,7 @@ import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
-import { getProvider, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
+import { getProvider, getMainModelList, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
@@ -1123,7 +1123,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
 // system prompt at position 0). Used by history-aware judges (completion verify): the
 // judge sees the full conversation — tool calls AND results — and the request shares the
 // main loop's prefix in the server's KV cache, so the marginal cost is ~the output tokens.
-async function callLLMComplete(prompt: string, { temperature = getTemperature(), maxTokens = 1024, endpoint = null as any, label = 'worker:llm:text', history = null as any[] | null, maxAttempts = 12 as number } = {}, handle: any = null): Promise<string> {
+async function callLLMComplete(prompt: string, { temperature = getTemperature(), maxTokens = 1024, endpoint = null as any, label = 'worker:llm:text', history = null as any[] | null, maxAttempts = 12 as number, allowPartial = false } = {}, handle: any = null): Promise<string> {
     const _own = !handle;
     if (!handle) {
         handle = activePlaceholder?.addToolStep([label])?.[0] ?? NULL_TASK_HANDLE;
@@ -1133,6 +1133,10 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
     // OAI-compatible
     // Worker calls always use firstFreeEndpoint (the main/vLLM model).
     // Callers that want a lighter model (title gen, prompt suggestions) pass endpoint explicitly.
+    // Every configured model paused: there is nothing to send to. callOAI refuses; this fell back to the built-in default provider and model, which are not
+    // among the person's choices (codex R29-001).
+    if (!endpoint && !getActiveMainModelList().length && getMainModelList().length)
+        throw new Error('No model can be used: every model in your priority list is paused. Unpause one in Settings, or add a model.');
     let ep = endpoint ?? firstFreeEndpoint() ?? oaiEndpoint();
     handle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`));
     // Worker/judge calls never think: thinkingBudget 0 → explicit enable_thinking:false on custom.
@@ -1194,6 +1198,15 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
                     const _e: any = new Error(_sawThinking
                         ? `TruncatedResponse(empty:only_reasoning — ${_thinkChars} chars of reasoning within max_tokens ${_tokens})`
                         : 'TruncatedResponse(empty:no_content)');
+                    _e.isTruncated = true;
+                    throw _e;
+                }
+                // A reply the provider ended as cut off, filtered or failed is not a completion, whatever text came with it: it was returned and the step marked
+                // complete (codex R28-001). It is retried like an empty reply and, when attempts run out, reported. A caller that asks for a short answer
+                // on purpose (a title, a suggestion, a yes/no) says `allowPartial`.
+                const _fr = (_data as any)?.finish_reason;
+                if (!allowPartial && _fr && (FINISH_TOKEN_CAP.has(_fr) || FINISH_FILTERED.has(_fr) || FINISH_ERROR.has(_fr))) {
+                    const _e: any = new Error(`TruncatedResponse(finish_reason:${_fr})`);
                     _e.isTruncated = true;
                     throw _e;
                 }
