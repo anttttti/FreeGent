@@ -78,6 +78,19 @@ describe('a dequeued message is a preparation (352/354/355)', () => {
         expect(W.getChatHistory().length).toBe(0);                // nothing was written for the cancelled turn
         delete W.collectWorkspacePaths; delete W.isTaskCompletionRequest;
     });
+    it('the Send button and Enter (userSend) queue the draft too, they do not drop it (465/466)', async () => {
+        let release!: (v: boolean | null) => void;
+        W.collectWorkspacePaths = async () => [];
+        W.isTaskCompletionRequest = () => new Promise(r => { release = r; });
+        const turn = W.runAgentTurn('queued question', null);
+        await tick();
+        W.userSend();
+        await tick();
+        expect(W.msgQueue.size()).toBe(1);
+        expect(document.getElementById('agent-input')!.textContent).toBe('');
+        W.cancelSendPreparation(); W.msgQueue.clear(); release(false); await turn;
+        delete W.collectWorkspacePaths; delete W.isTaskCompletionRequest;
+    });
     it('abandoned by leaving the chat', async () => {
         let release!: (v: boolean | null) => void;
         W.collectWorkspacePaths = async () => [];
