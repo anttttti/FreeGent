@@ -163,10 +163,29 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         return abs;
     }
 
+    /** The files kept in the sidecar (the redirected prefixes, such as fg-tasks/ and memory/), listed under their workspace names. Reads and writes of
+     *  those paths go there, so a listing that walked only the project root never found a task that had just been written (codex R47-001). */
+    async _sidecarFiles(withStat: boolean): Promise<Array<{ name: string; size?: number; lastModified?: number }>> {
+        if (!this._sidecarRoot) return [];
+        const out: Array<{ name: string; size?: number; lastModified?: number }> = [];
+        for (const prefix of this._sidecarPrefixes) {
+            const dir = prefix.replace(/\/+$/, '');
+            const found = await _walkFiles(join(this._sidecarRoot, dir), { skipNoise: false, withStat });
+            for (const f of found) out.push({ ...f, name: `${dir}/${f.name}` });
+        }
+        return out;
+    }
+    /** Replaces the project's entries under the sidecar's prefixes (shadowed: nothing reads or writes them) with the sidecar's own. */
+    _mergeSidecar<T extends { name: string }>(project: T[], side: T[]): T[] {
+        if (!this._sidecarRoot || !this._sidecarPrefixes.length) return project;
+        return [...project.filter(f => !this._sidecarPrefixes.some(p => f.name.startsWith(p))), ...side];
+    }
+
     async agentListFiles() {
         const { listing, files } = await _projectFiles(this._root, true);
-        if (!listing.complete) files.push({ name: _TRUNCATED_NOTE(files.length), size: 0, lastModified: 0 });
-        return files as Array<{name: string; size: number; lastModified: number}>;
+        const merged = this._mergeSidecar(files, await this._sidecarFiles(true));
+        if (!listing.complete) merged.push({ name: _TRUNCATED_NOTE(files.length), size: 0, lastModified: 0 });
+        return merged as Array<{name: string; size: number; lastModified: number}>;
     }
 
     /** Full workspace walk with _SKIP exclusions, WITHOUT stat() calls, and with a
@@ -181,9 +200,10 @@ export class NodeFsAdapter implements WorkspaceAdapter {
      */
     async agentListFilesNoStat(maxDepth = 4): Promise<Array<{name: string}>> {
         // In a git repository the project's own files are the answer, at any depth; elsewhere the depth cap keeps the walk small.
+        const side = await this._sidecarFiles(false);
         const { listing, files } = await _projectFiles(this._root, false);
-        if (listing.via === 'git') return files.map(f => ({ name: f.name }));
-        return _walkFiles(this._root, { maxDepth });
+        if (listing.via === 'git') return this._mergeSidecar(files.map(f => ({ name: f.name })), side);
+        return this._mergeSidecar(await _walkFiles(this._root, { maxDepth }), side);
     }
 
     /** Scan a single subdirectory without stat() calls — used by loadSkills() to
@@ -213,7 +233,15 @@ export class NodeFsAdapter implements WorkspaceAdapter {
     }
 
     async agentListFilesInDir(dir: string): Promise<Array<{name: string}>> {
-        return _walkFiles(join(this._root, dir), { skipNoise: false });
+        const norm = dir.replace(/^\/+|\/+$/g, '');
+        if (!this._sidecarRoot) return _walkFiles(join(this._root, dir), { skipNoise: false });
+        // A directory that is a sidecar prefix, or inside one, is the sidecar's own.
+        if (this._sidecarPrefixes.some(p => `${norm}/`.startsWith(p))) return _walkFiles(join(this._sidecarRoot, norm), { skipNoise: false });
+        // Elsewhere: the project's files, with the sidecar's files in place of anything it shadows.
+        const project = await _walkFiles(join(this._root, norm), { skipNoise: false });
+        const full = (name: string) => norm ? `${norm}/${name}` : name;
+        const side = (await this._sidecarFiles(false)).filter(f => !norm || f.name.startsWith(`${norm}/`)).map(f => ({ name: norm ? f.name.slice(norm.length + 1) : f.name }));
+        return [...project.filter(f => !this._sidecarPrefixes.some(p => full(f.name).startsWith(p))), ...side];
     }
 
     async agentReadFile(path: any) {
