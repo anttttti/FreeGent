@@ -2068,8 +2068,12 @@ function renderRolesTab() {
                     const _b = textarea.value.indexOf('{');
                     const _e = textarea.value.lastIndexOf('}');
                     const _fnBody = (_b !== -1 && _e > _b) ? textarea.value.slice(_b + 1, _e) : textarea.value;
+                    // The shipped source is run as the function it came from: its text is body_fn.toString(), and in the minified
+                    // bundle that text names bundle-scoped identifiers (`Pa`) that new Function cannot see (opencode bug #7).
+                    // Only an edited source is evaluated from text, against the window globals.
                     // eslint-disable-next-line no-new-func
-                    const rendered = new Function(_fnBody)() as string;
+                    const rendered = (defaultFnSrc !== null && textarea.value.trim() === defaultFnSrc.trim()
+                        ? role.body_fn() : new Function(_fnBody)()) as string;
                     const pre = document.createElement('pre');
                     pre.style.cssText = 'background:var(--bg2,#f5f5f5);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;line-height:1.5;overflow:auto;max-height:300px;white-space:pre-wrap;margin-top:8px';
                     pre.textContent = rendered || '(empty)';
