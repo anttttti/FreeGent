@@ -981,7 +981,14 @@ async function _processQueue(): Promise<void> {
         }
     }
     // TUI side-effect: add the user message to the event log when it actually fires.
-    window._onQueueDequeue?.(msg);
+    // It may be asynchronous (the TUI copies the workspace for /rewind first): the chat stays claimed meanwhile, so a message sent
+    // in that gap queues behind this one instead of starting a second turn.
+    const _dq = window._onQueueDequeue?.(msg);
+    if (_dq && typeof (_dq as Promise<void>).then === 'function') {
+        const _dqPrep = beginPreparation('turn', { chat: activeChatId as string | null });
+        try { await _dq; } finally { endPreparation(_dqPrep); }
+        if (_dqPrep && !_dqPrep.lease.valid()) return;   // Stop or a new chat meanwhile
+    }
     try {
         await runAgentTurn(msg.text, null);
     } catch {

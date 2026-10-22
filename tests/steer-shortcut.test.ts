@@ -87,3 +87,28 @@ describe('TUI step header', () => {
         expect(src).not.toContain("step.model.split('/').pop()");
     });
 });
+
+describe('an asynchronous dequeue hook (the TUI copies the workspace for /rewind first)', () => {
+    afterEach(() => { delete W._onQueueDequeue; });
+    it('keeps the chat claimed while it runs: nothing else is dequeued or started in the gap', async () => {
+        const { preparing } = await import('../turn-owner.ts');
+        const seen: any = { during: null, second: null };
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        W._onQueueDequeue = async () => {
+            await Promise.resolve();                       // the claim is taken as soon as the hook returns its promise
+            seen.during = preparing();
+            await W._processQueue();                       // a second dequeue attempt while the hook is awaited
+            seen.second = MsgQueue.getAll().map(m => m.text);
+            await gate;
+        };
+        MsgQueue.enqueue('one', 'queued'); MsgQueue.enqueue('two', 'queued');
+        const run = W._processQueue();
+        await new Promise(r => setTimeout(r, 20));
+        expect(seen.during).toBe(true);
+        expect(seen.second).toEqual(['two']);              // 'one' was taken, 'two' still waits
+        release();
+        await Promise.race([run, new Promise(r => setTimeout(r, 500))]);
+        expect(preparing()).toBe(false);                   // the slot was handed on, not leaked
+    });
+});

@@ -2,32 +2,18 @@
 // workspace directory (or `docker exec` in a task container). headless-runner.ts installs it as
 // globalThis.nativeExec; tests/headless-tools.test.ts runs the tool tests on it.
 import { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS } from './exec-limits.js';
-import { readdirSync, statSync, unlinkSync } from 'node:fs';
+import { readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { scrubEnv } from './secret-env.js';
+import { snapshotMarks, changedSince } from './workspace-scan.js';
 import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
 
-// Snapshot workspace files (path → mtimeMs) for detecting writes during execute_code.
-// Only used for local (non-Docker) execution where we can stat the filesystem directly.
-function _snapWorkspace(dir: string): Map<string, number> {
-    const snap = new Map<string, number>();
-    const walk = (d: string, depth: number) => {
-        if (depth > 8) return; // guard against deeply nested repos
-        try {
-            for (const ent of readdirSync(d, { withFileTypes: true })) {
-                if (ent.name === '.git') continue; // skip git internals (large + uninteresting); .github, .gitignore are files of the project
-                const full = join(d, ent.name);
-                if (ent.isFile()) {
-                    try { snap.set(full, statSync(full).mtimeMs); } catch {}
-                } else if (ent.isDirectory()) walk(full, depth + 1);
-            }
-        } catch {}
-    };
-    if (dir) walk(dir, 0);
-    return snap;
-}
+// Write detection (which files did the command touch) is workspace-scan.ts: git's own change list in a repository, a budgeted walk
+// elsewhere, and "unknown" (no files_written; the loop then reads the command) when neither is quick. It is asynchronous and never
+// scales with the size of the tree: a TUI run with parallel workers in a repo with 160k files in ignored folders spent 70% of the
+// main thread in the old synchronous walk, and the screen froze for minutes.
 
 // What test runners and type checkers leave behind. Not the command's work: a pytest run that
 // changed nothing else used to count as having written files.
@@ -41,7 +27,7 @@ export function signalExitCode(signal: string | null | undefined): number {
 
 export function createNativeExec({ workspaceRoot, targetContainer }: { workspaceRoot?: string | null; targetContainer?: string | null }) {
     const MAX_OUTPUT = 200_000;
-    return (language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> => new Promise((resolve) => {
+    return (language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> => new Promise((resolve) => { void (async () => {
         const TIMEOUT_MS = opts?.timeoutMs && opts.timeoutMs > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, opts.timeoutMs) : EXEC_TIMEOUT_MS;
         // JavaScript runs as the body of an async function, as in the browser (exec-sandbox/js-run.ts):
         // top-level await and return work the same in both.
@@ -57,7 +43,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
         const [cmd, cmdArgs] = entry;
         // Snapshot workspace before execution (local only — Docker workspace is on the container).
-        const preSnap = (!targetContainer && workspaceRoot) ? _snapWorkspace(workspaceRoot) : null;
+        const preSnap = (!targetContainer && workspaceRoot) ? await snapshotMarks(workspaceRoot) : null;
         // Snapshot .git/hooks to detect hook-injection attempts (non-.sample files planted by the agent).
         const hooksDir = (!targetContainer && workspaceRoot) ? join(workspaceRoot, '.git', 'hooks') : null;
         const preHooks: Set<string> | null = hooksDir ? (() => {
@@ -88,7 +74,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         child.stderr?.setEncoding('utf8');
         child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
         child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
-        child.on('close', (exitCode, signal) => {
+        child.on('close', async (exitCode, signal) => {
             // Ended by a signal (OOM killer, kill, a crash): never a success.
             const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
                 ...(exitCode == null && signal ? { signal } : {}) };
@@ -98,13 +84,8 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             if (preSnap && workspaceRoot) {
                 const written: string[] = [];
                 try {
-                    const postSnap = _snapWorkspace(workspaceRoot);
-                    for (const [p, mtime] of postSnap) {
-                        if (!preSnap.has(p) || preSnap.get(p) !== mtime) {
-                            const rel = p.startsWith(workspaceRoot + '/') ? p.slice(workspaceRoot.length + 1) : p;
-                            if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
-                        }
-                    }
+                    const postSnap = await snapshotMarks(workspaceRoot);
+                    if (postSnap) for (const rel of await changedSince(workspaceRoot, preSnap, postSnap)) if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
                 } catch {}
                 if (written.length > 0) result.files_written = written;
             }
@@ -127,5 +108,5 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             _done({ ..._shaped(),
                     exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` });
         }, TIMEOUT_MS);
-    });
+    })().catch(e => resolve({ error: `nativeExec: ${e?.message ?? e}`, exit_code: 1 })); });
 }
