@@ -5,14 +5,22 @@
 // is sent. Restoring puts the files back exactly: changed files get their old content, files the turn created are removed, files it
 // deleted come back. Limits keep it cheap and honest: a workspace that is too big, or a file that is too large, is not snapshotted, and
 // /rewind then says what it could not restore instead of claiming a full restore.
-import { mkdirSync, readdirSync, lstatSync, copyFileSync, rmSync, readFileSync, existsSync, rmdirSync, chmodSync, statSync } from 'node:fs';
+//
+// Asynchronous and bounded by workspace-scan.ts (git's file list in a repository, a budgeted walk elsewhere): a checkpoint is taken
+// before every message, and the old synchronous walk held the screen for as long as the tree was big.
+import { mkdir, lstat, copyFile, rm, readFile, rmdir, stat } from 'node:fs/promises';
 import { join, dirname, sep } from 'node:path';
+import { listFiles } from './workspace-scan.js';
 
 export const MAX_FILES = 2000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 // Folders never copied or touched: version control, dependencies, caches and build output.
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache', '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next', 'target']);
+const SKIP_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache', '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next', 'target']);
+// The list may hold some files that are not copied (symlinks, files over the size limit); past this it is not a workspace to snapshot.
+const LIST_LIMIT = MAX_FILES * 2;
+// Finding the files a turn created needs the whole list, not a snapshot's worth: a generous bound, still a bound.
+const RESTORE_LIST_LIMIT = 200_000;
 
 export interface Snapshot {
     id: string;
@@ -24,70 +32,66 @@ export interface Snapshot {
     tooBig: boolean;
 }
 
-function* walk(root: string, rel = ''): Generator<{ rel: string; size: number }> {
-    let entries;
-    try { entries = readdirSync(join(root, rel), { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-        const r = rel ? join(rel, e.name) : e.name;
-        if (e.isSymbolicLink()) continue;
-        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) yield* walk(root, r); continue; }
-        if (!e.isFile()) continue;
-        let size = 0;
-        try { size = lstatSync(join(root, r)).size; } catch { continue; }
-        yield { rel: r, size };
-    }
-}
-
-export function takeSnapshot(root: string, store: string, id: string): Snapshot {
+export async function takeSnapshot(root: string, store: string, id: string): Promise<Snapshot> {
     const dir = join(store, id);
     const snap: Snapshot = { id, dir, files: [], skippedLarge: [], tooBig: false };
+    const listing = await listFiles(root, { maxEntries: LIST_LIMIT, skipDirs: SKIP_DIRS });
+    if (!listing.complete) snap.tooBig = true;
     let total = 0;
-    for (const f of walk(root)) {
-        if (f.size > MAX_FILE_BYTES) { snap.skippedLarge.push(f.rel); continue; }
-        total += f.size;
+    if (!snap.tooBig) for (const rel of listing.files) {
+        let size = 0;
+        try { const st = await lstat(join(root, rel)); if (!st.isFile()) continue; size = st.size; } catch { continue; }   // symlinks, files deleted since git listed them
+        if (size > MAX_FILE_BYTES) { snap.skippedLarge.push(rel); continue; }
+        total += size;
         if (snap.files.length + 1 > MAX_FILES || total > MAX_TOTAL_BYTES) { snap.tooBig = true; break; }
         try {
-            const to = join(dir, f.rel);
-            mkdirSync(dirname(to), { recursive: true });
-            copyFileSync(join(root, f.rel), to);
-            snap.files.push(f.rel);
+            const to = join(dir, rel);
+            await mkdir(dirname(to), { recursive: true });
+            await copyFile(join(root, rel), to);
+            snap.files.push(rel);
         } catch { snap.tooBig = true; break; }   // a file that cannot be copied makes the snapshot incomplete
     }
-    if (snap.tooBig) { try { rmSync(dir, { recursive: true, force: true }); } catch {} snap.files = []; }
+    if (snap.tooBig) { await rm(dir, { recursive: true, force: true }).catch(() => {}); snap.files = []; }
     return snap;
 }
 
-export interface RestoreResult { restored: string[]; removed: string[]; skippedLarge: string[] }
+export interface RestoreResult {
+    restored: string[]; removed: string[]; skippedLarge: string[];
+    /** The workspace had too many files to list: files the turn created were left in place. */
+    createdNotRemoved?: boolean;
+}
 
 /** Put the workspace back as it was when `snap` was taken. Throws if the snapshot is not usable. */
-export function restoreSnapshot(root: string, snap: Snapshot): RestoreResult {
+export async function restoreSnapshot(root: string, snap: Snapshot): Promise<RestoreResult> {
     if (snap.tooBig) throw new Error('the workspace was too large to snapshot, so its files cannot be restored');
-    if (!existsSync(snap.dir) && snap.files.length) throw new Error('the snapshot is gone');
+    if (!await stat(snap.dir).then(() => true, () => false) && snap.files.length) throw new Error('the snapshot is gone');
     const had = new Set(snap.files);
     const result: RestoreResult = { restored: [], removed: [], skippedLarge: snap.skippedLarge };
     // Files created since: remove (never the large ones the snapshot skipped, which may be untouched).
     const large = new Set(snap.skippedLarge);
-    for (const f of [...walk(root)]) {
-        if (had.has(f.rel) || large.has(f.rel)) continue;
-        if (f.size > MAX_FILE_BYTES) continue;
-        try { rmSync(join(root, f.rel)); result.removed.push(f.rel); } catch {}
+    const now = await listFiles(root, { maxEntries: RESTORE_LIST_LIMIT, deadlineMs: 15_000, skipDirs: SKIP_DIRS });
+    if (!now.complete) result.createdNotRemoved = true;
+    else for (const rel of now.files) {
+        if (had.has(rel) || large.has(rel)) continue;
+        try { const st = await lstat(join(root, rel)); if (!st.isFile() || st.size > MAX_FILE_BYTES) continue; } catch { continue; }
+        try { await rm(join(root, rel)); result.removed.push(rel); } catch { continue; }
         // Remove the folders that became empty.
-        let d = dirname(join(root, f.rel));
-        while (d !== root && d.startsWith(root + sep)) { try { rmdirSync(d); } catch { break; } d = dirname(d); }
+        let d = dirname(join(root, rel));
+        while (d !== root && d.startsWith(root + sep)) { try { await rmdir(d); } catch { break; } d = dirname(d); }
     }
     for (const rel of snap.files) {
         const from = join(snap.dir, rel), to = join(root, rel);
         let same = false;
         try {
-            const a = statSync(from), b = statSync(to);
-            same = a.size === b.size && readFileSync(from).equals(readFileSync(to));
+            const [a, b] = await Promise.all([stat(from), stat(to)]);
+            same = a.size === b.size && (await readFile(from)).equals(await readFile(to));
         } catch {}
         if (same) continue;
-        mkdirSync(dirname(to), { recursive: true });
-        copyFileSync(from, to);
+        await mkdir(dirname(to), { recursive: true });
+        await copyFile(from, to);
         result.restored.push(rel);
     }
     return result;
 }
 
-export function dropSnapshot(snap: Snapshot): void { try { rmSync(snap.dir, { recursive: true, force: true }); } catch {} }
+export async function dropSnapshot(snap: Snapshot): Promise<void> { await rm(snap.dir, { recursive: true, force: true }).catch(() => {}); }

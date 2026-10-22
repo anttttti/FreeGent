@@ -18,6 +18,7 @@ import { join as joinPath } from 'node:path';
 import { rmSync } from 'node:fs';
 import { startGoal, resumeGoal, stopGoal, loadGoal, clearGoal, describeGoal, parseGoalCommand, GOAL_PATH, type GoalHost } from './goal.js';
 import { workspaceEpoch } from './exec-limits.js';
+import { startLoopWatch, stallAnnouncer } from './loop-watch.js';
 import { aiBusy, setAiJob, activeChatId, setSoftStopPending, setActiveAbortController, setAgentStreaming, activeAbortController } from './state.js';
 import { setChatHistory, getChatHistory } from './chat-history.js';
 import { stripInjected } from './history-util.js';
@@ -36,6 +37,7 @@ import { TuiApp } from './tui-app.js';
 let _mouseHandler:       ((row: number, col: number) => void)          | null = null;
 let _scrollHandler:      ((row: number, col: number, dir: 1|-1) => void) | null = null;
 let _heartbeatInterval:  ReturnType<typeof setInterval> | null = null;
+let _stopLoopWatch:      (() => void) | null = null;
 export function setMouseHandler (fn: (row: number, col: number) => void): void          { _mouseHandler  = fn; }
 export function setScrollHandler(fn: (row: number, col: number, dir: 1|-1) => void): void { _scrollHandler = fn; }
 
@@ -144,8 +146,8 @@ setTimeout(() => {
 
 // Hook called by agent-core's _processQueue when a queued message is about to be sent.
 // Adds the user message to the TUI event log at the moment of actual dispatch.
-dom.window._onQueueDequeue = (msg: { text: string }) => {
-    _takeCheckpoint();
+dom.window._onQueueDequeue = async (msg: { text: string }) => {
+    await _takeCheckpoint();
     Store.addUserMessage(msg.text);
 };
 
@@ -156,11 +158,12 @@ const _CKPT_KEEP = 10;
 const _ckptStore = joinPath(tmpdir(), `fg-tui-ckpt-${process.pid}`);
 const _ckpts: Array<{ snap: Snapshot; historyLen: number }> = [];
 let _ckptSeq = 0;
-function _takeCheckpoint(): void {
+async function _takeCheckpoint(): Promise<void> {
     try {
-        const snap = takeSnapshot(opts.workspaceRoot, _ckptStore, String(++_ckptSeq));
-        _ckpts.push({ snap, historyLen: getChatHistory().length });
-        while (_ckpts.length > _CKPT_KEEP) dropSnapshot(_ckpts.shift()!.snap);
+        const historyLen = getChatHistory().length;   // before the awaits: the history as the message found it
+        const snap = await takeSnapshot(opts.workspaceRoot, _ckptStore, String(++_ckptSeq));
+        _ckpts.push({ snap, historyLen });
+        while (_ckpts.length > _CKPT_KEEP) void dropSnapshot(_ckpts.shift()!.snap);
     } catch { /* no checkpoint: /rewind will say there is nothing to go back to */ }
 }
 const _dropCheckpoints = () => { try { rmSync(_ckptStore, { recursive: true, force: true }); } catch {} };
@@ -196,17 +199,18 @@ Store.setBusyProbe(isTurnBusy);
 
 /** Go back before the last message: the conversation, the workspace's files and the screen (/rewind). The files come back only as far as the
  *  snapshot reached (size limits in tui-checkpoint.ts); what could not be restored is said. */
-export function rewindLast(): void {
+export async function rewindLast(): Promise<void> {
     if (isTurnBusy()) { Store.addNotice('_A reply is still running — stop it (Ctrl+C or /stop) before rewinding._'); return; }
     const ck = _ckpts.pop();
     if (!ck) { Store.addNotice('_Nothing to rewind to._'); return; }
     let files = '';
     try {
-        const r = restoreSnapshot(opts.workspaceRoot, ck.snap);
+        const r = await restoreSnapshot(opts.workspaceRoot, ck.snap);
         files = `${r.restored.length} file${r.restored.length === 1 ? '' : 's'} restored, ${r.removed.length} removed`
+              + (r.createdNotRemoved ? '; the workspace has too many files to find the ones the reply created, so those were left' : '')
               + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
     } catch (e: any) { files = `files NOT restored: ${e?.message ?? e}`; }
-    dropSnapshot(ck.snap);
+    await dropSnapshot(ck.snap);
     setChatHistory(getChatHistory().slice(0, ck.historyLen));
     Store.dropFromLastUser();
     try { (dom.window as any).saveHistory?.(); } catch {}
@@ -214,13 +218,13 @@ export function rewindLast(): void {
 }
 
 export async function sendMessage(text: string): Promise<void> {
-    _takeCheckpoint();
     // A Ctrl+C (stop after this step) is spent when its turn has ended. Left set, it answered the next fresh message with "*(break)*" and
     // no request, until /stop cleared it (TUI report case 044). Only when nothing else is running: it must not cancel a stop that
     // a still-unwinding turn has yet to see.
     if (!isTurnBusy()) setSoftStopPending(false);
     _sendsActive++;
     try {
+        await _takeCheckpoint();   // counted as busy from the call: the copy is awaited, and the status must not read "ready" meanwhile
         await _nameSession(text);
         await (globalThis as any).runAgentTurn(text, null);
         dom.window.generateAndShowSuggestion?.().catch?.(() => {});
@@ -490,6 +494,13 @@ async function main() {
         try { appendFileSync(opts.logFile,
             JSON.stringify({ timing: { step: 'heartbeat', ms: now - _t0, gap } }) + '\n', 'utf8'); } catch {}
     }, 200);
+    // A stall is a heartbeat gap with a cause: how long, whether the process was busy (synchronous work) or just not scheduled, and the
+    // slow operations in flight. Repeated long ones also reach the screen: a frozen interface should say why.
+    const announce = stallAnnouncer(text => Store.addNotice(`_${text}_`), { where: opts.logFile });
+    _stopLoopWatch = startLoopWatch(s => {
+        try { appendFileSync(opts.logFile, JSON.stringify({ timing: { step: 'stall', ms: s.ms, busy: s.busy, ops: s.ops } }) + '\n', 'utf8'); } catch {}
+        announce(s);
+    });
 
     // The same path as a typed message: the user entry appears, the status reads running, and a message typed meanwhile
     // waits in the queue instead of starting a second turn on the same session.
@@ -497,7 +508,7 @@ async function main() {
 }
 
 // Save settings on exit, clear timers, and disable mouse protocol.
-const _cleanup = () => { try { clearInterval(_heartbeatInterval); process.stdout.write('\x1b[?1000l'); saveProfile(); _dropCheckpoints(); } catch {} };
+const _cleanup = () => { try { clearInterval(_heartbeatInterval); _stopLoopWatch?.(); process.stdout.write('\x1b[?1000l'); saveProfile(); _dropCheckpoints(); } catch {} };
 process.on('exit',    _cleanup);
 process.on('SIGTERM', () => { _cleanup(); process.exit(0); });
 process.on('SIGINT',  () => { _cleanup(); process.exit(0); });

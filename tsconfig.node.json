@@ -22,6 +22,8 @@
     "dotenv.ts",
     "headless-runner.ts",
     "native-exec.ts",
+    "workspace-scan.ts",
+    "loop-watch.ts",
     "mouse-input.ts",
     "tui-checkpoint.ts",
     "request-ledger.ts",

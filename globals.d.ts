@@ -57,7 +57,7 @@ declare global {
     var stopAfterStep: () => void;
     var stopNow: () => void;
     var _startEditUserMsg: any;
-    var _onQueueDequeue: ((msg: any) => void) | undefined;
+    var _onQueueDequeue: ((msg: any) => void | Promise<void>) | undefined;
     // ── bridged by runner.ts ──
     var runnerInterrupt: any;
     var runnerPause: () => void;
