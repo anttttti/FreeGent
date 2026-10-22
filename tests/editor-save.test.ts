@@ -79,6 +79,22 @@ describe('CRLF files (413/414)', () => {
     });
 });
 
+describe('CR-only and mixed endings (455/456)', () => {
+    for (const [label, bytes] of [['CR-only', 'a\rb\rc\r'], ['mixed', 'a\r\nb\nc\r']] as const) {
+        it(`a zero-edit Save of a ${label} file writes its bytes back`, async () => {
+            await open('m.txt', bytes);
+            await editor.onSave(editor.text);
+            expect(files['m.txt']).toBe(bytes);
+        });
+    }
+    it('an edited CR-only file stays CR-only', async () => {
+        await open('m.txt', 'a\rb\r');
+        type('a\nb\nc\n');
+        await editor.onSave('a\nb\nc\n');
+        expect(files['m.txt']).toBe('a\rb\rc\r');
+    });
+});
+
 describe('reload with unsaved edits (382/383)', () => {
     it('asks before the page unloads when a buffer is dirty, not when clean', async () => {
         await open('d.txt', 'x');
