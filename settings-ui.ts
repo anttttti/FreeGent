@@ -933,8 +933,10 @@ function saveEditModel() {
         const raw = String(cur[field]);
         if (raw) set[field] = (parse as any)(raw); else drop.push(field);   // blank = unknown / no limit: the field leaves the entry
     }
-    if (changed('url') && cur.url)       set.url = cur.url;
-    if (changed('key') && cur.key)       set.key = cur.key;
+    // Emptied means removed, as for the other optional fields: a rotated or revoked key, or an address given up, could not be cleared here and the old
+    // value kept being sent (opencode §9). (An untouched field is not "changed", so a key that is never shown in full is not wiped by an unrelated edit.)
+    if (changed('url')) { if (cur.url) set.url = cur.url; else drop.push('url'); }
+    if (changed('key')) { if (cur.key) set.key = cur.key; else drop.push('key'); }
     if (changed('apiFormat'))            set.apiFormat = cur.apiFormat;
     const apply = (entry: any) => { const e = { ...entry, ...set }; for (const f of drop) delete e[f]; return e; };
 

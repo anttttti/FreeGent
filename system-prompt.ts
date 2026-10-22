@@ -165,6 +165,10 @@ export function buildSystemPrompt(): string {
            : ''}`
         : '';
     const _honesty = '\n## Honesty\nOnly report what your tools actually return. Never fabricate file contents, search results, or code output.\nThink and reason in the language of the user\'s request (English unless they write otherwise) — never switch languages mid-task.';
+    // The Settings "prompt template" (and the text the Free/Paid profiles ship in it): the main agent's own standing instructions. It had a getter, a
+    // field and a place in every profile, and nothing read it (opencode §5).
+    const _tpl = (typeof getAgentPromptTemplate === 'function' ? String(getAgentPromptTemplate() ?? '') : '').trim();
+    const _tplCtx = _tpl ? `\n## Instructions from your settings\n${_tpl}\n` : '';
     const _deviceCtx = _buildDeviceContext();
     const _skillsCtx = (() => {
         const parts = [];
@@ -197,7 +201,7 @@ export function buildSystemPrompt(): string {
         : '';
     const _browserCtx = typeof browserPromptGuidance === 'function'
         ? browserPromptGuidance((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n)) : '';
-    return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
+    return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_tplCtx}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
 }
 
 // Window bridge for classic scripts.
