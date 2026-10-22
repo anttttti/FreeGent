@@ -51,4 +51,64 @@ describe('restoreCheckpointWorkspace', () => {
         expect(await read('z.txt')).toEqual({ content: 'Z', encoding: null });
         expect(await names()).toEqual(before);
     });
+
+    it('restores with one transaction for all its writes and deletes', async () => {
+        await W.writeWorkspaceFile('a.txt', 'A');
+        await W.writeWorkspaceFile('gone.txt', 'G');
+        await W.saveCheckpointSnapshot('chat-t', '1000');
+        await W.writeWorkspaceFile('a.txt', 'NEW');
+        await W.deleteWorkspaceFile('gone.txt');
+        await W.writeWorkspaceFile('only-later.txt', 'Z');
+        const before = { a: await read('a.txt'), names: await names() };
+        const txs: any[] = [];
+        // the restore must use one write transaction for its writes and deletes
+        const open = IDBObjectStore.prototype.put; let writes = 0;
+        vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: any, value: any, key?: any) {
+            if (value?.name) { writes++; txs.push(this.transaction); }
+            return open.call(this, value, key);
+        });
+        await W.restoreCheckpointWorkspace('chat-t', '1000');
+        vi.restoreAllMocks();
+        expect(writes).toBeGreaterThanOrEqual(2);                  // every file of the snapshot (earlier tests' files are in it too)
+        expect(new Set(txs).size).toBe(1);                         // one transaction for all of them
+        expect(await read('a.txt')).toEqual({ content: 'A', encoding: null });
+        expect(await names()).toContain('gone.txt');
+        expect(await names()).not.toContain('only-later.txt');
+        expect(before.a).toEqual({ content: 'NEW', encoding: null });
+    });
+});
+
+describe('checkpoint snapshots of one chat', () => {
+    it('a snapshot with a smaller id than the one before it still replays after it', async () => {
+        await W.writeWorkspaceFile('h.txt', 'H');                  // unchanged between the two snapshots: only the first one's delta holds it
+        await W.writeWorkspaceFile('f.txt', 'v1');
+        await W.saveCheckpointSnapshot('chat-o', '2000');
+        await W.writeWorkspaceFile('f.txt', 'v2');
+        await W.saveCheckpointSnapshot('chat-o', '1000');          // earlier by number, taken later (a post-turn id, a clock step back)
+        await W.writeWorkspaceFile('f.txt', 'v3'); await W.writeWorkspaceFile('x.txt', 'X');
+        await W.restoreCheckpointWorkspace('chat-o', '1000');
+        expect(await read('f.txt')).toEqual({ content: 'v2', encoding: null });
+        expect(await read('h.txt')).toEqual({ content: 'H', encoding: null });   // came from the first snapshot's delta
+        expect(await names()).toEqual(expect.not.arrayContaining(['x.txt']));
+    });
+    it('overlapping saves for one chat run one after the other, in the order they were started', async () => {
+        await W.writeWorkspaceFile('p.txt', 'P');
+        const done: string[] = [];
+        const a = W.saveCheckpointSnapshot('chat-q', '3000').then(() => done.push('a'));
+        const b = W.saveCheckpointSnapshot('chat-q', '2500').then(() => done.push('b'));
+        const c = W.saveCheckpointSnapshot('chat-q', 'post_1_x').then(() => done.push('c'));
+        await Promise.all([a, b, c]);
+        expect(done).toEqual(['a', 'b', 'c']);
+        const rows = (await W.getCheckpointDiff('chat-q', 'post_1_x'));
+        expect(rows).toBeTruthy();
+        await W.restoreCheckpointWorkspace('chat-q', 'post_1_x');
+        expect(await read('p.txt')).toEqual({ content: 'P', encoding: null });
+    });
+    it('a failed save does not stop the ones queued behind it', async () => {
+        const first = W.saveCheckpointSnapshot('chat-e', '1000');
+        const spy = vi.spyOn(W, 'listWorkspaceFiles');
+        void spy;
+        await first;
+        await expect(W.saveCheckpointSnapshot('chat-e', '2000')).resolves.toBeUndefined();
+    });
 });

@@ -232,6 +232,38 @@ async function listWorkspaceFileNames(): Promise<string[]> {
     });
 }
 
+// Writes and deletes in ONE transaction: all of it commits or none of it does, including when the tab closes or the browser dies
+// half-way (separate transactions left a mix of restored, deleted and untouched files). Used by the checkpoint restore.
+async function applyWorkspaceBatch(writes: Array<{ name: string; content: string; encoding?: string | null }>, deletes: string[]): Promise<void> {
+    await ensureDB();
+    return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.oncomplete = () => {
+            for (const w of writes) { try { scheduleArtifactRefresh?.(w.name); } catch {} try { (window as any).refreshOpenFileTab?.(w.name); } catch {} }
+            try { (window as any).invalidateWorkspacePaths?.(); } catch {}
+            resolve();
+        };
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted (storage full?)'));
+        tx.onerror = () => { /* the abort that follows rejects */ };
+        try {
+            const store = tx.objectStore(STORE);
+            const now = Date.now();
+            for (const w of writes) {
+                const size = w.encoding === 'base64'
+                    ? Math.floor(String(w.content || '').replace(/[^A-Za-z0-9+/]/g, '').length * 3 / 4)
+                    : new TextEncoder().encode(w.content || '').length;
+                const record: any = { name: w.name, content: w.content, lastModified: now, size };
+                if (w.encoding) record.encoding = w.encoding;
+                store.put(record);
+            }
+            for (const name of deletes) store.delete(name);
+        } catch (e) {
+            try { tx.abort(); } catch {}
+            reject(e);
+        }
+    });
+}
+
 async function deleteWorkspaceFile(name) {
     await ensureDB();
     return new Promise<void>((resolve, reject) => {
@@ -301,11 +333,24 @@ async function _getCkptsForChat(chatId) {
     });
 }
 
-async function saveCheckpointSnapshot(chatId, ckptId) {
+// Snapshots of one chat are taken one at a time, and each sorts after the one before it. Two could overlap (the post-turn snapshot
+// of one message, the opening one of the next, an Autopilot snapshot of the same chat), and each computed its delta against whatever
+// was stored when it started; one whose timestamp sorted earlier but was written later replayed on a wrong base.
+const _ckptQueue = new Map<string, Promise<unknown>>();
+function saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
+    const run = (_ckptQueue.get(chatId) ?? Promise.resolve()).catch(() => {}).then(() => _saveCheckpointSnapshot(chatId, ckptId));
+    _ckptQueue.set(chatId, run);
+    const clear = () => { if (_ckptQueue.get(chatId) === run) _ckptQueue.delete(chatId); };
+    run.then(clear, clear);
+    return run;
+}
+
+async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
     await ensureDB();
-    const ts = parseInt(ckptId, 10) || Date.now();
 
     const prev = (await _getCkptsForChat(chatId)).slice(-1)[0];
+    // Sort order is the replay order: never at or before the snapshot this one is a delta against.
+    const ts = Math.max(parseInt(ckptId, 10) || Date.now(), (prev?.ts ?? 0) + 1);
     const prevIdbH   = prev?.idbHashes   || {};
     const prevLocalH = prev?.localHashes || {};
 
@@ -375,35 +420,13 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
         }
     }
 
-    // Restore IDB without a window in which the workspace is half-deleted: write the target files first
-    // (keeping what each overwrote), delete the files the target does not have last, and put every
-    // change back if any step throws. The old order deleted everything first, so a failed write (quota,
-    // a closed database) left a workspace with its originals gone and the snapshot only partly written.
+    // One transaction: the target's files are written and the files it does not have are deleted together, or nothing changes.
+    // (Before, each file was its own transaction, with a rollback for a thrown error that a crash or a closed tab never reached.)
     const current = await listWorkspaceFileNames();
-    const originals = new Map<string, any>();   // name -> record before this restore touched it
-    const touched: string[] = [];
-    try {
-        for (const [name, content] of Object.entries(idbState)) {
-            if (current.includes(name)) originals.set(name, await readWorkspaceFile(name));
-            touched.push(name);
-            await writeWorkspaceFile(name, content, null, idbEnc[name] ?? null);
-        }
-        for (const name of current) {
-            if (name in idbState) continue;
-            originals.set(name, await readWorkspaceFile(name));
-            touched.push(name);
-            await deleteWorkspaceFile(name);
-        }
-    } catch (e) {
-        for (const name of touched.reverse()) {
-            try {
-                const rec = originals.get(name);
-                if (rec) await writeWorkspaceFile(name, rec.content ?? '', rec.lastModified ?? null, rec.encoding ?? null);
-                else await deleteWorkspaceFile(name);   // a file the restore created
-            } catch { /* keep rolling back the rest */ }
-        }
-        throw e;
-    }
+    await applyWorkspaceBatch(
+        Object.entries(idbState).map(([name, content]) => ({ name, content: content as string, encoding: idbEnc[name] ?? null })),
+        current.filter(name => !(name in idbState)),
+    );
 
     return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })) };
 }
@@ -3087,7 +3110,7 @@ Object.assign(window, { documentLibrary: _documentLibrary });
 Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
     getChatSnapshotInfo,
-    initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile,
+    initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile, applyWorkspaceBatch,
     // Document helpers exposed for tools.js and other classic scripts
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,
     // Agent file ops (called via window.X in tools.js)

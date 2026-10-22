@@ -36,6 +36,49 @@ describe('exec sandbox host', () => {
         expect(frame.srcdoc).toContain('fg-exec-sandbox.js');
     });
 
+    describe('one call ending early does not take the others with it', () => {
+        const start = async (opts: { signal?: AbortSignal; timeoutMs?: number } = {}) => {
+            const n = posted.filter(m => m.fg === 'call').length;
+            const call = sandboxCall('js', { code: 'x', files: {} }, opts.timeoutMs ?? 0, undefined, opts.signal);
+            call.catch(() => {});
+            await vi.waitFor(() => expect(posted.filter(m => m.fg === 'call').length).toBe(n + 1));
+            return { call, id: posted.filter(m => m.fg === 'call')[n].id };
+        };
+        it('Stop for one call rejects only that call; the other finishes, then the frame restarts', async () => {
+            const ac = new AbortController();
+            const a = await start({ signal: ac.signal }), b = await start();
+            ac.abort();
+            await expect(a.call).rejects.toMatchObject({ name: 'AbortError' });
+            expect(document.querySelector('iframe[sandbox]')).toBe(frame);          // still there: b is running in it
+            fromFrame({ fg: 'reply', id: b.id, value: { stdout: 'b' } });
+            await expect(b.call).resolves.toEqual({ stdout: 'b' });
+            expect(document.querySelector('iframe[sandbox]')).toBeNull();            // a's code may still run: restarted once b is done
+        });
+        it('the last call to end restarts the frame at once, as before', async () => {
+            const ac = new AbortController();
+            const a = await start({ signal: ac.signal });
+            ac.abort();
+            await expect(a.call).rejects.toMatchObject({ name: 'AbortError' });
+            expect(document.querySelector('iframe[sandbox]')).toBeNull();
+        });
+        it('a call that ends by itself leaves nothing to restart', async () => {
+            const ac = new AbortController();
+            const a = await start({ signal: ac.signal }), b = await start();
+            ac.abort(); await expect(a.call).rejects.toBeTruthy();
+            fromFrame({ fg: 'reply', id: a.id, value: { stdout: 'late' } });        // the abandoned call finished on its own
+            fromFrame({ fg: 'reply', id: b.id, value: { stdout: 'b' } });
+            await expect(b.call).resolves.toEqual({ stdout: 'b' });
+            expect(document.querySelector('iframe[sandbox]')).toBe(frame);          // nothing left running: the frame stays
+        });
+        it('a timeout rejects only the call that timed out while others are waiting', async () => {
+            const a = await start({ timeoutMs: 50 }), b = await start({ timeoutMs: 60_000 });
+            await expect(a.call).rejects.toThrow(/timed out/);
+            expect(document.querySelector('iframe[sandbox]')).toBe(frame);
+            fromFrame({ fg: 'reply', id: b.id, value: { stdout: 'b' } });
+            await expect(b.call).resolves.toEqual({ stdout: 'b' });
+        });
+    });
+
     it('delivers progress only for its own frame and pending call, outside result streams', async () => {
         const onProgress = vi.fn();
         const call = sandboxCall('bash', {code:'echo hi'}, 1000, onProgress);

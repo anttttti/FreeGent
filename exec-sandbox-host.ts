@@ -31,6 +31,8 @@ let boot: { frame: HTMLIFrameElement; reject: (e: Error) => void; timer: ReturnT
 let seq = 0;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; cleanup?: () => void; onProgress?: (message: string) => void }>();
 const eventListeners = new Map<string, Set<(data: any) => void>>();
+// Calls already answered to their callers (aborted, timed out) whose code may still be running in the frame.
+const abandoned = new Set<number>();
 
 // Workspace operations the frame may request (the page's bridged workspace functions).
 const WS_OPS = new Set(['agentWriteFile', 'agentDeleteFile', 'agentListFiles', 'readWorkspaceFile']);
@@ -45,11 +47,12 @@ function _onMessage(e: MessageEvent): void {
         if (typeof d.message === 'string') pending.get(d.id)?.onProgress?.(d.message);
     } else if (d.fg === 'reply') {
         const p = pending.get(d.id);
-        if (!p) return;
+        if (!p) { abandoned.delete(d.id); return; }      // an abandoned call finished by itself
         pending.delete(d.id);
         clearTimeout(p.timer);
         p.cleanup?.();
         if (d.error !== undefined) p.reject(new Error(d.error)); else p.resolve(d.value);
+        _restartIfOnlyAbandonedRemain();
     } else if (d.fg === 'ws') {
         void _answerWorkspace(d,frame.contentWindow!);
     } else if (d.fg === 'net') {
@@ -176,6 +179,7 @@ export function resetSandbox(reason = 'the code sandbox was reset', errorName = 
     }
     for (const [, p] of pending) { clearTimeout(p.timer); p.cleanup?.(); p.reject(error); }
     pending.clear();
+    abandoned.clear();
     for (const l of eventListeners.get('py-error') ?? []) l(reason);
     frame?.remove();
     frame = null;
@@ -183,12 +187,30 @@ export function resetSandbox(reason = 'the code sandbox was reset', errorName = 
     window.removeEventListener('message', _onMessage);
 }
 
+// One call ends early (Stop, its own timeout). The frame is shared, so only that call is rejected, and the others keep running. The
+// code of the ended call cannot be interrupted individually, so the frame is restarted once nothing else is waiting on it: at once
+// when this was the last call (as before), otherwise when the last of the others has finished.
+function _detach(id: number, error: Error): void {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    clearTimeout(p.timer);
+    p.cleanup?.();
+    p.reject(error);
+    abandoned.add(id);
+    _restartIfOnlyAbandonedRemain(error);
+}
+function _restartIfOnlyAbandonedRemain(why?: Error): void {
+    if (pending.size === 0 && abandoned.size > 0) resetSandbox(why?.message ?? 'the code sandbox was restarted to stop a call that was cancelled', why?.name ?? 'Error');
+}
+
 export async function sandboxCall(kind: string, payload: Record<string, any> = {}, timeoutMs = 0, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<any> {
     const cancelled = () => { const error = new Error('Execution cancelled'); error.name = 'AbortError'; return error; };
     if (signal?.aborted) throw cancelled();
     const start = _ensureFrame();
     if (signal) await new Promise<void>((resolve, reject) => {
-        const abort = () => { resetSandbox('Execution cancelled', 'AbortError'); reject(cancelled()); };
+        // Still waiting for the frame to load: only this caller leaves; others waiting for the same load keep it.
+        const abort = () => { cleanup(); reject(cancelled()); };
         const cleanup = () => signal.removeEventListener('abort', abort);
         signal.addEventListener('abort', abort, { once: true });
         start.then(() => { cleanup(); resolve(); }, error => { cleanup(); reject(error); });
@@ -199,9 +221,9 @@ export async function sandboxCall(kind: string, payload: Record<string, any> = {
     const id = ++seq;
     return new Promise((resolve, reject) => {
         const timer = timeoutMs > 0
-            ? setTimeout(() => resetSandbox(`timed out after ${Math.round(timeoutMs / 1000)} s — the code sandbox was restarted`), timeoutMs)
+            ? setTimeout(() => _detach(id, new Error(`timed out after ${Math.round(timeoutMs / 1000)} s — the code sandbox was restarted`)), timeoutMs)
             : null;
-        const abort = () => resetSandbox('Execution cancelled', 'AbortError');
+        const abort = () => _detach(id, cancelled());
         const cleanup = () => signal?.removeEventListener('abort', abort);
         pending.set(id, { resolve, reject, timer, cleanup, onProgress });
         signal?.addEventListener('abort', abort, { once: true });

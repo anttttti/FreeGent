@@ -8,9 +8,12 @@ import { friendlyLabel } from './step-label.js';
 
 // ── Media rendering helpers ────────────────────────────────────────────────
 
-// Render SVG text as a sandboxed iframe with srcdoc — same mechanism as the artifact preview tab.
+// Render SVG text as a sandboxed iframe with srcdoc.
 // <object> blob URLs are often blocked by CSP (object-src 'none' is a common default).
 // The iframe forces SVG to fill 100% of its box; aspect-ratio keeps proportions correct.
+// The SVG is the model's text, put into the page as HTML, so it is not trusted: the frame gets an empty sandbox (no scripts at all,
+// no same-origin), and a <script>, onload= or foreignObject payload does nothing. An SVG image has no use for scripts; its own
+// animation (SMIL, CSS) still runs. (The artifact preview tab is different on purpose: it exists to run what the agent builds.)
 function _makeSvgObject(svgText) {
     const wm = svgText.match(/<svg[^>]*\bwidth="([\d.]+)"/i);
     const hm = svgText.match(/<svg[^>]*\bheight="([\d.]+)"/i);
@@ -18,7 +21,7 @@ function _makeSvgObject(svgText) {
     const w  = parseFloat(wm?.[1] ?? vb?.[1] ?? '0') || 400;
     const h  = parseFloat(hm?.[1] ?? vb?.[2] ?? '0') || 400;
     const iframe = document.createElement('iframe');
-    iframe.setAttribute('sandbox', 'allow-scripts');
+    iframe.setAttribute('sandbox', '');
     iframe.style.cssText = `display:block;width:min(100%,${w}px);aspect-ratio:${w}/${h};border:none;border-radius:6px;margin:6px 0;`;
     iframe.srcdoc = `<!DOCTYPE html><html><head><style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}svg{width:100%!important;height:100%!important;display:block;}</style></head><body>${svgText}</body></html>`;
     return iframe;
