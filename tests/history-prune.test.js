@@ -207,6 +207,7 @@ describe('_historyResult — raw capture on truncation', () => {
     beforeEach(() => {
         window.activeChatId = 'c1';
         localStorage.setItem('fg_agent_max_tool_result', '100');
+        localStorage.setItem('fg_director_max_tool_result', '100');   // the main agent's own cap (opencode §15: it used to follow the worker setting)
         localStorage.setItem('fg_agent_tool_result_truncation', 'true');
     });
 

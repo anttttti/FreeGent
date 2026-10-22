@@ -1305,6 +1305,14 @@ async function _handleReadFile(args, context) {
     // start/end are common aliases for start_line/end_line.
     args.start_line = args.start_line ?? args.start;
     args.end_line   = args.end_line   ?? args.end;
+    // Line numbers are whole numbers. Weak models send "10" for 10, and "10" + "11" is "1011": a narrow range was read from line 481 and a repaired
+    // inverted one from 70 to 7099 (codex R41-001). Numeric strings are read as numbers; anything else is no line number.
+    const _lineNo = (v: any): number | undefined => {
+        const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
+        return Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined;
+    };
+    args.start_line = _lineNo(args.start_line);
+    args.end_line   = _lineNo(args.end_line);
     const _sliceLines = (text, start, end) => {
         if (!start && !end && text.length > _READ_INLINE_MAX) {
             const lines = text.split('\n');
@@ -2554,7 +2562,8 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // was stopped after nine in a row.
     if (args.language === 'python' && runtime.hasNativeExec && _isShellCompileError(args.code, execResult)) {
         try {
-            const asBash = await runtime.nativeExec('bash', args.code);
+            // The same limit as the first attempt: changing the language is not changing the time the caller asked for (codex R50-001).
+            const asBash = await runtime.nativeExec('bash', args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined);
             // No note: the main loop records the call itself as language "bash" (_ranAsBash, removed
             // before the result reaches history), so the model sees the call that ran. Any note made
             // it re-send the call still as python: v0.57 "use language bash" → 68 of 90 CTF
