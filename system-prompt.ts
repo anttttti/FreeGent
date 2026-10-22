@@ -3,6 +3,7 @@
 //   getSearchProvider, getSandboxProvider, getAgentConcisePrompts,
 //   getAgentPlanMode, getAgentPromptTemplate, getContextThreshold,
 //   getImageModel, getAudioModel, getVideoModel) and state.js (mainAgentRole).
+import { _skillRequiresUnmet } from './skill-guidance.js';
 import { runtime } from './runtime.js';
 import { mainAgentRole, _sessionToolFilter } from './state.js';
 
@@ -175,6 +176,7 @@ export function buildSystemPrompt(): string {
         for (const s of skillsRegistry.values()) {
             if (!activeSkills.has(s.name)) continue;
             if (s.requires_tools && s.requires_tools.split(',').some(t => !isToolActive(t.trim()))) continue;
+            if (_skillRequiresUnmet(s)) continue;   // a required setting is off: the same rule as for a triggered skill (codex R37-001)
             const _sb = (typeof _filterRoleBody === 'function' ? _filterRoleBody : (b: string) => b)(s.body, _effectiveToolSet);
             if (!_sb.trim()) continue; // dynamic (body_fn) rules have body:''; skip rather than emit an empty header
             parts.push(`\n### Always-on ${s.type === 'rule' ? 'rule' : 'skill'}: ${s.name}\n${_sb}`);
