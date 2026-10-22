@@ -78,3 +78,24 @@ describe('copied text (375/380)', () => {
         expect(copied).not.toContain('⎘');
     });
 });
+
+describe('model SVG in a message', () => {
+    it('is shown in a frame that cannot run scripts (no allow-scripts, no same-origin)', () => {
+        const el = document.createElement('div');
+        el.innerHTML = W.renderMarkdown('<svg width="40" height="40"><circle r="4"/></svg>');
+        W.processImgSlots(el);
+        const frame = el.querySelector('iframe') as HTMLIFrameElement;
+        expect(frame).toBeTruthy();
+        expect(frame.getAttribute('sandbox')).toBe('');
+        expect(frame.getAttribute('sandbox')).not.toMatch(/allow-/);
+    });
+    it('the same holds for an SVG sent as a data: URI, including one carrying a script', () => {
+        const svg = '<svg width="10" height="10"><script>parent.postMessage(1,"*")</script></svg>';
+        const el = document.createElement('div');
+        el.innerHTML = W.renderMarkdown(`![x](data:image/svg+xml;base64,${btoa(svg)})`);
+        W.processImgSlots(el);
+        const frame = el.querySelector('iframe') as HTMLIFrameElement;
+        expect(frame).toBeTruthy();
+        expect(frame.getAttribute('sandbox')).toBe('');
+    });
+});
