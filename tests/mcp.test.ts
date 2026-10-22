@@ -71,7 +71,7 @@ describe('sanitizeMcpSchema', () => {
     });
     it('takes the first concrete anyOf branch and maps const to enum', () => {
         expect(W.sanitizeMcpSchema({ anyOf: [{ type: 'null' }, { type: 'string', const: 'a' }], description: 'd' }))
-            .toEqual({ type: 'string', description: 'd', enum: ['a'] });
+            .toEqual({ type: 'string', description: 'd', enum: ['a'], nullable: true });   // the null alternative is kept (codex R22-001)
     });
 });
 
@@ -142,7 +142,7 @@ describe('server registry', () => {
         const specs = W.mcpToolSpecs();
         expect(specs).toHaveLength(1);
         expect(specs[0].name).toBe('mcp__maps__search_places');
-        expect(specs[0].description).toBe('maps: Find places.');
+        expect(specs[0].description).toBe('maps (external MCP server; its own description): Find places.');
         expect(specs[0].parameters.$schema).toBeUndefined();
         expect(W.activeTools(false, null, true).some((t: any) => t.name === 'mcp__maps__search_places')).toBe(true);
         W.setMcpServerEnabled(s.id, false);
@@ -308,7 +308,7 @@ describe('standard library', () => {
         const specs = W.mcpToolSpecs();
         expect(specs.map((x: any) => x.name)).toEqual(['mcp__test_lib__a', 'mcp__test_lib__b']);
         for (const spec of specs) {
-            expect(spec.description).toBe(`Test Lib: ${'x'.repeat(3000)}\nCredit Test Lib as the source.`);
+            expect(spec.description).toBe(`Test Lib (external MCP server; its own description): ${'x'.repeat(3000)}\nCredit Test Lib as the source.`);
         }
     });
 });

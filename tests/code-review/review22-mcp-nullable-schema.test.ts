@@ -1,0 +1,4 @@
+import {beforeAll,afterAll,it,expect} from 'vitest';
+const W=window as any,observations:any[]=[];
+beforeAll(async()=>{await import('../../mcp.ts')});
+it.each(['type-array-control','anyOf-null','oneOf-null'])('%s preserves nullability and default when normalizing equivalent parameter schemas',mode=>{const field=mode==='type-array-control'?{type:['string','null'],default:null}:{[mode==='anyOf-null'?'anyOf':'oneOf']:[{type:'string'},{type:'null'}],default:null},schema={type:'object',properties:{cursor:field},required:['cursor']},normalized=W.sanitizeMcpSchema(schema);observations.push({mode,schema,normalized});expect(normalized.required).toEqual(['cursor']);expect(normalized.properties.cursor.type).toBe('string');expect(normalized.properties.cursor.nullable).toBe(true);expect(normalized.properties.cursor).toHaveProperty('default',null)});
