@@ -51,7 +51,12 @@ export function _repairJsonArgs(s: string): string | null {
 // returned so the post-results block can push the targeted nudge.
 export function _repairToolCallArgs(calls: any[], repairFn: (s: string) => string | null = _repairJsonArgs): string[] {
     const bad: string[] = [];
-    for (const tc of calls) {
+    for (let i = 0; i < calls.length; i++) {
+        // An entry with no `function` at all (a provider quirk, a mangled stream) is a call to nothing: it gets an empty one, so the batch is
+        // handled and the call fails by itself ("unknown tool") instead of throwing and discarding every other call (hermes C13).
+        if (!calls[i] || typeof calls[i] !== 'object') calls[i] = { type: 'function', function: { name: '', arguments: '{}' } };
+        const tc = calls[i];
+        if (!tc.function || typeof tc.function !== 'object') tc.function = { name: typeof tc.name === 'string' ? tc.name : '', arguments: typeof tc.arguments === 'string' ? tc.arguments : '{}' };
         const s = tc.function.arguments;
         if (typeof s !== 'string' || !s.trim()) continue;
         try { JSON.parse(s); continue; } catch {}
@@ -457,7 +462,7 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
     const bad = _repairToolCallArgs(raw);                    // step 1: repair raw strings
     const norm = raw.map(tc => {                             // step 2: normalize (post-repair)
         try { return { name: tc.function.name, args: JSON.parse(tc.function.arguments) }; }
-        catch { return { name: tc.function.name, args: {} }; }
+        catch { return { name: tc.function?.name ?? '', args: {} }; }
     });
     _repairToolNames(norm);                                  // step 3
     _repairArgEnvelope(norm);                                // step 4

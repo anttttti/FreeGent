@@ -53,3 +53,30 @@ describe('Content-Type', () => {
         expect(msg.content).toBe('ok');
     });
 });
+
+describe('hermes C11: SSEPayloads stays linear and bounded', () => {
+    it('200,000 lines that never form JSON take well under a second and do not pile up', async () => {
+        const { SSEPayloads } = await import('../stream-decode.ts');
+        const ev = new SSEPayloads();
+        const warn = console.warn; console.warn = () => {};
+        const t0 = performance.now();
+        for (let i = 0; i < 200_000; i++) ev.line('data: ' + 'x'.repeat(50));
+        console.warn = warn;
+        expect(performance.now() - t0).toBeLessThan(1500);
+        expect((ev as any).pending.length).toBeLessThanOrEqual(1000);
+    });
+    it('a JSON event over several lines is still assembled, and one on a single line still streams at once', async () => {
+        const { SSEPayloads } = await import('../stream-decode.ts');
+        const ev = new SSEPayloads();
+        expect(ev.line('data: {"a":')).toEqual([]);
+        expect(ev.line('data: 1}')).toEqual([{ a: 1 }]);
+        expect(ev.line('data: {"b":2}')).toEqual([{ b: 2 }]);
+    });
+    it('the JSON string "[DONE]" is data, not the end of the stream; the bare marker still ends it', async () => {
+        const { SSEPayloads } = await import('../stream-decode.ts');
+        const ev = new SSEPayloads();
+        expect(ev.line('data: "[DONE]"')).toEqual([]);
+        expect(ev.line('')).toEqual([]);
+        expect(ev.line('data: [DONE]')).toEqual(['[DONE]']);
+    });
+});
