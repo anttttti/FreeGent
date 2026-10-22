@@ -244,18 +244,21 @@ function stopSpeaking() {
 
 // ── Speaker buttons ──────────────────────────────────────────────────────────
 
+// A model message is marked once its answer text exists, and the answer alone is spoken: the bubble also holds the step graph,
+// event log and Rewind/Rerun controls, which auto-speak read out, and an empty placeholder marked before its text arrived
+// was never spoken (opencode bug #8).
 function addVoiceButtons() {
-    let didAdd: boolean = false;
+    const spoken: string[] = [];
     document.querySelectorAll('.agent-msg-model:not(.has-speak-btn)').forEach(div => {
         const bubble = div.querySelector('.agent-msg-bubble') as HTMLElement | null;
         if (!bubble) return;
+        const parts = Array.from(bubble.querySelectorAll('.agent-response-text:not(.agent-stream-preview)'));
+        const answer = (parts.length ? parts.map(el => (el as HTMLElement).innerText ?? el.textContent ?? '').join('\n') : (bubble.innerText ?? bubble.textContent ?? '')).trim();
+        if (!answer && bubble.querySelector('.agent-response-text')) return;      // a reply still being written: marked when its text is final
         div.classList.add('has-speak-btn');
-        didAdd = true;
+        if (answer) spoken.push(answer);
     });
-    if (didAdd && localStorage.getItem('fg_voice_tts_auto') === '1') {
-        const last = document.querySelector('.agent-msg-model.has-speak-btn:last-of-type .agent-msg-bubble') as HTMLElement | null;
-        if (last) speakText(last.innerText);
-    }
+    if (spoken.length && localStorage.getItem('fg_voice_tts_auto') === '1') speakText(spoken[spoken.length - 1]);
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
