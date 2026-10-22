@@ -44,3 +44,16 @@ describe('the main agent\'s result cap', () => {
         expect(out({ isDirector: true }).stdout.length).toBe(5000);
     });
 });
+
+describe('hermes C15: block extraction keeps the rest of the read result', () => {
+    it('end_line (the read bookkeeping key) survives in every shape the extraction returns', () => {
+        localStorage.setItem('fg_director_max_tool_result', '2000'); localStorage.setItem('fg_agent_max_tool_result', '100000');
+        const py = Array.from({ length: 60 }, (_, i) => `def f${i}(x):\n    return x + ${i}  # ${'padding '.repeat(8)}\n`).join('\n');
+        const flat = Array.from({ length: 400 }, (_, i) => `plain line ${i} ${'x'.repeat(20)}`).join('\n');
+        for (const content of [py, flat, py.repeat(12)]) {
+            const r = (window as any)._historyResult('read_file', { path: 'big.py', start_line: 1, end_line: 1400, content, note: 'n' }, false);
+            expect(r.end_line, content.length + '').toBe(1400);
+            expect(r.start_line).toBe(1);
+        }
+    });
+});

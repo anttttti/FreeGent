@@ -244,6 +244,13 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         return [...project.filter(f => !this._sidecarPrefixes.some(p => full(f.name).startsWith(p))), ...side];
     }
 
+    /** The file's bytes as they are on disk (binary-safe: no text decoding). */
+    async agentReadFileBytes(path: any): Promise<Uint8Array> {
+        const abs = this._resolve(path);
+        try { return new Uint8Array(await readFile(abs)); }
+        catch (e) { throw new Error(readFailureMessage(e, path)); }
+    }
+
     async agentReadFile(path: any) {
         const abs = this._resolve(path);
         if (_OFFICE_RE.test(abs)) {

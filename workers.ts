@@ -1297,9 +1297,9 @@ export async function resolveFileConflicts(conflicts: Record<string, Record<stri
     let llmResolved: Record<string, any>;
     try {
         const text = await llm(prompt, { temperature: 0.1, maxTokens: 16384, label: 'worker:resolve:resolve' }, handle ?? null);
-        const match = text.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('Could not parse conflict resolution response');
-        llmResolved = JSON.parse(match[0]);
+        // The first complete JSON object, not "from the first { to the last }": a brace in prose after the answer made the greedy match span both and the whole
+        // merge was discarded (hermes C17).
+        llmResolved = _firstJsonObject(text) as any;
         if (!llmResolved || typeof llmResolved !== 'object') throw new Error('Could not parse conflict resolution response');
     } catch (e) {
         if (!Object.keys(autoMerged).length) throw e;
@@ -1411,6 +1411,24 @@ async function reduceWorkerOutputs(outputs: Array<{id: string; text: string}>, h
     // temperature: 0.3 — compression/synthesis; slightly creative for fluency but kept
     // low so the summary doesn't drift from the actual worker outputs.
     return await callLLMComplete(prompt, { temperature: 0.3, maxTokens: 2048 }, handle);
+}
+
+/** The first balanced `{…}` in `text` that parses as JSON (braces inside strings do not count), or null. */
+export function _firstJsonObject(text: string): Record<string, any> | null {
+    for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+        let depth = 0, inStr = false, esc = false;
+        for (let i = start; i < text.length; i++) {
+            const c = text[i];
+            if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+            if (c === '"') inStr = true;
+            else if (c === '{') depth++;
+            else if (c === '}' && --depth === 0) {
+                try { const v = JSON.parse(text.slice(start, i + 1)); if (v && typeof v === 'object') return v; } catch { /* not JSON: try the next brace */ }
+                break;
+            }
+        }
+    }
+    return null;
 }
 
 // The worker's final report ends with "STATUS: complete|blocked|partial". The LAST such line outside a fenced block is the footer: an earlier line

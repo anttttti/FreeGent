@@ -926,7 +926,7 @@ export async function agentReadFile(path) {
 
 /** Raw bytes of a workspace file (binary-safe; used to attach workspace files to a chat message). */
 export async function agentReadFileBytes(path: string): Promise<Uint8Array> {
-    if (_wa) return new TextEncoder().encode(await agentReadFile(path));
+    if (_wa) return (_wa as any).agentReadFileBytes ? (_wa as any).agentReadFileBytes(path) : new TextEncoder().encode(await agentReadFile(path));
     path = workspaceName(path);
     if (path.startsWith('local/') && fsaHandle) {
         try { return _base64ToUint8(await readFsaFile(path.slice(6), true)); } catch {}
