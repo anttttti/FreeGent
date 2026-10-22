@@ -3,6 +3,8 @@
 
 // Mirror of msg-queue.ts types — kept in sync manually; msg-queue runs in JSDOM,
 // this module runs in Node.js, so we cannot share the module instance directly.
+import { typedText } from './tui-input-history.js';
+
 export type QueueMode = 'steering' | 'queued';
 export interface QueuedMsg { id: string; text: string; mode: QueueMode; }
 
@@ -143,6 +145,13 @@ export function addTurn(): TurnState {
 
 // The origin of the next turn: fg-tui sets it when a message is sent, makeTuiPlaceholder takes it for the turn it creates.
 let _nextOrigin: TurnOrigin | null = null;
+/** Is the history still the one a turn was made from? The message that started it must still stand at the place recorded; a compaction or a rewind that was
+ *  followed by new messages can leave a history long enough for the old position and unrelated to it (codex R52-001). True when there is nothing to compare. */
+export function originStillValid(origin: TurnOrigin | undefined, history: readonly any[]): boolean {
+    if (!origin) return true;
+    const at = history[origin.historyLen];
+    return !!at && at.role === 'user' && typedText(at) === origin.text.trim();
+}
 export function setNextTurnOrigin(o: TurnOrigin | null): void { _nextOrigin = o; }
 export function takeTurnOrigin(): TurnOrigin | undefined { const o = _nextOrigin; _nextOrigin = null; return o ?? undefined; }
 
@@ -219,10 +228,10 @@ export function entriesFromHistory(history: any[], clean: { user: (s: string) =>
         const m = history[hi];
         if (!m) continue;
         if (m.role === 'user') {
-            const raw = textOf(m.content);
-            if (/^\s*<nudge>/.test(raw) || /^\[TASK[^\]]*\]/.test(raw)) continue;   // harness messages, not the user's
-            const text = clean.user(raw);
-            if (!text) continue;
+            // The same rule as the composer's message history: a person's own message (the task pin unwrapped), not a nudge, a tool result in text mode,
+            // the compaction summary or a /goal turn. Those were shown as the user's words and became the target of Rerun (codex R53-001).
+            const text = typedText(m);
+            if (text === null) continue;
             flush();
             out.push({ type: 'user', id: _nextId++, text });
             // A resumed conversation can be rewound and rerun from its messages too (the history is known; the workspace copy is not).
