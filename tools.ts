@@ -155,6 +155,9 @@ async function _rootRelativeToolPath(p: string): Promise<string> {
     try {
         const files = await agentListFiles();
         if ((files || []).some((f: any) => String(f?.name ?? f).startsWith('workspace/'))) return p;
+        // A listing of files cannot tell an empty directory called workspace from an absent one; only an absent one is the mount prefix.
+        // (An empty one made `workspace/new.txt` land on the project root and replace the file there.)
+        if (typeof agentDirExists === 'function' && await agentDirExists('workspace')) return p;
     } catch { return p; }
     return p.slice('workspace/'.length);
 }
@@ -2286,7 +2289,7 @@ async function _handleExecuteCode(args, context, onProgress?: (message:string)=>
         ? await _withWorkspaceRunLock(async () => {
             const stamps = await _applyStagingForRun(context.staging, context.snapshot);
             const res = await _handleExecuteCodeInner(args, context, onProgress);
-            await _stageRunChanges(context.staging, stamps, context.snapshot);
+            await _stageRunChanges(context.staging, stamps, context.snapshot, context.codeBinary);
             return res;
         })
         : await _handleExecuteCodeInner(args, context, onProgress);
@@ -2323,7 +2326,7 @@ async function _applyStagingForRun(staging: Map<string, string | null>, snapshot
 }
 
 /** Records in the worker's staging the files a run created, changed (text) or deleted. */
-async function _stageRunChanges(staging: Map<string, string | null>, before: _RunStamps, snapshot?: any): Promise<void> {
+async function _stageRunChanges(staging: Map<string, string | null>, before: _RunStamps, snapshot?: any, codeBinary?: Set<string>): Promise<void> {
     // A binary file is listed through the snapshot (workers.ts LazySnapshot.note).
     const context_snapshot_note = (name: string, size: number) => snapshot?.note?.(name, size);
     let after: any[];
@@ -2344,7 +2347,7 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
         const text = rec ? (rec.encoding === 'base64' ? null : rec.content)
                          : await agentReadFile(f.name).then((c: any) => typeof c === 'string' && !c.includes('\0') ? c : null, () => null);
         if (text !== null) staging.set(f.name, text);
-        else { staging.delete(f.name); context_snapshot_note(f.name, f.size ?? 0); }
+        else { staging.delete(f.name); context_snapshot_note(f.name, f.size ?? 0); codeBinary?.add(f.name); }
     }
     if (!truncated) for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
 }

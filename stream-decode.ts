@@ -153,6 +153,14 @@ function _thinkEnd(s: string, from: number): TagMatch {
     return best;
 }
 
+const _OPEN_TAGS = ['<think>', '<thinking>', '<thought>'], _CLOSE_TAGS = ['</think>', '</thinking>', '</thought>'];
+/** How many characters at the end of `s` could be the start of one of `tags` (a delimiter cut by the server's partition of the text into deltas). */
+function _partialTagSuffix(s: string, tags: string[]): number {
+    let best = 0;
+    for (const tag of tags) for (let k = Math.min(tag.length - 1, s.length); k > best; k--) if (s.endsWith(tag.slice(0, k))) { best = k; break; }
+    return best;
+}
+
 // ── Degenerate-output check ───────────────────────────────────────────────────
 // A model that falls into a repetition loop keeps generating until the output cap: v0.60 had 253
 // such cut-offs (2.02M tokens, 38% of everything generated), most of them repeated lines, a URL
@@ -195,6 +203,22 @@ export async function streamOAICompat(resp: any, onChunk: any) {
     let usage: any    = null;
     let finish_reason: string | null = null;
     let inThink: boolean  = false;
+    // A thinking tag can arrive in two deltas ("<th" + "ink>"). The end of a delta that could begin a tag waits for the next one, so the same text gives
+    // the same output however the server cut it (a split open tag leaked the reasoning, a split close tag swallowed the answer: codex R27-001).
+    let tagCarry = '';
+    const _withCarry = (piece: string): string => {
+        const whole = tagCarry + piece;
+        // Which tag could the end of the text be the start of? That depends on whether the text itself opens or closes a block first.
+        let endInThink = inThink;
+        for (let i = 0; i < whole.length;) {
+            const m = endInThink ? _thinkEnd(whole, i) : _thinkStart(whole, i);
+            if (m.pos === -1) break;
+            endInThink = !endInThink; i = m.pos + m.len;
+        }
+        const hold = _partialTagSuffix(whole, endInThink ? _CLOSE_TAGS : _OPEN_TAGS);
+        tagCarry = hold ? whole.slice(-hold) : '';
+        return hold ? whole.slice(0, -hold) : whole;
+    };
     let hasReasoningField: boolean = false;
     let reasoningEnded: boolean    = false;
     try { for await (const chunk of readSSE(resp)) {
@@ -241,7 +265,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
             }
             if (hasReasoningField && !reasoningEnded) {
                 // Still in thinking phase — parse <think>/<thought> for state tracking but discard the text
-                let raw: string = delta.content, i: number = 0;
+                let raw: string = _withCarry(delta.content), i: number = 0;
                 while (i < raw.length) {
                     if (!inThink) {
                         const s = _thinkStart(raw, i);
@@ -254,7 +278,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
                     }
                 }
             } else {
-                let raw: string = delta.content, out: string = '', i: number = 0;
+                let raw: string = _withCarry(delta.content), out: string = '', i: number = 0;
                 while (i < raw.length) {
                     if (!inThink) {
                         // Match <think> (Qwen3), <thinking> (DeepSeek/others), <thought> (Gemma)
@@ -304,6 +328,12 @@ export async function streamOAICompat(resp: any, onChunk: any) {
             }
         }
         else if (e.name !== 'AbortError' || !softStopPending) throw e;
+    }
+    // What was held back at the end of the stream was never a tag: it is text.
+    if (tagCarry) {
+        if (inThink) onChunk(tagCarry, 'thinking');
+        else { content += tagCarry; onChunk(tagCarry, 'output'); }
+        tagCarry = '';
     }
     if (degenerate) {
         // Close the connection so the server stops generating, and report it like a cut-off at the

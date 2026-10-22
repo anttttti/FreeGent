@@ -163,14 +163,15 @@ let _ckptSeq = 0;
 function _modelLabel(): string {
     try { const spec: string = (dom.window as any).getActiveMainModelList?.()?.[0] ?? ''; return spec.replace('|', ' · '); } catch { return ''; }
 }
-async function _takeCheckpoint(text: string): Promise<void> {
+async function _takeCheckpoint(text?: string): Promise<void> {
     const historyLen = getChatHistory().length;   // before the awaits: the history as the message found it
     const id = ++_ckptSeq;
     let snap: Snapshot | null = null;
     try { snap = await takeSnapshot(opts.workspaceRoot, _ckptStore, String(id)); } catch { /* no workspace copy: the conversation can still be taken back */ }
     _ckpts.push({ id, snap, historyLen });
     while (_ckpts.length > _CKPT_KEEP) { const old = _ckpts.shift()!; if (old.snap) void dropSnapshot(old.snap); }
-    Store.setNextTurnOrigin({ text, historyLen, ckptId: id, model: _modelLabel() });
+    // A turn the person did not start (a /goal turn) has a copy of the files but no message to rewind to or rerun.
+    if (text !== undefined) Store.setNextTurnOrigin({ text, historyLen, ckptId: id, model: _modelLabel() });
 }
 const _dropCheckpoints = () => { try { rmSync(_ckptStore, { recursive: true, force: true }); } catch {} };
 
@@ -212,6 +213,8 @@ async function _restoreTurnWorkspace(o: Store.TurnOrigin): Promise<string> {
         const r = await restoreSnapshot(opts.workspaceRoot, ck.snap);
         return `${r.restored.length} file${r.restored.length === 1 ? '' : 's'} restored, ${r.removed.length} removed`
             + (r.createdNotRemoved ? '; the workspace has too many files to find the ones the reply created, so those were left' : '')
+            + (r.kept ? `; ${r.kept} file${r.kept === 1 ? '' : 's'} that are not in the copy were not removed (they are older than it)` : '')
+            + (r.ignoreRulesChanged ? '; the ignore rules changed meanwhile, so files they now hide could not be found' : '')
             + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
     } catch (e: any) { return `files NOT restored: ${e?.message ?? e}`; }
 }
@@ -317,7 +320,7 @@ function goalHost(): GoalHost {
         async runTurn(prompt, { visible }) {
             // The goal belongs to the session it started in; a turn sent to another one would land in the wrong conversation.
             if (activeChatId !== session) return { text: 'the session was switched', finishSignal: 'stopped' };
-            _takeCheckpoint();
+            await _takeCheckpoint();
             setSoftStopPending(false);
             Store.addUserMessage(visible);
             const r: any = await (globalThis as any).runAgentTurn(prompt, null);
@@ -325,6 +328,7 @@ function goalHost(): GoalHost {
         },
         read: () => (dom.window as any).agentReadFile(GOAL_PATH).catch(() => null),
         write: (c) => (dom.window as any).agentWriteFile(GOAL_PATH, c, null, { epoch }),
+        remove: () => (dom.window as any).agentDeleteFile(GOAL_PATH, { epoch }),
         notify: (m) => Store.addNotice(m.includes('\n') ? m : `_${m}_`),
         async waitQuiet() {
             const t0 = Date.now();

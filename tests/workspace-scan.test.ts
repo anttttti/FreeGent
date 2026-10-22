@@ -104,3 +104,30 @@ describe('deleted files', () => {
         expect(await written(d, () => { rmSync(join(d, 'scratch.txt')); rmSync(join(d, 'b.txt')); rmSync(join(d, 'src', 'a.txt')); })).toEqual([]);
     });
 });
+
+describe('codex R14-001: a write that is committed inside the operation', () => {
+    it('a file written and committed, and a file created and committed, are reported; a commit alone is not', async () => {
+        const d = repo();
+        expect(await written(d, () => { appendFileSync(join(d, 'src', 'a.txt'), 'x'); git(d, 'commit', '-qam', 'edit'); })).toEqual(['src/a.txt']);
+        expect(await written(d, () => { writeFileSync(join(d, 'made.txt'), 'm'); git(d, 'add', 'made.txt'); git(d, 'commit', '-qm', 'create'); })).toEqual(['made.txt']);
+        appendFileSync(join(d, 'b.txt'), 'dirty first');
+        expect(await written(d, () => { git(d, 'commit', '-qam', 'record only'); })).toEqual([]);
+    });
+    it('a deletion that is committed is not a written file', async () => {
+        const d = repo();
+        expect(await written(d, () => { rmSync(join(d, 'b.txt')); git(d, 'commit', '-qam', 'rm'); })).toEqual([]);
+    });
+});
+
+describe('codex R12-001: nesting deeper than the walk goes is an incomplete scan, not a complete one', () => {
+    it('listFiles and snapshotMarks say so outside git', async () => {
+        const d = tmp(); writeFileSync(join(d, 'shallow.txt'), 's');
+        let p = d; for (let i = 0; i < 36; i++) { p = join(p, 'n'); mkdirSync(p); }
+        writeFileSync(join(p, 'deep.txt'), 'd');
+        const l = await listFiles(d, { maxEntries: 100 });
+        expect(l.complete).toBe(false);
+        expect(await snapshotMarks(d)).toBeNull();
+        const ok = tmp(); let q = ok; for (let i = 0; i < 12; i++) { q = join(q, 'n'); mkdirSync(q); } writeFileSync(join(q, 'twelve.txt'), 't');
+        expect((await listFiles(ok, { maxEntries: 100 })).complete).toBe(true);     // ordinary nesting is walked
+    });
+});

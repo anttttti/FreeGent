@@ -704,6 +704,7 @@ declare global {
     var workspaceRootDir: () => string;
     var agentListFilesInDir: (dir: string) => Promise<Array<{name: string}>>;
     var agentHiddenDirs: () => Promise<string[]>;
+    var agentDirExists: (path: string) => Promise<boolean>;
     var agentListFilesNoStat: () => Promise<Array<{name: string}>>;
     var agentReadFile: any;
     var agentWriteFile: any;

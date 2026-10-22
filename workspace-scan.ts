@@ -18,6 +18,7 @@ import { trackOp } from './loop-watch.js';
 
 export const SCAN_MAX_ENTRIES = 20_000;
 export const SCAN_DEADLINE_MS = 400;
+const MAX_WALK_DEPTH = 32;
 const GIT_STATUS_MAX_ENTRIES = 5_000;
 const GIT_DEADLINE_MS = 3_000;
 const MAX_CONCURRENT_SCANS = 2;
@@ -112,7 +113,10 @@ async function _walk(root: string, opts: { skipDirs?: ReadonlySet<string>; skipE
         try { return await fn(); } finally { active--; waiting.shift()?.(); }
     };
     const walk = async (d: string, rel: string, depth: number): Promise<void> => {
-        if (depth > 8 || over()) return;   // depth: a guard against deeply nested repos
+        if (over()) return;
+        // Nesting this deep is not a project layout but a loop or a generated tree. Files below it are left out, and the result says so
+        // (the walk used to report a complete listing without them: codex R12-001).
+        if (depth > MAX_WALK_DEPTH) { stopped = true; return; }
         let ents: import('node:fs').Dirent[];
         try { ents = await slot(() => readdir(d, { withFileTypes: true })); } catch { return; }
         const work: Promise<void>[] = [];
@@ -135,8 +139,10 @@ async function _walk(root: string, opts: { skipDirs?: ReadonlySet<string>; skipE
 
 // ── write detection ──────────────────────────────────────────────────────────
 
-/** Relative path → "mtimeMs:size", or 'gone' for a listed file that does not exist. */
+/** Relative path → "mtimeMs:size", or 'gone' for a listed file that does not exist. In a git repository one more entry, HEAD_KEY, holds the commit
+ *  the work tree was on: a write that was committed within the observed operation leaves a clean tree and shows only there. */
 export type Marks = Map<string, string>;
+const HEAD_KEY = '\0HEAD';
 const _sig = async (abs: string): Promise<string> => { try { const s = await lstat(abs); return `${s.mtimeMs}:${s.size}`; } catch { return 'gone'; } };
 
 /**
@@ -152,6 +158,8 @@ export function snapshotMarks(root: string): Promise<Marks | null> {
             if (!r.ok) return null;
             const top = resolve(root, cdup);
             const marks: Marks = new Map();
+            const head = await _git(root, ['rev-parse', '--verify', '-q', 'HEAD'], 4, 2_000);
+            marks.set(HEAD_KEY, head.ok ? head.out.trim() : '');
             await Promise.all(r.out.split('\0').filter(e => e.length > 3).map(async e => {
                 const path = e.slice(3);
                 if (path.endsWith('/')) return;                       // a nested repository: not this project's files
@@ -168,10 +176,28 @@ export function snapshotMarks(root: string): Promise<Marks | null> {
 /** The files written between two snapshotMarks(): new, changed, or (a file already listed that left the list) touched since. */
 export async function changedSince(root: string, before: Marks, after: Marks): Promise<string[]> {
     const written: string[] = [];
-    for (const [p, m] of after) if (m !== 'gone' && before.get(p) !== m) written.push(p);
+    for (const [p, m] of after) if (p !== HEAD_KEY && m !== 'gone' && before.get(p) !== m) written.push(p);
+    // The operation moved HEAD (a commit, a checkout, a pull). A file it wrote and committed is clean in both snapshots; the commit's own file list
+    // finds it. A file that was already changed before and is the same now was only recorded by the commit, not written by it.
+    const h0 = before.get(HEAD_KEY), h1 = after.get(HEAD_KEY);
+    if (h0 !== undefined && h1 !== undefined && h0 !== h1 && h0 !== '' && h1 !== '') {
+        const cdup = await _cdup(root);
+        const r = cdup === null ? null : await _git(root, ['diff', '--name-only', '-z', '--no-renames', h0, h1, '--', '.'], GIT_STATUS_MAX_ENTRIES, GIT_DEADLINE_MS);
+        if (cdup !== null && r?.ok) {
+            const top = resolve(root, cdup);
+            for (const path of r.out.split('\0').filter(Boolean)) {
+                const rel = relative(root, resolve(top, path)).split(sep).join('/');
+                if (rel.startsWith('..') || written.includes(rel)) continue;
+                const was = before.get(rel);
+                const now = await _sig(join(root, rel));
+                if (now === 'gone') continue;                 // a deleted file is not a written one
+                if (was === undefined || was !== now) written.push(rel);
+            }
+        }
+    }
     // Listed before, clean now: a revert or a commit. Only a file whose own mark changed counts, not the git operation.
     for (const [p, m] of before) {
-        if (after.has(p) || m === 'gone') continue;
+        if (p === HEAD_KEY || after.has(p) || m === 'gone') continue;
         const now = await _sig(join(root, p));
         if (now !== 'gone' && now !== m) written.push(p);   // a deleted file is not a written one
     }
@@ -185,12 +211,17 @@ export interface FileListing { files: string[]; complete: boolean; via: 'git' | 
  * The project's files (relative paths): tracked and untracked-but-not-ignored in a git repository, otherwise a budgeted walk.
  * `complete` is false when the list was cut at `maxEntries` or `deadlineMs`. Folders named in `skipDirs` are left out either way.
  */
-export function listFiles(root: string, opts: { maxEntries: number; deadlineMs?: number; skipDirs?: ReadonlySet<string>; skipEntry?: (name: string, isDir: boolean) => boolean }): Promise<FileListing> {
+export function listFiles(root: string, opts: { maxEntries: number; deadlineMs?: number; skipDirs?: ReadonlySet<string>; skipEntry?: (name: string, isDir: boolean) => boolean; includeIgnored?: boolean }): Promise<FileListing> {
     const deadlineMs = opts.deadlineMs ?? 5_000;
     return trackOp(`file list (${root})`, _scanSlot(async (): Promise<FileListing> => {
         const cdup = await _cdup(root);
         if (cdup !== null) {
+            // includeIgnored: the files the ignore rules hide as well (a rewind after the rules changed has to find what the turn made under the new rules).
             const r = await _git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'], opts.maxEntries, deadlineMs);
+            if (opts.includeIgnored && r.ok) {
+                const hidden = await _git(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', '.'], opts.maxEntries, deadlineMs);
+                r.out += hidden.out; r.ok = r.ok && hidden.ok; r.truncated = r.truncated || hidden.truncated;
+            }
             if (r.ok || r.truncated) {
                 const seen = new Set<string>();
                 for (const p of r.out.split('\0')) {

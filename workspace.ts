@@ -17,6 +17,8 @@ export interface WorkspaceAdapter {
     agentListFilesInDir?(dir: string): Promise<Array<{name: string}>>;
     /** Top-level directories that exist but are left out of listings (build output, caches, dependencies). */
     agentHiddenDirs?(): Promise<string[]>;
+    /** Whether a directory exists, empty or not (a file listing cannot tell an empty directory from an absent one). */
+    agentDirExists?(path: string): Promise<boolean>;
     agentReadFile(path: string, encoding?: string): Promise<string>;
     agentWriteFile(path: string, content: string, encoding?: string): Promise<void>;
     agentDeleteFile(path: string): Promise<void>;
@@ -802,6 +804,15 @@ export async function agentListFilesInDir(dir: string): Promise<Array<{name: str
     return all
         .filter(f => f.name.startsWith(prefix))
         .map(f => ({ name: f.name.slice(prefix.length) }));
+}
+
+/** Whether `path` is a directory of the workspace, empty or not. Adapters with real directories answer; for the rest (IndexedDB records, containers)
+ *  a directory is whatever has a file under it. */
+export async function agentDirExists(path: string): Promise<boolean> {
+    const dir = String(path).replace(/\/+$/, '');
+    if (_wa?.agentDirExists) return _wa.agentDirExists(dir);
+    const prefix = dir + '/';
+    try { return (await agentListFiles()).some(f => String(f?.name ?? f).startsWith(prefix)); } catch { return false; }
 }
 
 /** Top-level directories present in the workspace but omitted from listings; [] where nothing is hidden. */
@@ -3114,7 +3125,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
     // Document helpers exposed for tools.js and other classic scripts
     _isBinaryExt, _isDocExt, _extOf, _uint8ToBase64, _base64ToUint8, extractDocumentText,
     // Agent file ops (called via window.X in tools.js)
-    agentListFiles, agentListFilesInDir, agentHiddenDirs, agentListFilesNoStat, agentReadFile, agentReadFileBytes, agentWriteFile, agentDeleteFile, agentFileMtime,
+    agentListFiles, agentListFilesInDir, agentHiddenDirs, agentDirExists, agentListFilesNoStat, agentReadFile, agentReadFileBytes, agentWriteFile, agentDeleteFile, agentFileMtime,
     setWorkspaceAdapter, workspaceUsesAbsolutePaths, workspaceRootDir, workspaceName,
     readFileAsDataUrl,
     getWorkspaceFilesDict: async () => {

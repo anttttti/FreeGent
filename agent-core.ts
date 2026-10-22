@@ -1981,6 +1981,7 @@ function _webGoalHost(chat: string | null): GoalHost {
         },
         read: () => agentReadFile(GOAL_PATH).catch(() => null),
         write: (c) => agentWriteFile(GOAL_PATH, c, null, { epoch }),
+        remove: () => agentDeleteFile(GOAL_PATH, { epoch }),
         notify: _goalNote,
         waitQuiet: _goalIdle,
         onChange: _setGoalStatus,

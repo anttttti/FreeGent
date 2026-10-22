@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, parseGoal, serializeGoal, parseGoalCommand, describeGoal, isGoalPrompt, _resetGoalForTest, type GoalHost, type GoalTurn } from '../goal.ts';
+import { startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, parseGoal, serializeGoal, parseGoalCommand, describeGoal, isGoalPrompt, _resetGoalForTest, type GoalHost, type GoalTurn, type GoalRecord } from '../goal.ts';
 
 function host(script: Array<GoalTurn | ((prompt: string, kind: string) => GoalTurn | Promise<GoalTurn>)>) {
     const h = {
@@ -167,5 +167,86 @@ describe('goal record and commands', () => {
     it('describes each state', () => {
         expect(describeGoal(null)).toMatch(/No goal set/);
         expect(describeGoal(parseGoal(serializeGoal({ text: 'g', status: 'blocked', turns: 1, maxTurns: 20, note: 'which db?', updated: '', progress: ['turn 1: x'] })))).toMatch(/Waiting for you: which db\?/);
+    });
+});
+
+describe('codex review of the goal loop (R1-001..004) and opencode G3/G8/G10', () => {
+    it('an empty progress list survives a round trip, and so does a goal whose own text has a "## Progress" heading', () => {
+        const base = { status: 'paused' as const, turns: 0, maxTurns: 20, note: '', updated: 'now' };
+        for (const text of ['ship the report', 'alpha\n\n## Progress\nnot really progress\nomega', 'ends with a heading\n\n## Progress']) {
+            for (const progress of [[], ['turn 1: did a thing']]) {
+                const rec = { ...base, text, progress };
+                let cur = parseGoal(serializeGoal(rec))!;
+                expect(cur).toMatchObject({ text, progress });
+                cur = parseGoal(serializeGoal(cur))!; cur = parseGoal(serializeGoal(cur))!;          // repeated cycles change nothing
+                expect(cur).toMatchObject({ text, progress });
+            }
+        }
+    });
+    it('finishing on the last allowed work turn still gets its verification', async () => {
+        const h = host([complete(), complete('verified')]);
+        const rec = await startGoal('g', h as GoalHost, { maxTurns: 1 })!;
+        expect(rec.status).toBe('done');
+        expect(h.prompts.map(p => p[0])).toEqual(['work', 'verify']);
+    });
+    it('a verification that finds something missing on the last turn ends as out of turns, not as an endless loop', async () => {
+        const h = host([complete(), work('missing X')]);
+        const rec = await startGoal('g', h as GoalHost, { maxTurns: 1 })!;
+        expect(rec.status).toBe('cap');
+        expect(h.prompts.map(p => p[0])).toEqual(['work', 'verify']);
+    });
+    it('a note sent while the verification runs is not lost: the goal is not done on an answer that predates it', async () => {
+        const h = host([complete(), complete('verified'), complete(), complete('verified again')]);
+        const orig = h.runTurn;
+        let n = 0;
+        h.runTurn = async (p: string, o: any) => { if (++n === 2) steerGoal('ACCEPTED_STEER_verify'); return orig(p, o); };
+        const rec = await startGoal('g', h as GoalHost)!;
+        expect(rec.status).toBe('done');
+        expect(h.prompts.some(p => p[1].includes('ACCEPTED_STEER_verify'))).toBe(true);
+        expect(h.prompts.map(p => p[0])).toEqual(['work', 'verify', 'work', 'verify']);
+    });
+    it('a note accepted before the first prompt is in that prompt', async () => {
+        const h = host([complete(), complete()]);
+        h.waitQuiet = async () => { steerGoal('ACCEPTED_STEER_initial'); return true; };
+        await startGoal('g', h as GoalHost)!;
+        expect(h.prompts[0][1]).toContain('ACCEPTED_STEER_initial');
+    });
+    it('a note the loop ends before delivering is kept in the record and goes into the prompt after /goal resume', async () => {
+        const h = host([work('a'), { text: 'Which database?', finishSignal: 'blocked' }]);
+        const orig = h.runTurn; let n = 0;
+        h.runTurn = async (p: string, o: any) => { if (++n === 2) steerGoal('use postgres'); return orig(p, o); };
+        const rec = await startGoal('g', h as GoalHost)!;
+        expect(rec.status).toBe('blocked');
+        expect(h.notes.at(-1)).toMatch(/note was kept/);
+        expect(parseGoal(h.file)!.steer).toEqual(['use postgres']);
+        const h2 = host([complete(), complete()]); h2.file = h.file;
+        await (await resumeGoal(h2 as GoalHost))!.done;
+        expect(h2.prompts[0][1]).toContain('use postgres');
+        expect(parseGoal(h2.file)!.steer).toBeUndefined();
+    });
+    it('Clear removes the record; a failing store is reported and the goal stays', async () => {
+        const h: any = host([complete(), complete()]);
+        await startGoal('g', h as GoalHost)!;
+        let removed = 0; h.remove = async () => { removed++; h.file = null; };
+        expect(await clearGoal(h)).toBe(true);
+        expect(removed).toBe(1); expect(h.file).toBeNull();
+        const h2: any = host([complete(), complete()]); await startGoal('g', h2 as GoalHost)!;
+        h2.write = async () => { throw new Error('quota'); };
+        const seen: Array<GoalRecord | null> = []; h2.onChange = (g: any) => seen.push(g);
+        expect(await clearGoal(h2)).toBe(false);
+        expect(h2.notes.at(-1)).toMatch(/could not be cleared.*quota/);
+        expect(seen).toEqual([]);                                     // the view still shows the goal
+        expect(parseGoal(h2.file)).not.toBeNull();
+    });
+    it('a damaged record cannot change how many turns are allowed', () => {
+        const rec = parseGoal('---\nstatus: paused\nturns: -5\nmax_turns: abc\nupdated: x\nnote: ""\n---\n# Goal\ng\n\n## Progress\n')!;
+        expect(rec.turns).toBe(0); expect(rec.maxTurns).toBe(20);
+        expect(parseGoal('---\nstatus: paused\nturns: 2.7\nmax_turns: 0.4\nupdated: x\nnote: ""\n---\n# Goal\ng\n\n## Progress\n')).toMatchObject({ turns: 2, maxTurns: 20 });
+    });
+    it('a host that throws while waiting does not take the loop with it', async () => {
+        const h = host([complete(), complete()]);
+        h.waitQuiet = async () => { throw new Error('host bug'); };
+        const rec = await startGoal('g', h as GoalHost)!;
+        expect(rec.status).toBe('paused');
     });
 });
