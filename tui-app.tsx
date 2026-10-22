@@ -21,7 +21,7 @@ import { goalRunning, steerGoal } from './goal.js';
 import { forceSkillsNextTurn } from './turn-context.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
-import { layoutWindow, wrapRows, cursorWindow } from './log-layout.js';
+import { layoutWindow, lazyHeights, wrapRows, cursorWindow } from './log-layout.js';
 import { prevBoundary, nextBoundary, deleteBackward, deleteForward } from './input-edit.js';
 import { SETTINGS_DEF, keyedFields, numberFieldError, type FieldDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
@@ -390,11 +390,37 @@ function SectionContent({ step, section, width }: { step: Store.StepState; secti
     );
 }
 
+// The log is drawn again on every change of the store (about 20 times a second while a step streams), and it used to clean and wrap the text of
+// every finished turn each time: the work grew with the length of the conversation (a profile of a streaming reply over 100 earlier turns: half
+// of the busy time in wrapRows and _cleanFinalText; CPU 33% over 5 turns, 63% over 100). A finished turn's text does not change, so
+// what is made from it is kept (bounded: a long conversation does not keep every copy).
+function _memo<K, V>(cache: Map<K, V>, key: K, make: () => V, limit = 400): V {
+    const hit = cache.get(key);
+    if (hit !== undefined) return hit;
+    const v = make();
+    if (cache.size >= limit) cache.delete(cache.keys().next().value as K);   // oldest first
+    cache.set(key, v);
+    return v;
+}
+const _cleanedFinal = new Map<string, string>();
+const _finalRows = new Map<string, { width: number; rows: string[] }>();
+const _userRows = new Map<string, { width: number; rows: string[] }>();
+function _rowsOf(cache: Map<string, { width: number; rows: string[] }>, text: string, width: number, prefix = ''): string[] {
+    const hit = cache.get(text);
+    if (hit && hit.width === width) return hit.rows;
+    const rows = wrapRows(prefix + text, width);
+    if (cache.size >= 400) cache.delete(cache.keys().next().value as string);
+    cache.set(text, { width, rows });
+    return rows;
+}
+
 function _cleanFinalText(text: string): string {
-    try {
-        const stripped = _stripTerminal(text);
-        return (dom.window as any).cleanResponse?.(stripped) ?? stripped;
-    } catch { return text; }
+    return _memo(_cleanedFinal, text, () => {
+        try {
+            const stripped = _stripTerminal(text);
+            return (dom.window as any).cleanResponse?.(stripped) ?? stripped;
+        } catch { return text; }
+    });
 }
 
 function _cleanOutput(raw: string): string {
@@ -439,13 +465,16 @@ function _buildFlatItems(entries: Store.Entry[]): FlatItem[] {
 function EventLog({ height, width, entries, scrollOffset }: { height: number; width: number; entries: Store.Entry[]; scrollOffset: number }) {
     const items    = _buildFlatItems(entries);
     // Items are as tall as their content (a final answer can be dozens of rows): choose by rows, not by count.
-    const finalRows = (it: Extract<FlatItem, { kind: 'final-text' }>) => wrapRows(_cleanFinalText(it.turn.finalText!), width - 2);
-    const heights  = items.map(it =>
-        it.kind === 'user'       ? wrapRows(`> ${it.text}`, width).length
-      : it.kind === 'final-text' ? 1 + finalRows(it).length
-      // An open section is a rule, up to MAX_SECTION_LINES lines and the two lines saying how many are above and below it.
-      : it.kind === 'step'       ? 1 + (it.step.openSection && !it.step.collapsed ? 3 + MAX_SECTION_LINES : 0)
-      : 1);
+    const finalRows = (it: Extract<FlatItem, { kind: 'final-text' }>) => _rowsOf(_finalRows, _cleanFinalText(it.turn.finalText!), width - 2);
+    // Only the items the window reaches are measured (see lazyHeights); the rest of a long conversation costs nothing per redraw.
+    const heights  = lazyHeights(items.length, i => {
+        const it = items[i];
+        return it.kind === 'user'       ? _rowsOf(_userRows, it.text, width, '> ').length
+             : it.kind === 'final-text' ? 1 + finalRows(it).length
+             // An open section is a rule, up to MAX_SECTION_LINES lines and the two lines saying how many are above and below it.
+             : it.kind === 'step'       ? 1 + (it.step.openSection && !it.step.collapsed ? 3 + MAX_SECTION_LINES : 0)
+             : 1;
+    });
     const win      = layoutWindow(heights, height, scrollOffset);
     const visible  = items.slice(win.start, win.end);
     const tailRows = win.tailRows;
@@ -462,7 +491,7 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                 const isLast = i === visible.length - 1;
                 if (item.kind === 'user') {
                     // A message taller than the window shows its end, like a long answer.
-                    const rows = isLast && tailRows != null ? wrapRows(`> ${item.text}`, width).slice(-tailRows) : null;
+                    const rows = isLast && tailRows != null ? _rowsOf(_userRows, item.text, width, '> ').slice(-tailRows) : null;
                     return (
                         <Box key={item.id}>
                             <Text color="cyan" bold>{rows ? rows.join('\n') : `> ${item.text}`}</Text>
@@ -476,7 +505,7 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                     return <StepView key={item.step.id} step={item.step} turn={item.turn} width={width} />;
                 }
                 if (item.kind === 'final-text') {
-                    const all = wrapRows(_cleanFinalText(item.turn.finalText!), width - 2);
+                    const all = _rowsOf(_finalRows, _cleanFinalText(item.turn.finalText!), width - 2);
                     // Taller than the window: the last rows that fit, and a line saying how much is above (/export has all of it).
                     const clipped = isLast && tailRows != null;
                     const shown = clipped ? all.slice(-Math.max(1, tailRows! - 2)) : all;

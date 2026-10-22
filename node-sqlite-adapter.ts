@@ -18,6 +18,9 @@ import type { SessionStoreAdapter } from './session-store.js';
 // and works identically under plain Node and under vite-node.
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
+type _Row = [string, string | null, string | null, string | null, string | null, string | null];
+const _sameRow = (a: _Row, b: _Row): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[4] === b[4] && a[5] === b[5];
+
 export class NodeSqliteAdapter implements SessionStoreAdapter {
     private _db: any = null;
     private _dbPath: string;
@@ -67,24 +70,37 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         return row?.gen ?? 0;
     }
 
-    _insertGeneration(db: any, chatId: any, generation: any, history: any) {
+    // What is stored for each message of a chat's live generation, as saved by this adapter: role, text, content JSON, tool calls JSON, tool call id,
+    // name. replaceMessages compares the history it is given with it and writes only from the first message that differs: a save used to delete and
+    // insert every message of the chat (40-120 ms of blocked event loop for a 2-6 MB conversation, and a save is made many times per turn).
+    _saved = new Map<string, { gen: number; rows: _Row[] }>();
+
+    _toRow(m: any): _Row {
+        const isStringContent = typeof m?.content === 'string';
+        return [
+            m?.role ?? 'user',
+            isStringContent ? m.content : null,
+            isStringContent ? null : JSON.stringify(m?.content ?? null),
+            m?.tool_calls ? JSON.stringify(m.tool_calls) : null,
+            m?.tool_call_id ?? null,
+            m?.name ?? null,
+        ];
+    }
+
+    _insertRows(db: any, chatId: any, generation: any, rows: _Row[], from = 0) {
         const stmt = db.prepare(`
             INSERT INTO messages(chat_id, generation, seq, role, content, content_json, tool_calls, tool_call_id, name, raw, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         `);
         const now = Date.now();
-        (history ?? []).forEach((m: any, seq: any) => {
-            const isStringContent = typeof m?.content === 'string';
-            stmt.run(
-                chatId, generation, seq, m?.role ?? 'user',
-                isStringContent ? m.content : null,
-                isStringContent ? null : JSON.stringify(m?.content ?? null),
-                m?.tool_calls ? JSON.stringify(m.tool_calls) : null,
-                m?.tool_call_id ?? null,
-                m?.name ?? null,
-                now,
-            );
-        });
+        for (let seq = from; seq < rows.length; seq++) {
+            const [role, content, contentJson, toolCalls, toolCallId, name] = rows[seq];
+            stmt.run(chatId, generation, seq, role, content, contentJson, toolCalls, toolCallId, name, now);
+        }
+    }
+
+    _insertGeneration(db: any, chatId: any, generation: any, history: any) {
+        this._insertRows(db, chatId, generation, (history ?? []).map((m: any) => this._toRow(m)));
     }
 
     async replaceMessages(chatId: any, history: any) {
@@ -99,10 +115,20 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         db.exec('BEGIN');
         try {
             const gen = this._currentGeneration(db, chatId);
-            db.prepare('DELETE FROM messages WHERE chat_id = ? AND generation = ? AND raw = 0').run(chatId, gen);
-            this._insertGeneration(db, chatId, gen, history);
+            const rows: _Row[] = (history ?? []).map((m: any) => this._toRow(m));
+            // How many messages from the start are already stored as they are. Only trusted when the table still holds exactly what this adapter
+            // wrote (another process saving the same chat, or a deleted row, makes the count differ and the whole chat is written again).
+            let keep = 0;
+            const prev = this._saved.get(chatId);
+            if (prev && prev.gen === gen) {
+                const n = (db.prepare('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND generation = ? AND raw = 0').get(chatId, gen) as any)?.n;
+                if (n === prev.rows.length) while (keep < rows.length && keep < prev.rows.length && _sameRow(prev.rows[keep], rows[keep])) keep++;
+            }
+            db.prepare('DELETE FROM messages WHERE chat_id = ? AND generation = ? AND raw = 0 AND seq >= ?').run(chatId, gen, keep);
+            this._insertRows(db, chatId, gen, rows, keep);
             db.exec('COMMIT');
-        } catch (e) { db.exec('ROLLBACK'); throw e; }
+            this._saved.set(chatId, { gen, rows });
+        } catch (e) { db.exec('ROLLBACK'); this._saved.delete(chatId); throw e; }
     }
 
     // Compaction lineage (Hermes-style, hidden from the chat list): seals the CURRENT
@@ -125,7 +151,8 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
             this._insertGeneration(db, chatId, gen, preHistory);
             this._insertGeneration(db, chatId, gen + 1, postHistory);
             db.exec('COMMIT');
-        } catch (e) { db.exec('ROLLBACK'); throw e; }
+            this._saved.delete(chatId);   // a new generation: the next save starts from what the table holds
+        } catch (e) { db.exec('ROLLBACK'); this._saved.delete(chatId); throw e; }
     }
 
     // Append-only capture of content that would otherwise be silently lost to pruning/parsing —
