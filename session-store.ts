@@ -73,13 +73,30 @@ export function sessionSetChatRole(id, role) { _safeCall('setChatRole', id, role
 // Whole-blob replace semantics, matching chat-state.js's saveHistory() (one JSON blob per chat).
 // Resolves true once the store accepted the write, false if there is no adapter or it failed —
 // chat-state only drops a chat's localStorage copy after a true.
+// Saves of one chat go one at a time, and a save waiting behind a running one is replaced by the newer history: with the adapter's own timing two
+// saves could finish in the wrong order, and the older history was the last one written (opencode §13).
+const _saving = new Map<string, { active: boolean; pending: { history: any; waiters: Array<(ok: boolean) => void> } | null }>();
 function sessionSaveHistory(chatId, history): Promise<boolean> {
     if (!_store || typeof _store.replaceMessages !== 'function') return Promise.resolve(false);
+    return new Promise<boolean>(resolve => {
+        let st = _saving.get(chatId);
+        if (!st) { st = { active: false, pending: null }; _saving.set(chatId, st); }
+        if (st.pending) { st.pending.history = history; st.pending.waiters.push(resolve); }
+        else st.pending = { history, waiters: [resolve] };
+        if (!st.active) void _pumpSaves(chatId, st);
+    });
+}
+async function _pumpSaves(chatId: string, st: { active: boolean; pending: { history: any; waiters: Array<(ok: boolean) => void> } | null }): Promise<void> {
+    st.active = true;
     try {
-        return Promise.resolve(_store.replaceMessages(chatId, history)).then(() => true, e => {
-            console.warn('[session-store] replaceMessages failed:', e?.message); return false;
-        });
-    } catch (e) { console.warn('[session-store] replaceMessages failed:', (e as any)?.message); return Promise.resolve(false); }
+        while (st.pending) {
+            const job = st.pending; st.pending = null;
+            let ok = false;
+            try { await _store!.replaceMessages(chatId, job.history); ok = true; }
+            catch (e: any) { console.warn('[session-store] replaceMessages failed:', e?.message); }
+            for (const w of job.waiters) w(ok);
+        }
+    } finally { st.active = false; if (!st.pending) _saving.delete(chatId); }
 }
 
 // Compaction lineage (net-new — no legacy behavior to preserve, adapter-only like worker runs).
