@@ -250,7 +250,8 @@ function StepView({ step, width }: { step: Store.StepState; width: number }) {
     const glow  = isRunning ? _GLOW[tick]              : null;
     const color = isRunning ? 'yellow'                 : STATUS_COLOR[step.status];
     const label = _friendlyLabel(step.label);
-    const model = step.model ? ` [${step.model.split('/').pop()}]` : '';
+    // provider:model in full, as the WebUI step header shows it. Cutting at the last '/' dropped the provider (nous:meituan/longcat-… showed as longcat-…).
+    const model = step.model ? ` [${step.model}]` : '';
     const tokIn  = step.tokens.inp != null ? `↑${step.tokens.inp}` : '';
     const tokOut = step.tokens.out != null ? `↓${step.tokens.out}` : '';
     const tok = (tokIn || tokOut) ? ' ' + [tokIn, tokOut].filter(Boolean).join(' ') : '';

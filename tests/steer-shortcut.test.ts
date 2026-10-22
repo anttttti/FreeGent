@@ -79,3 +79,11 @@ describe('TUI composer keys', () => {
         expect(src).toContain('never typed as text');
     });
 });
+
+describe('TUI step header', () => {
+    it('shows the provider with the model (provider:model), not only the last path segment', () => {
+        const src = readFileSync('tui-app.tsx', 'utf8');
+        expect(src).toContain("const model = step.model ? ` [${step.model}]` : '';");
+        expect(src).not.toContain("step.model.split('/').pop()");
+    });
+});
