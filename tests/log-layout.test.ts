@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutWindow, wrapRows, cellWidth } from '../log-layout.ts';
+import { layoutWindow, lazyHeights, wrapRows, cellWidth } from '../log-layout.ts';
 
 describe('log layout', () => {
     it('picks items by rows: a tall answer does not hide what comes after it (case 065)', () => {
@@ -35,5 +35,23 @@ describe('log layout', () => {
     });
     it('an empty log is a window of nothing', () => {
         expect(layoutWindow([], 10, 0)).toMatchObject({ start: 0, end: 0, maxOffset: 0 });
+    });
+});
+
+describe('lazyHeights: a redraw measures only the items the window reaches', () => {
+    it('gives the same window as measuring everything', () => {
+        const eager = Array.from({ length: 500 }, (_, i) => 1 + (i % 7 === 0 ? 5 : 0) + (i % 50 === 0 ? 30 : 0));
+        for (const [height, offset] of [[24, 0], [24, 40], [10, 499], [3, 0], [60, 120]] as const) {
+            let asked = 0;
+            const lazy = lazyHeights(eager.length, i => { asked++; return eager[i]; });
+            expect(layoutWindow(lazy, height, offset)).toEqual(layoutWindow(eager, height, offset));
+            expect(asked).toBeLessThan(80);                              // not the 500 of the conversation
+        }
+    });
+    it('measures an item once however often it is read', () => {
+        let asked = 0;
+        const h = lazyHeights(10, i => { asked++; return i + 1; });
+        expect([h[3], h[3], h[3], h.length]).toEqual([4, 4, 4, 10]);
+        expect(asked).toBe(1);
     });
 });

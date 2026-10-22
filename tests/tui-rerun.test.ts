@@ -148,3 +148,14 @@ describe('wired into the TUI', () => {
         expect(main).toMatch(/Store\.setNextTurnOrigin\(\{ text, historyLen, ckptId: id, model: _modelLabel\(\) \}\)/);
     });
 });
+
+describe('the log does not measure the whole conversation on every redraw', () => {
+    const src = (f: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', f), 'utf8');
+    const app = src('tui-app.tsx');
+    it('heights are lazy, and the cleaned and wrapped text of a finished turn is kept', () => {
+        expect(app).toMatch(/const heights  = lazyHeights\(items\.length, i => \{/);
+        expect(app).toMatch(/return _memo\(_cleanedFinal, text, \(\) => \{/);
+        expect(app).toMatch(/_rowsOf\(_finalRows, _cleanFinalText\(item\.turn\.finalText!\), width - 2\)/);
+        expect(app).not.toMatch(/items\.map\(it =>\s+it\.kind === 'user'/);
+    });
+});

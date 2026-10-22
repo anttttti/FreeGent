@@ -558,12 +558,14 @@ async function main() {
     Store.setReady();
     _t('main:after_setReady');
 
-    // Heartbeat: fires every 200 ms so any >200 ms gap in the log marks the freeze.
-    let _hbLast = Date.now();
+    // Heartbeat: fires every 200 ms. A gap over 400 ms is logged (a freeze), and a line every 10 s shows the process is alive; the
+    // 5 lines a second it used to write grew the log by 50,000 lines in three hours, each one a synchronous disk write.
+    let _hbLast = Date.now(), _hbTick = 0;
     _heartbeatInterval = setInterval(() => {
         const now = Date.now();
         const gap = now - _hbLast;
         _hbLast = now;
+        if (gap <= 400 && ++_hbTick % 50 !== 0) return;
         try { appendFileSync(opts.logFile,
             JSON.stringify({ timing: { step: 'heartbeat', ms: now - _t0, gap } }) + '\n', 'utf8'); } catch {}
     }, 200);

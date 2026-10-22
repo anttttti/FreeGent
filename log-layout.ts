@@ -53,7 +53,7 @@ export interface LogWindow {
  * Pick the items that fit `height` rows, ending `offset` items before the newest. The newest item of the window is always included: a
  * too-tall one is shown from its tail. `heights[i]` is the number of rows item i needs.
  */
-export function layoutWindow(heights: number[], height: number, offset: number): LogWindow {
+export function layoutWindow(heights: ArrayLike<number>, height: number, offset: number): LogWindow {
     const n = heights.length;
     const maxOffset = Math.max(0, n - 1);
     const off = Math.max(0, Math.min(offset, maxOffset));
@@ -77,4 +77,23 @@ export function layoutWindow(heights: number[], height: number, offset: number):
         used += h; start--;
     }
     return { start, end, tailRows, maxOffset };
+}
+
+/**
+ * Heights worked out only for the items asked about, once each. layoutWindow reads the few items at the end of the log, but the log used to
+ * measure every item of the conversation (wrapping each answer) on every redraw, so the cost of a redraw grew with the length of the chat.
+ */
+export function lazyHeights(length: number, heightOf: (i: number) => number): ArrayLike<number> {
+    const memo = new Map<number, number>();
+    return new Proxy({ length } as ArrayLike<number>, {
+        get(target, key) {
+            if (typeof key === 'string' && /^\d+$/.test(key)) {
+                const i = Number(key);
+                let h = memo.get(i);
+                if (h === undefined) { h = heightOf(i); memo.set(i, h); }
+                return h;
+            }
+            return (target as any)[key];
+        },
+    });
 }
