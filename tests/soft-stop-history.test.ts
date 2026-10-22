@@ -15,9 +15,14 @@ const exchange = () => [
 beforeEach(() => setChatHistory([]));
 
 describe('soft stop and the recorded step', () => {
-    it('without the closing line the repair drops the finished step', () => {
+    it('without the closing line (a hard stop) the repair keeps the finished step: its result is answered by the assistant message above it', () => {
         const repaired = repairHistoryArray(exchange());
-        expect(repaired.map(m => m.role)).toEqual(['user']);          // what happened before this fix
+        expect(repaired.map(m => m.role)).toEqual(['user', 'assistant', 'tool']);    // it used to erase every trailing finished step (hermes C14)
+    });
+    it('several finished steps at the end of a hard-stopped turn all stay; an unanswered call at the end does not', () => {
+        const h = [...exchange(), ...exchange().slice(1).map((m: any, i: number) => i === 0 ? { ...m, tool_calls: [{ ...m.tool_calls[0], id: 'c2' }] } : { ...m, tool_call_id: 'c2' }),
+                   { role: 'assistant', content: null, tool_calls: [{ id: 'c3', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }];
+        expect(repairHistoryArray(h).map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool']);
     });
     it('a soft stop after a tool step closes the exchange, and the repair keeps it', () => {
         setChatHistory(exchange());

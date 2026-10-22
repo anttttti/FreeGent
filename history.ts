@@ -225,7 +225,13 @@ export function _historyResult(name: string, result: any, forWorker: boolean, st
 // the agent knows to read them in a separate step instead of silently missing content.
 export function truncateResultForHistory(name: string, result: any, { isDirector = false, seenReadFiles = null, seenListFiles = null, stepBudget = null }: any = {}): any {
     if (ls('fg_agent_tool_result_truncation', 'true') === 'false') return result;
-    const configLimit = getAgentMaxToolResult();
+    // The main agent has its own cap ("Max result size — main agent", 0 = no cap); the worker setting used to decide for both, so the main
+    // agent's setting capped nothing but the block extraction of read_file (opencode §15).
+    const _directorCap = isDirector && typeof getDirectorMaxToolResult === 'function' ? getDirectorMaxToolResult() : null;
+    const configLimit = _directorCap !== null ? (_directorCap > 0 ? _directorCap : Infinity) : getAgentMaxToolResult();
+    // What a result keeps is charged to the step's budget, whichever tool made it: results that were free let one step's mixed batch
+    // hold far more than the budget (a repository map, a research report and stderr cost nothing: codex R42-001).
+    const charge = (n: number) => { if (stepBudget) stepBudget.remaining = Math.max(0, stepBudget.remaining - Math.max(0, n)); };
     // Per-result limit: min of configLimit and remaining step budget (if tracking).
     const limit = stepBudget ? Math.min(configLimit, Math.max(0, stepBudget.remaining)) : configLimit;
     const _rf = seenReadFiles ?? _seenReadFiles;
@@ -292,8 +298,10 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // Suppress duplicate read of the same range whose content is still in history
         // (not yet pruned) and unchanged. pruneSessionHistory sets 'pruned' so post-prune
         // re-reads serve content again (never starve the model).
+        // Only a read that showed everything is "already read". One that was cut is not: the model asking for the same range again wants what
+        // was left out, and was told the full content was in its history (opencode §14).
         const priorState = _rf.get(rangeKey);
-        if (priorState === 'full' || priorState === 'truncated') {
+        if (priorState === 'full') {
             return { path: result.path, note: `Already read "${result.path}" — the full content is in your prior tool result for this file. Read a different range if you need other sections.` };
         }
 
@@ -311,7 +319,7 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         const effectiveLen = val?.length ?? 0;
         if (typeof val === 'string' && effectiveLen > limit) {
             const truncated = val.slice(0, limit);
-            if (stepBudget) stepBudget.remaining -= truncated.length;
+            charge(truncated.length);
             if (name === 'read_file') {
                 const startLine = result.start_line || 1;
                 const shownLines = (truncated.match(/\n/g) || []).length + 1;
@@ -319,6 +327,8 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
                 const shownEnd = startLine + shownLines - 1;
                 const totalEnd = startLine + totalLines - 1;
                 const _remaining = totalEnd - shownEnd;
+                // Cut inside the last line (a one-line file, a very long line): there are no further lines to point at, and "lines 2–1" is nonsense.
+                if (_remaining <= 0) return { ...result, [strField]: truncated + `\n[…${effectiveLen - limit} more characters of line ${shownEnd} not shown]` };
                 const _hint = _remaining > 500
                     ? `use start_line/end_line to read a specific range`
                     : `use start_line=${shownEnd + 1} to read more`;
@@ -328,12 +338,17 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
             // stderr has its own cap below, which this return used to skip.
             if (typeof out.stderr === 'string' && out.stderr.length > limit)
                 out.stderr = out.stderr.slice(0, limit) + `\n[…${out.stderr.length - limit} chars not shown]`;
+            if (typeof out.stderr === 'string') charge(out.stderr.length);
             return out;
         }
-        if (stepBudget) stepBudget.remaining -= effectiveLen;
+        charge(effectiveLen);
     }
-    if (name === 'execute_code' && typeof result.stderr === 'string' && result.stderr.length > limit) {
-        return { ...result, stderr: result.stderr.slice(0, limit) + `\n[…${result.stderr.length - limit} chars not shown]` };
+    if (name === 'execute_code' && typeof result.stderr === 'string') {
+        if (result.stderr.length > limit) {
+            charge(limit);
+            return { ...result, stderr: result.stderr.slice(0, limit) + `\n[…${result.stderr.length - limit} chars not shown]` };
+        }
+        charge(result.stderr.length);
     }
 
     if (name === 'web_search' && Array.isArray(result.results)) {
@@ -353,16 +368,21 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         return capped;
     }
 
-    if (name === 'repo_map' && typeof result.map === 'string' && result.map.length > limit) {
-        return { ...result, map: result.map.slice(0, limit) + `\n[…truncated, ${result.files_mapped} files total]` };
+    if (name === 'repo_map' && typeof result.map === 'string') {
+        charge(Math.min(result.map.length, limit));
+        if (result.map.length > limit) return { ...result, map: result.map.slice(0, limit) + `\n[…truncated, ${result.files_mapped} files total]` };
+        return result;
     }
 
-    if (name.startsWith('mcp__') && typeof result.content === 'string' && result.content.length > limit) {
-        return { ...result, content: result.content.slice(0, limit) + `\n[…${result.content.length - limit} chars not shown]` };
+    if (name.startsWith('mcp__') && typeof result.content === 'string') {
+        charge(Math.min(result.content.length, limit));
+        if (result.content.length > limit) return { ...result, content: result.content.slice(0, limit) + `\n[…${result.content.length - limit} chars not shown]` };
+        return result;
     }
 
     if (name === 'search_workspace' && Array.isArray(result.matches)) {
         const joined = result.matches.join('\n---\n');
+        charge(Math.min(joined.length, limit));
         if (joined.length > limit) {
             const truncated = joined.slice(0, limit);
             const matches = truncated.split('\n---\n');
@@ -373,8 +393,12 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
     // Any other tool (context7_docs, deep_research, check_page, run_git, academic_search, an MCP
     // result that is not a single string, a tool added later): bounded by the configured limit, so
     // no single result can exceed it. Handler-side caps normally keep these far below it.
-    return _capAnyResult(result, configLimit);
+    // With the step's budget in play the cap is what is left of it (never below a floor: a result is cut, not dropped), and what is kept is charged.
+    const capped = _capAnyResult(result, stepBudget ? Math.min(configLimit, Math.max(limit, GENERIC_RESULT_FLOOR)) : configLimit);
+    if (stepBudget) { try { charge(JSON.stringify(capped)?.length ?? 0); } catch {} }
+    return capped;
 }
+const GENERIC_RESULT_FLOOR = 2000;
 
 // Bound a result of any shape: the longest strings are cut in half until it fits; a result that
 // is still too large (many short entries) is replaced by the start of its JSON.
@@ -507,66 +531,30 @@ export function repairHistoryArray(hist: any[]): any[] {
     // They must be removed before the API call, not just skipped, or they serialize as null.
     hist = hist.filter(m => m != null);
 
-    // Strip any trailing tool-result messages whose tool_call_ids may be
-    // orphaned (e.g. after a model switch mid-step or after compaction).
-    while (hist.length && hist[hist.length - 1].role === 'tool') hist.pop();
-    // Remove a trailing assistant message that declared tool_calls but
-    // whose results were just stripped (or never arrived).
-    const last = hist[hist.length - 1];
-    if (last?.role === 'assistant' && last.tool_calls?.length) hist.pop();
-
-    // Verify each assistant+tool_calls turn has exactly one matching tool response per id.
-    // Remove whole turns where the tool_call/response pairing is broken.
-    const answeredIds = new Set(hist.filter(m => m?.role === 'tool').map(m => m.tool_call_id));
-    for (let i = hist.length - 1; i >= 0; i--) {
+    // A tool call and its results are one block: an assistant message with tool_calls, followed at once by exactly one tool message per call id.
+    // Each block is checked as such (not by sets over the whole history, which let a result stand under the wrong assistant, or twice), and a block
+    // that is whole stays wherever it is. The old pass stripped every trailing tool message "because it might be orphaned": after a hard stop (no
+    // closing line is written) that erased all the completed steps at the end of the turn (hermes C14), and its later passes left unanswered calls
+    // and misattached or doubled results behind (codex R11-001).
+    const repaired: any[] = [];
+    for (let i = 0; i < hist.length;) {
         const m = hist[i];
-        if (!m || m.role !== 'assistant' || !m.tool_calls?.length) continue;
-        const missing = m.tool_calls.some(tc => !answeredIds.has(tc.id));
-        if (missing) {
-            // Remove this assistant message and any immediately following tool messages
-            let end = i + 1;
-            while (end < hist.length && hist[end].role === 'tool') end++;
-            hist.splice(i, end - i);
-        }
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+            let j = i + 1;
+            const first = new Map<string, any>();                     // call id → the first tool message that answers it in this block
+            while (j < hist.length && hist[j].role === 'tool') { if (!first.has(hist[j].tool_call_id)) first.set(hist[j].tool_call_id, hist[j]); j++; }
+            if (m.tool_calls.every((tc: any) => first.has(tc.id))) {
+                repaired.push(m);
+                const done = new Set<string>();
+                for (const tc of m.tool_calls) if (!done.has(tc.id)) { done.add(tc.id); repaired.push(first.get(tc.id)); }
+            }
+            // else: calls without all their results (interrupted, or separated from them): the whole block goes; so do its leftover results
+            i = j;
+        } else if (m.role === 'tool') {
+            i++;                                                      // a result that does not follow its own assistant message
+        } else { repaired.push(m); i++; }
     }
-
-    // Full-history pass: remove ANY tool message not immediately preceded by
-    // an assistant message that declared its tool_call_id. This catches the
-    // case where a sliding-window or compaction trim left a user-nudge message
-    // between an assistant turn and its tool results, producing the sequence
-    // [..., user, tool] which Mistral rejects with "Unexpected role 'tool'
-    // after role 'user'". Scan backwards so splice indices stay valid.
-    const declaredIds = new Set(
-        hist
-            .filter(m => m?.role === 'assistant' && m.tool_calls?.length)
-            .flatMap(m => m.tool_calls.map(tc => tc.id))
-    );
-    for (let i = hist.length - 1; i >= 0; i--) {
-        const m = hist[i];
-        if (!m || m.role !== 'tool') continue;
-        if (!declaredIds.has(m.tool_call_id)) {
-            // Orphaned tool result — remove this block and its preceding assistant msg.
-            let start = i;
-            while (start > 0 && hist[start - 1].role === 'tool') start--;
-            if (start > 0 && hist[start - 1].role === 'assistant' && hist[start - 1].tool_calls?.length) start--;
-            hist.splice(start, i - start + 1);
-            i = start;
-            continue;
-        }
-        // tool_call_id is declared — but verify the immediately preceding message
-        // is either another tool or the assistant that owns these tool_calls.
-        // If it's a user message, remove all tool messages in this block.
-        let blockStart = i;
-        while (blockStart > 0 && hist[blockStart - 1].role === 'tool') blockStart--;
-        const prev = hist[blockStart - 1];
-        if (prev && prev.role !== 'assistant') {
-            // Tool block is not preceded by its assistant message — remove it.
-            let removeStart = blockStart;
-            if (removeStart > 0 && hist[removeStart - 1].role === 'assistant' && hist[removeStart - 1].tool_calls?.length) removeStart--;
-            hist.splice(removeStart, i - removeStart + 1);
-            i = removeStart;
-        }
-    }
+    hist = repaired;
     // Strip <think>/<thinking> tags from stored tool results so they don't leak
     // into the API request or prime the model to emit similar tags in its output.
     // (_stripThinking lives in llm-shared; guard for bare test environments.)
