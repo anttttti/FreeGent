@@ -2560,6 +2560,8 @@ const _fnTagStrips = new Map<string, number>();
 const FN_TAG_STRIP_BENCH_AT = 6;
 const FN_TAG_STRIP_BENCH_MS = 15 * 60_000;
 
+const FN_TAG_NOTE_MARKER = '\n\n## Tool-call format (this endpoint)\n';
+const FN_TAG_NOTE = FN_TAG_NOTE_MARKER + 'This endpoint does not execute the tool schema natively — to call a tool, output exactly this tag as literal text: `<function=NAME>{"arg":"value"}</function>` (NAME is the tool name, the body is valid JSON arguments). Output ONLY the tag, nothing else on that line — no narration before it, no fabricated result after it. The real result arrives in the next turn.';
 async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null, forceToolCall = false } = {}): Promise<any> {
     // A saved priority list with no usable model (all paused, switched off or keyless) must not quietly fall back to the
     // built-in Gemini default: the request would go to a model the user never listed.
@@ -2587,11 +2589,10 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // written as a literal text tag, which nothing tells the model unless we say so explicitly.
     // Without this, compliance is inconsistent: sometimes a valid tag, sometimes bare narration
     // with no tag at all (silently not a tool call), occasionally a hallucinated fake tag+result.
-    const _fnTagNote = toolFormat === 'fn-tag'
-        ? '\n\n## Tool-call format (this endpoint)\nThis endpoint does not execute the tool schema natively — to call a tool, output exactly this tag as literal text: `<function=NAME>{"arg":"value"}</function>` (NAME is the tool name, the body is valid JSON arguments). Output ONLY the tag, nothing else on that line — no narration before it, no fabricated result after it. The real result arrives in the next turn.'
-        : '';
-    // Forked worker: reuse the parent's system prompt and tools verbatim (prefix-cache identity).
-    const sysPrompt = forkPrefix ? forkPrefix.system : (forWorker ? _bwsp(roleOverride) : _bsp()) + _fnTagNote;
+    const _fnTagNote = toolFormat === 'fn-tag' ? FN_TAG_NOTE : '';
+    // Forked worker: the parent's system prompt and tools (prefix-cache identity), but the tool-call note belongs to the endpoint that is being called: the
+    // parent's is taken off the end and this endpoint's put on, so a child with another format is not told the parent's rules (codex R40-001). The prefix is still shared.
+    const sysPrompt = forkPrefix ? forkPrefix.system.split(FN_TAG_NOTE_MARKER)[0] + _fnTagNote : (forWorker ? _bwsp(roleOverride) : _bsp()) + _fnTagNote;
     // log the request header (model, system prompt size, tool count).
     // evtSession / evtStep come from runTurn via the options object.
     if (evtSession) {
@@ -2615,7 +2616,8 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // deriveMessages() returns [] (only turn/start is logged) and the task would be silently lost.
     const _evtSessOAI = (evtSession && !forWorker) ? _getEvtSession(evtSession) : null;
     let _effectiveHist: any[] = _evtSessOAI ? _evtSessOAI.deriveMessages() : (localHistory ?? []);
-    if (_evtSessOAI && toolFormat === 'fn-tag') _effectiveHist = fnTagMessages(_effectiveHist);
+    // The worker's own history is projected too: a worker on a text-tag endpoint was sent native tool-call blocks it was not set up to read (codex R39-001).
+    if (toolFormat === 'fn-tag') _effectiveHist = fnTagMessages(_effectiveHist);
     // For custom endpoints, clamp max_tokens so prompt + output fits within the configured context window.
     // Prefer exact prompt_tokens from the previous response (inputTokensHint) + estimate of new messages
     // added since then; fall back to estimateTokens * 1.25 when no prior call exists.

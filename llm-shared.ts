@@ -72,22 +72,37 @@ function _degenerateSummary(summary: string): boolean {
 
 // Facts the harness knows for certain, appended to every summary so they never depend on the
 // summarizer: files written this session, and the last few tool calls with their result headline.
+// Did a write tool's recorded result say the write failed? Results start with "[TOOL ERROR …]" when the call failed, or hold an error / success:false field.
+function _writeResultFailed(result: string): boolean {
+    if (/^\s*\[(?:TOOL )?ERROR/i.test(result)) return true;
+    try {
+        const v = JSON.parse(result.replace(/^\[[^\]]*\]\n/, ''));
+        return !!(v && typeof v === 'object' && (v.error || v.success === false || v.ok === false));
+    } catch { return false; }
+}
 function _harnessFacts(hist: any[]): string {
     const written = new Set<string>();
+    const failed = new Map<string, string>();   // path → why the last attempt did not apply
     const calls: string[] = [];
     const results = new Map(hist.filter((m: any) => m.role === 'tool').map((m: any) => [m.tool_call_id, String(m.content ?? '')]));
     for (const m of hist) for (const tc of m.tool_calls ?? []) {
         let a: any = {};
         try { a = JSON.parse(tc.function?.arguments || '{}'); } catch {}
         const name = tc.function?.name ?? '?';
-        if (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file'].includes(name) && a.path) written.add(a.path);
         const r = results.get(tc.id) ?? '';
+        // "Authoritative" must mean written. A call is a write only when its recorded result does not say it failed; an attempt that failed is listed as that, so a
+        // model resuming after the compaction does not take an edit that never applied for a done one (codex R3-001).
+        if (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file'].includes(name) && a.path) {
+            if (_writeResultFailed(r)) failed.set(a.path, r.replace(/^\[[^\]]*\]\n/, '').replace(/\s+/g, ' ').slice(0, 100));
+            else { written.add(a.path); failed.delete(a.path); }
+        }
         // Result content is "[TOOL ERROR …]\n" / "[EXIT CODE n]\n" prefix + JSON.
         try { for (const p of JSON.parse(r.replace(/^\[[^\]]*\]\n/, '')).files_written ?? []) written.add(p); } catch {}
         calls.push(`${name}(${JSON.stringify(a).slice(0, 120)}) → ${r.split('\n')[0].slice(0, 150)}`);
     }
     const files = [...written];
-    return `[Harness facts — authoritative]\nFiles written this session: ${files.slice(0, 30).join(', ') || 'none'}${files.length > 30 ? ` (+${files.length - 30} more)` : ''}\nLast tool calls:\n${calls.slice(-3).join('\n') || 'none'}`;
+    const notApplied = [...failed].filter(([p]) => !written.has(p)).slice(-10);
+    return `[Harness facts — authoritative]\nFiles written this session: ${files.slice(0, 30).join(', ') || 'none'}${files.length > 30 ? ` (+${files.length - 30} more)` : ''}${notApplied.length ? `\nWrites that did NOT apply (the file is unchanged by them): ${notApplied.map(([p, why]) => `${p} (${why})`).join('; ')}` : ''}\nLast tool calls:\n${calls.slice(-3).join('\n') || 'none'}`;
 }
 
 function _compactSummaryText(summary: string, facts: string): string {
