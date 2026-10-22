@@ -4,7 +4,7 @@
 
 import { canonTaskStatus, TASK_DIRS } from './task-status.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
-import { validateOutput } from './step-validator.js';
+import { validateOutput, judgeDecision } from './step-validator.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -50,7 +50,7 @@ function parseWorkflowMd(text) {
     let section: string | null = null;
     for (const line of text.split('\n')) {
         const secM = line.match(/^##\s+Gates:\s*(.+?)\s*$/i);
-        if (secM) { section = secM[1].trim().toLowerCase().replace(/\s*[→>]\s*/g, '->'); continue; }
+        if (secM) { section = secM[1].trim().toLowerCase().replace(/\s*(?:→|->|=>|>)\s*/g, '->'); continue; }
         if (/^##\s+Config/i.test(line)) { section = 'config'; continue; }
         if (section === 'config') {
             const m = line.match(/^([\w-]+):\s*(.+)$/);
@@ -393,6 +393,18 @@ async function gate_acceptance_review(taskPath, content) {
         llm, maxTokens: 300, budget: Infinity, ctx: { criteria, omitted, omittedCount, missing },
     });
 
+    // The answer is about the criteria, the code and the status the reviewer was shown. If any of them changed while it thought (the criteria edited, the
+    // code replaced, the task blocked), the answer says nothing about the task as it is now and must not complete it or override the newer decision
+    // (codex R35-001). It is not a verdict either way, so the transition is declined without counting as a failed review.
+    if (!unavailable && reply.trim()) {
+        const fresh = await agentReadFile(taskPath).catch(() => null);
+        const criteriaNow = fresh == null ? null : (_mdSection(fresh, 'Acceptance', 'Acceptance Criteria') ?? '').trim();
+        const statusNow   = fresh == null ? null : canonTaskStatus(parseFrontmatter(fresh).status);
+        const codeNow     = (await gatherReviewCode(filePaths)).text;
+        if (criteriaNow !== criteria || statusNow !== canonTaskStatus(parseFrontmatter(content).status) || codeNow !== fileContents)
+            return { blocks: false, outcome: 'stale', detail: 'The task or the code changed while the acceptance review was running, so its answer does not apply to what is there now. Run the transition again.' };
+    }
+
     const ts = new Date().toISOString().slice(0, 16) + 'Z';
     if (hit) {
         const why = hit.payload || 'see the reviewer note in the task file';
@@ -402,8 +414,7 @@ async function gate_acceptance_review(taskPath, content) {
     // A pass needs a readable NO. The validator returns null both for NO and for a reply it could not
     // read (a refusal, prose with no verdict): the second is "unknown", not "met" (uploads review
     // 2026-10-14, 4.2). Same decision rule as validateOutput: the last line that starts with YES or NO.
-    const decision = reply.split('\n').filter(l => /^\s*\W*(YES|NO)\b/i.test(l)).at(-1) ?? '';
-    const readable = /^\s*\W*NO\b/i.test(decision);
+    const readable = judgeDecision(reply) === 'no';
     if (unavailable || !reply.trim()) {
         await appendGateNote(taskPath, `## QA: Acceptance Review (${ts})\nNot verified: the reviewer could not be reached or gave no answer. Check the criteria by hand.`);
         return { blocks: false, outcome: 'unknown', detail: 'Reviewer unavailable — acceptance not verified' };
@@ -541,19 +552,23 @@ async function _transitionTask(taskPath, toStatus) {
     // If the model jumped straight from in-progress to done (skipping in-review),
     // in-progress->done is in QA_DEFAULT_GATES with the full review suite.
     const gateKey  = `${fromStatus}->${toStatus}`;
-    const gateNames = workflowGates[gateKey] || [];
+    // A move to done from a state the workflow has no gates for (todo, open, blocked …) is judged like the move from in-progress: leaving it
+    // gateless let a task be completed with every check skipped by jumping straight to done (codex R33-001).
+    const gateNames = workflowGates[gateKey] ?? (toStatus === 'done' ? workflowGates['in-progress->done'] : undefined) ?? [];
     const passed: string[] = [], unknown: Array<{ gate: string; detail?: string }> = [], skipped: string[] = [];
 
     const failures = [];
+    let stale: string | null = null;
     for (const gateName of gateNames) {
         const gateFn = GATES[gateName];
         if (!gateFn) continue;
 
-        let result: { blocks: boolean; reason?: string; detail?: string; outcome?: 'unknown' | 'skipped' };
+        let result: { blocks: boolean; reason?: string; detail?: string; outcome?: 'unknown' | 'skipped' | 'stale' };
         try   { result = await gateFn(taskPath, content); }
         catch (e) { result = { blocks: false, outcome: 'unknown', detail: `Gate error: ${e.message}` }; }
 
         const ts = new Date().toISOString().slice(0, 16) + 'Z';
+        if (result.outcome === 'stale') { stale = result.detail || 'The task changed while it was being checked.'; break; }
         if (result.blocks) {
             await appendGateNote(taskPath, `## Gate: ${gateName} FAILED (${ts})\n${result.reason || ''}`);
             failures.push({ gate: gateName, reason: result.reason });
@@ -565,6 +580,8 @@ async function _transitionTask(taskPath, toStatus) {
             passed.push(gateName);
         }
     }
+
+    if (stale) return { transitioned: false, reason: stale };
 
     if (failures.length) {
         if (toStatus === 'done' || fromStatus === 'in-review') {

@@ -57,7 +57,9 @@ const _SKILL_TRIGGER_RULES = [
     { field: 'trigger', match: (s, i) =>
         s.trigger.split(',').some(t => {
             const w = t.trim().toLowerCase();
-            return new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(i.lowerText);
+            // The boundaries are outside the whole literal keyword (\b is a word/non-word edge, which is no boundary for a keyword that itself begins or ends with
+            // punctuation: "c++", "c#", ".net" never matched: codex R36-001). No lookbehind: older Safari does not parse it.
+            return new RegExp(`(^|[^A-Za-z0-9_])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`).test(i.lowerText);
         }) },
     { field: 'trigger_on_filetype', match: (s, i) =>
         s.trigger_on_filetype.split(',').some(spec => {
