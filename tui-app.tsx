@@ -16,7 +16,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useWindowSize, useApp } from 'ink';
 import * as Store from './tui-store.js';
-import { sendMessage, stopAgent, startNewSession, showRestoredConversation, retryLast, rewindLast, setMouseHandler, setScrollHandler, runCompact, runGoal, listWorkspaceSessions, resumeSession, isTurnBusy } from './fg-tui.js';
+import { sendMessage, stopAgent, startNewSession, showRestoredConversation, retryLast, rewindLast, rewindToTurn, rerunTurn, rerunFromStep, setMouseHandler, setScrollHandler, runCompact, runGoal, listWorkspaceSessions, resumeSession, isTurnBusy } from './fg-tui.js';
 import { goalRunning, steerGoal } from './goal.js';
 import { forceSkillsNextTurn } from './turn-context.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
@@ -42,10 +42,51 @@ function _registerClick(row: number, colFrom: number, colTo: number, action: () 
 }
 
 function _handleMouseClick(row: number, col: number) {
+    // The narrowest target under the pointer: a button inside a row that toggles as a whole (the turn header's Rewind and Rerun).
+    let best: { width: number; action: () => void } | null = null;
     for (const [key, action] of _clickTargets) {
         const [r, cf, ct] = key.split(':').map(Number);
-        if (r === row && col >= cf && col <= ct) { action(); return; }
+        if (r === row && col >= cf && col <= ct && (!best || ct - cf < best.width)) best = { width: ct - cf, action };
     }
+    best?.action();
+}
+
+// A clickable piece of text (a button): registers the screen cells it covers after each render, like the section labels.
+function ClickText({ label, onClick, color }: { label: string; onClick: () => void; color?: string }) {
+    const ref = useRef<any>(null);
+    const prevKey = useRef<string | null>(null);
+    useEffect(() => {
+        if (prevKey.current) { _clickTargets.delete(prevKey.current); prevKey.current = null; }
+        const node = ref.current;
+        if (!node?.yogaNode) return;
+        const w = node.yogaNode.getComputedWidth();
+        if (w === 0) return;
+        const row = _absTop(node), col = _absLeft(node);
+        const key = `${row}:${col}:${col + w - 1}`;
+        _registerClick(row, col, col + w - 1, onClick);
+        prevKey.current = key;
+        return () => { _clickTargets.delete(key); prevKey.current = null; };
+    });
+    return <Box ref={ref} marginRight={1}><Text color={color ?? 'cyan'}>{label}</Text></Box>;
+}
+
+// Rewind asks first (it removes the later messages and restores the files, and neither can be undone); Rerun of a turn does not, as in the WebUI.
+function _askRewind(turn: Store.TurnState) {
+    Store.askConfirm({
+        text: 'Rewind to before this message? The messages after it are removed and the workspace is restored to how it was then. This cannot be undone.',
+        choices: [{ key: 'y', label: 'Rewind', run: () => { void rewindToTurn(turn); } }, { key: 'n', label: 'Cancel', run: () => {} }],
+    });
+}
+function _askRerunStep(turn: Store.TurnState, step: Store.StepState) {
+    const canReset = !!turn.origin;
+    Store.askConfirm({
+        text: 'Rerun the turn from this step? This step and everything after it are removed.' + (canReset ? '' : ' (The workspace cannot be reset: the start of this turn was not copied.)'),
+        choices: [
+            { key: 'y', label: 'Rerun', run: () => { void rerunFromStep(turn, step, { resetWorkspace: false }); } },
+            ...(canReset ? [{ key: 'w', label: 'Rerun and reset the workspace to the start of the turn', run: () => { void rerunFromStep(turn, step, { resetWorkspace: true }); } }] : []),
+            { key: 'n', label: 'Cancel', run: () => {} },
+        ],
+    });
 }
 
 // Scroll-target registry: "rowFrom:rowTo" → (dir: 1|-1) => void.
@@ -112,6 +153,9 @@ function TurnHeader({ turn, turnIndex }: { turn: Store.TurnState; turnIndex: num
     const elapsed = turn.done && turn.steps.length
         ? ` ${((turn.steps.at(-1)!.startTime + turn.steps.at(-1)!.elapsed * 1000 - turn.startTime) / 1000).toFixed(1)}s`
         : '';
+    // Rewind and Rerun, as on the WebUI's turns: only for a turn started by a message, and not while a reply is running or a question is open.
+    const st = Store.getState();
+    const canAct = !!turn.origin && !turn.local && turn.done && !st.agentRunning && !st.confirm;
 
     return (
         <Box ref={ref}>
@@ -119,6 +163,13 @@ function TurnHeader({ turn, turnIndex }: { turn: Store.TurnState; turnIndex: num
                 {turn.collapsed ? '▶' : '▼'}{` Turn ${turnIndex}${elapsed}`}
             </Text>
             {!turn.done && <Text color="yellow"> (running)</Text>}
+            {canAct && (
+                <Box marginLeft={2}>
+                    <ClickText label="[⏮ Rewind]" onClick={() => _askRewind(turn)} />
+                    <ClickText label="[↺ Rerun]" onClick={() => { void rerunTurn(turn); }} />
+                    {turn.origin!.model ? <Text dimColor>{turn.origin!.model}</Text> : null}
+                </Box>
+            )}
         </Box>
     );
 }
@@ -245,7 +296,7 @@ function SectionLabel({ step, section }: { step: Store.StepState; section: Store
     );
 }
 
-function StepView({ step, width }: { step: Store.StepState; width: number }) {
+function StepView({ step, turn, width }: { step: Store.StepState; turn: Store.TurnState; width: number }) {
     const isRunning = step.status === 'running';
     const tick      = useAnimTick(isRunning);
     // Running: slow braille spinner + yellow glow (dim → normal → bold → normal → dim, 2 s/cycle)
@@ -261,16 +312,20 @@ function StepView({ step, width }: { step: Store.StepState; width: number }) {
     const secs  = ` ${step.elapsed.toFixed(1)}s`;
     const header = `  ${sym} ${label}${model}${tok}${secs}`;
     const visibleSections = SECTION_ORDER.filter(s => _hasSection(step, s));
+    // ↺ Rerun: the turn goes on from this step's model call (a tool step reruns the model call that made it), as the WebUI's step button does.
+    const st = Store.getState();
+    const canRerun = step.histLen !== null && step.status !== 'running' && !st.agentRunning && !st.confirm;
 
     return (
         <Box flexDirection="column">
             <Box>
                 <Text color={color} bold={!!glow?.bold} dimColor={!!glow?.dimColor}>{header}</Text>
-                {visibleSections.length > 0 && !step.collapsed && (
+                {(visibleSections.length > 0 || canRerun) && !step.collapsed && (
                     <Box marginLeft={2} flexDirection="row">
                         {visibleSections.map(s => (
                             <SectionLabel key={s} step={step} section={s} />
                         ))}
+                        {canRerun && <ClickText label="[↺ Rerun]" onClick={() => _askRerunStep(turn, step)} />}
                     </Box>
                 )}
             </Box>
@@ -354,7 +409,7 @@ function _cleanOutput(raw: string): string {
 type FlatItem =
     | { kind: 'user';        id: number; text: string }
     | { kind: 'turn-header'; turn: Store.TurnState; turnIndex: number }
-    | { kind: 'step';        step: Store.StepState }
+    | { kind: 'step';        step: Store.StepState; turn: Store.TurnState }
     | { kind: 'final-text';  turn: Store.TurnState };
 
 function _buildFlatItems(entries: Store.Entry[]): FlatItem[] {
@@ -370,7 +425,7 @@ function _buildFlatItems(entries: Store.Entry[]): FlatItem[] {
             out.push({ kind: 'turn-header', turn: e.turn, turnIndex });
             if (!e.turn.collapsed) {
                 for (const step of e.turn.steps)
-                    out.push({ kind: 'step', step });
+                    out.push({ kind: 'step', step, turn: e.turn });
                 // Only show final-text when there's something non-trivial to display
                 // (protocol-only responses like bare "COMPLETED" clean to empty).
                 if (e.turn.done && e.turn.finalText?.trim())
@@ -418,7 +473,7 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                     return <TurnHeader key={`th-${item.turn.id}`} turn={item.turn} turnIndex={item.turnIndex} />;
                 }
                 if (item.kind === 'step') {
-                    return <StepView key={item.step.id} step={item.step} width={width} />;
+                    return <StepView key={item.step.id} step={item.step} turn={item.turn} width={width} />;
                 }
                 if (item.kind === 'final-text') {
                     const all = wrapRows(_cleanFinalText(item.turn.finalText!), width - 2);
@@ -785,7 +840,7 @@ const HELP_LINES = [
     '  Alt+U   retry last turn',
     '',
     'Slash commands:',
-    '  /clear /compact /rewind',
+    '  /clear /compact /rewind /rerun   (also the [Rewind] [Rerun] buttons on a turn; click a step\'s [Rerun] to go on from it)',
     '  /export  — save chat as markdown file',
     '  /resume  — choose a previous session from a list  (/resume N: by number)',
     '  /goal <text> — keep working until the goal is met',
@@ -1022,7 +1077,7 @@ function QueuePanel({ queue, rows }: { queue: Store.QueuedMsg[]; rows: number })
 // ── Input line ────────────────────────────────────────────────────────────────
 
 const SLASH_COMMANDS = [
-    '/clear', '/stop', '/break', '/retry', '/rewind', '/compact',
+    '/clear', '/stop', '/break', '/retry', '/rerun', '/rewind', '/compact',
     '/export', '/resume', '/goal',
     '/project', '/tasks', '/agent', '/model', '/role',
     '/set', '/skills', '/settings', '/help',
@@ -1094,6 +1149,7 @@ function PromptInput({ value, onChange, onSubmit, onSteer, placeholder = '' }: {
     }, [value]);
 
     useInput((input, key) => {
+        if (Store.getState().confirm) return;                                  // a question is open: its keys (y / n …) are not text
         if (key.upArrow || key.downArrow || key.tab || key.escape) return;   // the app's handler (scroll, panels, suggestion, Esc)
         const v = text.current, c = cur.current;
         // Home / End (and Ctrl+Home / Ctrl+End): start and end of the message, as Ctrl+A / Ctrl+E.
@@ -1276,7 +1332,7 @@ function InputLine({ ready, running, promptSuggestion }: {
             Store.setPromptSuggestion('');
         }
         // ↑/↓ recall earlier messages. A panel with a list owns the arrows while it is open.
-        if ((key.upArrow || key.downArrow) && !Store.getState().activePanel) {
+        if ((key.upArrow || key.downArrow) && !Store.getState().activePanel && !Store.getState().confirm) {
             const r = InputHistory.step(browseRef.current, key.upArrow ? 'older' : 'newer', _historyList(), valueRef.current);
             if (!r) return;
             setBrowsing(r.browse);
@@ -1298,6 +1354,16 @@ function InputLine({ ready, running, promptSuggestion }: {
 
     return (
         <Box flexDirection="column">
+            {Store.getState().confirm && (
+                <Box flexDirection="column" paddingLeft={2}>
+                    <Text color="yellow">{Store.getState().confirm!.text}</Text>
+                    <Box>
+                        {Store.getState().confirm!.choices.map(c => (
+                            <ClickText key={c.key} label={`[${c.key}] ${c.label}`} onClick={() => { Store.askConfirm(null); c.run(); }} color={c.key === 'n' ? undefined : 'green'} />
+                        ))}
+                    </Box>
+                </Box>
+            )}
             {browse && (
                 <Box paddingLeft={2}>
                     <Text color="cyan">{`message ${InputHistory.position(browse, _historyList().length)}`}</Text>
@@ -1452,7 +1518,8 @@ async function handleSlash(cmd: string) {
         case '/stop':     stopAgent(); break;
         case '/break':    try { dom.window.stopAfterStep?.(); } catch {} break;
         case '/retry':    await retryLast(); break;
-        case '/rewind':   rewindLast(); break;
+        case '/rewind':   await rewindLast(); break;
+        case '/rerun':    { const t = Store.lastOriginTurn(); if (t) await rerunTurn(t); else Store.addNotice('_Nothing to rerun._'); break; }
         case '/compact':  await runCompact(); break;
         case '/export':   await runExport(_workspaceRoot); break;
         case '/resume':   await runResume(parts[1]); break;
@@ -1543,13 +1610,22 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
     //   STATUS_HEIGHT + logH + panelH + queueH + INPUT_HEIGHT = rows
     const queueH  = state.queue.length ? queueShown(state.queue.length, rows) + (state.queue.length > queueShown(state.queue.length, rows) ? 1 : 0) + 2 : 0;
     const panelH  = state.activePanel ? PANEL_HEIGHT : 0;
-    const logH    = Math.max(1, rows - STATUS_HEIGHT - INPUT_HEIGHT - panelH - queueH);
+    const confirmH = state.confirm ? 2 : 0;   // the question and its choices, above the input line
+    const logH    = Math.max(1, rows - STATUS_HEIGHT - INPUT_HEIGHT - panelH - queueH - confirmH);
 
     useInput((input, key) => {
         // Ctrl-C: soft break if running, hard exit if idle
         if (key.ctrl && input === 'c') {
             if (state.agentRunning) { try { dom.window.stopAfterStep?.(); } catch {} }
             else exit();
+            return;
+        }
+        // A question is open (Rewind, Rerun from a step): its keys answer it, everything else waits.
+        const pending = Store.getState().confirm;
+        if (pending) {
+            if (key.escape) { Store.askConfirm(null); return; }
+            const choice = pending.choices.find(c => c.key === input.toLowerCase());
+            if (choice) { Store.askConfirm(null); choice.run(); }
             return;
         }
         // Esc: close open panel, or stop generation if none open

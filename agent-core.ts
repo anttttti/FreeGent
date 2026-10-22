@@ -652,16 +652,24 @@ async function rerunFromStep(btn: HTMLElement): Promise<void> {
     updateTokenLabel();
     // Later messages belong to a history that no longer exists.
     while (oldDiv.nextElementSibling) oldDiv.nextElementSibling.remove();
+    // The new bubble takes over the steps before this one and continues the graph; the old one goes.
+    await runTurnFromHistory(() => {
+        const ph: RenderAdapter = createResponsePlaceholder(null, { continueFrom: { oldDiv, cutSeq: Number(btn.dataset.seq) } });
+        oldDiv.remove();
+        return ph;
+    });
+}
 
-    // Same run as the tail of _agentSendReady, minus the user message (already in history).
+// Runs the AI turn on the chat history as it stands, with no new user message: the tail of _agentSendReady. A rerun from a step uses it after cutting
+// the history back (the WebUI continues the step graph in a new bubble; the TUI continues the turn it cut). `makePlaceholder` builds the
+// turn's display.
+async function runTurnFromHistory(makePlaceholder: () => RenderAdapter): Promise<void> {
     setSoftStopPending(false);
-    _resetModelWarmup?.();
+    if (typeof _resetModelWarmup === 'function') _resetModelWarmup();   // a browser global: the terminal UI has none (a bare call there is a ReferenceError)
     setAgentStreaming(true);
     setInputState(false);
     repairOAIHistory();
-    // The new bubble takes over the steps before this one and continues the graph; the old one goes.
-    const _ph: RenderAdapter = createResponsePlaceholder(null, { continueFrom: { oldDiv, cutSeq: Number(btn.dataset.seq) } });
-    oldDiv.remove();
+    const _ph: RenderAdapter = makePlaceholder();
     setActivePlaceholder(_ph);
     setActiveAbortController(new AbortController());
     const placeholder = activePlaceholder;
@@ -687,7 +695,7 @@ async function rerunFromStep(btn: HTMLElement): Promise<void> {
 function bindRerunButton(btn: HTMLElement): void {
     btn.onclick = (e: MouseEvent) => { e.stopPropagation(); void rerunFromStep(btn); };
 }
-Object.assign(window, { rerunFromStep, bindRerunButton });
+Object.assign(window, { rerunFromStep, bindRerunButton, rerunTurnFromHistory: runTurnFromHistory });
 
 window.rewindToCheckpoint  = rewindToCheckpoint;
 (window as any).rewindWithConfirm = rewindWithConfirm;

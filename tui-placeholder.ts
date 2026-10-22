@@ -34,15 +34,23 @@ function _makeStepHandle(step: Store.StepState) {
     };
 }
 
-export function makeTuiPlaceholder(): object {
-    const turn = Store.addTurn();
+export function makeTuiPlaceholder(opts?: { continueTurn?: Store.TurnState }): object {
+    // A rerun from a step continues the turn it cut: the steps before it stay, the new ones follow.
+    const turn = opts?.continueTurn ?? Store.addTurn();
+    if (!opts?.continueTurn) turn.origin = Store.takeTurnOrigin();
+    // The history length the latest model call of this turn started from, and that step: what the Rerun button of that step and of the
+    // tool steps it made cuts back to.
+    let curHistLen: number | null = null;
+    let curThink: Store.StepState | null = null;
     // Track live handles so finalize() can abort them (mirrors chat-render.ts stopAll()).
     const _liveHandles: ReturnType<typeof _makeStepHandle>[] = [];
 
-    const _steps = (labels: string | string[]) =>
+    const _steps = (labels: string | string[], rerunnable = false, isThink = false) =>
         (Array.isArray(labels) ? labels : [labels])
             .map(l => {
-                const h = _makeStepHandle(Store.addStep(turn, l));
+                const st = Store.addStep(turn, l, rerunnable && curHistLen !== null ? { histLen: curHistLen, anchor: isThink ? null : curThink } : undefined);
+                if (isThink) curThink = st;
+                const h = _makeStepHandle(st);
                 _liveHandles.push(h);
                 return h;
             });
@@ -52,12 +60,14 @@ export function makeTuiPlaceholder(): object {
         // never reads its contents in the headless / TUI paths.
         div: { style: {}, appendChild: _noop, contains: () => false } as any,
 
-        addThinkingTask: () => {
+        addThinkingTask: (ctx?: { histLen?: number }) => {
+            if (typeof ctx?.histLen === 'number') curHistLen = ctx.histLen;
             const role  = mainAgentRole?.name ?? null;
             const label = role ? `Thinking:${role}` : 'Thinking…';
-            return _steps([label])[0];
+            return _steps([label], true, true)[0];
         },
-        addToolStep:    (labels: string | string[]) => _steps(labels),
+        // The main agent's own tool call is rerunnable (its model call reruns with it); workers' steps are not, as in the WebUI.
+        addToolStep:    (labels: string | string[], o?: { main?: boolean }) => _steps(labels, !!o?.main && (!Array.isArray(labels) || labels.length === 1)),
         addCompactStep: () => {
             const h = _steps(['compacting…'])[0];
             h.markCompact();

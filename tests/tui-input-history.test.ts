@@ -104,7 +104,7 @@ describe('wired into the TUI', () => {
     it('the composer handles the arrows with a header, the app scrolls the log with PgUp/PgDn and only uses the arrows for a panel without a list', () => {
         expect(app).toMatch(/InputHistory\.step\(browseRef\.current, key\.upArrow \? 'older' : 'newer'/);
         expect(app).toMatch(/message \$\{InputHistory\.position\(browse, _historyList\(\)\.length\)\}/);
-        expect(app).toMatch(/if \(\(key\.upArrow \|\| key\.downArrow\) && !Store\.getState\(\)\.activePanel\)/);
+        expect(app).toMatch(/if \(\(key\.upArrow \|\| key\.downArrow\) && !Store\.getState\(\)\.activePanel\b/);
         expect(app).toMatch(/if \(key\.pageUp\)\s+Store\.scroll\(Math\.max\(1, logH - 2\)\)/);
         expect(app).toMatch(/if \(state\.activePanel\) \{\s+if \(key\.upArrow\)\s+Store\.scroll\(1\)/);
     });
