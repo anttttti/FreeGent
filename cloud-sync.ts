@@ -63,7 +63,7 @@ export class CloudSyncClient {
     private base: string;
     private devKey: string;
     private doFetch: typeof fetch;
-    constructor(base: string, devKey: string, doFetch: typeof fetch = (...a) => fetch(...a)) {
+    constructor(base: string, devKey: string, doFetch: typeof fetch = (input, init) => fetch(input, init)) {
         // (no parameter properties: the headless CLI loads this file with Node's type stripping)
         this.base = base.replace(/\/$/, ''); this.devKey = devKey; this.doFetch = doFetch;
     }
