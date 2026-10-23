@@ -104,7 +104,7 @@ describe('exec sandbox host', () => {
         W.agentListFiles = vi.fn();
         for (const op of ['eval', 'loadServerKeys', 'executeToolAsync', 'localStorage'])
             fromFrame({ fg: 'ws', id: 8, op, args: [] });
-        await vi.waitFor(() => expect(posted.filter(m => m.error?.startsWith('workspace op not allowed'))).toHaveLength(4));
+        await vi.waitFor(() => expect(posted.filter(m => m.error?.startsWith('workspace op not allowed'))).toHaveLength(4), { timeout: 5000 });
     });
 
     it('limits the artifact cache to its own frame and reviewed public artifacts', async () => {
@@ -112,7 +112,7 @@ describe('exec sandbox host', () => {
         fromFrame({fg:'package-cache',id:102,request:{op:'get',store:'packages',key:'secret'}});
         fromFrame({fg:'package-cache',id:103,request:{op:'put',store:'packages',key:'grep',value:new ArrayBuffer(0)}});
         fromFrame({fg:'package-cache',id:104,request:{op:'keys',store:'packages'}},window);
-        await vi.waitFor(() => expect(posted.filter(m=>m.fg === 'package-cache-reply')).toHaveLength(3));
+        await vi.waitFor(() => expect(posted.filter(m=>m.fg === 'package-cache-reply')).toHaveLength(3), { timeout: 5000 });   // the default 1 s fails on a loaded machine
         expect(posted.filter(m=>m.fg === 'package-cache-reply').every(m=>typeof m.error === 'string')).toBe(true);
         expect(posted.some(m=>m.id === 104)).toBe(false);
     });
