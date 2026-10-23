@@ -725,6 +725,22 @@ export class LazySnapshot {
     }
 }
 
+/** A worker's execute_code writes its staged edits into the real workspace. When the worker is retried or gives up, those files go back to the
+ *  run-start content (or are deleted when the run created them), so a failed attempt leaves no edit that nothing reports (opencode §19). */
+async function _revertWorkerDiskEdits(context: any, epoch: number): Promise<void> {
+    const paths: Set<string> | undefined = context?.onDisk;
+    if (!paths?.size) return;
+    const snap: LazySnapshot | undefined = context.snapshot;
+    for (const p of [...paths]) {
+        try {
+            if (!snap?.has(p)) { await agentDeleteFile(p, { epoch }); continue; }
+            const orig = await snap.get(p);
+            if (orig !== undefined) await agentWriteFile(p, orig, null, { epoch });   // an unreadable original (binary) is left as it is
+        } catch { /* best effort: the file stays as the code left it */ }
+    }
+    paths.clear();
+}
+
 async function takeWorkspaceSnapshot(): Promise<LazySnapshot> {
     try { return new LazySnapshot((await agentListFiles()).filter(f => !f.isLocal)); }
     catch { return new LazySnapshot([]); }
@@ -1654,6 +1670,7 @@ async function executeWorkers(args: any): Promise<any> {
                 if (isPermanent) break;   // every further attempt would fail the same way, and cost a full run
                 if (attempt < MAX_RETRIES) {
                     // Transient error (stream abort, network) — clear partial staging and retry
+                    await _revertWorkerDiskEdits(context, epoch);
                     staging.clear();
                     binary.clear();
                     handle.setOutput(`Error: ${e.message}\n[Retrying… attempt ${attempt + 2} of ${MAX_RETRIES + 1}]`);
@@ -1662,6 +1679,7 @@ async function executeWorkers(args: any): Promise<any> {
             }
         }
         if (rotationSpec) _busyEndpointSpecs.delete(rotationSpec);
+        await _revertWorkerDiskEdits(context, epoch);
         const _isOverflow = /maximum context length/i.test(lastError.message || '');
         const _errMsg = _isOverflow
             ? `Context window overflow: workers read too much context to fit in the token limit. On the next run_workers call with the same tasks, use path_filter with repo_map, read specific line ranges (start_line/end_line), or split into smaller independent sub-tasks.`
@@ -1673,7 +1691,7 @@ async function executeWorkers(args: any): Promise<any> {
             output: '', error: _errMsg, status: 'blocked', note: _errMsg,
             startedAt: _agentStart, finishedAt: Date.now(), staged: [],
         });
-        return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), codeBinary: [] as string[], error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
+        return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), codeBinary: [...context.codeBinary] as string[], error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
     }));
 
     // Every write the run makes at the end goes through here: stamped with the run's project, and a failure is recorded, not swallowed (a failed

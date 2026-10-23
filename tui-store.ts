@@ -281,8 +281,22 @@ export function flushStep(step: StepState): void {
     _dirtySteps.delete(step);
 }
 
+// A step's request is the whole conversation as sent, so each step of a long run holds a larger copy of the history than the one before:
+// a few hundred steps were hundreds of MB of strings nobody opens. The latest steps keep theirs whole; older ones keep their start.
+const _KEEP_WHOLE = 24, _KEPT_CHARS = 6000;
+const _withRequest: StepState[] = [];
+function _trimOldRequests(): void {
+    while (_withRequest.length > _KEEP_WHOLE) {
+        const old = _withRequest.shift()!;
+        for (const k of ['request', 'prompt'] as const) {
+            const v = old[k];
+            if (typeof v === 'string' && v.length > _KEPT_CHARS + 200) old[k] = `${v.slice(0, _KEPT_CHARS)}\n… [${(v.length - _KEPT_CHARS).toLocaleString('en-US')} more characters dropped to save memory]`;
+        }
+    }
+}
 export function patchStep(step: StepState, patch: Partial<StepState>): void {
     Object.assign(step, patch);
+    if (typeof patch.request === 'string' || typeof patch.prompt === 'string') { if (_withRequest[_withRequest.length - 1] !== step) _withRequest.push(step); _trimOldRequests(); }
     _notify();
 }
 

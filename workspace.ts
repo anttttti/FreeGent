@@ -159,12 +159,24 @@ async function initDB() {
 }
 
 let _dbOpening: Promise<any> | null = null;
+// "Is there an imported local/ snapshot" is read from the records, not remembered: a flag set by one upload path and cleared by one
+// delete path went stale on project import, clear and reload (opencode §16, §17). Called wherever local/ records can appear or go.
+function _resyncImportedLocal(): Promise<void> {
+    return new Promise<void>(res => {
+        try {
+            const r = db.transaction(STORE, 'readonly').objectStore(STORE).count(IDBKeyRange.bound('local/', 'local0', false, true));   // every name starting "local/"
+            r.onsuccess = () => { _hasImportedLocal = (r.result as number) > 0; res(); };
+            r.onerror = () => res();
+        } catch { res(); }
+    });
+}
+
 async function ensureDB() {
     if (db) {
         try { db.transaction(STORE, 'readonly').abort(); return; }   // cheap liveness probe
         catch { db = null; }
     }
-    if (!_dbOpening) _dbOpening = initDB().finally(() => { _dbOpening = null; });
+    if (!_dbOpening) _dbOpening = initDB().then(() => _resyncImportedLocal()).finally(() => { _dbOpening = null; });
     await _dbOpening;
 }
 
@@ -199,7 +211,7 @@ async function writeWorkspaceFile(name, content, lastModified = null, encoding =
         tx.objectStore(STORE).put(record);
         // Resolve on COMMIT, not when the request is queued: a quota failure surfaces as an abort
         // afterwards, and a write reported as done that never landed left task files unchanged.
-        tx.oncomplete = () => { try { scheduleArtifactRefresh?.(name); } catch {} try { (window as any).refreshOpenFileTab?.(name); } catch {} try { (window as any).invalidateWorkspacePaths?.(); } catch {} resolve(); };
+        tx.oncomplete = () => { try { scheduleArtifactRefresh?.(name); } catch {} try { (window as any).refreshOpenFileTab?.(name); } catch {} try { (window as any).invalidateWorkspacePaths?.(); } catch {} if (String(name).startsWith('local/')) _hasImportedLocal = true; resolve(); };
         tx.onabort    = () => reject(tx.error ?? new Error('IndexedDB write aborted (storage full?)'));
         tx.onerror    = () => reject(tx.error ?? new Error('IndexedDB write failed'));
     });
@@ -243,7 +255,8 @@ async function applyWorkspaceBatch(writes: Array<{ name: string; content: string
         tx.oncomplete = () => {
             for (const w of writes) { try { scheduleArtifactRefresh?.(w.name); } catch {} try { (window as any).refreshOpenFileTab?.(w.name); } catch {} }
             try { (window as any).invalidateWorkspacePaths?.(); } catch {}
-            resolve();
+            if (opts.clearAll || deletes.some(n => n.startsWith('local/')) || writes.some(w => w.name.startsWith('local/'))) _resyncImportedLocal().then(() => resolve());
+            else resolve();
         };
         tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted (storage full?)'));
         tx.onerror = () => { /* the abort that follows rejects */ };
@@ -275,7 +288,7 @@ async function deleteWorkspaceFile(name) {
         const req = store.delete(name);
 
         req.onsuccess = () => {
-            transaction.oncomplete = () => { try { (window as any).invalidateWorkspacePaths?.(); } catch {} resolve(); };
+            transaction.oncomplete = () => { try { (window as any).invalidateWorkspacePaths?.(); } catch {} if (String(name).startsWith('local/')) _resyncImportedLocal().then(() => resolve()); else resolve(); };
             transaction.onerror = () => reject(transaction.error);
         };
         req.onerror = () => reject(req.error);
@@ -779,6 +792,8 @@ export function workspaceRootDir(): string { return String((_wa as any)?.root ??
 let _hasImportedLocal = false;
 
 export function hasLocalFolder(): boolean { return !!fsaHandle || _hasImportedLocal; }
+/** A live File System Access folder is connected (an imported local/ snapshot does not count): what restoring to disk needs. */
+export function hasFsaFolder(): boolean { return !!fsaHandle; }
 
 export async function agentListFiles() {
     if (_wa) return _wa.agentListFiles();
@@ -2987,6 +3002,7 @@ async function clearProject() {
             req.onsuccess = () => resolve();
             req.onerror   = () => reject(req.error);
         });
+        _hasImportedLocal = false;
         // Close local folder
         if (fsaHandle) closeFsaFolder();
         // Clear chat history from SQLite/IDB before wiping localStorage so we still have the IDs.
@@ -3133,7 +3149,7 @@ async function importProject(inputEl) {
 // fsaHandle is mutable module state — expose a live accessor, not a snapshot.
 Object.defineProperty(window, 'fsaHandle', { get: () => fsaHandle, configurable: true });
 Object.assign(window, { documentLibrary: _documentLibrary });
-Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder,
+Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
     getChatSnapshotInfo,
     initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile, applyWorkspaceBatch,

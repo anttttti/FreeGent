@@ -290,7 +290,7 @@ async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<void> {
             // dialog's "Restore all" button appears to do nothing — the retry also
             // stalls if createWritable() hangs waiting for a browser permission prompt.
             const _canWriteLocal = typeof writeFsaFile === 'function'
-                                && typeof hasLocalFolder === 'function' && hasLocalFolder();
+                                && typeof hasFsaFolder === 'function' && hasFsaFolder();
             if (localFiles.length > 0 && _canWriteLocal) {
                 const ok = await _confirmLocalRestore(localFiles.length);
                 if (ok) {
@@ -338,7 +338,7 @@ async function restoreChatWorkspace(chatId: string, ckptId: string): Promise<boo
     if (typeof restoreCheckpointWorkspace !== 'function') return false;
     try {
         const { localFiles } = await restoreCheckpointWorkspace(chatId, ckptId);
-        const _canWriteLocal = typeof writeFsaFile === 'function' && typeof hasLocalFolder === 'function' && hasLocalFolder();
+        const _canWriteLocal = typeof writeFsaFile === 'function' && typeof hasFsaFolder === 'function' && hasFsaFolder();
         if (localFiles.length > 0 && _canWriteLocal && await _confirmLocalRestore(localFiles.length)) {
             await Promise.all(localFiles.map(async f => {
                 try {

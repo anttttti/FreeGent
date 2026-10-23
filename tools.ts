@@ -2304,9 +2304,16 @@ async function _handleExecuteCode(args, context, onProgress?: (message:string)=>
     const result = context?.staging
         ? await _withWorkspaceRunLock(async () => {
             const stamps = await _applyStagingForRun(context.staging, context.snapshot);
-            const res = await _handleExecuteCodeInner(args, context, onProgress);
-            await _stageRunChanges(context.staging, stamps, context.snapshot, context.codeBinary);
-            return res;
+            try {
+                const res = await _handleExecuteCodeInner(args, context, onProgress);
+                await _stageRunChanges(context.staging, stamps, context.snapshot, context.codeBinary);
+                return res;
+            } finally {
+                // Everything staged so far is now in the real workspace too: a worker that is retried or fails must put it back
+                // (workers.ts _revertWorkerDiskEdits), clearing the staging map alone left the edits orphaned on disk (opencode §19).
+                (context.onDisk ??= new Set<string>());
+                for (const k of context.staging.keys()) context.onDisk.add(k);
+            }
         })
         : await _handleExecuteCodeInner(args, context, onProgress);
     return _before?.size ? _annotateUnchangedInPlace(result, _before) : result;

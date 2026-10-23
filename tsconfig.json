@@ -33,6 +33,7 @@
     "native-exec.ts",
     "workspace-scan.ts",
     "safe-log.ts",
+    "tui-env.ts",
     "loop-watch.ts",
     "mouse-input.ts",
     "tui-checkpoint.ts",

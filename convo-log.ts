@@ -84,12 +84,27 @@ function _persistLogRecord(record: ConvoLogEntry): void {
     sessionLogTurn?.(record);
 }
 
+// The tab's copy of the whole log is a JSON string of up to 200 entries, with their history snapshots several MB, and was rebuilt after every model
+// step: seconds of synchronous work in a long session. It is only for a hot reload, so it is written once the burst of steps is over (and when the
+// page goes away).
+let _sessionCopyTimer: ReturnType<typeof setTimeout> | null = null;
+function _writeSessionCopy(): void {
+    if (_sessionCopyTimer) { clearTimeout(_sessionCopyTimer); _sessionCopyTimer = null; }
+    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+}
+function _scheduleSessionCopy(): void {
+    if (_sessionCopyTimer) return;
+    _sessionCopyTimer = setTimeout(_writeSessionCopy, 3000);
+    (_sessionCopyTimer as any).unref?.();
+}
+try { window.addEventListener('pagehide', _writeSessionCopy); } catch {}
+
 /** The one way a turn record enters the log: memory (capped), this tab's session copy, the chat's persisted log and the session
  *  store. Live turns and imported chats both come through here, so a record is never in memory without being persisted. */
 function commitLogRecord(record: ConvoLogEntry): void {
     conversationLog.push(record);
     if (conversationLog.length > _LOG_CAP) conversationLog.splice(0, conversationLog.length - _LOG_CAP);
-    try { sessionStorage.setItem(SESSION_KEYS.CONVO_LOG, JSON.stringify(conversationLog)); } catch {}
+    _scheduleSessionCopy();
     _persistLogRecord(record);
 }
 
