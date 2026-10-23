@@ -326,7 +326,7 @@ async function sendChatLog(id) {
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.id) throw new Error(j.error || `HTTP ${r.status}`);
     } catch (e) {
-        alert(`Could not send the log: ${(e as any)?.message ?? e}. Use the ⬇ download instead.`);
+        alert(`Could not send the log: ${(e as any)?.message ?? e}. Use the ↓ download instead.`);
     }
 }
 

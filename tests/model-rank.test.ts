@@ -113,3 +113,18 @@ describe('sortModelRankGroupsNewestFirst', () => {
         expect(out.map((x: any) => x.id)).toEqual(['c', 'a', 'd', 'b']);
     });
 });
+
+describe('priority arrows move to the top or bottom', () => {
+    it('↑ puts the row first and ↓ last', () => {
+        localStorage.clear();
+        const W = window as any;
+        const [a, b, c] = ['kilo|dots-studio/dots-3-note-preview:free', 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|recursive/flint-v1.0:free'];
+        const keys = [a, b, c];
+        localStorage.setItem('fg_main_models', JSON.stringify(keys));
+        document.body.innerHTML = '<div id="main-model-list"></div>';
+        W._movePriorityItem('main-model-list', 2, -1);
+        expect(W.getMainModelList()).toEqual([c, a, b]);
+        W._movePriorityItem('main-model-list', 0, 1);
+        expect(W.getMainModelList()).toEqual([a, b, c]);
+    });
+});

@@ -148,7 +148,7 @@ async function _storeLog(request, env) {
     } catch (e) {
         // KV refuses writes when the account's storage or daily write quota is used up. Say so with
         // CORS headers; an uncaught throw reaches the browser as an opaque network error.
-        return _err(507, 'Log storage is full or over its daily limit — download the chat instead (⬇) and try again tomorrow');
+        return _err(507, 'Log storage is full or over its daily limit — download the chat instead (↓) and try again tomorrow');
     }
     return new Response(JSON.stringify({ id }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
 }

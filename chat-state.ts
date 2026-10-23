@@ -796,7 +796,7 @@ function renderChatsDropdown() {
     searchInput.title = 'Filter the chats below by name';
     searchInput.oninput = () => _filterChatsDropdown(searchInput.value);
     const importBtn = document.createElement('button');
-    importBtn.className = 'ws-action-btn'; importBtn.textContent = '⬆ Import';
+    importBtn.className = 'ws-action-btn'; importBtn.textContent = '↑ Import';
     importBtn.title = 'Import a chat from a JSON file exported earlier';
     importBtn.onclick = () => importChat();
     // Message-content search was reachable only by its shortcut (hermes report F9).
@@ -867,7 +867,7 @@ function renderChatsDropdown() {
         };
         actions.append(
             mk('chat-act-btn', '✏', 'Rename this chat', () => promptRenameChat(chat.id)),
-            mk('chat-act-btn', '⬇', 'Download this chat as JSON (messages, tool calls and results)', () => exportChat(chat.id)),
+            mk('chat-act-btn', '↓', 'Download this chat as JSON (messages, tool calls and results)', () => exportChat(chat.id)),
             mk('chat-act-btn', '📄', 'Download this chat as a readable Markdown file', () => exportChatMarkdown(chat.id)),
             mk('chat-act-btn', '📤', 'Send this chat\'s log to the FreeGent developer for debugging (asks first; API keys are removed)', () => sendChatLog(chat.id)),
             mk('chat-act-btn chat-act-btn-del', '🗑', 'Delete this chat and its checkpoints permanently', () => deleteChat(chat.id)),
