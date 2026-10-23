@@ -66,8 +66,8 @@ function _renderVoicePriorityList(containerId, catalog, storageKey, defaultList)
   <span class="model-priority-provider">${_providerLabel(entry.provider)}</span>
   <span class="model-priority-cool" style="font-size:10px;color:var(--muted)">${escapeHtml(entry.note)}</span>
   <span class="model-priority-actions">
-    ${i > 0 ? `<button class="model-table-btn" onclick="_moveVoiceItem('${storageKey}',${i},-1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
-    ${i < list.length - 1 ? `<button class="model-table-btn" onclick="_moveVoiceItem('${storageKey}',${i},1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
+    ${i > 0 ? `<button class="model-table-btn" title="Move to the top" onclick="_moveVoiceItem('${storageKey}',${i},-1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↑</button>` : '<span class="model-table-btn-placeholder"></span>'}
+    ${i < list.length - 1 ? `<button class="model-table-btn" title="Move to the bottom" onclick="_moveVoiceItem('${storageKey}',${i},1,'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">↓</button>` : '<span class="model-table-btn-placeholder"></span>'}
     <button class="model-table-btn" onclick="_removeVoiceItem('${storageKey}',${i},'${containerId}','${catalog === _VOICE_STT_CATALOG ? 'stt' : 'tts'}')">✕</button>
   </span>
 </div>`;
@@ -105,9 +105,10 @@ function _removeVoiceItem(storageKey, idx, containerId, type) {
 function _moveVoiceItem(storageKey, idx, dir, containerId, type) {
     const def = type === 'stt' ? ['groq|whisper-large-v3-turbo','browser|webspeech'] : ['browser|webspeech'];
     const list = _getVoiceList(storageKey, def);
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= list.length) return;
-    [list[idx], list[newIdx]] = [list[newIdx], list[idx]];
+    if (idx < 0 || idx >= list.length) return;
+    // ↑ moves the item to the top of the ranking, ↓ to the bottom.
+    const [item] = list.splice(idx, 1);
+    if (dir < 0) list.unshift(item); else list.push(item);
     _saveVoiceList(storageKey, list);
     _renderVoicePriorityList(containerId, type === 'stt' ? _VOICE_STT_CATALOG : _VOICE_TTS_CATALOG, storageKey, def);
 }
@@ -1151,8 +1152,8 @@ function _renderPriorityList(containerId, list) {
         const pausedCls   = (paused || noKey) ? ' model-priority-paused'   : '';
         const selectedCls = selected  ? ' model-priority-selected' : '';
         // ↑/↓ title hints: when multiple rows are selected, the button moves them all.
-        const upTitle   = (multiSel && selected) ? 'Move selected up'   : 'Move up';
-        const downTitle = (multiSel && selected) ? 'Move selected down' : 'Move down';
+        const upTitle   = (multiSel && selected) ? 'Move selected to the top'    : 'Move to the top';
+        const downTitle = (multiSel && selected) ? 'Move selected to the bottom' : 'Move to the bottom';
         // On touch devices, draggable="true" on the row intercepts all child touch
         // events, making the ↑/↓ buttons unresponsive (iOS Safari bug).
         // Instead: omit draggable and use a touch-drag handle with touchstart/touchmove/touchend.
@@ -1756,38 +1757,15 @@ function renderUtilityModelSelector() {
 </div>`;
 }
 
+/** ↑ (dir -1) moves the row to the top of the ranking, ↓ (dir 1) to the bottom. With several rows selected, all of them move, keeping their order. */
 function _movePriorityItem(containerId, idx, dir) {
     const list = getMainModelList();
     if (idx < 0 || idx >= list.length) return;
-
-    if (_prioritySelected.size > 1 && _prioritySelected.has(list[idx])) {
-        // Multi-move: shift every selected item by one position in `dir`.
-        // Process in the order that avoids clobbering the swap partner:
-        //   moving up → ascending index order (each item swaps with the one just above it)
-        //   moving down → descending index order (each item swaps with the one just below it)
-        const idxs = list.map((k, i) => (_prioritySelected.has(k) ? i : -1)).filter(i => i >= 0);
-        if (dir === -1) {
-            idxs.sort((a, b) => a - b);
-            if (idxs[0] === 0) return; // already at top, nowhere to go
-            for (const i of idxs) {
-                if (i > 0 && !_prioritySelected.has(list[i - 1]))
-                    [list[i], list[i - 1]] = [list[i - 1], list[i]];
-            }
-        } else {
-            idxs.sort((a, b) => b - a);
-            if (idxs[0] === list.length - 1) return; // already at bottom
-            for (const i of idxs) {
-                if (i < list.length - 1 && !_prioritySelected.has(list[i + 1]))
-                    [list[i], list[i + 1]] = [list[i + 1], list[i]];
-            }
-        }
-    } else {
-        // Single-move.
-        const newIdx = idx + dir;
-        if (newIdx < 0 || newIdx >= list.length) return;
-        [list[idx], list[newIdx]] = [list[newIdx], list[idx]];
-    }
-    saveMainModelList(list);
+    const moving = _prioritySelected.size > 1 && _prioritySelected.has(list[idx])
+        ? list.filter(k => _prioritySelected.has(k))
+        : [list[idx]];
+    const rest = list.filter(k => !moving.includes(k));
+    saveMainModelList(dir < 0 ? [...moving, ...rest] : [...rest, ...moving]);
     renderMainModelList();
     updateActiveModelDisplay();
 }

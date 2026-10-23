@@ -792,7 +792,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
     btnRow.className = 'msg-edit-btns';
     const saveBtn   = document.createElement('button');
     saveBtn.className = 'agent-ckpt-btn';
-    saveBtn.textContent = '↑ Re-run';
+    saveBtn.textContent = '↻ Re-run';
     saveBtn.title = 'Save edit and re-run from here';
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'agent-ckpt-btn';
