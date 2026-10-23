@@ -519,6 +519,7 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'dots-studio/dots-3-note-preview:free',              label:'Dots3-Note Preview (free)',     released:'2026-08', contextK:512,  params:280,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'280B MoE (16B active); 512K context; free via OpenRouter' },
     { provider:'openrouter', model:'liquid/lfm-2.5-2.6b:free',                         label:'LFM2.5-2.6B (free)',           released:'2026-08', contextK:66,   params:2.6,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'LiquidAI compact reasoning model; 2.6B; agent/RAG-focused; free via OpenRouter' },
     { provider:'openrouter', model:'thinkingmachines/inkling-small:free',               label:'Inkling Small (free)',          released:'2026-07', contextK:1049, params:276,  media:['text','image'],                tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Thinking Machines; 276B MoE (12B active); 1M context; multimodal; free via OpenRouter' },
+    { provider:'openrouter', model:'recursive/flint-v1.0:free',                         label:'Flint v1.0 (free)',             released:'2026-10', contextK:262,  params:40,   media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23 (via Kilo); free via OpenRouter' },
     // ── Nous Portal ───────────────────────────────────────────────────────────
     // https://portal.nousresearch.com/models — 300+ models; rotating free tier (50 RPM / 500K TPM).
     // Free-model catalog rotates monthly; check portal for current availability.
@@ -539,15 +540,15 @@ const MODEL_CATALOG = [
     // https://kilo.ai — OpenAI-compatible inference gateway; :free models work without a key
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
     { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  noKey:true, note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
+    { provider:'kilo', model:'recursive/flint-v1.0:free',                       label:'Flint v1.0 (free)',                released:'2026-10', contextK:262,  params:40,   media:['text'],        tools:true, thinking:false, noKey:true, note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23; free via Kilo' },
+    { provider:'kilo', model:'xingchen-agi/xing4.0-29b-a4b:free',               label:'Xing4.0 29B (free)',               released:'2026-10', contextK:262,  params:29,   media:['text'],        tools:true, thinking:true,  noKey:true, note:'China Telecom TeleAI; 29B MoE (4B active); 262K ctx; tool call verified 2026-10-23; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  noKey:true, note:'120B MoE (12B active); 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, noKey:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
     { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, noKey:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
-    { provider:'kilo', model:'stepfun/step-3.7-flash:free',                     label:'Step 3.7 Flash (free)',            released:'2026-05', contextK:262,  params:196, media:['text'],        tools:true, thinking:true,  noKey:true, note:'198B MoE (11B active); 262K ctx; fast reasoning; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  noKey:true, note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
     { provider:'kilo', model:'poolside/laguna-xs-2.1:free',                     label:'Laguna XS 2.1 (free)',             released:'2026-07', contextK:262,  params:33,  media:['text'],        tools:true, thinking:true,  noKey:true, note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Kilo' },
-    { provider:'kilo', model:'thinkingmachines/inkling-small:free',             label:'Inkling Small (free)',             released:'2026-07', contextK:1049, params:276, media:['text'],        tools:true, thinking:true,  noKey:true, note:'276B MoE (12B active); 1M ctx; small fast reasoning model; free via Kilo' },
     { provider:'kilo', model:'dots-studio/dots-3-note-preview:free',            label:'Dots 3 Note (free)',               released:'2026-08', contextK:512,  params:280, media:['text'],        tools:true, thinking:true, noKey:true, note:'280B MoE (16B active); 512K ctx; long-context; free via Kilo' },
     { provider:'kilo', model:'cohere/north-mini-code:free',                     label:'North Mini Code (free)',           released:'2026-06', contextK:256,  params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 256K ctx; code-focused; free via Kilo' },
 
@@ -557,7 +558,6 @@ const MODEL_CATALOG = [
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token). Kilo lists it as retiring 2026-10-31' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
-    { provider:'vercel', model:'stealth/cat-jam',                      label:'Cat Jam (stealth)',            released:'2026-10', contextK:1048, params:null, media:['text'],        tools:true,  thinking:true,  note:'Anonymous early-access model, $0/token; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
     { provider:'vercel', model:'minimax/minimax-m3.1-flash',       label:'MiniMax M3.1 Flash',           released:'2026-10', contextK:1000, params:null, media:['text'],        tools:true,  thinking:true,  note:'1M ctx; $0/token; tool call verified 2026-10-20' },
 ];
 
@@ -723,6 +723,8 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'vercel|reflection/beam',                    // same 403 (2026-10-17)
     'vercel|stealth/glyph-cluster',              // HTTP 403 "requires an active Pro plan with purchased AI Gateway credits" despite $0 price (2026-10-18)
     'nous|stepfun/step-5-preview:free',          // HTTP 404 "This model's free period has ended" (2026-10-20)
+    'openrouter|minimax/minimax-m3.1-flash:free', // HTTP 404 "free launch period ended Oct 22" (2026-10-23)
+    'kilo|minimax/minimax-m3.1-flash:free',      // HTTP 404 "model does not exist" (2026-10-23)
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
