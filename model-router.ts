@@ -489,8 +489,10 @@ export function resolveWorkerModelSpec(workerModelSpec: string | null, role: any
         return setting;
     }
 
-    // Default: follow priority list rotation (first active model).
-    let wSpec: string | null = getActiveMainModelList()[0] || null;
+    // Default: the next model in the priority list after the one the main chat uses (the first active model), skipping any that is cooling;
+    // with no other model available the worker uses the main model.
+    const main = getActiveMainModelList()[0] || null;
+    let wSpec: string | null = (main ? _anyFreeSpec(main) : null) || main;
     // Director-tier roles get the main model (they reason about strategy, not just execute).
     if (getAgentRoleModelRouting() &&
         (role?.tier === 'orchestrator' || role?.name === 'director')) {
