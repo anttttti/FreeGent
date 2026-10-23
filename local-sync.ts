@@ -2,7 +2,7 @@
 // A browser without the File System Access API (Safari, Firefox) cannot watch a folder: the folder is imported as a
 // snapshot, so reconciling is a diff of two path→hash maps against the state the last sync left (the base).
 
-export type SyncAction = 'to-workspace' | 'to-local' | 'keep-both' | 'delete-workspace' | 'delete-local' | 'skip';
+export type SyncAction = 'to-workspace' | 'to-local' | 'keep-both' | 'merge' | 'delete-workspace' | 'delete-local' | 'skip';
 export type SyncKind =
     | 'new-in-local' | 'new-in-workspace'
     | 'changed-in-local' | 'changed-in-workspace'
@@ -35,8 +35,10 @@ export function hashContent(s: string): string {
  * Diff the Workspace against the Local snapshot. Maps are relative path → content hash (no `local/` prefix).
  * `base` is the hash each path had when the two sides last agreed; without it (first sync) nothing counts as removed.
  * Defaults are non-destructive: a removal is answered by restoring the file, and a conflict keeps both versions.
+ * `merges` holds the result of a three-way text merge per conflicting path: a clean one becomes the default for that file,
+ * one with overlapping edits is offered but not chosen (it would put conflict markers into both sides).
  */
-export function planSync(workspace: Record<string, string>, local: Record<string, string>, base: Record<string, string> = {}): SyncItem[] {
+export function planSync(workspace: Record<string, string>, local: Record<string, string>, base: Record<string, string> = {}, merges: Record<string, { conflicts: boolean }> = {}): SyncItem[] {
     const out: SyncItem[] = [];
     const paths = new Set([...Object.keys(workspace), ...Object.keys(local)]);
     for (const path of [...paths].sort()) {
@@ -45,6 +47,8 @@ export function planSync(workspace: Record<string, string>, local: Record<string
             if (w === l) continue;
             if (b === w) out.push({ path, kind: 'changed-in-local', action: 'to-workspace', choices: ['to-workspace', 'to-local', 'skip'] });
             else if (b === l) out.push({ path, kind: 'changed-in-workspace', action: 'to-local', choices: ['to-local', 'to-workspace', 'skip'] });
+            else if (merges[path] && !merges[path].conflicts) out.push({ path, kind: 'conflict', action: 'merge', choices: ['merge', 'keep-both', 'to-local', 'to-workspace', 'skip'] });
+            else if (merges[path]) out.push({ path, kind: 'conflict', action: 'keep-both', choices: ['keep-both', 'merge', 'to-local', 'to-workspace', 'skip'] });
             else out.push({ path, kind: 'conflict', action: 'keep-both', choices: ['keep-both', 'to-local', 'to-workspace', 'skip'] });
         } else if (w !== undefined) {
             if (b === undefined) out.push({ path, kind: 'new-in-workspace', action: 'to-local', choices: ['to-local', 'skip'] });
@@ -58,13 +62,13 @@ export function planSync(workspace: Record<string, string>, local: Record<string
 }
 
 /** The name a conflicting local version is kept under in the workspace: `a/b.txt` → `a/b (local).txt`. */
-export function keepBothName(path: string, taken: (name: string) => boolean): string {
+export function keepBothName(path: string, taken: (name: string) => boolean, tag = 'local'): string {
     const slash = path.lastIndexOf('/');
     const dir = path.slice(0, slash + 1), file = path.slice(slash + 1);
     const dot = file.lastIndexOf('.');
     const stem = dot > 0 ? file.slice(0, dot) : file, ext = dot > 0 ? file.slice(dot) : '';
-    let name = `${dir}${stem} (local)${ext}`;
-    for (let n = 2; taken(name); n++) name = `${dir}${stem} (local ${n})${ext}`;
+    let name = `${dir}${stem} (${tag})${ext}`;
+    for (let n = 2; taken(name); n++) name = `${dir}${stem} (${tag} ${n})${ext}`;
     return name;
 }
 

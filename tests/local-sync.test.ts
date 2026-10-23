@@ -50,3 +50,22 @@ describe('nextBase / changedSinceImport / hashContent', () => {
         expect(hashContent('abc')).not.toBe(hashContent('abd'));
     });
 });
+
+describe('merge planning', () => {
+    it('a clean three-way merge becomes the default for a file changed on both sides', () => {
+        const items = planSync({ 'a.txt': 'w' }, { 'a.txt': 'l' }, { 'a.txt': 'b' }, { 'a.txt': { conflicts: false } });
+        expect(items).toHaveLength(1);
+        expect(items[0]).toMatchObject({ kind: 'conflict', action: 'merge' });
+        expect(items[0].choices).toContain('keep-both');
+    });
+    it('a merge with overlapping edits is offered but keep-both stays the default', () => {
+        const [it] = planSync({ 'a.txt': 'w' }, { 'a.txt': 'l' }, { 'a.txt': 'b' }, { 'a.txt': { conflicts: true } });
+        expect(it.action).toBe('keep-both');
+        expect(it.choices[1]).toBe('merge');
+    });
+    it('without a merge result a conflict is unchanged, and keepBothName takes a tag', () => {
+        const [it] = planSync({ 'a.txt': 'w' }, { 'a.txt': 'l' }, { 'a.txt': 'b' });
+        expect(it.choices).not.toContain('merge');
+        expect(keepBothName('d/a.txt', () => false, 'imported')).toBe('d/a (imported).txt');
+    });
+});
