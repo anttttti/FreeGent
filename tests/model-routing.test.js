@@ -22,6 +22,12 @@ describe('resolveWorkerModelSpec — tier routing', () => {
         expect(result).toBe('kilo|nvidia/nemotron-3-ultra-550b-a55b:free');
     });
 
+    it('defaults to the next model in the priority list after the main one, and to the main one when there is no other', () => {
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|recursive/flint-v1.0:free']));
+        expect(W.resolveWorkerModelSpec(null, null)).toBe('kilo|recursive/flint-v1.0:free');
+        expect(W.resolveWorkerModelSpec(null, { tier: 'execution' })).toBe('kilo|recursive/flint-v1.0:free');
+    });
+
     it('returns first active model for execution tier (no special routing)', () => {
         localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free']));
         const result = W.resolveWorkerModelSpec(null, { tier: 'execution' });
