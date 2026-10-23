@@ -966,6 +966,8 @@ interface _SyncDialog {
     note: string;
     apply: (items: SyncItem[], chosen: Map<string, SyncAction>) => Promise<_SyncResult>;
     withUndo: boolean;
+    /** Further footer buttons; clicking one closes the dialog and runs `run`. */
+    extra?: Array<{ label: string; title: string; run: () => void }>;
 }
 
 async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction>, merges: Record<string, _Merge>): Promise<_SyncResult> {
@@ -1048,7 +1050,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
     const undo = d.withUndo && await _hasUndo();
     ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">${escapeHtml(d.title)}</span></div>` +
         `<div class="fg-modal-body" style="max-height:60vh;overflow:auto">${body}<p style="font-size:12px;opacity:.7">${d.note}</p></div>` +
-        `<div class="fg-modal-btns">${undo ? '<button class="fg-modal-btn fg-modal-btn-undo" style="margin-right:auto">↩ Undo last sync</button>' : ''}<button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
+        `<div class="fg-modal-btns">${undo ? '<button class="fg-modal-btn fg-modal-btn-undo" style="margin-right:auto">↩ Undo last sync</button>' : ''}${(d.extra || []).map((x, i) => `<button class="fg-modal-btn fg-modal-btn-extra" data-extra="${i}" title="${escapeHtml(x.title)}">${escapeHtml(x.label)}</button>`).join('')}<button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
     document.body.appendChild(ov);
     const rowSel = (g: string) => Array.from(ov.querySelectorAll<HTMLSelectElement>(`select[data-path][data-kind="${g}"]`));
     ov.querySelectorAll<HTMLSelectElement>('select[data-group]').forEach(sel => sel.onchange = () => {
@@ -1066,6 +1068,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
         pre.hidden = !pre.hidden;
     });
     (ov.querySelector('.fg-modal-btn-cancel') as HTMLElement).onclick = () => ov.remove();
+    ov.querySelectorAll<HTMLElement>('button[data-extra]').forEach(b => b.onclick = () => { ov.remove(); d.extra![Number(b.dataset.extra)].run(); });
     const undoBtn = ov.querySelector('.fg-modal-btn-undo') as HTMLElement | null;
     if (undoBtn) undoBtn.onclick = () => { undoLastSync(); };
     const ok = ov.querySelector('.fg-modal-btn-ok') as HTMLButtonElement | null;
@@ -1238,7 +1241,41 @@ export async function openCloudSyncDialog(): Promise<void> {
             title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true,
             note: 'Only changed files travel. Files changed on both sides merge when their edits do not overlap (see the preview). Nothing is deleted unless you choose it, and “Undo last sync” restores the Workspace files this sync changed.',
             apply: (its, chosen) => _applyCloudSync({ client, slug, remote, ws, base, items: its, chosen, merges }),
+            extra: [
+                { label: 'Replace cloud…', title: 'Make the cloud copy identical to this Workspace (uploads changes, deletes cloud-only files)', run: () => { _cloudReplace('cloud', items, { client, slug, remote, ws, base }); } },
+                { label: 'Replace Workspace…', title: 'Make this Workspace identical to the cloud copy (downloads changes, deletes Workspace-only files)', run: () => { _cloudReplace('workspace', items, { client, slug, remote, ws, base }); } },
+            ],
         });
+    } catch (e: any) {
+        _cloudStatus(null);
+        alert(`Cloud sync failed: ${e?.message || e}`);
+    }
+}
+
+/** One side overwrites the other completely: every difference is settled in its favour, and files only the other side has are deleted. */
+function _replaceItems(items: SyncItem[], target: 'cloud' | 'workspace'): SyncItem[] {
+    return items.map(it => {
+        const inWorkspaceOnly = it.kind === 'new-in-workspace' || it.kind === 'removed-from-local';
+        const inCloudOnly = it.kind === 'new-in-local' || it.kind === 'removed-from-workspace';
+        let action: SyncAction;
+        if (target === 'cloud') action = inCloudOnly ? 'delete-local' : 'to-local';          // "local" is the cloud side in cloud sync
+        else action = inWorkspaceOnly ? 'delete-workspace' : 'to-workspace';
+        return { ...it, action, choices: [action] };
+    });
+}
+
+async function _cloudReplace(target: 'cloud' | 'workspace', items: SyncItem[], c: { client: CloudSyncClient; slug: string; remote: { etag: string | null; manifest: CloudManifest };
+                                                                                    ws: { files: Record<string, CloudFile>; hashes: Record<string, string> }; base: Record<string, string> }): Promise<void> {
+    const its = _replaceItems(items, target);
+    const put = its.filter(i => i.action === 'to-local' || i.action === 'to-workspace').length;
+    const del = its.length - put;
+    const msg = target === 'cloud'
+        ? `Replace the cloud copy of “${c.slug}” with this Workspace?\n\nUploads ${put} file${put === 1 ? '' : 's'} and deletes ${del} file${del === 1 ? '' : 's'} that only the cloud has. The cloud’s versions cannot be restored afterwards.`
+        : `Replace this Workspace with the cloud copy of “${c.slug}”?\n\nDownloads ${put} file${put === 1 ? '' : 's'} (overwriting different ones) and deletes ${del} Workspace file${del === 1 ? '' : 's'} the cloud does not have. “Undo last sync” can restore them.`;
+    if (!confirm(msg)) return;
+    try {
+        const res = await _applyCloudSync({ ...c, items: its, chosen: new Map(), merges: {} });
+        alert(target === 'cloud' ? `The cloud copy now matches this Workspace (${res.changed} change${res.changed === 1 ? '' : 's'}).` : `This Workspace now matches the cloud copy (${res.changed} change${res.changed === 1 ? '' : 's'}).`);
     } catch (e: any) {
         _cloudStatus(null);
         alert(`Cloud sync failed: ${e?.message || e}`);
