@@ -966,6 +966,8 @@ interface _SyncDialog {
     note: string;
     apply: (items: SyncItem[], chosen: Map<string, SyncAction>) => Promise<_SyncResult>;
     withUndo: boolean;
+    /** Called after Apply failed, so the dialog can be rebuilt from the current state of both sides. */
+    onApplyError?: () => void;
     /** Further footer buttons; clicking one closes the dialog and runs `run`. */
     extra?: Array<{ label: string; title: string; run: () => void }>;
 }
@@ -1050,7 +1052,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
     const undo = d.withUndo && await _hasUndo();
     ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">${escapeHtml(d.title)}</span></div>` +
         `<div class="fg-modal-body" style="max-height:60vh;overflow:auto">${body}<p style="font-size:12px;opacity:.7">${d.note}</p></div>` +
-        `<div class="fg-modal-btns">${undo ? '<button class="fg-modal-btn fg-modal-btn-undo" style="margin-right:auto">↩ Undo last sync</button>' : ''}${(d.extra || []).map((x, i) => `<button class="fg-modal-btn fg-modal-btn-extra" data-extra="${i}" title="${escapeHtml(x.title)}">${escapeHtml(x.label)}</button>`).join('')}<button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
+        `<div class="fg-modal-btns" style="flex-wrap:wrap">${undo ? '<button class="fg-modal-btn fg-modal-btn-undo" style="margin-right:auto">↩ Undo last sync</button>' : ''}${(d.extra || []).map((x, i) => `<button class="fg-modal-btn fg-modal-btn-extra" data-extra="${i}" title="${escapeHtml(x.title)}">${escapeHtml(x.label)}</button>`).join('')}<button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
     document.body.appendChild(ov);
     const rowSel = (g: string) => Array.from(ov.querySelectorAll<HTMLSelectElement>(`select[data-path][data-kind="${g}"]`));
     ov.querySelectorAll<HTMLSelectElement>('select[data-group]').forEach(sel => sel.onchange = () => {
@@ -1079,7 +1081,10 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
             ov.remove();
             if (res.markers.length) alert(`${res.markers.length} file${res.markers.length === 1 ? '' : 's'} had overlapping edits and now contain conflict markers (<<<<<<< A is the Workspace version, >>>>>>> B the other one):\n\n${res.markers.slice(0, 10).join('\n')}${res.markers.length > 10 ? '\n…' : ''}`);
         }
-        catch (e: any) { ok.disabled = false; ok.textContent = 'Apply'; alert(`Sync failed: ${e.message}`); }
+        catch (e: any) {
+            ok.disabled = false; ok.textContent = 'Apply'; alert(`Sync failed: ${e.message}`);
+            if (d.onApplyError) { ov.remove(); d.onApplyError(); }
+        }
     };
 }
 
@@ -1228,8 +1233,8 @@ export async function openCloudSyncDialog(): Promise<void> {
             async p => {
                 const f = remote.manifest.files[p];
                 if (!f || f.e === 'base64' || f.s > 2 * 1024 * 1024) return null;
-                const rec = _bytesToRec(await client.getBlob(slug, f.h), false);
-                return rec.encoding ? null : rec;
+                // A cloud file that cannot be fetched only means no merge for it: the dialog (and its Replace buttons) must still open.
+                try { const rec = _bytesToRec(await client.getBlob(slug, f.h), false); return rec.encoding ? null : rec; } catch { return null; }
             });
         if (Object.keys(merges).length) items = planSync(ws.hashes, remoteHashes, base, merges);
         _cloudStatus(null);
@@ -1241,6 +1246,7 @@ export async function openCloudSyncDialog(): Promise<void> {
             title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true,
             note: 'Only changed files travel. Files changed on both sides merge when their edits do not overlap (see the preview). Nothing is deleted unless you choose it, and “Undo last sync” restores the Workspace files this sync changed.',
             apply: (its, chosen) => _applyCloudSync({ client, slug, remote, ws, base, items: its, chosen, merges }),
+            onApplyError: () => { openCloudSyncDialog(); },      // the cloud may have moved on: compare again, Replace options included
             extra: [
                 { label: 'Replace cloud…', title: 'Make the cloud copy identical to this Workspace (uploads changes, deletes cloud-only files)', run: () => { _cloudReplace('cloud', items, { client, slug, remote, ws, base }); } },
                 { label: 'Replace Workspace…', title: 'Make this Workspace identical to the cloud copy (downloads changes, deletes Workspace-only files)', run: () => { _cloudReplace('workspace', items, { client, slug, remote, ws, base }); } },
@@ -1279,6 +1285,7 @@ async function _cloudReplace(target: 'cloud' | 'workspace', items: SyncItem[], c
     } catch (e: any) {
         _cloudStatus(null);
         alert(`Cloud sync failed: ${e?.message || e}`);
+        openCloudSyncDialog();       // compare again with the current state
     }
 }
 
