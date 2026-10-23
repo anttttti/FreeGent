@@ -735,6 +735,14 @@ async function _storeUploadedText(path: string, file: File): Promise<void> {
     else await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
 }
 
+/** Bytes of a picked file, or an error after `ms`: an iCloud file that is online-only is fetched on first read, which can take long or never finish. */
+function _readBytesWithin(file: File, ms: number): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('not downloaded in time')), ms);
+        file.arrayBuffer().then(b => { clearTimeout(t); resolve(new Uint8Array(b)); }, e => { clearTimeout(t); reject(e); });
+    });
+}
+
 // The text of a base64 workspace record: a document is extracted; a plain text file (task attachments are stored as
 // base64 whatever they are) is decoded from its bytes; anything else gets the extractor's message.
 async function _readBase64Record(path: string, b64: string): Promise<string> {
@@ -2592,6 +2600,7 @@ const UPLOAD_SKIP_DIRS = new Set([
     '.cache', '.parcel-cache', 'coverage', '.nyc_output',
 ]);
 const UPLOAD_MAX_FILES  = 500;
+const UPLOAD_READ_MS    = 20_000; // per file: an online-only iCloud file may never arrive
 const UPLOAD_MAX_BYTES  = 10 * 1024 * 1024; // 10 MB per file
 
 // asLocal=true: write files under "local/" prefix so they appear in the Local Folder column.
@@ -2640,6 +2649,9 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         // Process in batches of 20, yielding to the UI between batches.
         const BATCH = 20;
         const importedPaths = new Set<string>();
+        const unreadable: string[] = [];
+        // iCloud leaves a hidden `.name.icloud` stub for a file that is not on the device yet.
+        const stubs = allFiles.filter(f => /^\..+\.icloud$/.test(f.name)).length;
         if (asLocal && folder) { const root = (toImport[0].webkitRelativePath || '').split('/')[0]; if (root) try { localStorage.setItem('fg_localsync_folder', root); } catch {} }
         for (let i = 0; i < toImport.length; i++) {
             const file = toImport[i];
@@ -2653,15 +2665,17 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             try {
                 // Photos, audio and video from a device picker can carry an extension the binary list
                 // lacks (.heic, .m4a …): reading those as text would corrupt them.
+                const bytes = await _readBytesWithin(file, UPLOAD_READ_MS);
                 if (_isBinaryExt(path) || (/^(image|audio|video)\//.test(file.type) && file.type !== 'image/svg+xml')) {
-                    const buf     = await file.arrayBuffer();
-                    const content = _uint8ToBase64(new Uint8Array(buf));
-                    await writeWorkspaceFile(path, content, null, 'base64');
+                    await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
                 } else {
-                    await _storeUploadedText(path, file);
+                    const text = decodeTextBytes(bytes);
+                    if (text !== null) await writeWorkspaceFile(path, text);
+                    else await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
                 }
             } catch (e) {
                 console.error('[workspace] upload error:', path, e);
+                unreadable.push(rel);
             }
             // Yield every BATCH files so the UI thread stays responsive.
             if ((i + 1) % BATCH === 0) await new Promise<void>(r => setTimeout(r, 0));
@@ -2671,6 +2685,11 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             try { await _afterLocalImport(importedPaths); } catch (e) { console.warn('[workspace] post-import bookkeeping failed:', e); }
         }
         await renderFileList();
+        if (unreadable.length || stubs) {
+            const list = unreadable.slice(0, 8).join('\n') + (unreadable.length > 8 ? `\n…and ${unreadable.length - 8} more` : '');
+            alert(`${unreadable.length + stubs} file${unreadable.length + stubs === 1 ? ' was' : 's were'} not imported because iCloud has not downloaded ${unreadable.length + stubs === 1 ? 'it' : 'them'} to this device.\n`
+                + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
+        }
         // Merge on import: when the folder brought files that are new or differ from the Workspace's, show the diff.
         if (asLocal) openLocalSyncDialog({ onlyIfIncoming: true }).catch(() => {});
     };
