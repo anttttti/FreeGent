@@ -9,6 +9,7 @@ import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
+import { tryMerge } from './diff-utils.js';
 import { hashContent, planSync, keepBothName, nextBase, changedSinceImport, type SyncAction, type SyncItem } from './local-sync.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
 import { bumpWorkspaceEpoch, workspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
@@ -33,11 +34,12 @@ export interface WorkspaceAdapter {
 let _wa: WorkspaceAdapter | null = null; // injected adapter (Node.js/headless only; null → IndexedDB/FSA)
 
 const DB_NAME    = 'FreeGentDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE      = 'files';
 const HDL_STORE  = 'handles';
 const CKPT_STORE = 'checkpoints';
 const PROJ_STORE = 'projects';
+const SYNC_STORE = 'syncbase';   // texts the last sync/export/import agreed on (the base of a three-way merge) and the last sync's undo copy
 
 const _extOf = extOf;
 const _isBinaryExt = isBinaryExt;
@@ -143,6 +145,8 @@ async function initDB() {
                 d.createObjectStore(CKPT_STORE, { keyPath: 'id' });
             if (!d.objectStoreNames.contains(PROJ_STORE))
                 d.createObjectStore(PROJ_STORE, { keyPath: 'id' });
+            if (!d.objectStoreNames.contains(SYNC_STORE))
+                d.createObjectStore(SYNC_STORE, { keyPath: 'id' });
         };
         req.onsuccess = () => {
             db = req.result;
@@ -856,19 +860,74 @@ async function _hashBothSides(): Promise<{ workspace: Record<string, string>; lo
     return { workspace, local };
 }
 
+// ── Base texts and undo ──────────────────────────────────────────────────────
+// A three-way merge needs the text both sides started from. The sync keeps it per path, in two separate sets: 'folder' (what the Workspace and the
+// imported Local Folder last agreed on) and 'project' (what the last project export or import held). The last sync's overwritten files are kept for one undo.
+const _BASE_TEXT_MAX = 512 * 1024;
+type _BaseNs = 'folder' | 'project';
+async function _syncTx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest | void): Promise<T | undefined> {
+    await ensureDB();
+    return new Promise<T | undefined>((resolve, reject) => {
+        const tx = db.transaction(SYNC_STORE, mode);
+        let req: IDBRequest | void;
+        try { req = fn(tx.objectStore(SYNC_STORE)); } catch (e) { reject(e); return; }
+        tx.oncomplete = () => resolve(req ? (req as IDBRequest).result : undefined);
+        tx.onabort = () => reject(tx.error ?? new Error('sync store write aborted'));
+    });
+}
+async function _saveBaseTexts(ns: _BaseNs, recs: Array<{ path: string; content: string; encoding?: string | null }>): Promise<void> {
+    const texts = recs.filter(r => !r.encoding && typeof r.content === 'string' && r.content.length <= _BASE_TEXT_MAX);
+    if (texts.length) await _syncTx('readwrite', st => { for (const r of texts) st.put({ id: `${ns}:${r.path}`, text: r.content }); });
+}
+async function _loadBaseText(ns: _BaseNs, path: string): Promise<string | null> {
+    const rec: any = await _syncTx('readonly', st => st.get(`${ns}:${path}`));
+    return rec && typeof rec.text === 'string' ? rec.text : null;
+}
+/** The base text of a path in the folder sync is only good while it is the text the recorded base hash stands for. */
+async function _folderBaseText(path: string, base: Record<string, string>): Promise<string | null> {
+    const t = await _loadBaseText('folder', path);
+    return t !== null && base[path] !== undefined && hashContent('|' + t) === base[path] ? t : null;
+}
+async function _snapshotForUndo(names: string[], base: Record<string, string> | null): Promise<void> {
+    const files: Array<{ name: string; rec: any }> = [];
+    for (const name of names) files.push({ name, rec: (await readWorkspaceFile(name)) || null });
+    await _syncTx('readwrite', st => st.put({ id: 'undo', ts: Date.now(), files, base }));
+}
+async function _hasUndo(): Promise<boolean> {
+    try { return !!(await _syncTx<any>('readonly', st => st.get('undo'))); } catch { return false; }
+}
+/** Put back what the last sync or merge overwrote or removed, and the agreement it started from. */
+export async function undoLastSync(): Promise<void> {
+    try {
+        const u: any = await _syncTx('readonly', st => st.get('undo'));
+        if (!u) { alert('There is no sync to undo.'); return; }
+        if (!confirm(`Undo the last sync (${u.files.length} file${u.files.length === 1 ? '' : 's'}, ${new Date(u.ts).toLocaleString()})? Changes made to these files since then are lost.`)) return;
+        const writes = u.files.filter((f: any) => f.rec).map((f: any) => ({ name: f.name, content: f.rec.content, encoding: f.rec.encoding || null, lastModified: f.rec.lastModified }));
+        const deletes = u.files.filter((f: any) => !f.rec).map((f: any) => f.name);
+        await applyWorkspaceBatch(writes, deletes);
+        if (u.base) _lsSet(_LS_BASE, u.base);
+        await _syncTx('readwrite', st => st.delete('undo'));
+        document.getElementById('fg-localsync-overlay')?.remove();
+        await renderFileList();
+    } catch (e: any) { alert(`Undo failed: ${e.message}`); }
+}
+
 /** A copy just made the two sides identical for this path: remember it, so a later edit on one side reads as that side's change rather than a conflict. */
 function _noteAgreed(path: string, rec: any): void {
     const base = _lsGet(_LS_BASE);
     base[path] = hashContent((rec.encoding || '') + '|' + (rec.content || ''));
     _lsSet(_LS_BASE, base);
+    _saveBaseTexts('folder', [{ path, content: rec.content, encoding: rec.encoding }]).catch(() => {});
 }
 
 /** After a folder import: drop snapshot files the folder no longer has (only those that were in sync, never a copy still waiting to be exported), and note what the folder holds. */
 async function _afterLocalImport(imported: Set<string>): Promise<void> {
     const { workspace, local } = await _hashBothSides();
     const base = _lsGet(_LS_BASE);
-    for (const p of imported) if (local[p] !== undefined && local[p] === workspace[p]) base[p] = local[p];   // identical files agree from the start
+    const agreed: string[] = [];
+    for (const p of imported) if (local[p] !== undefined && local[p] === workspace[p]) { base[p] = local[p]; agreed.push(p); }   // identical files agree from the start
     _lsSet(_LS_BASE, base);
+    await _recordFolderBase(agreed);
     const stale = Object.keys(local).filter(p => !imported.has(p) && base[p] === local[p]);
     if (stale.length) { await applyWorkspaceBatch([], stale.map(p => 'local/' + p)); for (const p of stale) delete local[p]; }
     const folder: Record<string, string> = {};
@@ -876,13 +935,44 @@ async function _afterLocalImport(imported: Set<string>): Promise<void> {
     _lsSet(_LS_IMPORTED, folder);
 }
 
-async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction>): Promise<number> {
+async function _recordFolderBase(paths: string[]): Promise<void> {
+    const recs: Array<{ path: string; content: string; encoding?: string | null }> = [];
+    for (const p of paths) { const r = await readWorkspaceFile(p); if (r && !r.encoding) recs.push({ path: p, content: r.content }); }
+    await _saveBaseTexts('folder', recs);
+}
+
+type _Merge = { merged: string; conflicts: boolean };
+/** Three-way merges for the paths changed on both sides, where the text they started from is known and all three are text. */
+async function _computeMerges(paths: string[], readBase: (p: string) => Promise<string | null>, readA: (p: string) => Promise<any>, readB: (p: string) => Promise<any>): Promise<Record<string, _Merge>> {
+    const out: Record<string, _Merge> = {};
+    for (const p of paths) {
+        const [b, a, c] = [await readBase(p), await readA(p), await readB(p)];
+        if (b === null || !a || !c || a.encoding || c.encoding) continue;
+        out[p] = tryMerge(b, a.content, c.content);
+    }
+    return out;
+}
+
+type _SyncResult = { changed: number; markers: string[] };
+interface _SyncDialog {
+    title: string;
+    other: string;                       // what the second side is called: "Local Folder", "imported project"
+    items: SyncItem[];
+    merges: Record<string, _Merge>;
+    note: string;
+    apply: (items: SyncItem[], chosen: Map<string, SyncAction>) => Promise<_SyncResult>;
+    withUndo: boolean;
+}
+
+async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction>, merges: Record<string, _Merge>): Promise<_SyncResult> {
     const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
     const deletes: string[] = [];
+    const markers: string[] = [];
     const names = new Set((await listWorkspaceFileNames()));
     const put = (name: string, rec: any) => writes.push({ name, content: rec.content, encoding: rec.encoding || null, lastModified: rec.lastModified });
     for (const it of items) {
-        const act = chosen.get(it.path) ?? it.action;
+        let act = chosen.get(it.path) ?? it.action;
+        if (!it.choices.includes(act)) act = it.action;
         if (act === 'skip') continue;
         const w = act === 'to-workspace' || act === 'delete-workspace' ? null : await readWorkspaceFile(it.path);
         const l = act === 'to-local' || act === 'delete-local' ? null : await readWorkspaceFile('local/' + it.path);
@@ -892,32 +982,41 @@ async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction
             const copy = keepBothName(it.path, n => names.has(n)); names.add(copy);
             put(copy, l); put('local/' + it.path, w);
         }
+        else if (act === 'merge' && merges[it.path]) {
+            const m = merges[it.path];
+            const rec = { content: m.merged, encoding: null, lastModified: Date.now() };
+            put(it.path, rec); put('local/' + it.path, rec);
+            if (m.conflicts) markers.push(it.path);
+        }
         else if (act === 'delete-workspace') deletes.push(it.path);
         else if (act === 'delete-local') deletes.push('local/' + it.path);
     }
-    if (writes.length || deletes.length) await applyWorkspaceBatch(writes, deletes);
+    const prevBase = _lsGet(_LS_BASE);
+    if (writes.length || deletes.length) {
+        await _snapshotForUndo([...new Set([...writes.map(x => x.name), ...deletes])], prevBase);
+        await applyWorkspaceBatch(writes, deletes);
+    }
     const now = await _hashBothSides();
-    _lsSet(_LS_BASE, nextBase(now.workspace, now.local, _lsGet(_LS_BASE)));
+    const base = nextBase(now.workspace, now.local, prevBase);
+    _lsSet(_LS_BASE, base);
+    await _recordFolderBase(Object.keys(base).filter(p => base[p] !== prevBase[p]));
     await renderFileList();
-    return writes.length + deletes.length;
+    return { changed: writes.length + deletes.length, markers };
 }
 
-const _SYNC_KIND_LABEL: Record<string, string> = {
-    'new-in-local': 'New in Local Folder', 'new-in-workspace': 'New in Workspace',
-    'changed-in-local': 'Changed in Local Folder', 'changed-in-workspace': 'Changed in Workspace',
-    'conflict': 'Changed on both sides', 'removed-from-local': 'Gone from Local Folder', 'removed-from-workspace': 'Gone from Workspace',
-};
-const _SYNC_ACTION_LABEL: Record<string, string> = {
-    'to-workspace': 'Local → Workspace', 'to-local': 'Workspace → Local', 'keep-both': 'Keep both',
-    'delete-workspace': 'Delete from Workspace', 'delete-local': 'Delete from Local Folder', 'skip': 'Leave',
-};
+const _SYNC_KIND_LABEL = (other: string): Record<string, string> => ({
+    'new-in-local': `New in ${other}`, 'new-in-workspace': 'New in Workspace',
+    'changed-in-local': `Changed in ${other}`, 'changed-in-workspace': 'Changed in Workspace',
+    'conflict': 'Changed on both sides', 'removed-from-local': `Gone from ${other}`, 'removed-from-workspace': 'Gone from Workspace',
+});
+const _SYNC_ACTION_LABEL = (other: string): Record<string, string> => ({
+    'to-workspace': `${other} → Workspace`, 'to-local': `Workspace → ${other}`, 'keep-both': 'Keep both', 'merge': 'Merge',
+    'delete-workspace': 'Delete from Workspace', 'delete-local': `Delete from ${other}`, 'skip': 'Leave',
+});
 
-/** Compare the imported Local Folder with the Workspace and let the user decide per file or per group. */
-export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = {}): Promise<void> {
-    const { workspace, local } = await _hashBothSides();
-    const items = planSync(workspace, local, _lsGet(_LS_BASE));
-    // After an import the Workspace's own files are not news: only open when the folder brought something that differs.
-    if (flags.onlyIfIncoming && !items.some(i => i.kind !== 'new-in-workspace')) return;
+async function _showSyncDialog(d: _SyncDialog): Promise<void> {
+    const { items, merges, other } = d;
+    const kindLabel = _SYNC_KIND_LABEL(other), actLabel = _SYNC_ACTION_LABEL(other);
     document.getElementById('fg-localsync-overlay')?.remove();
     const ov = document.createElement('div');
     ov.className = 'fg-modal-overlay'; ov.id = 'fg-localsync-overlay';
@@ -925,34 +1024,120 @@ export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = 
     const MAX_ROWS = 300;
     const groups = new Map<string, SyncItem[]>();
     for (const it of items) { if (!groups.has(it.kind)) groups.set(it.kind, []); groups.get(it.kind)!.push(it); }
-    const opts = (choices: SyncAction[], sel: SyncAction) => choices.map(c => `<option value="${c}"${c === sel ? ' selected' : ''}>${_SYNC_ACTION_LABEL[c]}</option>`).join('');
+    const opts = (choices: SyncAction[], sel: SyncAction, path?: string) => choices.map(c =>
+        `<option value="${c}"${c === sel ? ' selected' : ''}>${c === 'merge' && path && merges[path]?.conflicts ? 'Merge (with conflict markers)' : actLabel[c]}</option>`).join('');
     let body = '';
-    if (!items.length) body = '<p>The Local Folder and the Workspace match.</p>';
+    if (!items.length) body = `<p>The ${escapeHtml(other)} and the Workspace match.</p>`;
     else for (const [kind, list] of groups) {
-        body += `<div class="fg-localsync-group"><div style="display:flex;gap:8px;align-items:center;margin:10px 0 4px"><strong style="flex:1">${_SYNC_KIND_LABEL[kind]} (${list.length})</strong>` +
-            `<select data-group="${kind}" aria-label="${_SYNC_KIND_LABEL[kind]}: all">${opts(list[0].choices, list[0].action)}</select></div>`;
-        for (const it of list.slice(0, MAX_ROWS)) body += `<div style="display:flex;gap:8px;align-items:center;font-size:12px"><code style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</code>` +
-            `<select data-path="${escapeHtml(it.path)}" data-kind="${kind}" aria-label="${escapeHtml(it.path)}">${opts(it.choices, it.action)}</select></div>`;
+        body += `<div class="fg-localsync-group"><div style="display:flex;gap:8px;align-items:center;margin:10px 0 4px"><strong style="flex:1">${kindLabel[kind]} (${list.length})</strong>` +
+            `<select data-group="${kind}" aria-label="${kindLabel[kind]}: all">${opts(list[0].choices, list[0].action)}</select></div>`;
+        for (const it of list.slice(0, MAX_ROWS)) {
+            const m = merges[it.path];
+            body += `<div style="display:flex;gap:8px;align-items:center;font-size:12px"><code style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</code>` +
+                (m ? `<button type="button" class="fg-modal-btn" data-preview="${escapeHtml(it.path)}" style="padding:1px 8px;font-size:11px">${m.conflicts ? 'Preview ⚠' : 'Preview'}</button>` : '') +
+                `<select data-path="${escapeHtml(it.path)}" data-kind="${kind}" aria-label="${escapeHtml(it.path)}">${opts(it.choices, it.action, it.path)}</select></div>` +
+                (m ? `<pre data-preview-for="${escapeHtml(it.path)}" hidden style="font-size:11px;max-height:160px;overflow:auto;margin:2px 0 6px;padding:6px;background:rgba(127,127,127,.12);white-space:pre-wrap"></pre>` : '');
+        }
         if (list.length > MAX_ROWS) body += `<div style="font-size:12px;opacity:.7">…and ${list.length - MAX_ROWS} more, handled like the group setting.</div>`;
         body += '</div>';
     }
-    ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">Sync Local Folder with Workspace</span></div>` +
-        `<div class="fg-modal-body" style="max-height:60vh;overflow:auto">${body}<p style="font-size:12px;opacity:.7">Nothing is deleted unless you choose it. Changes to the Local Folder reach the real folder through “Export changes”.</p></div>` +
-        `<div class="fg-modal-btns"><button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
+    const undo = d.withUndo && await _hasUndo();
+    ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">${escapeHtml(d.title)}</span></div>` +
+        `<div class="fg-modal-body" style="max-height:60vh;overflow:auto">${body}<p style="font-size:12px;opacity:.7">${d.note}</p></div>` +
+        `<div class="fg-modal-btns">${undo ? '<button class="fg-modal-btn fg-modal-btn-undo" style="margin-right:auto">↩ Undo last sync</button>' : ''}<button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
     document.body.appendChild(ov);
     const rowSel = (g: string) => Array.from(ov.querySelectorAll<HTMLSelectElement>(`select[data-path][data-kind="${g}"]`));
     ov.querySelectorAll<HTMLSelectElement>('select[data-group]').forEach(sel => sel.onchange = () => {
-        for (const r of rowSel(sel.dataset.group!)) r.value = sel.value;
+        for (const r of rowSel(sel.dataset.group!)) { if (Array.from(r.options).some(o => o.value === sel.value)) r.value = sel.value; }
         for (const it of groups.get(sel.dataset.group!)!) chosen.set(it.path, sel.value as SyncAction);
     });
     ov.querySelectorAll<HTMLSelectElement>('select[data-path]').forEach(sel => sel.onchange = () => chosen.set(sel.dataset.path!, sel.value as SyncAction));
+    ov.querySelectorAll<HTMLElement>('button[data-preview]').forEach(btn => btn.onclick = () => {
+        const path = btn.dataset.preview!;
+        const pre = Array.from(ov.querySelectorAll<HTMLElement>('pre[data-preview-for]')).find(x => x.dataset.previewFor === path)!;
+        if (pre.hidden) {
+            const m = merges[path];
+            pre.textContent = (m.conflicts ? 'Overlapping edits: the markers show both versions (A = Workspace, B = the other side).\n\n' : '') + m.merged.slice(0, 6000) + (m.merged.length > 6000 ? '\n…' : '');
+        }
+        pre.hidden = !pre.hidden;
+    });
     (ov.querySelector('.fg-modal-btn-cancel') as HTMLElement).onclick = () => ov.remove();
+    const undoBtn = ov.querySelector('.fg-modal-btn-undo') as HTMLElement | null;
+    if (undoBtn) undoBtn.onclick = () => { undoLastSync(); };
     const ok = ov.querySelector('.fg-modal-btn-ok') as HTMLButtonElement | null;
     if (ok) ok.onclick = async () => {
         ok.disabled = true; ok.textContent = '…';
-        try { await _applyLocalSync(items, chosen); ov.remove(); }
+        try {
+            const res = await d.apply(items, chosen);
+            ov.remove();
+            if (res.markers.length) alert(`${res.markers.length} file${res.markers.length === 1 ? '' : 's'} had overlapping edits and now contain conflict markers (<<<<<<< A is the Workspace version, >>>>>>> B the other one):\n\n${res.markers.slice(0, 10).join('\n')}${res.markers.length > 10 ? '\n…' : ''}`);
+        }
         catch (e: any) { ok.disabled = false; ok.textContent = 'Apply'; alert(`Sync failed: ${e.message}`); }
     };
+}
+
+/** Compare the imported Local Folder with the Workspace and let the user decide per file or per group. */
+export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = {}): Promise<void> {
+    const { workspace, local } = await _hashBothSides();
+    const base = _lsGet(_LS_BASE);
+    let items = planSync(workspace, local, base);
+    const merges = await _computeMerges(items.filter(i => i.kind === 'conflict').map(i => i.path),
+        p => _folderBaseText(p, base), p => readWorkspaceFile(p), p => readWorkspaceFile('local/' + p));
+    if (Object.keys(merges).length) items = planSync(workspace, local, base, merges);
+    // After an import the Workspace's own files are not news: only open when the folder brought something that differs.
+    if (flags.onlyIfIncoming && !items.some(i => i.kind !== 'new-in-workspace')) return;
+    await _showSyncDialog({
+        title: 'Sync Local Folder with Workspace', other: 'Local Folder', items, merges, withUndo: true,
+        note: 'Files changed on both sides merge when their edits do not overlap; the preview shows the result. Nothing is deleted unless you choose it, and “Undo last sync” puts it all back. Changes to the Local Folder reach the real folder through “Export changes”.',
+        apply: (its, chosen) => _applyLocalSync(its, chosen, merges),
+    });
+}
+
+/** Project import as a merge: the project's files are compared with the Workspace; files edited on both sides merge when the project's last export or import is known. Chats stay as they are. */
+async function _mergeProjectFiles(data: any): Promise<void> {
+    const incoming: Record<string, any> = {}, incomingHash: Record<string, string> = {};
+    for (const f of data.workspace || []) {
+        const segs = String(f.name).split('/');
+        if (String(f.name).startsWith('local/') || String(f.name).endsWith('/') || segs.some((sg: string) => UPLOAD_SKIP_DIRS.has(sg) || sg.startsWith('.'))) continue;
+        incoming[f.name] = f; incomingHash[f.name] = hashContent((f.encoding || '') + '|' + (f.content || ''));
+    }
+    const { workspace } = await _hashBothSides();
+    let items = planSync(workspace, incomingHash, {}).filter(i => i.kind === 'new-in-local' || i.kind === 'conflict');
+    const merges = await _computeMerges(items.filter(i => i.kind === 'conflict').map(i => i.path),
+        p => _loadBaseText('project', p), p => readWorkspaceFile(p), async p => incoming[p]);
+    items = items.map(i => i.kind === 'new-in-local'
+        ? { ...i, choices: ['to-workspace', 'skip'] as SyncAction[] }
+        : (() => { const m = merges[i.path];
+            const choices: SyncAction[] = m ? (m.conflicts ? ['keep-both', 'merge', 'to-workspace', 'skip'] : ['merge', 'keep-both', 'to-workspace', 'skip']) : ['keep-both', 'to-workspace', 'skip'];
+            return { ...i, action: choices[0], choices }; })());
+    await _showSyncDialog({
+        title: `Merge project “${data.name || 'Project'}” into the Workspace`, other: 'imported project', items, merges, withUndo: true,
+        note: 'Files only: chats and settings stay as they are. A file changed on both sides merges when the project’s previous export or import is known; otherwise both versions are kept (the project’s as “name (imported)”). Nothing is deleted, and “Undo last sync” puts it all back.',
+        apply: async (its, chosen) => {
+            const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
+            const markers: string[] = [];
+            const names = new Set(await listWorkspaceFileNames());
+            const put = (name: string, f: any) => writes.push({ name, content: f.content, encoding: f.encoding || null, lastModified: f.lastModified });
+            for (const it of its) {
+                let act = chosen.get(it.path) ?? it.action;
+                if (!it.choices.includes(act)) act = it.action;
+                const f = incoming[it.path];
+                if (act === 'to-workspace' && f) put(it.path, f);
+                else if (act === 'keep-both' && f) { const copy = keepBothName(it.path, n => names.has(n), 'imported'); names.add(copy); put(copy, f); }
+                else if (act === 'merge' && merges[it.path]) {
+                    put(it.path, { content: merges[it.path].merged, encoding: null, lastModified: Date.now() });
+                    if (merges[it.path].conflicts) markers.push(it.path);
+                }
+            }
+            if (writes.length) {
+                await _snapshotForUndo([...new Set(writes.map(x => x.name))], null);
+                await applyWorkspaceBatch(writes, []);
+            }
+            await _saveBaseTexts('project', (data.workspace || []).map((f: any) => ({ path: f.name, content: f.content, encoding: f.encoding })));
+            await renderFileList();
+            return { changed: writes.length, markers };
+        },
+    });
 }
 
 /** Local Folder files that are new or edited since the folder was imported, as one zip: shared on devices that offer a share sheet, downloaded elsewhere. */
@@ -3307,6 +3492,8 @@ async function exportProject() {
     const name = (nameInput?.value || '').trim() || localStorage.getItem('fg_project_name') || 'Project';
     try {
         const data = await _collectProjectData(name);
+        // What this export holds is the common starting point of a later merge of an edited copy.
+        await _saveBaseTexts('project', data.workspace.map((f: any) => ({ path: f.name, content: f.content, encoding: f.encoding }))).catch(() => {});
         const buf  = await _gzipJson(data);
         const slug = _projectSlug(name);
         // No CompressionStream (older Safari): export plain JSON; import accepts it.
@@ -3325,7 +3512,8 @@ async function exportProject() {
     }
 }
 
-async function importProject(inputEl) {
+/** `mode` 'replace' swaps the workspace and chats for the file's; 'merge' brings the file's workspace files into the current one, previewed, leaving chats alone. */
+async function importProject(inputEl, mode: 'replace' | 'merge' = 'replace') {
     const file = inputEl.files?.[0];
     inputEl.value = '';
     if (!file) return;
@@ -3337,8 +3525,10 @@ async function importProject(inputEl) {
             data = JSON.parse(await file.text());
         }
         if (!(data?.fg_project || data?.fwproject)) throw new Error('Not a valid FreeGent project file.');
+        if (mode === 'merge') { validateProjectData(data); await _mergeProjectFiles(data); return; }
         if (!confirm(`Import project "${data.name}"? Current workspace and chat history will be replaced.`)) return;
         await _restoreProjectData(data);
+        await _saveBaseTexts('project', (data.workspace || []).map((f: any) => ({ path: f.name, content: f.content, encoding: f.encoding }))).catch(() => {});
         if (data.localFolderName) _showFolderPrompt(data.name, data.localFolderName, data.id || _projectSlug(data.name));
     } catch (e) {
         alert('Import failed: ' + e.message);
@@ -3368,7 +3558,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolde
     buildPyRunnerHtml: _buildPyRunnerHtml,
     // File list UI
     renderFileList, updateSelectionUI, downloadSelected, deleteSelected,
-    copyFileBetween, openLocalSyncDialog, exportLocalChanges, downloadFile, confirmDeleteFile, uploadFiles,
+    copyFileBetween, openLocalSyncDialog, undoLastSync, exportLocalChanges, downloadFile, confirmDeleteFile, uploadFiles,
     fsaSupported, updateFsaBadge,
     // FSA folder management
     openLocalFolder, closeFsaFolder, reconnectLocalFolder, tryRestoreLocalFolder,
