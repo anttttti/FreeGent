@@ -348,6 +348,7 @@ let _keyPasteLen = 0;
 (window as any).saveDevKey = function(input: HTMLInputElement) {
     const v = input.value.trim();
     try { if (v) localStorage.setItem(DEV_KEY_LS, v); else { localStorage.removeItem(DEV_KEY_LS); localStorage.removeItem('fg_pass'); } } catch {}
+    try { (window as any).refreshCloudSyncButton?.(); } catch {}
     (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     (window as any).renderMainModelList?.();
 };

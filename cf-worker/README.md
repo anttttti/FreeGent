@@ -10,6 +10,8 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 - Optional shared keys: stored as Worker secrets and injected only for requests that carry the Developer key (`X-FG-Dev-Key`, matched against the `FG_DEV_KEY` secret). Visitors without it always use their own keys.
 - Developer-key sessions can also upload console errors and finished Autopilot chats (`/errlog`, `/log`) to KV for the maintainer to review. Users can also send a chat log on purpose.
 
+- Project sync (optional, Developer key): `POST /sync/auth` trades the key for a 15-minute token; `/sync/projects`, `/sync/<project>/manifest`, `/sync/<project>/b/<sha256>`, `/sync/<project>/gc` and `DELETE /sync/<project>` keep a project's files as content-addressed objects in an R2 bucket bound as `FG_SYNC`. Only changed files travel, and a push replaces the manifest only if nobody pushed since (compare-and-swap). Without the binding every `/sync` route answers 503 and nothing is stored. To enable it: `npx wrangler r2 bucket create freegent-sync` (R2 needs a payment method on the Cloudflare account, though the free tier of 10 GB is not charged), then uncomment the `r2_buckets` block in `wrangler.toml` and deploy. In FreeGent, **☁ Sync** appears next to Import/Export once a Developer key is saved. To run it on a separate Worker later, deploy the same code under another name with its own bucket and `FG_DEV_KEY`, and put that Worker's URL in Settings → Privacy.
+
 ## Protections
 
 - **Origin check.** Only the origins in `ALLOWED_ORIGINS` are served (freegent.ai, the old GitHub Pages URL and local dev ports). An `Origin` header is easy to forge from a non-browser client, so it stops other websites, not other programs.

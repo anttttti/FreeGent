@@ -52,6 +52,10 @@
  * API keys (user's own or injected from env) are forwarded directly to the
  * provider and never retained.
  *
+ * Project sync (Developer key + an R2 bucket bound as FG_SYNC; answers 503 without it): POST /sync/auth trades the key for a
+ * 15-minute token; /sync/projects, /sync/<project>/manifest, /sync/<project>/b/<sha256>, /sync/<project>/gc and
+ * DELETE /sync/<project> store a project's files as content-addressed R2 objects. See the "/sync" comment below.
+ *
  * Free-tier limits
  * ──────────────────
  * Cloudflare's free Workers plan allows 100 000 req/day and up to 30 seconds
@@ -115,8 +119,8 @@ const SEARCH_HEADER_MAP = {
 
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass, X-FG-Sync-Token, X-FG-Sync-Base',
     'Access-Control-Max-Age':       '86400',
     'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
 };
@@ -174,12 +178,128 @@ async function _storeErrLog(request, env) {
     return new Response('{"ok":true}', { headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
+
+// ── /sync: per-file project sync (Developer key + the FG_SYNC R2 bucket) ──────
+// A project is a manifest (path → {h: SHA-256 hex, s: size, e?: 'base64', m?: mtime}) plus content-addressed blobs
+// p/<project>/b/<sha256>. The client uploads only blobs the manifest does not already list, then replaces the manifest
+// with a compare-and-swap on its etag, so two devices pushing at once cannot overwrite each other (the loser gets 412,
+// pulls and merges, and pushes again). Every route needs a short-lived token from POST /sync/auth, which is where the
+// Developer key is checked (and rate limited): a push of hundreds of files would otherwise exhaust the per-IP key budget.
+// Without the FG_SYNC binding every route answers 503, so a Worker that has not enabled sync stores nothing.
+const SYNC_TOKEN_TTL_MS = 15 * 60 * 1000;
+const SYNC_BLOB_MAX = 95 * 1024 * 1024;
+const SYNC_MANIFEST_MAX = 5 * 1024 * 1024;
+const _hex = (buf) => Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+async function _syncMac(env, exp) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(env.FG_DEV_KEY || env.FG_PASS)),
+        { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return _hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('fg-sync:' + exp)));
+}
+async function _syncTokenOk(request, env) {
+    const t = request.headers.get('X-FG-Sync-Token') || '';
+    const dot = t.indexOf('.');
+    const exp = Number(t.slice(0, dot));
+    if (dot < 1 || !(exp > Date.now()) || exp > Date.now() + SYNC_TOKEN_TTL_MS + 1000) return false;
+    const want = await _syncMac(env, exp), got = t.slice(dot + 1);
+    if (want.length !== got.length) return false;
+    let d = 0;
+    for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
+    return d === 0;
+}
+const _json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
+async function _sync(request, env, url) {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (!env || !env.FG_SYNC || !(env.FG_DEV_KEY || env.FG_PASS)) return _err(503, 'Project sync is not enabled on this Worker');
+    const parts = url.pathname.split('/').filter(Boolean).slice(1).map(decodeURIComponent);   // after "sync"
+    if (parts[0] === 'auth' && parts.length === 1) {
+        if (request.method !== 'POST') return _err(405, 'POST only');
+        if (!(await _unlocked(request, env))) return _err(401, 'Developer key required');
+        const exp = Date.now() + SYNC_TOKEN_TTL_MS;
+        return _json({ token: `${exp}.${await _syncMac(env, exp)}`, expires: exp });
+    }
+    if (!(await _syncTokenOk(request, env))) return _err(401, 'Sync token missing or expired');
+    const bucket = env.FG_SYNC;
+    try {
+        if (parts[0] === 'projects' && parts.length === 1 && request.method === 'GET') {
+            const l = await bucket.list({ prefix: 'p/', delimiter: '/' });
+            return _json({ projects: (l.delimitedPrefixes || []).map(x => x.slice(2, -1)) });
+        }
+        const project = parts[0] || '';
+        if (!/^[A-Za-z0-9._-]{1,64}$/.test(project) || project === '.' || project === '..') return _err(400, 'Invalid project name');
+        const root = `p/${project}/`;
+        if (parts.length === 1 && request.method === 'DELETE') {
+            let n = 0, cursor;
+            do {
+                const l = await bucket.list({ prefix: root, cursor, limit: 1000 });
+                if (l.objects.length) { await bucket.delete(l.objects.map(o => o.key)); n += l.objects.length; }
+                cursor = l.truncated ? l.cursor : undefined;
+            } while (cursor);
+            return _json({ deleted: n });
+        }
+        if (parts[1] === 'manifest' && parts.length === 2) {
+            if (request.method === 'GET') {
+                const o = await bucket.get(root + 'manifest.json');
+                if (!o) return _json({ etag: null, manifest: { files: {} } });
+                return _json({ etag: o.etag, manifest: JSON.parse(await o.text()) });
+            }
+            if (request.method === 'PUT') {
+                if (Number(request.headers.get('Content-Length') || 0) > SYNC_MANIFEST_MAX) return _err(413, 'Manifest too large');
+                const text = await request.text();
+                if (text.length > SYNC_MANIFEST_MAX) return _err(413, 'Manifest too large');
+                let m; try { m = JSON.parse(text); } catch { return _err(400, 'Manifest must be JSON'); }
+                if (!m || typeof m.files !== 'object' || Array.isArray(m.files)) return _err(400, 'Manifest needs a files object');
+                for (const f of Object.values(m.files)) if (!f || !/^[0-9a-f]{64}$/.test(f.h)) return _err(400, 'Manifest entry without a SHA-256');
+                const base = request.headers.get('X-FG-Sync-Base') || '';
+                if (!base) return _err(400, 'X-FG-Sync-Base required (the etag you started from, or "none")');
+                const o = await bucket.put(root + 'manifest.json', text, { onlyIf: base === 'none' ? { etagDoesNotMatch: '*' } : { etagMatches: base } });
+                if (!o) return _err(412, 'The project changed on the server — pull, merge and push again');
+                return _json({ etag: o.etag });
+            }
+        }
+        if (parts[1] === 'b' && parts.length === 3 && /^[0-9a-f]{64}$/.test(parts[2])) {
+            const key = `${root}b/${parts[2]}`;
+            if (request.method === 'GET') {
+                const o = await bucket.get(key);
+                if (!o) return _err(404, 'No such file');
+                return new Response(o.body, { headers: { ...CORS, 'Content-Type': 'application/octet-stream', 'Content-Length': String(o.size) } });
+            }
+            if (request.method === 'PUT') {
+                const lenHeader = request.headers.get('Content-Length');
+                const len = Number(lenHeader);
+                if (lenHeader === null || !Number.isFinite(len)) return _err(411, 'Content-Length required');
+                if (len > SYNC_BLOB_MAX) return _err(413, 'File too large for one upload (max 95 MB)');
+                if (await bucket.head(key)) return _json({ stored: false, exists: true });
+                try { await bucket.put(key, len === 0 ? new Uint8Array(0) : request.body, { sha256: parts[2] }); }
+                catch (e) { return _err(400, 'The upload does not match its SHA-256'); }
+                return _json({ stored: true });
+            }
+        }
+        if (parts[1] === 'gc' && parts.length === 2 && request.method === 'POST') {
+            const mo = await bucket.get(root + 'manifest.json');
+            const keep = new Set(mo ? Object.values(JSON.parse(await mo.text()).files).map(f => `${root}b/${f.h}`) : []);
+            let n = 0, cursor;
+            do {
+                const l = await bucket.list({ prefix: root + 'b/', cursor, limit: 1000 });
+                const drop = l.objects.filter(o => !keep.has(o.key)).map(o => o.key);
+                if (drop.length) { await bucket.delete(drop); n += drop.length; }
+                cursor = l.truncated ? l.cursor : undefined;
+            } while (cursor);
+            return _json({ deleted: n });
+        }
+        return _err(404, 'Unknown sync route');
+    } catch (e) {
+        return _err(500, 'Sync storage error: ' + String(e && e.message || e));
+    }
+}
+
 export default {
     async fetch(request, env) {
         const origin = request.headers.get('Origin') || '';
 
         if (new URL(request.url).pathname === '/log') return _storeLog(request, env);
         if (new URL(request.url).pathname === '/errlog') return _storeErrLog(request, env);
+        if (new URL(request.url).pathname.split('/')[1] === 'sync') return _sync(request, env, new URL(request.url));
 
         // ── CORS preflight ────────────────────────────────────────────────────
         if (request.method === 'OPTIONS') {

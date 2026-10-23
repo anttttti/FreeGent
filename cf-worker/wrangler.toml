@@ -45,3 +45,11 @@ namespace_id = "1001"
 [[kv_namespaces]]
 binding = "FG_LOGS"
 id = "5cf3c4410d8c42e88c416fd7ff5e04b3"
+
+# Per-file project sync (Developer key required). Create the bucket once, then uncomment:
+#   npx wrangler r2 bucket create freegent-sync
+# Without the binding every /sync route answers 503 and nothing is stored. To run sync on a separate Worker,
+# deploy this same code under another name with its own bucket and FG_DEV_KEY.
+# [[r2_buckets]]
+# binding = "FG_SYNC"
+# bucket_name = "freegent-sync"
