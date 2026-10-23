@@ -271,6 +271,7 @@
                 <label class="ws-action-btn project-import-label" title="Merge a project file into this workspace: new files are added, files edited on both sides are merged (previewed first). Chats are not changed.">&#8645; Merge
                     <input type="file" accept=".fg_project.gz,.fwproject.gz,.gz,.fg_project,.fwproject,.json" style="display:none" onchange="importProject(this, 'merge')">
                 </label>
+                <button class="ws-action-btn" id="fg-cloudsync-btn" style="display:none" onclick="openCloudSyncDialog()" title="Developer key: sync this project with the cloud, file by file (only changed files travel)">&#9729; Sync</button>
                 <button class="ws-action-btn project-clear-btn" onclick="clearProject()" title="Clear workspace, chat history and project name">&#10005; Clear</button>
             </div>
             <div id="project-storage-usage" class="project-storage-usage"></div>

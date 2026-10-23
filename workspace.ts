@@ -10,6 +10,10 @@ import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
 import { tryMerge } from './diff-utils.js';
+import { CloudSyncClient, sha256Hex, cloudSlug, pool, type CloudFile, type CloudManifest } from './cloud-sync.js';
+import { DEFAULT_CF_WORKER, getDevKey } from './proxy.js';
+import { getPrivacyLevel } from './privacy.js';
+import { KEYS } from './storage-keys.js';
 import { hashContent, planSync, keepBothName, nextBase, changedSinceImport, type SyncAction, type SyncItem } from './local-sync.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
 import { bumpWorkspaceEpoch, workspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
@@ -864,7 +868,7 @@ async function _hashBothSides(): Promise<{ workspace: Record<string, string>; lo
 // A three-way merge needs the text both sides started from. The sync keeps it per path, in two separate sets: 'folder' (what the Workspace and the
 // imported Local Folder last agreed on) and 'project' (what the last project export or import held). The last sync's overwritten files are kept for one undo.
 const _BASE_TEXT_MAX = 512 * 1024;
-type _BaseNs = 'folder' | 'project';
+type _BaseNs = string;   // 'folder', 'project' or 'cloud/<project>'
 async function _syncTx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest | void): Promise<T | undefined> {
     await ensureDB();
     return new Promise<T | undefined>((resolve, reject) => {
@@ -1138,6 +1142,187 @@ async function _mergeProjectFiles(data: any): Promise<void> {
             return { changed: writes.length, markers };
         },
     });
+}
+
+// ── Cloud sync (Developer key): the Workspace ↔ a project on the Worker, file by file ─────────────────────────────────────────────
+// Compared by SHA-256 against what the two sides agreed on last time, exactly like the folder sync; only changed files travel. Needs the
+// Developer key and a Worker with an R2 bucket bound (see cf-worker/wrangler.toml). A push replaces the manifest only if nobody pushed
+// since this device last looked (compare-and-swap); otherwise the sync says so and the user runs it again.
+const _CLOUD_BASE = (slug: string) => `fg_cloudsync_base:${slug}`;
+const _CLOUD_PULL_MAX = 200 * 1024 * 1024;
+const _enc = new TextEncoder();
+
+function _cloudWorkerUrl(): string {
+    if (getPrivacyLevel() !== 'default') return '';
+    return (localStorage.getItem(KEYS.SEARCH_PROXY) || '').trim() || DEFAULT_CF_WORKER;
+}
+function _cloudProjectSlug(): string {
+    const name = (document.getElementById('project-name-input') as HTMLInputElement | null)?.value?.trim() || localStorage.getItem('fg_project_name') || 'Project';
+    return cloudSlug(name);
+}
+function _cloudStatus(msg: string | null): void {
+    let el = document.getElementById('fg-cloudsync-status');
+    if (msg === null) { el?.remove(); return; }
+    if (!el) {
+        el = document.createElement('div'); el.id = 'fg-cloudsync-status'; el.setAttribute('role', 'status');
+        el.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:100000;background:#222;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;max-width:90vw';
+        document.body.appendChild(el);
+    }
+    el.textContent = msg;
+}
+/** The bytes a workspace record stands for: base64 content is the file's bytes, anything else is UTF-8 text. */
+function _recBytes(rec: any): Uint8Array {
+    return rec.encoding === 'base64' ? base64ToBytes(rec.content || '') : _enc.encode(rec.content || '');
+}
+/** A downloaded file as a workspace record: text when it is valid UTF-8 (and was text), otherwise base64. */
+function _bytesToRec(bytes: Uint8Array, asBase64: boolean): { content: string; encoding: string | null } {
+    if (!asBase64) { try { return { content: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: null }; } catch {} }
+    return { content: bytesToBase64(bytes), encoding: 'base64' };
+}
+
+/** SHA-256 of every project file (not local/, vendor dirs), reusing the last hash while a file's size and modified time are unchanged. */
+async function _cloudHashWorkspace(slug: string): Promise<{ files: Record<string, CloudFile>; hashes: Record<string, string> }> {
+    const cacheRec: any = await _syncTx('readonly', st => st.get(`hcache:${slug}`));
+    const cache: Record<string, [number, number, string]> = cacheRec?.files || {};
+    const names = (await listWorkspaceFileNames()).filter(n => !n.startsWith('local/') && !n.endsWith('/') && !n.split('/').some(sg => UPLOAD_SKIP_DIRS.has(sg)));
+    const files: Record<string, CloudFile> = {}, hashes: Record<string, string> = {}, next: Record<string, [number, number, string]> = {};
+    let i = 0;
+    for (const name of names) {
+        if (++i % 25 === 0) _cloudStatus(`Reading files… ${i}/${names.length}`);
+        const rec = await readWorkspaceFile(name);
+        if (!rec) continue;
+        const bytes = _recBytes(rec);
+        const hit = cache[name];
+        const h = hit && hit[0] === rec.lastModified && hit[1] === bytes.length ? hit[2] : await sha256Hex(bytes);
+        next[name] = [rec.lastModified, bytes.length, h];
+        files[name] = { h, s: bytes.length, ...(rec.encoding === 'base64' ? { e: 'base64' as const } : {}), m: rec.lastModified };
+        hashes[name] = h;
+    }
+    await _syncTx('readwrite', st => st.put({ id: `hcache:${slug}`, files: next }));
+    return { files, hashes };
+}
+
+/** Compare the Workspace with the project stored on the Worker and let the user choose, per file or group, what travels which way. */
+export async function openCloudSyncDialog(): Promise<void> {
+    const key = getDevKey(), url = _cloudWorkerUrl();
+    if (!key) { alert('Cloud sync needs the Developer key (Settings → API Credentials).'); return; }
+    if (!url) { alert('Cloud sync is off while the privacy level is below Default.'); return; }
+    const slug = _cloudProjectSlug();
+    const client = new CloudSyncClient(url, key);
+    try {
+        _cloudStatus('Connecting…');
+        const remote = await client.getManifest(slug);
+        const ws = await _cloudHashWorkspace(slug);
+        const remoteHashes: Record<string, string> = {};
+        for (const [p, f] of Object.entries(remote.manifest.files)) remoteHashes[p] = f.h;
+        const baseRec = (() => { try { return JSON.parse(localStorage.getItem(_CLOUD_BASE(slug)) || 'null'); } catch { return null; } })();
+        const base: Record<string, string> = baseRec?.files || {};
+        let items = planSync(ws.hashes, remoteHashes, base);
+        const ns = `cloud/${slug}`;
+        const merges = await _computeMerges(items.filter(i => i.kind === 'conflict').map(i => i.path),
+            async p => { const t = await _loadBaseText(ns, p); return t !== null && base[p] !== undefined && await sha256Hex(_enc.encode(t)) === base[p] ? t : null; },
+            p => readWorkspaceFile(p),
+            async p => {
+                const f = remote.manifest.files[p];
+                if (!f || f.e === 'base64' || f.s > 2 * 1024 * 1024) return null;
+                const rec = _bytesToRec(await client.getBlob(slug, f.h), false);
+                return rec.encoding ? null : rec;
+            });
+        if (Object.keys(merges).length) items = planSync(ws.hashes, remoteHashes, base, merges);
+        _cloudStatus(null);
+        if (!items.length) {
+            localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag: remote.etag, files: nextBase(ws.hashes, remoteHashes, base) }));
+            alert(`“${slug}” is in sync with the cloud.`); return;
+        }
+        await _showSyncDialog({
+            title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true,
+            note: 'Only changed files travel. Files changed on both sides merge when their edits do not overlap (see the preview). Nothing is deleted unless you choose it, and “Undo last sync” restores the Workspace files this sync changed.',
+            apply: (its, chosen) => _applyCloudSync({ client, slug, remote, ws, base, items: its, chosen, merges }),
+        });
+    } catch (e: any) {
+        _cloudStatus(null);
+        alert(`Cloud sync failed: ${e?.message || e}`);
+    }
+}
+
+async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remote: { etag: string | null; manifest: CloudManifest }; ws: { files: Record<string, CloudFile>; hashes: Record<string, string> };
+                                    base: Record<string, string>; items: SyncItem[]; chosen: Map<string, SyncAction>; merges: Record<string, _Merge> }): Promise<_SyncResult> {
+    const { client, slug, remote, ws, base } = c;
+    const files: Record<string, CloudFile> = { ...remote.manifest.files };      // the manifest as it will be after this sync
+    const wsAfter: Record<string, string> = { ...ws.hashes };
+    const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
+    const deletes: string[] = [];
+    const uploads = new Map<string, Uint8Array>();                               // hash → bytes still to send
+    const markers: string[] = [];
+    const names = new Set(await listWorkspaceFileNames());
+    let pullBytes = 0;
+    const pull = async (path: string, as: string) => {
+        const f = remote.manifest.files[path];
+        pullBytes += f.s; if (pullBytes > _CLOUD_PULL_MAX) throw new Error('Too much to download in one sync (over 200 MB): choose “Leave” for the large files and sync again.');
+        const rec = _bytesToRec(await client.getBlob(slug, f.h), f.e === 'base64');
+        writes.push({ name: as, content: rec.content, encoding: rec.encoding, lastModified: f.m || Date.now() });
+        return f;
+    };
+    const push = async (path: string) => {
+        const rec = await readWorkspaceFile(path); if (!rec) return;
+        const bytes = _recBytes(rec), h = ws.hashes[path];
+        files[path] = ws.files[path];
+        if (!Object.values(remote.manifest.files).some(f => f.h === h)) uploads.set(h, bytes);
+    };
+    let step = 0;
+    for (const it of c.items) {
+        let act = c.chosen.get(it.path) ?? it.action;
+        if (!it.choices.includes(act)) act = it.action;
+        if (act === 'skip') continue;
+        _cloudStatus(`Preparing… ${++step}/${c.items.length}`);
+        if (act === 'to-workspace') { const f = await pull(it.path, it.path); wsAfter[it.path] = f.h; }
+        else if (act === 'to-local') await push(it.path);
+        else if (act === 'keep-both') {
+            const copy = keepBothName(it.path, n => names.has(n), 'cloud'); names.add(copy);
+            await pull(it.path, copy);       // the cloud version is kept beside the file; the Workspace version goes up
+            await push(it.path);
+        } else if (act === 'merge' && c.merges[it.path]) {
+            const m = c.merges[it.path], bytes = _enc.encode(m.merged), h = await sha256Hex(bytes);
+            writes.push({ name: it.path, content: m.merged, encoding: null, lastModified: Date.now() });
+            files[it.path] = { h, s: bytes.length, m: Date.now() }; wsAfter[it.path] = h;
+            if (!Object.values(remote.manifest.files).some(f => f.h === h)) uploads.set(h, bytes);
+            if (m.conflicts) markers.push(it.path);
+        } else if (act === 'delete-workspace') { deletes.push(it.path); delete wsAfter[it.path]; }
+        else if (act === 'delete-local') delete files[it.path];                    // "local" = the cloud side here
+    }
+    // Send first: if the project moved on meanwhile nothing in the Workspace has changed yet.
+    const pushed = uploads.size > 0 || Object.keys(files).some(p => files[p] !== remote.manifest.files[p]) || Object.keys(remote.manifest.files).some(p => !(p in files));
+    let etag = remote.etag;
+    if (pushed) {
+        const list = [...uploads.entries()]; let done = 0;
+        await pool(list, 4, async ([h, bytes]) => {
+            _cloudStatus(`Uploading… ${done}/${list.length}`);
+            try { await client.putBlob(slug, h, bytes); } catch (e: any) { if (e?.status === 429 || e?.status === 500) { await new Promise(r => setTimeout(r, 1500)); await client.putBlob(slug, h, bytes); } else throw e; }
+            done++;
+        });
+        try { etag = await client.putManifest(slug, { files }, remote.etag); }
+        catch (e: any) { if (e?.status === 412) throw new Error('Someone pushed to this project while you were choosing. Nothing was changed here; run the sync again.'); throw e; }
+    }
+    if (writes.length || deletes.length) {
+        await _snapshotForUndo([...new Set([...writes.map(x => x.name), ...deletes])], null);
+        await applyWorkspaceBatch(writes, deletes);
+    }
+    const remoteAfter: Record<string, string> = {};
+    for (const [p, f] of Object.entries(files)) remoteAfter[p] = f.h;
+    const next = nextBase(wsAfter, remoteAfter, base);
+    localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag, files: next }));
+    const recs: Array<{ path: string; content: string; encoding?: string | null }> = [];
+    for (const p of Object.keys(next).filter(p => next[p] !== base[p])) { const r = await readWorkspaceFile(p); if (r && !r.encoding) recs.push({ path: p, content: r.content }); }
+    await _saveBaseTexts(`cloud/${slug}`, recs);
+    _cloudStatus(null);
+    await renderFileList();
+    return { changed: writes.length + deletes.length + uploads.size, markers };
+}
+
+/** Show the "☁ Sync" button only while a Developer key is saved. */
+export function refreshCloudSyncButton(): void {
+    const b = document.getElementById('fg-cloudsync-btn');
+    if (b) b.style.display = getDevKey() ? '' : 'none';
 }
 
 /** Local Folder files that are new or edited since the folder was imported, as one zip: shared on devices that offer a share sheet, downloaded elsewhere. */
@@ -3535,6 +3720,8 @@ async function importProject(inputEl, mode: 'replace' | 'merge' = 'replace') {
     }
 }
 
+try { if (typeof document !== 'undefined') { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshCloudSyncButton); else refreshCloudSyncButton(); } } catch {}
+
 // ── Window bridge ─────────────────────────────────────────────────────────────
 // fsaHandle is mutable module state — expose a live accessor, not a snapshot.
 Object.defineProperty(window, 'fsaHandle', { get: () => fsaHandle, configurable: true });
@@ -3558,7 +3745,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolde
     buildPyRunnerHtml: _buildPyRunnerHtml,
     // File list UI
     renderFileList, updateSelectionUI, downloadSelected, deleteSelected,
-    copyFileBetween, openLocalSyncDialog, undoLastSync, exportLocalChanges, downloadFile, confirmDeleteFile, uploadFiles,
+    copyFileBetween, openLocalSyncDialog, openCloudSyncDialog, refreshCloudSyncButton, undoLastSync, exportLocalChanges, downloadFile, confirmDeleteFile, uploadFiles,
     fsaSupported, updateFsaBadge,
     // FSA folder management
     openLocalFolder, closeFsaFolder, reconnectLocalFolder, tryRestoreLocalFolder,
