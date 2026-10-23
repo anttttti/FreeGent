@@ -9,7 +9,7 @@ import { emitNudge } from './nudge-emitter.js';
 import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
-import { stripInjected, parseArgs } from './history-util.js';
+import { stripInjected, parseArgs, isRealUserMessage } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
@@ -396,6 +396,21 @@ async function _getReplaceFailNudge(_replFails: Map<string, number>, _replNudge:
 export function _originalTask(hist: any[]): string {
     const m = hist.find((x: any) => x.role === 'user' && typeof x.content === 'string' && x.content.trim());
     return m ? stripInjected(m.content.replace(/^\[TASK[^\]]*\]\n/, '')) : '';
+}
+
+// What a forced stop's closing summary is told the task is. In a long chat the first message is not what the user is waiting for:
+// the stop at the step limit answered "Do you see this link? Say yes or no" after 100 steps of work on a later request
+// (fg-chat 2026-10-23). The user's latest message comes after the first; a lone message (benchmarks, new chats) is unchanged.
+export function _stopSummaryTask(hist: any[]): string {
+    const first = _originalTask(hist);
+    for (let i = hist.length - 1; i >= 0; i--) {
+        const m = hist[i];
+        if (!isRealUserMessage(m) || m.content.startsWith('[SYSTEM:') || m.content.startsWith('[TASK')) continue;
+        const last = stripInjected(m.content);
+        if (!last) continue;
+        return !first || first === last ? last : `${first.slice(0, 700)}\n\nThe user's latest message:\n${last}`;
+    }
+    return first;
 }
 
 // Returns the role to use when injecting a framework nudge into OAI history.
@@ -1254,7 +1269,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         _toolPauses.set(t, at + n);
         return n;
     };
-    _stopTask = (() => { try { return _originalTask(_histR(_s)) || ''; } catch { return ''; } })();
+    _stopTask = (() => { try { return _stopSummaryTask(_histR(_s)) || ''; } catch { return ''; } })();
     _stopRecent = [];
     _stopAttempts = [];
     // Director kicks pass forceToolCall:true to prevent step-0 planning-text exits. Set by enforcement
@@ -1346,6 +1361,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     async function _doCompact(step: number): Promise<void> {
         _forceCompact = false;
         _dupSeen.clear();   // stubs point at earlier copies; after compaction those are gone
+        // The same holds for "Already read" notes, refusals of repeated reads and replayed identical calls: the read they point to was
+        // summarised away, so the model re-asked for a file it no longer had and was told it had it (fg-chat 2026-10-23: three times).
+        resetSeenReadFiles(); _repeatCache.clear(); _readLedgers.delete(_repeatCache);
         // Capture any pending nudge so it can be re-injected if compaction drops it.
         const _lastPre = _histR(_s).at(-1);  // read from session
         const _pendingNudge = (_lastPre?.role === 'user' && typeof _lastPre.content === 'string' && _lastPre.content.startsWith('<nudge>'))
