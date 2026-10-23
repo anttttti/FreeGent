@@ -19,7 +19,7 @@ try { loader = import.meta.resolve('tsx'); }
 catch { console.error('freegent: the "tsx" package is not installed here. Run `npm install` in ' + root); process.exit(1); }
 
 const child = spawn(process.execPath, ['--import', loader, entry, ...r.args], {
-    stdio: 'inherit', cwd: process.cwd(), env: { ...process.env, NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS ?? '1' },
+    stdio: 'inherit', cwd: process.cwd(), env: { ...process.env, NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS ?? '1', NODE_ENV: process.env.NODE_ENV ?? 'production' },
 });
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill(sig); } catch {} });
 child.on('exit', (code, signal) => process.exit(code ?? (signal ? 128 + ({ SIGINT: 2, SIGTERM: 15, SIGHUP: 1 }[signal] ?? 1) : 1)));

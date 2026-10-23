@@ -6,6 +6,7 @@
 
 // bootstrap-jsdom MUST be the first import: it sets globalThis.window = dom.window
 // before any other module body runs. headless-runner re-exports dom for us.
+import './tui-env.js';
 import { setup, dom, saveProfile, listWorkspaceSessions, resumeSession } from './headless-runner.js';
 import { isCacheCapable, oaiEndpoint, _markFlatCooldown } from './model-router.js';
 export { listWorkspaceSessions, resumeSession };
@@ -578,6 +579,9 @@ async function main() {
     // A stall is a heartbeat gap with a cause: how long, whether the process was busy (synchronous work) or just not scheduled, and the
     // slow operations in flight. Repeated long ones also reach the screen: a frozen interface should say why.
     const announce = stallAnnouncer(text => Store.addNotice(`_${text}_`), { where: opts.logFile });
+    // A development build of React (NODE_ENV set to something else by the caller) still records a measure per render: drop them.
+    const _perfTimer = setInterval(() => { try { performance.clearMeasures(); performance.clearMarks(); } catch {} }, 15_000);
+    _perfTimer.unref?.();
     _stopLoopWatch = startLoopWatch(s => {
         try { appendFileSync(opts.logFile, JSON.stringify({ timing: { step: 'stall', ms: s.ms, busy: s.busy, ops: s.ops } }) + '\n', 'utf8'); } catch {}
         announce(s);

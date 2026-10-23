@@ -446,6 +446,9 @@ function _buildFlatItems(entries: Store.Entry[]): FlatItem[] {
     for (const e of entries) {
         if (e.type === 'user') {
             out.push({ kind: 'user', id: e.id, text: e.text });
+        } else if (e.turn.local && !e.turn.steps.length) {
+            // A notice (stall warning, "nothing to rerun") is not a turn of the agent: no header, no number.
+            if (e.turn.done && e.turn.finalText?.trim()) out.push({ kind: 'final-text', turn: e.turn });
         } else {
             turnIndex++;
             out.push({ kind: 'turn-header', turn: e.turn, turnIndex });

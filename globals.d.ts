@@ -319,6 +319,7 @@ declare global {
     var fgTargetContainer: any;
     var nativeExec: any;
     var hasLocalFolder: any;
+    var hasFsaFolder: any;
     var workspaceUsesAbsolutePaths: any;
     // ── bridged by history-util.ts ──
     var activeHistory: any;

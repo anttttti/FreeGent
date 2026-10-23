@@ -387,7 +387,11 @@ async function loadChatHistory(id: string): Promise<boolean> {
     _noteSeenRev(id);
     try {
         // Try SQLite session store first (available when an adapter is injected).
-        const sqliteHistory = await sessionLoadHistory?.(id);
+        // A read that rejects (closed connection, aborted transaction) falls through to the cache instead of leaving the
+        // model with an empty conversation that the next save would write over the recoverable copy (opencode §18).
+        let sqliteHistory: any = null;
+        try { sqliteHistory = await sessionLoadHistory?.(id); }
+        catch (e) { console.warn('[loadChatHistory] session store read failed, using the cache:', (e as any)?.message); }
         // Another chat became active during the await (New Chat, runner episode): assigning
         // now would put this chat's history into that one.
         if (activeChatId !== id) return false;
