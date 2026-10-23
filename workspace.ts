@@ -9,6 +9,7 @@ import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
 import { taskTitleKey, isTaskPath } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
+import { hashContent, planSync, keepBothName, nextBase, changedSinceImport, type SyncAction, type SyncItem } from './local-sync.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
 import { bumpWorkspaceEpoch, workspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
 export interface WorkspaceAdapter {
@@ -573,7 +574,7 @@ async function reconnectLocalFolder() {
 async function openLocalFolder() {
     if (!fsaSupported()) {
         // Fallback: webkitdirectory input imports files into IDB workspace as a snapshot.
-        uploadFiles(true);
+        uploadFiles(true, true);
         return null;
     }
     // Await directly — the user takes as long as they need to navigate the picker.
@@ -585,7 +586,7 @@ async function openLocalFolder() {
     } catch (e) {
         if (e.name === 'AbortError') return null;
         console.warn('[FSA]', e.name, e.message);
-        uploadFiles(true);  // fall back on any non-abort error
+        uploadFiles(true, true);  // fall back on any non-abort error
         return null;
     }
     pendingFsaHandle = null;
@@ -814,7 +815,166 @@ async function clearImportedLocalFiles() {
     const wsFiles = await listWorkspaceFilesMetaOnly();
     await Promise.all(wsFiles.filter(f => f.name.startsWith('local/')).map(f => deleteWorkspaceFile(f.name)));
     _hasImportedLocal = false;
+    try { for (const k of [_LS_BASE, _LS_IMPORTED, 'fg_localsync_folder']) localStorage.removeItem(k); } catch {}
     await renderFileList();
+}
+
+// ── Imported Local Folder ↔ Workspace ────────────────────────────────────────
+// Without a folder picker (Safari, Firefox) the Local Folder is a snapshot in IndexedDB under local/. Syncing it with the
+// Workspace is a diff against what the two sides agreed on last time; the way back to the real folder is an export.
+const _LS_BASE = 'fg_localsync_base';          // path → hash both sides had when last in agreement
+const _LS_IMPORTED = 'fg_localsync_imported';  // path → hash the folder had when it was imported
+function _lsGet(key: string): Record<string, string> { try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch { return {}; } }
+function _lsSet(key: string, v: Record<string, string>): void { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }
+
+/** Content hashes of both sides, read one record at a time. Paths an import would skip (hidden, vendor dirs) are left out. */
+async function _hashBothSides(): Promise<{ workspace: Record<string, string>; local: Record<string, string> }> {
+    await ensureDB();
+    const workspace: Record<string, string> = {}, local: Record<string, string> = {};
+    await new Promise<void>((resolve, reject) => {
+        const req = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
+        req.onsuccess = () => {
+            const c = req.result;
+            if (!c) { resolve(); return; }
+            const r = c.value, name: string = r.name;
+            const isLocal = name.startsWith('local/'), path = isLocal ? name.slice(6) : name;
+            const segs = path.split('/');
+            if (!path.endsWith('/') && !segs.some(sg => UPLOAD_SKIP_DIRS.has(sg) || sg.startsWith('.')))
+                (isLocal ? local : workspace)[path] = hashContent((r.encoding || '') + '|' + (r.content || ''));
+            c.continue();
+        };
+        req.onerror = () => reject(req.error);
+    });
+    return { workspace, local };
+}
+
+/** A copy just made the two sides identical for this path: remember it, so a later edit on one side reads as that side's change rather than a conflict. */
+function _noteAgreed(path: string, rec: any): void {
+    const base = _lsGet(_LS_BASE);
+    base[path] = hashContent((rec.encoding || '') + '|' + (rec.content || ''));
+    _lsSet(_LS_BASE, base);
+}
+
+/** After a folder import: drop snapshot files the folder no longer has (only those that were in sync, never a copy still waiting to be exported), and note what the folder holds. */
+async function _afterLocalImport(imported: Set<string>): Promise<void> {
+    const { workspace, local } = await _hashBothSides();
+    const base = _lsGet(_LS_BASE);
+    for (const p of imported) if (local[p] !== undefined && local[p] === workspace[p]) base[p] = local[p];   // identical files agree from the start
+    _lsSet(_LS_BASE, base);
+    const stale = Object.keys(local).filter(p => !imported.has(p) && base[p] === local[p]);
+    if (stale.length) { await applyWorkspaceBatch([], stale.map(p => 'local/' + p)); for (const p of stale) delete local[p]; }
+    const folder: Record<string, string> = {};
+    for (const p of imported) if (local[p] !== undefined) folder[p] = local[p];
+    _lsSet(_LS_IMPORTED, folder);
+}
+
+async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction>): Promise<number> {
+    const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
+    const deletes: string[] = [];
+    const names = new Set((await listWorkspaceFileNames()));
+    const put = (name: string, rec: any) => writes.push({ name, content: rec.content, encoding: rec.encoding || null, lastModified: rec.lastModified });
+    for (const it of items) {
+        const act = chosen.get(it.path) ?? it.action;
+        if (act === 'skip') continue;
+        const w = act === 'to-workspace' || act === 'delete-workspace' ? null : await readWorkspaceFile(it.path);
+        const l = act === 'to-local' || act === 'delete-local' ? null : await readWorkspaceFile('local/' + it.path);
+        if (act === 'to-workspace' && l) put(it.path, l);
+        else if (act === 'to-local') { const rec = await readWorkspaceFile(it.path); if (rec) put('local/' + it.path, rec); }
+        else if (act === 'keep-both' && w && l) {
+            const copy = keepBothName(it.path, n => names.has(n)); names.add(copy);
+            put(copy, l); put('local/' + it.path, w);
+        }
+        else if (act === 'delete-workspace') deletes.push(it.path);
+        else if (act === 'delete-local') deletes.push('local/' + it.path);
+    }
+    if (writes.length || deletes.length) await applyWorkspaceBatch(writes, deletes);
+    const now = await _hashBothSides();
+    _lsSet(_LS_BASE, nextBase(now.workspace, now.local, _lsGet(_LS_BASE)));
+    await renderFileList();
+    return writes.length + deletes.length;
+}
+
+const _SYNC_KIND_LABEL: Record<string, string> = {
+    'new-in-local': 'New in Local Folder', 'new-in-workspace': 'New in Workspace',
+    'changed-in-local': 'Changed in Local Folder', 'changed-in-workspace': 'Changed in Workspace',
+    'conflict': 'Changed on both sides', 'removed-from-local': 'Gone from Local Folder', 'removed-from-workspace': 'Gone from Workspace',
+};
+const _SYNC_ACTION_LABEL: Record<string, string> = {
+    'to-workspace': 'Local → Workspace', 'to-local': 'Workspace → Local', 'keep-both': 'Keep both',
+    'delete-workspace': 'Delete from Workspace', 'delete-local': 'Delete from Local Folder', 'skip': 'Leave',
+};
+
+/** Compare the imported Local Folder with the Workspace and let the user decide per file or per group. */
+export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = {}): Promise<void> {
+    const { workspace, local } = await _hashBothSides();
+    const items = planSync(workspace, local, _lsGet(_LS_BASE));
+    // After an import the Workspace's own files are not news: only open when the folder brought something that differs.
+    if (flags.onlyIfIncoming && !items.some(i => i.kind !== 'new-in-workspace')) return;
+    document.getElementById('fg-localsync-overlay')?.remove();
+    const ov = document.createElement('div');
+    ov.className = 'fg-modal-overlay'; ov.id = 'fg-localsync-overlay';
+    const chosen = new Map<string, SyncAction>();
+    const MAX_ROWS = 300;
+    const groups = new Map<string, SyncItem[]>();
+    for (const it of items) { if (!groups.has(it.kind)) groups.set(it.kind, []); groups.get(it.kind)!.push(it); }
+    const opts = (choices: SyncAction[], sel: SyncAction) => choices.map(c => `<option value="${c}"${c === sel ? ' selected' : ''}>${_SYNC_ACTION_LABEL[c]}</option>`).join('');
+    let body = '';
+    if (!items.length) body = '<p>The Local Folder and the Workspace match.</p>';
+    else for (const [kind, list] of groups) {
+        body += `<div class="fg-localsync-group"><div style="display:flex;gap:8px;align-items:center;margin:10px 0 4px"><strong style="flex:1">${_SYNC_KIND_LABEL[kind]} (${list.length})</strong>` +
+            `<select data-group="${kind}" aria-label="${_SYNC_KIND_LABEL[kind]}: all">${opts(list[0].choices, list[0].action)}</select></div>`;
+        for (const it of list.slice(0, MAX_ROWS)) body += `<div style="display:flex;gap:8px;align-items:center;font-size:12px"><code style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</code>` +
+            `<select data-path="${escapeHtml(it.path)}" data-kind="${kind}" aria-label="${escapeHtml(it.path)}">${opts(it.choices, it.action)}</select></div>`;
+        if (list.length > MAX_ROWS) body += `<div style="font-size:12px;opacity:.7">…and ${list.length - MAX_ROWS} more, handled like the group setting.</div>`;
+        body += '</div>';
+    }
+    ov.innerHTML = `<div class="fg-modal"><div class="fg-modal-header"><span class="fg-modal-title">Sync Local Folder with Workspace</span></div>` +
+        `<div class="fg-modal-body" style="max-height:60vh;overflow:auto">${body}<p style="font-size:12px;opacity:.7">Nothing is deleted unless you choose it. Changes to the Local Folder reach the real folder through “Export changes”.</p></div>` +
+        `<div class="fg-modal-btns"><button class="fg-modal-btn fg-modal-btn-cancel">${items.length ? 'Cancel' : 'Close'}</button>${items.length ? '<button class="fg-modal-btn fg-modal-btn-ok">Apply</button>' : ''}</div></div>`;
+    document.body.appendChild(ov);
+    const rowSel = (g: string) => Array.from(ov.querySelectorAll<HTMLSelectElement>(`select[data-path][data-kind="${g}"]`));
+    ov.querySelectorAll<HTMLSelectElement>('select[data-group]').forEach(sel => sel.onchange = () => {
+        for (const r of rowSel(sel.dataset.group!)) r.value = sel.value;
+        for (const it of groups.get(sel.dataset.group!)!) chosen.set(it.path, sel.value as SyncAction);
+    });
+    ov.querySelectorAll<HTMLSelectElement>('select[data-path]').forEach(sel => sel.onchange = () => chosen.set(sel.dataset.path!, sel.value as SyncAction));
+    (ov.querySelector('.fg-modal-btn-cancel') as HTMLElement).onclick = () => ov.remove();
+    const ok = ov.querySelector('.fg-modal-btn-ok') as HTMLButtonElement | null;
+    if (ok) ok.onclick = async () => {
+        ok.disabled = true; ok.textContent = '…';
+        try { await _applyLocalSync(items, chosen); ov.remove(); }
+        catch (e: any) { ok.disabled = false; ok.textContent = 'Apply'; alert(`Sync failed: ${e.message}`); }
+    };
+}
+
+/** Local Folder files that are new or edited since the folder was imported, as one zip: shared on devices that offer a share sheet, downloaded elsewhere. */
+export async function exportLocalChanges(): Promise<void> {
+    try {
+        const { local } = await _hashBothSides();
+        const changed = changedSinceImport(local, _lsGet(_LS_IMPORTED));
+        if (!changed.length) { alert('The Local Folder has no changes since it was imported.'); return; }
+        const files: { name: string; data: Uint8Array; mtime?: number }[] = [];
+        for (const p of changed) files.push({ name: p, data: await agentReadFileBytes('local/' + p) });
+        const { zipFiles } = await import('./workspace-zip.js');
+        const zip = await zipFiles(files);
+        const file = new File([zip as BlobPart], 'folder-changes.zip', { type: 'application/zip' });
+        const nav: any = navigator;
+        if (nav.canShare?.({ files: [file] })) {
+            try { await nav.share({ files: [file], title: 'Folder changes' }); }
+            catch (e: any) { if (e?.name === 'AbortError') return; throw e; }
+        } else {
+            const url = URL.createObjectURL(file);
+            const a = Object.assign(document.createElement('a'), { href: url, download: file.name });
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        }
+        // The user now copies them into the folder: what the folder holds is these versions.
+        const folder = { ..._lsGet(_LS_IMPORTED) };
+        for (const p of changed) folder[p] = local[p];
+        _lsSet(_LS_IMPORTED, folder);
+    } catch (e: any) {
+        alert(`Export failed: ${e.message}`);
+    }
 }
 
 /** Fast subdirectory scan — skips stat() and walks only the given dir.
@@ -1651,6 +1811,7 @@ async function copyFileBetween(srcName) {
             const rec = await readWorkspaceFile(srcName);
             if (!rec) throw new Error(`File not found: ${srcName}`);
             await writeWorkspaceFile(name, rec.content, null, rec.encoding);
+            _noteAgreed(name, rec);
         }
     } else {
         // IDB → local: write raw bytes for binary, text for text
@@ -1666,6 +1827,7 @@ async function copyFileBetween(srcName) {
             // Imported snapshot (no FSA): store the copy under local/ in IDB.
             await writeWorkspaceFile('local/' + srcName, rec.content, null, rec.encoding);
             _hasImportedLocal = true;
+            _noteAgreed(srcName, rec);
         }
     }
 }
@@ -2306,7 +2468,8 @@ export async function renderFileList() {
         // Imported snapshot (no live FSA, but IDB has local/ files from a prior import)
         const folderName = document.createElement('span');
         folderName.className = 'workspace-col-hdr-name';
-        const firstSeg = localFiles[0].name.replace(/^local\//, '').split('/')[0];
+        let savedRoot = ''; try { savedRoot = localStorage.getItem('fg_localsync_folder') || ''; } catch {}
+        const firstSeg = savedRoot || localFiles[0].name.replace(/^local\//, '').split('/')[0];
         folderName.textContent = firstSeg || '(imported)';
         folderName.title = `Imported snapshot — ${localFiles.length} file${localFiles.length !== 1 ? 's' : ''}`;
         const clearBtn = document.createElement('button');
@@ -2314,7 +2477,15 @@ export async function renderFileList() {
         clearBtn.textContent = '×';
         clearBtn.title = 'Clear imported files from Local Folder';
         clearBtn.onclick = () => clearImportedLocalFiles();
-        localHdr.append(folderName, clearBtn);
+        const mkBtn = (text: string, title: string, fn: () => void) => {
+            const b = document.createElement('button');
+            b.className = 'ws-col-hdr-btn'; b.textContent = text; b.title = title; b.onclick = fn;
+            return b;
+        };
+        localHdr.append(folderName,
+            mkBtn('⇄ Sync', 'Compare this snapshot with the Workspace and choose what to copy', () => openLocalSyncDialog()),
+            mkBtn('Export changes', 'Download (or share) a zip of the files changed here since the folder was imported', () => exportLocalChanges()),
+            clearBtn);
     } else {
         const openBtn = document.createElement('button');
         openBtn.className = 'ws-col-hdr-btn';
@@ -2468,12 +2639,17 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
 
         // Process in batches of 20, yielding to the UI between batches.
         const BATCH = 20;
+        const importedPaths = new Set<string>();
+        if (asLocal && folder) { const root = (toImport[0].webkitRelativePath || '').split('/')[0]; if (root) try { localStorage.setItem('fg_localsync_folder', root); } catch {} }
         for (let i = 0; i < toImport.length; i++) {
             const file = toImport[i];
             // webkitRelativePath gives "dirname/file.ext" for folder imports
-            const rel  = file.webkitRelativePath || file.name;
+            let rel  = file.webkitRelativePath || file.name;
+            // A Local Folder is addressed from the folder's root (as with a live folder): drop the picked folder's own name.
+            if (asLocal && folder && rel.includes('/')) rel = rel.slice(rel.indexOf('/') + 1);
             // Prefix with "local/" so files appear in the Local Folder column
             const path = asLocal ? 'local/' + rel : rel;
+            if (asLocal) importedPaths.add(rel);
             try {
                 // Photos, audio and video from a device picker can carry an extension the binary list
                 // lacks (.heic, .m4a …): reading those as text would corrupt them.
@@ -2490,8 +2666,13 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             // Yield every BATCH files so the UI thread stays responsive.
             if ((i + 1) % BATCH === 0) await new Promise<void>(r => setTimeout(r, 0));
         }
-        if (asLocal) _hasImportedLocal = true;
+        if (asLocal) {
+            _hasImportedLocal = true;
+            try { await _afterLocalImport(importedPaths); } catch (e) { console.warn('[workspace] post-import bookkeeping failed:', e); }
+        }
         await renderFileList();
+        // Merge on import: when the folder brought files that are new or differ from the Workspace's, show the diff.
+        if (asLocal) openLocalSyncDialog({ onlyIfIncoming: true }).catch(() => {});
     };
     input.click();
 }
@@ -3168,7 +3349,7 @@ Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolde
     buildPyRunnerHtml: _buildPyRunnerHtml,
     // File list UI
     renderFileList, updateSelectionUI, downloadSelected, deleteSelected,
-    copyFileBetween, downloadFile, confirmDeleteFile, uploadFiles,
+    copyFileBetween, openLocalSyncDialog, exportLocalChanges, downloadFile, confirmDeleteFile, uploadFiles,
     fsaSupported, updateFsaBadge,
     // FSA folder management
     openLocalFolder, closeFsaFolder, reconnectLocalFolder, tryRestoreLocalFolder,
