@@ -523,7 +523,6 @@ const MODEL_CATALOG = [
     // ── Nous Portal ───────────────────────────────────────────────────────────
     // https://portal.nousresearch.com/models — 300+ models; rotating free tier (50 RPM / 500K TPM).
     // Free-model catalog rotates monthly; check portal for current availability.
-    { provider:'nous', model:'stepfun/step-5-preview:free',          label:'Step 5 Preview (free)',        released:'2026-10', contextK:1000, params:600, media:['text','image','video'], tools:true, thinking:true,  note:'600B MoE (27B active); 1M ctx; multimodal text/image/video; StepFun flagship for agentic work; mandatory thinking (spends tokens reasoning before the answer); free via Nous Portal' },
     { provider:'nous', model:'stepfun/step-3.7-flash:free',          label:'Step 3.7 Flash (free)',        released:'2026-05', contextK:262, params:196, media:['text','image','video'], tools:true, thinking:true,  note:'196B MoE; 262K ctx; multimodal text/image/video; agent efficiency, coding, search; mandatory thinking; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-s-2.1:free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:262, params:118, media:['text'],                 tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent, 70.2% Terminal-Bench; free via Nous Portal. Kilo lists it as retiring 2026-10-31' },
     { provider:'nous', model:'poolside/laguna-xs-2.1:free',          label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262, params:33,  media:['text'],                 tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Nous Portal' },
@@ -801,6 +800,8 @@ export function getMainModelList() {
         if (spec.indexOf('|') < 0) return false;
         // Keep only specs that exist in the current catalog or user-defined custom models.
         // Custom models added via the catalog UI are in fg_custom_models → getAllModels().
+        // A model the provider withdrew (FREE_MODEL_BLACKLIST) goes too, even where the catalog still lists it.
+        if (isBlacklistedModel(spec)) return false;
         return getAllModels().some(m => `${m.provider}|${m.model}` === spec);
     };
 
