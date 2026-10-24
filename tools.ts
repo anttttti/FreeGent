@@ -15,6 +15,7 @@ import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
 import { destructiveGitReason } from './detectors.js';
+import { taskPolicy } from './task-policy.js';
 
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
@@ -1224,16 +1225,9 @@ function _snapshotFiles(snap: any): Array<{ name: string; size: number }> {
     return snap.list();
 }
 
-// SWE-bench: grader strips test-file changes before scoring — agent edits score zero.
-// 17/36 failed SWE tasks edited test files; 14 passed a self-modified test and were
-// still rejected. Benchmark policy: on only when the runner sets FG_PROTECT_TESTS=1
-// (runtime.protectTests); every other run, native or browser, may edit its tests.
-const _SWE_TEST_RE = /(^|\/)(tests?|testing|specs?)\/|(^|\/)test_|_test\.|\.test\./;
-export function isTestEditProtected(path: unknown): boolean {
-    return runtime.protectTests && typeof path === 'string' && _SWE_TEST_RE.test(path);
-}
-const _testEditRefusal = (path: string) =>
-    ({ error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${path}).` });
+// Edits to test files are refused when a benchmark runner says the grader strips them (bench-policy.ts); every other run may edit its tests.
+export function isTestEditProtected(path: unknown): boolean { return taskPolicy.isTestEditProtected(path); }
+const _testEditRefusal = (path: string) => taskPolicy.testEditRefusal(path);
 
 async function _handleRunWorkers(args, context) {
     if (context) {

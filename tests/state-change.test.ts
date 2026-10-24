@@ -1,6 +1,6 @@
 // detectors.ts: shell commands that change the system without a reported written file.
 import { describe, it, expect } from 'vitest';
-import { changesState } from '../detectors.ts';
+import { changesState } from '../bench-policy.ts';
 
 describe('state changes by shell command', () => {
     it('state-changing commands', () => {

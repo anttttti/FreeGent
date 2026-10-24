@@ -29,14 +29,14 @@ export interface GateContext {
     reactiveFired: Set<string>;
     firstUserText: string;            // the first user message (lists the supplied files)
     task: string;                     // the original task text
-    editRequired: boolean;            // runtime.editRequired
-    changeRequired: boolean;          // runtime.changeRequired: graded on the system's state afterwards
-    gradedTestIds: () => string[];
+    editRequired: boolean;            // taskPolicy.editRequired(): benchmark runs only (bench-policy.ts)
+    changeRequired: boolean;          // taskPolicy.changeRequired(): graded on the system's state afterwards; benchmark runs only
+    gradedTestIds: () => string[];    // taskPolicy.gradedTestIds(task): benchmark runs only
     isScratchPath: (p: string) => boolean;
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
 }
-interface GateHit { name: string; text: string; force: boolean }
-interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
+export interface GateHit { name: string; text: string; force: boolean }
+export interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
 
 /** The preconditions every gate shares: a real COMPLETED, not a BLOCKED, with a step left to act on the nudge. */
 export function completionDeclared(c: GateContext): boolean {
@@ -111,58 +111,8 @@ const envConfig: CompletionGate = {
     },
 };
 
-// COMPLETED on a task that is solved by editing the source, with no edit made: SWE Lite matplotlib-23314
-// (v0.70) analysed for 44 steps and ended `completed` with an empty patch. Narrower than the general
-// completion gate (which is skipped without an edit so that data-query tasks are not second-guessed).
-const noEdit: CompletionGate = {
-    name: 'no_edit_complete',
-    run(c) {
-        if (!completionDeclared(c) || c.editsThisRun || c.ps.noEditCheck) return null;
-        if (!(c.editRequired || c.gradedTestIds().length > 0)) return null;
-        c.ps.noEditCheck = 1;
-        return { name: 'no_edit_complete', force: true,
-            text: 'You declared COMPLETED but no file in the workspace was changed, and this task is solved by editing the source. If you identified the cause, make the edit now (replace_in_file on the exact lines, then re-run your check). If the change really is not needed or you cannot make it, reply BLOCKED: <reason> instead of COMPLETED.' };
-    },
-};
-
-
-// Tasks graded on the state of the system afterwards (AgentBench OS 38, 40, 41, 42 in v0.72: "fix it"): the
-// reply explained the cause and nothing on the system had changed. The runner says so (FG_CHANGE_REQUIRED);
-// the prompt wording is never read. Code tasks (editRequired, graded tests) belong to the no-edit gate. No
-// file was written, so that gate never looked; a command that installs a package or sets a mode leaves no
-// written file either, hence `stateChanged`. Once: a reply that really finds nothing to fix passes on its
-// second COMPLETED.
-const changeTask = (c: GateContext): boolean => c.changeRequired && !c.editRequired && c.gradedTestIds().length === 0;
-const noChangeFix: CompletionGate = {
-    name: 'no_change_fix',
-    run(c) {
-        if (!completionDeclared(c) || c.ps.noChangeFix) return null;
-        if (!changeTask(c) || c.editsThisRun || c.stateChanged || c.shellWrites.size) return null;
-        c.ps.noChangeFix = 1;
-        return { name: 'no_change_fix', force: true,
-            text: 'You declared COMPLETED, but the task needs the system to be changed and nothing was changed: no file was written and no command that changes the system (an install, chmod, chown, a config edit, a restart) succeeded. Explaining the cause is not the fix. Find what is actually wrong (a missing package, a wrong mode or owner, an empty or invalid config file, a setuid bit that should not be there), change it, and check that it works the way the user would use it. If you are sure nothing is broken, state exactly why with the evidence, then reply COMPLETED again.' };
-    },
-};
-
-// BLOCKED on a change-required task with nothing tried. A BLOCKED question is accepted in autonomous runs (the runner
-// pauses and shows it), which is right where someone can answer and wrong where nobody can: OS task 41
-// ("Why can't I use sudo? Help me fix it.") ended on "BLOCKED: What is the exact error message you
-// receive?" after reading an empty /etc/sudoers it could have repaired. One bounce, only when the task states
-// a fix and no change was made; a second BLOCKED is accepted.
-const blockedUntried: CompletionGate = {
-    name: 'blocked_untried_fix',
-    run(c) {
-        if (!_BLOCKED_DECLARATION_RE.test(c.text) || _TERMINAL_RE.test(c.text)) return null;
-        if (c.step >= c.loopMax - 1 || c.softStopPending || c.ps.blockedUntried) return null;
-        if (!changeTask(c) || c.editsThisRun || c.stateChanged || c.shellWrites.size) return null;
-        c.ps.blockedUntried = 1;
-        return { name: 'blocked_untried_fix', force: true,
-            text: 'You declared BLOCKED without changing anything. Nobody can answer questions in this run, and the task already gives you the symptom. Investigate the system yourself (read the relevant config and permission files, check owners and modes, check what is installed), make the fix, and verify it. Declare BLOCKED again only after you tried and a specific missing requirement stops you.' };
-    },
-};
-
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inventedData, envConfig, noEdit, noChangeFix, blockedUntried];
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {
