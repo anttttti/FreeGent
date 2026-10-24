@@ -36,8 +36,8 @@ import { join, relative } from 'node:path';
 
 describe('no unsupported syntax in page code', () => {
     const root = join(__dirname, '..');
-    // notes/ is the gitignored scratch area (campaign artifacts include copies of built bundles), not page code.
-    const skip = /^(tests|bench|docs|notes|scripts|work|tmp|cf-worker|smoke|node_modules|dist|public|\.)/;
+    // bench/ (with bench/notes, whose campaign artifacts include copies of built bundles) is not page code.
+    const skip = /^(tests|bench|docs|scripts|work|tmp|cf-worker|smoke|node_modules|dist|public|\.)/;
     const files: string[] = [];
     const walk = (d: string) => {
         for (const e of readdirSync(d)) {

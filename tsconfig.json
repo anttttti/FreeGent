@@ -19,7 +19,6 @@
     "node_modules",
     "tmp",
     "bench",
-    "notes",
     "tests",
     "vite.config.ts",
     "dev-api.ts",
