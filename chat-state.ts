@@ -115,10 +115,16 @@ async function _idbDelete(chatId) {
     } catch {}
 }
 
-async function _saveHtml(chatId, html) {
+// Put in the localStorage slot of a chat's message snapshot when no current copy could be stored (the snapshot is too large for localStorage and the IndexedDB
+// write failed, e.g. Chrome's "An internal error was encountered in the Indexed Database server"). Without it _loadHtml found the OLDER IndexedDB copy and the chat
+// opened without its last turns: the answer of a turn had "disappeared" although the history held it. restoreChatMessages treats it as "no snapshot", so the
+// view is rebuilt from the history.
+const _STALE_SNAPSHOT = '<!--fg-stale-snapshot-->';
+
+async function _saveHtml(chatId, html): Promise<boolean> {
     // Persist to IDB — durable local store with no hard size limit.
     // localStorage is written synchronously by saveHistory() before this is called.
-    await _idbPut(chatId, html);
+    return await _idbPut(chatId, html);
 }
 
 async function _loadHtml(chatId) {
@@ -362,12 +368,16 @@ function saveHistory() {
             // the async server/IDB saves before they complete.
             // Too large to cache: drop the older cached snapshot too, or _loadHtml would
             // prefer it over the current one in IDB.
+            let cached = false;
             try {
-                if (html.length < _HTML_CACHE_MAX) localStorage.setItem(chatKey.msgs(id), html);
+                if (html.length < _HTML_CACHE_MAX) { localStorage.setItem(chatKey.msgs(id), html); cached = true; }
                 else localStorage.removeItem(chatKey.msgs(id));
-            } catch { localStorage.removeItem(chatKey.msgs(id)); }
-            // Fire-and-forget to server (no size limit) and IDB (durable, survives server restarts).
-            _saveHtml(id, html).catch((e: any) => console.warn('[saveHistory] html save failed:', e?.message));
+            } catch { try { localStorage.removeItem(chatKey.msgs(id)); } catch {} }
+            // Fire-and-forget to server (no size limit) and IDB (durable, survives server restarts). When neither store holds this snapshot, an older one must not be
+            // taken for it later.
+            _saveHtml(id, html).then(ok => {
+                if (!ok && !cached) { try { localStorage.setItem(chatKey.msgs(id), _STALE_SNAPSHOT); } catch {} }
+            }).catch((e: any) => console.warn('[saveHistory] html save failed:', e?.message));
         }
     } catch {}
     refreshStorageUsage();
@@ -567,7 +577,7 @@ function _reattachStepGraphHandlers(msgs: HTMLElement) {
 async function restoreChatMessages(id) {
     try {
         const saved = await _loadHtml(id);
-        if (!saved) return false;
+        if (!saved || saved === _STALE_SNAPSHOT) return false;
         // If the active chat changed while the HTML was loading (e.g. user clicked
         // "+ New Chat" during the async fetch), discard the stale result so we don't
         // overwrite the now-current chat's empty UI with the old chat's messages.
@@ -1037,7 +1047,7 @@ async function viewChatReadOnly(id: string) {
     let saved: any = null;
     try { saved = await _loadHtml(id); } catch {}
     if (_viewingChatId !== id) return;   // closed or another chat opened meanwhile
-    if (saved) {
+    if (saved && saved !== _STALE_SNAPSHOT) {
         body.innerHTML = saved;
         // Saved markup is inert: drop live-state leftovers and the interactive hooks it can't carry.
         body.querySelectorAll('.seq-selected-detail, .seq-live-detail').forEach(el => { el.innerHTML = ''; });

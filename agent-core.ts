@@ -19,7 +19,7 @@ import { runtime } from './runtime.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider } from './config.js';
 import { getPrivacyLevel } from './privacy.js';
-import { acquireChatLease, releaseChatLease } from './chat-lease.js';
+import { acquireChatLease, releaseChatLease, chatLeaseHolderAlive } from './chat-lease.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
@@ -989,7 +989,7 @@ async function _processQueue(): Promise<void> {
     if (head.chatId && activeChatId && head.chatId !== activeChatId) return;
     // The same cross-tab rule as a direct Send: a turn in a chat another tab is running would overwrite its history. The message stays queued and is tried again (codex R113).
     const leaseChat = activeChatId as string | null;
-    if (!acquireChatLease(leaseChat)) { setTimeout(() => _processQueue(), 3000); return; }
+    if (!acquireChatLease(leaseChat) && (await chatLeaseHolderAlive(leaseChat) || !acquireChatLease(leaseChat))) { setTimeout(() => _processQueue(), 3000); return; }
     const msg = MsgQueue.shift();
     if (!msg) { releaseChatLease(leaseChat); return; }
     // A steer-interrupt sets softStopPending=true to abort the current turn; clear it so the
@@ -1264,7 +1264,8 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
             return;
         }
         // One tab at a time runs a turn in a chat (chat-lease.ts): the tab that finished last used to overwrite the other's messages.
-        if (!acquireChatLease(activeChatId)) {
+        // A record left by a page that is gone (reload, crash) is not "another tab": ask the holder, and take over when nobody answers.
+        if (!acquireChatLease(activeChatId) && (await chatLeaseHolderAlive(activeChatId as string) || !acquireChatLease(activeChatId))) {
             appendMessage('model', '<em>This chat is running a turn in another browser tab. Wait for it to finish, or start a new chat. Your message is still in the box.</em>', container);
             return;
         }

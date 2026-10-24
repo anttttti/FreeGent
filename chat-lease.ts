@@ -67,6 +67,51 @@ export function acquireChatLease(chatId: string | null): boolean {
     return true;
 }
 
+// A lease left behind by a page that no longer exists (a reload, a crash, a tab the browser discarded: pagehide does not always run) used to keep the
+// chat locked for the rest of its 20 seconds: "This chat is running a turn in another browser tab" with no other tab open. Every page answers a ping for
+// the chats it really holds; a record nobody answers for is stale and is taken over at once. Only where BroadcastChannel exists; elsewhere the TTL stays the rule.
+const CHANNEL = 'fg-chat-lease';
+export const LEASE_PING_WAIT_MS = 250;
+let channel: BroadcastChannel | null = null;
+function bus(): BroadcastChannel | null {
+    if (channel) return channel;
+    try {
+        if (typeof BroadcastChannel === 'undefined') return null;
+        channel = new BroadcastChannel(CHANNEL);
+        channel.onmessage = (ev: MessageEvent) => {
+            const m = ev.data;
+            // Answer only for a lease this page holds, and only to a ping that names the page it is addressed to.
+            if (m?.type === 'ping' && m.chatId && held.has(m.chatId) && ours(m.chatId)) channel!.postMessage({ type: 'pong', chatId: m.chatId, nonce: m.nonce });
+        };
+    } catch { channel = null; }
+    return channel;
+}
+bus();   // listen from page load: a page that holds a lease must be able to answer from its first turn on
+
+/**
+ * The lease on this chat is held by another tab's record: is that tab still there? Asks over BroadcastChannel and waits `LEASE_PING_WAIT_MS`.
+ * Resolves true when a holder answered (or when the question cannot be asked: assume it is there), false when nobody did; in that case the
+ * stale record has been removed and `acquireChatLease` will succeed.
+ */
+export async function chatLeaseHolderAlive(chatId: string | null): Promise<boolean> {
+    if (!chatId || !chatBusyInAnotherTab(chatId)) return false;
+    const ch = bus();
+    if (!ch) return true;
+    const nonce = `${TAB_ID}:${Math.random().toString(36).slice(2)}`;
+    const answered = await new Promise<boolean>(resolve => {
+        const probe = new BroadcastChannel(CHANNEL);   // a channel does not receive its own messages: ask on one, listen on another
+        const done = (v: boolean) => { clearTimeout(timer); try { probe.close(); } catch {} resolve(v); };
+        probe.onmessage = (ev: MessageEvent) => { if (ev.data?.type === 'pong' && ev.data.chatId === chatId && ev.data.nonce === nonce) done(true); };
+        const timer = setTimeout(() => done(false), LEASE_PING_WAIT_MS);
+        try { probe.postMessage({ type: 'ping', chatId, nonce }); } catch { done(true); }
+    });
+    if (answered) return true;
+    // Nobody holds it: remove the record, unless it was refreshed or replaced while we waited.
+    const cur = read(chatId);
+    if (cur && cur.tab !== TAB_ID && Date.now() - cur.at >= 0) { try { localStorage.removeItem(KEY(chatId)); } catch {} }
+    return false;
+}
+
 /** Give the lease back when the turn is over (also fine to call without holding it). */
 export function releaseChatLease(chatId: string | null): void {
     if (!chatId) return;
@@ -80,5 +125,5 @@ export function releaseChatLease(chatId: string | null): void {
 if (typeof window !== 'undefined') {
     // A closing tab hands its leases back at once instead of leaving them to run out.
     window.addEventListener('pagehide', () => { for (const id of [...held.keys()]) releaseChatLease(id); });
-    Object.assign(window, { acquireChatLease, releaseChatLease, chatBusyInAnotherTab, chatLeaseHeld });
+    Object.assign(window, { acquireChatLease, releaseChatLease, chatBusyInAnotherTab, chatLeaseHeld, chatLeaseHolderAlive });
 }
