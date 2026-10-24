@@ -9,7 +9,7 @@ import { emitNudge } from './nudge-emitter.js';
 import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
-import { stripInjected, parseArgs, isRealUserMessage } from './history-util.js';
+import { stripInjected, parseArgs } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';

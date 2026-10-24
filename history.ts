@@ -138,6 +138,21 @@ function _summarizeToolResult(name: string, originalResult: any, truncatedResult
     return truncatedResult;
 }
 
+/** The longest string value in `root` (to depth 4) as {o, k, n}. Objects on the way are copied, so the caller can cut `o[k]` without touching the original. */
+function _longestString(root: any): { o: any; k: string; n: number } | null {
+    let best: { o: any; k: string; n: number } | null = null;
+    const walk = (o: any, depth: number) => {
+        if (!o || typeof o !== 'object' || depth > 4) return;
+        for (const k of Object.keys(o)) {
+            const v = o[k];
+            if (typeof v === 'string') { if (!best || v.length > best.n) best = { o, k, n: v.length }; }
+            else if (v && typeof v === 'object') { o[k] = Array.isArray(v) ? [...v] : { ...v }; walk(o[k], depth + 1); }
+        }
+    };
+    walk(root, 0);
+    return best;
+}
+
 // A run_workers result had no size limit in history: its path lists (each worker's `wrote`, and
 // `applied`, which repeats them) reached 128K chars in one result, more than the context window,
 // and compaction could not drop it (TerminalBench v0.66 sanitize-git-repo). Long path lists keep
@@ -156,18 +171,8 @@ function _capWorkerResult(result: any, limit: number): any {
     if (Array.isArray(out.agents)) out.agents = out.agents.map((a: any) => { if (!a?.toolCalls) return a; const { toolCalls, ...rest } = a; return rest; });
     for (let i = 0; i < 20 && size(out) > limit; i++) {
         // Cut the longest remaining string (a worker note, the output, an incomplete file's content) by half.
-        let best: { o: any; k: string; n: number } | null = null;
-        const walk = (o: any, depth: number) => {
-            if (!o || typeof o !== 'object' || depth > 4) return;
-            for (const k of Object.keys(o)) {
-                const v = o[k];
-                if (typeof v === 'string') { if (!best || v.length > best.n) best = { o, k, n: v.length }; }
-                else if (v && typeof v === 'object') { o[k] = Array.isArray(v) ? [...v] : { ...v }; walk(o[k], depth + 1); }
-            }
-        };
-        walk(out, 0);
-        if (!best || (best as any).n < 400) break;
-        const b = best as { o: any; k: string; n: number };
+        const b = _longestString(out);
+        if (!b || b.n < 400) break;
         b.o[b.k] = `${b.o[b.k].slice(0, Math.floor(b.n / 2))}\n[…${b.n - Math.floor(b.n / 2)} chars not shown]`;
     }
     // Still over: many individually short entries. Counts replace the lists, then the text is cut to the limit.
@@ -407,18 +412,8 @@ export function _capAnyResult(result: any, limit: number): any {
     if (!result || typeof result !== 'object' || !(limit > 0) || size(result) <= limit) return result;
     let out: any = Array.isArray(result) ? [...result] : { ...result };
     for (let i = 0; i < 20 && size(out) > limit; i++) {
-        let best: { o: any; k: string; n: number } | null = null;
-        const walk = (o: any, depth: number) => {
-            if (!o || typeof o !== 'object' || depth > 4) return;
-            for (const k of Object.keys(o)) {
-                const v = o[k];
-                if (typeof v === 'string') { if (!best || v.length > best.n) best = { o, k, n: v.length }; }
-                else if (v && typeof v === 'object') { o[k] = Array.isArray(v) ? [...v] : { ...v }; walk(o[k], depth + 1); }
-            }
-        };
-        walk(out, 0);
-        if (!best || (best as any).n < 400) break;
-        const b = best as { o: any; k: string; n: number };
+        const b = _longestString(out);
+        if (!b || b.n < 400) break;
         // Cut by what is over the limit (plus room for the note and JSON escaping), not by half:
         // a result slightly over the limit should lose slightly more than the excess.
         const keep = Math.max(200, Math.min(b.n - 1, b.n - (size(out) - limit) - 80));

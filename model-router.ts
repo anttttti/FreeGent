@@ -350,24 +350,29 @@ function _staticProxy(): boolean {
     } catch { return false; }
 }
 
+// The hosted providers' chat-completions endpoints, or null for vllm / custom / unknown providers.
+function _hostedEndpoint(provider: string, model: string): any {
+    const sp = _staticProxy();
+    const viaProxy = !window._fgHeadless;
+    switch (provider) {
+        case 'google':      return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
+        case 'groq':        return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
+        case 'openrouter':  return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
+        case 'tokenharbor': return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: viaProxy };
+        case 'kilo':        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: viaProxy };
+        case 'vercel':      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: viaProxy };
+        case 'nous':        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
+        case 'nvidia':      return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: viaProxy };
+        default:            return null;
+    }
+}
+
 export function oaiEndpoint(): any {
     const provider = getProvider();
     const model    = getActiveModel(); // always reads from priority list
-    const sp       = _staticProxy();
-    if (provider === 'google')      return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
-    if (provider === 'groq')        return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
-    if (provider === 'openrouter')  return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
-    if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
-    if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
-    if (provider === 'nvidia') {
-        return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: !window._fgHeadless };
-    }
-    if (provider === 'vllm' || provider === 'custom') {
-        return _customEndpoint(model, provider);
-    }
-    return _customEndpoint(model, 'custom');
+    const hosted = _hostedEndpoint(provider, model);
+    if (hosted) return hosted;
+    return _customEndpoint(model, provider === 'vllm' || provider === 'custom' ? provider : 'custom');
 }
 
 // Returns the default endpoint for the current provider configuration.
@@ -378,20 +383,9 @@ export function specToEndpoint(spec: string): any {
     const idx      = spec.indexOf('|');
     const provider = idx !== -1 ? spec.slice(0, idx) : spec;
     const model    = idx !== -1 ? spec.slice(idx + 1) : spec;
-    const sp = _staticProxy();
-    if (provider === 'google')     return { provider, url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: getGeminiKey(), model, proxy: sp };
-    if (provider === 'groq')       return { provider, url: 'https://api.groq.com/openai/v1/chat/completions',     key: getGroqKey(),       model, proxy: sp };
-    if (provider === 'openrouter') return { provider, url: 'https://openrouter.ai/api/v1/chat/completions',       key: getOpenRouterKey(), model, proxy: sp };
-    if (provider === 'tokenharbor') return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'kilo')        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: !window._fgHeadless };
-    if (provider === 'vercel')      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: !window._fgHeadless };
-    if (provider === 'nous')        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
-    if (provider === 'nvidia') {
-        return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: !window._fgHeadless };
-    }
-    if (provider === 'vllm' || provider === 'custom') {
-        return _customEndpoint(model, provider);
-    }
+    const hosted = _hostedEndpoint(provider, model);
+    if (hosted) return hosted;
+    if (provider === 'vllm' || provider === 'custom') return _customEndpoint(model, provider);
     // Unknown provider falls back to the custom OAI-compatible endpoint.
     // Only 'openai' and 'custom' specs are guaranteed to name a model available there;
     // any other provider prefix (e.g. 'anthropic' hallucinated by the LLM) must be
