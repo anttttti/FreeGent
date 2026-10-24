@@ -5,6 +5,7 @@ node_modules
 *.jsonl
 logs/
 memory/
+notes/
 research/
 rules/
 __pycache__/

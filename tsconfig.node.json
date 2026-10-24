@@ -21,6 +21,7 @@
     "fg-run.ts",
     "dotenv.ts",
     "headless-runner.ts",
+    "finish-summary.ts",
     "native-exec.ts",
     "workspace-scan.ts",
     "safe-log.ts",

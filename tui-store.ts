@@ -239,7 +239,7 @@ export function entriesFromHistory(history: any[], clean: { user: (s: string) =>
         } else if (m.role === 'assistant') {
             const text = clean.answer(textOf(m.content)).trim();
             // The lines the harness adds to close a stopped request are not answers.
-            if (text && !/^\[(?:The user stopped|Stopped by the user)/.test(text)) answer = text;
+            if (text && !/^\[(?:The user stopped|Stopped by the user|Stopped after this step)/.test(text)) answer = text;
         }
     }
     flush();

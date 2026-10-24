@@ -45,7 +45,7 @@ EMITTED AS: 'completion_gate' nudge; _forceToolCall = true forces next response 
 Template:
 --
 ~~~guidance
-Before finalizing, apply this completion checklist. If everything already holds, restate your final answer exactly and end with COMPLETED.
+Before finalizing, apply this completion checklist. If everything already holds, reply with COMPLETED alone: your answer above is kept, so do not repeat it. If something changes, give the corrected answer in full and end with COMPLETED.
 
 ### {skill.name}
 {skill.body}

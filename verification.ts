@@ -23,33 +23,38 @@ const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+t
 const ENV_BROKEN_RE = /ModuleNotFoundError|ImportError|cannot import name|No module named|ERROR collecting|INTERNALERROR|conftest\.py.*(?:Error|error)|was removed in the NumPy|has no attribute '(?:Mapping|MutableMapping|Iterable|Callable|unicode_)'/;
 const SCRATCH_RE = /(?:^|\/)(?:tmp|temp|scratch|repro\w*|reproduc\w*|debug\w*|_probe\w*)(?:[_./-]|$)|\.(?:tmp|bak|orig|pyc)$|__pycache__|\.pytest_cache/i;
 
-interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null }
-export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null });
+interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string> }
+export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set() });
 
-function _changed(call: any): boolean {
+/** Whether the call changed the workspace (scratch files do not count) and which files it names. */
+function _changedInfo(call: any): { changed: boolean; files: string[] } {
+    const none = { changed: false, files: [] as string[] };
     const r = call?.result;
-    if (!call || !r || typeof r !== 'object' || r.error) return false;
+    if (!call || !r || typeof r !== 'object' || r.error) return none;
     if (WRITE_TOOLS.has(call.name)) {
-        return !SCRATCH_RE.test(String(call.args?.path ?? call.result?.path ?? ''));
+        const path = String(call.args?.path ?? call.result?.path ?? '');
+        return SCRATCH_RE.test(path) ? none : { changed: true, files: path ? [path] : [] };
     }
     if (call.name === 'execute_code') {
-        if (Array.isArray(r.files_written) && r.files_written.length)
-            return r.files_written.some((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
+        if (Array.isArray(r.files_written) && r.files_written.length) {
+            const files = r.files_written.filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
+            return { changed: files.length > 0, files };
+        }
         // Task containers do not report files_written: read the command (redirects, tee, in-place
         // edits, patch / git apply). v0.70: 3 of the resolved SWE patches were made this way.
-        if (r.exit_code !== 0 && r.exit_code != null) return false;
+        if (r.exit_code !== 0 && r.exit_code != null) return none;
         const code = String(call.args?.code ?? '');
         const lang = String(call.args?.language ?? 'bash');
         if (lang === 'bash' || lang === 'sh' || lang === 'shell') {
             const w = shellWrites(code);
+            const files = w.paths.filter(p => !SCRATCH_RE.test(p));
             // A patch applied from /tmp still changed the workspace: its own path says nothing.
-            if (w.patched) return true;
-            if (w.paths.some(p => !SCRATCH_RE.test(p))) return true;
+            if (w.patched || files.length) return { changed: true, files };
         }
         const m = code.match(/open\(\s*['"]([^'"]+)['"]\s*,\s*['"][wa]/);
-        if (m) return !SCRATCH_RE.test(m[1]);
+        if (m && !SCRATCH_RE.test(m[1])) return { changed: true, files: [m[1]] };
     }
-    return false;
+    return none;
 }
 // A runner that started and ran no test: pytest's "collected 0 items" / "no tests ran" (exit 4 usage error, 5 no
 // tests), unittest's "Ran 0 tests", Django's "Found 0 test(s)", a runner that is not installed (126/127).
@@ -102,7 +107,8 @@ function _check(call: any): 'pass' | 'fail' | null {
 /** Fold one step record (as written to the run log) into the state. */
 export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | null | undefined): VerificationState {
     for (const c of record?.toolCalls ?? []) {
-        if (_changed(c)) { st.edits++; st.changedSinceCheck = true; st.lastCheck = null; }
+        const ch = _changedInfo(c);
+        if (ch.changed) { st.edits++; st.changedSinceCheck = true; st.lastCheck = null; for (const f of ch.files) st.files.add(f); }
         const k = _check(c);
         if (k) { st.lastCheck = k; st.changedSinceCheck = false; }
     }

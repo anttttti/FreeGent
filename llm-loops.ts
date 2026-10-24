@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -882,7 +882,7 @@ export async function _gracefulSynthesis(reason: string, lastContent: string = '
         const outs = _stopRecent.length ? `Most recent tool outputs:\n${_stopRecent.join('\n---\n')}\n\n` : '';
         const ctx = lastContent ? `Last agent output:\n${lastContent.slice(0, 600)}\n\n` : '';
         const text = await callLLMComplete(
-            `${task}${outs}${ctx}An autonomous agent working on this task was force-stopped (${reason}). If the task asks for a specific answer (a value, name, flag, path, command or query) and the tool outputs above show it, reply with only that answer, in the form the task asks for. Otherwise summarise in 1-2 sentences what was accomplished and why it stopped.`,
+            `${task}${outs}${ctx}An autonomous agent working on this task was force-stopped (${reason}). If the task asks for a specific answer (a value, name, flag, path, command or query) and the tool outputs above show it, reply with only that answer, in the form the task asks for. Give no number, name or other value that is not in the tool outputs above: if the answer is not there, say it was not found. Otherwise summarise in 1-2 sentences what was accomplished and why it stopped.`,
             { maxTokens: 300, label: 'termination:synthesis', maxAttempts: 1 }
         );
         return withBlocked(_stripSynthesisToolCall(text) || _stopFallbackText(reason));
@@ -1269,6 +1269,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const ps: { finalCheck: number; cont: number; saved: any; substCheck: number; checkFires: Record<string, number>; scratchOnlyCheck?: number; inventedDataCheck?: number; noEditCheck?: number; verifCheck?: number; savedByStateLine?: boolean; lastWasNarration?: boolean; emptyBodyCount?: number; _lastCompactionStep?: number; _postCompactionTurns?: number; brokenCallRetries?: number; envConfigCheck?: number; envConfigAt?: number } = { finalCheck: 0, cont: 0, saved: null, substCheck: 0, checkFires: {} };
     let _editsThisRun = false;      // any successful write_file/replace_in_file/apply_patch — feeds the completion gate
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
+    const _rewrites = newRewriteState();      // full rewrites per file since a check passed (rewrite_loop nudge)
     const _verif = newVerification();         // state of the change, for the failed-check bounce at COMPLETED
     const _shellWrites = new Set<string>();   // paths a shell command redirected into (container runs report no files_written)
     let _stateChanged = false;                // a successful command changed the system without a reported file (install, chmod, ...)
@@ -1926,7 +1927,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 _is400Again = _rejectedStreak >= 2;
             }
             const _isPermanent = _is400Again || /does not exist|you do not have access|model not found|no such model/i.test(e.message || '')
-                || (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP (?:401|403|404)\b/.test(e.message || ''));
+                || (isCustomEndpoint(activeEndpoint ?? _defaultEndpoint()) && /\bHTTP (?:401|403|404|410)\b/.test(e.message || ''));
             // A model that takes no images (vLLM --language-model-only answers 400 "At most 0 image(s)"): the same request was re-sent
             // every few seconds with no end (real-model run). Remember it, say so, and resend with the image as a text note.
             if (/\bHTTP 400\b/.test(e.message || '') && IMAGE_REFUSAL_RE.test(e.message || '')) {
@@ -2291,6 +2292,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (_argEdits.size) _patchLastAssistantArgs(_s, step, _argEdits);
 
         const replaceFailNudge = await _getReplaceFailNudge(_s._replaceFailures, _s._replaceNudgeSent);
+        const rewriteNudge = noteRewrites(_rewrites, results);
 
         const resSig = JSON.stringify(results.map(r => ({ n: r.name, res: r.result })), _fpTrunc);
         const stalledPaths = new Set(calls.map(tc => parseArgs(tc.function.arguments)?.path).filter(Boolean).map(_normPath)) as Set<string>;
@@ -2423,6 +2425,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));
         else if (replaceFailNudge)            _emitNudge('replace_fail', _nudge(replaceFailNudge));
+        else if (rewriteNudge)                _emitNudge('rewrite_loop', _nudge(rewriteNudge));
         if (!stuckNudge) {
             const _errRes = results.filter(r => r.result?.error || (r.result?.exit_code != null && r.result.exit_code !== 0 && !(r.name === 'execute_code' && isNegativeProbe(r.args, r.result))));
             // Rate-limit: skip on the first error in a burst (the [TOOL ERROR] prefix in history
@@ -2437,7 +2440,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         if (_repeatedNames.length)            _emitNudge('tool_repeat', _nudge(`You repeated tool call(s) you already made this turn: ${_repeatedNames.join(', ')}. Here are the cached results — no need to re-execute, move forward.`));
         if (_badArgCalls.length) {
-            _emitNudge('bad_args', _nudge(`The arguments of your ${_badArgCalls.join(', ')} tool call(s) were not valid JSON — they were executed with EMPTY arguments and their errors reflect that, not the tool itself. Re-emit each call with valid JSON arguments.`));
+            _emitNudge('bad_args', _nudge(`The arguments of your ${_badArgCalls.join(', ')} tool call(s) were not valid JSON, or arrived damaged (stray <|"|> markers in the argument names) — they were executed with missing or EMPTY arguments and their errors reflect that, not the tool itself. Re-emit each call with plain JSON arguments: every value a normal JSON string, no <|"|> markers.`));
             _forceToolCall = true;
         }
         if (_hasEmptyCode)        _emitNudge('empty_code', _nudge('execute_code was called with no code argument. Provide the code as: {"code": "...", "language": "bash"}.'));

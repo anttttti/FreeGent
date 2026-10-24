@@ -146,6 +146,25 @@ describe('browser chat flow on the Session-backed history', () => {
         expect(texts().some(t => t.includes('question from the old chat'))).toBe(true);
     });
 
+    it('the fourth full rewrite of one file in a turn brings the rewrite_loop nudge', async () => {
+        const wr = (id: string) => ({ tool_calls: [{ id, type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'rewritten.txt', content: 'attempt ' + id }) } }] });
+        W.fetch = makeReplayFetch([wr('w1'), wr('w2'), wr('w3'), wr('w4'), { content: 'stopped rewriting\nCOMPLETED' }]);
+        localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|nvidia/nemotron-3-ultra-550b-a55b:free']));
+        localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
+        W.enabledTools.add('write_file');                  // chat mode ships with it off
+        const files = new Map<string, string>(), saved = [W.agentWriteFile, W.agentReadFile, W.agentListFiles];
+        W.agentWriteFile = async (p: string, c: string) => { files.set(p, c); };       // jsdom has no IndexedDB workspace
+        W.agentReadFile = async (p: string) => { if (!files.has(p)) throw new Error('File not found: ' + p); return files.get(p); };
+        W.agentListFiles = async () => [...files.keys()].map(name => ({ name }));
+        W._sessionToolFilter = new Set(['write_file']);
+        (document.getElementById('agent-input') as any).innerText = 'write rewritten.txt';
+        await W.agentSend();
+        await settle();
+        const nudges = getChatHistory().filter(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('rewritten.txt in full 4 times'));
+        [W.agentWriteFile, W.agentReadFile, W.agentListFiles] = saved;
+        expect(nudges).toHaveLength(1);
+    });
+
     it('a reload (history gone from memory, restored from storage) continues the conversation', async () => {
         W.fetch = makeReplayFetch([{ content: 'before reload\nCOMPLETED' }]);
         await say('hello');
@@ -214,4 +233,5 @@ describe('browser chat flow on the Session-backed history', () => {
         expect(stored.every((e: any) => e.chatId === id)).toBe(true);
         expect((await W.getChatStats(id)).models).toEqual([{ model: 'm-one', steps: 2 }]);
     });
+
 });

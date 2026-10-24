@@ -25,3 +25,17 @@ describe('stop fallback', () => {
         expect(mod._stopFallbackText('step budget exhausted', [])).toBe('I stopped because step budget exhausted.');
     });
 });
+
+describe('the summary asked for after a forced stop', () => {
+    it('tells the model to give no value that is not in the tool outputs (sim x2-big-log: a made-up error count after a loop stop)', async () => {
+        const W: any = window; const prompts: string[] = [];
+        const saved = W.callLLMComplete;
+        W.callLLMComplete = async (p: string) => { prompts.push(p); return 'It was not found.'; };
+        try {
+            mod._noteStopAttempts([{ name: 'execute_code', args: { code: 'grep ERROR app.log' }, result: { exit_code: 0, stdout: '' } }]);
+            const text = await mod._gracefulSynthesis('it kept repeating calls', '');
+            expect(text).toMatch(/^BLOCKED: it kept repeating calls/);
+            expect(prompts[0]).toContain('Give no number, name or other value that is not in the tool outputs above');
+        } finally { W.callLLMComplete = saved; }
+    });
+});

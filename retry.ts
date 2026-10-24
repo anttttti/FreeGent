@@ -274,11 +274,11 @@ export function _isLocalEp(ep: any): boolean { return !!ep && (ep.provider === '
 // (pause the model, rotate to the next one in the pool) was never reached: a turn ended on the first dead model while the rest of the pool
 // worked. Callers add this to the transient override so the handler sees it. With nothing to rotate to the handler gives up and
 // the error is reported as before; a custom/local endpoint's 404 stays permanent (the route or model is wrong, retrying cannot fix it).
-export function isModelGone(e: any, ep: any): boolean { return !_isLocalEp(ep) && /\bHTTP 404\b/.test(String(e?.message ?? '')); }
+export function isModelGone(e: any, ep: any): boolean { return !_isLocalEp(ep) && /\bHTTP (?:404|410)\b/.test(String(e?.message ?? '')); }
 
 // HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
 export const SAME_ENDPOINT_WAIT_LIMIT_MS = 20 * 60_000;
-const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|413|415|422)\b|answered with a web page/;
+const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|410|413|415|422)\b|answered with a web page/;
 export const CUSTOM_CLIENT_ERROR_ATTEMPTS = 3;
 // Attempts (with backoff) on an empty or cut-off reply when no other model is free to cycle to.
 export const EMPTY_REPLY_ATTEMPTS = 4;
@@ -412,7 +412,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 }
             }
         }
-        const isGone = /HTTP 40[14]/.test(e.message || '');
+        const isGone = /HTTP (?:40[14]|410)\b/.test(e.message || '');   // 410 Gone: "the model has reached its end of life" (chat log b1fd2d32, nvidia|moonshotai/kimi-k3)
         if (isGone && !_isLocalEp(ep) && !forWorker) {
             const goneKey = `${ep.provider}|${ep.model}`;
             if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {

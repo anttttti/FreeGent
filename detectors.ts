@@ -16,6 +16,7 @@
 // window bridge.
 
 import { shellWrites } from './shell-writes.js';
+import { isCheckCommand } from './verification.js';
 import { runtime } from './runtime.js';
 import { _degenerateTail } from './stream-decode.js';
 
@@ -513,8 +514,71 @@ export function sameErrorNudge(sig: string, n: number): string {
     return `The same error has now repeated ${n} times: "${sig}". Running it again will not change it. If it comes from the environment (a library version, a missing service or build step), stop trying to reproduce or fix the environment: make the change by reading the code, then finish. Otherwise try a different approach. The run stops if the failures continue.`;
 }
 
+// Backslashes doubled by the model's own escaping: a full rewrite of an existing file in which `\d`, `\n`, `\s` ... became
+// `\\d`, `\\n`, `\\s`. bench/selfanalysis W7r2 regenerated storage-usage.ts that way (the regex `(\d+)` turned into `(\\d+)`, three
+// `\n` in a tooltip into `\\n`) and broke an existing test; the file still parsed, so no syntax check could see it. Counted as growth
+// against the previous text, so a file that legitimately contains such sequences is not flagged for keeping them.
+const _DOUBLED_ESC = /\\\\[A-Za-z]/g;
+export function doubledBackslashGrowth(previous: string, content: string): number {
+    const count = (s: string) => (String(s ?? '').match(_DOUBLED_ESC) ?? []).length;
+    return count(content) - count(previous);
+}
+
+// A file written in full again and again. Six self-analysis runs rewrote one file 7-34 times with the same flaw (an unterminated
+// string, a quoting that breaks the next step) and never read back what they had written; the step budget ended it. Counted
+// per path from successful write_file calls; a passing check command or a targeted replace_in_file on the path starts it over.
+// Nothing after the fourth full rewrite changes unless the approach does, so the nudge comes at 4 and again at 8, 12, ...
+export const REWRITE_NUDGE_EVERY = 4;
+export type RewriteState = Map<string, number>;
+export const newRewriteState = (): RewriteState => new Map();
+export function noteRewrites(st: RewriteState, results: Array<{ name: string; args?: any; result: any }>): string | null {
+    let msg: string | null = null;
+    for (const r of results) {
+        if (r.result?.error) continue;
+        const path = String(r.args?.path ?? r.result?.path ?? '');
+        if (r.name === 'replace_in_file' && path) st.delete(path);
+        else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && isCheckCommand(String(r.args?.code ?? ''))) st.clear();
+        else if (r.name === 'write_file' && path) {
+            const n = (st.get(path) ?? 0) + 1;
+            st.set(path, n);
+            if (n % REWRITE_NUDGE_EVERY === 0) {
+                msg = `You have now written ${path} in full ${n} times without a check passing in between. Writing it again will not fix what is wrong with it. Read it back (read_file), find the part that fails, and change only that part with replace_in_file. If you cannot make it work, say so and leave the original as it was instead of a half-written file.`;
+            }
+        }
+    }
+    return msg;
+}
+
+// A tool call typed into the shell: `read_file{path: "a.ts"}` or `search_workspace(pattern="x")` as the command of execute_code. The shell answers
+// `command not found`, which the failure streak counts as a missing tool in the environment (ENV_MISSING_RE) and the env_failure nudge
+// then talks about installing things; the model keeps typing the same call. Only the first command line counts, and a shell function
+// that happens to carry a tool's name (`read_file() { ... }`) is a definition, not a call.
+export function pseudoToolInShell(code: string, toolNames: Iterable<string>): string | null {
+    const first = String(code ?? '').split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
+    if (!first) return null;
+    const m = /^([a-z][a-z0-9_]*)[ \t]*([{(])/.exec(first);
+    if (!m || (m[2] === '(' && /^[a-z][a-z0-9_]*[ \t]*\(\s*\)/.test(first))) return null;
+    for (const n of toolNames) if (n === m[1]) return n;
+    return null;
+}
+
+// A program the shell has to quote (python3 -c "...", a heredoc) that failed on syntax. The model rewrites the same program
+// with another quoting each time and the errors differ (`syntax error near unexpected token`, `f-string expression part cannot
+// include a backslash`, `command not found` for words the shell split off), so no two failures share an error line: the
+// same-error and environment counters never saw a loop, and bench/selfanalysis logged 5-22 wasted steps in each of six runs.
+const _INLINE_PY_RE = /^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:python3?|py)\s+(?:-c\b|-\s*<<)/;
+const _INLINE_SYNTAX_RE = /SyntaxError|syntax error near|unexpected EOF|unexpected token|f-string|EOL while scanning|unterminated|command not found/i;
+export const INLINE_SCRIPT_SIG = 'inline python through the shell failed on syntax';
+export function inlineScriptSyntaxFailure(args: any, result: any): boolean {
+    const lang = String(args?.language ?? 'bash').toLowerCase();
+    if (!['bash', 'sh', 'shell', 'zsh'].includes(lang)) return false;
+    if (!_INLINE_PY_RE.test(String(args?.code ?? ''))) return false;
+    return _INLINE_SYNTAX_RE.test(`${result?.stderr ?? ''}\n${result?.stdout ?? ''}\n${result?.error ?? ''}`);
+}
+const INLINE_SCRIPT_NUDGE = 'Two inline `python3 -c` / heredoc programs in a row failed on syntax or quoting. The shell is part of the problem: stop quoting the program. Write it to a file with write_file (for example out/step.py) and run `python3 out/step.py`, or send it with language "python". Do not rewrite the quoting again.';
+
 export function _updateEnvFailureDetector(
-    results: Array<{ name: string; result: any }>,
+    results: Array<{ name: string; args?: any; result: any }>,
     envFailSig: string,
     envFailCount: number,
     envFailTotal: number = 0,
@@ -527,9 +591,14 @@ export function _updateEnvFailureDetector(
         return { envFailSig, envFailCount, envFailTotal, envFailMsg: null };
     }
     envFailTotal++;
-    const _sig = failureSignature(_execFails[0].result).slice(0, 120);
+    const _inline = inlineScriptSyntaxFailure(_execFails[0].args, _execFails[0].result);
+    const _sig = _inline ? INLINE_SCRIPT_SIG : failureSignature(_execFails[0].result).slice(0, 120);
     if (_sig && _sig === envFailSig) {
         envFailCount++;
+        if (_inline && envFailCount >= 2) {
+            envFailCount = 0; envFailSig = ''; envFailTotal = 0;
+            return { envFailSig, envFailCount, envFailTotal, envFailMsg: INLINE_SCRIPT_NUDGE };
+        }
         if (envFailCount >= 3) {
             const _n = envFailCount;
             envFailCount = 0; envFailSig = ''; envFailTotal = 0;

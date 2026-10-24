@@ -1663,7 +1663,9 @@ async function retryLastTurn(container: HTMLElement | null = null): Promise<void
  *  output, and the fact that its command ran (TUI report cases 047-051, 072). A closing assistant line makes the exchange complete. */
 function _closeSoftStop(finalText: string, sess?: any): void {
     if (finalText !== '*(break)*') return;
-    const note = { role: 'assistant', content: '[Stopped by the user after this step. The step finished and its tool results above are complete; continue from them only if asked.]' };
+    // A headless run that hit its time limit sets stopCause: the note must not say a person stopped it (the output of a timed-out run ends with this line).
+    const by = sess?.stopCause ? `Stopped after this step (${sess.stopCause})` : 'Stopped by the user after this step';
+    const note = { role: 'assistant', content: `[${by}. The step finished and its tool results above are complete; continue from them only if asked.]` };
     try {
         if (sess) {   // an isolated (headless) session keeps its own log
             const msgs = sess.deriveMessages?.() ?? [];

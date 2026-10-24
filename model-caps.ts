@@ -89,7 +89,7 @@ const _BUILTIN_TEXT_TOOL_NAMES = [
     'context7_docs','academic_search','package_search',
 ];
 
-function _knownToolNames(): Set<string> {
+export function _knownToolNames(): Set<string> {
     const mcp = typeof mcpToolNames === 'function' ? mcpToolNames() : [];
     return new Set([..._BUILTIN_TEXT_TOOL_NAMES, ...mcp]);
 }

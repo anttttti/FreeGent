@@ -11,6 +11,7 @@ import { dom, virtualConsole } from './bootstrap-jsdom.js';
 import { isCredentialKey } from './profile-keys.js';
 import { KEYS } from './storage-keys.js';
 import { newVerification, noteStep, verdict } from './verification.js';
+import { checkChangedFiles, type ChangedFile } from './finish-summary.js';
 import { appendLedger } from './request-ledger.js';
 import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
 import { logAppend, defaultLogPath } from './safe-log.js';
@@ -26,13 +27,14 @@ import { NodeSqliteAdapter } from './node-sqlite-adapter.js';
 // These run their module body, setting window.X properties via Object.assign(window,{}).
 // Each property also lands on globalThis.window = dom.window, so the classic scripts
 // (evaluated in dom.window context below) can access them as free variables.
-import { createSession } from './state.js';
+import { createSession, setCurrentUserIntent } from './state.js';
 import './config.js';
 import './model-caps.js';
 import './ast.js';
 import './history-util.js';
 import './fetch-blacklist.js';
 import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
+import { parseWriteAllow, setWriteAllow } from './write-allow.js';
 import { createNativeExec } from './native-exec.js';
 import './search-providers.js';
 import './skill-guidance.js';
@@ -276,6 +278,7 @@ function _parseOpts(opts: any) {
         maxRounds: opts.maxRounds ?? (parseInt(e.FREEGENT_MAX_ROUNDS ?? '') || 0),
         harness:   opts.harness   ?? e.FREEGENT_HARNESS ?? 'freegent',
         fetchAllow:      opts.fetchAllow      ?? e.FREEGENT_FETCH_ALLOW      ?? '',
+        writeAllow:      opts.writeAllow      ?? e.FREEGENT_WRITE_ALLOW      ?? '',
         enableTools:     opts.enableTools     ?? e.FREEGENT_ENABLE_TOOLS     ?? '',
         browserUrl: opts.browserUrl ?? '',
         replyChannelHint: opts.replyChannelHint ?? e.FREEGENT_REPLY_CHANNEL_HINT ?? '',
@@ -315,7 +318,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
         contextWindow, compactionLimit, disabledTools, mainRole, workflowMode, resumeSessionId, sessionDbPath,
-        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, enableTools, browserUrl, replyChannelHint, mcpServers,
+        temperature, thinkingLevel, preserveThinking, retryMode, retryFixedMs, maxRounds, harness, fetchAllow, writeAllow, enableTools, browserUrl, replyChannelHint, mcpServers,
     } = _parseOpts(opts);
 
     // ── Startup timing instrumentation ────────────────────────────────────────
@@ -387,6 +390,7 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     // malformed entry, failing the run before the agent starts). Other tools that make their own
     // outbound requests are switched off so fetch_url is the only HTTP tool. Request policy only —
     // containment is the caller's job (network isolation around this process).
+    setWriteAllow(writeAllow ? parseWriteAllow(writeAllow) : null);   // set (or cleared) on every run: a second run() in one process must not inherit the first one's list
     if (fetchAllow) {
         setFetchAllow(parseFetchAllow(fetchAllow));
         const _netTools = ['web_search', 'deep_research', 'academic_search', 'package_search', 'context7_docs', 'generate_image',
@@ -719,6 +723,8 @@ interface RunFinish {
     error:      string | null;
     /** What can be said about the change itself (verification.ts): `complete` does not mean it was checked. */
     verification: 'no_change' | 'unverified' | 'verified' | 'failed_verification';
+    /** The files the run changed (from the tool log) with what is wrong with each on disk: empty, unparseable, gone. */
+    changedFiles?: ChangedFile[];
 }
 
 /**
@@ -727,7 +733,7 @@ interface RunFinish {
 export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics; finish?: RunFinish }> {
     if (typeof task !== 'string' || task.trim().length < 8)
         return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 } };
-    const { timeoutMs } = _parseOpts(opts);
+    const { timeoutMs, workspaceRoot } = _parseOpts(opts);
     await setup(opts);
     // Per-chat state of earlier tasks in this process (worker budget, lookalike-refusal counts, replace
     // failures) must not carry over: a second run() would inherit the first one's spent worker budget.
@@ -773,6 +779,11 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     });
 
     const session = createSession({ workflowMode });  // §2: session owns workflowMode
+    // The request this run serves. The intent checks on risky tool calls (a phrase the request itself contains, a git command it names, the
+    // model judge) read it, and only the browser's agentSend and the default session set it: a CLI run, which uses an isolated session,
+    // checked every call against an empty request, so a task that spelt out a phrase or a command was still refused.
+    setCurrentUserIntent(String(task));
+    (globalThis as any).resetIntentTaint?.();
 
     // Fire a hard abort after timeoutMs so the agent doesn't hang in retry loops.
     // Guard: setTimeout(fn, undefined) is equivalent to setTimeout(fn, 0) and fires
@@ -784,6 +795,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             // The Director continuation loop reads the isolated session's stop flag.
             // stopNow aborts the current request but clears the page's soft-stop flag.
             session.softStopPending = true;
+            (session as any).stopCause = 'the run time limit was reached';
             try { dom.window.stopNow?.(); } catch {}
         }, timeoutMs)
         : null;
@@ -903,6 +915,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         timedOut,
         error:      error ? String((error as any)?.message ?? error).slice(0, 300) : null,
         verification: verdict(_verification),
+        changedFiles: await checkChangedFiles(workspaceRoot, _verification.files).catch(() => []),
     };
     _metrics.finish = finish;
     return { output, error, metrics: _metrics, finish };

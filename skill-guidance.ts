@@ -372,7 +372,7 @@ export function completionGateGuidance(editsHappened: boolean, blocked: boolean 
         fired.add(s.name);  // prevent re-fire as reactive nudge after the gate
     }
     if (!parts.length) return '';
-    return `~~~guidance\nBefore finalizing, apply this completion checklist. If everything already holds, restate your final answer exactly and end with COMPLETED.\n\n${parts.join('\n\n')}\n~~~`;
+    return `~~~guidance\nBefore finalizing, apply this completion checklist. If everything already holds, reply with COMPLETED alone: your answer above is kept, so do not repeat it. If something changes, give the corrected answer in full and end with COMPLETED.\n\n${parts.join('\n\n')}\n~~~`;
 }
 
 // Window bridge for classic scripts (and tests that access private helpers via W._name).

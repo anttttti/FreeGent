@@ -52,6 +52,14 @@ describe('fg-run argument contract', () => {
         }
         expect(posts.length).toBe(before);
     }, 60_000);
+    it('no arguments prints the usage and exits 1, and --help exits 0 (a self-analysis run deleted the no-argument line and nothing failed)', async () => {
+        const none = await run([]);
+        expect(none.code).toBe(1);
+        expect(none.err).toMatch(/Usage:/);
+        const help = await run(['--help']);
+        expect(help.code).toBe(0);
+        expect(help.err).toMatch(/--max-rounds|--task-file/);
+    }, 60_000);
     it('--task with --prompt (or --task-file) is refused, not silently reduced to one', async () => {
         for (const a of [['--task', 't', '--prompt', 'p'], ['--prompt', 'p', '--task-file', 'x.txt']]) {
             const r = await run([...std(), ...a]);

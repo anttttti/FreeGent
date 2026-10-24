@@ -265,6 +265,7 @@ function execToolSpec() {
     // in the browser).
     description += ' Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over to the next call; files do.';
     const hasBashLang = languages.includes('bash');
+    if (hasBashLang) description += ' A Python program goes in language "python", not into python3 -c or a heredoc in bash (shell quoting breaks it).';
     const languageDesc = hasBashLang
         ? 'Language: "bash", "python", or "javascript". Always specify.'
         : `Language: one of ${languages.map(l => `"${l}"`).join(', ')}.`;

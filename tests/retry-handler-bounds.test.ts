@@ -81,3 +81,48 @@ describe('a local endpoint that answers with a web page (opencode §44)', () => 
         delete (window as any).getActiveMainModelList;
     });
 });
+
+describe('429 from every model in the pool (retry-storm regression, bench/selfanalysis T10/T29)', () => {
+    // A v0.71.29 session logged 5,149 failed requests with a median gap of 19 ms and 3,080 in one minute. At HEAD two models that
+    // always answer 429 without a retry-after are switched once (a zero wait to the sibling is the rotation) and then waited out:
+    // a zero wait is never followed by another zero, so the pool cannot ping-pong, and a simulated hour produces a handful of requests.
+    it('never answers two 429s in a row with no wait, so requests per simulated hour are bounded', () => {
+        (window as any).getActiveMainModelList = () => ['openrouter|rate-a', 'groq|rate-b'];
+        try {
+            const { h } = handler({ provider: 'openrouter', model: 'rate-a', url: 'http://x/v1' });
+            let clock = 0, requests = 0, previous = 1;
+            while (clock < 3_600_000 && requests < 20_000) {
+                requests++;
+                const wait = h(requests - 1, err('HTTP 429: Rate limit exceeded'), 1000);
+                expect(typeof wait).toBe('number');
+                expect(wait as number).toBeGreaterThanOrEqual(0);
+                expect(previous === 0 && wait === 0, `two zero waits in a row at request ${requests}`).toBe(false);
+                previous = wait as number;
+                clock += wait as number;
+            }
+            expect(requests).toBeLessThan(200);          // a 19 ms loop would make 190,000 in the hour
+        } finally { delete (window as any).getActiveMainModelList; }
+    });
+});
+
+describe('HTTP 410 (a model that has reached its end of life)', () => {
+    // Chat log b1fd2d32 (v0.96.52): "[nvidia|moonshotai/kimi-k3] HTTP 410: The model 'moonshotai/kimi-k3' has reached its end of life on 2026-10-15".
+    // Only 401/404 were treated as "the model is gone"; 410 Gone is that by definition.
+    it('is "gone" for a cloud provider (paused, rotated away from), not for a local server', async () => {
+        const { isModelGone } = await import('../retry.ts');
+        const msg = "[nvidia|moonshotai/kimi-k3] HTTP 410: The model 'moonshotai/kimi-k3' has reached its end of life on 2026-10-15";
+        expect(isModelGone(err(msg), { provider: 'nvidia', model: 'moonshotai/kimi-k3' })).toBe(true);
+        expect(isModelGone(err(msg), { provider: 'vllm', model: 'm', url: 'http://localhost:8000/v1' })).toBe(false);
+        expect(isModelGone(err('HTTP 4100: x'), { provider: 'nvidia', model: 'm' })).toBe(false);
+    });
+    it('the retry handler pauses the model and rotates to the next one', () => {
+        (window as any).getActiveMainModelList = () => ['nvidia|moonshotai/kimi-k3', 'openrouter|other-410'];
+        try {
+            const { h, notes, ep } = handler({ provider: 'nvidia', model: 'moonshotai/kimi-k3' });
+            const out = h(0, err("HTTP 410: The model 'moonshotai/kimi-k3' has reached its end of life"), 1000);
+            expect(out).toBe(0);
+            expect(notes.join('\n')).toMatch(/paused: HTTP 410/);
+            expect(ep().model).toBe('other-410');
+        } finally { delete (window as any).getActiveMainModelList; }
+    });
+});

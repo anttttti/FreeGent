@@ -6,6 +6,7 @@
 // module caching means it only executes once — the first time (here).
 import './bootstrap-jsdom.js';
 import { run, prompt as llmPrompt, getHeadlessPrimaryModel } from './headless-runner.js';
+import { finishLines } from './finish-summary.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadDotenv } from './dotenv.js';
@@ -40,7 +41,7 @@ console.log = console.info = (...a: unknown[]) => console.error(...a);
 // Every option that takes a value. A value-taking option followed by another option (or nothing) is an error, not a value:
 // `--prompt --temperature 0.3` used to send the text "--temperature" as the prompt (case 086).
 const _VALUE_FLAGS = new Set(['--api-key', '--api-url', '--browser-url', '--compaction-limit', '--context-window', '--disable-tools',
-    '--enable-tools', '--fetch-allow', '--llm', '--log', '--main-role', '--max-rounds', '--mcp-config', '--model', '--prompt', '--provider',
+    '--enable-tools', '--fetch-allow', '--write-allow', '--llm', '--log', '--main-role', '--max-rounds', '--mcp-config', '--model', '--prompt', '--provider',
     '--reply-channel-hint', '--retry-fixed-ms', '--retry-mode', '--sidecar-dir', '--task', '--task-file', '--temperature', '--thinking-level',
     '--timeout', '--workflow', '--workspace']);
 const _OPTION_NAMES = new Set([..._VALUE_FLAGS, '--help', '-h', '--no-log', '--print-model', '--no-tools', '-p', '--print']);
@@ -88,6 +89,9 @@ Options:
   --fetch-allow <origins>   Restrict fetch_url to these origins (comma-separated, e.g.
                             http://fg-gw:41234) and disable web_search and other
                             outbound-request tools. Request policy, not containment.
+  --write-allow <paths>     The file-writing tools may only touch these files or directories (comma-separated,
+                            workspace-relative, e.g. out/,notes/report.md); other paths are refused. A request
+                            policy, not containment: execute_code can still write anywhere.
   --browser-url <url>       Text-only Playwright bridge URL (explicit opt-in)
   --reply-channel-hint <t>  The task's counterpart is reached through a tool, not chat output: text
                             to show the model when it answers in chat instead (benchmark runners)
@@ -140,6 +144,7 @@ const contextWindow   = parseInt(_arg('--context-window') || '') || 0;
 const compactionLimit = parseInt(_arg('--compaction-limit') || '') || 0;
 const disabledTools   = _arg('--disable-tools') || '';
 const fetchAllow      = _arg('--fetch-allow') || '';
+const writeAllow      = _arg('--write-allow') || '';
 const enableTools     = _arg('--enable-tools') || '';
 const browserUrl      = _arg('--browser-url') || '';
 const replyChannelHint = _arg('--reply-channel-hint') || '';
@@ -169,7 +174,7 @@ if (!task && taskFile) {
 if (!task && !promptText && !_flag('--print-model')) { console.error('Error: provide --prompt, --workflow, --task, or --task-file'); _usage(); }
 
 const workspaceRoot = resolve(workspacePath);
-const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, enableTools, browserUrl, replyChannelHint, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
+const sharedOpts = { workspaceRoot, provider, model, apiKey, apiUrl, timeoutMs, logFile, sidecarDir, contextWindow, compactionLimit, disabledTools, fetchAllow, writeAllow, enableTools, browserUrl, replyChannelHint, mcpServers, mainRole, temperature, thinkingLevel, retryMode, retryFixedMs, maxRounds };
 
 if (_flag('--print-model')) {
     // A pipe is asynchronous on some platforms; wait for it before process.exit().
@@ -199,9 +204,15 @@ if (promptText) {
     // killed by the wall-clock limit still leaves its token counts. Consumers take the last line.
     const onMetrics = process.stdout.isTTY || printMode ? undefined
         : (m: unknown) => { process.stdout.write(`__FG_METRICS__:${JSON.stringify(m)}\n`); };
-    const { output, error, metrics } = await run(task!, { ...sharedOpts, workflowMode: true, onMetrics });
+    const { output, error, metrics, finish } = await run(task!, { ...sharedOpts, workflowMode: true, onMetrics });
     if (error) await new Promise<void>(resolve => process.stderr.write(`[fg-run] Error: ${error}\n`, () => resolve()));
     if (!printMode) process.stdout.write(`__FG_METRICS__:${JSON.stringify(metrics)}\n`);
     await new Promise<void>(resolve => process.stdout.write(output + '\n', () => resolve()));
+    // How the run ended and which files it changed, from the tool log and the disk, not from the model's own account of it.
+    // On stderr, so what a pipeline or a benchmark reads from stdout is unchanged; a pipeline (-p) only hears about broken files.
+    if (finish) {
+        const summary = finishLines(finish, finish.changedFiles ?? []).filter(l => !printMode || l.includes('WARNING'));
+        if (summary.length) await new Promise<void>(resolve => process.stderr.write(summary.join('\n') + '\n', () => resolve()));
+    }
     process.exit(error ? 1 : 0);
 }
