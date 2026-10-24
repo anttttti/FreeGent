@@ -151,7 +151,7 @@ describe('CF Worker', () => {
 });
 
 describe('CF Worker POST /log', () => {
-    const logReq = (body: string, origin = 'http://192.168.1.20:5000') => new Request('https://proxy.example/log', {
+    const logReq = (body: string | Uint8Array, origin = 'http://192.168.1.20:5000') => new Request('https://proxy.example/log', {
         method: 'POST', headers: { Origin: origin, 'Content-Type': 'text/plain', 'CF-Connecting-IP': '203.0.113.9' }, body });
     const kv = () => ({ put: vi.fn().mockResolvedValue(undefined) });
 
@@ -161,12 +161,19 @@ describe('CF Worker POST /log', () => {
         expect(r.status).toBe(200);
         const { id } = await r.json() as any;
         expect(id).toMatch(/^[0-9a-f]{16}$/);
-        expect(FG_LOGS.put).toHaveBeenCalledWith(`log:${id}`, '{"a":1}', { expirationTtl: 14 * 24 * 3600 });
+        expect(FG_LOGS.put).toHaveBeenCalledTimes(1);
+        const [key, value, opts] = FG_LOGS.put.mock.calls[0];
+        expect(key).toBe(`log:${id}`);
+        expect(new TextDecoder().decode(value)).toBe('{"a":1}');
+        expect(opts).toEqual({ expirationTtl: 14 * 24 * 3600 });
     });
-    it('answers 503 without the KV binding, 413 over 5 MB, 429 when rate limited', async () => {
+    it('answers 503 without the KV binding, 413 over 25 MB (the Workers KV value limit), 429 when rate limited', async () => {
         expect((await worker.fetch(logReq('x'), {})).status).toBe(503);
         const FG_LOGS = kv();
-        expect((await worker.fetch(logReq('x'.repeat(5 * 1024 * 1024 + 1)), { FG_LOGS })).status).toBe(413);
+        // 25 MiB is the Workers KV value limit. The declared size is checked first; a real 25 MiB body runs the vitest
+        // worker out of memory under jsdom (checked by hand in plain node: 25 MiB stored, 25 MiB + 1 byte -> 413).
+        const over = new Request('https://proxy.example/log', { method: 'POST', headers: { Origin: 'http://192.168.1.20:5000', 'CF-Connecting-IP': '203.0.113.9', 'Content-Length': String(25 * 1024 * 1024 + 1) }, body: 'x' });
+        expect((await worker.fetch(over, { FG_LOGS })).status).toBe(413);
         expect((await worker.fetch(logReq('x'), { FG_LOGS, FG_RATE_LIMITER: limiter(false) })).status).toBe(429);
         expect(FG_LOGS.put).not.toHaveBeenCalled();
     });
