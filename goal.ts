@@ -125,7 +125,6 @@ interface Run { rec: GoalRecord; host: GoalHost; stop: boolean; stopNote: string
 let _run: Run | null = null;
 
 export const goalRunning = (): boolean => _run !== null;
-export const currentGoal = (): GoalRecord | null => _run?.rec ?? null;
 
 const firstLine = (s: string): string => (s.trim().split('\n').find(l => l.trim()) ?? '').trim().slice(0, 160);
 const nowIso = () => new Date().toISOString().slice(0, 19) + 'Z';

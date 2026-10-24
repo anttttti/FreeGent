@@ -16,7 +16,7 @@ import { getPrivacyLevel } from './privacy.js';
 import { KEYS } from './storage-keys.js';
 import { hashContent, planSync, keepBothName, nextBase, changedSinceImport, type SyncAction, type SyncItem } from './local-sync.js';
 import { PYODIDE_CDN } from './pyodide-version.js';
-import { bumpWorkspaceEpoch, workspaceEpoch, WORKSPACE_EPOCH_KEY } from './exec-limits.js';
+import { bumpWorkspaceEpoch, workspaceEpoch } from './exec-limits.js';
 export interface WorkspaceAdapter {
     agentListFiles(): Promise<Array<{name: string; size?: number; lastModified?: number}>>;
     /** List only files inside a specific subdirectory (relative to workspace root). Paths returned are relative to that subdir. Fast path — no stat calls. */
