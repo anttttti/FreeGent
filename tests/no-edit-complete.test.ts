@@ -109,6 +109,22 @@ describe('invented_data', () => {
     });
 });
 
+describe('invented_data does not second-guess a task that changes the supplied data', () => {
+    it('lets a fix of a supplied data file stand (s6-misleading-error)', async () => {
+        delete process.env.FG_EDIT_REQUIRED;
+        const orig = W.nativeExec;
+        (globalThis as any).nativeExec = W.nativeExec = async () => ({ stdout: '', stderr: '', exit_code: 0 });
+        try {
+            const task = '<workspace_files>\n2 files:\napp.py\ndata.csv\n</workspace_files>\n\n`python3 app.py` crashes with a ValueError. Fix whatever is actually wrong so it prints total=60. Do not change app.py.';
+            const { s } = await run(task, [
+                { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code: "sed -i 's/3O/30/' data.csv && python3 app.py" }) } }] },
+                { content: 'Fixed the typo in data.csv.\nCOMPLETED' },
+            ]);
+            expect(historyOf(s).filter((m: any) => /wrote to data files yourself/.test(String(m.content)))).toHaveLength(0);
+        } finally { (globalThis as any).nativeExec = W.nativeExec = orig; }
+    });
+});
+
 describe('failed_check_complete', () => {
     it('bounces a COMPLETED when the last check after the final change failed, once', async () => {
         const orig = W.nativeExec;

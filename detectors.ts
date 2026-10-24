@@ -359,6 +359,14 @@ export function isQuestionOnlyTask(task: string): boolean {
     if (!t || t.length > 1500) return false;
     return !_ACTION_RE.test(t);
 }
+// A task that asks for the supplied data itself to be changed ("fix the bad value in data.csv", "clean up the
+// log", "convert the CSV"). Overwriting a supplied data file is then the work, not a way of inventing data, so the
+// invented_data gate leaves it alone (s6-misleading-error: the nudge made the model restore a correct fix).
+const _DATA_CHANGE_RE = /\b(?:fix\w*|repair\w*|correct\w*|updat\w*|edit\w*|modif\w*|chang\w*|clean\w*|convert\w*|replac\w*|renam\w*|sort\w*|dedup\w*|reformat\w*|normali[sz]\w*|patch\w*|delet\w*|remov\w*|append\w*|insert\w*|overwrit\w*|rewrit\w*|trim\w*|redact\w*|mask\w*|merge\w*)\b/i;
+export function taskChangesData(task: string): boolean {
+    return _DATA_CHANGE_RE.test(String(task ?? ''));
+}
+
 const _DATA_FILE_RE = /\.(?:txt|log|csv|tsv|json|dat|md|xml|ya?ml|ini|conf)$/i;
 /** Data-like files created or changed in this run that are not scratch or temp files. */
 export function inventedDataPaths(edited: Iterable<string>, isScratch: (p: string) => boolean): string[] {
