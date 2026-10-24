@@ -157,7 +157,7 @@ describe('server registry', () => {
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('destructive');
         W.setMcpServerTrust(s.id, true);
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('read');
-        expect(W.mcpToolRisk(W.mcpToolName(s.id, 'delete.everything'))).toBe('destructive');
+        expect(W.mcpToolRisk(W.mcpExposedName(s.id, 'delete.everything'))).toBe('destructive');
         W.setMcpServerTrust(s.id, false);
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('destructive');
     });
@@ -187,7 +187,7 @@ describe('dispatch through executeToolAsync', () => {
     it('returns isError results and disabled tools as errors', async () => {
         mockServer(standardHandler);
         const s = await W.addMcpServer({ name: 'maps', url: 'https://e.example.com/mcp' });
-        const name = W.mcpToolName(s.id, 'delete.everything');
+        const name = W.mcpExposedName(s.id, 'delete.everything');
         expect((await W.executeToolAsync(name, {})).error).toMatch(/disabled/);
         W.setMcpToolEnabled(s.id, 'delete.everything', true);
         expect((await W.executeToolAsync(name, {})).error).toBe('maps/delete.everything: nope');

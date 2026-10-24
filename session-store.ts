@@ -65,7 +65,7 @@ async function _asyncCall<T>(method: string, ...args: any[]): Promise<T | null> 
 
 // list: [{id, name, createdAt, lastAt}, ...] — same shape chat-state.js's getChatList() returns.
 function sessionSyncChatList(list) { _safeCall('syncChatList', list); }
-function sessionDeleteChat(id)     { _safeCall('deleteChat', id); }
+function sessionDeleteChat(id)     { _enqueueChatOp(id, { kind: 'delete' }); }
 export function sessionSetChatRole(id, role) { _safeCall('setChatRole', id, role); }
 
 // ── Messages ────────────────────────────────────────────────────────────────
@@ -73,30 +73,65 @@ export function sessionSetChatRole(id, role) { _safeCall('setChatRole', id, role
 // Whole-blob replace semantics, matching chat-state.js's saveHistory() (one JSON blob per chat).
 // Resolves true once the store accepted the write, false if there is no adapter or it failed —
 // chat-state only drops a chat's localStorage copy after a true.
-// Saves of one chat go one at a time, and a save waiting behind a running one is replaced by the newer history: with the adapter's own timing two
-// saves could finish in the wrong order, and the older history was the last one written (opencode §13).
-const _saving = new Map<string, { active: boolean; pending: { history: any; waiters: Array<(ok: boolean) => void> } | null }>();
+// Everything that changes one chat's stored history goes through one queue, one operation at a time, in the order it was asked for: a save, a compaction
+// (which seals the generation and opens the next) and a deletion. Run apart, the adapter's compaction and save both chose "the current generation" before
+// either wrote, so one overwrote the other's sealed history (codex R107), and a save queued behind a deletion recreated the chat it had removed (R108).
+// Saves queued behind another operation are merged: the newest history is the one that is written, and the older callers get its result (opencode §13).
+type _ChatOp =
+    | { kind: 'save'; history: any; waiters: Array<(ok: boolean) => void> }
+    | { kind: 'compact'; pre: any; post: any }
+    | { kind: 'delete' };
+const _chatOps = new Map<string, { active: boolean; queue: _ChatOp[] }>();
+function _enqueueChatOp(chatId: string, op: _ChatOp): void {
+    if (!_store) return;
+    let st = _chatOps.get(chatId);
+    if (!st) { st = { active: false, queue: [] }; _chatOps.set(chatId, st); }
+    // Nothing ahead of a compaction or a deletion for this chat: the adapter takes it at once. Its transactions are atomic and IndexedDB runs overlapping ones
+    // in the order they were created, so only an operation that has to wait for an earlier save needs the queue.
+    if (op.kind !== 'save' && !st.active && !st.queue.length) {
+        _chatOps.delete(chatId);
+        const method = op.kind === 'compact' ? 'compactHistory' : 'deleteChat';
+        try {
+            const p = op.kind === 'compact' ? (_store as any)?.compactHistory?.(chatId, op.pre, op.post) : (_store as any)?.deleteChat?.(chatId);
+            if (p?.catch) p.catch((e: any) => console.warn(`[session-store] ${method} failed:`, e?.message));
+        } catch (e: any) { console.warn(`[session-store] ${method} failed:`, e?.message); }
+        return;
+    }
+    if (op.kind === 'save') {
+        const last = st.queue[st.queue.length - 1];
+        if (last?.kind === 'save') { last.history = op.history; last.waiters.push(...op.waiters); }
+        else st.queue.push(op);
+    } else {
+        // A deletion makes the saves still waiting for the chat pointless: they end with false instead of bringing it back.
+        if (op.kind === 'delete') for (const q of st.queue) if (q.kind === 'save') for (const w of q.waiters) w(false);
+        if (op.kind === 'delete') st.queue = st.queue.filter(q => q.kind !== 'save');
+        st.queue.push(op);
+    }
+    if (!st.active) void _pumpChatOps(chatId, st);
+}
 function sessionSaveHistory(chatId, history): Promise<boolean> {
     if (!_store || typeof _store.replaceMessages !== 'function') return Promise.resolve(false);
-    return new Promise<boolean>(resolve => {
-        let st = _saving.get(chatId);
-        if (!st) { st = { active: false, pending: null }; _saving.set(chatId, st); }
-        if (st.pending) { st.pending.history = history; st.pending.waiters.push(resolve); }
-        else st.pending = { history, waiters: [resolve] };
-        if (!st.active) void _pumpSaves(chatId, st);
-    });
+    return new Promise<boolean>(resolve => _enqueueChatOp(chatId, { kind: 'save', history, waiters: [resolve] }));
 }
-async function _pumpSaves(chatId: string, st: { active: boolean; pending: { history: any; waiters: Array<(ok: boolean) => void> } | null }): Promise<void> {
+async function _pumpChatOps(chatId: string, st: { active: boolean; queue: _ChatOp[] }): Promise<void> {
     st.active = true;
     try {
-        while (st.pending) {
-            const job = st.pending; st.pending = null;
-            let ok = false;
-            try { await _store!.replaceMessages(chatId, job.history); ok = true; }
-            catch (e: any) { console.warn('[session-store] replaceMessages failed:', e?.message); }
-            for (const w of job.waiters) w(ok);
+        while (st.queue.length) {
+            const op = st.queue.shift()!;
+            if (op.kind === 'save') {
+                let ok = false;
+                try { await _store!.replaceMessages(chatId, op.history); ok = true; }
+                catch (e: any) { console.warn('[session-store] replaceMessages failed:', e?.message); }
+                for (const w of op.waiters) w(ok);
+            } else {
+                const method = op.kind === 'compact' ? 'compactHistory' : 'deleteChat';
+                try {
+                    const fn = (_store as any)?.[method];
+                    if (typeof fn === 'function') await (op.kind === 'compact' ? fn.call(_store, chatId, op.pre, op.post) : fn.call(_store, chatId));
+                } catch (e: any) { console.warn(`[session-store] ${method} failed:`, e?.message); }
+            }
         }
-    } finally { st.active = false; if (!st.pending) _saving.delete(chatId); }
+    } finally { st.active = false; if (!st.queue.length) _chatOps.delete(chatId); }
 }
 
 // Compaction lineage (net-new — no legacy behavior to preserve, adapter-only like worker runs).
@@ -105,7 +140,7 @@ async function _pumpSaves(chatId: string, st: { active: boolean; pending: { hist
 // different (Hermes Agent's session-lineage model, minus the visible child session). See
 // NodeSqliteAdapter.compactHistory() for why sealing happens here rather than relying on a
 // regular save having already captured the pre-compaction state.
-export function sessionCompactHistory(chatId, preHistory, postHistory) { _safeCall('compactHistory', chatId, preHistory, postHistory); }
+export function sessionCompactHistory(chatId, preHistory, postHistory) { _enqueueChatOp(chatId, { kind: 'compact', pre: preHistory, post: postHistory }); }
 
 // ── Turn log ────────────────────────────────────────────────────────────────
 
@@ -183,6 +218,11 @@ async function sessionLoadChatList(): Promise<{id: string; name: string; created
 async function sessionLoadHistory(chatId: string): Promise<any[] | null> {
     return _asyncCall<any[]>('loadHistory', chatId);
 }
+/** Like sessionLoadHistory, but a read that fails throws: null then means "the store has no history for this chat", not "the read did not work". A backup must tell them apart. */
+export async function sessionLoadHistoryStrict(chatId: string): Promise<any[] | null> {
+    if (!_store || typeof _store.loadHistory !== 'function') return null;
+    return (await _store.loadHistory(chatId)) ?? null;
+}
 
 function sessionPruneRawFrom(chatId: string, sinceMs: number): void {
     if (!chatId) return;
@@ -247,5 +287,5 @@ Object.assign(window, {
     sessionSaveCheckpointAttachments, sessionLoadCheckpointAttachments, sessionDeleteCheckpointAttachments,
     sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent,
     sessionSaveRawMessage, sessionLoadRawMessages, sessionPruneRawFrom,
-    sessionLoadChatList, sessionLoadHistory,
+    sessionLoadChatList, sessionLoadHistory, sessionLoadHistoryStrict,
 });

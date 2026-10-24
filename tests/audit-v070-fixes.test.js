@@ -198,7 +198,7 @@ describe('B6. requests outside the main loop reach the metrics', () => {
 
 describe('B8. one table of write tools', () => {
     it('every list of write tools is built from it', async () => {
-        expect([...MAY_WRITE_TOOLS]).toEqual([...WORKSPACE_WRITE_TOOLS, 'execute_code']);
+        expect([...MAY_WRITE_TOOLS]).toEqual([...WORKSPACE_WRITE_TOOLS, 'execute_code', 'deep_research']);   // deep_research saves its report under research/ (codex R122)
         expect([...WORKSPACE_WRITE_TOOLS]).toEqual([...FILE_WRITE_TOOLS, 'undo_write']);
         expect([..._WRITE_TOOLS].sort()).toEqual([...MAY_WRITE_TOOLS].sort());
         // No module keeps its own literal list of the file-write tools any more.

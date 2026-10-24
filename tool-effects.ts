@@ -15,6 +15,6 @@ export const WORKSPACE_WRITE_TOOLS = [...FILE_WRITE_TOOLS, 'undo_write'] as cons
 
 /** Tools after which workspace files may differ: the above, and code that can write anything.
  *  (run_workers changes files only through its workers and is handled by its callers.) */
-export const MAY_WRITE_TOOLS = [...WORKSPACE_WRITE_TOOLS, 'execute_code'] as const;
+export const MAY_WRITE_TOOLS = [...WORKSPACE_WRITE_TOOLS, 'execute_code', 'deep_research'] as const;   // deep_research saves its report under research/ (codex R122)
 
 export const isFileWriteTool = (name: string): boolean => (FILE_WRITE_TOOLS as readonly string[]).includes(name);

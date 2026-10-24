@@ -763,6 +763,13 @@ async function _handleUndoWrite(args: any) {
         return { error: `undo_write: "${args.path}" has changed since that write (edited, uploaded or deleted elsewhere), so it was not restored. Read the file to see what is there now.` };
     }
     try {
+        // The file is compared again immediately before it is changed: an edit committed while the first read was in flight is not undone (codex R132). The workspace
+        // has no compare-and-write, so what remains is the instant between this read and the mutation.
+        let now: string | null = null;
+        try { now = await agentReadFile(args.path); } catch { now = null; }
+        if (now !== previous.after) {
+            return { error: `undo_write: "${args.path}" changed while the undo was being checked, so it was not restored. Read the file to see what is there now.` };
+        }
         if (!previous.existed) {
             await agentDeleteFile(args.path, { epoch: previous.epoch });
             stack.pop();
@@ -776,7 +783,7 @@ async function _handleUndoWrite(args: any) {
 
 async function _handleDeleteFile(args: any, context: any) {
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
-    if (context) { context.staging.set(args.path, null); return { success: true }; }
+    if (context) { context.binary?.delete(args.path); context.staging.set(args.path, null); return { success: true }; }
     try {
         // A file that isn't there is reported, not "deleted" (the workspace delete is silent).
         if (!workspaceUsesAbsolutePaths?.() && !(await agentListFiles()).some((f: any) => (f?.name ?? f) === args.path))
@@ -793,7 +800,12 @@ async function _handleAppendFile(args: any, context: any) {
         content: args.content ?? args.text ?? args.body ?? args.data ?? '',
     };
     const doAppend = async (read: () => Promise<string>, write: (c: string) => Promise<void>) => {
-        const existing = await read().catch(() => '');
+        // Only a file that is not there is created by an append; one that exists and cannot be read is not "empty" (writing the fragment alone would replace it, codex R119).
+        let existing = '';
+        try { existing = await read(); }
+        catch (e: any) {
+            if (!/not found|ENOENT|no such file|does not exist/i.test(String(e?.message ?? e))) return { error: `append_file: could not read ${args.path} (${e?.message ?? e}); nothing was written` };
+        }
         const sep = existing && !existing.endsWith('\n') ? '\n' : '';
         const newContent = existing + sep + args.content;
         await write(newContent);
@@ -805,7 +817,7 @@ async function _handleAppendFile(args: any, context: any) {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
-            async c => context.staging.set(args.path, c)
+            async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
     }
     try {
@@ -855,6 +867,9 @@ async function _handleAcademicSearch(args: any) {
             const xml = await resp.text();
             const doc = new DOMParser().parseFromString(xml, 'application/xml');
             const NS  = 'http://www.w3.org/2005/Atom';
+            // A response that is not an Atom feed (a parse error, an HTML error page) is a failed search, not an empty one (codex R131).
+            if (doc.getElementsByTagName('parsererror').length || doc.documentElement?.localName !== 'feed' || doc.documentElement?.namespaceURI !== NS)
+                return { error: 'arXiv: the response was not a valid Atom feed (malformed XML or an error page)' };
             const get = (el, tag) => el.getElementsByTagNameNS(NS, tag)[0]?.textContent?.trim() || '';
             return { results: [...doc.getElementsByTagNameNS(NS, 'entry')].map(e => ({
                 title: get(e, 'title').replace(/\s+/g, ' '),
@@ -899,6 +914,8 @@ async function _handleAcademicSearch(args: any) {
             const fetchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`, { signal: activeAbortController?.signal });
             if (!fetchResp.ok) return { error: `PubMed fetch HTTP ${fetchResp.status}` };
             const doc = new DOMParser().parseFromString(await fetchResp.text(), 'application/xml');
+            if (doc.getElementsByTagName('parsererror').length || !/^PubmedArticleSet$/i.test(doc.documentElement?.localName ?? ''))
+                return { error: 'PubMed: the response was not a valid PubmedArticleSet (malformed XML or an error page)' };
             return { results: [...doc.getElementsByTagName('PubmedArticle')].map(a => `\n1. [${a.getElementsByTagName('ArticleTitle')[0]?.textContent || ''}] — PMID:${a.getElementsByTagName('PMID')[0]?.textContent || ''}\n   ${a.getElementsByTagName('AbstractText')[0]?.textContent?.slice(0, 150) || ''}`).join('') };
         } catch (e) { return { error: `academic_search/pubmed: ${e.message}` }; }
     }
@@ -974,6 +991,9 @@ async function _handleSearchWorkspace(args: any) {
         const re = isRegex ? new RegExp(pattern, caseSensitive ? 'g' : 'gi') : _literalRe(pattern);
 
         const files   = await agentListFiles();
+        // Files that were listed but could not be read: a search that skipped them did not search them (codex R54).
+        const _readErrors = new Set<string>();
+        const _skippedLarge = new Set<string>();   // files over the content-scan cap: their contents were not searched
         const scan = async (re: RegExp) => {
         const matches = [];
 
@@ -983,17 +1003,18 @@ async function _handleSearchWorkspace(args: any) {
             if (!pathFilter.length && /^logs\//.test(f.name)) continue;
             // Fast-path: skip files whose IDB size metadata is already over 300KB (name-only search skips this
             // read cost, but content search needs the file contents below).
-            if (scope !== 'names' && !pathFilter.length && f.size > _SEARCH_FILE_SIZE_CAP) continue;
-            // Filename match (name-only when scope='names').
+            // Filename match (name-only when scope='names'). Tested before the size cap: the cap is a limit on scanning contents, and a name hit costs nothing (codex R116).
             let nameMatched = false;
             if (scope !== 'contents') {
                 re.lastIndex = 0;
                 nameMatched = re.test(f.name);
             }
+            const _tooBig = () => { _skippedLarge.add(f.name); if (nameMatched && scope === 'both') { matches.push(`> ${f.name}  (filename match; contents not searched: file is over ${Math.round(_SEARCH_FILE_SIZE_CAP / 1000)} KB)`); } };
+            if (scope !== 'names' && !pathFilter.length && f.size > _SEARCH_FILE_SIZE_CAP) { _tooBig(); if (matches.length >= maxMatches) break; continue; }
 
-            const content = scope === 'names' ? null : await agentReadFile(f.name).catch(() => '');
+            const content = scope === 'names' ? null : await agentReadFile(f.name).catch(() => { _readErrors.add(f.name); return ''; });
             // Recheck with actual content length — covers local/ FSA files with no size metadata
-            if (content !== null && !pathFilter.length && content.length > _SEARCH_FILE_SIZE_CAP) continue;
+            if (content !== null && !pathFilter.length && content.length > _SEARCH_FILE_SIZE_CAP) { _tooBig(); if (matches.length >= maxMatches) break; continue; }
             const lines   = content !== null ? content.split('\n') : [];
             let contentMatched = false;
             const contentBlocks = [];
@@ -1028,6 +1049,8 @@ async function _handleSearchWorkspace(args: any) {
         return matches;
         };
 
+        const _unreadField = () => ({ ...(_readErrors.size ? { read_errors: [..._readErrors].slice(0, 20) } : {}), ...(_skippedLarge.size ? { contents_not_searched: [..._skippedLarge].slice(0, 20) } : {}) });
+        const _unreadNote = () => _readErrors.size ? ` ${_readErrors.size} file${_readErrors.size === 1 ? '' : 's'} could not be read (see read_errors), so this is not a complete negative: read ${_readErrors.size === 1 ? 'it' : 'them'} directly or search again.` : '';
         let matches = await scan(re);
         let note = '';
         // Models often send regex syntax (\. \( \{ \d, .*, (?:...)) without is_regex, which the literal
@@ -1045,14 +1068,15 @@ async function _handleSearchWorkspace(args: any) {
                     if (matches.length) note = 'No literal match, so the pattern was retried as a regex. Set is_regex=true to use regex syntax explicitly.';
                 } catch { /* not a valid regex either */ }
             }
-            if (!matches.length) return { matches: [], note: 'No matches found. The pattern looks like a regex but is_regex was not set (patterns are literal by default) — retry with is_regex=true, or a plain literal such as the bare identifier.' };
+            if (!matches.length) return { matches: [], note: 'No matches found. The pattern looks like a regex but is_regex was not set (patterns are literal by default) — retry with is_regex=true, or a plain literal such as the bare identifier.' + _unreadNote(), ..._unreadField() };
         }
 
-        if (!matches.length) return { matches: [], note: 'No matches found.' };
+        if (!matches.length) return { matches: [], note: 'No matches found' + (_readErrors.size ? ' in the files that could be read.' : '.') + _unreadNote(), ..._unreadField() };
         const _capped = matches.length >= maxMatches;
         return {
             matches,
             match_count: matches.length,
+            ..._unreadField(),
             ...(note && !_capped && { note }),
             ...(_capped && { note: `Results capped at ${maxMatches} matches — there may be more. Narrow your search with path_filter or a more specific pattern. Do not repeat this exact search.` }),
         };
@@ -1389,6 +1413,13 @@ async function _handleReadFile(args, context) {
     };
     if (context) {
         const path = args.path;
+        // The worker's own base64 write, held for commit: read it back as the committed record would read (text when it is text).
+        if (context.binary?.has(path) && !context.staging.has(path)) {
+            let text: string | null = null;
+            try { const bin = atob(String(context.binary.get(path) ?? '')); const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0)); text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = null; }
+            if (text === null || text.includes('\0')) return { error: `binary file: ${path} was written as binary by this worker (staged, ${_base64Len(String(context.binary.get(path)))} bytes)`, hint: 'do not read binary files as text' };
+            return _checkBinary(path, text) ?? _ret(path, text, _sliceLines(text, sl, el));
+        }
         if (context.staging.has(path)) {
             const c = context.staging.get(path);
             if (c === null) return { error: `File deleted: ${path}` };
@@ -1442,6 +1473,7 @@ async function _handleWriteFile(args, context) {
             // A worker's binary write is held back like its text writes: run_workers applies it
             // after reconciling, reports it under `wrote`, and flags two workers writing one asset.
             if (context?.binary) {
+                context.staging?.delete(args.path);   // and a binary write supersedes an earlier text write or delete
                 context.binary.set(args.path, args.content);
                 return { success: true, path: args.path, bytes: _base64Len(args.content), staged: true };
             }
@@ -1495,6 +1527,7 @@ async function _handleWriteFile(args, context) {
             if (!review.approved)
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
         }
+        context.binary?.delete(args.path);   // the latest staged operation on a path is the only one (text supersedes an earlier binary write)
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         return { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
@@ -1588,9 +1621,13 @@ async function _handleReplaceInFile(args, context) {
                     idx = at - rel; matchLen = dOld.length;
                     // In 'full' mode (\n, \t decoded) a new_string that already holds real newlines was not double-encoded:
                     // its `\n` are source-code escapes the model meant (a string literal), so only old_string is decoded.
-                    newText = (mode === 'full' && args.new_string.includes('\n'))
-                        ? args.new_string
-                        : (_decodeEscapedArg(args.new_string, mode) ?? args.new_string);
+                    // Quotes and backslashes are decoded; \n, \t and \r only if old_string needed them: an old_string with escaped quotes alone says nothing about a
+                    // `\n` in new_string, which is then the source-level escape of a string literal and must stay as written (codex R120).
+                    if (mode === 'full') {
+                        const used = new Set([...args.old_string.matchAll(/\\([ntr"'\\])/g)].map((m: RegExpMatchArray) => m[1]));
+                        newText = args.new_string.includes('\n') ? args.new_string
+                            : args.new_string.replace(/\\([ntr"'\\])/g, (m: string, c: string) => (c === 'n' || c === 't' || c === 'r') && !used.has(c) ? m : c === 'n' ? '\n' : c === 't' ? '\t' : c === 'r' ? '\r' : c);
+                    } else newText = _decodeEscapedArg(args.new_string, mode) ?? args.new_string;
                     decodedNote = ' old_string and new_string contained escape sequences (\\n, \\", \\\\) that are not in the file; they were read as the characters they stand for. Send real newlines and quotes next time.';
                     break;
                 }
@@ -1653,7 +1690,7 @@ async function _handleReplaceInFile(args, context) {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
-            async c => context.staging.set(args.path, c)
+            async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
     }
     try {
@@ -1742,7 +1779,7 @@ async function _handleApplyPatch(args, context) {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
-            async c => context.staging.set(args.path, c)
+            async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
     }
     try {
@@ -2303,6 +2340,8 @@ async function _handleExecuteCode(args, context, onProgress?: (message:string)=>
     // apply → run → collect sequence therefore holds a lock; main-agent runs (no staging) don't.
     const result = context?.staging
         ? await _withWorkspaceRunLock(async () => {
+            // The files the code names are copied (or found absent) before it can change them: a failed worker is put back from these.
+            try { await context.snapshot?.pinMentioned?.(_rawCode, { eager: !workspaceUsesAbsolutePaths?.() }); } catch {}
             const stamps = await _applyStagingForRun(context.staging, context.snapshot);
             try {
                 const res = await _handleExecuteCodeInner(args, context, onProgress);
@@ -2364,6 +2403,7 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
         const changed = before.files.get(f.name) !== _stamp(f) || (f.lastModified ?? 0) >= before.t0;
         if (!changed) continue;
         _invalidateReadDedup(f.name);
+        snapshot?.noteMutated?.(f.name);
         // Binary files stay out of staging (it holds text); they are in the workspace already.
         const rec = !workspaceUsesAbsolutePaths?.() && typeof readWorkspaceFile === 'function'
             ? await readWorkspaceFile(f.name).catch(() => null) : null;
@@ -2372,7 +2412,7 @@ async function _stageRunChanges(staging: Map<string, string | null>, before: _Ru
         if (text !== null) staging.set(f.name, text);
         else { staging.delete(f.name); context_snapshot_note(f.name, f.size ?? 0); codeBinary?.add(f.name); }
     }
-    if (!truncated) for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); }
+    if (!truncated) for (const name of before.files.keys()) if (!seen.has(name)) { staging.set(name, null); _invalidateReadDedup(name); snapshot?.noteMutated?.(name); }
 }
 
 async function _handleExecuteCodeInner(args, context, onProgress?: (message:string)=>void) {

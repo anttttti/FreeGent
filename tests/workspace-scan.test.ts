@@ -131,3 +131,20 @@ describe('codex R12-001: nesting deeper than the walk goes is an incomplete scan
         expect((await listFiles(ok, { maxEntries: 100 })).complete).toBe(true);     // ordinary nesting is walked
     });
 });
+
+describe('a workspace folder that an enclosing repository ignores', () => {
+    // The sim writes workspaces under bench/logs/ of the FreeGent repo, whose .gitignore ignores /bench/: ls-files and status said "nothing" for them.
+    it('is listed by a walk, and its writes are seen', async () => {
+        const d = repo(); mkdirSync(join(d, 'ignored-dir', 'ws'), { recursive: true });
+        const ws = join(d, 'ignored-dir', 'ws');
+        writeFileSync(join(ws, 'a.py'), '1'); mkdirSync(join(ws, 'fg-tasks')); writeFileSync(join(ws, 'fg-tasks', '001-t.md'), 't');
+        const l = await listFiles(ws, { maxEntries: 1000 });
+        expect(l.via).toBe('walk');
+        expect(l.files.sort()).toEqual(['a.py', 'fg-tasks/001-t.md']);
+        expect(await written(ws, () => { writeFileSync(join(ws, 'new.txt'), 'n'); })).toEqual(['new.txt']);
+    });
+    it('a folder the repository does not ignore still uses git', async () => {
+        const d = repo();
+        expect((await listFiles(d, { maxEntries: 1000 })).via).toBe('git');
+    });
+});

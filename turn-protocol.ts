@@ -143,10 +143,10 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
         const _isBareAck = !newText ||
             /^(?:ok(?:ay)?|done|understood|acknowledged|confirmed|(?:the )?task(?:'s| is| was)?(?: now)? ?complete[d]?)[.! ]*$/i.test(newText);
         if (!_isBareAck) {
-            if (adapter.histLen() >= 2) adapter.spliceFromSecondLast(1);
+            if (!adapter.spliceReminder?.(false) && adapter.histLen() >= 2) adapter.spliceFromSecondLast(1);
             return { kind: 'return', text: newText };
         }
-        if (adapter.histLen() >= 2) adapter.spliceFromSecondLast(2);
+        if (!adapter.spliceReminder?.(true) && adapter.histLen() >= 2) adapter.spliceFromSecondLast(2);
         return { kind: 'return', text: _stripTerminal(ps.saved ?? textContent) };
     }
     // A task whose counterpart is reached through a tool (tau2: POST /message to the customer). Chat

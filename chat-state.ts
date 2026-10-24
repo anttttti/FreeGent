@@ -382,6 +382,11 @@ function chatCacheIsNewer(id: string): boolean {
     return !!(st && st.rev && st.acked !== st.rev && !st.trimmed && localStorage.getItem(chatKey.oh(id)));
 }
 (window as any).chatCacheIsNewer = chatCacheIsNewer;
+/** The cached history of this chat was put there by something (a project import) whose save to the session store did not work: the cache is then the newer copy. */
+function markChatCacheUnacknowledged(id: string): void {
+    try { localStorage.setItem(chatKey.rev(id), JSON.stringify({ rev: `imp-${Date.now().toString(36)}`, trimmed: false })); } catch {}
+}
+(window as any).markChatCacheUnacknowledged = markChatCacheUnacknowledged;
 
 async function loadChatHistory(id: string): Promise<boolean> {
     _noteSeenRev(id);

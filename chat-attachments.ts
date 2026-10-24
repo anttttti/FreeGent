@@ -12,7 +12,9 @@ const _attachmentReads = new Set<Promise<void>>();
 // Bounded: a read that never settles must not leave the composer stuck in "send-preparing", and one
 // failed read must not sink the others (each read reports its own failure as a chip error).
 const ATTACHMENT_WAIT_MS = 30_000;
-async function waitForAttachments(): Promise<void> {
+// Resolves true when every read has settled, false when the deadline passed with a read still outstanding: the caller must not treat that as a finished read (the
+// send used to go ahead without the file and then clear the composer, revoking the read that was still running, codex R92).
+async function waitForAttachments(): Promise<boolean> {
     const deadline = Date.now() + ATTACHMENT_WAIT_MS;
     while (_attachmentReads.size && Date.now() < deadline) {
         await Promise.race([
@@ -20,6 +22,7 @@ async function waitForAttachments(): Promise<void> {
             new Promise(r => setTimeout(r, Math.max(0, deadline - Date.now()))),
         ]);
     }
+    return _attachmentReads.size === 0;
 }
 function hasPendingAttachments(): boolean { return !!(_pendingImages.length || _pendingFiles.length || _attachmentReads.size); }
 function warnAttachmentSendBusy(): void {

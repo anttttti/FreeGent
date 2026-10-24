@@ -313,6 +313,7 @@ async function _runLoop() {
         _runnerRunning = false;
         _runnerOnlyPath = null;
         setAiJob('');
+        setTimeout(() => (window as any)._processQueue?.(), 0);   // messages queued while the run owned the chat (codex R112)
         _runnerPaused  = false;
         _runnerAbort   = false;
         _runnerChatId  = null;

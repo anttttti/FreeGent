@@ -52,6 +52,16 @@ export function cloudSlug(name: string): string {
     return (name || 'project').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64) || 'project';
 }
 
+/** A path a manifest may carry: relative, no empty, `.` or `..` segment, no backslash or control character, no drive letter. The Worker applies the
+ *  same rule when a manifest is pushed, and the client applies it again to what it pulls, because the keys reach the workspace and the folder helpers
+ *  (a `..` key could otherwise address a file outside the synced folder). */
+export function isSafeSyncPath(p: unknown): p is string {
+    if (typeof p !== 'string' || !p || p.length > 1024) return false;
+    // eslint-disable-next-line no-control-regex
+    if (/[\\\u0000-\u001f]/.test(p) || p.startsWith('/') || /^[A-Za-z]:/.test(p)) return false;
+    return p.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..');
+}
+
 export class CloudError extends Error {
     status: number;
     constructor(status: number, message: string) { super(message); this.status = status; }
@@ -90,7 +100,13 @@ export class CloudSyncClient {
 
     async projects(): Promise<string[]> { return (await (await this.call('GET', '/projects')).json()).projects; }
     async getManifest(project: string): Promise<{ etag: string | null; manifest: CloudManifest }> {
-        return (await this.call('GET', `/${project}/manifest`)).json();
+        const j = await (await this.call('GET', `/${project}/manifest`)).json();
+        const files = j?.manifest?.files;
+        if (files && typeof files === 'object') for (const [path, f] of Object.entries(files as Record<string, any>)) {
+            if (!isSafeSyncPath(path)) throw new CloudError(422, `The cloud project lists a file path that is not allowed: ${JSON.stringify(path).slice(0, 80)}`);
+            if (!f || typeof f.h !== 'string' || !/^[0-9a-f]{64}$/.test(f.h)) throw new CloudError(422, `The cloud project lists ${JSON.stringify(path).slice(0, 80)} without a SHA-256`);
+        }
+        return j;
     }
     /** Replace the manifest if the server still has `baseEtag` (null = none yet); a CloudError with status 412 means somebody pushed first. */
     async putManifest(project: string, manifest: CloudManifest, baseEtag: string | null): Promise<string> {

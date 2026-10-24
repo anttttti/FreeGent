@@ -192,6 +192,10 @@ export async function runDeepResearch(question: any, { max_rounds = _DR_MAX_ROUN
     _step(`→ Research: planning "${question.slice(0, 60)}"`);
     state.plan = await _drPlan(question);
 
+    // Rounds that went through to a synthesis: what the receipt and the saved header count (the loop cursor also steps past an unexecuted round, codex R124).
+    let rounds = 0;
+    let stoppedBy = '';
+    try {
     for (state.round = 1; state.round <= maxRounds; state.round++) {
         if (softStopPending) break;
 
@@ -222,26 +226,40 @@ export async function runDeepResearch(question: any, { max_rounds = _DR_MAX_ROUN
             + `\n\n### Search result snippets\n${snippetBlock}`;
 
         const done = await _drSynthesize(state, findings);
+        rounds++;
         if (done) { _step(`→ Research: coverage sufficient after round ${state.round}`); break; }
         if (state.round < maxRounds && state.gaps) _step(`→ Research gaps: ${state.gaps.slice(0, 100)}`);
+    }
+    } catch (e: any) {
+        // A later round failed (a synthesis the provider rejected): the report of the rounds before it is still the result, returned as partial and saved (codex R125).
+        if (!state.report) throw e;
+        stoppedBy = String(e?.message ?? e).slice(0, 300);
+        _step(`→ Research stopped after ${rounds} round(s): ${stoppedBy.slice(0, 100)}`);
     }
 
     if (!state.report) return { error: 'deep_research: no report could be produced (searches failed or returned nothing)' };
 
-    // Persist to research/ so future sessions (researcher memory mining) can reuse it
-    const slug = question.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
-    const path = `research/${new Date().toISOString().slice(0, 10)}-${slug}.md`;
+    // Persist to research/ so future sessions (researcher memory mining) can reuse it. The name carries a hash of the whole question: the date and the first
+    // 60 ASCII characters alone gave two different questions (one differing at the end, "C++" and "C#", a non-Latin one) the same file, and the later run
+    // replaced the earlier report. The same question still gets the same file (codex R123).
+    const slug = question.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    let h = 0x811c9dc5; for (const ch of question) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 0x01000193) >>> 0; }
+    const path = `research/${new Date().toISOString().slice(0, 10)}-${slug || 'research'}-${h.toString(16).padStart(8, '0')}.md`;
+    let saveError = '';
     try {
         await agentWriteFile(path,
-            `# ${question}\n*Deep research, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — ${state.round} round(s), ${state.sources.length} sources*\n\n${state.report}\n`);
-    } catch {}
+            `# ${question}\n*Deep research, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — ${rounds} round(s), ${state.sources.length} sources${stoppedBy ? ' — INCOMPLETE: ' + stoppedBy : ''}*\n\n${state.report}\n`);
+    } catch (e: any) { saveError = String(e?.message ?? e).slice(0, 200); }
 
     return {
         report: state.report,
-        saved_to: path,
-        rounds: state.round,
+        ...(saveError ? { save_error: `The report could not be saved (${saveError}); it is in this result. Write it to a file if it should be kept.` } : { saved_to: path }),
+        rounds,
         sources: [...new Set(state.sources)],
-        note: 'Present this report to the user (verbatim or lightly trimmed). It is already saved to the workspace — do not rewrite it to a file.',
+        ...(stoppedBy ? { partial: true, error_after_rounds: stoppedBy } : {}),
+        note: (stoppedBy ? `Research stopped early (${stoppedBy.slice(0, 120)}); this is the report of the ${rounds} round(s) that finished. ` : '')
+            + (saveError ? 'Present this report to the user (verbatim or lightly trimmed).'
+                          : 'Present this report to the user (verbatim or lightly trimmed). It is already saved to the workspace — do not rewrite it to a file.'),
     };
 }
 

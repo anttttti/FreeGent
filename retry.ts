@@ -108,6 +108,15 @@ export const MIN_USEFUL_OUTPUT = 1024;
 // gets the same answer; the caller resends without the image instead.
 export const IMAGE_REFUSAL_RE = /(?:at most 0 image|image input is not supported|(?:does not|doesn't) (?:accept|support) (?:image|vision|multimodal)|no endpoints found that support image)/i;
 
+// The server names one of the thinking controls FreeGent sent as a parameter it does not accept (NVIDIA NIM, z-ai/glm-5.3: "HTTP 400: Validation:
+// Unsupported parameter(s): `reasoning_budget`"). The same request gets the same answer; the caller remembers the model and resends without them.
+const _THINKING_FIELD_RE = /reasoning_budget|enable_thinking|thinking_token_budget|preserve_thinking|chat_template_kwargs|budget_tokens|\bthinking\b/i;
+const _FIELD_REFUSAL_RE = /unsupported|unknown|unrecognized|unexpected|not (?:supported|allowed|permitted|a valid)|extra (?:inputs?|fields?)|invalid parameter|additional properties/i;
+export function isThinkingFieldRefusal(message: unknown): boolean {
+    const m = String(message ?? '');
+    return /\bHTTP 400\b/.test(m) && _THINKING_FIELD_RE.test(m) && _FIELD_REFUSAL_RE.test(m);
+}
+
 export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
     const msg = e.message || '';
     // vLLM (current): "you requested M output tokens and your prompt contains at least N input

@@ -81,6 +81,11 @@ export interface RestoreResult {
 export async function restoreSnapshot(root: string, snap: Snapshot): Promise<RestoreResult> {
     if (snap.tooBig) throw new Error('the workspace was too large to snapshot, so its files cannot be restored');
     if (!await stat(snap.dir).then(() => true, () => false) && snap.files.length) throw new Error('the snapshot is gone');
+    // Every saved copy must be there before anything is removed or overwritten: failing on the last one, after the files made since had been deleted and the first
+    // ones restored, left the workspace half way between the two states (codex R115).
+    const missing: string[] = [];
+    await Promise.all(snap.files.map(async rel => { if (!await stat(join(snap.dir, rel)).then(st => st.isFile(), () => false)) missing.push(rel); }));
+    if (missing.length) throw new Error(`the snapshot is incomplete (${missing.length} saved file${missing.length === 1 ? '' : 's'} missing, e.g. ${missing.slice(0, 3).join(', ')}); nothing was restored`);
     const had = new Set(snap.files);
     const result: RestoreResult = { restored: [], removed: [], skippedLarge: snap.skippedLarge };
     // Files created since: remove (never the large ones the snapshot skipped, which may be untouched).

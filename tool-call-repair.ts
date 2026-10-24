@@ -62,7 +62,11 @@ export function _repairToolCallArgs(calls: any[], repairFn: (s: string) => strin
         try { JSON.parse(s); continue; } catch {}
         const fixed = repairFn(s);
         if (fixed !== null) tc.function.arguments = fixed;
-        else bad.push(tc.function.name);
+        else {
+            // The call runs with {} (its error is the feedback) and the conversation keeps valid JSON: vLLM json.loads() each call's arguments on the next request.
+            bad.push(tc.function.name);
+            tc.function.arguments = '{}';
+        }
     }
     return bad;
 }

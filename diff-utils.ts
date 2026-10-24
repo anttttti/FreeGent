@@ -60,13 +60,16 @@ export function diffRegions(base: string[], side: string[]): Array<{type: 'eq'|'
     return regions;
 }
 
+// Array.prototype.push(...big) throws RangeError above ~125k arguments (V8): an unchanged span of a long file is one such array.
+function pushAll<T>(out: T[], items: readonly T[]): void { for (let i = 0; i < items.length; i++) out.push(items[i]); }
+
 function applyMergeHunks(baseLines: string[], hunks: Array<{bs: number; be: number; rep: string[]}>, start: number, end: number): string[] {
     const out = []; let bi = start;
     for (const h of hunks) {
-        if (h.bs > bi) out.push(...baseLines.slice(bi, h.bs));
-        out.push(...h.rep); bi = h.be;
+        if (h.bs > bi) pushAll(out, baseLines.slice(bi, h.bs));
+        pushAll(out, h.rep); bi = h.be;
     }
-    if (bi < end) out.push(...baseLines.slice(bi, end));
+    if (bi < end) pushAll(out, baseLines.slice(bi, end));
     return out;
 }
 
@@ -85,10 +88,10 @@ export function tryMerge(base: string, sideA: string, sideB: string): { merged: 
     while (bi <= bLines.length) {
         const hA = ai < HA.length ? HA[ai] : null;
         const hB = bj < HB.length ? HB[bj] : null;
-        if (!hA && !hB) { out.push(...bLines.slice(bi)); break; }
+        if (!hA && !hB) { pushAll(out, bLines.slice(bi)); break; }
         const next = Math.min(hA ? hA.bs : Infinity, hB ? hB.bs : Infinity);
         if (next > bi) {
-            if (bi < bLines.length) out.push(...bLines.slice(bi, Math.min(next, bLines.length)));
+            if (bi < bLines.length) pushAll(out, bLines.slice(bi, Math.min(next, bLines.length)));
             bi = next; continue;
         }
         const groupA = [], groupB = [];
@@ -99,21 +102,21 @@ export function tryMerge(base: string, sideA: string, sideB: string): { merged: 
             while (bj < HB.length && HB[bj].bs <= spanEnd) { spanEnd = Math.max(spanEnd, HB[bj].be); groupB.push(HB[bj++]); again = true; }
         }
         if (!groupA.length) {
-            out.push(...applyMergeHunks(bLines, groupB, bi, spanEnd));
+            pushAll(out, applyMergeHunks(bLines, groupB, bi, spanEnd));
         } else if (!groupB.length) {
-            out.push(...applyMergeHunks(bLines, groupA, bi, spanEnd));
+            pushAll(out, applyMergeHunks(bLines, groupA, bi, spanEnd));
         } else {
             // Only treat as a true conflict if any A and B hunks overlap in base lines.
             // Adjacent edits (one ends where another begins) are not real conflicts.
             const baseOverlap = groupA.some(a => groupB.some(b => a.bs < b.be && b.bs < a.be));
             if (!baseOverlap) {
                 const allHunks = [...groupA, ...groupB].sort((x, y) => x.bs - y.bs);
-                out.push(...applyMergeHunks(bLines, allHunks, bi, spanEnd));
+                pushAll(out, applyMergeHunks(bLines, allHunks, bi, spanEnd));
             } else {
                 const wantA = applyMergeHunks(bLines, groupA, bi, spanEnd);
                 const wantB = applyMergeHunks(bLines, groupB, bi, spanEnd);
                 if (JSON.stringify(wantA) === JSON.stringify(wantB)) {
-                    out.push(...wantA);
+                    pushAll(out, wantA);
                 } else {
                     hasConflicts = true;
                     out.push('<<<<<<< A', ...wantA, '=======', ...wantB, '>>>>>>> B');

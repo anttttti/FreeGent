@@ -299,7 +299,15 @@ function profileApply(settings) {
     // A profile can change where requests go but never carries a key, so the key already stored would be sent to whatever address the profile names
     // (opencode §8). When the endpoint's ORIGIN changes, the keys that were entered for the old one are removed and must be entered again.
     const clearedKeys = _dropKeysIfEndpointMoves(patch, settings);
-    patchPrefs(patch);
+    // All or nothing: a write that fails (quota, blocked storage) must not leave a mixture of the old and the requested settings that nothing reports.
+    const prior: Record<string, string | null> = {};
+    for (const k of Object.keys(patch)) { try { prior[k] = localStorage.getItem(k); } catch { prior[k] = null; } }
+    if (!patchPrefs(patch)) {
+        patchPrefs(prior);
+        try { alert('The profile could not be applied: the browser refused to store some of its settings (storage full or blocked). Nothing was changed.'); } catch {}
+        if (typeof populateSettingsForm === 'function') populateSettingsForm();
+        return;
+    }
     if (clearedKeys.length) { try { alert(`This profile points the OpenAI-compatible endpoint somewhere else, so the stored API key${clearedKeys.length > 1 ? 's' : ''} for it (${clearedKeys.join(', ')}) ${clearedKeys.length > 1 ? 'were' : 'was'} removed. Enter ${clearedKeys.length > 1 ? 'them' : 'it'} again if you trust the new address.`); } catch {} }
     if (refused.length) { try { alert(`Not applied (not a list): ${refused.join(', ')}`); } catch {} }
     _previewedId = null;

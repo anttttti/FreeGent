@@ -24,7 +24,7 @@ declare global {
     var addFileAttachment: any;
     var hasPendingAttachments: () => boolean;
     var warnAttachmentSendBusy: () => void;
-    var waitForAttachments: () => Promise<void>;
+    var waitForAttachments: () => Promise<boolean | void>;
     var restoreFileAttachment: any;
     var addWorkspaceAttachment: any;
     var getPendingAttachments: any;
@@ -468,6 +468,7 @@ declare global {
     var mcpToolNames: any;
     var mcpServerInstructionsBlock: any;
     var mcpToolName: any;
+    var mcpExposedName: any;
     var mcpToolRisk: any;
     var executeMcpTool: any;
     var sanitizeMcpSchema: any;
@@ -565,6 +566,8 @@ declare global {
     var sessionDeleteCheckpointAttachments: any;
     var sessionLoadChatList: () => Promise<{id: string; name: string; createdAt: number; lastAt: number}[]>;
     var sessionLoadHistory: (chatId: string) => Promise<any[] | null>;
+    var sessionLoadHistoryStrict: (chatId: string) => Promise<any[] | null>;
+    var markChatCacheUnacknowledged: (id: string) => void;
     // ── bridged by idb-session-adapter.ts ──
     var initIDBSession: () => Promise<void>;
     // ── bridged by settings-ui.ts ──

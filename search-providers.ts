@@ -121,20 +121,24 @@ export async function wikipediaSearch(query: any): Promise<{ error: string; sour
         if (!r.ok) return { error: `Wikipedia HTTP ${r.status}` };
         const [, titles] = await r.json();
         if (!titles?.length) return { source: 'Wikipedia', results: [] };
+        let failedSummaries = 0, firstFailure = '';
         const summaries = await Promise.all(titles.slice(0, 3).map(async t => {
             try {
                 const sr = await fetch(
                     `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(t)}`,
                     { signal: _searchSignal() }
                 );
-                if (!sr.ok) return null;
+                if (!sr.ok) { failedSummaries++; firstFailure ||= `HTTP ${sr.status}`; return null; }
                 const d = await sr.json();
                 const _u = d.content_urls?.desktop?.page || '';
                 const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
                 return { title: d.title, url: _an(_u), snippet: d.extract || '' };
-            } catch { return null; }
+            } catch (e: any) { failedSummaries++; firstFailure ||= String(e?.message ?? e).slice(0, 80); return null; }
         }));
-        return { source: 'Wikipedia', results: summaries.filter(Boolean) };
+        const usable = summaries.filter(Boolean);
+        // Articles were found and none could be read: that is a failed search, not an empty one (and not "Wikipedia found nothing", codex R130).
+        if (!usable.length && failedSummaries) return { error: `Wikipedia: found ${Math.min(titles.length, 3)} article(s) but could not retrieve their summaries (${firstFailure})` };
+        return { source: 'Wikipedia', results: usable };
     } catch (e) { return { error: `Wikipedia: ${e.message}` }; }
 }
 

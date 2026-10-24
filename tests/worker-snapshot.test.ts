@@ -76,3 +76,24 @@ describe('worker tools through the snapshot', () => {
         expect(reads).not.toHaveBeenCalled();   // listing needs no content reads
     });
 });
+
+describe('reverting a failed worker run', () => {
+    it('deletes a file the run created whether it is text or a binary noted after the listing, and restores one that existed', async () => {
+        const { _revertWorkerDiskEdits } = await import('../workers.ts');
+        const { workspaceEpoch } = await import('../exec-limits.ts');
+        const snap = new LazySnapshot(Object.keys(disk).map(name => ({ name, size: disk[name].length })));
+        expect(snap.createdSince('a.py')).toBe(false);
+        await snap.get('a.py');   // the worker read a.py before editing it (an unread file has no preimage: codex R80)
+        // the worker's code wrote a new text file, a new binary file (noted, not readable as text) and edited a.py
+        disk['new.txt'] = 'text'; disk['new.bin'] = 'BIN'; disk['a.py'] = 'print("changed")\n';
+        snap.note('new.bin', 3);
+        expect(snap.has('new.bin')).toBe(true);
+        expect(snap.createdSince('new.bin')).toBe(true);
+        const context = { onDisk: new Set(['new.txt', 'new.bin', 'a.py']), snapshot: snap };
+        await _revertWorkerDiskEdits(context, workspaceEpoch());
+        expect(disk['new.txt']).toBeUndefined();
+        expect(disk['new.bin']).toBeUndefined();          // used to stay: noted names counted as run-start files
+        expect(disk['a.py']).toBe('print("a")\n');
+        expect(context.onDisk.size).toBe(0);
+    });
+});

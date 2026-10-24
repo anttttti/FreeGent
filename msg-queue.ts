@@ -10,6 +10,8 @@ export interface QueuedMsg {
     id:   string;
     text: string;
     mode: QueueMode;
+    /** The chat the message was written in. It is sent there only: while another chat is open it stays parked. */
+    chatId?: string | null;
 }
 
 const _queue: QueuedMsg[]            = [];
@@ -22,8 +24,8 @@ function _notify(): void {
 
 // ── Mutations ──────────────────────────────────────────────────────────────────
 
-export function enqueue(text: string, mode: QueueMode): QueuedMsg {
-    const msg: QueuedMsg = { id: `mq${++_nextId}`, text, mode };
+export function enqueue(text: string, mode: QueueMode, chatId: string | null = null): QueuedMsg {
+    const msg: QueuedMsg = { id: `mq${++_nextId}`, text, mode, chatId };
     _queue.push(msg);
     _notify();
     return msg;

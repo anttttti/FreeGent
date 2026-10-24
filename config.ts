@@ -794,6 +794,15 @@ const _DEFAULT_MAIN_MODELS = [
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
 
+/** True when the saved priority list is empty by the person's choice or by the retirement of everything in it (an empty array, or only withdrawn models): then there is
+ *  no default to fall back to. A list whose entries are merely unknown to the catalog is not this case (codex R88). */
+export function mainModelListIsEmptyByChoice(): boolean {
+    const raw = ls(KEYS.MAIN_MODELS, '');
+    if (!raw) return false;
+    try { const a = JSON.parse(raw); return Array.isArray(a) && a.every((x: any) => typeof x === 'string' && isBlacklistedModel(x)); }
+    catch { return false; }
+}
+
 export function getMainModelList() {
     const _validSpec = spec => {
         if (typeof spec !== 'string' || !spec.length) return false;
@@ -811,8 +820,9 @@ export function getMainModelList() {
             const a = JSON.parse(raw);
             if (Array.isArray(a)) {
                 const valid = [...new Set(a.filter(_validSpec))];
-                if (valid.length !== a.length) {
-                    // Prune stale entries (removed catalog models) and persist the clean list
+                if (valid.length !== a.length && (valid.length > 0 || a.every((x: any) => typeof x === 'string' && isBlacklistedModel(x)))) {
+                    // Prune stale entries (removed catalog models) and persist the clean list. A list that nothing valid is left of because its entries are
+                    // merely unknown to the catalog is not rewritten to `[]`: that would read as a list the person emptied (mainModelListIsEmptyByChoice).
                     try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(valid)); } catch {}
                 }
                 // Return even if empty — an empty list means the user cleared it intentionally.
@@ -827,11 +837,20 @@ export function getMainModelList() {
     // and trap new devices into a single Gemini model instead of _DEFAULT_MAIN_MODELS.
     const p = localStorage.getItem(KEYS.PROVIDER);
     if (!p) return [..._DEFAULT_MAIN_MODELS];
-    if (p === 'google')      return [`google|${ls('fg_gemini_model', 'gemini-3.5-flash-lite')}`];
-    if (p === 'nvidia')      return [`nvidia|${ls(KEYS.NVIDIA_MODEL, 'nvidia/nemotron-3-super-120b-a12b')}`];
-    if (p === 'openrouter')  return [`openrouter|${ls('fg_openrouter_model', 'nvidia/nemotron-3-ultra-550b-a55b:free')}`];
-    if (p === 'groq')        return [`groq|${ls(KEYS.GROQ_MODEL, 'openai/gpt-oss-120b')}`];
-    return [..._DEFAULT_MAIN_MODELS];
+    let legacy: string | null = null;
+    if (p === 'google')      legacy = `google|${ls('fg_gemini_model', 'gemini-3.5-flash-lite')}`;
+    else if (p === 'nvidia')      legacy = `nvidia|${ls(KEYS.NVIDIA_MODEL, 'nvidia/nemotron-3-super-120b-a12b')}`;
+    else if (p === 'openrouter')  legacy = `openrouter|${ls('fg_openrouter_model', 'nvidia/nemotron-3-ultra-550b-a55b:free')}`;
+    else if (p === 'groq')        legacy = `groq|${ls(KEYS.GROQ_MODEL, 'openai/gpt-oss-120b')}`;
+    if (legacy === null) return [..._DEFAULT_MAIN_MODELS];
+    // The same retirement rule as the saved list: a model the provider withdrew is not carried over from the old per-provider setting, and the
+    // list that results is stored, so the migration is made once and not repeated on every read.
+    if (isBlacklistedModel(legacy)) {
+        const migrated = [..._DEFAULT_MAIN_MODELS].filter(spec => !isBlacklistedModel(spec));
+        try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(migrated)); } catch {}
+        return migrated;
+    }
+    return [legacy];
 }
 function saveMainModelList(arr) {
     const deduped = [...new Set((arr || []).filter(x => typeof x === 'string' && x.length > 0))];
@@ -961,6 +980,12 @@ export function specBlockedByPrivacy(spec: string): boolean {
 // Returns the first active model spec that supports every required media type.
 // requiredMedia: array of strings e.g. ['image'], ['audio'], ['image','audio']
 // Returns 'provider|model' string or null.
+// Providers whose request can carry audio and video: Google natively, and the OpenAI-style `input_audio` / `video_url` parts for these. A catalog entry that lists
+// audio or video for another provider (NVIDIA NIM, Groq, Nous) would be chosen for a turn and then receive a text note instead of the file (opencode §22).
+export const AV_CAPABLE_PROVIDERS: ReadonlySet<string> = new Set(['google', 'openrouter', 'custom', 'vllm', 'openai']);
+const _coversMedia = (entry: any, required: string[]): boolean => required.every(t =>
+    (entry.media || ['text']).includes(t) && ((t !== 'audio' && t !== 'video') || AV_CAPABLE_PROVIDERS.has(entry.provider)));
+
 function getMediaCapableSpec(requiredMedia) {
     if (!requiredMedia.length) return null;
     // Prefer explicitly configured media model if it covers all required types
@@ -977,7 +1002,7 @@ function getMediaCapableSpec(requiredMedia) {
         if (bar < 0) continue;
         const entry = all.find(m => m.provider === spec.slice(0, bar) && m.model === spec.slice(bar + 1));
         if (!entry) continue;
-        if (requiredMedia.every(t => (entry.media || ['text']).includes(t))) return spec;
+        if (_coversMedia(entry, requiredMedia)) return spec;
     }
     // Fall back to active main models that cover all required types.
     // Prefer free-tier models (have rpm/rpd limits or :free suffix) over paid ones.
@@ -986,7 +1011,7 @@ function getMediaCapableSpec(requiredMedia) {
         const bar = spec.indexOf('|');
         if (bar < 0) return false;
         const entry = all.find(m => m.provider === spec.slice(0, bar) && m.model === spec.slice(bar + 1));
-        return entry && requiredMedia.every(t => (entry.media || ['text']).includes(t));
+        return entry && _coversMedia(entry, requiredMedia);
     });
     const _free = _capable.find(spec => {
         const bar = spec.indexOf('|');
@@ -1001,7 +1026,7 @@ function getMediaCapableSpec(requiredMedia) {
     // set up (found with a local vLLM profile: an image went to Gemini, hung for 30 s, and left the user's
     // own model out of the turn). They get the "no image model" chip and a text-only turn instead.
     if (getProvider() === 'custom' || getProvider() === 'vllm') return null;   // both are "their own server" (the second fell through to a hosted model: codex R45-001)
-    const _catalogFallback = all.find(m => requiredMedia.every(t => (m.media || ['text']).includes(t)));
+    const _catalogFallback = all.find(m => _coversMedia(m, requiredMedia));
     return _catalogFallback ? `${_catalogFallback.provider}|${_catalogFallback.model}` : null;
 }
 
@@ -1025,7 +1050,8 @@ function saveWorkerModel(v) { localStorage.setItem(KEYS.WORKER_MODEL, v ?? ''); 
 // 'provider|model'    = use that specific model.
 function getUtilityModel() {
     const saved = ls(KEYS.UTILITY_MODEL, '');
-    if (saved) return saved;
+    // A saved choice the provider has since withdrawn is no choice (the catalog and the main list drop it too): fall through to the default.
+    if (saved && (saved === 'none' || !isBlacklistedModel(saved))) return saved;
     // Not chosen by the user. When the main model is a custom endpoint (a local vLLM / Ollama), keep
     // utility calls on it: the hosted default would send file names and prompts to a provider the user
     // chose not to use, and fail without a key for it.
@@ -1033,7 +1059,8 @@ function getUtilityModel() {
     // user chose, so the chat title and prompt suggestions use the first usable main model, not Google.
     try {
         const first = getActiveMainModelList()[0];
-        if (typeof first === 'string' && (first.startsWith('custom|') || getPrivacyLevel() !== 'default')) return first;
+        // A local endpoint is `custom|` or `vllm|` (the request path treats both alike): utility calls stay on it.
+        if (typeof first === 'string' && (first.startsWith('custom|') || first.startsWith('vllm|') || getPrivacyLevel() !== 'default')) return first;
     } catch {}
     return 'google|gemma-4-26b-a4b-it';
 }
@@ -1336,7 +1363,7 @@ Object.assign(window, {
     getEditReviewEnabled, getWorkerThinkingBudget, getPreserveThinking,
     getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels, fillMissingReleased, rememberModelCreated,
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
-    getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, saveMainModelList, resetMainModelList,
+    getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
     getActiveMainModelList, specHasKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,

@@ -151,10 +151,12 @@ function _focusComposer(el?: HTMLElement | null): void {
     (el ?? document.getElementById('agent-input'))?.focus();
 }
 
-async function _checkpointAttachments(ckptId: string, ckpt: any): Promise<{ images: any[]; files: any[] }> {
+// `unavailable`: the checkpoint says it had attachments and they could not be loaded (a read error, or the record is gone). An empty list is then not "no attachments".
+async function _checkpointAttachments(ckptId: string, ckpt: any): Promise<{ images: any[]; files: any[]; unavailable?: boolean }> {
     if (ckpt?.attachments && typeof sessionLoadCheckpointAttachments === 'function') {
         const stored = await sessionLoadCheckpointAttachments(ckptId);
         if (stored) return stored;
+        if (!(ckpt?.images?.length || ckpt?.files?.length)) return { images: [], files: [], unavailable: true };
     }
     return { images: ckpt?.images ?? [], files: ckpt?.files ?? [] };
 }
@@ -281,10 +283,11 @@ function _pruneLogsFrom(sinceMs: number): void {
 }
 
 // Puts the workspace back to a checkpoint's snapshot; local-folder files are restored only after the user agrees.
-async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<void> {
+// Returns 'ok', 'missing' (no snapshot of this point exists: nothing was restored) or 'failed' (the restore threw; the storage change is transactional, so the workspace is as it was).
+async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<'ok' | 'missing' | 'failed'> {
     if (activeChatId && typeof restoreCheckpointWorkspace === 'function') {
         try {
-            const { localFiles } = await restoreCheckpointWorkspace(activeChatId, ckptId);
+            const { localFiles, found } = await restoreCheckpointWorkspace(activeChatId, ckptId);
             // Only offer local-file restore when a folder is actually synced via FSA.
             // Without an active FSA handle, writeFsaFile throws immediately and the
             // dialog's "Restore all" button appears to do nothing — the retry also
@@ -304,8 +307,10 @@ async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<void> {
                 }
             }
             renderFileList?.();
-        } catch (e) { console.warn('[checkpoint] workspace restore failed:', e); }
+            return found === false ? 'missing' : 'ok';
+        } catch (e) { console.warn('[checkpoint] workspace restore failed:', e); return 'failed'; }
     }
+    return 'ok';
 }
 
 async function applyCheckpoint(ckptId: string): Promise<boolean> {
@@ -317,7 +322,20 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
         appendMessage?.('model', '<em style="color:var(--muted)">Checkpoint data no longer available — history context was cleared. You can still read the conversation above.</em>');
         return false;
     }
-    const { openaiLen, roleName } = JSON.parse(raw);
+    const { openaiLen, roleName, chatId: ckptChat } = JSON.parse(raw);
+    // A checkpoint belongs to the chat it was taken in: applied to another one it would cut that chat's history and restore the wrong workspace.
+    if (ckptChat && activeChatId && ckptChat !== activeChatId) {
+        console.warn('[checkpoint] belongs to another chat:', ckptId);
+        appendMessage?.('model', '<em style="color:var(--muted)">This checkpoint belongs to another chat, so nothing was changed.</em>');
+        return false;
+    }
+    // The workspace goes back first: when it cannot, the conversation stays as it is (history cut and a rerun sent against the newer files is a mismatch nobody asked for).
+    const restored = await _restoreCheckpointWorkspaceUI(ckptId);
+    if (restored === 'failed') {
+        appendMessage?.('model', '<em style="color:var(--muted)">The workspace could not be restored to this point, so the conversation was not rewound either. Nothing was changed.</em>');
+        return false;
+    }
+    if (restored === 'missing' && !confirm('There is no workspace snapshot for this point, so the files cannot be put back.\n\nOK rewinds the conversation only (the workspace stays as it is); Cancel changes nothing.')) return false;
     setChatHistory(getChatHistory().slice(0, openaiLen));
     lastUserMessageText  = '';
     // Checkpoint id is a Date.now() timestamp — see saveCheckpoint.
@@ -326,8 +344,6 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
     // roleName is null for pre-Agent-role checkpoints → fall back to Agent default.
     if (roleName) setMainAgentRole(roleName);
     else if (typeof clearMainAgentRole === 'function') clearMainAgentRole(); // restores Agent
-
-    await _restoreCheckpointWorkspaceUI(ckptId);
     return true;
 }
 
@@ -550,9 +566,13 @@ async function rerunCheckpoint(ckptId: string, checkpointRow: HTMLElement): Prom
     }
     const ckpt = JSON.parse(raw);
     const { userText } = ckpt;
-    const { images, files } = await _checkpointAttachments(ckptId, ckpt);
+    const sourceChat = activeChatId;   // the rerun belongs to this chat for as long as it takes to load the attachments
+    const { images, files, unavailable } = await _checkpointAttachments(ckptId, ckpt);
+    if (activeChatId !== sourceChat || aiBusy()) { console.warn('[rerun] the open chat changed while the attachments loaded; nothing was changed'); return; }
+    if (unavailable && !confirm('The files attached to this message could not be loaded.\n\nOK reruns it with the text only; Cancel changes nothing.')) return;
     if (!userText && !images.length && !files.length) { console.warn('[checkpoint] no message content in checkpoint:', ckptId); return; }
     if (!await applyCheckpoint(ckptId)) return;
+    if (activeChatId !== sourceChat) return;
     pruneMessagesAfterCheckpoint(checkpointRow);
     saveHistory();
     updateTokenLabel();
@@ -961,8 +981,17 @@ async function _processQueue(): Promise<void> {
     }
     // A dequeued message is being prepared: the next one waits for that turn to finish, as for a streaming one (codex 354).
     if (preparing()) return;
+    // A background job (Autopilot, /goal, init) owns the chat between its turns: a queued message is not its turn. It waits; the job processes the queue when it lets go (codex R112).
+    if (aiJob) return;
+    const head = MsgQueue.peek();
+    if (!head) return;
+    // A message belongs to the chat it was written in; with another chat open it stays parked instead of becoming a request there (codex R114).
+    if (head.chatId && activeChatId && head.chatId !== activeChatId) return;
+    // The same cross-tab rule as a direct Send: a turn in a chat another tab is running would overwrite its history. The message stays queued and is tried again (codex R113).
+    const leaseChat = activeChatId as string | null;
+    if (!acquireChatLease(leaseChat)) { setTimeout(() => _processQueue(), 3000); return; }
     const msg = MsgQueue.shift();
-    if (!msg) return;
+    if (!msg) { releaseChatLease(leaseChat); return; }
     // A steer-interrupt sets softStopPending=true to abort the current turn; clear it so the
     // dequeued message actually runs instead of hitting the loop-entry guard in runTurn.
     setSoftStopPending(false);
@@ -995,13 +1024,13 @@ async function _processQueue(): Promise<void> {
     if (_dq && typeof (_dq as Promise<void>).then === 'function') {
         const _dqPrep = beginPreparation('turn', { chat: activeChatId as string | null });
         try { await _dq; } finally { endPreparation(_dqPrep); }
-        if (_dqPrep && !_dqPrep.lease.valid()) return;   // Stop or a new chat meanwhile
+        if (_dqPrep && !_dqPrep.lease.valid()) { releaseChatLease(leaseChat); return; }   // Stop or a new chat meanwhile
     }
     try {
         await runAgentTurn(msg.text, null);
     } catch {
         // runAgentTurn catches and finalizes its own errors; nothing to surface here.
-    }
+    } finally { releaseChatLease(leaseChat); }
 }
 
 // Task-intent detection (_isCompletionRequest) moved to turn-context.js, which owns
@@ -1224,10 +1253,16 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
             if (!ready) { appendMessage('model', '<em>This chat is still loading, so your message was not sent. It is still in the box; try again in a moment.</em>', container); return; }
         }
         (window as any).reopenApprovals?.();   // a Stop or New Chat before this turn refused the old batch's asks; this turn may ask again
+        let attachmentsSettled = true;
         if (typeof waitForAttachments === 'function')
-            await Promise.race([waitForAttachments(), new Promise<void>(r => { prep.wake = r; })]);
+            attachmentsSettled = (await Promise.race([waitForAttachments(), new Promise<boolean>(r => { prep.wake = () => r(true); })])) !== false;
         // Nothing was taken from the composer yet: a cancelled or abandoned send leaves the text and the files where they are.
         if (!prep.lease.valid()) return;
+        // A file that is still being read at the deadline is not "no file": sending without it and clearing the composer threw the read away unreported.
+        if (!attachmentsSettled) {
+            appendMessage('model', '<em>A file you attached is still being read, so the message was not sent. Your text and the file stay in the box; send again when the file has finished loading.</em>', container);
+            return;
+        }
         // One tab at a time runs a turn in a chat (chat-lease.ts): the tab that finished last used to overwrite the other's messages.
         if (!acquireChatLease(activeChatId)) {
             appendMessage('model', '<em>This chat is running a turn in another browser tab. Wait for it to finish, or start a new chat. Your message is still in the box.</em>', container);
@@ -1283,7 +1318,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         const _qInput = document.getElementById('agent-input') as HTMLElement | null;
         const _qText  = _readInputText(_qInput);
         if (_qText) {
-            MsgQueue.enqueue(_qText, 'queued');
+            MsgQueue.enqueue(_qText, 'queued', activeChatId);
             if (_qInput) { _qInput.innerHTML = ''; autoResizeTextarea(_qInput as any); }
         }
         return;
@@ -1385,9 +1420,11 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             setActivePlaceholder(_ph);
             setActiveAbortController(new AbortController());
             const ph = activePlaceholder;
+            const _compactCtl = activeAbortController;
             try {
                 setChatHistory(await compactHistory(ph));
-                ph.finalize('Compacted.');
+                // Stop during the summary leaves the history as it was: say so (codex R65).
+                ph.finalize(_compactCtl?.signal?.aborted ? 'Compaction stopped.' : 'Compacted.');
             } catch (e) {
                 ph.finalize(`**Compaction error:** ${e.message}`);
                 console.error('[compact]', e);
@@ -1651,6 +1688,8 @@ function stopNow(): void {
     (window as any).cancelPendingApprovals?.();   // an approval left on screen would still run its tool
     cancelPreparation();   // a send or dequeued turn that has not started streaming has no stream to abort: it ends here
     activeAbortController?.abort();
+    // The commands the turn started are part of it: left running they wrote their files into the next turn's workspace (codex R81).
+    try { runtime.killNative(); } catch {}
     setAgentStreaming(false);
     setInputState(true);
 }
@@ -1659,7 +1698,8 @@ function stopNow(): void {
  *  (import a chat or a project, delete the running chat): a turn left running keeps its tool calls and its replies, and they
  *  land in whatever chat is open when they arrive. Returns false when the user declined to stop a running Autopilot, or when the turn did not wind down within 5 s (nothing is replaced then). */
 async function stopTurnAndWait(): Promise<boolean> {
-    const busy = () => aiBusy() || turnsInFlight() > 0;
+    // A command the turn started is part of it: the turn is not over while it can still write.
+    const busy = () => aiBusy() || turnsInFlight() > 0 || runtime.nativeBusy;
     // Autopilot owns the chat: stopping the turn ends the whole run, so that is the user's call.
     if (busy() && aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
     // Messages queued behind the running turn were written for the conversation that is being replaced: left in
@@ -1930,7 +1970,7 @@ function steerNextQueued(composerText = ''): { did: 'queued' | 'composer' | 'goa
     if (!text) return { did: 'none', text };
     if (aiJob === 'goal') return steerGoal(text) ? { did: 'goal', text } : { did: 'none', text };
     if (!aiBusy()) return { did: 'none', text };   // nothing is running: Enter sends it
-    MsgQueue.enqueue(text, 'steering');
+    MsgQueue.enqueue(text, 'steering', activeChatId);
     return { did: 'composer', text };
 }
 

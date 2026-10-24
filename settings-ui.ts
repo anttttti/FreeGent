@@ -2390,8 +2390,8 @@ function renderMcpTab() {
                 });
                 const ti = _mcpEl('div', 'model-item-info');
                 const nm = _mcpEl('div', 'model-item-name', t.name);
-                const risk  = mcpToolRisk(mcpToolName(s.id, t.name));
-                const claim = mcpToolClaim(mcpToolName(s.id, t.name));
+                const risk  = mcpToolRisk(mcpExposedName(s.id, t.name));
+                const claim = mcpToolClaim(mcpExposedName(s.id, t.name));
                 // The server's label is shown either way; when it is not trusted it does not lower approval.
                 const unused = claim !== risk;
                 const claimLabel = claim === 'read' ? 'read-only' : claim === 'write' ? 'writes' : 'may modify';

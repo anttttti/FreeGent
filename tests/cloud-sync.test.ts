@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { sha256Js, sha256Hex, cloudSlug, CloudSyncClient, CloudError, pool } from '../cloud-sync';
+import { sha256Js, sha256Hex, cloudSlug, CloudSyncClient, CloudError, pool, isSafeSyncPath } from '../cloud-sync';
 import worker from '../cf-worker/worker.js';
 
 class FakeR2 {
@@ -89,6 +89,25 @@ describe('/sync on the Worker', () => {
         expect((await client.getBlob('p', hk)).length).toBe(4);
         expect(await client.remove('p')).toBeGreaterThan(0);
         expect(await client.projects()).toEqual([]);
+    });
+});
+
+describe('manifest paths', () => {
+    const H = 'a'.repeat(64);
+    it('isSafeSyncPath accepts project paths and refuses anything that climbs, roots or hides a control character', () => {
+        for (const ok of ['a.txt', 'src/app.js', 'local/src/a b.js', 'dir/.hidden', 'ünï/ç.md']) expect(isSafeSyncPath(ok), ok).toBe(true);
+        for (const bad of ['', '..', '../x', 'a/../../x', 'local/../../etc/passwd', './a', 'a/./b', 'a//b', '/abs', 'C:/x', 'C:\\x', 'a\\b', 'a/\u0000b', 'a/', 'x'.repeat(1025), 5, null]) expect(isSafeSyncPath(bad as any), String(bad)).toBe(false);
+    });
+    it('the Worker refuses a manifest with such a key, and the client refuses to pull one', async () => {
+        const { client, env } = setup();
+        await expect(client.putManifest('p', { files: { 'local/../../x': { h: H, s: 1 } } }, null)).rejects.toMatchObject({ status: 400 });
+        await expect(client.putManifest('p', { files: { '/etc/passwd': { h: H, s: 1 } } }, null)).rejects.toMatchObject({ status: 400 });
+        await client.putManifest('p', { files: { 'ok/a.txt': { h: H, s: 1 } } }, null);
+        expect((await client.getManifest('p')).manifest.files['ok/a.txt'].h).toBe(H);
+        // a manifest that got into the bucket some other way (an older Worker, a direct write)
+        const key = [...(env.FG_SYNC as any).objs.keys()].find((k: string) => k.endsWith('manifest.json'))!;
+        await (env.FG_SYNC as any).put(key, JSON.stringify({ files: { 'local/../../x': { h: H, s: 1 } } }));
+        await expect(client.getManifest('p')).rejects.toMatchObject({ status: 422 });
     });
 });
 
