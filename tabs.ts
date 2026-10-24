@@ -546,7 +546,8 @@ export function resolvePageRef(ref: string, fromPath: string): string {
 const _isLocalRef = (r: string) => !!r && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(r.trim());
 
 // A workspace file as a data: URL (binary files are stored as base64; SVG may be stored as text).
-async function _dataUrlFor(name: string): Promise<string | null> {
+async function _dataUrlFor(name: string, deps?: Set<string>): Promise<string | null> {
+    deps?.add(name);
     try { if (typeof readFileAsDataUrl === 'function') { const d = await readFileAsDataUrl(name); if (d) return d; } } catch {}
     try {
         const t = await agentReadFile(name);
@@ -557,10 +558,10 @@ async function _dataUrlFor(name: string): Promise<string | null> {
 
 // url(...) references to workspace files in CSS become data: URLs, resolved from fromPath (the
 // stylesheet's own file, or the page for inline <style>).
-async function _inlineCssUrls(css: string, fromPath: string): Promise<string> {
+async function _inlineCssUrls(css: string, fromPath: string, deps?: Set<string>): Promise<string> {
     return _replaceAsync(css, /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, async (m, q, val) => {
         if (!_isLocalRef(val)) return m;
-        const d = await _dataUrlFor(resolvePageRef(val, fromPath));
+        const d = await _dataUrlFor(resolvePageRef(val, fromPath), deps);
         return d ? `url(${q || '"'}${d}${q || '"'})` : m;
     });
 }
@@ -604,9 +605,11 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
 // Inline external CSS and JS file references so the HTML is self-contained for srcdoc.
 // Handles: <link rel="stylesheet" href="...">, <script src="..." [type="module"]>,
 //          inline <script> blocks containing static ES import statements.
-async function _inlineWorkspaceRefs(html, pagePath = '') {
-    const readFile = typeof agentReadFile === 'function' ? agentReadFile : null;
-    if (!readFile) return html;
+// `deps`, when given, collects every workspace path the page reads (found or not), so a later write can tell whether it matters to the page.
+async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
+    const readFileRaw = typeof agentReadFile === 'function' ? agentReadFile : null;
+    if (!readFileRaw) return html;
+    const readFile = deps ? (p: string) => { deps.add(p); return readFileRaw(p); } : readFileRaw;
     const ref = (r: string) => resolvePageRef(r, pagePath);
 
     // Inline <link rel="stylesheet" href="...">
@@ -617,23 +620,29 @@ async function _inlineWorkspaceRefs(html, pagePath = '') {
             try {
                 const css = await readFile(ref(href));
                 if (css == null) return match;
-                return `<style>\n${await _inlineCssUrls(css, ref(href))}\n</style>`;
+                return `<style>\n${await _inlineCssUrls(css, ref(href), deps)}\n</style>`;
             } catch { return match; }
         });
 
     // Remaining url(...) in the page's own <style> blocks resolve from the page.
     html = await _replaceAsync(html, /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
-        async (m, open, css, close) => `${open}${await _inlineCssUrls(css, pagePath)}${close}`);
+        async (m, open, css, close) => `${open}${await _inlineCssUrls(css, pagePath, deps)}${close}`);
 
     // Workspace images, media and icons in the page's tags become data: URLs: a srcdoc page has no
     // base URL, so a relative src/href in it would not load.
+    // A large src that a script also loads by path is tagged data-fg-asset: the fetch shim then reads it from the
+    // element instead of the page carrying a second copy of the same bytes.
+    const markupAssets = new Set<string>();
     html = await _replaceAsync(html, /<(img|audio|video|source|track|input|embed|link)\b[^>]*>/gi, async (tag, name) => {
         if (name.toLowerCase() === 'link' && !/\brel=["'][^"']*\b(?:icon|apple-touch-icon|preload)\b/i.test(tag)) return tag;
-        return _replaceAsync(tag, /\b(src|href|poster)=(["'])([^"']*)\2/gi, async (m, attr, q, val) => {
+        let shared = '';
+        const out = await _replaceAsync(tag, /\b(src|href|poster)=(["'])([^"']*)\2/gi, async (m, attr, q, val) => {
             if (!_isLocalRef(val)) return m;
-            const d = await _dataUrlFor(ref(val));
+            const d = await _dataUrlFor(ref(val), deps);
+            if (d && attr.toLowerCase() === 'src' && !shared && d.length > 4096 && /^(img|audio|video|source|embed)$/i.test(name)) { shared = ref(val); markupAssets.add(shared); }
             return d ? `${attr}=${q}${d}${q}` : m;
         });
+        return shared ? out.replace(/^<\w+/, m => `${m} data-fg-asset="${shared.replace(/"/g, '&quot;')}"`) : out;
     });
 
     // Inline <script src="..." [type="module"]>
@@ -731,6 +740,8 @@ async function _inlineWorkspaceRefs(html, pagePath = '') {
     const readDataUrl = typeof readFileAsDataUrl === 'function' ? readFileAsDataUrl : null;
     if (readDataUrl) {
         await Promise.all([...assetPaths].map(async p => {
+            deps?.add(ref(p));
+            if (markupAssets.has(ref(p))) { assetMap[p] = '@' + ref(p); return; }   // already in the page as an element's src
             try { const d = await readDataUrl(ref(p)); if (d) assetMap[p] = d; } catch {}
         }));
     }
@@ -760,9 +771,12 @@ try { window.localStorage; } catch(e) {
   };},configurable:true});
 }
 /* 2. passive touch fix */
+/* Chrome only makes touchstart/touchmove passive by default on window, document, html and body; any other
+   target (a canvas, a library's element) is already non-passive, so leave those listeners alone. */
 const _ael=EventTarget.prototype.addEventListener;
 EventTarget.prototype.addEventListener=function(t,f,p){
-  if((t==='touchstart'||t==='touchmove')&&(p==null||p===true||p===false))
+  if((t==='touchstart'||t==='touchmove')&&(p==null||p===true||p===false)&&
+     (this===window||this===document||this===document.documentElement||this===document.body))
     p={passive:false,capture:p===true};
   return _ael.call(this,t,f,p);
 };
@@ -784,11 +798,24 @@ const _silentWav=(function(){
   let s='';for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);
   return 'data:audio/wav;base64,'+btoa(s);
 })();
+const _blobs={};
+/* assets the page already carries as an element's src (tagged data-fg-asset): read from there, snapshotted as the
+   elements are parsed so a script removing one later does not lose them */
+const _D={};
+function _snap(){document.querySelectorAll('[data-fg-asset]').forEach(function(el){const k=el.getAttribute('data-fg-asset'),v=el.getAttribute('src');if(k&&v&&!_D[k])_D[k]=v;});}
+try{new MutationObserver(_snap).observe(document,{childList:true,subtree:true});}catch(e){}   /* catches an element a script removes while the page is still parsing */
+_ael.call(document,'DOMContentLoaded',_snap);
+function _domAsset(k){return new Promise(function(res){const go=function(){_snap();res(_D[k]||null);};if(document.readyState==='loading')_ael.call(document,'DOMContentLoaded',go);else go();});}
 function _dataUrlResponse(dataUrl){
-  const s=dataUrl.split(','),mt=s[0].split(':')[1].split(';')[0],
-      b=atob(s[1]),a=new Uint8Array(b.length);
-  for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
-  return Promise.resolve(new Response(new Blob([a],{type:mt})));
+  /* decode each asset once; later fetches reuse the Blob */
+  let bl=_blobs[dataUrl];
+  if(!bl){
+    const s=dataUrl.split(','),mt=s[0].split(':')[1].split(';')[0],
+        b=atob(s[1]),a=new Uint8Array(b.length);
+    for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
+    bl=_blobs[dataUrl]=new Blob([a],{type:mt});
+  }
+  return Promise.resolve(new Response(bl));
 }
 const _audioExts=/\\.(wav|mp3|ogg|flac|aac|m4a)$/i;
 const _SAFE_H=new Set(['accept','accept-language','cache-control','referer','x-requested-with']);
@@ -819,7 +846,11 @@ window.fetch=function(u,opts){
   if(typeof u==='string'){
     /* workspace assets + silent audio */
     if(!u.startsWith('http')&&!u.startsWith('//')&&!u.startsWith('data:')){
-      if(_M[u]) return _dataUrlResponse(_M[u]);
+      if(_M[u]){
+        if(_M[u][0]!=='@') return _dataUrlResponse(_M[u]);
+        const _self=this;
+        return _domAsset(_M[u].slice(1)).then(function(d){return d?_dataUrlResponse(d):_F.call(_self,u,opts);});
+      }
       if(_audioExts.test(u)) return _dataUrlResponse(_silentWav);
     }
     /* CORS proxy: relay cross-origin GET requests to the parent page */
@@ -1119,13 +1150,15 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
 
 // title is the page's workspace path when it is a workspace file; its references resolve from there.
 async function openArtifactTab(title, html, { isPreview = true } = {}) {
-    const inlined = await _inlineWorkspaceRefs(html, title);
+    const deps = new Set<string>();
+    const inlined = await _inlineWorkspaceRefs(html, title, deps);
     const content = _wrapArtifact(inlined);
     const key = `artifact:${title}`;
     const existing = fileTabs.get(key);
     if (existing) {
         const iframe = existing.panel.querySelector('.artifact-iframe');
         if (iframe) iframe.srcdoc = content;
+        existing.deps = deps;
         activateTab(key);
         return;
     }
@@ -1150,7 +1183,7 @@ async function openArtifactTab(title, html, { isPreview = true } = {}) {
     panel.appendChild(iframe);
     document.getElementById('tab-content').appendChild(panel);
 
-    fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview });
+    fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview, deps });
     activateTab(key);
 }
 window.openArtifactTab = openArtifactTab;
@@ -1160,22 +1193,29 @@ window.openArtifactTab = openArtifactTab;
 // fixed. Workspace writes call this; open ▶ page tabs are rebuilt from the current files, debounced
 // so a burst of edits reloads once.
 let _artifactRefreshTimer: any = 0;
+let _artifactChanged = new Set<string>();   // files written since the last rebuild; '' = unknown, rebuild every page
 function scheduleArtifactRefresh(changedName = '') {
     if (/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName)) return;
     if (!fileTabs.size) return;
+    _artifactChanged.add(changedName);
     clearTimeout(_artifactRefreshTimer);
     _artifactRefreshTimer = setTimeout(async () => {
+        const changed = _artifactChanged; _artifactChanged = new Set();
         for (const [key, ft] of [...fileTabs]) {
             if (!key.startsWith('artifact:') || !ft.isPreview) continue;
             const title = key.slice('artifact:'.length);
             if (!/\.html?$/i.test(title)) continue;
+            // A write to a file the page neither is nor reads would only restart the running page for nothing.
+            if (ft.deps && !changed.has('') && ![...changed].some(n => n === title || ft.deps.has(n))) continue;
             const iframe = ft.panel.querySelector('.artifact-iframe') as HTMLIFrameElement | null;
             if (!iframe) continue;
             try {
                 const html = await agentReadFile(title);
                 if (typeof html !== 'string' || !html.trim()) continue;
                 ft.savedContent = html;
-                iframe.srcdoc = _wrapArtifact(await _inlineWorkspaceRefs(html, title));
+                const deps = new Set<string>();
+                iframe.srcdoc = _wrapArtifact(await _inlineWorkspaceRefs(html, title, deps));
+                ft.deps = deps;
             } catch {}
         }
     }, 800);
