@@ -11,7 +11,7 @@
 import { _BLOCKED_DECLARATION_RE, _TERMINAL_RE, _isComplete } from './turn-protocol.js';
 import { runtime } from './runtime.js';
 import type { Verification } from './verification.js';
-import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths } from './detectors.js';
+import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths, taskChangesData } from './detectors.js';
 
 export interface GateContext {
     text: string;                     // the reply that declared COMPLETED
@@ -80,8 +80,8 @@ const inventedData: CompletionGate = {
         if (!completionDeclared(c) || c.ps.inventedDataCheck) return null;
         const supplied = suppliedFiles(c.firstUserText);
         const written = new Set<string>([...c.editedPaths, ...c.shellWrites]);
-        // Not for a task whose fix is a code edit: its supplied files are meant to change.
-        const codeTask = c.editRequired || c.gradedTestIds().length > 0;
+        // Not for a task whose fix is a code edit, or that asks for the data itself to be changed: its supplied files are meant to change.
+        const codeTask = c.editRequired || c.gradedTestIds().length > 0 || taskChangesData(c.task);
         const over = supplied.size && !codeTask ? overwrittenSupplied(written, supplied) : [];
         const made = isQuestionOnlyTask(c.task) ? inventedDataPaths(written, c.isScratchPath) : [];
         const flag = [...new Set([...over, ...made])];
