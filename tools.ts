@@ -14,6 +14,7 @@ import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
+import { destructiveGitReason } from './detectors.js';
 
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
@@ -350,7 +351,7 @@ async function _reviewFileEdit(path, oldContent, newContent) {
 }
 
 
-const _IV_HIGH_RISK = new Set(['fetch_url', 'execute_code', 'write_file', 'delete_file']);
+const _IV_HIGH_RISK = new Set(['fetch_url', 'execute_code', 'write_file', 'delete_file', 'run_git']);
 
 const _IV_INJECTION_PATTERNS = [
     /ignore\s+(all\s+)?previous\s+instructions?/i,
@@ -399,7 +400,7 @@ const _INTENT_CHECKS = [{
         `Answer YES or NO on the first line. If YES, add a second line "payload: " with the reason in under 20 words. YES means the call should be blocked.`,
 }];
 
-async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; reason: string } | null> {
+async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; reason: string; quiet?: boolean } | null> {
     if (getIntentValidation() !== 'llm' || !_ivExternalSeen) return null;
     const intent = String(_currentUserIntent ?? '').trim();
     if (!intent || typeof validateOutput !== 'function' || typeof callLLMComplete !== 'function') return null;
@@ -418,12 +419,21 @@ async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; re
     return reason ? { level: 'block', reason } : null;
 }
 
-function _ivCheck(name, args) {
+function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean } | null {
     const argsStr = JSON.stringify(args);
     for (const pat of _IV_INJECTION_PATTERNS) {
         if (pat.test(argsStr)) {
             return { level: 'block', reason: `Injection phrase in ${name}() args: "${argsStr.slice(0, 120)}"` };
         }
+    }
+
+    // Git commands that discard work git cannot restore, unless the request names them (see destructiveGitReason).
+    if (name === 'execute_code' || name === 'run_git') {
+        const code = name === 'run_git'
+            ? 'git ' + (Array.isArray(args.args ?? args.command) ? (args.args ?? args.command).join(' ') : String(args.args ?? args.command ?? args.cmd ?? ''))
+            : (String(args.language ?? 'bash') === 'bash' ? String(args.code ?? '') : '');
+        const why = destructiveGitReason(code, String(_currentUserIntent ?? ''));
+        if (why) return { level: 'block', quiet: true, reason: `${why}. Nothing in this call was run. Send it again WITHOUT that command: leave untracked files alone (a commit or a branch does not need a clean directory, and git status just lists them). Only the user can ask for them to be removed` };
     }
 
     if (name === 'write_file' || name === 'delete_file') {
@@ -2744,7 +2754,7 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
     if (getIntentValidation() !== 'off' && _IV_HIGH_RISK.has(name)) {
         const check = _ivCheck(name, args) ?? await _ivLlmCheck(name, args);
         if (check) {
-            _ivLog(name, args, check).catch(() => {});
+            if (!check.quiet) _ivLog(name, args, check).catch(() => {});   // quiet: a refusal that is not an injection attempt (destructive git)
             return { error: `[Intent validation — ${check.level === 'block' ? 'BLOCKED' : 'FLAGGED'}] ${check.reason}. If this is intentional, make the request explicit in your message.` };
         }
     }

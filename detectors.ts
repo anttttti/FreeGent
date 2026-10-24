@@ -367,6 +367,37 @@ export function taskChangesData(task: string): boolean {
     return _DATA_CHANGE_RE.test(String(task ?? ''));
 }
 
+// Git commands that throw away work that cannot be got back from the repository: untracked files (git clean),
+// uncommitted edits (reset --hard, checkout/restore of the whole tree, forced checkout/switch), stashed untracked
+// files being removed with the stash. An agent reaches for them to "leave the tree clean" and deletes the user's
+// own untracked files (s5-git-branch-tag: setup.sh was removed). Allowed only when the user's request names the
+// operation or says to discard/wipe; "leave the working tree clean" does not count.
+const _GIT_USER_OK_RE = /\bgit\s+(?:clean|reset\s+--hard|checkout\s+(?:-f|--force|\.)|restore\s+\.)|\breset\s+--hard\b|\b(?:discard|throw\s+away|wipe|blow\s+away|nuke|hard[\s-]reset|delete\s+(?:all\s+)?untracked)\b/i;
+export function destructiveGitReason(code: string, userText: string): string | null {
+    const text = String(code ?? '');
+    if (!/\bgit\b/.test(text)) return null;
+    if (_GIT_USER_OK_RE.test(String(userText ?? ''))) return null;
+    for (const raw of text.split(/&&|\|\||;|\n|\|/)) {
+        const seg = raw.trim().replace(/^(?:sudo\s+|env\s+|\w+=\S+\s+)+/, '');
+        const m = /^git\s+((?:-C\s+\S+\s+|-c\s+\S+\s+|--no-pager\s+)*)(\w[\w-]*)\b(.*)$/.exec(seg);
+        if (!m) continue;
+        const [, , sub, rest] = m;
+        const flags = rest.split(/\s+/).filter(t => t.startsWith('-'));
+        const has = (re: RegExp) => flags.some(f => re.test(f));
+        if (sub === 'clean') {
+            if (has(/^--dry-run$|^-[a-zA-Z]*n/)) continue;
+            if (has(/^--force$|^-[a-zA-Z]*f/)) return 'git clean -f deletes untracked files that git cannot restore';
+        } else if (sub === 'reset' && has(/^--hard$/)) {
+            return 'git reset --hard discards uncommitted changes that git cannot restore';
+        } else if ((sub === 'checkout' || sub === 'restore') && /(?:^|\s)(?:--\s+)?(?:\.|:\/|\*)\s*$/.test(rest.trim())) {
+            return `git ${sub} on the whole tree discards uncommitted changes that git cannot restore`;
+        } else if ((sub === 'checkout' || sub === 'switch') && has(/^-f$|^--force$|^--discard-changes$/)) {
+            return `git ${sub} with force discards uncommitted changes that git cannot restore`;
+        }
+    }
+    return null;
+}
+
 const _DATA_FILE_RE = /\.(?:txt|log|csv|tsv|json|dat|md|xml|ya?ml|ini|conf)$/i;
 /** Data-like files created or changed in this run that are not scratch or temp files. */
 export function inventedDataPaths(edited: Iterable<string>, isScratch: (p: string) => boolean): string[] {
