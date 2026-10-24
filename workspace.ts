@@ -2871,6 +2871,17 @@ export async function renderFileList() {
     downloadBtn.onclick = () => downloadWorkspaceFolder(downloadBtn);
     uploadBtn.style.marginLeft = 'auto';   // title on the left, the four buttons right-aligned
     idbHdr.append(idbTitle, uploadBtn, uploadFolderBtn, attachBtn, downloadBtn);
+    // The Local Folder column is minimized by default so the Workspace gets the whole width; the preference is remembered.
+    let localMin = true; try { localMin = localStorage.getItem('fg_local_col_min') !== '0'; } catch {}
+    const setLocalMin = (v: boolean) => { try { localStorage.setItem('fg_local_col_min', v ? '1' : '0'); } catch {} void renderFileList(); };
+    if (localMin) {
+        const showLocalBtn = document.createElement('button');
+        showLocalBtn.className = 'ws-col-hdr-btn';
+        showLocalBtn.textContent = '▸ Local Folder';
+        showLocalBtn.title = 'Show the Local Folder view';
+        showLocalBtn.onclick = () => setLocalMin(false);
+        idbHdr.appendChild(showLocalBtn);
+    }
     idbCol.appendChild(idbHdr);
 
     idbCol.appendChild(_wsSortHeader());
@@ -2967,6 +2978,12 @@ export async function renderFileList() {
         localHdr.appendChild(openBtn);
     }
 
+    const minLocalBtn = document.createElement('button');
+    minLocalBtn.className = 'ws-col-hdr-btn';
+    minLocalBtn.textContent = '◂ Minimize';
+    minLocalBtn.title = 'Minimize the Local Folder view; the Workspace uses the space';
+    minLocalBtn.onclick = () => setLocalMin(true);
+    localHdr.appendChild(minLocalBtn);
     localCol.appendChild(localHdr);
     localCol.appendChild(_wsSortHeader());
 
@@ -2993,7 +3010,7 @@ export async function renderFileList() {
     }
 
     localCol.appendChild(localBody);
-    colsWrap.appendChild(localCol);
+    if (!localMin) colsWrap.appendChild(localCol);
     listEl.appendChild(colsWrap);
     listEl.appendChild(trashZone);
 
