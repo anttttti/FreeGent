@@ -6,7 +6,7 @@ import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName
 import { buildSystemPrompt } from './system-prompt.js';
 import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payload-builder.js';
 import { buildOAITools } from './tool-schemas.js';
-import { estimateTokens, getOAIContextTokens, getSamplingParams, getActiveMainModelList, getLocalApiProxy, getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens } from './config.js';
+import { estimateTokens, getOAIContextTokens, getEndpointContextTokens, getSamplingParams, getActiveMainModelList, getMainModelList, getLocalApiProxy, getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens } from './config.js';
 import { sessionCompactHistory } from './session-store.js';
 import { combineSignals } from './abort.js';
 // llm-shared.js — FreeGent: context compaction (and the AGENTS.md loader).
@@ -25,8 +25,11 @@ const COMPACT_SUMMARY_TOKENS    = 2000;
 // dynamic budget from _tailTokenBudget().
 const COMPACT_TAIL_TOKEN_BUDGET = 48000;
 
-function _effectiveSummaryTokens(): number {
-    return Math.min(COMPACT_SUMMARY_TOKENS, Math.floor(getOAIContextTokens() * 0.25));
+// The window of the endpoint the summary goes to (its own model's, when the catalog knows it, under the shared setting): an 8K model behind a shared 50K setting
+// was asked for a summary and a tail that do not fit it (codex R60).
+const _window = (ep?: any): number => ep ? getEndpointContextTokens(ep) : getOAIContextTokens();
+function _effectiveSummaryTokens(ep?: any): number {
+    return Math.min(COMPACT_SUMMARY_TOKENS, Math.floor(_window(ep) * 0.25));
 }
 
 // Compute the effective tail-token budget for the current context window.
@@ -34,9 +37,9 @@ function _effectiveSummaryTokens(): number {
 // compaction threshold — otherwise compaction never reduces the window and spirals.
 // Uses the threshold (not ctxWindow) as the ceiling; 5K overhead covers the anchor,
 // system prompt, and safety margin. For hard-limit compaction the original formula applies.
-function _tailTokenBudget(): number {
-    const ctxWindow     = getOAIContextTokens();
-    const summaryBudget = _effectiveSummaryTokens();
+function _tailTokenBudget(ep?: any): number {
+    const ctxWindow     = _window(ep);
+    const summaryBudget = _effectiveSummaryTokens(ep);
     if (getAgentProactiveCompact()) {
         const compactAt = getAgentCompactAt();
         const tokens    = getAgentCompactTokens();
@@ -84,6 +87,15 @@ function _harnessFacts(hist: any[]): string {
     const written = new Set<string>();
     const failed = new Map<string, string>();   // path → why the last attempt did not apply
     const calls: string[] = [];
+    // The receipts of earlier compactions: their calls are gone from the history, and the only record left is the facts block that compaction wrote into its
+    // summary message. Carried forward from there, so that a second and third compaction do not depend on the summarizer remembering them (codex R58).
+    for (const m of hist) {
+        const t = typeof m?.content === 'string' ? m.content : '';
+        const at = t.indexOf('[Harness facts — authoritative]');
+        if (at < 0) continue;
+        const line = /Files written this session: ([^\n]*)/.exec(t.slice(at))?.[1];
+        if (line && line.trim() !== 'none') for (const p of line.replace(/\s*\(\+\d+ more\)\s*$/, '').split(', ')) if (p.trim()) written.add(p.trim());
+    }
     const results = new Map(hist.filter((m: any) => m.role === 'tool').map((m: any) => [m.tool_call_id, String(m.content ?? '')]));
     for (const m of hist) for (const tc of m.tool_calls ?? []) {
         let a: any = {};
@@ -102,7 +114,7 @@ function _harnessFacts(hist: any[]): string {
     }
     const files = [...written];
     const notApplied = [...failed].filter(([p]) => !written.has(p)).slice(-10);
-    return `[Harness facts — authoritative]\nFiles written this session: ${files.slice(0, 30).join(', ') || 'none'}${files.length > 30 ? ` (+${files.length - 30} more)` : ''}${notApplied.length ? `\nWrites that did NOT apply (the file is unchanged by them): ${notApplied.map(([p, why]) => `${p} (${why})`).join('; ')}` : ''}\nLast tool calls:\n${calls.slice(-3).join('\n') || 'none'}`;
+    return `[Harness facts — authoritative]\nFiles written this session: ${files.slice(0, 100).join(', ') || 'none'}${files.length > 100 ? ` (+${files.length - 100} more)` : ''}${notApplied.length ? `\nWrites that did NOT apply (the file is unchanged by them): ${notApplied.map(([p, why]) => `${p} (${why})`).join('; ')}` : ''}\nLast tool calls:\n${calls.slice(-3).join('\n') || 'none'}`;
 }
 
 function _compactSummaryText(summary: string, facts: string): string {
@@ -170,9 +182,9 @@ function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = nu
             }
             return false;
         }
-        const is429 = _isRateLimit(e.message);
-        const isErr = !is429 && _isServerError(e.message);
         const ep = getEp();
+        const is429 = _isRateLimit(e.message, ep);   // with the endpoint: a busy local server's 503 is a server error, not a quota (opencode §23)
+        const isErr = !is429 && _isServerError(e.message);
         const key = `${ep.provider}|${ep.model}`;
         const isCustom = ep.provider === 'custom' || ep.provider === 'vllm';
         if (_isTimeoutError(e) && isCustom) {
@@ -236,9 +248,12 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     // On a local model a ~20k-token history takes ~5 minutes to summarise; the step said only "Compacting…" and a running timer.
     task.setPrompt(`~${_fmtK(beforeTokens)} tokens → Compacting…${isCustomEndpoint(activeEndpoint) && beforeTokens > 8000 ? ' (a local model can take a few minutes for this)' : ''}`);
 
+    // Starting endpoint: the caller's active endpoint if not cooling (same server = warm prefix cache), then first free across all providers.
+    const _freeEp = (activeEndpoint && !_isCoolingDown(activeEndpoint)) ? null : firstFreeEndpoint();
+    const _startEp = (activeEndpoint && !_isCoolingDown(activeEndpoint)) ? activeEndpoint : (_freeEp ?? activeEndpoint ?? null);
     const tail = (() => {
         let t = _hR.slice(-COMPACT_TAIL).filter((m: any) => m !== _origFirst);
-        return _trimTailToTokenBudget(_capTailToolResults(t, _tailTokenBudget()), _tailTokenBudget());
+        return _trimTailToTokenBudget(_capTailToolResults(t, _tailTokenBudget(_startEp)), _tailTokenBudget(_startEp));
     })();
     const facts = _harnessFacts(_hR);
 
@@ -247,9 +262,11 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
     try {
         // Starting endpoint: the caller's active endpoint if not cooling (same server = warm
         // prefix cache), then first free across all providers, then whatever is configured.
-        let ep: any = (activeEndpoint && !_isCoolingDown(activeEndpoint))
-            ? activeEndpoint
-            : (firstFreeEndpoint() ?? activeEndpoint ?? _defaultEndpoint());
+        // Nothing usable and no endpoint given (a manual /compact with every model paused or the list empty): no request, as for a turn; the caller's
+        // fallback (facts plus the tail) applies, and the default provider is not tried (codex R63).
+        if (!_startEp && !getActiveMainModelList().length)
+            throw new Error(getMainModelList().length ? 'every model in the priority list is paused, switched off or has no API key' : 'the priority list is empty');
+        let ep: any = _startEp ?? _defaultEndpoint();
         task.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`));
 
         const system = prefix?.system ?? buildSystemPrompt();
@@ -257,15 +274,15 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
         const tools  = _tools?.length ? _tools : null;
         const instr  = { role: 'user', content: COMPACT_PROMPT };
         let msgs     = buildRequestMessages(_hR, ep.provider ?? 'custom');
-        let maxTok   = _effectiveSummaryTokens();
+        let maxTok   = _effectiveSummaryTokens(ep);
 
         // Fit prompt + summary into the window: estimate, and drop the oldest messages (keeping
         // the first) before sending rather than learning it from a rejected request.
         const fit = () => {
-            if (!isCustomEndpoint(ep) && getOAIContextTokens() >= 50000) { maxTok = _effectiveSummaryTokens(); return; }
+            if (!isCustomEndpoint(ep) && _window(ep) >= 50000) { maxTok = _effectiveSummaryTokens(ep); return; }
             const est = Math.ceil(estimateTokens([{ role: 'system', content: system }, ...msgs, instr]) * 1.1)
                       + (tools ? estimateTokens(tools) : 0);
-            maxTok = Math.min(_effectiveSummaryTokens(), getOAIContextTokens() - est - 512);
+            maxTok = Math.min(_effectiveSummaryTokens(ep), _window(ep) - est - 512);
         };
         const dropOldest = (): boolean => {
             if (msgs.length <= 3) return false;

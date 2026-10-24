@@ -19,11 +19,11 @@ import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
-import { getProvider, getMainModelList, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
+import { getProvider, getMainModelList, mainModelListIsEmptyByChoice, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
-import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, renderFileList } from './workspace.js';
+import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, agentFileMtime, renderFileList, workspaceName } from './workspace.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { sessionSetChatRole, sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent } from './session-store.js';
 import { convoLogTurn, metricsNote } from './convo-log.js';
@@ -386,8 +386,13 @@ function _parseRoleFile(content: string) {
     return { name, description, tools, tier, body_fn: () => body };
 }
 
+let _rolesLoadSeq = 0;
 async function loadRoles() {
-    for (const r of BUILTIN_ROLES) rolesRegistry.set(r.name, r); // reset to built-ins
+    // The next registry is built apart and published whole, only if no newer load started meanwhile and the inventory was complete: the old code changed the live map as
+    // each read finished, kept a deleted or renamed role selectable, and let an older read overwrite newer instructions (codex R127, R128).
+    const seq = ++_rolesLoadSeq;
+    const next = new Map<string, any>(BUILTIN_ROLES.map(r => [r.name, r]));
+    let complete = true;
     try {
         const files = await agentListFiles();
         const roleFiles = files.filter(f => /^(?:local\/)?roles\/[^/]+\.md$/i.test(f.name));
@@ -395,10 +400,17 @@ async function loadRoles() {
             try {
                 const content = await agentReadFile(f.name);
                 const r = _parseRoleFile(content);
-                if (r) rolesRegistry.set(r.name, r);
-            } catch {}
+                if (r) next.set(r.name, r);
+            } catch { complete = false; }   // a role file that could not be read is not a role file that is gone
         }));
-    } catch {}
+    } catch { complete = false; }
+    if (seq !== _rolesLoadSeq) return;
+    if (!complete) {
+        console.warn('[roles] reload incomplete (a listing or a read failed); the custom roles already loaded are kept');
+        for (const [k, v] of rolesRegistry) if (!next.has(k)) next.set(k, v);
+    }
+    rolesRegistry.clear();
+    for (const [k, v] of next) rolesRegistry.set(k, v);
 }
 
 
@@ -708,12 +720,29 @@ Do not attempt to spawn workers. Work independently and write your outputs as fi
 export class LazySnapshot {
     private _sizes   = new Map<string, number>();                        // name → size from the listing
     private _content = new Map<string, Promise<string | undefined>>();   // name → first read
-    constructor(files: Array<{ name: string; size?: number }>) {
-        for (const f of files) this._sizes.set(f.name, f.size ?? 0);
+    private _initial = new Set<string>();                                // the names in the run-start listing
+    private _lost    = new Set<string>();                                // changed by code before their content was read: no run-start copy exists
+    private _absent  = new Set<string>();                                // known not to exist when the run started (checked before the code ran)
+    static readonly PIN_FILE_MAX = 256 * 1024;
+    static readonly PIN_FILES_MAX = 300;
+    static readonly PIN_BYTES_MAX = 3 * 1024 * 1024;
+    /** False when the run-start listing could not be taken: a name missing from it then proves nothing about whether the file existed. */
+    readonly inventoryKnown: boolean;
+    private _stamps  = new Map<string, { size: number; mtime: number | null }>();   // the listing's size and timestamp at the start
+    constructor(files: Array<{ name: string; size?: number; lastModified?: number | null }>, opts: { inventoryKnown?: boolean } = {}) {
+        this.inventoryKnown = opts.inventoryKnown !== false;
+        for (const f of files) {
+            this._sizes.set(f.name, f.size ?? 0); this._initial.add(f.name);
+            this._stamps.set(f.name, { size: f.size ?? 0, mtime: typeof f.lastModified === 'number' ? f.lastModified : null });
+        }
     }
+    /** Size and timestamp the file had in the run-start listing (undefined: not listed). */
+    stampOf(name: string): { size: number; mtime: number | null } | undefined { return this._stamps.get(name); }
     get size(): number { return this._sizes.size; }
     has(name: string): boolean { return this._sizes.has(name); }
     list(): Array<{ name: string; size: number }> { return [...this._sizes].map(([name, size]) => ({ name, size })); }
+    /** True for a file the run created: not in the run-start listing, whether or not it was noted since (a revert deletes it). */
+    createdSince(name: string): boolean { return !this._initial.has(name); }
     /** A file that appeared in the workspace since (a binary file a worker's code wrote: staging holds text only). */
     note(name: string, size: number): void { this._sizes.set(name, size); this._content.delete(name); }
     // undefined when the file isn't in the listing or can't be read (e.g. a directory).
@@ -723,27 +752,80 @@ export class LazySnapshot {
         if (!p) { p = agentReadFile(name).catch(() => undefined); this._content.set(name, p); }
         return p;
     }
+    /** Code changed or deleted this file. If its run-start content was never read, it can no longer be (the first read would see the changed file). */
+    noteMutated(name: string): void {
+        if (this._initial.has(name) && !this._content.has(name)) this._lost.add(name);
+    }
+    /** Before a worker's code runs: keep the run-start state of the files the code names (its text, or that they do not exist). Code can reach other
+     *  files than it names (globs, computed paths); those are reported as not restorable, never guessed at. */
+    async pinMentioned(code: string, opts: { eager?: boolean } = {}): Promise<void> {
+        const cands = new Set<string>();
+        // Within a budget, every small file is copied: code does not have to name a file to change it (a script that walks the tree, a glob).
+        // A larger workspace, or one behind a container where each read is a process, keeps to the files the code names.
+        if (opts.eager) {
+            let files = 0, bytes = 0;
+            for (const [name, size] of [...this._sizes].sort((a, b) => a[1] - b[1])) {
+                if (!this._initial.has(name) || this._content.has(name)) continue;
+                if (size > LazySnapshot.PIN_FILE_MAX || files >= LazySnapshot.PIN_FILES_MAX || bytes + size > LazySnapshot.PIN_BYTES_MAX) continue;
+                cands.add(name); files++; bytes += size;
+            }
+        }
+        for (const name of this._initial) {
+            if (cands.size >= 40) break;
+            const base = name.slice(name.lastIndexOf('/') + 1);
+            if (code.includes(name) || (base.length >= 3 && code.includes(base))) cands.add(name);
+        }
+        if (!this.inventoryKnown) {
+            for (const m of code.matchAll(/(['"`])([^'"`\n]{1,200})\1/g)) {
+                if (cands.size >= 80) break;
+                try { const nm = workspaceName(m[2]); if (nm) cands.add(nm); } catch {}
+            }
+        }
+        const pin = async (name: string) => {
+            if (this._content.has(name) || this._absent.has(name) || this._lost.has(name)) return;
+            if (this._sizes.has(name)) { await this.get(name); return; }
+            try {
+                const t = await agentReadFile(name);
+                if (typeof t === 'string') { this._sizes.set(name, t.length); this._initial.add(name); this._content.set(name, Promise.resolve(t)); }
+            } catch (e: any) {
+                if (/ENOENT|not found|no such file|does not exist/i.test(String(e?.message ?? e))) this._absent.add(name);
+            }
+        };
+        const list = [...cands];
+        for (let i = 0; i < list.length; i += 16) await Promise.all(list.slice(i, i + 16).map(pin));
+    }
+    /** What the file was when the run started, as far as it is known. */
+    async preimage(name: string): Promise<{ kind: 'content'; text: string } | { kind: 'absent' } | { kind: 'unknown' }> {
+        if (this._lost.has(name)) return { kind: 'unknown' };
+        if (this._absent.has(name)) return { kind: 'absent' };
+        if (!this._initial.has(name)) return this.inventoryKnown ? { kind: 'absent' } : { kind: 'unknown' };
+        const t = await this.get(name);
+        return t === undefined ? { kind: 'unknown' } : { kind: 'content', text: t };
+    }
 }
 
 /** A worker's execute_code writes its staged edits into the real workspace. When the worker is retried or gives up, those files go back to the
  *  run-start content (or are deleted when the run created them), so a failed attempt leaves no edit that nothing reports (opencode §19). */
-async function _revertWorkerDiskEdits(context: any, epoch: number): Promise<void> {
+export async function _revertWorkerDiskEdits(context: any, epoch: number): Promise<void> {
     const paths: Set<string> | undefined = context?.onDisk;
     if (!paths?.size) return;
     const snap: LazySnapshot | undefined = context.snapshot;
+    const unrestored: string[] = (context.unrestored ??= []);
     for (const p of [...paths]) {
         try {
-            if (!snap?.has(p)) { await agentDeleteFile(p, { epoch }); continue; }
-            const orig = await snap.get(p);
-            if (orig !== undefined) await agentWriteFile(p, orig, null, { epoch });   // an unreadable original (binary) is left as it is
-        } catch { /* best effort: the file stays as the code left it */ }
+            const pre = snap ? await snap.preimage(p) : { kind: 'unknown' as const };
+            // Delete only where the file's absence at the start is known; restore only a copy taken before the code could change it.
+            if (pre.kind === 'absent') await agentDeleteFile(p, { epoch });
+            else if (pre.kind === 'content') await agentWriteFile(p, pre.text, null, { epoch });
+            else if (!unrestored.includes(p)) unrestored.push(p);   // a binary original, or one no copy was taken of: left as the code left it, and said so
+        } catch { if (!unrestored.includes(p)) unrestored.push(p); /* best effort: the file stays as the code left it */ }
     }
     paths.clear();
 }
 
 async function takeWorkspaceSnapshot(): Promise<LazySnapshot> {
     try { return new LazySnapshot((await agentListFiles()).filter(f => !f.isLocal)); }
-    catch { return new LazySnapshot([]); }
+    catch { return new LazySnapshot([], { inventoryKnown: false }); }   // not an empty workspace: nothing may be inferred from a name's absence
 }
 
 // ── Endpoint busy-tracking for parallel rotation ──────────────────────────
@@ -834,6 +916,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     };
 
     const localOH   = [];
+    let _taskMsg: any = null;   // the delegated subtask, found by identity: message 0 can be the surrounding conversation's request or a forked parent's history
     const localSeenRF = new Map(); // per-worker read-file dedup (isolates from main agent globals)
     const localSeenLF = new Set(); // per-worker list-files dedup
     // Accumulates every tool call this worker makes across all steps — surfaced in session log.
@@ -862,10 +945,12 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
     const isFork = !!forkBase && (!role || role.name === 'director') && getAgentWorkerHistory();
     if (isFork) {
         localOH.push(...forkBase!.messages);
-        localOH.push({ role: 'user', content: _forkTaskMessage(task) });
+        _taskMsg = { role: 'user', content: _forkTaskMessage(task) };
+        localOH.push(_taskMsg);
     } else {
         localOH.push(..._userRequestMsgs(forkBase?.messages ?? [], role?.name ?? null));
-        localOH.push({ role: 'user', content: task });
+        _taskMsg = { role: 'user', content: task };
+        localOH.push(_taskMsg);
     }
     // This worker's own last request, exposed so a nested run_workers call can fork it.
     let _ownRequest: ForkBase | null = null;
@@ -942,17 +1027,21 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                         onContextOverflow: max => { workerMaxTokens = max; taskHandle.append(`\n[context overflow: reducing max_tokens to ${max}]\n`, 'thinking'); },
                         onContextTruncate: () => {
                             // Prompt exceeds context window even at min max_tokens.
-                            // Progressively drop middle messages, keeping localOH[0] (task).
-                            // Returns true if something was removed (caller retries), false to bail.
-                            if (localOH.length > 1) {
-                                // Drop half of everything after index 0, at least 1 message.
-                                const drop = Math.max(1, Math.floor((localOH.length - 1) / 2));
-                                localOH.splice(1, drop);
+                            // Progressively drop middle messages, never the delegated subtask itself (kept by identity) nor the background request that
+                            // precedes it. Returns true if something was removed (caller retries), false to bail.
+                            const keep = (m: any, i: number) => m === _taskMsg || i === 0;
+                            const removable = localOH.map((m, i) => i).filter(i => !keep(localOH[i], i));
+                            if (removable.length > 0) {
+                                // Drop the older half of what can go, at least 1 message.
+                                const drop = removable.slice(0, Math.max(1, Math.floor(removable.length / 2)));
+                                for (const i of drop.reverse()) localOH.splice(i, 1);
+                                // What the model was told it had read is gone with those messages: a later identical read must return the content, not "Already read".
+                                localSeenRF.clear(); localSeenLF.clear();
                                 workerMaxTokens = null;
-                                taskHandle.append(`\n[context overflow: dropped ${drop} messages, ${localOH.length} remain]\n`, 'thinking');
+                                taskHandle.append(`\n[context overflow: dropped ${drop.length} messages, ${localOH.length} remain]\n`, 'thinking');
                                 return true;
                             }
-                            return false;  // only task message left; bail so caller records error
+                            return false;  // only the task (and the request it came with) left: bail so the caller records the error and the work is split
                         },
                     });
                 const _u = message?.usage;
@@ -1151,8 +1240,10 @@ async function callLLMComplete(prompt: string, { temperature = getTemperature(),
     // Callers that want a lighter model (title gen, prompt suggestions) pass endpoint explicitly.
     // Every configured model paused: there is nothing to send to. callOAI refuses; this fell back to the built-in default provider and model, which are not
     // among the person's choices (codex R29-001).
-    if (!endpoint && !getActiveMainModelList().length && getMainModelList().length)
-        throw new Error('No model can be used: every model in your priority list is paused. Unpause one in Settings, or add a model.');
+    if (!endpoint && !getActiveMainModelList().length && (getMainModelList().length || mainModelListIsEmptyByChoice()))
+        throw new Error(getMainModelList().length
+            ? 'No model can be used: every model in your priority list is paused. Unpause one in Settings, or add a model.'
+            : 'No model is selected: the priority list is empty. Add a model in Settings → Models.');
     let ep = endpoint ?? firstFreeEndpoint() ?? oaiEndpoint();
     handle.setModel(modelFriendlyName(`${ep.provider}|${ep.model}`));
     // Worker/judge calls never think: thinkingBudget 0 → explicit enable_thinking:false on custom.
@@ -1276,10 +1367,19 @@ export async function _mergeLostContent(content: string, maxLen: number, llm: an
     return !!(await validateOutput(content, _MERGE_CHECKS, { llm, maxTokens: 200, ctx: { maxLen } }));
 }
 
-export async function resolveFileConflicts(conflicts: Record<string, Record<string, string>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null, llm: any = callLLMComplete): Promise<{resolved: Record<string, string>; stats: {auto: number; llm: number; picked: number}; picked: Record<string, string>; unresolved: string[]}> {
+export async function resolveFileConflicts(conflicts: Record<string, Record<string, string | null>>, snapshot: LazySnapshot | Map<string, string>, handle: any = null, llm: any = callLLMComplete): Promise<{resolved: Record<string, string | null>; stats: {auto: number; llm: number; picked: number}; picked: Record<string, string>; unresolved: string[]}> {
     const autoMerged: Record<string, any> = {}, needsLLM: Record<string, any> = {};
+    const picked: Record<string, string> = {};
 
-    for (const [path, versions] of Object.entries(conflicts)) {
+    for (const [path, allVersions] of Object.entries(conflicts)) {
+        // A deletion is a version (null), not text: workers that all deleted the file agree; a worker that wrote it against one that deleted it keeps the
+        // file (the safe side), reported as the version kept; the writers' texts are then merged among themselves (codex R105).
+        const written = Object.entries(allVersions).filter(([, v]) => v !== null) as [string, string][];
+        if (!written.length) { autoMerged[path] = null; continue; }
+        if (written.length < Object.keys(allVersions).length) {
+            if (written.length === 1) { autoMerged[path] = written[0][1]; picked[path] = written[0][0]; continue; }
+        }
+        const versions: Record<string, string> = Object.fromEntries(written);
         const sides = Object.values(versions);
         if (sides.length < 2) { autoMerged[path] = sides[0] ?? ''; continue; }
         if (sides.length === 2) {
@@ -1326,7 +1426,6 @@ export async function resolveFileConflicts(conflicts: Record<string, Record<stri
     // or hallucinated filenames. A rejected or missing merge falls back to the longest worker
     // version — that is one worker's file, not a merge, so it is reported in `picked` (path →
     // the worker whose version was kept) and never counted as resolved by the model.
-    const picked: Record<string, string> = {};
     const _pickLongest = (path: string, versions: Record<string, string>) => {
         const [id, content] = Object.entries(versions).reduce((a, b) =>
             (String(a[1] ?? '').length >= String(b[1] ?? '').length ? a : b));
@@ -1349,7 +1448,7 @@ export async function resolveFileConflicts(conflicts: Record<string, Record<stri
     const nPicked = Object.keys(picked).length;
     return {
         resolved: { ...autoMerged, ...merged },
-        stats: { auto: Object.keys(autoMerged).length, llm: Object.keys(merged).length - nPicked, picked: nPicked },
+        stats: { auto: Object.keys(autoMerged).length, llm: Object.keys(merged).length - Object.keys(merged).filter(p => p in picked).length, picked: nPicked },
         picked, unresolved: [],
     };
 }
@@ -1681,9 +1780,12 @@ async function executeWorkers(args: any): Promise<any> {
         if (rotationSpec) _busyEndpointSpecs.delete(rotationSpec);
         await _revertWorkerDiskEdits(context, epoch);
         const _isOverflow = /maximum context length/i.test(lastError.message || '');
-        const _errMsg = _isOverflow
+        const _unrestored: string[] = context.unrestored ?? [];
+        const _errMsg0 = _isOverflow
             ? `Context window overflow: workers read too much context to fit in the token limit. On the next run_workers call with the same tasks, use path_filter with repo_map, read specific line ranges (start_line/end_line), or split into smaller independent sub-tasks.`
             : lastError.message;
+        // What the worker's code changed in the workspace and the rollback could not put back (a binary original, or a file the code reached without naming it).
+        const _errMsg = _unrestored.length ? `${_errMsg0}\n[The worker's code had changed these files and they could not be restored: ${_unrestored.slice(0, 10).join(', ')}${_unrestored.length > 10 ? ', …' : ''}]` : _errMsg0;
         handle.setOutput(`Error: ${_errMsg}`);
         handle.abort();
         sessionRecordWorkerAgent?.(runId, {
@@ -1698,8 +1800,34 @@ async function executeWorkers(args: any): Promise<any> {
     // binary write or delete used to leave the run "complete" with the path listed as applied: codex R10-001) and not thrown (one bad file used to
     // lose the report of every other worker).
     const failedCommits: Array<{ path: string; error: string }> = [];
+    // The file as the workers started from it is what their edit was made to. When another actor (the editor's Save, another tool, another tab) changed it since,
+    // the worker's version would silently replace that edit, and the run was reported complete: such a path is not written and is reported (codex R106). The
+    // project epoch does not change for an edit in the same project, so this compares the file itself: it is unchanged when its timestamp and size are those of
+    // the run-start listing, or when it already holds what is about to be written (the worker's own code wrote it).
+    const changedOutside = async (path: string, content: string | null, encoding: string | null): Promise<boolean> => {
+        try {
+            const stamp = snapshot.stampOf?.(path);
+            let cur: string | null = null;
+            try { const c = await agentReadFile(path); cur = typeof c === 'string' ? c : null; } catch { cur = null; }
+            const exists = cur !== null || (await agentFileMtime(path).catch(() => null)) !== null;
+            if (!stamp) {                                                    // not there when the run started
+                if (!snapshot.inventoryKnown || !exists) return false;
+                return content === null || encoding === 'base64' || cur !== content;
+            }
+            if (!exists) return content !== null;                            // removed by someone else; a second delete changes nothing
+            if (encoding !== 'base64' && cur === content) return false;      // already what the worker wants
+            const mt = await agentFileMtime(path).catch(() => null);
+            if (mt !== null && stamp.mtime !== null) return mt !== stamp.mtime;
+            const base = await snapshot.get(path);                           // no timestamps: the text the worker started from, if it was read
+            return base !== undefined && cur !== null && cur !== base;
+        } catch { return false; }
+    };
     const commit = async (path: string, content: string | null, encoding: string | null = null): Promise<boolean> => {
         try {
+            if (await changedOutside(path, content, encoding)) {
+                failedCommits.push({ path, error: 'the file was changed by someone else after the workers started, so their version was not written over it' });
+                return false;
+            }
             if (content === null) await agentDeleteFile(path, { epoch });
             else await agentWriteFile(path, content, encoding, { epoch });
             return true;

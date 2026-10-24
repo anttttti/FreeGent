@@ -484,8 +484,8 @@ export function resolveWorkerModelSpec(workerModelSpec: string | null, role: any
         // Always use the #1 model in the priority list, regardless of cooldown.
         return getMainModelList()[0] || null;
     }
-    if (setting && setting !== '') {
-        // A specific provider|model was selected.
+    if (setting && setting !== '' && !isBlacklistedModel(setting)) {
+        // A specific provider|model was selected (one the provider has since withdrawn is no selection: the default below applies).
         return setting;
     }
 

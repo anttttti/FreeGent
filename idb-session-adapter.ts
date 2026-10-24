@@ -39,6 +39,13 @@ function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (r
     });
 }
 
+// The newest generation of a chat's history, read INSIDE the transaction that then writes (callback style: the transaction stays active). A generation read in
+// a transaction of its own and written in another let two overlapping operations choose the same generation and overwrite each other (codex R107).
+function _latestGeneration(store: IDBObjectStore, chatId: string, then: (gen: number) => void): void {
+    const req = store.index('chatId').getAll(IDBKeyRange.only(chatId));
+    req.onsuccess = () => { const rs: any[] = req.result || []; then(rs.length ? Math.max(...rs.map((r: any) => r.generation)) : 0); };
+}
+
 // A handle the browser has closed (iOS Safari does this to backgrounded or memory-pressured tabs)
 // throws InvalidStateError on every transaction until reopened.
 const _isClosedDbError = (e: any) => e?.name === 'InvalidStateError' || /connection is closing|database.*closed/i.test(String(e?.message ?? ''));
@@ -115,12 +122,14 @@ export class IDBSessionAdapter {
     }
 
     async deleteChat(id: string) {
-        const delTx = this._db.transaction('chats', 'readwrite');
-        delTx.objectStore('chats').delete(id);
-        await _commit(delTx);
-        await _deleteByChat(this._db, 'history', id);
-        await _deleteByChat(this._db, 'raw_messages', id);
-        await _deleteByChat(this._db, 'turn_log', id);
+        // One transaction for the chat row and everything stored under it: a save queued behind a deletion then finds either all of it or none (codex R108).
+        const tx = this._db.transaction(['chats', 'history', 'raw_messages', 'turn_log'], 'readwrite');
+        tx.objectStore('chats').delete(id);
+        for (const name of ['history', 'raw_messages', 'turn_log']) {
+            const cur = tx.objectStore(name).index('chatId').openCursor(IDBKeyRange.only(id));
+            cur.onsuccess = () => { const c = cur.result; if (c) { c.delete(); c.continue(); } };
+        }
+        await _commit(tx);
     }
 
     async setChatRole(id: string, role: string | null) {
@@ -140,22 +149,30 @@ export class IDBSessionAdapter {
     // ── Messages ───────────────────────────────────────────────────────────────
 
     async replaceMessages(chatId: string, history: any[]) {
-        const [gen, ex] = await Promise.all([
-            this._getGeneration(chatId),
-            _req(this._db.transaction('chats', 'readonly').objectStore('chats').get(chatId)),
-        ]);
+        // The chat row, the newest generation and the write are one transaction: read apart, an overlapping compaction could move the newest generation between the
+        // read and the write, and this save then replaced the history the compaction had just sealed (codex R107).
         const tx = this._db.transaction(['chats', 'history'], 'readwrite');
-        if (!ex) tx.objectStore('chats').put({ id: chatId, name: 'New Chat', createdAt: Date.now(), lastAt: Date.now(), mainRole: null, archived: 0 });
-        tx.objectStore('history').put({ chatId, generation: gen, history });
-        await _commit(tx);
+        const done = _commit(tx);
+        let chat: any, haveChat = false, gen = 0, haveGen = false;
+        const go = () => {
+            if (!haveChat || !haveGen) return;
+            if (!chat) tx.objectStore('chats').put({ id: chatId, name: 'New Chat', createdAt: Date.now(), lastAt: Date.now(), mainRole: null, archived: 0 });
+            tx.objectStore('history').put({ chatId, generation: gen, history });
+        };
+        const creq = tx.objectStore('chats').get(chatId);
+        creq.onsuccess = () => { chat = creq.result; haveChat = true; go(); };
+        _latestGeneration(tx.objectStore('history'), chatId, g => { gen = g; haveGen = true; go(); });
+        await done;
     }
 
     async compactHistory(chatId: string, preHistory: any[], postHistory: any[]) {
-        const gen = await this._getGeneration(chatId);
         const tx = this._db.transaction('history', 'readwrite');
-        tx.objectStore('history').put({ chatId, generation: gen,     history: preHistory  });
-        tx.objectStore('history').put({ chatId, generation: gen + 1, history: postHistory });
-        await _commit(tx);
+        const done = _commit(tx);
+        _latestGeneration(tx.objectStore('history'), chatId, gen => {
+            tx.objectStore('history').put({ chatId, generation: gen,     history: preHistory  });
+            tx.objectStore('history').put({ chatId, generation: gen + 1, history: postHistory });
+        });
+        await done;
     }
 
     async saveRawMessage(chatId: string, entry: any) {

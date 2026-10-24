@@ -90,12 +90,12 @@ async function getFsaMtime(name) {
 async function pollFsaChanges() {
     if (!fsaHandle) { stopFsaSync(); return; }
     try {
-        const names    = await listFsaFiles();
+        const names    = await listFsaFiles(null, '', 0, true);   // a failed listing ends the poll with the baseline as it was
         const nameSet  = new Set(names);
         const prevKeys = new Set(fsaSyncMtimes.keys());
 
         let listChanged  = false;
-        const changed    = []; // { name, mtime }
+        const changed: Array<{ name: string; mtime: number }> = [];   // acknowledged (fsaSyncMtimes) only once their content was read
 
         await Promise.all(names.map(async name => {
             if (name.endsWith('/')) {
@@ -106,7 +106,7 @@ async function pollFsaChanges() {
             try {
                 const mtime = await getFsaMtime(name);
                 if (!prevKeys.has(name)) { listChanged = true; fsaSyncMtimes.set(name, mtime); }
-                else if (mtime !== fsaSyncMtimes.get(name)) { fsaSyncMtimes.set(name, mtime); changed.push(name); }
+                else if (mtime !== fsaSyncMtimes.get(name)) changed.push({ name, mtime });
             } catch {}
         }));
 
@@ -119,14 +119,15 @@ async function pollFsaChanges() {
         let taskFileChanged  = false;
         let skillFileChanged = false;
         let roleFileChanged  = false;
-        await Promise.all(changed.map(async name => {
+        await Promise.all(changed.map(async ({ name, mtime }) => {
             try {
                 const content = await readFsaFile(name);
+                fsaSyncMtimes.set(name, mtime);
                 notifyLocalFileChanged?.('local/' + name, content);
                 if (isTaskPath(name))  taskFileChanged  = true;
                 if (name.startsWith('skills/') || name.startsWith('rules/')) skillFileChanged = true;
                 if (name.startsWith('roles/'))  roleFileChanged  = true;
-            } catch {}
+            } catch (e) { console.warn('[FSA] could not read the changed file, will try again:', name, e); }   // not acknowledged: the next poll sees the change again
         }));
 
         if (taskFileChanged)  refreshTasks?.();
@@ -428,7 +429,7 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
 async function restoreCheckpointWorkspace(chatId, ckptId) {
     const ckpts = await _getCkptsForChat(chatId);
     const targetIdx = ckpts.findIndex(c => c.ckptId === ckptId);
-    if (targetIdx < 0) return { localFiles: [] };
+    if (targetIdx < 0) return { localFiles: [], found: false };   // no snapshot of this point: the caller says so, it did not restore anything
 
     // Replay deltas from first checkpoint up to target to reconstruct state
     const idbState   = Object.create(null);
@@ -453,7 +454,7 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
         current.filter(name => !(name in idbState)),
     );
 
-    return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })) };
+    return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })), found: true };
 }
 
 // Workspace state after replaying a chat's snapshot deltas up to index `upto` (inclusive).
@@ -706,7 +707,8 @@ const FSA_SKIP = new Set([
     '.DS_Store',
 ]);
 
-async function listFsaFiles(dirHandle = null, prefix = '', depth = 0) {
+// `strict`: a listing that fails throws instead of coming back short; the folder poll must not read a failed listing as an empty folder.
+async function listFsaFiles(dirHandle = null, prefix = '', depth = 0, strict = false) {
     const dir = dirHandle || fsaHandle;
     if (!dir) return [];
     const files = [];
@@ -715,19 +717,22 @@ async function listFsaFiles(dirHandle = null, prefix = '', depth = 0) {
             if (handle.kind === 'file') {
                 files.push(prefix + name);
             } else if (handle.kind === 'directory' && depth < 4 && !FSA_SKIP.has(name)) {
-                const sub = await listFsaFiles(handle, prefix + name + '/', depth + 1);
+                const sub = await listFsaFiles(handle, prefix + name + '/', depth + 1, strict);
                 if (sub.length) files.push(...sub);
                 else files.push(prefix + name + '/'); // empty directory sentinel
             }
         }
     } catch (e) {
         console.error('[FSA] listFsaFiles:', e);
+        if (strict) throw e;
     }
     return files;
 }
 
 async function fsaNavigate(name, create = false) {
     const parts = name.split('/');
+    // A name reaches here from the file list, which a cloud manifest or an import can fill: never step out of the granted folder.
+    if (parts.some(p => p === '..' || p === '.')) throw new Error(`Path '${name}' is outside the folder`);
     let dir = fsaHandle;
     for (let i = 0; i < parts.length - 1; i++)
         dir = await dir.getDirectoryHandle(parts[i], { create });
@@ -924,19 +929,32 @@ function _noteAgreed(path: string, rec: any): void {
     _saveBaseTexts('folder', [{ path, content: rec.content, encoding: rec.encoding }]).catch(() => {});
 }
 
-/** After a folder import: drop snapshot files the folder no longer has (only those that were in sync, never a copy still waiting to be exported), and note what the folder holds. */
-async function _afterLocalImport(imported: Set<string>): Promise<void> {
+/** After a folder import: drop snapshot files the folder no longer has (only those that were in sync, never a copy still waiting to be exported), and note what the folder holds.
+ *  `inventory` is every path the picker listed (filtered, oversize and unreadable ones included): absence from it is the only evidence that the folder lost a file.
+ *  `read` maps the paths whose bytes were actually read to the hash the folder held; an unreadable path keeps the version recorded at the last import. */
+async function _afterLocalImport(read: Map<string, string>, inventory: Set<string>): Promise<void> {
     const { workspace, local } = await _hashBothSides();
     const base = _lsGet(_LS_BASE);
     const agreed: string[] = [];
-    for (const p of imported) if (local[p] !== undefined && local[p] === workspace[p]) { base[p] = local[p]; agreed.push(p); }   // identical files agree from the start
+    for (const p of read.keys()) if (local[p] !== undefined && local[p] === workspace[p]) { base[p] = local[p]; agreed.push(p); }   // identical files agree from the start
     _lsSet(_LS_BASE, base);
     await _recordFolderBase(agreed);
-    const stale = Object.keys(local).filter(p => !imported.has(p) && base[p] === local[p]);
+    const stale = Object.keys(local).filter(p => !inventory.has(p) && base[p] === local[p]);
     if (stale.length) { await applyWorkspaceBatch([], stale.map(p => 'local/' + p)); for (const p of stale) delete local[p]; }
-    const folder: Record<string, string> = {};
-    for (const p of imported) if (local[p] !== undefined) folder[p] = local[p];
+    const folder = _lsGet(_LS_IMPORTED);
+    for (const p of Object.keys(folder)) if (!inventory.has(p)) delete folder[p];
+    for (const [p, h] of read) folder[p] = h;
     _lsSet(_LS_IMPORTED, folder);
+}
+
+/** Forget the base texts of one set ('folder', 'project', 'cloud/<project>'): they belong to a folder or project that is no longer the one being synced. */
+async function _clearBaseTexts(ns: _BaseNs): Promise<void> {
+    await _syncTx('readwrite', st => {
+        const range = IDBKeyRange.bound(`${ns}:`, `${ns}:\uffff`);
+        const cur = st.openCursor(range);
+        cur.onsuccess = () => { const c = cur.result; if (c) { c.delete(); c.continue(); } };
+        return cur;
+    });
 }
 
 async function _recordFolderBase(paths: string[]): Promise<void> {
@@ -952,7 +970,8 @@ async function _computeMerges(paths: string[], readBase: (p: string) => Promise<
     for (const p of paths) {
         const [b, a, c] = [await readBase(p), await readA(p), await readB(p)];
         if (b === null || !a || !c || a.encoding || c.encoding) continue;
-        out[p] = tryMerge(b, a.content, c.content);
+        // A file the merge engine cannot take (any failure) is left without a merge: the dialog then offers keep-both and the sides as they are.
+        try { out[p] = tryMerge(b, a.content, c.content); } catch (e) { console.warn('[sync] merge of', p, 'failed:', e); }
     }
     return out;
 }
@@ -966,6 +985,8 @@ interface _SyncDialog {
     note: string;
     apply: (items: SyncItem[], chosen: Map<string, SyncAction>) => Promise<_SyncResult>;
     withUndo: boolean;
+    /** Called when Apply is clicked: the paths whose files are no longer what the comparison was made from. They are left out of the apply. */
+    staleCheck?: () => Promise<Set<string>>;
     /** Called after Apply failed, so the dialog can be rebuilt from the current state of both sides. */
     onApplyError?: () => void;
     /** Further footer buttons; clicking one closes the dialog and runs `run`. */
@@ -1029,6 +1050,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
     const ov = document.createElement('div');
     ov.className = 'fg-modal-overlay'; ov.id = 'fg-localsync-overlay';
     const chosen = new Map<string, SyncAction>();
+    const epoch0 = workspaceEpoch();
     const MAX_ROWS = 300;
     const groups = new Map<string, SyncItem[]>();
     for (const it of items) { if (!groups.has(it.kind)) groups.set(it.kind, []); groups.get(it.kind)!.push(it); }
@@ -1077,8 +1099,18 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
     if (ok) ok.onclick = async () => {
         ok.disabled = true; ok.textContent = '…';
         try {
-            const res = await d.apply(items, chosen);
+            // The comparison belongs to the project it was made in, and to the file versions it was made from.
+            if (workspaceEpoch() !== epoch0) {
+                ov.remove();
+                alert('The project was replaced while this comparison was open, so nothing was applied. Open the comparison again.');
+                return;
+            }
+            const stale = d.staleCheck ? await d.staleCheck() : new Set<string>();
+            const res = await d.apply(stale.size ? items.filter(i => !stale.has(i.path)) : items, chosen);
             ov.remove();
+            if (stale.size) {
+                alert(`${stale.size} file${stale.size === 1 ? ' was' : 's were'} changed after this comparison was made and ${stale.size === 1 ? 'was' : 'were'} left as ${stale.size === 1 ? 'it is' : 'they are'}:\n\n${[...stale].slice(0, 10).join('\n')}${stale.size > 10 ? '\n…' : ''}\n\nCompare again to see them.`);
+            }
             if (res.markers.length) alert(`${res.markers.length} file${res.markers.length === 1 ? '' : 's'} had overlapping edits and now contain conflict markers (<<<<<<< A is the Workspace version, >>>>>>> B the other one):\n\n${res.markers.slice(0, 10).join('\n')}${res.markers.length > 10 ? '\n…' : ''}`);
         }
         catch (e: any) {
@@ -1100,6 +1132,10 @@ export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = 
     if (flags.onlyIfIncoming && !items.some(i => i.kind !== 'new-in-workspace')) return;
     await _showSyncDialog({
         title: 'Sync Local Folder with Workspace', other: 'Local Folder', items, merges, withUndo: true,
+        staleCheck: async () => {
+            const now = await _hashBothSides();
+            return new Set(items.filter(i => now.workspace[i.path] !== workspace[i.path] || now.local[i.path] !== local[i.path]).map(i => i.path));
+        },
         note: 'Files changed on both sides merge when their edits do not overlap; the preview shows the result. Nothing is deleted unless you choose it, and “Undo last sync” puts it all back. Changes to the Local Folder reach the real folder through “Export changes”.',
         apply: (its, chosen) => _applyLocalSync(its, chosen, merges),
     });
@@ -1124,6 +1160,10 @@ async function _mergeProjectFiles(data: any): Promise<void> {
             return { ...i, action: choices[0], choices }; })());
     await _showSyncDialog({
         title: `Merge project “${data.name || 'Project'}” into the Workspace`, other: 'imported project', items, merges, withUndo: true,
+        staleCheck: async () => {
+            const now = (await _hashBothSides()).workspace;
+            return new Set(items.filter(i => now[i.path] !== workspace[i.path]).map(i => i.path));
+        },
         note: 'Files only: chats and settings stay as they are. A file changed on both sides merges when the project’s previous export or import is known; otherwise both versions are kept (the project’s as “name (imported)”). Nothing is deleted, and “Undo last sync” puts it all back.',
         apply: async (its, chosen) => {
             const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
@@ -1244,6 +1284,10 @@ export async function openCloudSyncDialog(): Promise<void> {
         }
         await _showSyncDialog({
             title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true,
+            staleCheck: async () => {
+                const now = await _cloudHashWorkspace(slug);
+                return new Set(items.filter(i => now.hashes[i.path] !== ws.hashes[i.path]).map(i => i.path));
+            },
             note: 'Only changed files travel. Files changed on both sides merge when their edits do not overlap (see the preview). Nothing is deleted unless you choose it, and “Undo last sync” restores the Workspace files this sync changed.',
             apply: (its, chosen) => _applyCloudSync({ client, slug, remote, ws, base, items: its, chosen, merges }),
             onApplyError: () => { openCloudSyncDialog(); },      // the cloud may have moved on: compare again, Replace options included
@@ -1546,7 +1590,8 @@ function _refuseGitMetadata(path: string, op: string): void {
 // A new task file whose title is already on the board is a copy (Autopilot once wrote one while
 // working a task): refuse it and point at the original so the agent continues that one.
 async function _refuseDuplicateTask(path: string, content: any): Promise<void> {
-    if (typeof content !== 'string' || !/^(?:fg-|local\/)?tasks\/\d+-.+\.md$/i.test(path) || path.endsWith('/ledger.md')) return;
+    // The task folders are task-status.ts's (fg-tasks/, local/fg-tasks/) and any .md file there with a title is a task, numbered name or not, as for the board (codex R118).
+    if (typeof content !== 'string' || !isTaskPath(path) || !/\.md$/i.test(path) || path.endsWith('/ledger.md')) return;
     if (typeof loadTaskFiles !== 'function' || typeof parseFrontmatter !== 'function') return;
     const key = taskTitleKey(parseFrontmatter(content).title);
     if (!key) return;
@@ -3037,12 +3082,16 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         document.body.removeChild(input);
         const allFiles = Array.from(input.files || []);
 
+        // iCloud leaves a hidden `.name.icloud` stub for a file that is not on the device yet: it is not imported (a placeholder is not the file),
+        // and it is counted so the person is told to download it.
+        let stubs = 0;
         // Filter out skip-dirs and oversized files before touching IDB.
         const files = allFiles.filter(f => {
             const rel  = f.webkitRelativePath || f.name;
             const segs = rel.split('/');
             // Any directory segment in the skip-list → drop the file.
             if (segs.slice(0, -1).some(s => UPLOAD_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
+            if (/^\..+\.icloud$/.test(f.name)) { stubs++; return false; }
             if (f.size > UPLOAD_MAX_BYTES) {
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);
                 return false;
@@ -3055,38 +3104,74 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         if (toImport.length !== files.length) {
             console.warn(`[workspace] capped import at ${UPLOAD_MAX_FILES} of ${files.length} files (${skipped} filtered by dir/size)`);
         }
+        const reportNotDownloaded = (unreadable: string[]) => {
+            if (!unreadable.length && !stubs) return;
+            const list = unreadable.slice(0, 8).join('\n') + (unreadable.length > 8 ? `\n…and ${unreadable.length - 8} more` : '');
+            alert(`${unreadable.length + stubs} file${unreadable.length + stubs === 1 ? ' was' : 's were'} not imported because iCloud has not downloaded ${unreadable.length + stubs === 1 ? 'it' : 'them'} to this device.\n`
+                + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
+        };
         if (toImport.length === 0) {
             console.warn('[workspace] no importable files after filtering');
+            reportNotDownloaded([]);
             return;
         }
 
         // Process in batches of 20, yielding to the UI between batches.
         const BATCH = 20;
-        const importedPaths = new Set<string>();
+        const readHashes = new Map<string, string>();      // folder path → hash of the bytes just read from it
         const unreadable: string[] = [];
-        // iCloud leaves a hidden `.name.icloud` stub for a file that is not on the device yet.
-        const stubs = allFiles.filter(f => /^\..+\.icloud$/.test(f.name)).length;
-        if (asLocal && folder) { const root = (toImport[0].webkitRelativePath || '').split('/')[0]; if (root) try { localStorage.setItem('fg_localsync_folder', root); } catch {} }
+        const relOf = (f: File) => {
+            const r = f.webkitRelativePath || f.name;
+            // A Local Folder is addressed from the folder's root (as with a live folder): drop the picked folder's own name.
+            return asLocal && folder && r.includes('/') ? r.slice(r.indexOf('/') + 1) : r;
+        };
+        if (asLocal && folder) {
+            const root = (toImport[0].webkitRelativePath || '').split('/')[0];
+            if (root) try {
+                // Another folder is not the one the agreement and the import hashes were made with: start from "nothing agreed" (conflicts keep both).
+                const prevRoot = localStorage.getItem('fg_localsync_folder');
+                if (prevRoot && prevRoot !== root) {
+                    localStorage.removeItem(_LS_BASE); localStorage.removeItem(_LS_IMPORTED);
+                    await _clearBaseTexts('folder');
+                }
+                localStorage.setItem('fg_localsync_folder', root);
+            } catch {}
+        }
+        const prevImported = asLocal ? _lsGet(_LS_IMPORTED) : {};
+        const takenNames = asLocal ? new Set((await listWorkspaceFilesMetaOnly()).map((f: any) => f.name as string)) : new Set<string>();
         for (let i = 0; i < toImport.length; i++) {
             const file = toImport[i];
-            // webkitRelativePath gives "dirname/file.ext" for folder imports
-            let rel  = file.webkitRelativePath || file.name;
-            // A Local Folder is addressed from the folder's root (as with a live folder): drop the picked folder's own name.
-            if (asLocal && folder && rel.includes('/')) rel = rel.slice(rel.indexOf('/') + 1);
+            const rel  = relOf(file);
             // Prefix with "local/" so files appear in the Local Folder column
             const path = asLocal ? 'local/' + rel : rel;
-            if (asLocal) importedPaths.add(rel);
             try {
                 // Photos, audio and video from a device picker can carry an extension the binary list
                 // lacks (.heic, .m4a …): reading those as text would corrupt them.
                 const bytes = await _readBytesWithin(file, UPLOAD_READ_MS);
+                let content: string, encoding: 'base64' | null = null;
                 if (_isBinaryExt(path) || (/^(image|audio|video)\//.test(file.type) && file.type !== 'image/svg+xml')) {
-                    await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
+                    content = _uint8ToBase64(bytes); encoding = 'base64';
                 } else {
                     const text = decodeTextBytes(bytes);
-                    if (text !== null) await writeWorkspaceFile(path, text);
-                    else await writeWorkspaceFile(path, _uint8ToBase64(bytes), null, 'base64');
+                    if (text !== null) content = text; else { content = _uint8ToBase64(bytes); encoding = 'base64'; }
                 }
+                const inHash = hashContent((encoding || '') + '|' + content);
+                let target = path, targetRel = rel, write = true;
+                if (asLocal) {
+                    // An edit waiting to be exported is the only copy of that edit: the folder's version must not replace it before the sync can offer both.
+                    const cur = takenNames.has(path) ? await readWorkspaceFile(path) : null;
+                    const curHash = cur ? hashContent((cur.encoding || '') + '|' + (cur.content || '')) : null;
+                    const pending = curHash !== null && prevImported[rel] !== undefined && curHash !== prevImported[rel];
+                    if (pending && curHash !== inHash) {
+                        if (inHash === prevImported[rel]) write = false;                       // the folder is as imported: the edit stays, still to be exported
+                        else {                                                                  // edited on both sides: the folder's version comes in beside it
+                            targetRel = keepBothName(rel, n => takenNames.has('local/' + n), 'folder'); target = 'local/' + targetRel;
+                            readHashes.set(rel, inHash);
+                        }
+                    }
+                }
+                if (write) { await writeWorkspaceFile(target, content, null, encoding); takenNames.add(target); }
+                readHashes.set(targetRel, inHash);
             } catch (e) {
                 console.error('[workspace] upload error:', path, e);
                 unreadable.push(rel);
@@ -3096,14 +3181,10 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         }
         if (asLocal) {
             _hasImportedLocal = true;
-            try { await _afterLocalImport(importedPaths); } catch (e) { console.warn('[workspace] post-import bookkeeping failed:', e); }
+            try { await _afterLocalImport(readHashes, new Set(allFiles.map(relOf))); } catch (e) { console.warn('[workspace] post-import bookkeeping failed:', e); }
         }
         await renderFileList();
-        if (unreadable.length || stubs) {
-            const list = unreadable.slice(0, 8).join('\n') + (unreadable.length > 8 ? `\n…and ${unreadable.length - 8} more` : '');
-            alert(`${unreadable.length + stubs} file${unreadable.length + stubs === 1 ? ' was' : 's were'} not imported because iCloud has not downloaded ${unreadable.length + stubs === 1 ? 'it' : 'them'} to this device.\n`
-                + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
-        }
+        reportNotDownloaded(unreadable);
         // Merge on import: when the folder brought files that are new or differ from the Workspace's, show the diff.
         if (asLocal) openLocalSyncDialog({ onlyIfIncoming: true }).catch(() => {});
     };
@@ -3250,10 +3331,16 @@ async function _collectProjectData(name) {
     const chatData = {};
     for (const k of _chatKeys()) chatData[k] = localStorage.getItem(k);
     // localStorage caches only the most recent chats' history — read the rest from IndexedDB.
+    const unreadableChats: string[] = [];
     if (typeof getChatList === 'function' && typeof sessionLoadHistory === 'function') {
         for (const c of getChatList()) {
             const k = `fg_chat_${c.id}_oh`;
-            const h = await sessionLoadHistory(c.id);
+            let h: any[] | null;
+            try {
+                if (typeof sessionLoadHistoryStrict !== 'function') h = await sessionLoadHistory(c.id);
+                else { try { h = await sessionLoadHistoryStrict(c.id); } catch { h = await sessionLoadHistoryStrict(c.id); } }   // one more try: a failed read is often a moment, not a state
+            }
+            catch { h = null; if (chatData[k] == null) unreadableChats.push(String(c.name || c.id)); }   // no cached copy and the store would not answer: this chat's history is not in the backup
             if (!h?.length) continue;
             // A cached copy may be a trimmed snapshot of the stored history; keep the longer one.
             // The cache is kept only when it is newer than the stored copy (its last save was not acknowledged by the store): comparing lengths picked the
@@ -3270,7 +3357,16 @@ async function _collectProjectData(name) {
         localFolderName: fsaHandle ? fsaHandle.name : null,
         workspace: wsFiles.map(f => ({ name: f.name, content: f.content, lastModified: f.lastModified, encoding: f.encoding || null })),
         chatData,
+        unreadableChats,
     };
+}
+
+/** A backup must say what it does not hold: chats whose stored history could not be read (and that have no cached copy) are not in it, and restoring it would empty them. */
+function _confirmCompleteBackup(data: any): boolean {
+    const unreadable: string[] = data.unreadableChats || [];
+    delete data.unreadableChats;
+    if (!unreadable.length) return true;
+    return confirm(`The saved history of ${unreadable.length} chat${unreadable.length === 1 ? '' : 's'} could not be read, so ${unreadable.length === 1 ? 'it' : 'they'} will NOT be in this backup (restoring it would leave ${unreadable.length === 1 ? 'that chat' : 'those chats'} empty):\n\n${unreadable.slice(0, 8).join('\n')}${unreadable.length > 8 ? '\n…' : ''}\n\nSave the backup anyway? Cancel keeps things as they are so you can try again.`);
 }
 
 async function _idbPutProject(data) {
@@ -3436,6 +3532,17 @@ export function validateProjectData(data: any): void {
     }
     if (data.chatData !== undefined && (data.chatData === null || typeof data.chatData !== 'object' || Array.isArray(data.chatData)))
         throw new Error('The project\'s chat data is not valid.');
+    // The chat list and every chat's history are parsed here, before anything is replaced: a corrupt one found afterwards left the new workspace in and the old chats
+    // gone, or an emptied conversation without a word (codex R97).
+    for (const [k, v] of Object.entries(data.chatData || {})) {
+        if (typeof v !== 'string') continue;
+        const isList = k === 'fg_chat_list', isHistory = /^fg_chat_.+_oh$/.test(k);
+        if (!isList && !isHistory) continue;
+        let parsed: unknown;
+        try { parsed = JSON.parse(v); } catch { throw new Error(`The project's ${isList ? 'chat list' : `history of chat "${k.slice(8, -3)}"`} is damaged (not valid JSON), so nothing was imported.`); }
+        if (!Array.isArray(parsed)) throw new Error(`The project's ${isList ? 'chat list' : `history of chat "${k.slice(8, -3)}"`} is not a list, so nothing was imported.`);
+        if (isList && parsed.some((c: any) => !c || typeof c !== 'object' || typeof c.id !== 'string')) throw new Error('The project\'s chat list has an entry without an id, so nothing was imported.');
+    }
 }
 
 // A running turn belongs to the project being replaced: its tool calls would write into the imported
@@ -3467,6 +3574,8 @@ async function _restoreProjectData(data) {
     // (the clear was its own transaction, then one per file: a failure part-way left the new project half in and the old one gone, and an aborted
     // clear was taken for a successful one: codex R30-001, opencode §10). Before anything else is touched, so a failure leaves the page as it was.
     await applyWorkspaceBatch((data.workspace || []).map((f: any) => ({ name: f.name, content: f.content, encoding: f.encoding || null, lastModified: f.lastModified })), [], { clearAll: true });
+    // Whether "local/" paths exist follows the project now in place, not the one replaced (opencode §16, §17).
+    _hasImportedLocal = (data.workspace || []).some((f: any) => String(f.name).startsWith('local/'));
     _workspaceGeneration++; bumpWorkspaceEpoch();
     _discardProjectUiState();
     // Snapshot all settings (API keys, model config, etc.) before touching anything.
@@ -3484,6 +3593,7 @@ async function _restoreProjectData(data) {
     }
     // Restore chat data to localStorage
     const replacedChatIds: string[] = typeof getChatList === 'function' ? getChatList().map((c: any) => c.id) : [];
+    const importedSaves: Array<Promise<string | null>> = [];
     for (const k of _chatKeys()) localStorage.removeItem(k);
     for (const [k, v] of Object.entries(data.chatData || {})) {
         if (typeof v !== 'string') continue;
@@ -3491,11 +3601,17 @@ async function _restoreProjectData(data) {
         // History goes to IndexedDB, which loadChatHistory reads first; the localStorage copy
         // is a cache that may not fit for every chat (saveHistory prunes it to recent chats).
         const oh = /^fg_chat_(.+)_oh$/.exec(k);
-        if (oh && typeof sessionSaveHistory === 'function') {
-            try { sessionSaveHistory(oh[1], JSON.parse(v as string)); } catch {}
-        }
         try { localStorage.setItem(k, v as string); } catch {}
+        if (oh && typeof sessionSaveHistory === 'function') {
+            try { const id = oh[1]; importedSaves.push(sessionSaveHistory(id, JSON.parse(v as string)).then(ok => ok ? null : id, () => id)); } catch {}
+        }
     }
+    // Every imported history is written to the session store and the answer is checked: one the store refused would leave the old conversation durable under the same
+    // chat id and the imported one only in the cache, which the next load read as the older copy (codex R98). Such a chat's cache is marked as the newer copy, and the
+    // person is told.
+    const storeTakesHistory = typeof sessionHas === 'function' && sessionHas('replaceMessages');
+    const notSaved = storeTakesHistory ? (await Promise.all(importedSaves)).filter((x): x is string => !!x) : [];
+    for (const id of notSaved) (window as any).markChatCacheUnacknowledged?.(id);
     // The session store still held the replaced project's chats and, after a reload, brought them back next to the restored ones (opencode §10):
     // the chats that are not in the restored project are deleted there, and the list it keeps is the restored one.
     try {
@@ -3549,6 +3665,7 @@ async function _restoreProjectData(data) {
     loadSkills?.();
     // The board still showed the replaced workspace's tasks until something else refreshed it.
     try { await (window as any).syncLedgerWithTaskFiles?.(); } catch { try { await (window as any).refreshTasks?.(); } catch {} }
+    if (notSaved.length) console.warn(`[import] the session store refused the history of ${notSaved.length} imported chat(s): ${notSaved.join(', ')}; the imported cache is kept as the newer copy and is saved again with the next message`);
 
 }
 
@@ -3650,6 +3767,7 @@ async function saveProject() {
     localStorage.setItem('fg_project_name', name);
     try {
         const data = await _collectProjectData(name);
+        if (!_confirmCompleteBackup(data)) return;
         // The id is the project's name reduced to letters and digits, so "Release 1.0" and "Release 1-0" share one. Saving the same
         // name again updates its slot; a different name that maps to a taken id gets its own.
         const base = data.id;
@@ -3721,6 +3839,7 @@ async function exportProject() {
     const name = (nameInput?.value || '').trim() || localStorage.getItem('fg_project_name') || 'Project';
     try {
         const data = await _collectProjectData(name);
+        if (!_confirmCompleteBackup(data)) return;
         // What this export holds is the common starting point of a later merge of an edited copy.
         await _saveBaseTexts('project', data.workspace.map((f: any) => ({ path: f.name, content: f.content, encoding: f.encoding }))).catch(() => {});
         const buf  = await _gzipJson(data);

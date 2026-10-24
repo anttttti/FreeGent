@@ -113,6 +113,28 @@ export const modelRefusesImages = (key: string) => {
     return true;
 };
 if (typeof window !== 'undefined') (window as any).clearImageRefusals = clearImageRefusals;   // settings code resets it when the model list changes
+// Models whose endpoint answered 400 to the thinking controls we sent (a hosted model that takes no `reasoning_budget`, a template without
+// `enable_thinking`). Their requests go without the controls from then on; the answer is remembered for the session, and expires so that an
+// endpoint upgraded in the meantime gets them again.
+const THINKING_REFUSAL_TTL_MS = 60 * 60_000;
+const _noThinkingFieldModels = new Map<string, number>();
+export const markModelRejectsThinkingFields = (key: string) => { _noThinkingFieldModels.set(key, Date.now()); };
+export const clearThinkingFieldRefusals = () => { _noThinkingFieldModels.clear(); };
+export const modelRejectsThinkingFields = (key: string) => {
+    const at = _noThinkingFieldModels.get(key);
+    if (at === undefined) return false;
+    if (Date.now() - at > THINKING_REFUSAL_TTL_MS) { _noThinkingFieldModels.delete(key); return false; }
+    return true;
+};
+/** The request without the thinking controls (the resend after a model refused them). */
+export function stripThinkingFields(payload: any): any {
+    const { reasoning_budget: _rb, thinking: _th, thinking_token_budget: _tb, ...rest } = payload;
+    if (rest.chat_template_kwargs) {
+        const { enable_thinking: _et, preserve_thinking: _pt, ...kw } = rest.chat_template_kwargs;
+        if (Object.keys(kw).length) rest.chat_template_kwargs = kw; else delete rest.chat_template_kwargs;
+    }
+    return rest;
+}
 export function stripImageParts(hist: any[]): any[] {
     return hist.map(m => Array.isArray(m?.content) && m.content.some((p: any) => p?.type === 'image_url')
         ? { ...m, content: m.content.map((p: any) => p?.type === 'image_url' ? { type: 'text', text: '[image omitted: this model does not accept images]' } : p) }
@@ -189,7 +211,7 @@ export function buildChatPayload(ep: any, {
             }),
         }),
         ...(provider === 'openrouter' && { include_reasoning: true }),
-        ..._thinkingFields(provider, isCustom, thinkingBudget, preserveThinking),
+        ..._thinkingFields(provider, isCustom, modelRejectsThinkingFields(`${provider}|${ep?.model ?? ''}`) ? -1 : thinkingBudget, preserveThinking),
         // No value (the user cleared the field): the key is left out, so the server uses its own default.
         ...(temperature != null && { temperature }),
         // Opt-in sampling seed for OpenAI-compatible servers (FREEGENT_SAMPLING_SEED). The benchmark's

@@ -63,7 +63,10 @@ async function _cdup(root: string): Promise<string | null> {
     const hit = _cdupCache.get(root);
     if (hit && (hit.cdup !== null || Date.now() - hit.at < 10_000)) return hit.cdup;
     const r = await _git(root, ['rev-parse', '--show-cdup'], 4, 2_000);
-    const cdup = r.ok ? r.out.trim() : null;
+    let cdup = r.ok ? r.out.trim() : null;
+    // A folder that an enclosing repository's .gitignore ignores (a workspace under its repo's /bench/, /tmp/ or /logs/) is not that repository's
+    // project: ls-files and status answer "nothing" for it, which read as an empty workspace and as "no file was written". Treat it as unmanaged.
+    if (cdup !== null && (await _git(root, ['check-ignore', '-q', '--', '.'], 4, 2_000)).ok) cdup = null;
     _cdupCache.set(root, { cdup, at: Date.now() });
     return cdup;
 }

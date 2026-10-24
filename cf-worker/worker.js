@@ -249,7 +249,10 @@ async function _sync(request, env, url) {
                 if (text.length > SYNC_MANIFEST_MAX) return _err(413, 'Manifest too large');
                 let m; try { m = JSON.parse(text); } catch { return _err(400, 'Manifest must be JSON'); }
                 if (!m || typeof m.files !== 'object' || Array.isArray(m.files)) return _err(400, 'Manifest needs a files object');
-                for (const f of Object.values(m.files)) if (!f || !/^[0-9a-f]{64}$/.test(f.h)) return _err(400, 'Manifest entry without a SHA-256');
+                for (const [path, f] of Object.entries(m.files)) {
+                    if (!_safeSyncPath(path)) return _err(400, 'Manifest path not allowed: ' + JSON.stringify(path).slice(0, 80));
+                    if (!f || !/^[0-9a-f]{64}$/.test(f.h)) return _err(400, 'Manifest entry without a SHA-256');
+                }
                 const base = request.headers.get('X-FG-Sync-Base') || '';
                 if (!base) return _err(400, 'X-FG-Sync-Base required (the etag you started from, or "none")');
                 const o = await bucket.put(root + 'manifest.json', text, { onlyIf: base === 'none' ? { etagDoesNotMatch: '*' } : { etagMatches: base } });
@@ -530,6 +533,14 @@ function _publicUrlOk(target) {
 }
 
 // X-FG-Proxy-Error marks errors generated here, so clients can tell them from upstream responses.
+// A path a project manifest may carry (the client applies the same rule to what it pulls): relative, no empty, "." or ".." segment,
+// no backslash or control character, no drive letter. The keys reach the workspace and the folder helpers on the client.
+function _safeSyncPath(p) {
+  if (typeof p !== 'string' || !p || p.length > 1024) return false;
+  if (/[\\\u0000-\u001f]/.test(p) || p.startsWith('/') || /^[A-Za-z]:/.test(p)) return false;
+  return p.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..');
+}
+
 function _err(status, message) {
     return new Response(JSON.stringify({ error: message }), {
         status,

@@ -6,6 +6,8 @@
 // or "can I open a page?". Those questions are named here. Every getter reads the global at call
 // time, never at module load, because the runner installs it after the modules load.
 
+import { killRunningNative } from './native-running.js';
+
 const g = globalThis as any;
 let nativeRunning = 0;
 
@@ -43,6 +45,8 @@ export const runtime = {
     /** Native executions running now. Stop-after-this-step (agent-core stopAfterStep) must not abort a step while one runs:
      *  the abort detached the command, which kept going and wrote its files after the next turn had started. */
     get nativeBusy(): boolean { return nativeRunning > 0; },
+    /** End the commands running natively (a hard Stop). Only commands run by the built-in executor are registered; an executor of another kind cannot be cancelled. */
+    killNative(): number { return killRunningNative(); },
     async nativeExec(language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> {
         nativeRunning++;
         try { return await g.nativeExec(language, code, opts); } finally { nativeRunning--; }

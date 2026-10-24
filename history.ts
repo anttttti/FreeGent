@@ -426,7 +426,13 @@ export function _capAnyResult(result: any, limit: number): any {
     }
     if (size(out) > limit) {
         const text = JSON.stringify(out);
-        out = { truncated: true, content: `${text.slice(0, limit)}\n[…${text.length - limit} chars not shown]` };
+        // Whether the tool succeeded is not data volume: the status fields stay outside the excerpt, so a cut-off result of a failed tool still says it failed (codex R55).
+        const meta: Record<string, any> = {};
+        if (!Array.isArray(result)) for (const k of ['error', 'success', 'ok', 'status', 'exit_code', 'signal', 'warning']) {
+            const v = (result as any)[k];
+            if (v !== undefined && (v === null || typeof v !== 'object')) meta[k] = typeof v === 'string' ? v.slice(0, 500) : v;
+        }
+        out = { truncated: true, ...meta, content: `${text.slice(0, limit)}\n[…${text.length - limit} chars not shown]` };
     }
     return out;
 }
@@ -467,12 +473,30 @@ function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
 // The covering read must hold the lines: a later "Already read" note, refusal or pruned stub does not
 // (v0.59 xarray-6744: full copies were pruned in favour of "Already read" notes, so the window was in
 // no result at all and the model re-read it ~40 times).
+// Whether a retained read_file result holds the lines it was asked for. The request says what was asked, not what was kept: a whole-file read returns only the first
+// lines inline, and history clipping cuts a long result (codex R62). A result that was cut is not a copy of the range.
+function _retainsRange(content: any, meta: _CallMeta): boolean {
+    const text = typeof content === 'string' ? content : JSON.stringify(content);
+    if (/\[…\d+ chars not shown\]|chars not shown\]|"truncated":\s*true/.test(text)) return false;
+    try {
+        const j = JSON.parse(text.replace(/^\[[^\]]*\]\n/, ''));
+        if (j && typeof j === 'object') {
+            if (j.truncated) return false;
+            if (typeof j.content === 'string' && typeof j.length === 'number') {
+                const whole = meta.from <= 1 && meta.to === Infinity && !j.start_line && !j.end_line;
+                if (whole && j.content.length < j.length) return false;   // only part of the file came back
+            }
+        }
+    } catch { /* not JSON: judged by the markers above */ }
+    return true;
+}
+
 function _readCovered(pos: number, meta: _CallMeta, results: Array<{ pos: number; meta: _CallMeta; content?: any }>): _CallMeta | null {
     for (const r of results) {
         if (r.pos <= pos || r.meta.path !== meta.path) continue;
         if (_PRUNE_WRITE_TOOLS.has(r.meta.name)) return null;   // file changed before any covering read
         if (_PRUNE_READ_TOOLS.has(r.meta.name) && r.meta.from <= meta.from && r.meta.to >= meta.to
-            && _clen(r.content) >= _PRUNE_MIN_CHARS && !String(r.content).startsWith('[')) return r.meta;
+            && _clen(r.content) >= _PRUNE_MIN_CHARS && !String(r.content).startsWith('[') && _retainsRange(r.content, r.meta)) return r.meta;
     }
     return null;
 }
@@ -513,7 +537,7 @@ export function pruneSessionHistory(sess: Session): number {
         saved += cl;
         const pNorm = _normPath(meta.path);
         for (const key of _seenReadFiles.keys())
-            if (key.startsWith(pNorm + ':')) _seenReadFiles.set(key, 'pruned');
+            if (key.startsWith(pNorm + ':') && !key.endsWith('::__count__')) _seenReadFiles.set(key, 'pruned');   // the per-file read counter is not a range (opencode §24)
     }
     return saved;
 }

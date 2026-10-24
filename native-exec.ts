@@ -9,6 +9,7 @@ import { constants as osConstants } from 'node:os';
 import { scrubEnv } from './secret-env.js';
 import { snapshotMarks, changedSince } from './workspace-scan.js';
 import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
+import { registerNativeRun } from './native-running.js';
 
 // Write detection (which files did the command touch) is workspace-scan.ts: git's own change list in a repository, a budgeted walk
 // elsewhere, and "unknown" (no files_written; the loop then reads the command) when neither is quick. It is asynchronous and never
@@ -54,7 +55,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         let done = false;
         // Head + tail of each stream (exec-output.ts); curl's progress meter is dropped from stderr.
         const _shaped = () => ({ stdout: clipOutput(out.text, out.dropped), stderr: clipOutput(stripCurlProgress(err.text), err.dropped) });
-        const _done = (val: any) => { if (done) return; done = true; clearTimeout(timer); resolve(val); };
+        const _done = (val: any) => { if (done) return; done = true; clearTimeout(timer); unregister(); resolve(val); };
         // The runner's environment holds the provider keys (loaded from the credentials file);
         // agent commands get it without them. (docker exec doesn't forward it either way.)
         // spawn, not execFile: execFile kills the child once stdout passes its maxBuffer, and the
@@ -65,6 +66,9 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             // a module edited within the same second (same size) over the edit.
             env: { ...scrubEnv(process.env), PYTHONDONTWRITEBYTECODE: '1' } });
         child.unref();
+        // A hard Stop ends the command, not only the turn waiting for it: a process left running wrote its files after the next turn had begun.
+        const kill = () => { try { process.kill(-(child.pid ?? 0), 'SIGKILL'); } catch {} try { child.kill('SIGKILL'); } catch {} };
+        const unregister = registerNativeRun(kill);
         // No interactive input: close stdin so a program that reads it gets EOF at once instead of
         // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
         child.stdin?.end();

@@ -2,6 +2,7 @@
 // Depends on: config.js, workers.js, state.js (aiBusy, setAiJob, activeChatId).
 import { activeChatId, aiBusy, setAiJob } from './state.js';
 import { redactSecrets, storedSecretValues } from './convo-log.js';
+import { isTaskPath, dedupeTasksByTitle } from './task-status.js';
 
 export async function runPostTurnAgents(): Promise<void> {
     if (getAgentReviewLogs()) {
@@ -128,12 +129,15 @@ async function _saveLogAndCreateReviewTask() {
 
 export async function rebuildLedger(): Promise<void> {
     const LEDGER = 'fg-tasks/ledger.md';
+    const isMissing = (e: any) => /not found|ENOENT|no such file|does not exist/i.test(String(e?.message ?? e));
     let files: Array<{ name: string; size?: number; lastModified?: number; isLocal?: boolean }>;
     try { files = await agentListFiles(); } catch { return; }
 
+    // The task files are the board's: the folders task-status.ts names, any .md file there that is a task (a title or id, or a numbered name), de-duplicated by title
+    // as the board does (codex R117). The older numbered-file regex left out local/fg-tasks/ and unnumbered tasks and included the retired tasks/ folders.
     const taskPaths = (files || [])
         .map(f => (typeof f === 'string' ? f : f.name) || '')
-        .filter(n => /^(?:fg-|local\/)?tasks\/\d+-.+\.md$/i.test(n))
+        .filter(n => isTaskPath(n) && /\.md$/i.test(n) && !n.endsWith('/ledger.md'))
         .sort();
 
     if (!taskPaths.length) {
@@ -146,30 +150,39 @@ export async function rebuildLedger(): Promise<void> {
         return;
     }
 
-    const entries = await Promise.all(taskPaths.map(async path => {
-        try {
-            const content = await agentReadFile(path);
-            if (typeof content !== 'string') return null;
-            const fm = parseFrontmatter(content);
-            const id       = String(fm.id || path.match(/(\d+)/)?.[1] || '?').padStart(3, '0');
-            const status   = (fm.status   || 'open').slice(0, 12).padEnd(12);
-            const priority = (fm.priority || '—').slice(0, 8).padEnd(8);
-            const title    = (fm.title    || path.split('/').pop().replace(/^\d+-/, '').replace(/\.md$/, '')).slice(0, 80);
-            return `| ${id} | ${status} | ${priority} | ${title} |`;
-        } catch { return null; }
+    // A read that failed is not a file that is gone: the table is rebuilt only from a complete read (one retry each), or not at all (codex R111).
+    let incomplete = false;
+    const tasks: Array<{ path: string; fm: any }> = [];
+    await Promise.all(taskPaths.map(async path => {
+        let content: any;
+        try { content = await agentReadFile(path).catch(() => agentReadFile(path)); } catch { incomplete = true; return; }
+        if (typeof content !== 'string') { incomplete = true; return; }
+        const fm = parseFrontmatter(content);
+        if (!fm.id && !fm.title && !/\/\d{2,}-/.test(path)) return;   // not a task file
+        tasks.push({ path, fm });
     }));
+    if (incomplete) { console.warn('[ledger] not rebuilt: a task file could not be read; the ledger is left as it is'); return; }
 
-    const rows = entries.filter(Boolean);
+    const rows = dedupeTasksByTitle(tasks.sort((a, b) => a.path.localeCompare(b.path))).map(({ path, fm }) => {
+        const id       = String(fm.id || path.match(/(\d+)/)?.[1] || '?').padStart(3, '0');
+        const status   = (fm.status   || 'open').slice(0, 12).padEnd(12);
+        const priority = (fm.priority || '—').slice(0, 8).padEnd(8);
+        const title    = (fm.title    || path.split('/').pop()!.replace(/^\d+-/, '').replace(/\.md$/, '')).slice(0, 80);
+        return `| ${id} | ${status} | ${priority} | ${title} |`;
+    });
     if (!rows.length) return;
 
     const table = LEDGER_HEADER + rows.join('\n') + '\n';
 
+    // The archive is kept from the ledger as it is: when that cannot be read (and it exists), the rebuild stops instead of dropping the archive.
     let archivePart = '';
     try {
         const existing = await agentReadFile(LEDGER);
         const archiveIdx = existing.indexOf('\n## Archive');
         if (archiveIdx >= 0) archivePart = existing.slice(archiveIdx);
-    } catch {}
+    } catch (e) {
+        if (!isMissing(e)) { console.warn('[ledger] not rebuilt: the existing ledger could not be read, so its archive would be lost'); return; }
+    }
     await agentWriteFile(LEDGER, table + archivePart);
     console.log('[ledger] rebuilt from', rows.length, 'task files');
 }

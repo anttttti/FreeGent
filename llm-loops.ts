@@ -6,7 +6,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs, isRealUserMessage } from './history-util.js';
@@ -14,15 +14,15 @@ import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlP
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, userForbidsExecution, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
-import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages, markModelRefusesImages, modelRefusesImages, stripImageParts } from './payload-builder.js';
+import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages, markModelRefusesImages, modelRefusesImages, stripImageParts, markModelRejectsThinkingFields, modelRejectsThinkingFields, stripThinkingFields } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
-import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
+import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
-import { newVerification, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
+import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { runCompletionGates } from './completion-gates.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
@@ -393,22 +393,37 @@ async function _getReplaceFailNudge(_replFails: Map<string, number>, _replNudge:
 // without injected framework blocks. The raw message starts with the guidance prelude, so
 // slicing it yielded guidance boilerplate (551/558 v0.54 tasks) and its pytest examples were
 // read as graded tests.
+// The text a user message carries, whatever shape it has (a string, or parts: text beside an image or file).
+const _humanText = (m: any): string => typeof m?.content === 'string' ? m.content
+    : Array.isArray(m?.content) ? m.content.filter((p: any) => p?.type === 'text' && typeof p.text === 'string').map((p: any) => p.text).join('\n') : '';
+const _isFrameworkText = (t: string): boolean => /^\s*(?:<nudge>|<tool_response>|\[SYSTEM:|\[TASK)/.test(t);
 export function _originalTask(hist: any[]): string {
-    const m = hist.find((x: any) => x.role === 'user' && typeof x.content === 'string' && x.content.trim());
-    return m ? stripInjected(m.content.replace(/^\[TASK[^\]]*\]\n/, '')) : '';
+    const m = hist.find((x: any) => x.role === 'user' && _humanText(x).trim());
+    return m ? stripInjected(_humanText(m).replace(/^\[TASK[^\]]*\]\n/, '')) : '';
 }
 
 // What a forced stop's closing summary is told the task is. In a long chat the first message is not what the user is waiting for:
 // the stop at the step limit answered "Do you see this link? Say yes or no" after 100 steps of work on a later request
 // (fg-chat 2026-10-23). The user's latest message comes after the first; a lone message (benchmarks, new chats) is unchanged.
+// The task has one allowance (the synthesis prompt cuts it at STOP_TASK_CHARS): the latest request is given its room first, the first
+// request only what is left, and a latest request that does not fit is cut with a visible mark, not behind older background (codex R74).
+const STOP_TASK_CHARS = 1500;
 export function _stopSummaryTask(hist: any[]): string {
     const first = _originalTask(hist);
     for (let i = hist.length - 1; i >= 0; i--) {
         const m = hist[i];
-        if (!isRealUserMessage(m) || m.content.startsWith('[SYSTEM:') || m.content.startsWith('[TASK')) continue;
-        const last = stripInjected(m.content);
+        if (m?.role !== 'user') continue;
+        const raw = _humanText(m);
+        if (!raw.trim() || _isFrameworkText(raw)) continue;
+        const last = stripInjected(raw);
         if (!last) continue;
-        return !first || first === last ? last : `${first.slice(0, 700)}\n\nThe user's latest message:\n${last}`;
+        if (!first || first === last) return last;
+        const header = "\n\nThe user's latest message:\n";
+        const mark = ' […shortened]';
+        if (last.length > STOP_TASK_CHARS) return last.slice(0, STOP_TASK_CHARS - mark.length) + mark;
+        const room = STOP_TASK_CHARS - header.length - last.length;
+        if (room < 80) return last;                                   // no room for the earlier request: the current one is what counts
+        return `${first.slice(0, Math.min(700, room))}${header}${last}`;
     }
     return first;
 }
@@ -704,7 +719,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
 // Tools that only read, whatever their arguments. Anything else (file writes, execute_code,
 // run_workers, MCP and browser tools, task and memory updates, a non-GET fetch_url) may change state.
 const _PARALLEL_SAFE_TOOLS = new Set(['read_file', 'list_files', 'search_workspace', 'repo_map', 'ast_query', 'web_search',
-    'academic_search', 'package_search', 'context7_docs', 'deep_research']);
+    'academic_search', 'package_search', 'context7_docs']);   // not deep_research: it writes its report to the workspace, so what follows it in a batch must see that file
 export function _isReadOnlyCall(c: { name: string; args: any }): boolean {
     if (c.name === 'fetch_url') return /^(GET|HEAD)$/i.test(String(c.args?.method ?? 'GET'));
     return _PARALLEL_SAFE_TOOLS.has(c.name);
@@ -861,16 +876,42 @@ export function _gradedTestIds(taskText: string): string[] {
  * parse). False for output the model cannot act on: a collection or import error, a listing, or
  * failures only in tests that are not graded.
  */
+// Pytest node ids compared as ids: the module (path) and each class/function component must match, and a parameter instance is compared only where the graded id names
+// one (an unparameterized id selects all of its instances). `tests/test_a.py` or a directory selects what is under it (codex R76).
+function _nodeSplit(id: string): { path: string; comps: string[] } {
+    const [path, ...comps] = id.trim().replace(/^\.\//, '').split('::');
+    return { path: path.replace(/\/+$/, ''), comps };
+}
+export function _sameTestNode(failedId: string, gradedId: string): boolean {
+    const F = _nodeSplit(failedId), G = _nodeSplit(gradedId);
+    // pytest prints ids relative to its rootdir; the task may name the file by a longer or absolute path: one path ending in the other is the same module.
+    const samePath = (a: string, b: string) => a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+    // A graded directory (or file) selects what is under it; the directory may be named by a longer path than pytest prints.
+    const under = (dir: string, file: string) => dir.split('/').some((_, i, a) => file.startsWith(a.slice(i).join('/') + '/'));
+    if (!G.comps.length) return samePath(F.path, G.path) || under(G.path, F.path);
+    if (!samePath(F.path, G.path) || F.comps.length < G.comps.length) return false;
+    return G.comps.every((g, i) => {
+        const f = F.comps[i];
+        return /\[/.test(g) ? f === g : f.replace(/\[.*$/, '') === g;
+    });
+}
+
+/**
+ * True when this test output shows a graded test that ran and failed (or source that does not
+ * parse). False for output the model cannot act on: a collection or import error, a listing, or
+ * failures only in tests that are not graded.
+ */
 export function _gradedTestFailed(output: string, gradedIds: string[]): boolean {
+    // The output is a JSON-encoded tool result: its line breaks are the two characters backslash-n. A count at the start of a line ("\n1 failed" in the text) is
+    // then glued to a word character and \b does not see it (codex R76).
+    output = output.replace(/\\[nrt]/g, ' ');
     if (/SyntaxError|IndentationError|TabError/.test(output)) return true;
     if (/errors? during collection|Interrupted: \d+ errors?|no tests ran|ERROR: (?:not found|file or directory not found)|INTERNALERROR/.test(output)) return false;
     if (!/\b\d+ failed\b/.test(output)) return false;
     // FAILED lines name the tests; the output is a JSON-encoded tool result, so a line ends at "\n".
     const failed = [...output.matchAll(/FAILED\s+([^\s\\]+)/g)].map(m => m[1]);
     if (!failed.length || !gradedIds.length) return true;
-    // Compare test names, not substrings: test_diophantine.py::test_fail_holzer is not test_diophantine.
-    const nameOf = (id: string) => id.split('::').pop()!.replace(/\[.*$/, '');
-    return failed.some(f => gradedIds.some(g => g.includes('::') ? nameOf(f) === nameOf(g) : f.includes(g)));
+    return failed.some(f => gradedIds.some(g => _sameTestNode(f, g)));
 }
 
 // The synthesis request has no tools, but a confused model may still answer with a tool call
@@ -1232,6 +1273,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // chat's (headless runs have their own session; the model saw none of their nudges from
     // 8028033 until emitNudge was bound here). The log is the only sink: emitNudge is told to
     // leave history alone and the nudge is appended below. See docs/dead-code-audit-2026-07-25.md §4.5.
+    let _reminderSeq: number | undefined;   // the event of the last completion reminder pushed (identity, not position; see spliceReminder)
     const _emitNudge = (name: string, entry: any, opts: any = {}) => {
         emitNudge(name, entry, { suppressHistory: true, ...opts });
         // append all nudges to the event log as user/message so
@@ -1247,6 +1289,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _evtAppend(_s, 'user/message',
                 { role: 'user', content: _nudgeContent },
                 { surfaceOp: 'append' });
+            if (name === 'completion_gate' || name === 'turn_state') { const _ps = _getEvtSession(_s); _reminderSeq = _ps ? _ps.surface[_ps.surface.length - 1] : undefined; }
         }
     };
     if (!_getEvtSession(_s)) _s._session = registry.create({ chatId: activeChatId ?? 'anon' });
@@ -1298,6 +1341,25 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _nudgeFn;
     const _oaiAdapter = {
         pushNudge: text => _emitNudge('turn_state', _nudgeFn(text)),
+        // The reply to the reminder was COMPLETED (or an acknowledgement): the reminder goes, and with it the reply when it carried no answer. The reminder is found by
+        // its event: a model that did work in answer to it (a check run, a file read) has tool results between the two, and removing "the second-last message" took
+        // the check's result instead and left its call unanswered (codex R79).
+        spliceReminder: (alsoReply: boolean): boolean => {
+            const _rs = _getEvtSession(_s);
+            if (!_rs || _reminderSeq === undefined || !_rs.surface.includes(_reminderSeq)) return false;
+            const _replySeq = _rs.surface[_rs.surface.length - 1];
+            if (_replySeq === _reminderSeq) return false;
+            // The model did work in answer to the reminder (a tool call and its result stand between): nothing is removed. The reminder stays in the record, harmless,
+            // and the result of the check it asked for is not lost with it.
+            if (_rs.surface[_rs.surface.length - 2] !== _reminderSeq) { _reminderSeq = undefined; return true; }
+            const tomb = (seq: number) => (_rs.append as _AppendSurface)('user/message', { role: 'user', content: '' }, { surfaceOp: { op: 'replace', start: seq, end: seq } });
+            try {
+                if (alsoReply) tomb(_replySeq);
+                tomb(_reminderSeq);
+                _reminderSeq = undefined;
+                return true;
+            } catch (_e) { console.warn('[session-event] spliceReminder failed:', _e); return false; }
+        },
         spliceFromSecondLast: count => {
             // Drop the splice from the session surface via a tombstone replace.
             // Splices always start at history[length-2] and remove 'count' items.
@@ -1594,9 +1656,19 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             && _editsThisRun && ps.finalCheck >= 1 && ps.finalCheck < 3 && _reactiveFired.has('graded_test')) {
             const _hist = _histR(_s);
             let _testOutput = '';
+            // The result must be of a command that ran pytest: a file that was read and mentions a passing run is not one (codex R77).
+            const _ranPytest = (callId: string): boolean => {
+                for (const a of _hist) for (const tc of a.tool_calls ?? []) {
+                    if (tc.id !== callId) continue;
+                    let args: any = {}; try { args = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+                    const code = String(args.code ?? args.command ?? args.cmd ?? '');
+                    return tc.function?.name === 'execute_code' && /\bpytest\b|\bpy\.test\b/.test(code) && isCheckCommand(code);
+                }
+                return false;
+            };
             for (let _i = _hist.length - 1; _i >= 0; _i--) {
                 const _m = _hist[_i];
-                if (_m.role !== 'tool') continue;
+                if (_m.role !== 'tool' || !_ranPytest(_m.tool_call_id)) continue;
                 const _c = typeof _m.content === 'string' ? _m.content
                     : Array.isArray(_m.content) ? (_m.content as any[]).map((x: any) => x.text ?? '').join('') : '';
                 if (/passed|failed|PASSED|FAILED|ERROR|pytest/.test(_c)) { _testOutput = _c; break; }
@@ -2583,8 +2655,11 @@ const FN_TAG_NOTE = FN_TAG_NOTE_MARKER + 'This endpoint does not execute the too
 async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onRequest: (r: any) => void, { localHistory = null as any[] | null, forWorker = false, endpointOverride = null as any, roleOverride = null as any, toolFilterOverride = null as Set<string> | null, maxTokens = null as number | null, inputTokensHint = 0, evtSession = null as AgentSession | null, evtStep = 0, forkPrefix = null as { system: string; tools: any[] | null } | null, forceToolCall = false } = {}): Promise<any> {
     // A saved priority list with no usable model (all paused, switched off or keyless) must not quietly fall back to the
     // built-in Gemini default: the request would go to a model the user never listed.
-    if (!endpointOverride && !getActiveMainModelList().length && getMainModelList().length)
-        throw new Error('No model can be used: every model in the priority list is paused, switched off or has no API key. Resume one in Settings → Models.');
+    // An empty list is the person's choice too (cleared, or emptied by the retirement of its only model): there is no default to fall back to.
+    if (!endpointOverride && !getActiveMainModelList().length && (getMainModelList().length || mainModelListIsEmptyByChoice()))
+        throw new Error(getMainModelList().length
+            ? 'No model can be used: every model in the priority list is paused, switched off or has no API key. Resume one in Settings → Models.'
+            : 'No model is selected: the priority list is empty. Add a model in Settings → Models.');
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;
     const provider = ep.provider ?? getProvider();
@@ -2627,7 +2702,12 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // the same thinking controls (codex R4-001).
     const thinkBudget = isNvidia && modelSupportsThinking(provider, model)
         ? (forWorker ? getWorkerThinkingBudget() : thinkingLevelBudget('nvidia')) : 0;
-    const customThinkBudget = isCustom ? thinkingLevelBudget('custom') : 0; // 0 = off
+    // A worker on a local endpoint follows the worker thinking-budget setting when the person has set one (Off turns thinking off for it, a number is its budget);
+    // with none set it follows the main model's level, as before. The setting was read for Google and NVIDIA only (opencode §21).
+    const _workerBudgetSet = forWorker && (() => { try { return localStorage.getItem('fg_worker_thinking_budget') !== null; } catch { return false; } })();
+    const customThinkBudget = isCustom
+        ? (_workerBudgetSet ? (() => { const wb = parseInt(ls('fg_worker_thinking_budget', '-1'), 10); return !Number.isFinite(wb) || wb === -1 ? thinkingLevelBudget('custom') : Math.max(0, wb); })() : thinkingLevelBudget('custom'))
+        : 0; // 0 = off
     // The history is the event log's projection (deriveMessages). A fn-tag model gets the text-tag
     // shape of it (fnTagMessages). Workers are excluded: their localOH is the authoritative history
     // (it includes the task message which is never added to the worker's event session). On step 0
@@ -2714,16 +2794,29 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     };
     // Tool format learning for models not in model-caps' table (see getModelToolFormat).
     // Schema rejected → learn 'none' and resend right away without tools, so the turn goes on.
+    // A model that takes none of the thinking controls we send (NVIDIA z-ai/glm-5.3: 400 "Unsupported parameter(s): `reasoning_budget`") is remembered,
+    // and this request is resent without them: the worker that hit it was blocked for a setting, not for anything the task asked.
+    const _send = async (p: any) => {
+        try { return await callLLM(ep, p, _timestampedOnChunk, { onRequest }); }
+        catch (e: any) {
+            const _mkey = `${provider}|${model}`;
+            if (!isThinkingFieldRefusal(e?.message) || modelRejectsThinkingFields(_mkey)) throw e;
+            markModelRejectsThinkingFields(_mkey);
+            console.warn(`[thinking] ${_mkey}: thinking controls rejected — sent without them from now on:`, e.message);
+            _timestampedOnChunk(`\n[${_mkey}: does not accept the thinking setting, sending without it]\n`, 'error');
+            return await callLLM(ep, stripThinkingFields(p), _timestampedOnChunk, { onRequest });
+        }
+    };
     let result: any;
     try {
-        result = await callLLM(ep, payload, _timestampedOnChunk, { onRequest });
+        result = await _send(payload);
     } catch (e) {
         if (!hasTools || forkPrefix || isToolFormatListed(provider, model) || !isToolsRejectedError(e)) throw e;
         recordToolFormat(provider, model, 'none');
         console.warn(`[tool-format] ${provider}/${model}: tools rejected — now 'none':`, e.message);
         const { tools: _t, tool_choice: _tc, ...noTools } = payload;
         noTools.messages = [{ role: 'system', content: forWorker ? _bwsp(roleOverride) : _bsp() }, ...payload.messages.slice(1)];
-        result = await callLLM(ep, noTools, _timestampedOnChunk, { onRequest });
+        result = await _send(noTools);
     }
     // Native tool calls from a model that started as fn-tag by default → it is an 'openai' model.
     if (toolFormat === 'fn-tag' && result.tool_calls?.length && !isToolFormatListed(provider, model))

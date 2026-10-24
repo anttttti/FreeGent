@@ -31,6 +31,22 @@ const SSE_IDLE_TIMEOUT_MS = 90_000;
 const SSE_MIDSTREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 
+/** The value of a quoted string literal's interior (`first\nsecond`, `say \"hi\"`, `it\'s`), escapes decoded as JSON/Python write them. A form that is not
+ *  a valid string (an unknown escape) is returned as it is, so nothing is made to look decoded that was not. */
+function _decodeQuoted(inner: string, quote: string): string {
+    let body = '';
+    for (let i = 0; i < inner.length; i++) {
+        const c = inner[i];
+        if (c === '\\' && i + 1 < inner.length) {
+            const n = inner[i + 1];
+            if (n === "'") { body += "'"; i++; continue; }          // \' is a quote, which JSON has no escape for
+            body += c + n; i++; continue;                           // any other escape is kept for JSON.parse below
+        }
+        body += c === '"' ? '\\"' : c;                            // a bare double quote inside a single-quoted string
+    }
+    try { return JSON.parse('"' + body + '"'); } catch { return inner; }
+}
+
 /** Turns SSE lines into JSON payloads. Events end at a blank line and may carry several `data:` lines, which join with "\n" (the
  *  spec; codex 402). A payload that is complete JSON on its own is delivered at once, so servers that never send the blank
  *  line between events still stream. `:` comments and other fields are ignored. */
@@ -92,6 +108,7 @@ export async function* readSSE(resp: any) {
     const decoder = new TextDecoder();
     let buffer: string = '';
     let gotData = false;
+    let ended = false;   // the body reached its end by itself; any other way out of this generator leaves the producer open unless it is cancelled
     const events = new SSEPayloads();
     // Stop must end the read even where the engine does not reject a pending read() when the request is aborted: with WebKit the
     // turn then never unwound, and every later send was refused as "already preparing" until the page was reloaded (campaign 5).
@@ -117,7 +134,7 @@ export async function* readSSE(resp: any) {
                     }, gotData ? SSE_MIDSTREAM_IDLE_TIMEOUT_MS : SSE_IDLE_TIMEOUT_MS);
                 }),
             ]).finally(() => clearTimeout(timerId));
-            if (done) break;
+            if (done) { ended = true; break; }
             gotData = true;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split(_SSE_BREAK);
@@ -126,7 +143,12 @@ export async function* readSSE(resp: any) {
         }
         // End of stream: a last line without its break, then the event it belongs to
         for (const line of [buffer.replace(/\r$/, ''), '']) for (const v of events.line(line)) { if (v === '[DONE]') return; yield v; }
-    } finally { if (onAbort) signal?.removeEventListener('abort', onAbort); try { reader.releaseLock(); } catch {} }
+    } finally {
+        if (onAbort) signal?.removeEventListener('abort', onAbort);
+        // [DONE], a consumer that stopped iterating (the EOS-token cutoff) or an error: tell the producer to stop before the lock is released.
+        if (!ended) { try { reader.cancel().catch(() => {}); } catch {} }
+        try { reader.releaseLock(); } catch {}
+    }
 }
 
 // ── Thinking-tag helpers ──────────────────────────────────────────────────────
@@ -381,7 +403,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
                     // regex conversion on raw text produced valid-but-corrupted args.
                     const _strs = [];
                     const skel = kwargsStr.replace(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g,
-                        (m, s1, s2) => { _strs.push(s1 ?? s2); return `\u0000${_strs.length - 1}\u0000`; });
+                        (m, s1, s2) => { _strs.push(_decodeQuoted(s1 ?? s2, s1 !== undefined ? "'" : '"')); return `\u0000${_strs.length - 1}\u0000`; });
                     const jsonStr = '{' + skel
                         .replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null')
                         .replace(/(\w+)\s*=/g, '"$1":')
@@ -394,17 +416,13 @@ export async function streamOAICompat(resp: any, onChunk: any) {
             tc.function.name = cleanName.trim();
         }
     }
-    // Sanitize arguments: vLLM's _postprocess_messages calls json.loads(arguments) on each
-    // tool call in subsequent requests. If the model emitted Python-style dicts (single quotes,
-    // unquoted keys), the next request fails with HTTP 500. Ensure arguments is always valid JSON.
+    // Python-style dicts (single quotes) are made JSON here. Anything else that does not parse is left exactly as streamed, like the non-streaming decode:
+    // repairAllToolCalls (tool-call-repair.ts) owns the rest of the repair (fences) and the flagging of what cannot be repaired, and leaves valid JSON behind
+    // for the next request (vLLM json.loads() each call's arguments). Replacing it here with '{}' hid both the original text and the diagnostic (codex R90).
     for (const tc of tool_calls) {
         if (typeof tc.function.arguments === 'string') {
             try { JSON.parse(tc.function.arguments); }
-            catch {
-                // Try simple single-quote → double-quote repair for Python-style dicts
-                try { const r = tc.function.arguments.replace(/'/g, '"'); JSON.parse(r); tc.function.arguments = r; }
-                catch { tc.function.arguments = '{}'; }
-            }
+            catch { try { const r = tc.function.arguments.replace(/'/g, '"'); JSON.parse(r); tc.function.arguments = r; } catch { /* repaired or flagged downstream */ } }
         }
     }
     return { role: 'assistant', content: content || null,

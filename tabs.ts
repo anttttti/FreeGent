@@ -1215,6 +1215,7 @@ function _activeTabKey(): string | null {
 // A workspace file was written by anything (upload, shell, agent, another tab) while it is open in a tab: the tab
 // shows the new version. An editor with unsaved edits keeps them and says the file changed underneath.
 const _tabRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const _tabRefreshGen = new Map<string, number>();   // per tab: the newest refresh read started; an older read that finishes later is dropped
 function refreshOpenFileTab(name: string) {
     if (!fileTabs.has(name)) return;
     clearTimeout(_tabRefreshTimers.get(name));
@@ -1222,10 +1223,11 @@ function refreshOpenFileTab(name: string) {
         _tabRefreshTimers.delete(name);
         const ft = fileTabs.get(name);
         if (!ft) return;
+        const gen = (_tabRefreshGen.get(name) || 0) + 1; _tabRefreshGen.set(name, gen);
         const isMd = /\.md$/i.test(name);
         if (ft.editor) {
             const content = await agentReadFile(name).catch(() => null);
-            if (typeof content !== 'string' || !fileTabs.has(name)) return;
+            if (typeof content !== 'string' || !fileTabs.has(name) || _tabRefreshGen.get(name) !== gen) return;
             const doc = ft.editor.state.doc.toString();
             const saveBtn = ft.panel.querySelector('.file-save-btn');
             if (_sameText(doc, content)) { ft.savedContent = content; return; }   // the editor's own Save
@@ -1254,6 +1256,12 @@ function notifyLocalFileChanged(fullPath, content) {
     const ft = fileTabs.get(fullPath);
     if (!ft) return;
     if (ft.editor) {
+        // One policy for every source (agent, another tab, the connected folder): unsaved text stays, and the tab says the file changed underneath.
+        if (!_sameText(ft.editor.state.doc.toString(), ft.savedContent)) {
+            const warn = ft.panel.querySelector('.file-save-btn');
+            if (warn) { warn.textContent = '⚠ File changed'; warn.title = 'This file changed while you were editing it. Save asks before overwriting.'; }
+            return;
+        }
         setEditorContent(ft.editor, content);
         ft.savedContent = content;
         const saveBtn = ft.panel.querySelector('.file-save-btn');

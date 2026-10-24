@@ -67,12 +67,16 @@ function parseWorkflowMd(text) {
 }
 
 
+const _isMissingFile = (e: any): boolean => /not found|ENOENT|no such file|does not exist/i.test(String(e?.message ?? e));
 async function setTaskStatus(taskPath, newStatus) {
     try {
         let content: string;
         try {
             content = await agentReadFile(taskPath);
-        } catch {
+        } catch (e) {
+            // Only a file that is not there is created. One that exists and could not be read must not be replaced by a stub: the write below would
+            // destroy the task (codex R126).
+            if (!_isMissingFile(e)) throw new Error(`could not read the task first (${(e as any)?.message ?? e}); nothing was changed`);
             // File doesn't exist yet — synthesise a minimal stub in memory.
             // The final agentWriteFile below will create it with the correct status.
             const title = taskPath.replace(/^.*\/\d+-/, '').replace(/\.md$/, '').replace(/-/g, ' ');
@@ -533,7 +537,11 @@ async function _transitionTask(taskPath, toStatus) {
 
     let content: string;
     try { content = await agentReadFile(taskPath); }
-    catch { await setTaskStatus(taskPath, toStatus); return { transitioned: true }; }
+    catch (e) {
+        // A task that does not exist yet is created in the requested state; one that could not be read has gates that were not evaluated, so it does not move (codex R126).
+        if (_isMissingFile(e)) { await setTaskStatus(taskPath, toStatus); return { transitioned: true }; }
+        return { transitioned: false, reason: `The task file could not be read (${(e as any)?.message ?? e}), so its gates were not checked. Nothing was changed; try again.` };
+    }
 
     const fm          = parseFrontmatter(content);
     const fromStatus  = canonTaskStatus(fm.status);

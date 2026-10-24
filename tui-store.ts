@@ -296,7 +296,7 @@ function _trimOldRequests(): void {
 }
 export function patchStep(step: StepState, patch: Partial<StepState>): void {
     Object.assign(step, patch);
-    if (typeof patch.request === 'string' || typeof patch.prompt === 'string') { if (_withRequest[_withRequest.length - 1] !== step) _withRequest.push(step); _trimOldRequests(); }
+    if (typeof patch.request === 'string' || typeof patch.prompt === 'string') { const at = _withRequest.indexOf(step); if (at < 0 || at !== _withRequest.length - 1) { if (at >= 0) _withRequest.splice(at, 1); _withRequest.push(step); } _trimOldRequests(); }   // one entry per step, newest last: evicting an old position cannot trim a step still being updated
     _notify();
 }
 

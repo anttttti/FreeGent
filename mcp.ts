@@ -367,16 +367,21 @@ function mcpToolName(serverId: string, toolName: string): string {
 // others get a short hash of their own name. Independent of the order the server lists its tools in, so a refresh cannot swap them.
 function _exposedNames(s: McpServer): Map<string, string> {
     const tools = s.tools || [];
-    const base = new Map(tools.map(t => [t.name, mcpToolName(s.id, t.name)] as [string, string]));
-    const uses = new Map<string, number>();
-    for (const b of base.values()) uses.set(b, (uses.get(b) ?? 0) + 1);
     const out = new Map<string, string>();
     for (const t of tools) {
-        const b = base.get(t.name)!;
-        if ((uses.get(b) ?? 0) < 2 || /^[A-Za-z0-9_-]+$/.test(t.name)) out.set(t.name, b);
-        else out.set(t.name, `${b.slice(0, _MAX_NAME - 5)}_${_hash4(t.name)}`);
+        const b = mcpToolName(s.id, t.name);
+        // A name with punctuation is sanitized, which can make it equal another tool's name: it always carries a hash of its own name, whether or not a
+        // colliding tool is listed now. Its exposed name then depends on that tool alone, so a refresh that adds or removes a sibling cannot move a
+        // name the model was given to another tool (codex R102). A name that is already plain keeps the base name.
+        out.set(t.name, /^[A-Za-z0-9_-]+$/.test(t.name) ? b : `${b.slice(0, _MAX_NAME - 5)}_${_hash4(t.name)}`);
     }
     return out;
+}
+
+/** The name the model is given for one of a server's tools (mcpToolName, plus a hash of the tool's own name where it has punctuation). */
+function mcpExposedName(serverId: string, toolName: string): string {
+    const s = getMcpServers().find(x => x.id === serverId);
+    return (s && _exposedNames(s).get(toolName)) || mcpToolName(serverId, toolName);
 }
 
 function _uniqueId(name: string, list: McpServer[]): string {
@@ -718,5 +723,5 @@ async function executeMcpTool(name: string, args: any): Promise<any> {
 Object.assign(window, {
     MCP_CONTEXT7_URL, callMCPTool,
     getMcpServers, saveMcpServers, getMcpLibrary, addMcpServer, addMcpLibraryServer, removeMcpServer, refreshMcpServer, setMcpServerEnabled, setMcpServerTrust, setMcpToolEnabled, mcpToolClaim, mcpAnnotationsTrusted,
-    mcpToolSpecs, mcpToolNames, mcpServerInstructionsBlock, mcpToolName, mcpToolRisk, executeMcpTool, sanitizeMcpSchema, redactMcpSecrets,
+    mcpToolSpecs, mcpToolNames, mcpServerInstructionsBlock, mcpToolName, mcpExposedName, mcpToolRisk, executeMcpTool, sanitizeMcpSchema, redactMcpSecrets,
 });

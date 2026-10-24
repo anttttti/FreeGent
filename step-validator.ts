@@ -61,9 +61,9 @@ function _snippet(text: string, budget = 1500): string {
  * a wrapped YES, so a clear "**YES**, the criterion is unmet" read as uncertain while "**NO**" was a pass (codex R34-001).
  */
 export function judgeDecision(reply: string | null | undefined): 'yes' | 'no' | null {
-    const line = String(reply ?? '').split('\n').filter(l => /^[\s*_`>#\-\u2013\u2014\u2022"'(\[]*(YES|NO)\b/i.test(l)).at(-1);
+    const line = String(reply ?? '').split('\n').filter(l => /^[\s*_`>#\-\u2013\u2014\u2022"'(\[]*(YES|NO)(?![\w-])/i.test(l)).at(-1);
     if (!line) return null;
-    return /^[\s*_`>#\-\u2013\u2014\u2022"'(\[]*YES\b/i.test(line) ? 'yes' : 'no';
+    return /^[\s*_`>#\-\u2013\u2014\u2022"'(\[]*YES(?![\w-])/i.test(line) ? 'yes' : 'no';
 }
 
 export async function validateOutput(text: string, checks: any[], opts: any = {}): Promise<any> {
@@ -76,7 +76,7 @@ export async function validateOutput(text: string, checks: any[], opts: any = {}
         // _testVal preserves string returns from re_fail (used as toolName); _test coerces to bool.
         const _testVal = (g: any): string | boolean => {
             if (g == null) return false;
-            try { return typeof g === 'function' ? g(text, ctx) ?? false : g.test(text); }
+            try { if (typeof g !== 'function' && (g.global || g.sticky)) g.lastIndex = 0; return typeof g === 'function' ? g(text, ctx) ?? false : g.test(text); }   // a /g pattern keeps lastIndex between calls (hermes C19)
             catch { return false; }
         };
         const _test = (g: any): boolean => !!_testVal(g);

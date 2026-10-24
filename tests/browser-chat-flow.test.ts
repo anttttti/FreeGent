@@ -98,6 +98,8 @@ describe('browser chat flow on the Session-backed history', () => {
         expect(roles()).toEqual(['user', 'assistant', 'user', 'assistant']);
         const row = document.createElement('div');
         document.getElementById('agent-messages')!.appendChild(row);
+        // The workspace is restored before the conversation is cut, and a restore that fails stops the rewind (codex R95); this environment has no IndexedDB for it.
+        vi.spyOn(W, 'restoreCheckpointWorkspace').mockResolvedValue({ localFiles: [], found: true });
         await W.rewindToCheckpoint(list[1], row);
         expect(roles()).toEqual(['user', 'assistant']);
         expect(texts()[0]).toContain('q1');

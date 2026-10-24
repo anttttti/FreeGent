@@ -54,8 +54,24 @@ function _changed(call: any): boolean {
 // A runner that started and ran no test: pytest's "collected 0 items" / "no tests ran" (exit 4 usage error, 5 no
 // tests), unittest's "Ran 0 tests", Django's "Found 0 test(s)", a runner that is not installed (126/127).
 const NO_TESTS_RE = /collected 0 items|\bno tests ran\b|no tests collected|ERROR: (?:file or directory )?not found|\bRan 0 tests\b|Found 0 test\(s\)|command not found|: not found$/m;
+// A check is a command that RUNS a runner, not code that merely contains its name: a quoted pytest command that is printed, a grep for "pytest", a file called
+// docs/pytest.txt are data (codex R78). Quoted strings, comments and heredoc bodies are blanked; the code is cut into simple commands; each is looked at from its
+// first word on, after the wrappers that only start another command (cd, env assignments, time, timeout, sudo, python -m, uv run, npx, docker exec, bash -c).
+const _WRAP = '(?:\\w+=\\S*|time|env|sudo|nice(?:\\s+-n\\s*\\d+)?|exec|command|xvfb-run(?:\\s+-a)?|timeout\\s+\\S+|(?:uv|poetry|pipenv|pdm|hatch)\\s+run|npx|docker\\s+exec(?:\\s+-\\S+)*\\s+\\S+|python[\\d.]*(?:\\s+-[A-Za-z]+)*(?:\\s+-m)?)';
+const CHECK_AT_START_RE = new RegExp(`^(?:${_WRAP}\\s+)*(?:${CHECK_RE.source})`);
+export function isCheckCommand(code: string): boolean {
+    let t = String(code ?? '');
+    t = t.replace(/\b(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*?)\1/g, '\n$2\n');                  // the program a shell is told to run is a command
+    t = t.replace(/<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\s*\1\b/g, ' ')                     // heredoc bodies are data
+         .replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#.*$/gm, '');
+    for (const seg of t.split(/&&|\|\||;|\n|\||\(|\)/)) {
+        const c = seg.trim().replace(/^[!{]\s*/, '');
+        if (c && CHECK_AT_START_RE.test(c)) return true;
+    }
+    return false;
+}
 function _isCheckCall(call: any): boolean {
-    return call?.name === 'execute_code' && CHECK_RE.test(String(call.args?.code ?? ''));
+    return call?.name === 'execute_code' && isCheckCommand(String(call.args?.code ?? ''));
 }
 /** The call was a check command, but nothing was tested (see the header). */
 export function checkDidNotRun(call: any): boolean {
