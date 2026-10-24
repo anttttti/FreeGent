@@ -159,6 +159,19 @@ function _gemmaObject(s: string, i: number): [Record<string, any>, number] {
     return [obj, s.length];
 }
 
+/** The index just past the JSON object that starts at s[start] === '{' (string- and escape-aware), or -1 when it never closes. */
+function _jsonObjectEnd(s: string, start: number): number {
+    let depth = 0, inStr = false;
+    for (let i = start; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; }
+        if (ch === '"') inStr = true;
+        else if (ch === '{') depth++;
+        else if (ch === '}' && --depth === 0) return i + 1;
+    }
+    return -1;
+}
+
 /** A tool-argument value as written in text: JSON when it parses, the raw string otherwise. */
 function _looseJson(val: string): any {
     try { return JSON.parse(val); } catch { return val; }
@@ -340,6 +353,31 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
             return '';
         }
     );
+
+    // Format B′ — <function=name>{"k":"v"}</arg_value></tool_call>: the JSON body is there but the call is not closed by
+    // </function> (a model mixing two dialects: v0.96.50 replace_in_file, whose body was left in the text while the call went out
+    // with empty arguments). The body is taken by brace matching, then any run of stray closing tags is dropped with it.
+    {
+        const re = /<function=(\w+)>\s*(?=\{)/g;
+        let m: RegExpExecArray | null;
+        let out = '', last = 0;
+        while ((m = re.exec(cleaned)) !== null) {
+            const start = m.index + m[0].length;
+            const end = _jsonObjectEnd(cleaned, start);
+            if (end < 0) continue;
+            if (/^\s*<\/function>/.test(cleaned.slice(end))) continue;   // well formed: Format B below takes it
+            let body = cleaned.slice(start, end);
+            try { JSON.parse(body); } catch { continue; }
+            let stop = end;
+            const tail = /^(?:\s*<\/(?:arg_value|parameter|arguments|tool_call|function)>)+/.exec(cleaned.slice(stop));
+            if (tail) stop += tail[0].length;
+            pushCall(m[1], body);
+            out += cleaned.slice(last, m.index);
+            last = stop;
+            re.lastIndex = stop;
+        }
+        if (last) cleaned = out + cleaned.slice(last);
+    }
 
     // Format B — <function=name>{"k":"v"}</function> or bare <function=name />
     cleaned = cleaned.replace(

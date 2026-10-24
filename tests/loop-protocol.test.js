@@ -114,6 +114,28 @@ describe('parseFnTagCalls — non-native tool-call formats', () => {
         const { tool_calls } = window.parseFnTagCalls('<nudge>this is not a tool</nudge>');
         expect(tool_calls).toHaveLength(0);
     });
+    it('keeps the arguments of <function=name>{json} closed by other dialects\' tags (v0.96.50 replace_in_file)', () => {
+        const body = '{"path":"fg-tasks/current.md","old_string":"- [ ] `a`\\n  b {x}","new_string":"- [x] `a`\\n  b {x}"}';
+        for (const closer of ['</arg_value></tool_call>', '</tool_call>', '</arg_value>', '']) {
+            const { tool_calls, cleaned } = window.parseFnTagCalls(`Now tick the boxes.\n<function=replace_in_file>${body}${closer}`);
+            expect(tool_calls).toHaveLength(1);
+            expect(tool_calls[0].function.name).toBe('replace_in_file');
+            expect(JSON.parse(tool_calls[0].function.arguments)).toEqual(JSON.parse(body));
+            expect(cleaned.trim()).toBe('Now tick the boxes.');
+        }
+    });
+    it('two unclosed calls in a row keep their own arguments, and a well formed one is untouched', () => {
+        const text = '<function=list_files>{"path":"src"}</tool_call>\n<function=read_file>{"path":"a.js"}</function>\n<function=search_workspace>{"pattern":"x"}</arg_value>';
+        const { tool_calls } = window.parseFnTagCalls(text);
+        expect(tool_calls.map((c) => [c.function.name, JSON.parse(c.function.arguments)])).toEqual([
+            ['list_files', { path: 'src' }], ['search_workspace', { pattern: 'x' }], ['read_file', { path: 'a.js' }],
+        ]);
+    });
+    it('a body that is not valid JSON still falls back to the old handling', () => {
+        const { tool_calls } = window.parseFnTagCalls('<function=execute_code>{"code": oops</arg_value>');
+        expect(tool_calls).toHaveLength(1);
+        expect(JSON.parse(tool_calls[0].function.arguments)).toEqual({});
+    });
     it('parses Format B (<function=name>{json}</function>)', () => {
         const { tool_calls } = window.parseFnTagCalls('<function=list_files>{"path":""}</function>');
         expect(tool_calls).toHaveLength(1);
