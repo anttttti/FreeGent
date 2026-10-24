@@ -175,8 +175,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activeChatId) {
         const endLoad = beginChatLoad(activeChatId);   // no Send, and no save of the still-empty history, until the chat is restored
         try {
-            const loaded   = await loadChatHistory(activeChatId);
+            // The saved markup is drawn first; the history read from the session store (slow while it opens) runs meanwhile.
+            const historyP = loadChatHistory(activeChatId);
             const restored = await restoreChatMessages(activeChatId);
+            const loaded   = await historyP;
             if (!restored && loaded) renderHistoryFallback();
             if (typeof restoreRoleForChat === 'function') restoreRoleForChat(activeChatId);
         } finally { endLoad(); }

@@ -128,6 +128,24 @@ describe('browser chat flow on the Session-backed history', () => {
         expect(texts().some(t => t.includes('answer A'))).toBe(false);
     });
 
+    it('opening a chat draws its saved messages at once, not after the session store has answered', async () => {
+        const id = 'slow-open';
+        localStorage.setItem(KEYS.CHAT_LIST, JSON.stringify([{ id: W.activeChatId, name: 'now' }, { id, name: 'old chat' }]));
+        localStorage.setItem(chatKey.msgs(id), '<div class="agent-msg-user">question from the old chat</div>');
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        W.setSessionStore({
+            loadHistory: async () => { await gate; return [{ role: 'user', content: 'question from the old chat' }]; },
+            replaceMessages: async () => {},
+        } as any);
+        const opening = W.switchToChat(id);
+        for (let i = 0; i < 5; i++) await Promise.resolve();                    // a few microtasks, far less than any storage read
+        expect(document.getElementById('agent-messages')!.textContent).toContain('question from the old chat');
+        expect(getChatHistory()).toEqual([]);                                    // the history itself is still on its way
+        release(); await opening;
+        expect(texts().some(t => t.includes('question from the old chat'))).toBe(true);
+    });
+
     it('a reload (history gone from memory, restored from storage) continues the conversation', async () => {
         W.fetch = makeReplayFetch([{ content: 'before reload\nCOMPLETED' }]);
         await say('hello');

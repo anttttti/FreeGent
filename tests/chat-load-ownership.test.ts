@@ -77,12 +77,12 @@ describe('Send and New Chat while a chat loads (277/283/285)', () => {
 });
 
 describe('switching chats restores the draft at the start', () => {
-    it('chat-state restores the destination draft before awaiting the load and not again after it', async () => {
+    it('chat-state restores the destination draft before the load starts and not again after it', async () => {
         const src = (await import('fs')).readFileSync(`${process.cwd()}/chat-state.ts`, 'utf8');
         const body = src.slice(src.indexOf('async function switchToChat'), src.indexOf('async function deleteChat'));
         const first = body.indexOf('_restoreDraft?.(id)');
         expect(first).toBeGreaterThan(-1);
-        expect(first).toBeLessThan(body.indexOf('await loadChatHistory'));
+        expect(first).toBeLessThan(body.indexOf('loadChatHistory(id)'));
         expect(body.indexOf('_restoreDraft?.(id)', first + 1)).toBe(-1);
     });
 });

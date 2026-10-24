@@ -1077,13 +1077,18 @@ async function switchToChat(id, force = false) {
     window._restoreDraft?.(id);
     let loaded = false, restored = false;
     try {
-        loaded   = await loadChatHistory(id);
+        // The messages on screen are the saved markup (localStorage, else IndexedDB); they do not depend on the history or
+        // the turn log, which come from the session store and can take a second. They are drawn first, and the two reads run
+        // meanwhile, so opening a chat never shows an empty view while the store answers.
+        const historyP = loadChatHistory(id);
         // Restore the per-chat turn log alongside the LLM history so the log viewer and exports
         // reflect the exact session history, not just what survived in the ephemeral sessionStorage.
         // A storage failure here must not abandon the switch half-done (chat id changed, view blank,
         // composer left disabled): the chat opens with whatever loaded.
-        try { await loadChatLog?.(id); } catch (e) { console.warn('[switchToChat] log restore failed:', (e as any)?.message); }
+        const logP = Promise.resolve().then(() => loadChatLog?.(id)).catch(e => console.warn('[switchToChat] log restore failed:', (e as any)?.message));
         try { restored = await restoreChatMessages(id); } catch (e) { console.warn('[switchToChat] message restore failed:', (e as any)?.message); }
+        loaded = await historyP;
+        await logP;
     } finally {
         endLoad();
     }
