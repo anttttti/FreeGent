@@ -21,8 +21,12 @@ npm run dev            # http://localhost:5000
 | `npm run probe:headless` | That the headless runner loads every module and bridge. Run it after changing bridges or load order. |
 | `node bench/smoke/run.js` | End-to-end smoke tasks against a real model |
 | `node bench/browser/run.mjs` | The WebUI in a real browser with a scripted model |
+| `node scripts/nudge-index.mjs --check` | That `docs/harness/nudges.md` lists every harness nudge and completion gate by name (`--update` regenerates it; a new name also needs a line in `WHEN` in the script) |
+| `npx tsx scripts/shiro-inventory.mjs --check` | That `docs/shiro/command-matrix.json` matches the sources (`--update-note` regenerates it; it hashes `headless-runner.ts`, so run it after editing that file or adding a root module) |
 
 [bench/BENCHMARKS.md](https://github.com/anttttti/FreeGent/blob/main/bench/BENCHMARKS.md) ("What tests what") says which check to use when. A defect found by hand gets a unit test, and where it is about the UI, a regression probe in `bench/browser/`.
+
+Structure questions about the code (the longest functions, exports nothing else mentions, import cycles) are answered from the syntax tree by `node scripts/code-index.mjs functions|exports --unused|cycles` (`--root-only` for the files directly in the repository root).
 
 Pull requests run typecheck, tests, build and the headless probe (`.github/workflows/check.yml`).
 
