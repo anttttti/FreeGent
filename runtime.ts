@@ -22,17 +22,6 @@ export const runtime = {
     get headless(): boolean { return this.hasNativeExec; },
     /** Browser pages (iframe sandbox, check_page, inline images) are available. */
     get hasBrowserUi(): boolean { return !this.headless; },
-    /** Benchmark policy, not a capability: file tools refuse to edit test files. Set by a runner whose
-     *  grader discards test-file changes (SWE-bench: FG_PROTECT_TESTS=1); never on for ordinary runs. */
-    get protectTests(): boolean { return this.hasNativeExec && g.process?.env?.FG_PROTECT_TESTS === '1'; },
-    /** Task policy, not a capability: the task is solved by editing files, so a COMPLETED with no edit is
-     *  bounced once. Set by the runner that knows (SWE-bench: FG_EDIT_REQUIRED=1); never inferred from
-     *  the wording of a benchmark's prompt. */
-    get editRequired(): boolean { return g.process?.env?.FG_EDIT_REQUIRED === '1'; },
-    /** Task policy, not a capability: the task is graded on the state of the system afterwards (AgentBench OS
-     *  tasks with a check script: "fix it", "make X work"), so a reply that changed nothing cannot be right.
-     *  Set by the runner from the task's grader (FG_CHANGE_REQUIRED=1); never inferred from the prompt wording. */
-    get changeRequired(): boolean { return g.process?.env?.FG_CHANGE_REQUIRED === '1'; },
     /** Experiment switch, never set in ordinary runs: FG_DISABLE_GUARDS=name,name (or `review`, the set added
      *  by the v0.70 review) turns single guards off so their effect can be measured against the same build. */
     guardOff(name: string): boolean {

@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, changesState, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -23,6 +23,7 @@ import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
 import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
+import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
@@ -850,69 +851,6 @@ function _noteStopOutputs(results: Array<{ name: string; result: any }>): void {
     if (_stopRecent.length > 3) _stopRecent = _stopRecent.slice(-3);
 }
 
-/** Graded test IDs the benchmark runner listed in the task text. */
-export function _gradedTestIds(taskText: string): string[] {
-    const ids = new Set<string>();
-    // Collect graded test IDs from two formats the runner emits:
-    //   1. backtick-quoted `pytest -xvs path.py::name …` — runner always wraps in
-    //      backticks and may include flags and multiple paths on one line; parse
-    //      the full arg string and filter for *.py tokens (fixes dead regex — T1.3)
-    //   2. bare lines in "Graded tests:" block — tests without '::' are emitted as-is
-    for (const m of taskText.matchAll(/pytest\s+(.*?)(?=`|$)/gm))
-        for (const tok of m[1].split(/\s+/))
-            if (/^[\w/.+-]+\.py(?:::\S+)?$/.test(tok)) ids.add(tok);
-    const block = taskText.match(/Graded tests[^\n]*\n([\s\S]*?)(?:\n\n|$)/);
-    if (block) {
-        for (const line of block[1].split('\n')) {
-            const t = line.trim();
-            if (t && !t.startsWith('#')) ids.add(t.startsWith('pytest ') ? t.slice(7).trim() : t);
-        }
-    }
-    return [...ids];
-}
-
-/**
- * True when this test output shows a graded test that ran and failed (or source that does not
- * parse). False for output the model cannot act on: a collection or import error, a listing, or
- * failures only in tests that are not graded.
- */
-// Pytest node ids compared as ids: the module (path) and each class/function component must match, and a parameter instance is compared only where the graded id names
-// one (an unparameterized id selects all of its instances). `tests/test_a.py` or a directory selects what is under it (codex R76).
-function _nodeSplit(id: string): { path: string; comps: string[] } {
-    const [path, ...comps] = id.trim().replace(/^\.\//, '').split('::');
-    return { path: path.replace(/\/+$/, ''), comps };
-}
-export function _sameTestNode(failedId: string, gradedId: string): boolean {
-    const F = _nodeSplit(failedId), G = _nodeSplit(gradedId);
-    // pytest prints ids relative to its rootdir; the task may name the file by a longer or absolute path: one path ending in the other is the same module.
-    const samePath = (a: string, b: string) => a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
-    // A graded directory (or file) selects what is under it; the directory may be named by a longer path than pytest prints.
-    const under = (dir: string, file: string) => dir.split('/').some((_, i, a) => file.startsWith(a.slice(i).join('/') + '/'));
-    if (!G.comps.length) return samePath(F.path, G.path) || under(G.path, F.path);
-    if (!samePath(F.path, G.path) || F.comps.length < G.comps.length) return false;
-    return G.comps.every((g, i) => {
-        const f = F.comps[i];
-        return /\[/.test(g) ? f === g : f.replace(/\[.*$/, '') === g;
-    });
-}
-
-/**
- * True when this test output shows a graded test that ran and failed (or source that does not
- * parse). False for output the model cannot act on: a collection or import error, a listing, or
- * failures only in tests that are not graded.
- */
-export function _gradedTestFailed(output: string, gradedIds: string[]): boolean {
-    // The output is a JSON-encoded tool result: its line breaks are the two characters backslash-n. A count at the start of a line ("\n1 failed" in the text) is
-    // then glued to a word character and \b does not see it (codex R76).
-    output = output.replace(/\\[nrt]/g, ' ');
-    if (/SyntaxError|IndentationError|TabError/.test(output)) return true;
-    if (/errors? during collection|Interrupted: \d+ errors?|no tests ran|ERROR: (?:not found|file or directory not found)|INTERNALERROR/.test(output)) return false;
-    if (!/\b\d+ failed\b/.test(output)) return false;
-    // FAILED lines name the tests; the output is a JSON-encoded tool result, so a line ends at "\n".
-    const failed = [...output.matchAll(/FAILED\s+([^\s\\]+)/g)].map(m => m[1]);
-    if (!failed.length || !gradedIds.length) return true;
-    return failed.some(f => gradedIds.some(g => _sameTestNode(f, g)));
-}
 
 // The synthesis request has no tools, but a confused model may still answer with a tool call
 // (fg-chat 2026-10-20: minimax wrote "…]<]minimax[>[<tool_call> > execute_code {…}" and that became
@@ -1604,7 +1542,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 verdict: verificationVerdict(_verif), stateChanged: _stateChanged,
                 reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
-                editRequired: runtime.editRequired, changeRequired: runtime.changeRequired, gradedTestIds: () => _gradedTestIds(_task),
+                editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
                 isScratchPath, envConfigEdits,
             });
             if (_gate) {
@@ -1623,22 +1561,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             && _editsThisRun && ps.finalCheck < 1) {
             const _blocked = _BLOCKED_DECLARATION_RE.test(textContent);
             let _gate = completionGateGuidance(_editsThisRun, _blocked);
-            // SWE-bench graded-test directive: when the task text lists `pytest path::name`
-            // identifiers (injected by the runner), require them to pass before COMPLETED.
-            // Fires once per session (_reactiveFired dedup); skipped when blocked.
+            // Benchmark runs only (task-policy.ts): when the task text lists graded tests, require them to pass before
+            // COMPLETED. Fires once per session (_reactiveFired dedup); skipped when blocked.
             let _hasGradedTest = false;
-            if (!_blocked && _editsThisRun && !_reactiveFired.has('graded_test')) {
-                const _taskText = _task;   // guidance examples (e.g. `pytest tests/test_foo.py`) excluded
-                // Collect graded test IDs from two formats the runner emits:
-                //   1. backtick-quoted `pytest -xvs path.py::name …` — runner always wraps in
-                //      backticks and may include flags and multiple paths on one line; parse
-                //      the full arg string and filter for *.py tokens (fixes dead regex — T1.3)
-                //   2. bare lines in "Graded tests:" block — tests without '::' are emitted as-is
-                const _ftpIds = _gradedTestIds(_taskText);
-                if (_ftpIds.length) {
+            if (!_blocked && _editsThisRun) {
+                const _ftpMsg = taskPolicy.completionDirective(_task, _reactiveFired);   // _task: guidance examples (e.g. `pytest tests/test_foo.py`) excluded
+                if (_ftpMsg) {
                     _hasGradedTest = true;
-                    _reactiveFired.add('graded_test');
-                    const _ftpMsg = `Run the graded test now: \`pytest ${_ftpIds.join(' ')}\` — it must exit 0 before you declare COMPLETED. If it cannot be collected or imported in this environment (a missing module, an unbuilt extension, a test that does not exist yet), do not change test or packaging configuration to make it run: check your fix another way and declare COMPLETED.`;
                     _gate = _gate ? `${_gate}\n\n${_ftpMsg}` : `~~~guidance\n${_ftpMsg}\n~~~`;
                 }
             }
@@ -1654,37 +1583,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // inject another bounce. Cap at ps.finalCheck < 3 (two re-fires after the first).
         if (_isComplete(textContent) && step < _loopMax - 1 && !softStopPending
             && _editsThisRun && ps.finalCheck >= 1 && ps.finalCheck < 3 && _reactiveFired.has('graded_test')) {
-            const _hist = _histR(_s);
-            let _testOutput = '';
-            // The result must be of a command that ran pytest: a file that was read and mentions a passing run is not one (codex R77).
-            const _ranPytest = (callId: string): boolean => {
-                for (const a of _hist) for (const tc of a.tool_calls ?? []) {
-                    if (tc.id !== callId) continue;
-                    let args: any = {}; try { args = JSON.parse(tc.function?.arguments || '{}'); } catch {}
-                    const code = String(args.code ?? args.command ?? args.cmd ?? '');
-                    return tc.function?.name === 'execute_code' && /\bpytest\b|\bpy\.test\b/.test(code) && isCheckCommand(code);
-                }
-                return false;
-            };
-            for (let _i = _hist.length - 1; _i >= 0; _i--) {
-                const _m = _hist[_i];
-                if (_m.role !== 'tool' || !_ranPytest(_m.tool_call_id)) continue;
-                const _c = typeof _m.content === 'string' ? _m.content
-                    : Array.isArray(_m.content) ? (_m.content as any[]).map((x: any) => x.text ?? '').join('') : '';
-                if (/passed|failed|PASSED|FAILED|ERROR|pytest/.test(_c)) { _testOutput = _c; break; }
-            }
-            // Pass: at least one "N passed" with no "N failed" / "N error"
-            const _testPassed = !!_testOutput && /\d+ passed/.test(_testOutput) && !/\d+ (failed|error)/.test(_testOutput);
-            // Bounce again only when no test was run, or a graded test ran and failed. Anything else
-            // cannot be fixed by the model: v0.66 SWE sent "still failed" 32 times, 4 of them for a
-            // test that ran and failed; the rest were collection or import errors from the image
-            // (old pytest internals, unbuilt C extensions), a `--collect-only` listing, or failures
-            // of tests that are not graded. 17 of 31 gated tasks never got a runnable pytest, and 7
-            // of those were resolved by the grader anyway.
-            if (!_testPassed && (!_testOutput || _gradedTestFailed(_testOutput, _gradedTestIds(_task)))) {
-                const _retryMsg = _testOutput
-                    ? `The graded test still failed — fix the failure then run it again: it must exit 0 before you declare COMPLETED.`
-                    : `You declared COMPLETED without running the graded test. Run it now — it must exit 0.`;
+            const _retryMsg = taskPolicy.retryDirective(_histR(_s), _task);
+            if (_retryMsg) {
                 _saveAnswer(ps, textContent); ps.finalCheck++;
                 _emitNudge('completion_gate', nudge(`~~~guidance\n${_retryMsg}\n~~~`)); _forceToolCall = true;
                 return { do: 'continue' };
@@ -2476,7 +2376,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         for (const r of results) if (r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0)
             for (const p of shellWritePaths(String(r.args?.code ?? ''))) _shellWrites.add(p);
         if (!_stateChanged) _stateChanged = results.some(r => r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
-            && String(r.args?.language ?? 'bash') === 'bash' && changesState(String(r.args?.code ?? '')));
+            && String(r.args?.language ?? 'bash') === 'bash' && taskPolicy.changesState(String(r.args?.code ?? '')));
         noteVerification(_verif, { toolCalls: results.map(r => ({ name: r.name, args: r.args, result: r.result })) });
         // Which files changed this run — for the scratch-only completion check.
         for (const r of results) {

@@ -2,7 +2,7 @@
 // for a test that ran and failed, a run_workers result is bounded in history, and one tool result
 // cannot fill the compaction tail.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { _gradedTestIds, _gradedTestFailed } from '../llm-loops.ts';
+import { _gradedTestIds, _gradedTestFailed } from '../bench-policy.ts';
 import { truncateResultForHistory } from '../history.ts';
 import { _capTailToolResults } from '../llm-shared.ts';
 

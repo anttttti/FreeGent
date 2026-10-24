@@ -306,6 +306,10 @@ let _setupDone = false;
 export async function setup(opts: Record<string, any> = {}): Promise<void> {
     if (_setupDone) return;
     _setupDone = true;
+    // Benchmark task policies (bench-policy.ts) are loaded only when the runner asks for one of them.
+    const _env = (globalThis as any).process?.env ?? {};
+    if (_env.FG_EDIT_REQUIRED === '1' || _env.FG_CHANGE_REQUIRED === '1' || _env.FG_PROTECT_TESTS === '1')
+        (await import('./bench-policy.js')).installBenchPolicy();
     loadDotenv();  // load .env keys into process.env before profile or config reads
     loadProfile();  // populate JSDOM localStorage from fg-current-profile.json before config write
     const {

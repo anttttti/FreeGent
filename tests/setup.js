@@ -71,3 +71,7 @@ await import('../search-providers.ts');
 await import('../qa.ts');
 // chat-render.ts: renderMarkdown, cleanResponse, createResponsePlaceholder, appendMessage
 await import('../chat-render.ts');
+// bench-policy.ts: the benchmark task policies (FG_EDIT_REQUIRED, FG_CHANGE_REQUIRED, FG_PROTECT_TESTS). A product run does not load
+// them; the tests of those policies need them in place (tests/task-policy.test.ts covers the run without).
+const { installBenchPolicy } = await import('../bench-policy.ts');
+installBenchPolicy();
