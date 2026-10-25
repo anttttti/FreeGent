@@ -6,6 +6,7 @@ import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel } from './privacy.j
 import { specBlockedByPrivacy } from './config.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 import { modelPageUrl as _modelPageUrl } from './model-page-url.js';
+import { detectEndpoint, LOCAL_ENDPOINT_PRESETS } from './endpoint-detect.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -726,7 +727,7 @@ function renderModelCatalogTable() {
           <option value="custom">Custom</option>
         </select></td></tr>
     <tr><td class="settings-table-label">Model ID</td>
-        <td><input class="settings-input" id="new-model-id" type="text" placeholder="e.g. meta-llama/llama-3.3-70b-instruct:free" style="width:100%"></td></tr>
+        <td><input class="settings-input" id="new-model-id" type="text" list="new-model-id-list" placeholder="e.g. meta-llama/llama-3.3-70b-instruct:free" style="width:100%" onchange="_onNewModelIdChange()"><datalist id="new-model-id-list"></datalist></td></tr>
     <tr><td class="settings-table-label">Label</td>
         <td><input class="settings-input" id="new-model-label" type="text" placeholder="Display name" style="width:100%"></td></tr>
     <tr><td class="settings-table-label">Context (K)</td>
@@ -736,7 +737,9 @@ function renderModelCatalogTable() {
     <tr><td class="settings-table-label">Thinking</td>
         <td><input type="checkbox" id="new-model-thinking"></td></tr>
     <tr id="new-model-url-row" style="display:none"><td class="settings-table-label">URL</td>
-        <td><input class="settings-input" id="new-model-url" type="url" placeholder="http://localhost:8000/v1" style="width:100%"></td></tr>
+        <td><div style="display:flex;gap:6px"><input class="settings-input" id="new-model-url" type="url" placeholder="http://localhost:8000/v1" style="flex:1"><button class="ws-action-btn" type="button" onclick="detectNewModel()">Detect</button></div>
+        <div style="margin-top:4px;font-size:11px;color:var(--muted)">Try: ${LOCAL_ENDPOINT_PRESETS.map(p => `<a href="#" onclick="document.getElementById('new-model-url').value=${jsArg(p.url)};detectNewModel();return false">${escapeHtml(p.label)}</a>`).join(' · ')}</div>
+        <div id="new-model-detect-status" style="margin-top:4px;font-size:11px;color:var(--muted)"></div></td></tr>
     <tr id="new-model-key-row" style="display:none"><td class="settings-table-label">Key</td>
         <td><input class="settings-input" id="new-model-key" type="password" placeholder="(leave blank if not required)" style="width:100%"></td></tr>
     <tr id="new-model-api-row" style="display:none"><td class="settings-table-label">API</td>
@@ -770,6 +773,58 @@ function showAddCustomModelForm() {
     const f = (document.getElementById('add-custom-model-form') as HTMLInputElement);
     if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
     _onNewModelProviderChange();
+}
+
+// Last detection of the add form, so that choosing another detected model fills its context window.
+let _newModelDetected: Array<{ id: string; contextK?: number }> = [];
+
+function _setDetectStatus(id: string, text: string, bad = false) {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = text; el.style.color = bad ? 'var(--err,#c44)' : 'var(--muted)'; }
+}
+
+async function detectNewModel() {
+    const val = (id: string) => ((document.getElementById(id) as HTMLInputElement | null)?.value || '').trim();
+    _setDetectStatus('new-model-detect-status', 'Detecting…');
+    const r = await detectEndpoint(val('new-model-url'), val('new-model-key'), { pageProtocol: location.protocol });
+    if (!r.ok) { _setDetectStatus('new-model-detect-status', r.error || 'Detection failed.', true); return; }
+    _newModelDetected = r.models;
+    const dl = document.getElementById('new-model-id-list');
+    if (dl) dl.innerHTML = r.models.map(m => `<option value="${escapeHtml(m.id)}"></option>`).join('');
+    const set = (id: string, v: string) => { const el = document.getElementById(id) as HTMLInputElement | null; if (el) el.value = v; };
+    set('new-model-api', r.apiFormat);
+    const first = r.models[0];
+    set('new-model-id', first.id);
+    _onNewModelIdChange();
+    if (!val('new-model-note')) set('new-model-note', r.server);
+    _setDetectStatus('new-model-detect-status', `${r.server}: ${r.models.length} model${r.models.length === 1 ? '' : 's'} found${r.models.length > 1 ? ' (pick one in the Model ID list)' : ''}.`);
+}
+
+function _onNewModelIdChange() {
+    const id = ((document.getElementById('new-model-id') as HTMLInputElement | null)?.value || '').trim();
+    const m = _newModelDetected.find(x => x.id === id);
+    if (!m) return;
+    const label = document.getElementById('new-model-label') as HTMLInputElement | null;
+    if (label) label.value = id.split('/').pop() || id;
+    const ctx = document.getElementById('new-model-ctx') as HTMLInputElement | null;
+    if (ctx && m.contextK) ctx.value = String(m.contextK);
+}
+
+// Edit dialog: asks the server again what it serves and sets the context window (a vLLM server often gets another model at the same address).
+async function redetectEditModel() {
+    const val = (id: string) => ((document.getElementById(id) as HTMLInputElement | null)?.value || '').trim();
+    const key = val('emd-model-key');
+    const model = key.slice(key.indexOf('|') + 1);
+    _setDetectStatus('emd-detect-status', 'Detecting…');
+    const r = await detectEndpoint(val('emd-url'), val('emd-api-key'), { pageProtocol: location.protocol });
+    if (!r.ok) { _setDetectStatus('emd-detect-status', r.error || 'Detection failed.', true); return; }
+    const m = r.models.find(x => x.id === model);
+    if (!m) { _setDetectStatus('emd-detect-status', `${r.server} serves ${r.models.map(x => x.id).join(', ')}, not "${model}".`, true); return; }
+    const fmt = document.getElementById('emd-api-fmt') as HTMLInputElement | null;
+    if (fmt) fmt.value = r.apiFormat;
+    const ctx = document.getElementById('emd-ctx') as HTMLInputElement | null;
+    if (ctx && m.contextK) ctx.value = String(m.contextK);
+    _setDetectStatus('emd-detect-status', `${r.server}: context ${m.contextK ? m.contextK + 'K' : 'not reported'}.`);
 }
 
 function addCustomModel() {
@@ -859,7 +914,8 @@ function openEditModelDialog(key: string) {
           <td style="padding-top:4px"><input type="checkbox" id="emd-thinking" ${m.thinking ? 'checked' : ''}></td></tr>
       ${isCustomProvider ? `
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">URL</td>
-          <td><input class="settings-input" id="emd-url" type="url" value="${escapeHtml(m.url)}" placeholder="http://localhost:8000/v1" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-url" type="url" value="${escapeHtml(m.url)}" placeholder="http://localhost:8000/v1" style="margin:0;width:100%">
+          <div style="margin-top:4px"><button class="ws-action-btn" type="button" onclick="redetectEditModel()">Re-detect</button> <span id="emd-detect-status" style="font-size:11px;color:var(--muted)"></span></div></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">API key</td>
           <td><input class="settings-input" id="emd-api-key" type="password" value="${escapeHtml(m.key)}" placeholder="(blank = not required)" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">API format</td>
@@ -2489,4 +2545,4 @@ async function submitAddMcpServer() {
     onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
