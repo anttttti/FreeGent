@@ -8,7 +8,33 @@ FreeGent is an AI agent for free-tier cloud models and for models on your own ma
 - **Built for free tiers.** It rotates between providers and models as quotas run out or requests fail, and ranks models with its own long-conversation test results. See [Priority, fallbacks and retries](/models/rotation).
 - **Every message is a checkpoint.** Rewind removes the later messages and puts the project files back as they were; Rerun repeats a message. See [Chats](/webui/chats/).
 - **A task board the agent works through.** Tasks are Markdown files; Autopilot runs them one chat per task, with quality gates between columns, for as long as the tab is open. See [Tasks](/webui/tasks).
-- **You choose where requests may go.** Default, Provider-only (no Cloudflare Worker) or Local (your own network only). See [Settings → Privacy](/webui/settings#privacy).
+- **You choose where requests may go.** Provider-only (the default: your browser calls providers directly, no Cloudflare Worker), Routed (through the Worker) or Local (your own network only). The sidebar's Privacy button switches between them. See [Settings → Privacy](/webui/settings#privacy).
+
+## How the pieces fit
+
+```text
+┌────────────────────────── Your browser ──────────────────────────┐
+│                                                                   │
+│   WebUI ───────► Agent harness ───────► Tools                     │
+│   chat, tasks,   loop, compaction,      ├ project files           │
+│   project,       checks, model          │   (in the browser or a  │
+│   settings       rotation               │    folder you connect)  │
+│                                         ├ code sandboxes          │
+│                                         │   JavaScript (Worker),  │
+│                                         │   Python (Pyodide),     │
+│                                         │   bash (in-browser)     │
+│                                         └ MCP servers (direct)    │
+└────────────────────────────────┬──────────────────────────────────┘
+                                 │ model requests
+         ┌───────────────────────┼───────────────────────┐
+         │ Provider-only         │ Routed                │ Local
+         │ (the default)         │                       │
+         ▼                       ▼                       ▼
+   model providers        Cloudflare Worker       models on localhost
+   (Gemini, Groq, ...)    ──► model providers     or your network
+```
+
+The agent loop, files and sandboxes run in the page; what leaves it are requests to a model, to MCP servers, and for web search and fetch. The Privacy level chooses the route: straight to the provider, through the Worker (needed for providers that browsers cannot call, such as NVIDIA and Kilo), or to your own network only. The TUI and CLI run the same agent core in Node.js, with no proxy and, optionally, real bash. See [How requests reach providers](/models/proxy) and [Code execution](/code-execution/).
 
 ## Free and local models first
 
