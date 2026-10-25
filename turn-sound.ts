@@ -1,4 +1,4 @@
-// turn-sound.ts — FreeGent: short chime when an agent turn in the WebUI finishes.
+// turn-sound.ts — FreeGent: short chime when Autopilot finishes a task's chat in the WebUI.
 // A device preference (not part of profiles); on by default, switch in Settings → Agent → Agent Loop.
 
 export const TURN_SOUND_KEY = 'fg_turn_sound';

@@ -663,7 +663,7 @@
                         <label class="settings-input-label" style="margin-top:8px">Rate-limit cooldown (minutes)</label>
                         <input class="settings-input" id="rate-limit-cooldown-min" type="number" min="1" max="30" step="1" style="width:80px" oninput="saveAgentSetting('fg_rate_limit_cooldown_min', this.value)">
                         <p class="settings-hint agent-hint">Base cooldown duration per endpoint after a 429 rate-limit response. Doubles on each consecutive hit (exponential backoff), capped at 10 minutes.</p>
-                        <label class="settings-check-row" style="margin-top:8px"><input type="checkbox" id="turn-sound" onchange="onTurnSoundChange(this.checked)" checked> Play a sound when a turn finishes</label>
+                        <label class="settings-check-row" style="margin-top:8px"><input type="checkbox" id="turn-sound" onchange="onTurnSoundChange(this.checked)" checked> Play a sound when Autopilot finishes a task</label>
                         <label class="settings-check-row" style="margin-top:12px"><input type="checkbox" id="agent-lean-workers" onchange="saveAgentSetting('fg_agent_lean_workers', this.checked)"> Lean worker context</label>
                         <p class="settings-hint agent-hint">Give workers scoped context and minimal tool subsets instead of the full system prompt.</p>
                         <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-worker-history" onchange="saveAgentSetting('fg_agent_worker_history', this.checked)"> Director workers fork the full context (shared prefix)</label>

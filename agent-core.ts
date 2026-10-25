@@ -23,7 +23,6 @@ import { acquireChatLease, releaseChatLease, chatLeaseHolderAlive } from './chat
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
 import { repairLedgerIfBroken, runPostTurnAgents } from './post-turn.js';
-import { playTurnSound } from './turn-sound.js';
 import { escapeHtml } from './html-escape.js';
 
 // Max binary-attachment size to include in a checkpoint snapshot (bytes).
@@ -706,7 +705,6 @@ async function runTurnFromHistory(makePlaceholder: () => RenderAdapter): Promise
     } finally {
         _tearDownTurn();
     }
-    playTurnSound();
     runPostTurnAgents().catch(() => {});
     setTimeout(() => _processQueue(), 0);
 }
@@ -1597,7 +1595,6 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     }
 
     // Fire-and-forget post-turn agents (log review, memory, task extraction).
-    playTurnSound();
     runPostTurnAgents().catch(() => {});
     _fireSuggestion('post-turn');
 

@@ -6,6 +6,7 @@ import { canonTaskStatus } from './task-status.js';
 import * as MsgQueue from './msg-queue.js';
 import { isStepLimitStop } from './loop-director.js';
 import { sendTaskLog } from './dev-log.js';
+import { playTurnSound } from './turn-sound.js';
 import { buildRedactedChatJson } from './convo-log.js';
 
 interface Task {
@@ -241,6 +242,7 @@ async function _runLoop() {
                 _runnerAbort ? 'stopped' : result.success ? 'done' : result.blocked ? 'blocked' : 'failed',
                 result.blockedReason || result.failReason || '', _runnerChatId, buildRedactedChatJson);
             if (_runnerAbort) break;
+            playTurnSound();   // Autopilot finished a task's chat (done, failed or blocked); plain chat turns are silent
 
             _runnerSessionLog.push({
                 time:    new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
