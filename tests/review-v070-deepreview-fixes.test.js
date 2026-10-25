@@ -200,9 +200,10 @@ describe('default history cap', () => {
 
 describe('checkpoint cleanup', () => {
     it('purges snapshots of deleted chats, but nothing when the chat list is empty', async () => {
-        const { IDBFactory } = await import('fake-indexeddb');
+        const { IDBFactory, IDBKeyRange } = await import('fake-indexeddb');
         const hadIdb = 'indexedDB' in W, prevIdb = W.indexedDB;
         W.indexedDB = new IDBFactory();
+        W.IDBKeyRange = IDBKeyRange;
         try {
         await import('../workspace.ts');
         files['a.txt'] = 'A';

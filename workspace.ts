@@ -351,7 +351,10 @@ function _ckptHash(s) {
 async function _getCkptsForChat(chatId) {
     await ensureDB();
     return new Promise<any>((resolve, reject) => {
-        const req = db.transaction(CKPT_STORE, 'readonly').objectStore(CKPT_STORE).getAll();
+        // Records are keyed `${chatId}/${ckptId}`: read that key range only. A getAll() of the whole store pulled every
+        // chat's file contents into memory several times per turn end, which a low-memory iPad's Safari did not survive.
+        const req = db.transaction(CKPT_STORE, 'readonly').objectStore(CKPT_STORE)
+            .getAll(IDBKeyRange.bound(`${chatId}/`, `${chatId}/\uffff`));
         req.onsuccess = () => resolve(
             (req.result || []).filter(r => r.chatId === chatId).sort((a, b) => a.ts - b.ts)
         );

@@ -1,12 +1,13 @@
 // Checkpoint restore (review 2026-10-14, opencode M11 and uploads 7.2): binary records keep their
 // encoding tag across a restore, and a failed restore puts the workspace back as it was.
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore, IDBKeyRange } from 'fake-indexeddb';
 
 const W = window as any;
 
 beforeAll(async () => {
     W.indexedDB = new IDBFactory();
+    W.IDBKeyRange = IDBKeyRange;
     await import('../workspace.ts');
 });
 afterEach(() => vi.restoreAllMocks());
