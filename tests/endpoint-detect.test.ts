@@ -37,5 +37,6 @@ describe('detectEndpoint', () => {
         expect((await detectEndpoint('nonsense', '', {})).error).toMatch(/http/);
         expect(explainDetectError(new TypeError('x'), 'http://192.168.1.5:8000/v1', 'https:')).toMatch(/mixed content/);
         expect(explainDetectError(new TypeError('x'), 'http://localhost:8000/v1', 'https:')).toMatch(/CORS/);
+        expect(explainDetectError(new TypeError('x'), 'https://10.0.0.5:8000/v1', 'https:')).toMatch(/no TLS/);
     });
 });

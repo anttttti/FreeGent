@@ -40,6 +40,8 @@ export function explainDetectError(e: any, url: string, pageProtocol = ''): stri
     if (e?.name === 'AbortError') return 'The server did not answer in time.';
     if (pageProtocol === 'https:' && /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url))
         return 'The browser blocks a plain-http address from an https page (mixed content). Use https for the server, or open FreeGent over http.';
+    if (/^https:\/\//i.test(url))
+        return 'Could not connect over https. If the server has no TLS certificate (vLLM and llama.cpp serve plain http unless started with --ssl-keyfile/--ssl-certfile; its log then shows "Invalid HTTP request"), use http:// for localhost, or put a TLS proxy (Caddy, tailscale serve) in front.';
     return 'Could not connect. Is the server running, and does it allow this page\'s origin (CORS)? Ollama: set OLLAMA_ORIGINS.';
 }
 
