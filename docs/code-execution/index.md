@@ -10,6 +10,8 @@ The agent runs code through the `execute_code` tool. Where that code runs depend
 
 With the **Local** provider, Python also runs on your machine (unless Pyodide is loaded) with full coreutils, `npm` and `pip`. JavaScript still runs in the browser sandbox.
 
+The WASM bash builds on [Shiro](https://github.com/williamsharkey/shiro), William Sharkey's bash-compatible shell for the browser. FreeGent has extended it so that command arguments, options and outputs match real bash byte for byte. Each of the 248 commands, builtins and keywords is run in the browser and in native bash on a corpus of over a thousand test cases (1,430 in the latest sweep). It compares stdout, stderr, exit status and the files a command changes, and the latest sweep found no mismatches. Cases where the native reference itself is unstable, and a few that only work in the browser, are tracked separately and not counted as matches. The per-command implementation matrix is in [`docs/shiro`](https://github.com/anttttti/FreeGent/tree/main/docs/shiro).
+
 In every case the workspace is mirrored: project files appear at their normal paths (`/workspace` for bash), and files the code writes sync back to the project, including files it deletes or renames. Very large files are not copied into a JavaScript or Python run (about 10 MB in the browser, 1 MB for Local), so the code cannot see them. The browser's bash reads the project directly and has no such limit. A run that writes a file it could not see is refused for that file, with a message, instead of replacing the original with its own output; use `append_file` or `replace_in_file` for those.
 
 | Page | Covers |
