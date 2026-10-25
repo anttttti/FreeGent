@@ -2086,3 +2086,5 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 .privacy-menu button.active { background: rgba(74,124,247,0.1); color: var(--accent); }
 .privacy-menu button.active::before { content: "\2713"; position: absolute; right: 16px; }
 .privacy-menu button { position: relative; }
+
+.mcp-clear { background: none; border: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }

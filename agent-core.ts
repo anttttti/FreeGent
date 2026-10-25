@@ -1227,6 +1227,8 @@ const _leaseIds = new Set<string>();   // chats whose turn lease the running sen
 /** A dequeued turn (not this send) is being prepared: new text queues behind it like behind a streaming turn. */
 const _turnPreparing = (): boolean => currentPreparation()?.kind === 'turn';
 function cancelSendPreparation(): boolean { return cancelPreparation(); }
+// The response placeholder (the working indicator) made right after the user's message is shown, until the turn adopts it.
+let _earlyPlaceholder: RenderAdapter | null = null;
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // Busy turns still accept queued text. Only preparation (file reads, intent,
     // workspace context) is serialized so a double tap cannot start two turns.
@@ -1271,6 +1273,8 @@ async function agentSend(container: HTMLElement | null = null): Promise<void> {
         await _agentSendReady(container);
     } catch (error) {
         console.error('[send]', error);
+        // Preparation failed after the working indicator was shown: take it away with the turn.
+        if (_earlyPlaceholder) { try { (_earlyPlaceholder as any).div?.remove(); } catch {} _earlyPlaceholder = null; }
         if (agentStreaming) _tearDownTurn();
         appendMessage('model', `<em>Message was not sent: ${esc(error.message || String(error))}</em>`, container);
     } finally {
@@ -1484,6 +1488,9 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         _editBubble.appendChild(_editBtn);
     }
     appendCheckpointRow(ckptId, container);
+    // Show that the agent is working now: preparing the turn (intent check, memory recall, ledger repair) can take seconds, and
+    // a message with nothing after it looks unsent.
+    _earlyPlaceholder = workflowMode ? null : createResponsePlaceholder(container);
 
     // Skill triggers + tool-group gating — shared with runAgentTurn via turn-context.js so headless runs evaluate exactly what the UI
     // does. After the bubble is on screen: the task-intent check can make a model call, and a slow, rate limited or out-of-quota
@@ -1545,7 +1552,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     // Persist now: a reload, crash or sleep before the turn ends must not lose the message just sent.
     try { saveHistory(); } catch {}
 
-    const _ph: RenderAdapter = workflowMode ? NULL_RENDER_ADAPTER : createResponsePlaceholder(container);
+    const _ph: RenderAdapter = workflowMode ? NULL_RENDER_ADAPTER : (_earlyPlaceholder ?? createResponsePlaceholder(container));
+    _earlyPlaceholder = null;
     setActivePlaceholder(_ph);
     setActiveAbortController(new AbortController());
     const placeholder     = activePlaceholder;

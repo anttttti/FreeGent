@@ -4,6 +4,8 @@ import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
 import { specBlockedByPrivacy } from './config.js';
+import { clearAllCooldowns } from './model-router.js';
+import { fmtDelay } from './retry.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 import { modelPageUrl as _modelPageUrl } from './model-page-url.js';
 import { detectEndpoint, LOCAL_ENDPOINT_PRESETS } from './endpoint-detect.js';
@@ -569,11 +571,16 @@ function _renderCooldownPopup() {
         const rem   = getCooldownRemaining(k);
         const label = modelFriendlyName(k) || k.split('|').pop();
         const isActive = i === (activeIdx === -1 ? 0 : activeIdx);
-        const badge = rem > 0 ? `<span class="mcp-cooling">${rem}s</span>` : `<span class="mcp-ok">✓</span>`;
+        // A quota that resets in hours or days reads as "3.2h", not "11520s".
+        const badge = rem > 0 ? `<span class="mcp-cooling">${fmtDelay(rem * 1000)}</span>` : `<span class="mcp-ok">✓</span>`;
         rows.push(`<div class="mcp-row"><span class="mcp-name${isActive ? ' mcp-active' : ''}">${escapeHtml(label)}</span>${badge}</div>`);
     });
+    // Cooldowns now survive a reload, so reloading is no longer a way to retry at once.
+    if (list.some(k => getCooldownRemaining(k) > 0))
+        rows.push(`<div class="mcp-row"><button type="button" class="mcp-clear" onmousedown="clearModelCooldowns()" title="Forget which models are rate limited or out of quota and try them again">Clear cooldowns</button></div>`);
     popup.innerHTML = rows.join('');
 }
+function clearModelCooldowns() { clearAllCooldowns(); _renderCooldownPopup(); (window as any).renderMainModelList?.(); }
 
 function showModelCooldownPopup() {
     const popup = (document.getElementById('model-cooldown-popup') as HTMLInputElement);
@@ -2560,4 +2567,4 @@ async function submitAddMcpServer() {
     onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { clearModelCooldowns, switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

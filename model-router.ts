@@ -23,7 +23,39 @@ import { isCustomEndpoint } from './payload-builder.js';
 
 // ── Endpoint cooldown state ──────────────────────────────────────────────────
 // Shared by all LLM callers (main loops, compaction, workers).
-export const _endpointCooldown          = new Map(); // key → expiry timestamp
+// A Map that keeps itself in localStorage, so a page reload does not forget which models are cooling down. Without it the first
+// message after a load tried every exhausted or rate limited model again, each failure a round trip (often through the Worker),
+// and the message looked stuck for seconds. Only unexpired entries are kept; headless runs (no page) do not persist.
+const COOLDOWN_STORE_KEY = 'fg_endpoint_cooldowns';
+class PersistentCooldownMap extends Map<string, number> {
+    private _timer: ReturnType<typeof setTimeout> | null = null;
+    constructor() {
+        super();
+        try {
+            if ((globalThis as any).window?._fgHeadless) return;
+            const saved = JSON.parse(localStorage.getItem(COOLDOWN_STORE_KEY) || '{}');
+            const now = Date.now();
+            for (const [k, until] of Object.entries(saved)) if (typeof until === 'number' && until > now) super.set(k, until);
+        } catch { /* no storage, or unreadable: start empty */ }
+    }
+    private _save(): void {
+        if (this._timer) return;
+        this._timer = setTimeout(() => {
+            this._timer = null;
+            try {
+                if ((globalThis as any).window?._fgHeadless) return;
+                const now = Date.now(), out: Record<string, number> = {};
+                for (const [k, until] of this) if (until > now) out[k] = until;
+                if (Object.keys(out).length) localStorage.setItem(COOLDOWN_STORE_KEY, JSON.stringify(out));
+                else localStorage.removeItem(COOLDOWN_STORE_KEY);
+            } catch { /* quota or blocked: the cooldowns still work for this page */ }
+        }, 50);
+    }
+    set(k: string, v: number): this { super.set(k, v); this._save(); return this; }
+    delete(k: string): boolean { const r = super.delete(k); if (r) this._save(); return r; }
+    clear(): void { super.clear(); this._save(); }
+}
+export const _endpointCooldown          = new PersistentCooldownMap(); // key → expiry timestamp
 export const _endpointHits              = new Map(); // key → consecutive 429 count
 export const _endpointNeedsProbe        = new Set(); // keys that exited cooldown and must be probed before next use
 export const _endpointSuccessSinceCooldown = new Map(); // key → bool: had a success since last _markCooldown call
@@ -296,6 +328,12 @@ export function _isCoolingDown(endpoint: any): boolean {
     if (!until) return false;
     if (Date.now() >= until) { _endpointCooldown.delete(key); _endpointHits.delete(key); _endpointNeedsProbe.add(key); return false; }
     return true;
+}
+/** Forget every cooldown (the popup's "Clear cooldowns"): the user has fixed the cause, or wants to try the models again now. */
+export function clearAllCooldowns(): void {
+    _endpointCooldown.clear();
+    _endpointHits.clear();
+    _endpointNeedsProbe.clear();
 }
 export function getCooldownRemaining(key: string): number {
     const until = _endpointCooldown.get(key);

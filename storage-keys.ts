@@ -120,6 +120,7 @@ export const KEYS = {
     SEARCH_PROXY:       'fg_search_proxy',   // custom CF Worker URL (Settings → Privacy)
     PRIVACY_LEVEL:      'fg_privacy_level',  // 'routed' | 'provider' | 'local'; unset = provider, or routed with a Developer key (privacy.ts)
     SANDBOX_PROVIDER:   'fg_sandbox_provider',
+    ENDPOINT_COOLDOWNS: 'fg_endpoint_cooldowns', // { 'provider|model': expiry ms } of models cooling down after 429/402 (model-router.ts)
 
     // ── Geo cache ─────────────────────────────────────────────────────────────
     GEO_CACHE:          'fg_geo_cache',   // { ip, city, region, country, timezone, org, ts }

@@ -16,6 +16,8 @@ A model that answers `429` (rate limited) goes on a cooldown and the next model 
 
 - The base cooldown is set in **Settings → Agent** ("Rate-limit cooldown", in minutes). It doubles on each consecutive hit for the same endpoint and is capped at 10 minutes.
 - If every model is cooling down, FreeGent waits for the shortest cooldown instead of failing.
+- A `402` (payment required, or a free allowance used up) cools down the model and its free siblings until the reset the error names, or for an hour.
+- Cooldowns are kept in this browser, so reloading the page does not make FreeGent try an exhausted model again. Point at the model name in the chat header to see which models are cooling down and for how long; **Clear cooldowns** there forgets them, for example after you add credit or a new key.
 - Hover the model name in the chat toolbar to see which models are cooling.
 
 ## Rotation
