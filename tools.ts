@@ -15,7 +15,7 @@ import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
-import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth } from './detectors.js';
+import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
 
@@ -1562,6 +1562,8 @@ async function _handleWriteFile(args, context) {
         const synErr = await _syntaxCheck(args.path);
         const wfResult: any = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
         const doubled = existed ? doubledBackslashGrowth(previous, args.content) : 0;
+        const badRegex = /\.(?:[cm]?js|[jt]sx?)$/i.test(String(args.path)) ? overEscapedRegexLiterals(args.content) : 0;
+        if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
         return synErr ? { ...wfResult, syntax_error: synErr, syntax_hint: _SYNTAX_HINT } : wfResult;
     } catch (e) { return { error: e.message }; }

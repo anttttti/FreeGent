@@ -524,6 +524,15 @@ export function doubledBackslashGrowth(previous: string, content: string): numbe
     return count(content) - count(previous);
 }
 
+// The same over-escaping inside a regular expression literal of a file that did not exist before: `h.match(/^(\\d+)\\.(\\d+)$/)` matches a backslash
+// and a "d", not a number. bench/selfanalysis SEC1-SEC5: five of nine access-check reviews blamed a correct function for a "bug" that only existed in the
+// copy the agent had written into a test script (its tool call had doubled the backslashes), so the test of the copy "proved" the original wrong.
+// Looked for only after a call, a test, a match or an assignment, so a regex written as text in a string is not counted; none of this repository's sources has one.
+const _OVERESCAPED_REGEX = /(?:\.match\(|\.test\(|\.replace\(|\.search\(|=\s*|\(\s*|,\s*)\/(?:[^/\n\\]|\\[^\\])*\\\\[dswDSW][^/\n]*\//g;
+export function overEscapedRegexLiterals(content: string): number {
+    return (String(content ?? '').match(_OVERESCAPED_REGEX) ?? []).length;
+}
+
 // A file written in full again and again. Six self-analysis runs rewrote one file 7-34 times with the same flaw (an unterminated
 // string, a quoting that breaks the next step) and never read back what they had written; the step budget ended it. Counted
 // per path from successful write_file calls; a passing check command or a targeted replace_in_file on the path starts it over.
