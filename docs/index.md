@@ -31,6 +31,10 @@ features:
     linkText: Code execution
 ---
 
+## What it looks like
+
+![An Autopilot run in FreeGent: each step of the task as a card in the flow view, with the model, timing and a Rerun button on every step](./assets/autopilot-flow.png)
+
 ## Getting started
 
 1. Open [freegent.ai](https://freegent.ai). There is no install and no account.
