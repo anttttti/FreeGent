@@ -83,6 +83,7 @@ export const KEYS = {
     AGENT_WORKER_REDUCE:                'fg_agent_worker_reduce',
     AGENT_ROLE_MODEL_ROUTING:           'fg_agent_role_model_routing',
     ENDPOINT_ROTATION:                  'fg_endpoint_rotation',
+    SINGLE_REQUEST_PER_ENDPOINT:        'fg_single_request_per_endpoint',
     ROTATION_STEP_N:                    'fg_rotation_step_n',
     AGENT_MAX_DELEGATION_DEPTH:         'fg_agent_max_delegation_depth',
     AGENT_LEDGER:                       'fg_agent_ledger',

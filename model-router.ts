@@ -453,6 +453,44 @@ export function _nextRotationSpec(currentKey: string, rot: { step: number }): st
     return _anyFreeSpec(currentKey);
 }
 
+// ── One request at a time per endpoint ───────────────────────────────────────
+
+const _slotQueues = new Map<string, Array<() => void>>(); // key → waiters; a key present means a request is in flight
+
+/** Whether the "one request per endpoint" setting is on (default on). */
+export function singleRequestPerEndpoint(): boolean {
+    return typeof getSingleRequestPerEndpoint === 'function' ? !!getSingleRequestPerEndpoint() : true;
+}
+
+/** Runs fn once no other request to the same provider|model is in flight (waiting in arrival order), when the setting is on. An abort while waiting rejects. */
+export async function withEndpointSlot<T>(endpoint: any, signal: AbortSignal | null | undefined, fn: () => Promise<T>): Promise<T> {
+    if (!endpoint || !singleRequestPerEndpoint()) return fn();
+    const key = `${endpoint.provider}|${endpoint.model}`;
+    const queue = _slotQueues.get(key);
+    if (queue) {
+        await new Promise<void>((resolve, reject) => {
+            const go = () => { signal?.removeEventListener('abort', onAbort); resolve(); };
+            const onAbort = () => {
+                const i = queue.indexOf(go);
+                if (i !== -1) queue.splice(i, 1);
+                reject(signal!.reason ?? new DOMException('Aborted', 'AbortError'));
+            };
+            if (signal?.aborted) return onAbort();
+            queue.push(go);
+            signal?.addEventListener('abort', onAbort, { once: true });
+        });
+    } else {
+        _slotQueues.set(key, []);
+    }
+    try {
+        return await fn();
+    } finally {
+        const next = _slotQueues.get(key)?.shift();
+        if (next) next(); // the slot passes straight to the next waiter
+        else _slotQueues.delete(key);
+    }
+}
+
 // ── Worker model resolution + display ────────────────────────────────────────
 
 export function modelFriendlyName(providerModel: string): string {
@@ -531,5 +569,5 @@ Object.assign(window, {
     _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining,
     oaiEndpoint, specToEndpoint, _defaultEndpoint, firstFreeEndpoint, utilityEndpoint,
     _anyFreeSpec, getRateLimitFallbackEndpoint, _switchToFreeModel, _nextRotationSpec,
-    modelFriendlyName, resolveWorkerModelSpec,
+    modelFriendlyName, resolveWorkerModelSpec, withEndpointSlot, singleRequestPerEndpoint,
 });

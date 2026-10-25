@@ -7,7 +7,7 @@ import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal 
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
-import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName } from './model-router.js';
+import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName, withEndpointSlot } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
 import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
@@ -2487,7 +2487,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 // When ep can rotate between retries (e.g. callLLMComplete), build payload inside
 // the withRetry lambda and pass the freshly-resolved ep + payload each attempt.
 // onRequest: called with the payload object before the fetch (for debug/display).
-async function callLLM(
+// One request at a time per endpoint (Settings → Agent): the slot is held until the response is fully read.
+function callLLM(ep: any, payload: any, onChunk: (text: string, kind: string) => void, opts: { onRequest?: ((p: any) => void) | null } = {}): Promise<any> {
+    return withEndpointSlot(ep, activeAbortController?.signal, () => callLLMUngated(ep, payload, onChunk, opts));
+}
+async function callLLMUngated(
     ep: any,
     payload: any,
     onChunk: (text: string, kind: string) => void,

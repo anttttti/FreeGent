@@ -12,7 +12,7 @@ import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDe
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
 import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR } from './retry.js';
-import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec } from './model-router.js';
+import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec, singleRequestPerEndpoint } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
@@ -841,8 +841,15 @@ const _busyEndpointSpecs = new Set();
  * The caller is responsible for adding the returned spec to _busyEndpointSpecs
  * before launching the request and removing it when the request finishes.
  */
+// Parallel workers start on distinct models when rotation is on, or when only one request per endpoint may run at a time
+// (unless the person pinned the worker model, which then applies to every worker).
+function _assignsDistinctEndpoints(): boolean {
+    if (getEndpointRotation()) return true;
+    return singleRequestPerEndpoint() && !(typeof getWorkerModel === 'function' && getWorkerModel());
+}
+
 function _pickFreeRotationSpec(alreadyPicked: Set<string> | null): string | null {
-    if (!getEndpointRotation()) return null;
+    if (!_assignsDistinctEndpoints()) return null;
     const pool = getActiveMainModelList();
     if (pool.length < 2) return null;
     for (const spec of pool) {
@@ -1690,7 +1697,7 @@ async function executeWorkers(args: any): Promise<any> {
     // Pre-assign rotation endpoints to workers that have no explicit model.
     // This ensures no two parallel workers share an endpoint when rotation is on.
     const workerAssignedSpecs = new Map(); // index → spec string
-    if (getEndpointRotation() && getActiveMainModelList().length >= 2) {
+    if (_assignsDistinctEndpoints() && getActiveMainModelList().length >= 2) {
         const pickedThisRound = new Set<string>();
         for (let i = 0; i < agents.length; i++) {
             if (agents[i].model) continue; // explicit model → skip

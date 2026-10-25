@@ -437,6 +437,7 @@ export function getAgentConcisePrompts()     { return ls('fg_agent_concise_promp
 export function getAgentWorkerReduce()       { return ls('fg_agent_worker_reduce', 'true') !== 'false'; }
 function getAgentRoleModelRouting()   { return ls('fg_agent_role_model_routing', 'true') !== 'false'; }
 export function getEndpointRotation()        { return ls('fg_endpoint_rotation', 'false') !== 'false'; }
+export function getSingleRequestPerEndpoint() { return ls('fg_single_request_per_endpoint', 'true') !== 'false'; }
 function getRotationStepN()           { return intSetting('fg_rotation_step_n', 5, 1); }
 function getAgentMaxDelegationDepth() { return intSetting('fg_agent_max_delegation_depth', 1); }
 function getAgentLedger()             { return ls('fg_agent_ledger', 'true') !== 'false'; }
@@ -1353,7 +1354,7 @@ Object.assign(window, {
     getAgentMaxSteps, getAgentLeanWorkers,
     getAgentWorkerHistory, getAgentPromptTemplate, getAgentConcisePrompts,
     getAgentWorkerReduce, getAgentRoleModelRouting,
-    getEndpointRotation, getRotationStepN, getAgentMaxDelegationDepth,
+    getEndpointRotation, getSingleRequestPerEndpoint, getRotationStepN, getAgentMaxDelegationDepth,
     getAgentLedger, getAgentReviewLogs,
     getIntentValidation, setIntentValidation, getToolApproval,
     getRunnerMaxConsecutiveFails, getRateLimitCooldownMs,

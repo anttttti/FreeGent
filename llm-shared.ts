@@ -1,7 +1,7 @@
 import { workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay, _httpErrorFromResponse } from './retry.js';
-import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName,
+import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName, withEndpointSlot,
          firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payload-builder.js';
@@ -298,7 +298,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
 
         const _compactIsTransient = (e: any) => isCustomEndpoint(ep) ||
             /HTTP 4\d\d.*(?:not found|no endpoint|no model|invalid model|model.*not.*exist|does not exist)/i.test(e.message);
-        const data = await withRetry(async () => {
+        const data = await withRetry(() => withEndpointSlot(ep, null, async () => {
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
             if (ep.key) headers['Authorization'] = `Bearer ${ep.key}`;
             // thinkingBudget 0: the summary must land in the content field, not in reasoning.
@@ -316,7 +316,7 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             ).catch(e => { throw asTransportError(e); });
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             return resp.json();
-        }, _makeCompactRetryHandler({
+        }), _makeCompactRetryHandler({
             getEp: () => ep,
             setEp: (e: any) => { ep = e; fit(); task.setModel(modelFriendlyName(`${e.provider}|${e.model}`)); task.setPrompt(`Compacting… [→ ${e.provider}|${e.model}]`); },
             onNote: (msg: string) => task.setPrompt(`Compacting… ${msg}`),

@@ -202,6 +202,7 @@ declare global {
     var getEffectiveProxy: any;
     var getEnabledModels: any;
     var getEndpointRotation: any;
+    var getSingleRequestPerEndpoint: any;
     var getGeminiKey: any;
     var getGeminiModel: any;
     var getGitEnabled: any;

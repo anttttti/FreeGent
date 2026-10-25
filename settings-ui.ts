@@ -1825,6 +1825,7 @@ function populateAgentSettings() {
     cb('agent-worker-reduce',     getAgentWorkerReduce());
     cb('agent-role-model-routing',       getAgentRoleModelRouting());
     cb('endpoint-rotation',              getEndpointRotation());
+    cb('single-request-per-endpoint',    getSingleRequestPerEndpoint());
     num('rotation-step-n',               getRotationStepN());
     cb('agent-ledger',                   getAgentLedger());
     cb('agent-review-logs',              getAgentReviewLogs());

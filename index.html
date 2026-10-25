@@ -672,6 +672,8 @@
                         <p class="settings-hint agent-hint">When total worker text output exceeds 2K chars, synthesise all outputs into one compact summary before returning to the main loop.</p>
                         <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="agent-role-model-routing" onchange="saveAgentSetting('fg_agent_role_model_routing', this.checked)"> Role model routing</label>
                         <p class="settings-hint agent-hint">Automatically uses the first model for planning workers; later models in the priority list for execution workers.</p>
+                        <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="single-request-per-endpoint" onchange="saveAgentSetting('fg_single_request_per_endpoint', this.checked)"> One request per endpoint at a time</label>
+                        <p class="settings-hint agent-hint">Never sends two requests to the same model endpoint at once; a second one waits for the first to finish. Parallel workers each start on a different model, taking the highest one in the priority list that is free. On by default.</p>
                         <label class="settings-check-row" style="margin-top:4px"><input type="checkbox" id="endpoint-rotation" onchange="saveAgentSetting('fg_endpoint_rotation', this.checked)"> Rotate endpoints every N steps</label>
                         <div class="settings-hint agent-hint" style="display:flex;align-items:center;gap:8px;margin-top:2px">
                             <label style="white-space:nowrap">Steps per model (N):</label>
