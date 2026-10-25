@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 552" width="960" height="552" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t">How FreeGent fits together</title>
+  <desc id="d">The WebUI, FreeGent harness, project files, code sandboxes and MCP connections all run in your browser. Model requests leave by one of three routes chosen by the privacy level: straight to model providers (Provider-only, the default), through a Cloudflare Worker to providers (Routed), or to models on your own network (Local).</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5b6b8c"/></marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#3b6fe0"/></marker>
+  </defs>
+  <rect width="960" height="552" rx="14" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="959" height="551" rx="14" fill="none" stroke="#dfe4ee"/>
+
+  <!-- Browser -->
+  <rect x="30" y="28" width="900" height="290" rx="14" fill="#f5f8ff" stroke="#3b6fe0" stroke-width="1.5"/>
+  <text x="52" y="58" font-size="16" font-weight="700" fill="#2a4fb0">Your browser</text>
+  <text x="920" y="58" font-size="12" fill="#5b6b8c" text-anchor="end">freegent.ai, or your own deployment</text>
+
+  <rect x="52" y="82" width="190" height="210" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="147" y="110" font-size="15" font-weight="700" fill="#1b2438" text-anchor="middle">WebUI</text>
+  <text x="147" y="138" font-size="13" fill="#4a5879" text-anchor="middle">Chat</text>
+  <text x="147" y="162" font-size="13" fill="#4a5879" text-anchor="middle">Project files</text>
+  <text x="147" y="186" font-size="13" fill="#4a5879" text-anchor="middle">Task board, Autopilot</text>
+  <text x="147" y="210" font-size="13" fill="#4a5879" text-anchor="middle">Settings, Privacy</text>
+
+  <rect x="290" y="82" width="230" height="210" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="405" y="110" font-size="15" font-weight="700" fill="#1b2438" text-anchor="middle">FreeGent harness</text>
+  <text x="405" y="138" font-size="13" fill="#4a5879" text-anchor="middle">Agent loop and roles</text>
+  <text x="405" y="162" font-size="13" fill="#4a5879" text-anchor="middle">History compaction</text>
+  <text x="405" y="186" font-size="13" fill="#4a5879" text-anchor="middle">Tool-call repair, output checks</text>
+  <text x="405" y="210" font-size="13" fill="#4a5879" text-anchor="middle">Model rotation, cooldowns</text>
+  <text x="405" y="234" font-size="13" fill="#4a5879" text-anchor="middle">Checkpoints, parallel workers</text>
+
+  <rect x="568" y="82" width="340" height="210" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="738" y="110" font-size="15" font-weight="700" fill="#1b2438" text-anchor="middle">Tools</text>
+  <text x="590" y="138" font-size="13" font-weight="600" fill="#1b2438">Project files</text>
+  <text x="590" y="156" font-size="12" fill="#4a5879">in the browser, or a folder you connect</text>
+  <text x="590" y="184" font-size="13" font-weight="600" fill="#1b2438">Code sandboxes</text>
+  <text x="590" y="202" font-size="12" fill="#4a5879">JavaScript (Worker), Python (Pyodide),</text>
+  <text x="590" y="218" font-size="12" fill="#4a5879">bash (shell written in TypeScript)</text>
+  <text x="590" y="246" font-size="13" font-weight="600" fill="#1b2438">MCP servers, web search and fetch</text>
+  <text x="590" y="264" font-size="12" fill="#4a5879">called from the browser</text>
+
+  <path d="M242 187H288" stroke="#5b6b8c" stroke-width="1.6" fill="none" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <path d="M520 187H566" stroke="#5b6b8c" stroke-width="1.6" fill="none" marker-end="url(#ah)" marker-start="url(#ah)"/>
+
+  <!-- Model requests leave the browser -->
+  <text x="50" y="358" font-size="13" font-weight="600" fill="#1b2438">Chosen privacy level controls external access</text>
+  <path d="M480 318V392" stroke="#3b6fe0" stroke-width="1.8" fill="none"/>
+  <path d="M220 392H815" stroke="#3b6fe0" stroke-width="1.8" fill="none"/>
+  <path d="M220 392V430" stroke="#3b6fe0" stroke-width="1.8" fill="none" marker-end="url(#ahb)"/>
+  <path d="M545 392V430" stroke="#3b6fe0" stroke-width="1.8" fill="none" marker-end="url(#ahb)"/>
+  <path d="M815 392V430" stroke="#3b6fe0" stroke-width="1.8" fill="none" marker-end="url(#ahb)"/>
+
+  <!-- Provider-only -->
+  <rect x="50" y="432" width="340" height="86" rx="10" fill="#fff" stroke="#3b6fe0" stroke-width="1.5"/>
+  <text x="68" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Provider-only <tspan font-weight="500" fill="#5b6b8c">(the default)</tspan></text>
+  <text x="68" y="482" font-size="13" fill="#1b2438">Straight to the model providers</text>
+  <text x="68" y="502" font-size="12" fill="#4a5879">Model endpoints and services allowing direct requests</text>
+
+  <!-- Routed -->
+  <rect x="410" y="432" width="270" height="86" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="428" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Routed</text>
+  <text x="428" y="482" font-size="13" fill="#1b2438">Cloudflare Worker, then providers</text>
+  <text x="428" y="502" font-size="12" fill="#4a5879">Services not accepting direct web requests</text>
+
+  <!-- Local -->
+  <rect x="700" y="432" width="230" height="86" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="718" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Local</text>
+  <text x="718" y="482" font-size="13" fill="#1b2438">Your own network only</text>
+  <text x="718" y="502" font-size="12" fill="#4a5879">Local models and tools only</text>
+
+</svg>

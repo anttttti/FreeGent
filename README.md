@@ -2,7 +2,7 @@
 
 **Free agentic AI for everyone.** An AI agent platform for chat and cowork, running on free AI services and available to anyone with a browser and an internet connection.
 
-![The FreeGent task board: tasks as cards in To do, In progress, Review and Done](docs/assets/tasks-board.png)
+![An Autopilot run in FreeGent: each step of the task as a card in the flow view, with the model, timing and a Rerun button on every step](docs/assets/autopilot-flow.png)
 
 **[Open freegent.ai](https://freegent.ai)**: no install, no account. Open **Settings → Models → API Credentials**, paste a key from one provider and start chatting. [Default providers](https://freegent.ai/docs/models/providers) lists where to get free keys.
 
@@ -22,6 +22,10 @@
 | **WebUI** | Chat, project files, task board and settings in the browser | [freegent.ai](https://freegent.ai), or `npm run dev` |
 | **TUI** | An interactive terminal session | `freegent`, or `npm run tui` |
 | **CLI** | One-off and scripted runs, for CI and pipelines | `git diff \| freegent -p "review this"` |
+
+## How it fits together
+
+![FreeGent architecture: the WebUI, FreeGent harness, project files, code sandboxes and MCP run in your browser; model requests go straight to providers (Provider-only, the default), through a Cloudflare Worker (Routed), or to your own network (Local)](docs/assets/architecture.svg)
 
 ## Run it locally
 
