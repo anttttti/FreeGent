@@ -3,7 +3,8 @@
 An interactive terminal session on the same agent core as the WebUI: same tools, skills, roles and model rotation. It needs Node.js 22+ and a clone of the repository.
 
 ```bash
-npm run tui
+freegent             # after `npm link` in the clone (see Local or self-hosted)
+npm run tui          # the same, without npm link
 
 # explicit provider and key
 npm run tui -- --provider google --api-key AIza...

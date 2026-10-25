@@ -38,8 +38,8 @@ The same agent loop, tools, skills, roles and model rotation are behind every in
 | Interface | What it is | Start it |
 |---|---|---|
 | **WebUI** | Chat, project files, task board and settings in the browser | [freegent.ai](https://freegent.ai), or `npm run dev` |
-| **TUI** | An interactive terminal session | `npm run tui` |
-| **CLI** | One-off and scripted runs, for CI and benchmarks | `npx tsx fg-run.ts --task "…"` |
+| **TUI** | An interactive terminal session | `freegent` (after `npm link`), or `npm run tui` |
+| **CLI** | One-off and scripted runs, for CI and benchmarks | `freegent -p "…"`, or `npx tsx fg-run.ts --task "…"` |
 
 The WebUI at freegent.ai needs no install and no account; you add API keys in Settings. It runs the agentic harness entirely inside the front-end of your browser, with its own filesystem and code execution paths isolated by the browser. To run any interface on your own machine, or host your own copy, see [Local or self-hosted](/local/). The [WebUI section](/webui/) describes the browser app.
 

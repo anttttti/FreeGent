@@ -17,9 +17,12 @@ git clone https://github.com/anttttti/FreeGent
 cd FreeGent
 npm install
 npm run dev          # WebUI at http://localhost:5000
-npm run tui          # terminal UI
-npx tsx fg-run.ts --help
+npm link             # optional: puts the `freegent` command on your PATH
+freegent             # terminal UI (same as npm run tui)
+freegent -p "…"      # headless run (same as npx tsx fg-run.ts)
 ```
+
+`npm link` is optional; `npm run tui` and `npx tsx fg-run.ts --help` work from the clone without it.
 
 Put your keys in a file outside the repository so they cannot be committed:
 
