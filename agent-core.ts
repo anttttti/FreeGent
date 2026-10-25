@@ -1379,17 +1379,9 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         if (f.contentType === 'text') _msgMedia.add('file');
     }
 
-    // Skill triggers + tool-group gating — shared with runAgentTurn via turn-context.js so
-    // headless runs evaluate exactly what the UI does.
     const _isFirstTurn = chatHistoryLength() === 0;
-    applyTurnTriggers({
-        rawText,
-        // Interactive turn: three-band task-intent check (a model call only for ambiguous task wording).
-        isTaskCompletion: workflowMode ? null : await isTaskCompletionRequest(rawText),
-        history:  getChatHistory(),
-        wsPaths:  await collectWorkspacePaths(),
-        msgMedia: _msgMedia,
-    });
+    // A /skill command names a skill for this turn; the triggers below replace the turn's skill set, so it is added again after them.
+    let _slashSkill: string | null = null;
     if (rawText.startsWith('/')) {
         const spaceIdx = rawText.indexOf(' ');
         const cmd = (spaceIdx === -1 ? rawText.slice(1) : rawText.slice(1, spaceIdx)).toLowerCase();
@@ -1407,7 +1399,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             setTimeout(() => { void runGoalCommand(goalArg); }, 0);
             return;
         } else if (skillsRegistry.has(cmd)) {
-            currentTurnSkills.add(cmd);
+            _slashSkill = cmd;
             text = spaceIdx === -1 ? `Invoke the /${cmd} skill.` : rawText.slice(spaceIdx + 1).trim();
         } else if (cmd === 'compact') {
             input.innerHTML = '';
@@ -1492,6 +1484,19 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         _editBubble.appendChild(_editBtn);
     }
     appendCheckpointRow(ckptId, container);
+
+    // Skill triggers + tool-group gating — shared with runAgentTurn via turn-context.js so headless runs evaluate exactly what the UI
+    // does. After the bubble is on screen: the task-intent check can make a model call, and a slow, rate limited or out-of-quota
+    // utility model used to hold the message back for seconds, so it looked as if nothing had been sent.
+    applyTurnTriggers({
+        rawText,
+        // Interactive turn: three-band task-intent check (a model call only for ambiguous task wording, at most 4 s).
+        isTaskCompletion: workflowMode ? null : await isTaskCompletionRequest(rawText, undefined, 4000),
+        history:  getChatHistory(),
+        wsPaths:  await collectWorkspacePaths(),
+        msgMedia: _msgMedia,
+    });
+    if (_slashSkill) currentTurnSkills.add(_slashSkill);
     await _saveCheckpointSnapshot(ckptId);
 
     // History is always in OAI format — no conversion needed when switching providers.

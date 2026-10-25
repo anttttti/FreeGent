@@ -50,10 +50,15 @@ const _TASK_INTENT_CHECKS = [{
     re_pass: (t: string) => !_TASK_VOCAB_RE.test(t),
     llmPrompt: 'The message below was sent by a user to an AI agent that keeps a task list (a backlog of task files). Does the message ask the agent to work on, continue, complete, or process items from that task list or backlog — as opposed to a general request that merely mentions the word "task"? Answer YES or NO.',
 }];
-export async function isTaskCompletionRequest(text: string, llm: any = typeof callLLMComplete === 'function' ? callLLMComplete : null): Promise<boolean> {
+// `timeoutMs` (interactive turns): a model that is slow, rate limited or out of quota must not hold the turn up; past the limit
+// the check counts as "no match" (the regex already said no), exactly as when the model call fails.
+export async function isTaskCompletionRequest(text: string, llm: any = typeof callLLMComplete === 'function' ? callLLMComplete : null, timeoutMs = 0): Promise<boolean> {
     const t = String(text ?? '');
     if (typeof validateOutput !== 'function') return _isCompletionRequest(t);
-    return !!(await validateOutput(t, _TASK_INTENT_CHECKS, { llm, maxTokens: 200 }));
+    const bounded = timeoutMs > 0 && typeof llm === 'function'
+        ? (...a: any[]) => Promise.race([llm(...a), new Promise((_, rej) => setTimeout(() => rej(new Error('task intent check timed out')), timeoutMs))])
+        : llm;
+    return !!(await validateOutput(t, _TASK_INTENT_CHECKS, { llm: bounded, maxTokens: 200 }));
 }
 
 // ── Workspace index ────────────────────────────────────────────────────────

@@ -603,7 +603,7 @@ declare global {
     var reactiveSkillGuidance: any;
     // ── bridged by turn-context.ts ──
     var _isCompletionRequest: any;
-    var isTaskCompletionRequest: (text: string, llm?: any) => Promise<boolean>;
+    var isTaskCompletionRequest: (text: string, llm?: any, timeoutMs?: number) => Promise<boolean>;
     var buildWorkspaceIndex: any;
     var collectWorkspacePaths: any;
     var applyTurnTriggers: any;
