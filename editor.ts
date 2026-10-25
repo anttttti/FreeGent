@@ -1,5 +1,6 @@
 // editor.js — FreeGent: lazy-loaded CodeMirror 6 editor for file tabs
-// Loaded dynamically on first file open, not at page startup.
+// Loaded dynamically, not at page startup: fetched in the background once the page is idle, so the first file tab
+// does not wait seconds for esm.sh (opening a file before that still loads it on demand).
 
 let _cmPromise: Promise<{ basicSetup: any; EditorView: any; EditorState: any; langJS: any; langPY: any; langHTML: any; langCSS: any; langMD: any; langJSON: any }> | null = null;
 
@@ -112,6 +113,23 @@ function setEditorContent(view, content) {
         changes: { from: 0, to: view.state.doc.length, insert: content }
     });
 }
+
+// Warm the cache after the page has settled. Skipped on Data Saver and where the privacy level keeps third-party
+// requests off (the same rule as the analytics script); the editor then loads on first use as before.
+function _warmEditor(): void {
+    try {
+        if ((navigator as any).connection?.saveData) return;
+        const lvl = localStorage.getItem('fg_privacy_level');
+        if (lvl === 'provider' || lvl === 'local') return;
+    } catch { /* storage blocked: warm anyway */ }
+    _loadCM().catch(() => {});   // a failure resets the cache; the first real open retries
+}
+function _scheduleWarmEditor(): void {
+    const idle = (window as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
+    setTimeout(() => idle ? idle(_warmEditor, { timeout: 5000 }) : _warmEditor(), 1500);   // Safari has no requestIdleCallback
+}
+if (document.readyState === 'complete') _scheduleWarmEditor();
+else window.addEventListener('load', _scheduleWarmEditor, { once: true });
 
 Object.assign(window, { createEditor, setEditorContent });
 
