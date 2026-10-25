@@ -318,7 +318,7 @@ export async function buildRedactedChatJson(id: string): Promise<string> {
 async function sendChatLog(id) {
     if (!id) { alert('No chat to send.'); return; }
     const url = 'https://proxy.freegent.ai/log';
-    if (getPrivacyLevel() !== 'default') { alert('Sending logs is off at the Provider-only and Local privacy levels (Settings → Privacy). Download the chat instead.'); return; }
+    if (getPrivacyLevel() !== 'routed') { alert('Sending logs is off at the Provider-only and Local privacy levels (Settings → Privacy). Download the chat instead.'); return; }
     if (!confirm('Send this chat (messages, tool calls and results) to the FreeGent developer for debugging? API keys are removed first. It is kept for 14 days.')) return;
     try {
         const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());

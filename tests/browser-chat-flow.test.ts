@@ -186,6 +186,7 @@ describe('browser chat flow on the Session-backed history', () => {
         const sentBodies: string[] = [];
         W.fetch = vi.fn(async (_u: string, init: any) => { sentBodies.push(init.body); return { ok: true, json: async () => ({ id: 'x' }) }; });
         vi.spyOn(window, 'confirm').mockReturnValue(true);
+        localStorage.setItem('fg_privacy_level', 'routed');   // sending logs is off below Routed
         await W.sendChatLog(W.activeChatId);
         const payload = JSON.parse(sentBodies[0]);
         expect(payload.openaiHistory).toEqual(getChatHistory());

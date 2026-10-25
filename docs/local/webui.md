@@ -28,11 +28,11 @@ Serve `dist/` from any static host. A static host has no `/api/proxy`, no Local 
 
 FreeGent uses a proxy Worker to enable request types that a browser cannot make on its own:
 
-- **Model calls** to providers that do not allow requests from web pages (NVIDIA, Kilo). On a static host at the default privacy level every provider call goes through it, which is also how shared keys are added.
+- **Model calls** to providers that do not allow requests from web pages (NVIDIA, Kilo). On a static host at the Routed privacy level every provider call goes through it, which is also how shared keys are added.
 - **Web search** through Brave, and **`fetch_url`** and other plain page requests to sites that do not send CORS headers. The Worker fetches the page and returns it, for public HTTPS addresses only.
 - **Optional extras**: shared provider keys for sessions with a Developer key, and chat logs a user chooses to send.
 
-A static site without a Worker still loads, but these requests fail. Providers that do allow browser requests (Gemini, Groq, OpenRouter and others) work directly when [Settings → Privacy](/webui/settings#privacy) is set to Provider-only.
+A static site without a Worker still loads, but these requests fail. Providers that do allow browser requests (Gemini, Groq, OpenRouter and others) work directly at the Provider-only level, which is the default.
 
 
 1. Create a free Cloudflare account.

@@ -1,8 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { resolveProxy, DEFAULT_CF_WORKER } from '../proxy.js';
 
-const env = (hostname: string, headless = false) =>
+const env = (hostname: string, headless = false) => {
     vi.stubGlobal('window', { _fgHeadless: headless, location: { hostname, origin: `https://${hostname}` } });
+    // A page whose visitor chose Routed; with nothing saved the level is Provider-only (no Worker).
+    vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'fg_privacy_level' ? 'routed' : null), setItem() {} });
+};
 afterEach(() => vi.unstubAllGlobals());
 
 describe('resolveProxy', () => {

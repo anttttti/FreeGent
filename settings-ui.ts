@@ -2,7 +2,7 @@ import { escapeHtml, jsArg } from './html-escape.js';
 import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
-import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel } from './privacy.js';
+import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
 import { specBlockedByPrivacy } from './config.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 import { modelPageUrl as _modelPageUrl } from './model-page-url.js';
@@ -172,9 +172,9 @@ function _applySandboxProviderUI(val) {
     if (localHint) localHint.style.display = val === 'local' ? '' : 'none';
 }
 
-// Settings → Privacy: one of 'default' | 'provider' | 'local' (privacy.ts). Takes effect at once.
+// Settings → Privacy and the sidebar's Privacy button: one of 'routed' | 'provider' | 'local' (privacy.ts). Takes effect at once.
 const _PRIVACY_NOTES: Record<string, string> = {
-    default:  '',
+    routed:   '',
     provider: 'Models that browsers cannot call directly (NVIDIA, Kilo) are left out of the rotation on a hosted page. Shared keys held by the Worker are not available.',
     local:    'Only local models are usable. Add one under Models → Add custom model (for example http://localhost:11434/v1).',
 };
@@ -182,14 +182,26 @@ function _applyPrivacyLevelUI(level: string) {
     document.querySelectorAll<HTMLInputElement>('input[name="privacy-level"]').forEach(r => { r.checked = r.value === level; });
     const note = document.getElementById('privacy-level-note');
     if (note) note.textContent = _PRIVACY_NOTES[level] || '';
-    const restricted = level !== 'default';
+    const restricted = level !== 'routed';
     for (const id of ['privacy-geo', 'privacy-analytics', 'search-proxy']) {
         const el = document.getElementById(id) as HTMLInputElement | null;
-        if (el) el.disabled = restricted;
+        // The page-view counter is a browser-side request to a third party, so only Local switches it off.
+        if (el) el.disabled = id === 'privacy-analytics' ? level === 'local' : restricted;
     }
+    // Sidebar button: shows the current level, and the menu marks it.
+    const lbl = document.getElementById('privacy-btn-label');
+    if (lbl) lbl.textContent = 'Privacy: ' + (PRIVACY_LABELS[level as keyof typeof PRIVACY_LABELS] || level);
+    const btn = document.getElementById('privacy-btn');
+    if (btn) btn.dataset.level = level;
+    if (btn) btn.title = 'Privacy: ' + (PRIVACY_LABELS[level as keyof typeof PRIVACY_LABELS] || level) + '. ' + (PRIVACY_HELP[level as keyof typeof PRIVACY_HELP] || '');
+    document.querySelectorAll<HTMLElement>('#privacy-menu [data-level]').forEach(o => {
+        const on = o.dataset.level === level;
+        o.classList.toggle('active', on);
+        o.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
 }
 function onPrivacyLevelChange(level: string) {
-    setPrivacyLevel(parsePrivacyLevel(level));
+    setPrivacyLevel(parsePrivacyLevel(level) ?? 'provider');
     const now = getPrivacyLevel();
     _applyPrivacyLevelUI(now);
     // Shared Worker keys come and go with the level, and so do the models that can be reached.
@@ -349,8 +361,11 @@ let _keyPasteLen = 0;
 // developer logging. Empty removes it.
 (window as any).saveDevKey = function(input: HTMLInputElement) {
     const v = input.value.trim();
+    // A newly saved Developer key only works through the Worker, so it moves the level to Routed (it can be changed back).
+    const wasEmpty = !getDevKey();
     try { if (v) localStorage.setItem(DEV_KEY_LS, v); else { localStorage.removeItem(DEV_KEY_LS); localStorage.removeItem('fg_pass'); } } catch {}
     try { (window as any).refreshCloudSyncButton?.(); } catch {}
+    if (v && wasEmpty) { onPrivacyLevelChange('routed'); return; }
     (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     (window as any).renderMainModelList?.();
 };
@@ -2545,4 +2560,4 @@ async function submitAddMcpServer() {
     onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
-Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

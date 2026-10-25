@@ -1,6 +1,6 @@
 # Local or self-hosted
 
-freegent.ai needs nothing beyond an API key, but it cannot run bash or Python on your machine or use `run_git`, and at the default privacy level it cannot reach models on `localhost` (Provider-only and Local reach them directly if the model server allows the page's origin). For those, run FreeGent from a clone of the repository. The same install gives you all three interfaces:
+freegent.ai needs nothing beyond an API key, but it cannot run bash or Python on your machine or use `run_git`, and at the Routed privacy level it cannot reach models on `localhost` (Provider-only, the default, and Local reach them directly if the model server allows the page's origin). For those, run FreeGent from a clone of the repository. The same install gives you all three interfaces:
 
 | Page | Covers |
 |---|---|

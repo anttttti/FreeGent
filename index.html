@@ -107,7 +107,7 @@
         var _noop = function(){};
         // toggleDarkMode is also exposed at module level in init.ts, but stub here as
         // belt-and-suspenders in case the module hasn't executed yet on first click.
-        'activateTab toggleRailExpanded closeMobileRail newChat expandChatToolbar toggleChatsDropdown toggleChatToolbar handleSendButton agentSend stopAfterStep retryLastTurn showModelCooldownPopup hideModelCooldownPopup toggleDarkMode setMode'
+        'activateTab toggleRailExpanded closeMobileRail newChat expandChatToolbar toggleChatsDropdown toggleChatToolbar handleSendButton agentSend stopAfterStep retryLastTurn showModelCooldownPopup hideModelCooldownPopup toggleDarkMode togglePrivacyMenu pickPrivacyLevel setMode'
             .split(' ').forEach(function(n){ if (!window[n]) window[n] = _noop; });
     })();
     </script>
@@ -141,6 +141,15 @@
     <div id="rail-recent-chats"></div>
     <div class="rail-spacer"></div>
     <div id="rail-preview"></div>
+    <button class="rail-btn" id="privacy-btn" onclick="togglePrivacyMenu(event)" title="Privacy" aria-label="Network privacy level" aria-haspopup="menu" aria-expanded="false">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span class="rail-label" id="privacy-btn-label">Privacy</span>
+    </button>
+    <div id="privacy-menu" class="privacy-menu" role="menu" aria-label="Network privacy level" hidden>
+        <button type="button" role="menuitemradio" data-level="routed" onclick="pickPrivacyLevel('routed')" title="Requests go through FreeGent's Cloudflare Worker (or your local server's proxy), which forwards them and stores nothing. Works with every provider and with web search and fetch."><b>Routed</b><span>via the Cloudflare Worker</span></button>
+        <button type="button" role="menuitemradio" data-level="provider" onclick="pickPrivacyLevel('provider')" title="Your browser calls the model providers directly. NVIDIA, Kilo and sites without CORS headers cannot be reached."><b>Provider-only</b><span>directly to providers</span></button>
+        <button type="button" role="menuitemradio" data-level="local" onclick="pickPrivacyLevel('local')" title="Only localhost and local-network addresses are reachable: local models and MCP servers on your network. Cloud providers, web search and fetch_url are refused."><b>Local</b><span>local network only</span></button>
+    </div>
     <button class="rail-btn" id="dark-mode-btn" onclick="toggleDarkMode()" title="Switch to dark mode" aria-label="Toggle dark mode">
         <!-- moon — shown in light mode; swapped to sun via JS on toggle -->
         <svg id="dark-mode-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -539,10 +548,10 @@
                     <div class="settings-section">
                         <span class="settings-label">Network privacy</span>
                         <p class="settings-hint" style="margin-bottom:8px">Where FreeGent may send requests. The level applies at once and is saved in this browser only (profiles do not carry it).</p>
-                        <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="default" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
-                            <span><b>Default</b> &mdash; Cloudflare Worker + endpoint<br><span class="settings-hint">Browsers block direct calls to some providers, so on freegent.ai model requests, web fetches and searches go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. On a local server, providers that need one go through its own proxy. Everything else goes straight to its endpoint.</span></span></label>
+                        <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="routed" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
+                            <span><b>Routed</b> &mdash; Cloudflare Worker + endpoint<br><span class="settings-hint">Browsers block direct calls to some providers, so on freegent.ai model requests, web fetches and searches go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. On a local server, providers that need one go through its own proxy. Everything else goes straight to its endpoint.</span></span></label>
                         <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="provider" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
-                            <span><b>Provider-only</b> &mdash; no FreeGent.ai or Cloudflare<br><span class="settings-hint">Your browser calls the model providers directly. Nothing goes through the hosted or a custom Worker, and the page-view counter, log uploads and location lookup are off. Providers that do not allow browser calls (NVIDIA, Kilo) are dropped from the rotation on a hosted page, and so are web fetches and Brave search for sites without CORS headers. A local server's own proxy still works.</span></span></label>
+                            <span><b>Provider-only</b> &mdash; no FreeGent.ai or Cloudflare<br><span class="settings-hint">Your browser calls the model providers directly. Providers that do not allow browser calls (NVIDIA, Kilo) are dropped from the rotation on a hosted page, and so are web fetches and Brave search for sites without CORS headers. A local server's own proxy still works.</span></span></label>
                         <label class="settings-check-row" style="align-items:flex-start"><input type="radio" name="privacy-level" value="local" onchange="onPrivacyLevelChange(this.value)" style="margin-top:4px">
                             <span><b>Local</b> &mdash; local network access only<br><span class="settings-hint">Only localhost and private-network addresses are reachable: local models (Ollama, vLLM, LM Studio) and MCP servers on your network. Cloud providers, web search and <code>fetch_url</code> are refused, and code the agent runs (JavaScript, Python) and HTML previews cannot call other hosts. Libraries the page loads from jsdelivr / esm.sh (and runtimes such as Pyodide) still load once and are cached.</span></span></label>
                         <p class="settings-hint" id="privacy-level-note" style="margin-top:8px"></p>
@@ -550,13 +559,13 @@
                     <div class="settings-section">
                         <span class="settings-label">CORS Proxy / CF Worker URL</span>
                         <input class="settings-input" id="search-proxy" type="url" placeholder="https://fg-proxy.yourname.workers.dev">
-                        <p class="settings-hint">Optional, Default level only. freegent.ai and the local dev server already proxy provider calls, so leave this empty unless you host FreeGent on your own domain or fork (the built-in Worker refuses other origins). Then deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL &mdash; see <a href="https://freegent.ai/docs/local/webui#hosting-your-own-site-and-worker" target="_blank" rel="noopener">Hosting your own site and Worker</a>.</p>
+                        <p class="settings-hint">Optional, Routed level only. freegent.ai and the local dev server already proxy provider calls, so leave this empty unless you host FreeGent on your own domain or fork (the built-in Worker refuses other origins). Then deploy <code>cf-worker/</code> to your own Cloudflare account (free tier) and paste the URL &mdash; see <a href="https://freegent.ai/docs/local/webui#hosting-your-own-site-and-worker" target="_blank" rel="noopener">Hosting your own site and Worker</a>.</p>
                     </div>
                     <div class="settings-section" style="border-bottom:none">
                         <span class="settings-label">Other requests</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Besides the model provider you chose. Both are off at the Provider-only and Local levels.</p>
+                        <p class="settings-hint" style="margin-bottom:8px">Besides the model provider you chose. The location lookup is off at the Provider-only and Local levels, and the page-view counter at Local.</p>
                         <label class="settings-check-row"><input type="checkbox" id="privacy-geo" onchange="onPrivacyChange('geo', this.checked)"> Look up approximate location (sends your IP to ipinfo.io; city, region and ISP are then added to prompts that ask about weather, places or maps)</label>
-                        <label class="settings-check-row"><input type="checkbox" id="privacy-analytics" onchange="onPrivacyChange('analytics', this.checked)" checked> Anonymous page-view counter (GoatCounter; no cookies; skipped when Do Not Track is on). Applies on next load.</label>
+                        <label class="settings-check-row"><input type="checkbox" id="privacy-analytics" onchange="onPrivacyChange('analytics', this.checked)" checked> Anonymous page-view counter (GoatCounter; no cookies; skipped when Do Not Track is on; off at the Local level). Applies on next load.</label>
                     </div>
                 </div>
 
@@ -941,14 +950,13 @@
     </div>
 </div>
 <!-- GoatCounter — privacy-friendly page view analytics (no cookies, no personal data).
-     Shared site: paths are prefixed /freegent. Skipped when Do Not Track is on or the user turned it off
-     in Settings → Privacy, or the privacy level there is Provider-only or Local. -->
+     Shared site: paths are prefixed /freegent. Skipped when Do Not Track is on, the user turned it off in
+     Settings → Privacy, or the privacy level there is Local (local network only). -->
 <script>
 (function () {
     try {
         if (navigator.doNotTrack === '1' || localStorage.getItem('fg_analytics') === '0') return;
-        var lvl = localStorage.getItem('fg_privacy_level');
-        if (lvl === 'provider' || lvl === 'local') return;
+        if (localStorage.getItem('fg_privacy_level') === 'local') return;
     } catch (e) {}
     window.goatcounter = {path: function (p) { return '/freegent' + (p || '/'); }};
     var s = document.createElement('script');

@@ -16,7 +16,7 @@ function _randomId(): string {
 /** One ID per page load. Carried by every error-log batch and every task chat log. */
 export const SESSION_ID: string = _randomId();
 
-function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'default'; }
+function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'routed'; }
 
 interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
 

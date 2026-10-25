@@ -22,12 +22,14 @@ The search provider for `web_search`: **Auto** (Tavily, then Brave, then Wikiped
 
 ## Privacy
 
-Controls where FreeGent may send requests. The level is saved in this browser only and is not part of [profiles](#profiles).
+Controls where FreeGent may send requests. Change it with **Settings → Privacy** or the **Privacy** button in the sidebar above Dark mode, which shows the current level and explains each option when you point at it. The level is saved in this browser only and is not part of [profiles](#profiles).
+
+Until you choose, the level is **Provider-only**. Saving a Developer key switches it to **Routed**, because the key's shared provider keys only work through the Worker; you can switch back afterwards.
 
 | Level | What it does |
 |---|---|
-| **Default** (Cloudflare Worker + endpoint) | On freegent.ai, model requests, web fetches and searches go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. On a local server, providers that need one go through its own proxy, and the rest are called directly. |
-| **Provider-only** (no FreeGent.ai or Cloudflare) | Your browser calls the model providers directly. Neither the hosted Worker nor a custom Worker is used, and the page-view counter, log uploads and location lookup are off. Providers that do not allow browser calls (NVIDIA, Kilo) are dropped from the rotation on a hosted page, and web fetches and Brave search only work for sites that send CORS headers. On a local server its own proxy is still used, because it runs on your machine and holds the keys from the credentials file. |
+| **Routed** (Cloudflare Worker + endpoint) | On freegent.ai, model requests, web fetches and searches go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. On a local server, providers that need one go through its own proxy, and the rest are called directly. |
+| **Provider-only** (no FreeGent.ai or Cloudflare) | Your browser calls the model providers directly. Neither the hosted Worker nor a custom Worker is used, and log uploads and location lookup are off. Providers that do not allow browser calls (NVIDIA, Kilo) are dropped from the rotation on a hosted page, and web fetches and Brave search only work for sites that send CORS headers. On a local server its own proxy is still used, because it runs on your machine and holds the keys from the credentials file. |
 | **Local** (local network access only) | Only `localhost` and private-network addresses are reachable, such as Ollama, vLLM or LM Studio and MCP servers on your network. Cloud providers, web search and `fetch_url` are refused, and code the agent runs (JavaScript, Python) and HTML previews cannot call other hosts. |
 
 Switching takes effect at once and re-checks which models are usable. In Local, add a model under **Models → Add custom model**; from freegent.ai the model server must allow the page's origin (Ollama: `OLLAMA_ORIGINS=https://freegent.ai`).
@@ -36,8 +38,8 @@ Two limits apply at every level. Libraries the page loads from jsdelivr and esm.
 
 Also on this tab:
 
-- **CORS Proxy / CF Worker URL**: your own Worker, for FreeGent hosted on your own domain (Default level only). See [Hosting your own site and Worker](/local/webui#hosting-your-own-site-and-worker).
-- **Other requests**: location lookup through ipinfo.io (on by default; it sends your IP address to ipinfo.io) and the anonymous GoatCounter page-view counter (on by default, skipped when your browser sends Do Not Track). Both are always off at Provider-only and Local.
+- **CORS Proxy / CF Worker URL**: your own Worker, for FreeGent hosted on your own domain (Routed level only). See [Hosting your own site and Worker](/local/webui#hosting-your-own-site-and-worker).
+- **Other requests**: location lookup through ipinfo.io (on by default; it sends your IP address to ipinfo.io) and the anonymous GoatCounter page-view counter (on by default, skipped when your browser sends Do Not Track; no cookies). The location lookup is off at Provider-only and Local; the counter is off at Local only.
 
 ## Code Execution
 

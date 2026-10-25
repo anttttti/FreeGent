@@ -372,7 +372,7 @@ const GEO_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 // and the result (city, region, ISP) goes into prompts. Without it the location skill uses timezone + locale.
 // Never at the Provider-only and Local privacy levels.
 export function geoLookupEnabled(): boolean {
-    try { return getPrivacyLevel() === 'default' && localStorage.getItem('fg_geo_lookup') !== '0'; } catch { return false; }
+    try { return getPrivacyLevel() === 'routed' && localStorage.getItem('fg_geo_lookup') !== '0'; } catch { return false; }
 }
 
 export function getGeoCache(): { ip?:string; city?:string; region?:string; country?:string; timezone?:string; org?:string } | null {
@@ -968,7 +968,7 @@ export function getActiveMainModelList() {
 // Provider-only level the providers that a browser cannot call without the Worker (NVIDIA, Kilo) on a static host.
 export function specBlockedByPrivacy(spec: string): boolean {
     const level = getPrivacyLevel();
-    if (level === 'default') return false;
+    if (level === 'routed') return false;
     const bar = spec.indexOf('|');
     if (bar < 0) return false;
     const provider = spec.slice(0, bar);
@@ -1056,12 +1056,12 @@ function getUtilityModel() {
     // Not chosen by the user. When the main model is a custom endpoint (a local vLLM / Ollama), keep
     // utility calls on it: the hosted default would send file names and prompts to a provider the user
     // chose not to use, and fail without a key for it.
-    // Below the Default privacy level the same holds for any provider: Provider-only means the providers the
+    // Below the Routed privacy level the same holds for any provider: Provider-only means the providers the
     // user chose, so the chat title and prompt suggestions use the first usable main model, not Google.
     try {
         const first = getActiveMainModelList()[0];
         // A local endpoint is `custom|` or `vllm|` (the request path treats both alike): utility calls stay on it.
-        if (typeof first === 'string' && (first.startsWith('custom|') || first.startsWith('vllm|') || getPrivacyLevel() !== 'default')) return first;
+        if (typeof first === 'string' && (first.startsWith('custom|') || first.startsWith('vllm|') || getPrivacyLevel() !== 'routed')) return first;
     } catch {}
     return 'google|gemma-4-26b-a4b-it';
 }

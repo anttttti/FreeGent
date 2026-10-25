@@ -122,6 +122,8 @@ declare global {
     var clearInputDraft: any;
     var _restoreDraft: any;
     var toggleDarkMode: any;
+    var togglePrivacyMenu: any;
+    var pickPrivacyLevel: any;
     var getChatList: any;
     var evictOldChatCaches: any;
     var loadChatHistory: any;

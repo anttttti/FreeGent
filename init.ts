@@ -2,6 +2,7 @@
 // Depends on: all other modules (loaded last)
 import { sanitizePastedHtml } from './paste-sanitize.js';
 import { installPassHeader, installPrivacyGuard } from './proxy.js';
+import { getPrivacyLevel } from './privacy.js';
 import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
@@ -35,6 +36,33 @@ function toggleDarkMode(): void {
     localStorage.setItem('fg_dark_mode', isDark ? '0' : '1');
     _applyTheme(!isDark);
 }
+// Sidebar Privacy button: a menu of the three levels (privacy.ts); the choice is the same as Settings → Privacy.
+function _closePrivacyMenu(): void {
+    const m = document.getElementById('privacy-menu'), b = document.getElementById('privacy-btn');
+    if (m) m.hidden = true;
+    if (b) b.setAttribute('aria-expanded', 'false');
+}
+function togglePrivacyMenu(ev?: Event): void {
+    ev?.stopPropagation();
+    const m = document.getElementById('privacy-menu'), b = document.getElementById('privacy-btn');
+    if (!m || !b) return;
+    if (!m.hidden) { _closePrivacyMenu(); return; }
+    (window as any)._applyPrivacyLevelUI?.(getPrivacyLevel());
+    const r = b.getBoundingClientRect();
+    m.hidden = false;
+    m.style.left = `${Math.round(r.right + 8)}px`;
+    m.style.top = `${Math.max(8, Math.round(Math.min(r.bottom - m.offsetHeight, window.innerHeight - m.offsetHeight - 8)))}px`;
+    b.setAttribute('aria-expanded', 'true');
+}
+function pickPrivacyLevel(level: string): void {
+    _closePrivacyMenu();
+    (window as any).onPrivacyLevelChange?.(level);
+}
+document.addEventListener('click', e => { if (!(e.target as Element)?.closest?.('#privacy-menu, #privacy-btn')) _closePrivacyMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closePrivacyMenu(); });
+(window as any).togglePrivacyMenu = togglePrivacyMenu;
+(window as any).pickPrivacyLevel = pickPrivacyLevel;
+
 // Expose at module level so onclick="toggleDarkMode()" works even if the
 // DOMContentLoaded async handler hasn't finished yet (e.g. an await threw).
 (window as any).toggleDarkMode = toggleDarkMode;
@@ -634,10 +662,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Apply saved theme now that DOM is ready (wires icon + hljs sheets)
     // No saved choice yet: follow the system setting (a Mac or phone in dark mode opened FreeGent in light).
+    (window as any)._applyPrivacyLevelUI?.(getPrivacyLevel());
     { const saved = localStorage.getItem('fg_dark_mode'); _applyTheme(saved === '1' || (saved === null && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches)); }
 
     // Expose to HTML onclick handlers and window bridge (chat-render.ts uses _updateScrollBtn)
-    Object.assign(window, { scrollToLatest, _updateScrollBtn, openMsgSearch, closeMsgSearch, runMsgSearch, msgSearchKeydown, msgSearchSelect, clearInputDraft, _restoreDraft, _flushDraft, toggleDarkMode });
+    Object.assign(window, { scrollToLatest, _updateScrollBtn, openMsgSearch, closeMsgSearch, runMsgSearch, msgSearchKeydown, msgSearchSelect, clearInputDraft, _restoreDraft, _flushDraft, toggleDarkMode, togglePrivacyMenu, pickPrivacyLevel });
 
     // Close model picker when clicking outside
     document.addEventListener('click', e => {

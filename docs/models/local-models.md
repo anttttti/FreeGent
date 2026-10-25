@@ -1,6 +1,6 @@
 # Local models
 
-Any server with an OpenAI-compatible `/v1/chat/completions` endpoint works: vLLM, Ollama, LM Studio, llama.cpp's `llama-server` and others. Use the WebUI from the [local dev server](/local/webui), the [TUI](/local/tui) or the [CLI](/local/cli). freegent.ai cannot reach `localhost` through its proxy, which only forwards to a fixed list of cloud providers. Set **Settings → Privacy** to Provider-only or Local and the browser calls your server directly instead, if the server allows the page's origin (Ollama: `OLLAMA_ORIGINS=https://freegent.ai`).
+Any server with an OpenAI-compatible `/v1/chat/completions` endpoint works: vLLM, Ollama, LM Studio, llama.cpp's `llama-server` and others. Use the WebUI from the [local dev server](/local/webui), the [TUI](/local/tui) or the [CLI](/local/cli). freegent.ai cannot reach `localhost` through its proxy, which only forwards to a fixed list of cloud providers. At the default Provider-only level, or at Local, the browser calls your server directly instead, if the server allows the page's origin (Ollama: `OLLAMA_ORIGINS=https://freegent.ai`).
 
 - **WebUI:** add a custom model under **Settings → Models**, with the base URL, model ID, an optional key, the API format and **Context (K)**, the window size in thousands of tokens. The "Ollama" API format uses Ollama's OpenAI-compatible endpoint (`/v1`), so `http://localhost:11434` is enough.
 - **TUI and CLI:** `--api-url http://localhost:8000/v1 --provider custom --model <id>`. In the CLI, `--context-window` sets the window size.

@@ -23,6 +23,7 @@ describe('F6 privacy', () => {
     it('the IP lookup is on by default, off when the user opts out or the privacy level is restricted', async () => {
         const W = window as any;
         localStorage.clear();
+        localStorage.setItem('fg_privacy_level', 'routed');
         localStorage.setItem('fg_geo_cache', JSON.stringify({ ip: '1.2.3.4', city: 'X', ts: Date.now() }));
         expect(W.geoLookupEnabled()).toBe(true);
         expect(W.getGeoCache()).not.toBeNull();
@@ -37,9 +38,10 @@ describe('F6 privacy', () => {
         }
         localStorage.clear();
     });
-    it('the default utility model stays on the main provider below the Default privacy level', () => {
+    it('the default utility model stays on the main provider below the Routed privacy level', () => {
         const W = window as any;
         localStorage.clear();
+        localStorage.setItem('fg_privacy_level', 'routed');
         localStorage.setItem('fg_groq_key', 'k');
         localStorage.setItem('fg_main_models', JSON.stringify(['groq|openai/gpt-oss-120b']));
         expect(W.getUtilityModel()).toBe('google|gemma-4-26b-a4b-it');

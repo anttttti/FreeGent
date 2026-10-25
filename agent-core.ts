@@ -1343,8 +1343,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     // Settings → Privacy can rule out every model in the list: say so instead of silently opening Settings.
     if (!getActiveMainModelList().length && getMainModelList().some(specBlockedByPrivacy)) {
         throw new Error(getPrivacyLevel() === 'local'
-            ? 'Settings → Privacy is set to Local, which allows only models on this machine or your local network, and none is in your priority list. Add one under Settings → Models → Add custom model (for example http://localhost:11434/v1), or set Privacy to Default.'
-            : 'Settings → Privacy is set to Provider-only, and the models in your priority list (NVIDIA, Kilo) cannot be called from a browser without the Cloudflare Worker. Add another provider, or set Privacy to Default.');
+            ? 'Settings → Privacy is set to Local, which allows only models on this machine or your local network, and none is in your priority list. Add one under Settings → Models → Add custom model (for example http://localhost:11434/v1), or set Privacy to Routed.'
+            : 'Settings → Privacy is set to Provider-only, and the models in your priority list (NVIDIA, Kilo) cannot be called from a browser without the Cloudflare Worker. Add another provider, or set Privacy to Routed.');
     }
 
     // Key guard: check local key AND CF Worker shared key via specHasKey.

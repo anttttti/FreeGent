@@ -1,26 +1,43 @@
 // privacy.ts — FreeGent: the network privacy level (Settings → Privacy) and the rules that follow from it.
 // Pure functions, no imports, so proxy.ts, config.ts, the sandbox hosts and the tests can all use them.
 //
-//   default   today's behaviour: model and web requests go through the hosted Cloudflare Worker on a static
-//             host (freegent.ai, *.github.io, *.pages.dev), or through the local server's /api/proxy.
+//   routed    model and web requests go through the hosted Cloudflare Worker on a static host (freegent.ai,
+//             *.github.io, *.pages.dev), or through the local server's /api/proxy.
 //   provider  the browser talks to the model provider directly. Nothing goes to the hosted or a custom
-//             Worker, the page-view counter, log uploads and the location lookup are off. The local dev
+//             Worker, log uploads and the location lookup are off. The anonymous page-view counter still runs
+//             (opt out in Settings → Privacy). The local dev
 //             server's own /api/proxy still works: it runs on this machine and holds the credentials file keys.
 //   local     only localhost and local-network addresses. Cloud providers, web search and fetch_url are
 //             refused, and sandboxed code gets a CSP that blocks its own network calls.
 //
+// Without a saved choice the level is Provider-only, or Routed while a Developer key is saved (the key only
+// works through the Worker). The choice is made in the sidebar's Privacy button or Settings → Privacy.
+// "default" is the old name of "routed" and still reads as it.
+//
 // Libraries and runtimes that the page loads with <script> or import() (jsdelivr, esm.sh) are not fetch calls
 // and load at every level; the browser caches them afterwards.
 
-type PrivacyLevel = 'default' | 'provider' | 'local';
+type PrivacyLevel = 'routed' | 'provider' | 'local';
 const PRIVACY_LEVEL_KEY = 'fg_privacy_level';
+const DEV_KEY_STORAGE = 'fg_dev_key';   // proxy.ts DEV_KEY_LS; not imported, to keep this module import-free
 
-export function parsePrivacyLevel(v: unknown): PrivacyLevel {
-    return v === 'provider' || v === 'local' ? v : 'default';
+/** The saved level, or null when `v` is not one (never chosen, or an unknown value). */
+export function parsePrivacyLevel(v: unknown): PrivacyLevel | null {
+    return v === 'routed' || v === 'default' ? 'routed' : v === 'provider' || v === 'local' ? v : null;
+}
+
+/** The level when nothing is saved: Routed with a Developer key, else Provider-only. */
+export function defaultPrivacyLevel(hasDevKey: boolean): PrivacyLevel {
+    return hasDevKey ? 'routed' : 'provider';
 }
 
 export function getPrivacyLevel(): PrivacyLevel {
-    try { return parsePrivacyLevel(localStorage.getItem(PRIVACY_LEVEL_KEY)); } catch { return 'default'; }
+    // Headless runs (fg-run, benchmarks) have no page, no Worker and no saved choice: nothing to restrict.
+    try { if ((globalThis as any).window?._fgHeadless || (globalThis as any)._fgHeadless) return 'routed'; } catch {}
+    try {
+        const saved = parsePrivacyLevel(localStorage.getItem(PRIVACY_LEVEL_KEY));
+        return saved ?? defaultPrivacyLevel(!!localStorage.getItem(DEV_KEY_STORAGE));
+    } catch { return 'provider'; }
 }
 
 export function setPrivacyLevel(level: PrivacyLevel): void {
@@ -52,7 +69,14 @@ export interface PrivacyContext {
     workerOrigins: string[];
 }
 
-const LEVEL_NAME: Record<PrivacyLevel, string> = { default: 'Default', provider: 'Provider-only', local: 'Local' };
+export const PRIVACY_LABELS: Record<PrivacyLevel, string> = { routed: 'Routed', provider: 'Provider-only', local: 'Local' };
+/** One-sentence explanations, shown as tooltips in the sidebar's Privacy menu. */
+export const PRIVACY_HELP: Record<PrivacyLevel, string> = {
+    routed: 'Requests go through FreeGent\'s Cloudflare Worker (or your local server\'s proxy), which forwards them and stores nothing. Works with every provider and with web search and fetch.',
+    provider: 'Your browser calls the model providers directly. NVIDIA, Kilo and sites without CORS headers cannot be reached.',
+    local: 'Only localhost and local-network addresses are reachable: local models and MCP servers on your network. Cloud providers, web search and fetch_url are refused.',
+};
+const LEVEL_NAME = PRIVACY_LABELS;
 
 /** The real destination of a request to the local server's /api/proxy: `?url=` for GETs, `{url}` in a POST body. */
 export function proxiedTarget(url: string, body: unknown, pageOrigin: string): string | null {
@@ -68,14 +92,14 @@ export function proxiedTarget(url: string, body: unknown, pageOrigin: string): s
 
 /** Why `target` may not be contacted at this level, or null when it may. Non-network schemes are always fine. */
 export function privacyBlockReason(target: string, level: PrivacyLevel, ctx: PrivacyContext): string | null {
-    if (level === 'default') return null;
+    if (level === 'routed') return null;
     let u: URL;
     try { u = new URL(target, ctx.pageOrigin); } catch { return null; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'ws:' && u.protocol !== 'wss:') return null;
     const name = LEVEL_NAME[level];
     if (level === 'provider') {
         return ctx.workerOrigins.includes(u.origin)
-            ? `Blocked by Settings → Privacy (${name}): ${u.host} is a Cloudflare Worker. Choose Default to use it.` : null;
+            ? `Blocked by Settings → Privacy (${name}): ${u.host} is a Cloudflare Worker. Choose Routed to use it.` : null;
     }
     // The page's own origin is where the app was served from, including its static files.
     if (u.origin === ctx.pageOrigin || isLocalAddress(u.hostname)) return null;
@@ -87,7 +111,7 @@ const NO_BROWSER_CORS_PROVIDERS: ReadonlySet<string> = new Set(['nvidia', 'kilo'
 
 /** True when a model cannot be used at this level, so it should not enter the rotation. */
 export function providerBlockedByPrivacy(provider: string, level: PrivacyLevel, opts: { staticHost: boolean; url?: string }): boolean {
-    if (level === 'default') return false;
+    if (level === 'routed') return false;
     if (level === 'provider') return opts.staticHost && NO_BROWSER_CORS_PROVIDERS.has(provider);
     if (provider === 'custom' || provider === 'vllm') {
         if (!opts.url) return false;

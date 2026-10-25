@@ -16,7 +16,7 @@ type ProxyKind = 'get' | 'post' | 'local';
 export function resolveProxy(kind: ProxyKind, manual = ''): string {
     // Settings → Privacy: below "Default" no hosted or custom Worker is used. The local server's own
     // /api/proxy stays, because it runs on this machine and holds the credentials-file keys.
-    const restricted = getPrivacyLevel() !== 'default';
+    const restricted = getPrivacyLevel() !== 'routed';
     if (restricted) manual = '';
     if (kind !== 'local' && manual) return kind === 'post' ? manual.replace(/\/$/, '') : manual;
     // Headless (fg-run, benchmarks) has no local server and no CORS: fetch directly.
@@ -76,7 +76,7 @@ export function installPrivacyGuard(): void {
     window.fetch = function (input: any, init?: any) {
         try {
             const level = getPrivacyLevel();
-            if (level !== 'default') {
+            if (level !== 'routed') {
                 const url = typeof input === 'string' ? input : input?.url ?? String(input);
                 const pageOrigin = window.location.origin;
                 const manual = (() => { try { return new URL(localStorage.getItem('fg_search_proxy') || '').origin; } catch { return ''; } })();

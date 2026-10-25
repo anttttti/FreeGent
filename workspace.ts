@@ -1204,7 +1204,7 @@ const _CLOUD_PULL_MAX = 200 * 1024 * 1024;
 const _enc = new TextEncoder();
 
 function _cloudWorkerUrl(): string {
-    if (getPrivacyLevel() !== 'default') return '';
+    if (getPrivacyLevel() !== 'routed') return '';
     return (localStorage.getItem(KEYS.SEARCH_PROXY) || '').trim() || DEFAULT_CF_WORKER;
 }
 function _cloudProjectSlug(): string {

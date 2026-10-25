@@ -37,7 +37,7 @@ features:
 2. Go to **Settings → Models → API Credentials** and paste a key for one provider. [Default providers](/models/providers) lists where to get free ones.
 3. Start a chat. The agent may call tools; each call shows as a step, and files it creates appear in **Project**. For longer jobs, switch to **Cowork** mode and start **Autopilot** on the [task board](/webui/tasks): it works through the tasks on its own for as long as the browser tab stays open.
 
-Keys, chats and files stay in your browser. Browsers block direct calls to most model APIs, so freegent.ai sends model requests, with your key, through a small Cloudflare proxy that forwards only to a fixed list of provider hosts and stores nothing ([details](/models/proxy)). **Settings → Privacy** can switch the Worker off or restrict FreeGent to your local network. For local models, bash on your machine, the terminal and the CLI, see [Local or self-hosted](/local/).
+Keys, chats and files stay in your browser. Browsers block direct calls to most model APIs, so when you choose Routed, freegent.ai sends model requests, with your key, through a small Cloudflare proxy that forwards only to a fixed list of provider hosts and stores nothing ([details](/models/proxy)). By default FreeGent calls providers directly from your browser and uses no Worker. The sidebar's **Privacy** button (also under **Settings → Privacy**) switches to **Routed** (through the Worker, for providers such as NVIDIA and Kilo that block browsers) or restricts FreeGent to your local network. For local models, bash on your machine, the terminal and the CLI, see [Local or self-hosted](/local/).
 
 ## Documentation
 

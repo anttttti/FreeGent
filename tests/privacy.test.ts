@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { isLocalAddress, privacyBlockReason, proxiedTarget, providerBlockedByPrivacy, sandboxCspMeta, parsePrivacyLevel, type PrivacyContext } from '../privacy.js';
+import { isLocalAddress, privacyBlockReason, proxiedTarget, providerBlockedByPrivacy, sandboxCspMeta, parsePrivacyLevel, getPrivacyLevel, type PrivacyContext } from '../privacy.js';
 import { resolveProxy, DEFAULT_CF_WORKER, installPrivacyGuard } from '../proxy.js';
 
 const hosted: PrivacyContext = { pageOrigin: 'https://freegent.ai', workerOrigins: [DEFAULT_CF_WORKER, 'https://mine.workers.dev'] };
@@ -17,9 +17,9 @@ describe('isLocalAddress', () => {
 });
 
 describe('privacyBlockReason', () => {
-    it('default blocks nothing', () => {
-        expect(privacyBlockReason('https://proxy.freegent.ai/', 'default', hosted)).toBeNull();
-        expect(privacyBlockReason('https://api.groq.com/x', 'default', hosted)).toBeNull();
+    it('routed blocks nothing', () => {
+        expect(privacyBlockReason('https://proxy.freegent.ai/', 'routed', hosted)).toBeNull();
+        expect(privacyBlockReason('https://api.groq.com/x', 'routed', hosted)).toBeNull();
     });
     it('provider blocks the hosted and a custom Worker, not providers or the web', () => {
         expect(privacyBlockReason(`${DEFAULT_CF_WORKER}/keys`, 'provider', hosted)).toMatch(/Provider-only.*Cloudflare Worker/);
@@ -54,7 +54,7 @@ describe('proxiedTarget', () => {
 });
 
 describe('providerBlockedByPrivacy', () => {
-    it('default blocks nothing', () => expect(providerBlockedByPrivacy('nvidia', 'default', { staticHost: true })).toBe(false));
+    it('routed blocks nothing', () => expect(providerBlockedByPrivacy('nvidia', 'routed', { staticHost: true })).toBe(false));
     it('provider drops NVIDIA and Kilo on a static host only', () => {
         expect(providerBlockedByPrivacy('nvidia', 'provider', { staticHost: true })).toBe(true);
         expect(providerBlockedByPrivacy('kilo', 'provider', { staticHost: true })).toBe(true);
@@ -71,15 +71,27 @@ describe('providerBlockedByPrivacy', () => {
 
 describe('sandboxCspMeta / parsePrivacyLevel', () => {
     it('only the local level adds a CSP', () => {
-        expect(sandboxCspMeta('default')).toBe('');
+        expect(sandboxCspMeta('routed')).toBe('');
         expect(sandboxCspMeta('provider')).toBe('');
         expect(sandboxCspMeta('local')).toMatch(/Content-Security-Policy.*connect-src/);
     });
-    it('unknown values mean default', () => {
+    it('unknown values are no saved level; the old name "default" reads as routed', () => {
         expect(parsePrivacyLevel('provider')).toBe('provider');
         expect(parsePrivacyLevel('local')).toBe('local');
-        expect(parsePrivacyLevel('strict')).toBe('default');
-        expect(parsePrivacyLevel(null)).toBe('default');
+        expect(parsePrivacyLevel('routed')).toBe('routed');
+        expect(parsePrivacyLevel('default')).toBe('routed');
+        expect(parsePrivacyLevel('strict')).toBeNull();
+        expect(parsePrivacyLevel(null)).toBeNull();
+    });
+    it('with nothing saved the level is Provider-only, or Routed while a Developer key is saved', () => {
+        stubPage('freegent.ai', null);
+        expect(getPrivacyLevel()).toBe('provider');
+        localStorage.setItem('fg_dev_key', 'k');
+        expect(getPrivacyLevel()).toBe('routed');
+        localStorage.setItem('fg_privacy_level', 'local');
+        expect(getPrivacyLevel()).toBe('local');
+        localStorage.setItem('fg_privacy_level', 'default');
+        expect(getPrivacyLevel()).toBe('routed');
     });
 });
 
@@ -96,8 +108,8 @@ function stubPage(hostname: string, level: string | null, manual = '') {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('resolveProxy at each privacy level', () => {
-    it('default is unchanged', () => {
-        stubPage('freegent.ai', null);
+    it('routed uses the hosted Worker', () => {
+        stubPage('freegent.ai', 'routed');
         expect(resolveProxy('post')).toBe(DEFAULT_CF_WORKER);
     });
     it('provider and local use no Worker on a static host, and ignore a custom Worker URL', () => {
@@ -113,8 +125,8 @@ describe('resolveProxy at each privacy level', () => {
 });
 
 describe('installPrivacyGuard', () => {
-    it('lets everything through at default', async () => {
-        const { win, fetchSpy } = stubPage('freegent.ai', null);
+    it('lets everything through when routed', async () => {
+        const { win, fetchSpy } = stubPage('freegent.ai', 'routed');
         installPrivacyGuard();
         await win.fetch('https://proxy.freegent.ai/keys');
         expect(fetchSpy).toHaveBeenCalledTimes(1);
