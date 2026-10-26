@@ -167,6 +167,7 @@ declare global {
     var estimateTokens: (obj: any) => number;
     var getActiveMainModelList: any;
     var specHasKey: (spec: string) => boolean;
+    var entryNeedsNoKey: (m: any) => boolean;
     var getActiveModel: any;
     var getAgentCompactAt: any;
     var getAgentCompactTokens: any;

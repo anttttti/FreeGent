@@ -8,6 +8,7 @@ const W = window;
 describe('resolveWorkerModelSpec — tier routing', () => {
     beforeEach(() => {
         localStorage.clear();
+        localStorage.setItem('fg_kilo_key', 'sk-test');   // Kilo models need a key, so specHasKey passes
     });
 
     it('returns explicit override regardless of role', () => {
@@ -16,7 +17,6 @@ describe('resolveWorkerModelSpec — tier routing', () => {
     });
 
     it('returns first active model when no spec and no role', () => {
-        // Use a kilo noKey:true model so specHasKey passes without an API key.
         localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free']));
         const result = W.resolveWorkerModelSpec(null, null);
         expect(result).toBe('kilo|nvidia/nemotron-3-ultra-550b-a55b:free');
@@ -35,7 +35,6 @@ describe('resolveWorkerModelSpec — tier routing', () => {
     });
 
     it('orchestrator tier returns main model spec when role routing is active', () => {
-        // Use a kilo noKey:true model so specHasKey passes without an API key.
         localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free']));
         localStorage.setItem('fg_agent_role_model_routing', 'true');
         const result = W.resolveWorkerModelSpec(null, { tier: 'orchestrator' });

@@ -2565,7 +2565,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // An empty list is the person's choice too (cleared, or emptied by the retirement of its only model): there is no default to fall back to.
     if (!endpointOverride && !getActiveMainModelList().length && (getMainModelList().length || mainModelListIsEmptyByChoice()))
         throw new Error(getMainModelList().length
-            ? 'No model can be used: every model in the priority list is paused, switched off or has no API key. Resume one in Settings → Models.'
+            ? 'No model can be used: every model in the priority list is paused, switched off, has no API key or is ruled out by Settings → Privacy. Resume one in Settings → Models.'
             : 'No model is selected: the priority list is empty. Add a model in Settings → Models.');
     const ep = endpointOverride ?? oaiEndpoint();
     const { model } = ep;

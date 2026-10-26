@@ -1,6 +1,6 @@
-// agentSend's key guard (agent-core.ts): a priority list headed by a keyless Kilo model must not
+// agentSend's key guard (agent-core.ts): a priority list headed by a Kilo model with a Kilo key must not
 // send the user to Settings. The guard used to check the provider alone ('kilo|'), which misses
-// per-model noKey, so every send from a device with no keys opened Settings instead.
+// per-model entries, so every send opened Settings instead. Kilo models need a key since 2026-10.
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 
 const W = window as any;
@@ -13,7 +13,7 @@ beforeAll(async () => {
     W.clearSuggestion ??= () => {};
     W.getPendingAttachments ??= () => ({ images: [], files: [] });
 });
-afterEach(() => { localStorage.removeItem('fg_main_models'); localStorage.removeItem('fg_kilo_key'); });
+afterEach(() => { localStorage.removeItem('fg_main_models'); localStorage.removeItem('fg_kilo_key'); localStorage.removeItem('fg_custom_models'); });
 
 async function sendOpensSettings(): Promise<boolean> {
     const orig = W.showSettings;
@@ -24,12 +24,26 @@ async function sendOpensSettings(): Promise<boolean> {
 }
 
 describe('send key guard', () => {
-    it('does not open Settings for a keyless Kilo model', async () => {
+    it('does not open Settings for a Kilo model with a Kilo key', async () => {
         localStorage.setItem('fg_main_models', JSON.stringify(['kilo|dots-studio/dots-3-note-preview:free']));
+        localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(await sendOpensSettings()).toBe(false);
     });
     it('opens Settings when no listed model has a key', async () => {
         localStorage.setItem('fg_main_models', JSON.stringify(['nvidia|nvidia/nemotron-3-ultra-550b-a55b']));
         expect(await sendOpensSettings()).toBe(true);
+    });
+    it('treats a Kilo model without a Kilo key as keyless, even a saved custom entry marked noKey', () => {
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'kilo', model: 'acme/old-free:free', label: 'Old', noKey: true, media: ['text'] }]));
+        expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(false);
+        expect(W.specHasKey('kilo|acme/old-free:free')).toBe(false);
+        localStorage.setItem('fg_kilo_key', 'sk-test');
+        expect(W.specHasKey('kilo|acme/old-free:free')).toBe(true);
+    });
+    it('showSettings opens the Models tab, not Profiles', () => {
+        document.body.insertAdjacentHTML('beforeend', '<button class="settings-tab-btn" data-tab="profiles"></button><button class="settings-tab-btn" data-tab="model"></button>');
+        const orig = W.activateTab; W.activateTab = () => {};
+        try { W.showSettings(); } finally { W.activateTab = orig; }
+        expect(document.querySelector('.settings-tab-btn.active')?.getAttribute('data-tab')).toBe('model');
     });
 });

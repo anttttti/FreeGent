@@ -9,7 +9,7 @@ Free-tier limits are set by the providers and change often, so check each provid
 | Google Gemini | `GEMINI_API_KEY` (also `GOOGLE_API_KEY`) | Free tier from [AI Studio](https://aistudio.google.com/app/apikey) |
 | OpenRouter | `OPENROUTER_API_KEY` | Many `:free` models |
 | NVIDIA NIM | `NVIDIA_API_KEY` | Free API credits at [build.nvidia.com](https://build.nvidia.com) |
-| Kilo | `KILO_API_KEY` | `:free` models; works without a key at an anonymous rate limit |
+| Kilo | `KILO_API_KEY` | `:free` models; needs a key (keyless access ended in 2026-10) |
 | Nous Portal | `NOUSPORTAL_API_KEY` (also `NOUS_API_KEY`) | |
 | TokenHarbor | `TOKENHARBOR_API_KEY` | Weekly quota |
 | Vercel AI Gateway | `VERCEL_API_KEY` | Selected models at $0 per token |

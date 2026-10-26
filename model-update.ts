@@ -711,9 +711,6 @@ function _applyProposals(proposals: Proposal[]): void {
                     released: p.created ? new Date(p.created * 1000).toISOString().slice(0, 7) : new Date().toISOString().slice(0, 7),
                     ...(p.created ? {} : { releasedEstimated: true }),
                     ...(p.cooldownMs != null ? { cooldownMs: p.cooldownMs } : {}),
-                    // Kilo proposals are all isFree models, which work without a key. Not all carry
-                    // a ":free" suffix (stealth/space-bunny-alpha does not).
-                    ...(p.provider === 'kilo' ? { noKey: true } : {}),
                 });
             }
         } else {

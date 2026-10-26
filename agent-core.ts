@@ -1353,7 +1353,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
 
     // Key guard: check local key AND CF Worker shared key via specHasKey.
     // When media routing kept the priority list's provider, check its first active spec: a
-    // provider-only spec ('kilo|') misses per-model noKey, so keyless Kilo models opened Settings.
+    // provider-only spec ('kilo|') missed per-model noKey, so keyless models opened Settings.
     const _activeSpec = getActiveMainModelList()[0];
     const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
     if (!specHasKey(_keySpec)) { showSettings(); return; }

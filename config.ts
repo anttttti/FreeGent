@@ -537,20 +537,20 @@ const MODEL_CATALOG = [
     { provider:'tokenharbor', model:'mimo-v2.5:free',         label:'MiMo V2.5 (free)',         released:'2026-04', contextK:1048, params:310,  media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'310B MoE (15B active); XiaomiAI MiMo V2.5 reasoning model; free tier via TokenHarbor; weekly quota' },
     { provider:'tokenharbor', model:'mimo-v2.6-flash:free',   label:'MiMo V2.6 Flash (free)',   released:'2026-09', contextK:1050, params:null, media:['text'], tools:true, thinking:true,  cooldownMs: 604800000, note:'XiaomiAI MiMo V2.6 Flash; 1M context; tool calls verified 2026-10-06; free tier via TokenHarbor; weekly quota' },
     // ── Kilo ─────────────────────────────────────────────────────────────────
-    // https://kilo.ai — OpenAI-compatible inference gateway; :free models work without a key
+    // https://kilo.ai — OpenAI-compatible inference gateway; :free models need a Kilo key (keyless requests stopped working in 2026-10)
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
-    { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  noKey:true, note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
-    { provider:'kilo', model:'recursive/flint-v1.0:free',                       label:'Flint v1.0 (free)',                released:'2026-10', contextK:262,  params:40,   media:['text'],        tools:true, thinking:false, noKey:true, note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23; free via Kilo' },
-    { provider:'kilo', model:'xingchen-agi/xing4.0-29b-a4b:free',               label:'Xing4.0 29B (free)',               released:'2026-10', contextK:262,  params:29,   media:['text'],        tools:true, thinking:true,  noKey:true, note:'China Telecom TeleAI; 29B MoE (4B active); 262K ctx; tool call verified 2026-10-23; free via Kilo' },
-    { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  noKey:true, note:'120B MoE (12B active); 262K ctx; free via Kilo' },
-    { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
-    { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, noKey:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
-    { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, noKey:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
-    { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  noKey:true, note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
-    { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  noKey:true, note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
-    { provider:'kilo', model:'poolside/laguna-xs-2.1:free',                     label:'Laguna XS 2.1 (free)',             released:'2026-07', contextK:262,  params:33,  media:['text'],        tools:true, thinking:true,  noKey:true, note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Kilo' },
-    { provider:'kilo', model:'dots-studio/dots-3-note-preview:free',            label:'Dots 3 Note (free)',               released:'2026-08', contextK:512,  params:280, media:['text'],        tools:true, thinking:true, noKey:true, note:'280B MoE (16B active); 512K ctx; long-context; free via Kilo' },
-    { provider:'kilo', model:'cohere/north-mini-code:free',                     label:'North Mini Code (free)',           released:'2026-06', contextK:256,  params:30,  media:['text'],        tools:true, thinking:true, noKey:true, note:'30B MoE (3B active); 256K ctx; code-focused; free via Kilo' },
+    { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
+    { provider:'kilo', model:'recursive/flint-v1.0:free',                       label:'Flint v1.0 (free)',                released:'2026-10', contextK:262,  params:40,   media:['text'],        tools:true, thinking:false, note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23; free via Kilo' },
+    { provider:'kilo', model:'xingchen-agi/xing4.0-29b-a4b:free',               label:'Xing4.0 29B (free)',               released:'2026-10', contextK:262,  params:29,   media:['text'],        tools:true, thinking:true,  note:'China Telecom TeleAI; 29B MoE (4B active); 262K ctx; tool call verified 2026-10-23; free via Kilo' },
+    { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  note:'120B MoE (12B active); 262K ctx; free via Kilo' },
+    { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
+    { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
+    { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
+    { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
+    { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
+    { provider:'kilo', model:'poolside/laguna-xs-2.1:free',                     label:'Laguna XS 2.1 (free)',             released:'2026-07', contextK:262,  params:33,  media:['text'],        tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Kilo' },
+    { provider:'kilo', model:'dots-studio/dots-3-note-preview:free',            label:'Dots 3 Note (free)',               released:'2026-08', contextK:512,  params:280, media:['text'],        tools:true, thinking:true, note:'280B MoE (16B active); 512K ctx; long-context; free via Kilo' },
+    { provider:'kilo', model:'cohere/north-mini-code:free',                     label:'North Mini Code (free)',           released:'2026-06', contextK:256,  params:30,  media:['text'],        tools:true, thinking:true, note:'30B MoE (3B active); 256K ctx; code-focused; free via Kilo' },
 
     // ── Vercel AI Gateway ──────────────────────────────────────────────────────
     // https://vercel.com/ai-gateway — OAI-compatible gateway; API key required for inference.
@@ -757,10 +757,10 @@ function getAllModels() {
 // The first non-cooling entry is used; if all cool, wait for the shortest.
 
 // Default priority list for new users, and for Settings → Model Priority → Defaults.
-// Kilo models (noKey:true) work with zero configuration; entries for providers without a key
-// are skipped, so the keyed ones cost no-key users nothing.
+// Entries for providers without a key are skipped, so listing them costs nothing. (Kilo's free models
+// needed no key until 2026-10; every one of them now answers only with a valid Kilo key.)
 // Order: quality tiers, best first. Within a tier, one model's providers sit together so a
-// rate limit on one moves to another provider's quota, Kilo first for no-key users.
+// rate limit on one moves to another provider's quota.
 // OpenRouter appears only a few times: its free tier is ~50 requests/day per account.
 // Inkling is not here: inkling:free is 404 on Kilo and 403 "agentic harnesses only" on
 // OpenRouter (rechecked 2026-10-06); inkling-small:free hit its daily cap almost immediately.
@@ -777,7 +777,7 @@ const _DEFAULT_MAIN_MODELS = [
     'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota
     'nvidia|stepfun-ai/step-5-preview',                // same model on NVIDIA NIM; separate quota
     'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
-    'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx; no key needed
+    'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx
     'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
     // Notes on the top tier: KiloBench (Terminal Bench 2.0): DeepSeek V4.1 Flash 75.3% (S tier). Step 5 Preview
     // is the most used free model on the Kilo leaderboard (kilo.ai/leaderboard/llm.txt, 2026-10-17)
@@ -934,6 +934,12 @@ export function hasCfTavilyKey(): boolean { return !!_cfWorkerKeys['TAVILY_API_K
 // Returns true if the CF Worker has a shared Brave Search API key configured.
 export function hasCfBraveKey():  boolean { return !!_cfWorkerKeys['BRAVE_API_KEY'];  }
 
+// True for a catalog or custom entry that works without any key. Kilo entries are never such: Kilo stopped serving
+// keyless requests in 2026-10, but custom Kilo entries saved by an earlier model-update check still carry noKey:true.
+export function entryNeedsNoKey(m: any): boolean {
+    return !!m?.noKey && m.provider !== 'kilo';
+}
+
 // Returns true when the user has a key configured for the given provider|model spec
 // (or when the model works without a key). Mirrors _modelHasKey() in settings-ui.ts.
 export function specHasKey(spec: string): boolean {
@@ -942,7 +948,7 @@ export function specHasKey(spec: string): boolean {
     const provider = spec.slice(0, bar);
     const model    = spec.slice(bar + 1);
     const entry    = getAllModels().find(m => m.provider === provider && m.model === model) as any;
-    if (entry?.noKey) return true;
+    if (entryNeedsNoKey(entry)) return true;
     if (entry?.key)   return true;
     if (provider === 'custom' || provider === 'vllm') return true;
     const _k = (fn: any) => typeof fn === 'function' && !!fn();
@@ -1366,7 +1372,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
+    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,

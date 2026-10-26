@@ -163,8 +163,11 @@ function populateVoiceTab() {
     if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = fillVoices;
 }
 
+// Opens Settings on the Models tab: its callers send the person there to choose a model or add a key
+// (activateTab alone lands on Profiles).
 function showSettings() {
     activateTab('settings');
+    switchSettingsTab('model');
 }
 
 function _applySandboxProviderUI(val) {
@@ -728,7 +731,7 @@ function renderModelCatalogTable() {
   <td${m.releasedEstimated ? ' style="color:var(--muted)" title="Estimated: the provider gave no release date, so this is when the model was first found"' : ''}>${escapeHtml(m.released || '')}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
-  <td>${m.noKey ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
+  <td>${entryNeedsNoKey(m) ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
   <td class="model-table-note">${escapeHtml(m.note || '')}</td>
   <td style="white-space:nowrap">${editBtn}${delBtn}</td>
 </tr>`;
@@ -1185,7 +1188,7 @@ function _handleDrop(event, containerId, targetIdx) {
 
 
 // Returns true when a model entry can be used with the current key configuration:
-// either it needs no key (noKey:true) or its provider has a key set in localStorage.
+// either it needs no key (entryNeedsNoKey) or its provider has a key set in localStorage.
 // custom/vllm entries are always included — the user added them and may have a per-entry key.
 // Thin wrapper so callers that have a model entry object can use specHasKey
 // (defined in config.ts, which is the single source of truth for key checks).
@@ -1209,8 +1212,11 @@ function _renderPriorityList(containerId, list) {
     // model's group) and skewed the row indices the move/remove buttons pass for the saved list.
     const _allModelMap = new Map((getAllModels() as any[]).map(m => [`${m.provider}|${m.model}`, m]));
     const noKeySet  = new Set(list.filter(k => { const m = _allModelMap.get(k); return !!m && !_modelHasKey(m); }));
+    // Settings → Privacy rules these out of routing too (Kilo and NVIDIA at Provider-only on a static host). They were drawn
+    // as active, so a new user saw ranked Kilo models while the chat said "no model", and adding a key changed nothing.
+    const blockedSet = new Set(list.filter(k => specBlockedByPrivacy(k)));
     const pausedSet = new Set(getPausedMainModels());
-    const _inactive = (k: string) => pausedSet.has(k) || noKeySet.has(k);
+    const _inactive = (k: string) => pausedSet.has(k) || noKeySet.has(k) || blockedSet.has(k);
     const multiSel  = _prioritySelected.size > 1;
 
     let html = `<div class="model-priority-list">`;
@@ -1221,13 +1227,15 @@ function _renderPriorityList(containerId, list) {
         const key = list[i];
         const paused   = pausedSet.has(key);
         const noKey    = noKeySet.has(key);
+        const blocked  = blockedSet.has(key);
         const selected = _prioritySelected.has(key);
         const lbl = modelFriendlyName(key) || key;
         const rem = typeof getCooldownRemaining === 'function' ? getCooldownRemaining(key) : 0;
         const coolTag = rem > 0 ? `<span class="model-priority-cool">⏳${rem}s</span>` : '';
-        const keyTag  = noKey ? `<span class="model-priority-cool" title="No API key for this provider — add one in Settings → Models">no key</span>` : '';
+        const keyTag  = blocked ? `<span class="model-priority-cool" title="Settings → Privacy (${escapeHtml(PRIVACY_LABELS[getPrivacyLevel()])}) does not allow this provider. Set Privacy to Routed to use it.">blocked by Privacy</span>`
+                      : noKey ? `<span class="model-priority-cool" title="No API key for this provider — add one in Settings → Models">no key</span>` : '';
         const rankCls     = (i === 0 && !_inactive(key)) ? ' model-priority-rank-1' : '';
-        const pausedCls   = (paused || noKey) ? ' model-priority-paused'   : '';
+        const pausedCls   = (paused || noKey || blocked) ? ' model-priority-paused'   : '';
         const selectedCls = selected  ? ' model-priority-selected' : '';
         // ↑/↓ title hints: when multiple rows are selected, the button moves them all.
         const upTitle   = (multiSel && selected) ? 'Move selected to the top'    : 'Move to the top';
@@ -1331,8 +1339,18 @@ function updateInputModelBtn(): void {
         : `<span class="ibtn-model">no model</span>`;
     // The visible text is only the model; the name also says what the button does.
     btn.setAttribute('aria-label', active ? `Switch model (current: ${provider} ${modelId})` : 'Switch model (none selected)');
+    btn.title = active ? 'Switch model' : _noModelReason();
     // Send is enabled only while a model can answer: the model list just changed (paused, resumed, added, removed).
     (window as any)._updateSendBtnVisibility?.();
+}
+
+// Why no model in the priority list can be used, for the input bar's "no model" button and its picker.
+function _noModelReason(): string {
+    const list = typeof getMainModelList === 'function' ? getMainModelList() : [];
+    if (!list.length) return 'The priority list is empty: add a model in Settings → Models.';
+    if (list.some(k => specBlockedByPrivacy(k)))
+        return `Settings → Privacy is ${PRIVACY_LABELS[getPrivacyLevel()]}, which rules out ${getPrivacyLevel() === 'local' ? 'every cloud model' : 'Kilo and NVIDIA (they cannot be called from a browser without the Worker)'}. Set Privacy to Routed, or add a model from another provider.`;
+    return 'Every model in the priority list is paused or has no API key: resume one or add a key in Settings → Models.';
 }
 
 function toggleInputModelPicker(): void {
@@ -1373,7 +1391,10 @@ function _renderInputModelPicker(picker: HTMLElement): void {
             <span>${escapeHtml(it.label)}</span>${it.paused ? '<span class="picker-paused" title="Paused: choosing it resumes it"> · paused</span>' : ''}
          </div>`
     ).join('') +
-    `<div class="picker-model-item picker-all-link" role="option" tabindex="0" onclick="activateTab('settings');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
+    // With nothing to choose from, say why, and offer the Privacy tab when that is the cause.
+    (items.length ? '' : `<div class="picker-note">${escapeHtml(_noModelReason())}</div>` +
+        (raw.some(k => specBlockedByPrivacy(k)) ? `<div class="picker-model-item picker-all-link" role="option" tabindex="0" onclick="activateTab('settings');switchSettingsTab('privacy');document.getElementById('input-model-picker')?.classList.remove('picker-open')">Privacy settings…</div>` : '')) +
+    `<div class="picker-model-item picker-all-link" role="option" tabindex="0" onclick="showSettings();document.getElementById('input-model-picker')?.classList.remove('picker-open')">Browse all models…</div>`;
     if (!(picker as any)._kbd) {
         (picker as any)._kbd = true;
         picker.addEventListener('keydown', (e: KeyboardEvent) => {
