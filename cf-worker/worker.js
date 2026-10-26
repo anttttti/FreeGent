@@ -66,7 +66,6 @@
 const ALLOWED_ORIGINS = new Set([
     'https://freegent.ai',           // production
     'https://www.freegent.ai',
-    'https://anttttti.github.io',   // old GitHub Pages URL — remove once traffic has moved to freegent.ai
     'http://localhost:5173',         // Vite dev server
     'http://localhost:4173',         // Vite preview
     'http://localhost:3000',

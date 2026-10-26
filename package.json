@@ -1,9 +1,12 @@
 {
   "name": "freegent",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Browser WebUI and headless CLI for running AI agents against free-tier LLMs and local models",
   "type": "module",
-  "bin": { "freegent": "bin/freegent.mjs" },
+  "engines": { "node": ">=22" },
+  "bin": {
+    "freegent": "bin/freegent.mjs"
+  },
   "author": "Antti Puurula",
   "license": "MIT",
   "keywords": [

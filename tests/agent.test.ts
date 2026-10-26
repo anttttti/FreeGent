@@ -193,8 +193,6 @@ describe('buildSystemPrompt', () => {
         expect(W.buildSystemPrompt()).toContain('FreeGent');
     });
 
-    it.todo('does not mention execute_code without sandbox — execute_code appears in skill/tool list regardless of sandbox; re-evaluate when prompt template is split');
-
     it('mentions execute_code when local sandbox is set', () => {
         localStorage.setItem('fg_sandbox_provider', 'local');
         expect(W.buildSystemPrompt()).toContain('execute_code');
@@ -575,17 +573,6 @@ describe('wikipediaSearch', () => {
         const r = await W.wikipediaSearch('q');
         expect(r).toHaveProperty('error');
     });
-});
-
-// ── saveCheckpoint ────────────────────────────────────────────────────────────
-// saveCheckpoint lives in agent-core.js which requires a full browser env to load.
-// Mark all four tests as todo until agent-core.js can be stubbed in setup.js.
-
-describe('saveCheckpoint', () => {
-    it.todo('returns a non-empty string ID');
-    it.todo('stores checkpoint data in localStorage');
-    it.todo('adds ID to checkpoint list');
-    it.todo('caps checkpoint list at 50 and removes oldest');
 });
 
 // ── withRetry ─────────────────────────────────────────────────────────────────
