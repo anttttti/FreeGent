@@ -13,7 +13,7 @@ export default defineConfig({
   lastUpdated: false,
   // Only the user guide is published. Contributor material (ADRs, prompt snapshots, the Shiro inventory,
   // the GitHub index page) stays in the repository.
-  srcExclude: ['README.md', 'adr/**', 'prompts/**', 'shiro/**', 'shiro-commands*.md', 'example-system-prompts.md'],
+  srcExclude: ['README.md', 'prompts/**', 'shiro/**', 'shiro-commands*.md', 'example-system-prompts.md'],
   themeConfig: {
     nav: [
       { text: 'Open the app', link: 'https://freegent.ai/', target: '_self' },
@@ -75,6 +75,7 @@ export default defineConfig({
         items: [
           { text: 'Cloudflare Worker', link: `${GH}/blob/main/cf-worker/README.md` },
           { text: 'Security', link: `${GH}/blob/main/SECURITY.md` },
+          { text: 'Privacy', link: '/privacy' },
           { text: 'Contributing', link: '/contributing' },
         ],
       },

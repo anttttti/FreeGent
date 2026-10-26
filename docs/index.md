@@ -53,4 +53,5 @@ Keys, chats and files stay in your browser. Browsers block direct calls to most 
 | [Harness](harness/index.md) | Tools, roles, skills, MCP, compaction and checks |
 | [Code execution](code-execution/index.md) | Python, JavaScript and bash, in the browser or on your machine |
 | [Local or self-hosted](local/index.md) | Install, TUI, CLI, LAN access, your own site and Worker |
+| [Privacy](privacy.md) | What stays in your browser, what leaves it and where it goes |
 

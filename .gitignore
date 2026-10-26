@@ -36,7 +36,6 @@ cf-worker/.wrangler/
 \#.env#
 .#.env
 
-docs/adr/
 __pycache__/
 
 # VitePress

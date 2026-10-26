@@ -53,7 +53,7 @@ The guide is at **[freegent.ai/docs](https://freegent.ai/docs/)**; the same page
 - [Harness](docs/harness/index.md): tools, skills, MCP, compaction, checks
 - [Code execution](docs/code-execution/index.md): Python, JavaScript and bash
 - [Local or self-hosted](docs/local/index.md): install, TUI, CLI, your own site
-- [Security](SECURITY.md) · [Contributing](docs/contributing.md)
+- [Privacy](docs/privacy.md) · [Security](SECURITY.md) · [Contributing](docs/contributing.md) · [Third-party notices](THIRD-PARTY-NOTICES.md)
 
 ## License
 
