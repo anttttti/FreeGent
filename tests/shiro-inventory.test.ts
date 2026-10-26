@@ -16,7 +16,6 @@ beforeAll(() => {
     }
     for (const path of ['shiro','exec-sandbox','docs/shiro']) cpSync(join(repository,path),join(root,path),{recursive:true});
     mkdirSync(join(root,'scripts')); copyFileSync(join(repository,'scripts/shiro-inventory.mjs'),join(root,'scripts/shiro-inventory.mjs'));
-    for (const name of ['shiro-commands-v0.61.md','shiro-commands-v0.61-historical.md']) copyFileSync(join(repository,'docs',name),join(root,'docs',name));
     copyFileSync(join(repository,'package.json'),join(root,'package.json'));
     symlinkSync(join(repository,'node_modules'),join(root,'node_modules'),'dir');
 });
@@ -24,8 +23,6 @@ afterAll(() => { if (root) rmSync(root,{recursive:true,force:true}); });
 const invoke = (...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/shiro-inventory.mjs', ...args], {cwd:root, encoding:'utf8'});
 const snapshot = () => Object.fromEntries([
     ...readdirSync(join(root,'docs/shiro')).map(name => `docs/shiro/${name}`),
-    'docs/shiro-commands-v0.61.md',
-    'docs/shiro-commands-v0.61-historical.md',
 ].map(path => [path, {sha256:createHash('sha256').update(readFileSync(join(root,path))).digest('hex'),mtime:statSync(join(root,path)).mtimeMs}]));
 
 describe('Shiro inventory CLI', () => {
@@ -55,22 +52,22 @@ describe('Shiro inventory CLI', () => {
         const version = data.artifacts.find((row:any)=>row.name==='hexdump').version;
         expect(markdown).toContain(`| util-linux | hexdump | hexdump@${version} / hexdump |`);
     });
-    it('checks the committed note and matrix without writing', () => {
+    it('checks the committed inventory and matrix without writing', () => {
         const before = snapshot();
         const result = invoke('--check');
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain('no files written');
         expect(snapshot()).toEqual(before);
     }, 30000);
-    it('detects stale notes without rewriting them', () => {
-        const path = join(root,'docs/shiro-commands-v0.61.md');
+    it('detects a stale inventory without rewriting it', () => {
+        const path = join(root,'docs/shiro/command-inventory.md');
         const previous = readFileSync(path);
         try {
             writeFileSync(path,'stale note\n');
             const before = snapshot();
             const result = invoke('--check');
             expect(result.status).toBe(1);
-            expect(result.stderr).toContain('shiro-commands-v0.61.md');
+            expect(result.stderr).toContain('command-inventory.md');
             expect(snapshot()).toEqual(before);
         } finally { writeFileSync(path,previous); }
     }, 30000);

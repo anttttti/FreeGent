@@ -229,37 +229,8 @@ for (const pkg of listAvailable().filter(pkg=>pkg.family)) for (const name of pk
 }
 inventory.push('', '## Common names absent from the current surface','',
   'This candidate list is a documentation comparison, not another runtime registry. Names below have no catalog/parser/package entry; installed user scripts may still add them.','', absent.map(name=>'`'+name+'`').join(', ')+'.',
-  '', '`make`, `chown`, `ln`, `col` and `ulimit` have explicit capability-only contracts. A listed name does not mean browser build execution, ownership changes, links or kernel limits are available.',
-  '', '## Removed command modules','',
-  'The removal record contains hashes and import/caller evidence. Removed files are not described as existing unregistered implementations. Their names may remain active through another owner.','');
-const removals = JSON.parse(await readFile(resolve(root,'docs/shiro/removals.json'),'utf8'));
-for (const row of removals.removed_command_modules) inventory.push(`- \`${row.path}\``);
+  '', '`make`, `chown`, `ln`, `col` and `ulimit` have explicit capability-only contracts. A listed name does not mean browser build execution, ownership changes, links or kernel limits are available.');
 generated.set(resolve(output,'command-inventory.md'),inventory.join('\n')+'\n');
-{
-  const notePath = resolve(root,'docs/shiro-commands-v0.61.md');
-  const historicalPath = resolve(root,'docs/shiro-commands-v0.61-historical.md');
-  // The immutable archive is the only source for historical measurements.
-  const previous = await readFile(historicalPath,'utf8');
-  const marker = '## v0.61 benchmark command usage';
-  const start = previous.indexOf(marker);
-  if (start < 0) throw new Error('Historical benchmark section missing; refusing to discard it');
-  let historical = previous.slice(start)
-    .replace(/^## v0\.61 benchmark command usage[^\n]*/, '## v0.61 benchmark command usage — historical measurements')
-    .replace('the support classification below is against Shiro’s active command registry and WASI manifest.', 'the support classification below is against the original v0.61 command surface.')
-    .replace('Observed command names unavailable in Shiro, with invocation counts:', 'Observed command names unavailable in the original v0.61 Shiro surface, with invocation counts:');
-  // Preserve lexical measurements; recompute only their current availability.
-  const observedSection = historical.slice(historical.indexOf('Observed command names'),historical.indexOf('That is 22'));
-  const observed = [...observedSection.matchAll(/\|\s*`([^`]+)`\s*\|\s*([\d,]+)/g)].map(match=>({name:match[1],count:Number(match[2].replaceAll(',',''))}));
-  const current = ['## Current availability of historically unavailable names','',
-    'Invocation counts retain the historical lexical extraction. Availability below is regenerated from the current catalog/parser/manifest.','',
-    '| Name | Historical invocations | Current route |','|---|---:|---|'];
-  for (const row of observed) current.push(`| \`${row.name}\` | ${row.count} | ${commands.get(row.name)?.route ?? 'absent'} |`);
-  const missing = observed.filter(row=>!commands.has(row.name));
-  current.push('', `${missing.length} of those names remain absent (${missing.reduce((sum,row)=>sum+row.count,0)} historical invocations). The original 22-name/1,071-invocation baseline remains unchanged in the historical section.`);
-  const footer = previous.indexOf('## Current availability of historically unavailable names',start);
-  if (footer >= 0) historical = historical.slice(0,historical.indexOf('## Current availability of historically unavailable names')).trimEnd()+'\n';
-  generated.set(notePath,inventory.join('\n').replaceAll('../../tests/','../tests/')+'\n\nComplete per-command routes and source hashes: [generated matrix](shiro/command-matrix.md), [JSON](shiro/command-matrix.json). Original routing claims are retained in the [historical note](shiro-commands-v0.61-historical.md).\n\n'+historical+'\n'+current.join('\n')+'\n');
-}
 if (options.check) {
   const stale = [];
   for (const [path,expected] of generated) {

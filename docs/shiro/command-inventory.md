@@ -109,36 +109,3 @@ This candidate list is a documentation comparison, not another runtime registry.
 `chgrp`, `chroot`, `mkfifo`, `mknod`, `syncfs`, `install-info`, `ldconfig`, `ldd`, `readelf`, `objdump`, `strip`, `ar`, `as`, `ld`, `systemctl`, `service`, `journalctl`, `dmesg`, `modprobe`, `lsmod`, `mount`, `umount`, `swapon`, `swapoff`, `sudo`, `su`, `passwd`, `useradd`, `userdel`, `groupadd`, `groups`, `who`, `w`, `last`, `login`, `ssh`, `scp`, `sftp`, `rsync`, `telnet`, `ftp`, `ping`, `traceroute`, `ip`, `ifconfig`, `ss`, `netstat`, `lsof`, `nc`, `netcat`, `tcpdump`, `git`, `svn`, `hg`, `docker`, `podman`, `kubectl`, `crontab`, `at`, `watchdog`, `ps`, `man`, `vi`, `nano`, `ed`, `top`, `pgrep`, `pkill`, `tput`, `stty`, `cc`, `gcc`, `ffmpeg`, `magick`, `psql`.
 
 `make`, `chown`, `ln`, `col` and `ulimit` have explicit capability-only contracts. A listed name does not mean browser build execution, ownership changes, links or kernel limits are available.
-
-## Removed command modules
-
-The removal record contains hashes and import/caller evidence. Removed files are not described as existing unregistered implementations. Their names may remain active through another owner.
-
-- `shiro/commands/cc.ts`
-- `shiro/commands/ed.ts`
-- `shiro/commands/export.ts`
-- `shiro/commands/ffmpeg.ts`
-- `shiro/commands/history.ts`
-- `shiro/commands/jobs.ts`
-- `shiro/commands/jseval/index.ts`
-- `shiro/commands/listen.ts`
-- `shiro/commands/lua.ts`
-- `shiro/commands/magick.ts`
-- `shiro/commands/man.ts`
-- `shiro/commands/nano.ts`
-- `shiro/commands/notify.ts`
-- `shiro/commands/pgrep.ts`
-- `shiro/commands/postgres.ts`
-- `shiro/commands/ps.ts`
-- `shiro/commands/source.ts`
-- `shiro/commands/sqlite.ts`
-- `shiro/commands/stty.ts`
-- `shiro/commands/test.ts`
-- `shiro/commands/top.ts`
-- `shiro/commands/tput.ts`
-- `shiro/commands/type.ts`
-- `shiro/commands/vi.ts`
-- `shiro/commands/wasi.ts`
-- `shiro/commands/which.ts`
-- `shiro/commands/x86.ts`
-- `shiro/commands/xpkg.ts`
