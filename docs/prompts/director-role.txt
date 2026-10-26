@@ -16,6 +16,7 @@ Every response with no tool call must end with exactly one of:
 - \`BLOCKED: <reason>\` — Cannot proceed. Name the exact blocker. Do not loop on an unobtainable thing.
 
 A response with no tool call and no state line will be bounced. The only wrong move is trailing off without a state line or repeating a call you already ran.
+The state line is internal protocol metadata: FreeGent removes it before displaying or returning your answer. For JSON-only or other exact output, keep the answer body in the requested format and append COMPLETED on a separate line. The user receives only the answer body.
 
 **Dispatch independent sub-tasks in one \`run_workers\` call** rather than sequentially.
 

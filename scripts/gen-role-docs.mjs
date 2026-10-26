@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * gen-role-docs.mjs
- * Regenerates 02–05_*_role.txt documentation files from BUILTIN_ROLES in workers.ts.
+ * Regenerates docs/prompts/<role>-role.txt from BUILTIN_ROLES in workers.ts.
  * Run whenever roles change: node scripts/gen-role-docs.mjs
  *
  * Tool lists in the generated files come directly from role.tools in the source —
@@ -129,6 +129,8 @@ function extractRole(objSrc, fullSrc, objOffset) {
 // Map from interpolation expression to human-readable description for the docs.
 const INTERPOLATION_NOTES = {
     '_roleConciseBlock':        '[injected when concise prompts are enabled: ## Conciseness — telegraphic style, outcome-only summary]',
+    'strategySection':          '[dynamic ## Strategy section — built at call time from the active tools]',
+    'toolSection':              '[dynamic ## Tools section — built at call time from enabledTools: one entry per active tool]',
     'availableToolsSection':    '[dynamic ## Available tools section — built at call time from enabledTools; lists only active tools and their worker role descriptions]',
 };
 
@@ -143,13 +145,12 @@ const SENT_TO = {
     director:   'main agent system prompt when mainRole = director (bench, headless, or user-selected)\n         also used as worker system prompt when run_workers spawns a director sub-worker',
     researcher: 'worker system prompt when run_workers spawns a researcher sub-worker\n         (also used as main-agent prompt when --role=researcher)',
     coder:      'worker system prompt when run_workers spawns a coder sub-worker',
-    planner:    'worker system prompt when run_workers spawns a planner sub-worker',
 };
 
 const FILE_MAP = {
-    director:   '02_director_role.txt',
-    researcher: '03_researcher_role.txt',
-    coder:      '04_coder_role.txt',
+    director:   'director-role.txt',
+    researcher: 'researcher-role.txt',
+    coder:      'coder-role.txt',
 };
 
 // ── generate ──────────────────────────────────────────────────────────────────
@@ -187,35 +188,9 @@ for (const role of roles) {
         role.description ? `- description: ${role.description}` : null,
     ].filter(l => l !== null).join('\n');
 
-    const outPath = resolve(root, outFile);
+    const outPath = resolve(root, 'docs/prompts', outFile);
     writeFileSync(outPath, content, 'utf8');
     console.log(`  wrote ${outFile} (${role.tools.length} tools)`);
 }
-
-// ── 05_planner_role.txt — note removal from BUILTIN_ROLES ────────────────────
-const plannerPath = resolve(root, '05_planner_role.txt');
-const plannerNote = [
-    `SOURCE: workers.ts — BUILTIN_ROLES`,
-    `GENERATED: by scripts/gen-role-docs.mjs — do not edit by hand; run the script to update`,
-    `STATUS: planner role removed from BUILTIN_ROLES`,
-    '',
-    HR,
-    '',
-    `The 'planner' role is no longer defined in BUILTIN_ROLES in workers.ts.`,
-    '',
-    `It was previously used as a sub-worker role for generating execution plans.`,
-    `Its functionality was absorbed into the director role (which reads and delegates`,
-    `planning inline) and into custom roles/ workspace files when needed.`,
-    '',
-    `If you want to restore the planner, add an entry to BUILTIN_ROLES in workers.ts`,
-    `and re-run: node scripts/gen-role-docs.mjs`,
-    '',
-    HR,
-    `NOTES:`,
-    `- Not in BUILTIN_ROLES — run_workers cannot spawn a planner sub-worker.`,
-    `- Custom role files in roles/ can define a 'planner' role; see workers.ts _parseRoleFile().`,
-].join('\n');
-writeFileSync(plannerPath, plannerNote, 'utf8');
-console.log(`  wrote 05_planner_role.txt (removed-role note)`);
 
 console.log('Done.');

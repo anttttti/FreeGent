@@ -14,7 +14,6 @@ editing them has no effect.
 | `director-role.txt` | Director role body (main agent role) |
 | `researcher-role.txt` | Researcher worker role body |
 | `coder-role.txt` | Coder worker role body |
-| `planner-role.txt` | Planner worker role body |
 | `tool-classifier-prompt.txt` | Tool-use classification prompt |
 | `step-validation-prompts.txt` | Step validation judge prompts |
 | `answer-grounding-judge.txt` | Answer grounding / hallucination detection judge |
