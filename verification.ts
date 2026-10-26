@@ -23,17 +23,26 @@ const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+t
 const ENV_BROKEN_RE = /ModuleNotFoundError|ImportError|cannot import name|No module named|ERROR collecting|INTERNALERROR|conftest\.py.*(?:Error|error)|was removed in the NumPy|has no attribute '(?:Mapping|MutableMapping|Iterable|Callable|unicode_)'/;
 const SCRATCH_RE = /(?:^|\/)(?:tmp|temp|scratch|repro\w*|reproduc\w*|debug\w*|_probe\w*)(?:[_./-]|$)|\.(?:tmp|bak|orig|pyc)$|__pycache__|\.pytest_cache/i;
 
-interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string> }
-export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set() });
+// `deleted`: paths whose last change was a deletion (delete_file, or undo_write removing a file it had created), so a missing file is the
+// intended result, not a broken one (codex Review936).
+interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string>; deleted: Set<string> }
+export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set(), deleted: new Set() });
 
 /** Whether the call changed the workspace (scratch files do not count) and which files it names. */
-function _changedInfo(call: any): { changed: boolean; files: string[] } {
+function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
     const none = { changed: false, files: [] as string[] };
     const r = call?.result;
     if (!call || !r || typeof r !== 'object' || r.error) return none;
     if (WRITE_TOOLS.has(call.name)) {
         const path = String(call.args?.path ?? call.result?.path ?? '');
-        return SCRATCH_RE.test(path) ? none : { changed: true, files: path ? [path] : [] };
+        const deleted = call.name === 'delete_file' || (call.name === 'undo_write' && /\bdeleted\b/i.test(String(r.note ?? '')));
+        return SCRATCH_RE.test(path) ? none : { changed: true, files: path ? [path] : [], deleted };
+    }
+    // Workers' edits reach the workspace when run_workers applies them: they are the run's edits as much as the Director's (codex Review939).
+    if (call.name === 'run_workers') {
+        const files = [...(Array.isArray(r.applied) ? r.applied : []), ...(Array.isArray(r.conflictsResolved) ? r.conflictsResolved : [])]
+            .filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
+        return { changed: files.length > 0, files };
     }
     if (call.name === 'execute_code') {
         if (Array.isArray(r.files_written) && r.files_written.length) {
@@ -96,6 +105,10 @@ function _check(call: any): 'pass' | 'fail' | null {
     if (!r || typeof r !== 'object' || r.exit_code == null) return null;
     if (checkDidNotRun(call)) return null;
     const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+    // `pytest >/dev/null 2>&1 || true`: the exit status is not the runner's, so exit 0 proves nothing unless the output shows the
+    // passes (codex Review915: such a call made the run `verified` whatever pytest said).
+    if (r.exit_code === 0 && /\|\|\s*(?:true|:|exit\s+0)\b/.test(String(call.args?.code ?? ''))
+        && !/\b[1-9]\d* passed\b|^OK\b|\bFound 0 errors\b|\b0 errors?\b/m.test(out)) return null;
     // Exit 0 with a runner that printed failures (a wrapper that swallows the status) is not a pass.
     // "0 failed" and tsc's "Found 0 errors." are passes: the count must be non-zero.
     if (r.exit_code === 0 && !/\b[1-9]\d* (?:failed|errors?)\b|^FAILED\b|Traceback \(most recent call last\)/m.test(out)) return 'pass';
@@ -108,7 +121,10 @@ function _check(call: any): 'pass' | 'fail' | null {
 export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | null | undefined): VerificationState {
     for (const c of record?.toolCalls ?? []) {
         const ch = _changedInfo(c);
-        if (ch.changed) { st.edits++; st.changedSinceCheck = true; st.lastCheck = null; for (const f of ch.files) st.files.add(f); }
+        if (ch.changed) {
+            st.edits++; st.changedSinceCheck = true; st.lastCheck = null;
+            for (const f of ch.files) { st.files.add(f); if (ch.deleted) st.deleted.add(f); else st.deleted.delete(f); }
+        }
         const k = _check(c);
         if (k) { st.lastCheck = k; st.changedSinceCheck = false; }
     }

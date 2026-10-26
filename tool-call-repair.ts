@@ -404,6 +404,18 @@ export function _repairArgEnvelope(normCalls: any[]): void {
             for (let i = 0; i < a.arg_keys.length; i++) rebuilt[a.arg_keys[i]] = a.arg_values[i];
             nc.args = rebuilt;
         }
+        // The call's own arguments written as the file text: write_file {path: "config.json", content: "{\"path\": \"config.json\",
+        // \"content\": {…}}"}. A model writing a JSON file does this (sim s5-broken-json, 3 of 3 runs on Gemma 4): the file got
+        // the wrapper, and the task failed. Unwrapped only when the inner object is exactly {path, content} for the same path.
+        if ((nc.name === 'write_file' || nc.name === 'append_file') && typeof nc.args.content === 'string' && /^\s*\{\s*"path"\s*:/.test(nc.args.content)) {
+            let inner: any = null;
+            try { inner = JSON.parse(nc.args.content); } catch { /* not the wrapper */ }
+            const keys = inner && typeof inner === 'object' && !Array.isArray(inner) ? Object.keys(inner).sort().join(',') : '';
+            if (keys === 'content,path' && (nc.args.path == null || inner.path === nc.args.path) && inner.content != null) {
+                nc.args.path ??= inner.path;
+                nc.args.content = typeof inner.content === 'string' ? inner.content : JSON.stringify(inner.content, null, 2) + '\n';
+            }
+        }
     }
 }
 

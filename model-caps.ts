@@ -173,6 +173,15 @@ function _jsonObjectEnd(s: string, start: number): number {
 }
 
 /** A tool-argument value as written in text: JSON when it parses, the raw string otherwise. */
+// <parameter=KEY>v</parameter> and <parameter name="KEY">v</parameter> (either quote): Hermes models write both, and Format A
+// read only the first, so a call in the attribute form arrived with empty arguments ("path is required"; self-analysis task P6).
+const _PARAM_TAG_RE = /<parameter(?:=(["']?)(\w+)\1|\s+name=(["'])(\w+)\3)\s*>([\s\S]*?)<\/parameter>/g;
+function _paramTagArgs(body: string): Record<string, any> {
+    const args: Record<string, any> = {};
+    for (const m of body.matchAll(_PARAM_TAG_RE)) args[m[2] ?? m[4]] = _looseJson(m[5].trim());
+    return args;
+}
+
 function _looseJson(val: string): any {
     try { return JSON.parse(val); } catch { return val; }
 }
@@ -274,14 +283,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     cleaned = cleaned.replace(
         /<tool_call>\s*<function=(\w+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g,
         (_, name, body) => {
-            const args = {};
-            const paramRe = /<parameter=(\w+)>([\s\S]*?)<\/parameter>/g;
-            let m: RegExpExecArray | null;
-            while ((m = paramRe.exec(body)) !== null) {
-                const val = m[2].trim();
-                args[m[1]] = _looseJson(val);
-            }
-            pushCall(name, JSON.stringify(args));
+            pushCall(name, JSON.stringify(_paramTagArgs(body)));
             return '';
         }
     );
@@ -296,13 +298,8 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     //   Anthropic-style: <parameter name="language">bash</parameter>
     //   Plain children:  <language>bash</language>
     const _parseInvokeBody = (body: string): Record<string, any> => {
-        const args: Record<string, any> = {};
-        const paramReA = /<parameter\s+name="(\w+)">([\s\S]*?)<\/parameter>/g;
+        const args: Record<string, any> = _paramTagArgs(body);
         let m: RegExpExecArray | null;
-        while ((m = paramReA.exec(body)) !== null) {
-            const val = m[2].trim();
-            args[m[1]] = _looseJson(val);
-        }
         const paramReB = /<(\w+)>([\s\S]*?)<\/\1>/g;
         while ((m = paramReB.exec(body)) !== null) {
             if (m[1] === 'parameter') continue;

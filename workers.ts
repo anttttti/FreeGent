@@ -1535,11 +1535,16 @@ async function reduceWorkerOutputs(outputs: Array<{id: string; text: string}>, h
     return await callLLMComplete(prompt, { temperature: 0.3, maxTokens: 2048 }, handle);
 }
 
-/** The first balanced `{…}` in `text` that parses as JSON (braces inside strings do not count), or null. */
+/** The first balanced `{…}` in `text` that parses as JSON (braces inside strings do not count), or null.
+ *  Bounded (hermes review §26: unmatched braces made it quadratic, 5.8 s on a 60k reply): no scan runs past the last `}`, and at most
+ *  _JSON_START_LIMIT opening braces are tried as starts. */
+const _JSON_START_LIMIT = 256;
 export function _firstJsonObject(text: string): Record<string, any> | null {
-    for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+    const end = text.lastIndexOf('}') + 1;
+    let tries = 0;
+    for (let start = text.indexOf('{'); start !== -1 && start < end && tries++ < _JSON_START_LIMIT; start = text.indexOf('{', start + 1)) {
         let depth = 0, inStr = false, esc = false;
-        for (let i = start; i < text.length; i++) {
+        for (let i = start; i < end; i++) {
             const c = text[i];
             if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
             if (c === '"') inStr = true;
@@ -1986,8 +1991,14 @@ async function executeWorkers(args: any): Promise<any> {
         }));
     }
 
+    // Code execution off for everyone (no execute_code in the full tool pool): a worker asked to run, execute or test something can only
+    // stall, and the stall warnings below blame the files. Sim s6-no-exec-honest (3 of 3 runs): seven delegations of "run fizz.py",
+    // then an answer that did not say the code never ran.
+    const _askedToRun = agents.some((a: any) => /\b(?:run|execut\w*|test\w*)\b/i.test(String(a?.task ?? '')));
+    const _noExec = _askedToRun && blocked.length > 0 && !activeTools(false, null, true).some((s: any) => (s.function?.name ?? s.name) === 'execute_code');
     const result = {
-        ...(loopFiles.length > 0
+        ...(_noExec ? { exec_unavailable: 'Code execution is turned off in this session: neither you nor a worker can run a program (there is no execute_code tool), so running it cannot be delegated. Do not start another worker to run it. In your answer say plainly that the code was not run, and give what you can without running it.' } : {}),
+        ...(loopFiles.length > 0 && !_noExec
             ? { loop_warning: `${loopFiles.map(p => `"${p}"`).join(', ')} ${loopFiles.length === 1 ? 'has' : 'have'} stalled ${loopFiles.map(p => _fileStallCounts.get(p)).join('/')} times in a row. Do NOT spawn another worker for the same file. Read its current content (shown in incomplete_contents), decide what is wrong with it, and either write it directly or try a completely different approach.` }
             : blocked.length > 0
             ? { warning: `${blocked.length} worker(s) blocked — files in "incomplete" may be partially or incorrectly written. Current content shown in incomplete_contents — read it before deciding next step.` }

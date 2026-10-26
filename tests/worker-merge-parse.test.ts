@@ -19,4 +19,12 @@ describe('_firstJsonObject', () => {
         expect(_firstJsonObject('no object here')).toBeNull();
         expect(_firstJsonObject('{"unterminated": ')).toBeNull();
     });
+    it('stays fast on a reply full of unmatched braces (hermes §26: was 5.8 s for 60k)', async () => {
+        const { _firstJsonObject } = await import('../workers.ts');
+        const t0 = Date.now();
+        expect(_firstJsonObject('x'.repeat(60_000) + '{'.repeat(60_000))).toBeNull();
+        expect(_firstJsonObject('{'.repeat(60_000) + '}')).toBeNull();
+        expect(_firstJsonObject('{"a":1}' + '{'.repeat(60_000))).toEqual({ a: 1 });
+        expect(Date.now() - t0).toBeLessThan(1000);
+    });
 });

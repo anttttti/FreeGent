@@ -2730,7 +2730,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         recordToolFormat(provider, model, 'openai');
     // Fallback parser: also fires for 'openai' models when vLLM fails to parse the model's XML
     // tool-call syntax (e.g. ThinkingCap generating <invoke>/<execute_code> instead of
-    // <tool_call>{json}</tool_call>). Safe because parseFnTagCalls is restricted to known tool names.
+    // <tool_call>{json}</tool_call>). Formats whose tag *is* the name (D, F, G-b, H, K) match known tool names only; the
+    // explicit wrappers (A, B, C, E) accept any name, and an unknown one ends as executeToolAsync's "Unknown tool" error, which
+    // tells the model its name was wrong (role/worker ceilings apply before that). Nothing here may treat a parsed name as valid.
     if ((toolFormat === 'fn-tag' || toolFormat === 'openai') && result.content && !result.tool_calls?.length) {
         // The request itself can say a command is to be shown, not run: then a shell fence is the answer.
         const _lastAsk = [...(payload.messages ?? [])].reverse().find((m: any) => m.role === 'user' && !String(m.content ?? '').startsWith('<nudge>'));

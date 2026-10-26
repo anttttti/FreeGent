@@ -25,19 +25,6 @@ loadDotenv();
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-// `-p [text]` / `--print [text]` (the `freegent -p` pipeline form): run the agent on the text and the piped input, print only the answer.
-// The text is optional because the input may come entirely from stdin; it is taken out of `args` here so the option checks below never see it.
-let printMode = false, printText = '';
-for (let i = 0; i < args.length; i++) {
-    if (args[i] !== '-p' && args[i] !== '--print') continue;
-    printMode = true;
-    const next = args[i + 1];
-    if (next !== undefined && !next.startsWith('-')) { printText = next; args.splice(i, 2); } else args.splice(i, 1);
-    break;
-}
-// stdout is the answer (or the metrics lines); startup diagnostics such as the endpoint's context-window probe go to stderr.
-// Run before the probe prints: it came a moment after the reply and broke `--prompt … | jq` (TUI report case 025).
-console.log = console.info = (...a: unknown[]) => console.error(...a);
 // Every option that takes a value. A value-taking option followed by another option (or nothing) is an error, not a value:
 // `--prompt --temperature 0.3` used to send the text "--temperature" as the prompt (case 086).
 const _VALUE_FLAGS = new Set(['--api-key', '--api-url', '--browser-url', '--compaction-limit', '--context-window', '--disable-tools',
@@ -45,6 +32,20 @@ const _VALUE_FLAGS = new Set(['--api-key', '--api-url', '--browser-url', '--comp
     '--reply-channel-hint', '--retry-fixed-ms', '--retry-mode', '--sidecar-dir', '--task', '--task-file', '--temperature', '--thinking-level',
     '--timeout', '--workflow', '--workspace']);
 const _OPTION_NAMES = new Set([..._VALUE_FLAGS, '--help', '-h', '--no-log', '--print-model', '--no-tools', '-p', '--print']);
+// `-p [text]` / `--print [text]` (the `freegent -p` pipeline form): run the agent on the text and the piped input, print only the answer.
+// The text is optional because the input may come entirely from stdin; it is taken out of `args` here so the option checks below never see it.
+let printMode = false, printText = '';
+for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '-p' && args[i] !== '--print') continue;
+    printMode = true;
+    const next = args[i + 1];
+    // The text is the next argument unless that is an option: "-5 degrees in F?" is a request (hermes review §62: it was dropped).
+    if (next !== undefined && !_OPTION_NAMES.has(next)) { printText = next; args.splice(i, 2); } else args.splice(i, 1);
+    break;
+}
+// stdout is the answer (or the metrics lines); startup diagnostics such as the endpoint's context-window probe go to stderr.
+// Run before the probe prints: it came a moment after the reply and broke `--prompt … | jq` (TUI report case 025).
+console.log = console.info = (...a: unknown[]) => console.error(...a);
 // Progress banners go to stderr; in -p mode only errors do.
 const _note = (m: string) => { if (!printMode) console.error(m); };
 const _fail = (msg: string): never => { console.error(`Error: ${msg}`); process.exit(2); };

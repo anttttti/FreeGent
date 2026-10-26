@@ -369,32 +369,99 @@ export function taskChangesData(task: string): boolean {
 }
 
 // Git commands that throw away work that cannot be got back from the repository: untracked files (git clean),
-// uncommitted edits (reset --hard, checkout/restore of the whole tree, forced checkout/switch), stashed untracked
-// files being removed with the stash. An agent reaches for them to "leave the tree clean" and deletes the user's
-// own untracked files (s5-git-branch-tag: setup.sh was removed). Allowed only when the user's request names the
-// operation or says to discard/wipe; "leave the working tree clean" does not count.
-const _GIT_USER_OK_RE = /\bgit\s+(?:clean|reset\s+--hard|checkout\s+(?:-f|--force|\.)|restore\s+\.)|\breset\s+--hard\b|\b(?:discard|throw\s+away|wipe|blow\s+away|nuke|hard[\s-]reset|delete\s+(?:all\s+)?untracked)\b/i;
-export function destructiveGitReason(code: string, userText: string): string | null {
+// uncommitted edits (reset --hard, checkout/restore of the whole tree, forced checkout/switch), saved stashes (stash
+// drop/clear), modified files (rm -f), unmerged branches (branch -D) and remote history (push --force/--delete).
+// An agent reaches for them to "leave the tree clean" and deletes the user's own untracked files (s5-git-branch-tag:
+// setup.sh was removed). Allowed only when the user's request asks for that operation; "leave the working tree clean",
+// a negated or explained mention ("do not run git clean"), or a dry run ("git clean -n") does not count, and permission
+// for one operation is not permission for another (hermes N2; codex Review657/667/671/694/695/742-744/747).
+type _GitOp = 'clean' | 'reset' | 'discard' | 'stash' | 'rm' | 'branch' | 'push';
+const _GIT_OP_REASON: Record<_GitOp, string> = {
+    clean: 'git clean -f deletes untracked files that git cannot restore',
+    reset: 'git reset --hard discards uncommitted changes that git cannot restore',
+    discard: 'a whole-tree or forced git checkout/restore/switch discards uncommitted changes that git cannot restore',
+    stash: 'git stash drop/clear deletes saved stashes that git cannot restore',
+    rm: 'git rm -f deletes modified files whose changes git cannot restore',
+    branch: 'git branch -D deletes a branch whose unmerged commits git may not keep',
+    push: 'a forced or deleting git push rewrites remote history that git cannot restore here',
+};
+const _DISCARD_WORDS = String.raw`\b(?:discard|throw\s+away|blow\s+away|nuke|wipe|hard[\s-]reset)\b`;
+const _GIT_ASK: Record<_GitOp, RegExp> = {
+    clean: new RegExp(String.raw`\bgit\s+clean\b((?:\s+-[-\w]*)*)|\b(?:delete|remove|wipe|get\s+rid\s+of)\s+(?:all\s+)?(?:the\s+|my\s+)?untracked\b`, 'gi'),
+    reset: new RegExp(String.raw`\b(?:git\s+)?reset\s+--hard\b|${_DISCARD_WORDS}`, 'gi'),
+    discard: new RegExp(String.raw`\bgit\s+(?:checkout\s+(?:-f|--force|\.)|restore\s+\.|switch\s+(?:-f|--force|--discard-changes))|${_DISCARD_WORDS}`, 'gi'),
+    stash: /\bgit\s+stash\s+(?:drop|clear)\b|\b(?:drop|clear|delete|remove)\s+(?:the\s+|all\s+|my\s+|old\s+)*stash(?:es)?\b/gi,
+    rm: /\bgit\s+rm\b/gi,
+    branch: /\bgit\s+branch\s+(?:-D|-d|--delete)\b|\b(?:delete|remove|drop)\b[^.\n]{0,40}\bbranch(?:es)?\b/gi,
+    push: /\bgit\s+push\b[^.\n]*?(?:--force|\s-f\b|--delete|--mirror)|\bforce[\s-]push\w*/gi,
+};
+// Words that turn a mention in the request into something other than permission, when they come earlier in its clause.
+const _NOT_ASKED_RE = /\b(?:not|never|don'?t|no|without|avoid|explain\w*|describe\w*|what\s+(?:does|would|is)|how\s+does|why)\b/i;
+function _userAsked(op: _GitOp, userText: string): boolean {
+    const re = _GIT_ASK[op];
+    re.lastIndex = 0;
+    for (let m: RegExpExecArray | null; (m = re.exec(userText)); ) {
+        if (op === 'clean' && m[1] && m[1].split(/\s+/).some(f => /^--dry-run$|^-[a-zA-Z]*n/.test(f))) continue;   // a dry run is not a deletion
+        const before = userText.slice(0, m.index);
+        const clause = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(';'), before.lastIndexOf('!'), before.lastIndexOf('?'), before.lastIndexOf('\n'), before.search(/,\s*but\b[^,]*$/)) + 1);
+        if (!_NOT_ASKED_RE.test(clause)) return true;
+    }
+    return false;
+}
+// The operation an argv (after `git`) performs, if it is one of the above.
+function _gitOp(argv: string[]): _GitOp | null {
+    let i = 0;
+    while (i < argv.length && argv[i].startsWith('-')) i += /^-[Cc]$/.test(argv[i]) ? 2 : 1;   // -C dir, -c k=v, --no-pager, --git-dir=…
+    const sub = argv[i], rest = argv.slice(i + 1);
+    const flags = rest.filter(t => t.startsWith('-') && t !== '--'), words = rest.filter(t => !t.startsWith('-'));
+    const has = (re: RegExp) => flags.some(f => re.test(f));
+    const dry = has(/^--dry-run$|^-[a-zA-Z]*n/);
+    switch (sub) {
+        case 'clean': return !dry && has(/^--force$|^-[a-zA-Z]*f/) ? 'clean' : null;
+        case 'reset': return has(/^--hard$/) ? 'reset' : null;
+        case 'restore': if (has(/^--staged$|^-S$/) && !has(/^--worktree$|^-W$/)) return null;   // index only
+        // falls through
+        case 'checkout':
+            if (words.some(w => /^(?:\.\/?|:\/\*?|\*|:\(top\)\S*)$/.test(w))) return 'discard';
+            return sub === 'checkout' && has(/^-f$|^--force$/) ? 'discard' : null;
+        case 'switch': return has(/^-f$|^--force$|^--discard-changes$/) ? 'discard' : null;
+        case 'stash': return words[0] === 'drop' || words[0] === 'clear' ? 'stash' : null;
+        case 'rm': return !dry && !has(/^--cached$/) && has(/^--force$|^-[a-zA-Z]*f/) ? 'rm' : null;
+        case 'branch': return has(/^-D$/) || (has(/^-d$|^--delete$/) && has(/^-f$|^--force$/)) ? 'branch' : null;
+        case 'push': return has(/^--force(?:-with-lease)?(?:=|$)|^-f$|^--delete$|^-d$|^--mirror$/) || words.slice(1).some(w => /^[+:]/.test(w)) ? 'push' : null;
+        default: return null;
+    }
+}
+// Every git invocation in command position in shell text: after a separator, a subshell or group opener, a shell keyword or
+// wrapper (if/then/do, sudo/env/exec/command/nohup/time, VAR=value), and inside `bash -c '…'`. A mention inside an argument
+// (`echo git clean -fd`, a commit message) is not a command.
+function _shellGitArgvs(code: string): string[][] {
+    const out: string[][] = [];
+    const text = code.replace(/^\s*#.*$/gm, '');
+    for (const m of text.matchAll(/\b(?:ba|z|da)?sh\s+-c\s+(['"])([\s\S]*?)\1/g)) out.push(..._shellGitArgvs(m[2]));
+    for (const raw of text.split(/&&|\|\||;|\n|\||\$\(|[(){}`]/)) {
+        const seg = raw.trim().replace(/^(?:(?:sudo|env|exec|command|nohup|time|then|do|else|if|elif|while|until|!|\w+=\S*)\s+)+/, '');
+        if (/^git\s/.test(seg)) out.push(seg.slice(4).trim().split(/\s+/).map(t => t.replace(/^(['"])(.*)\1$/, '$2')));
+    }
+    return out;
+}
+// Git argv lists in program text of other languages: `['git', 'clean', '-fd']` and "git clean -fd" string literals
+// (subprocess.run, os.system, child_process.exec ...).
+function _programGitArgvs(code: string): string[][] {
+    const out: string[][] = [];
+    for (const m of code.matchAll(/\[\s*(['"])git\1\s*,([^\]]*)\]/g)) out.push([...m[2].matchAll(/(['"])((?:(?!\1).)*)\1/g)].map(x => x[2]));
+    for (const m of code.matchAll(/(['"`])git\s+((?:(?!\1)[^\n])*)\1/g)) out.push(..._shellGitArgvs('git ' + m[2]));
+    return out;
+}
+/** Why `code` must not run without the user asking for it, or null. `shell`: the code is shell text (bash, run_git);
+ *  otherwise it is a program whose git calls are found in its list and string literals. */
+export function destructiveGitReason(code: string, userText: string, shell = true): string | null {
     const text = String(code ?? '');
     if (!/\bgit\b/.test(text)) return null;
-    if (_GIT_USER_OK_RE.test(String(userText ?? ''))) return null;
-    for (const raw of text.split(/&&|\|\||;|\n|\|/)) {
-        const seg = raw.trim().replace(/^(?:sudo\s+|env\s+|\w+=\S+\s+)+/, '');
-        const m = /^git\s+((?:-C\s+\S+\s+|-c\s+\S+\s+|--no-pager\s+)*)(\w[\w-]*)\b(.*)$/.exec(seg);
-        if (!m) continue;
-        const [, , sub, rest] = m;
-        const flags = rest.split(/\s+/).filter(t => t.startsWith('-'));
-        const has = (re: RegExp) => flags.some(f => re.test(f));
-        if (sub === 'clean') {
-            if (has(/^--dry-run$|^-[a-zA-Z]*n/)) continue;
-            if (has(/^--force$|^-[a-zA-Z]*f/)) return 'git clean -f deletes untracked files that git cannot restore';
-        } else if (sub === 'reset' && has(/^--hard$/)) {
-            return 'git reset --hard discards uncommitted changes that git cannot restore';
-        } else if ((sub === 'checkout' || sub === 'restore') && /(?:^|\s)(?:--\s+)?(?:\.|:\/|\*)\s*$/.test(rest.trim())) {
-            return `git ${sub} on the whole tree discards uncommitted changes that git cannot restore`;
-        } else if ((sub === 'checkout' || sub === 'switch') && has(/^-f$|^--force$|^--discard-changes$/)) {
-            return `git ${sub} with force discards uncommitted changes that git cannot restore`;
-        }
+    const user = String(userText ?? '');
+    for (const argv of shell ? _shellGitArgvs(text) : _programGitArgvs(text)) {
+        const op = _gitOp(argv);
+        if (op && !_userAsked(op, user)) return _GIT_OP_REASON[op];
     }
     return null;
 }

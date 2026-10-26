@@ -37,8 +37,10 @@ async function problemWith(abs: string): Promise<string | null> {
     return null;
 }
 
-/** The files the run changed (workspace-relative where they are inside it), each with its problem or null. */
-export async function checkChangedFiles(root: string, files: Iterable<string>): Promise<ChangedFile[]> {
+/** The files the run changed (workspace-relative where they are inside it), each with its problem or null. `deleted`: paths the run
+ *  deleted on purpose; still gone, they are listed as deleted, not broken (codex Review936). `onDisk: false`: the files live elsewhere
+ *  (a task container, FG_TARGET_CONTAINER), so this process's disk says nothing about them and they are listed unchecked (codex Review937). */
+export async function checkChangedFiles(root: string, files: Iterable<string>, opts: { deleted?: Set<string>; onDisk?: boolean } = {}): Promise<ChangedFile[]> {
     const seen = new Set<string>(), out: ChangedFile[] = [];
     for (const f of files) {
         const abs = isAbsolute(f) ? f : join(root, f);
@@ -46,6 +48,8 @@ export async function checkChangedFiles(root: string, files: Iterable<string>): 
         const shown = rel && !rel.startsWith('..') ? rel : abs;
         if (seen.has(shown)) continue;
         seen.add(shown);
+        if (opts.onDisk === false) { out.push({ path: shown, problem: null }); continue; }
+        if (opts.deleted?.has(f) && !existsSync(abs)) { out.push({ path: `${shown} (deleted)`, problem: null }); continue; }
         out.push({ path: shown, problem: await problemWith(abs) });
     }
     return out;

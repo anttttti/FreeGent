@@ -436,11 +436,11 @@ function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean 
 
     // Git commands that discard work git cannot restore, unless the request names them (see destructiveGitReason).
     if (name === 'execute_code' || name === 'run_git') {
-        const code = name === 'run_git'
-            ? 'git ' + (Array.isArray(args.args ?? args.command) ? (args.args ?? args.command).join(' ') : String(args.args ?? args.command ?? args.cmd ?? ''))
-            : (String(args.language ?? 'bash') === 'bash' ? String(args.code ?? '') : '');
-        const why = destructiveGitReason(code, String(_currentUserIntent ?? ''));
-        if (why) return { level: 'block', quiet: true, reason: `${why}. Nothing in this call was run. Send it again WITHOUT that command: leave untracked files alone (a commit or a branch does not need a clean directory, and git status just lists them). Only the user can ask for them to be removed` };
+        // run_git is checked as the argv _handleRunGit will send; a program in another language through its git list/string literals.
+        const shell = name === 'run_git' || String(args.language ?? 'bash') === 'bash';
+        const code = name === 'run_git' ? ['git', ...runGitArgv(args)].join(' ') : String(args.code ?? '');
+        const why = destructiveGitReason(code, String(_currentUserIntent ?? ''), shell);
+        if (why) return { level: 'block', quiet: true, reason: `${why}. Nothing in this call was run. Send it again WITHOUT that command: leave untracked files, stashes and branches alone (a commit or a branch does not need a clean directory, and git status just lists untracked files). Only the user can ask for this` };
     }
 
     if (name === 'write_file' || name === 'delete_file') {
@@ -513,8 +513,7 @@ export function requestToolApproval(toolName, args) {
     if (toolName === 'run_workers' && Array.isArray(args.agents))
         summary += `: ${args.agents.slice(0, 8).map((a: any) => `${a?.id ?? '?'} (${a?.role ?? 'director'})`).join(', ')}`;
     // Show what will run, not just which tool: the approval is only as good as what the user sees.
-    const cmd = toolName === 'run_git'
-        ? (Array.isArray(args.args) ? args.args.join(' ') : String(args.args ?? args.command ?? args.cmd ?? ''))
+    const cmd = toolName === 'run_git' ? ['git', ...runGitArgv(args)].join(' ')
         : (typeof args.code === 'string' ? args.code : '');
     if (cmd) summary += `: ${cmd.length > 300 ? cmd.slice(0, 300) + '…' : cmd}`;
     return new Promise<boolean>(resolve => {
@@ -742,13 +741,21 @@ async function _handleAstQuery(args: any) {
     } catch (e) { return { error: `ast_query: ${e.message}` }; }
 }
 
+/** The argv run_git sends to /api/git: `args`, `command`, `cmd` or `arguments`, a string or a list, a leading "git" dropped.
+ *  The intent check, the approval prompt and the step label use this too, so none of them sees other words than the ones that run
+ *  (codex Review669/670/703/704: `{arguments: [...]}` and `"git clean -fd"` were screened as something else). */
+export function runGitArgv(args: any): string[] {
+    let a = args?.args ?? args?.command ?? args?.cmd ?? args?.arguments ?? [];
+    if (typeof a === 'string') a = a.trim().replace(/^git(?:\s+|$)/, '').split(/\s+/).filter(Boolean);
+    else if (Array.isArray(a)) { a = a.map(String); if (a[0] === 'git') a = a.slice(1); }
+    else a = [];
+    return a;
+}
+
 async function _handleRunGit(args: any) {
     if (!getGitEnabled() || getSandboxProvider() !== 'local')
         return { error: 'run_git requires Local Sandbox and Git access enabled in Settings → Code Execution.' };
-    // Normalise: accept command string/array aliases; strip leading "git" if included
-    let gitArgs = args.args ?? args.command ?? args.cmd ?? args.arguments ?? [];
-    if (typeof gitArgs === 'string') gitArgs = gitArgs.trim().replace(/^git\s+/, '').split(/\s+/);
-    else if (Array.isArray(gitArgs) && gitArgs[0] === 'git') gitArgs = gitArgs.slice(1);
+    const gitArgs = runGitArgv(args);
     try {
         const resp = await fetch('/api/git', {
             method: 'POST',
@@ -2881,7 +2888,7 @@ export function toolLabel(name, args) {
     if (name === 'generate_image')    return `imagine:${(a.prompt || '').slice(0, 40)}`;
     if (name === 'execute_code')      return `exec(${a.language})`;
     if (name === 'ast_query')         return `ast:${a.path}?${a.query || 'symbols'}`;
-    if (name === 'run_git')           return `git ${(a.args || []).join(' ')}`;
+    if (name === 'run_git')           return ['git', ...runGitArgv(a)].join(' ');
     if (name === 'run_workers')       return `workers(${(Array.isArray(a.agents) ? a.agents : []).map(w => w.role ? `${w.id}:${w.role}` : w.id).join(',')})`;
     if (name === 'repo_map')                  return `repo_map${a.path_filter ? ':' + a.path_filter : ''}`;
     if (name === 'search_workspace')            return `grep:${(a.pattern || '').slice(0, 32)}${a.path_filter ? ' in ' + a.path_filter : ''}`;

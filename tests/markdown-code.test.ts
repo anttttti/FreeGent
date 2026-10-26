@@ -47,7 +47,7 @@ describe('workspace links (372/373)', () => {
         ['/workspace/guide.md', 'guide.md'], ['/workspace/my%20notes.md', 'my notes.md'], ['/workspace/caf%C3%A9.txt', 'café.txt'],
         ['/workspace/%70lan.md', 'plan.md'], ['docs/a%20b.md', 'docs/a b.md'], ['./x.csv', 'x.csv'],
     ])('%s opens %s', (href, path) => expect(_workspacePathFromHref(href)).toBe(path));
-    it.each(['https://example.com/a.md', '//host/a.md', '#top', 'mailto:a@b.c', '../secret.md', '/etc/passwd.txt', '/workspace/dir//x.md', '/workspace/noext'])('%s is not a workspace link', href => {
+    it.each(['https://example.com/a.md', '//host/a.md', '#top', 'mailto:a@b.c', '../secret.md', '/etc/passwd.txt', '/workspace/dir//x.md', '/workspace/noext', '%6aavascript:x.md', '%6A%61vascript:x.md', '%64ata:text/html,x.md'])('%s is not a workspace link', href => {
         expect(_workspacePathFromHref(href)).toBeNull();
     });
 });

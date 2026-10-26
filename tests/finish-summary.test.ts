@@ -24,6 +24,51 @@ describe('verification records the files a run changed', () => {
     });
 });
 
+describe('deletions, worker edits and task containers (codex Review936, 937, 939)', () => {
+    it('a file the run deleted on purpose is listed as deleted, not broken; writing it again makes it an ordinary change', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fg-fin-'));
+        try {
+            writeFileSync(join(root, 'kept.ts'), 'export const x = 1;\n');
+            const st = newVerification();
+            noteStep(st, { toolCalls: [
+                call('delete_file', { path: 'old.ts' }, { success: true }),
+                call('undo_write', { path: 'new.ts' }, { success: true, path: 'new.ts', note: 'File deleted (it did not exist before the write).' }),
+                call('delete_file', { path: 'kept.ts' }, { success: true }),
+                call('write_file', { path: 'kept.ts' }, { success: true }),
+            ] });
+            const files = await checkChangedFiles(root, st.files, { deleted: st.deleted });
+            expect(files).toEqual([{ path: 'old.ts (deleted)', problem: null }, { path: 'new.ts (deleted)', problem: null }, { path: 'kept.ts', problem: null }]);
+            expect(finishLines({ signal: 'complete', stopReason: null, timedOut: false, verification: 'unverified' }, files).join('\n')).not.toMatch(/WARNING/);
+            // Without the record of the deletions they read as vanished files, as before.
+            expect((await checkChangedFiles(root, ['old.ts']))[0].problem).toBe('no longer exists');
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+    it('the files run_workers applied are the run\'s edits', () => {
+        const st = newVerification();
+        noteStep(st, { toolCalls: [call('run_workers', { agents: [] }, { status: 'complete', applied: ['src/w.ts', 'scratch_tmp.py'], conflictsResolved: ['src/both.ts'] })] });
+        expect([...st.files].sort()).toEqual(['src/both.ts', 'src/w.ts']);
+        expect(verdict(st)).toBe('unverified');
+        const none = newVerification();
+        noteStep(none, { toolCalls: [call('run_workers', { agents: [] }, { status: 'complete', applied: [] })] });
+        expect(verdict(none)).toBe('no_change');
+    });
+    it('a check whose status is masked (|| true) and whose output is discarded is no pass (codex Review915)', () => {
+        const run = (code: string, stdout = '') => { const st = newVerification();
+            noteStep(st, { toolCalls: [call('write_file', { path: 'a.py' }), call('execute_code', { language: 'bash', code }, { exit_code: 0, stdout, stderr: '' })] });
+            return verdict(st); };
+        expect(run('pytest >/dev/null 2>&1 || true')).toBe('unverified');
+        expect(run('pytest -q || true', '3 passed in 0.1s')).toBe('verified');
+        expect(run('pytest -q', '3 passed in 0.1s')).toBe('verified');
+    });
+    it('with the files in a task container, this disk is not consulted', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fg-fin-'));
+        try {
+            expect(await checkChangedFiles(root, ['/app/solution.py', 'gone.ts'], { onDisk: false }))
+                .toEqual([{ path: '/app/solution.py', problem: null }, { path: 'gone.ts', problem: null }]);
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+});
+
 describe('checkChangedFiles', () => {
     it('reports an emptied file, a syntax error, invalid JSON and a vanished file; leaves good files alone', async () => {
         const root = mkdtempSync(join(tmpdir(), 'fg-fin-'));

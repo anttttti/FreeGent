@@ -915,7 +915,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         timedOut,
         error:      error ? String((error as any)?.message ?? error).slice(0, 300) : null,
         verification: verdict(_verification),
-        changedFiles: await checkChangedFiles(workspaceRoot, _verification.files).catch(() => []),
+        changedFiles: await checkChangedFiles(workspaceRoot, _verification.files, { deleted: _verification.deleted, onDisk: !process.env.FG_TARGET_CONTAINER }).catch(() => []),
     };
     _metrics.finish = finish;
     return { output, error, metrics: _metrics, finish };

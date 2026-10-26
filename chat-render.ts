@@ -214,6 +214,7 @@ export function _workspacePathFromHref(href: string): string | null {
     if (!h || h.startsWith('#') || h.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(h)) return null;
     h = h.replace(/[?#].*$/, '');
     try { h = decodeURIComponent(h); } catch { return null; }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(h)) return null;   // a scheme written as %xx (%6aavascript:) is still a scheme (hermes review §68)
     h = h.replace(/^\/workspace\//, '').replace(/^\.\//, '');
     if (!h || h.startsWith('/') || h.split('/').some(seg => seg === '..' || seg === '') || !_WS_LINK_EXT.test(h)) return null;
     return h;

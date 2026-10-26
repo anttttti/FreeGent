@@ -35,6 +35,7 @@ function run(args: string[], env: Record<string, string> = {}): Promise<{ code: 
     const cwd = mkdtempSync(join(tmpdir(), 'fg-cli-'));
     return new Promise(resolve => {
         const p = spawn(process.execPath, [...RUN, ...args], { cwd, env: { PATH: process.env.PATH!, HOME: cwd, XDG_CONFIG_HOME: cwd, NODE_NO_WARNINGS: '1', ...env } });
+        p.stdin.end();   // nothing piped in: -p reads stdin until it closes
         let out = '', err = ''; p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
         const t = setTimeout(() => p.kill('SIGKILL'), 40_000);
         p.on('close', code => { clearTimeout(t); resolve({ code, out, err }); });
@@ -75,6 +76,15 @@ describe('fg-run argument contract', () => {
         }
         const ok = await run([...std(), '--prompt', 'hi', '--temperature', '0.4']);
         expect(ok.code).toBe(0);
+    }, 90_000);
+    it('-p takes a request that begins with a dash as the request, and a known option after -p as an option (hermes review §62)', async () => {
+        posts.length = 0;
+        const r = await run([...std(), '-p', '-5 degrees in F?', '--no-log']);
+        expect(r.err).not.toMatch(/needs a request/);
+        expect(r.code).toBe(0);
+        expect(JSON.stringify(posts.at(-1)?.messages ?? [])).toContain('-5 degrees in F?');
+        const opt = await run([...std(), '-p', '--no-log'], {});
+        expect(opt.err).toMatch(/-p needs a request/);
     }, 90_000);
     it('--prompt writes only the answer to stdout, even when the endpoint probe reports a window', async () => {
         delayMs = 500;   // the probe prints a moment after the request; a fast reply used to exit first and hide it

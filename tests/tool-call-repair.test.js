@@ -136,6 +136,23 @@ describe('_repairArgEnvelope — {arg_keys, arg_values} unwrap', () => {
         _repairArgEnvelope(calls);
         expect(calls[0].args).toEqual({ code: 'ls', language: 'bash' });
     });
+    it('write_file whose content is its own arguments gets the inner content (sim s5-broken-json)', () => {
+        const wrapped = JSON.stringify({ path: 'config.json', content: { name: 'svc', ports: [80, 443], debug: true } }) + '\n';
+        const calls = [{ name: 'write_file', args: { content: wrapped, path: 'config.json' } }];
+        _repairArgEnvelope(calls);
+        expect(JSON.parse(calls[0].args.content)).toEqual({ name: 'svc', ports: [80, 443], debug: true });
+        const text = [{ name: 'write_file', args: { path: 'a.txt', content: JSON.stringify({ path: 'a.txt', content: 'hello' }) } }];
+        _repairArgEnvelope(text);
+        expect(text[0].args).toEqual({ path: 'a.txt', content: 'hello' });
+    });
+    it('a JSON file that only looks similar is written as given', () => {
+        for (const content of [JSON.stringify({ path: 'other.json', content: 'x' }), JSON.stringify({ path: 'c.json', content: 'x', extra: 1 }), '{"path": "c.json"}', '{"path": broken'])
+            for (const path of ['c.json']) {
+                const calls = [{ name: 'write_file', args: { path, content } }];
+                _repairArgEnvelope(calls);
+                expect(calls[0].args.content).toBe(content);
+            }
+    });
     it('ignores mismatched arg_keys/arg_values lengths', () => {
         const orig = { arg_keys: ['a', 'b'], arg_values: ['x'] };
         const calls = [{ name: 'foo', args: { ...orig } }];
