@@ -23,9 +23,10 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 #
 # Keys are injected server-side and never visible to browser clients.
 
-# Per-client-IP rate limit for requests that use a shared key above, and for the open
-# ?url= fetch path. Anyone can call this Worker (an Origin header is easy to fake), so this is
-# what bounds use of the shared keys. worker.js keys the limit as "key:<ip>" / "get:<ip>".
+# Per-client-IP rate limit for requests that use a shared key above (only sent with the Developer
+# key), for guesses at the Developer key, and for the open ?url= fetch path. Anyone can call this
+# Worker (an Origin header is easy to fake). worker.js keys the limit as "key:<ip>" / "get:<ip>" /
+# "devkey:<ip>".
 # period must be 10 or 60 seconds; namespace_id is any number unique within the account.
 [[ratelimits]]
 name = "FG_RATE_LIMITER"

@@ -408,10 +408,9 @@ export default {
                 // Shared keys must never travel in clear text or to a URL that carries credentials.
                 if (!_httpsNoCreds(target)) return _err(403, 'Only https:// URLs without embedded credentials are allowed');
 
-                // Inject shared key when client sends no / empty Authorization.
-                // Shared keys are usable by anyone who can reach this Worker — the Origin check
-                // stops browsers on other sites, but any other client can send any Origin. The
-                // per-IP rate limit (FG_RATE_LIMITER in wrangler.toml) is what bounds their use.
+                // Inject a shared key when the client sends no / empty Authorization, and only for a
+                // request that carries the Developer key (_unlocked): without it no secret is ever used.
+                // The per-IP rate limit (FG_RATE_LIMITER in wrangler.toml) also caps use of an unlocked key.
                 const auth = headers['Authorization'] || headers['authorization'] || '';
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 const { hostname } = new URL(target);

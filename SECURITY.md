@@ -37,10 +37,14 @@ FreeGent has four parts, and they have different exposure:
     bubblewrap it runs isolated like `/api/execute`, seeing only the repository. The agent's file
     tools can't write inside `.git` (hooks, repo config). Remote operations that need your SSH keys
     or credential helper don't work from the agent — push from your own shell.
-- **The CF Worker** (`cf-worker/`) is the CORS proxy for the GitHub Pages site. Shared keys
-  stored as Worker secrets are usable by anyone who can send it a request — an `Origin` check
-  stops other websites, but other clients can send any header. Their use is bounded by a per-IP
-  rate limit (`FG_RATE_LIMITER` in `wrangler.toml`), not by secrecy.
+- **The CF Worker** (`cf-worker/`) is the CORS proxy for freegent.ai. It forwards model calls only
+  to a fixed list of provider hosts and stores nothing, except a chat log a user chooses to send
+  (kept 14 days). Optional shared provider keys, stored as Worker secrets, are injected only into
+  requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every
+  attempt spends from a per-IP rate limit (`FG_RATE_LIMITER` in `wrangler.toml`), so the key cannot
+  be guessed online. Other clients never receive a shared key. An `Origin` check keeps other
+  websites out, but any non-browser client can send any `Origin`; the same rate limit also bounds
+  the open `?url=` fetch path.
 - **The headless runner** (`fg-run.ts`, benchmarks) runs agent commands on the host or in a task
   container. Credentials are removed from command environments; `FG_EXEC_KEEP_ENV=NAME,…` passes
   named variables through when a task needs one.
