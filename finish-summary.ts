@@ -1,5 +1,5 @@
 // finish-summary.ts — what a finished headless run can say about the files it changed, from the tool log and the disk, not from
-// the model's own account. The self-analysis runs (bench/selfanalysis) had five runs that ended with a file emptied or unparseable and a
+// the model's own account. The self-analysis runs had five runs that ended with a file emptied or unparseable and a
 // final message that did not say so. The changed paths come from verification.ts (the same record that decides `verification`).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, extname } from 'node:path';

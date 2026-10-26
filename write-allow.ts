@@ -3,7 +3,7 @@
 // When a list is set, write_file, append_file, replace_in_file, apply_patch, delete_file and undo_write may only
 // touch the listed files and directories; any other path is refused before anything is written, with a message
 // that names the allowed paths so the model can send the call again. For runs whose task says "write only in out/":
-// an analysis or test-writing run that rewrote a product file (bench/selfanalysis W7r2: a full write_file of
+// an analysis or test-writing run that rewrote a product file (self-analysis W7r2: a full write_file of
 // storage-usage.ts with its backslashes doubled) is stopped at the call instead of being found by a diff afterwards.
 //
 // Like --fetch-allow this is request policy, not containment: execute_code can still write anywhere the process

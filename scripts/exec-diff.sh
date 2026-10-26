@@ -7,7 +7,7 @@
 #   *.js — `node` running the code as the body of an async function vs the exec sandbox's
 #          runner (exec-sandbox/js-run.ts)
 # The real side runs under bubblewrap: read-only system, private /tmp, no network — cases may be
-# commands models wrote (bench/dev-tests/log-replay/cases, picked from benchmark logs).
+# commands models wrote (the log-replay corpus, picked from benchmark logs).
 #
 #   scripts/exec-diff.sh [cases-dir] [fixtures-dir]
 #
@@ -30,11 +30,10 @@ sandbox=(bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-
     --setenv PATH "$nodedir:/usr/bin:/bin" --setenv HOME /workspace --setenv LC_ALL C.UTF-8
     --setenv PYTHONDONTWRITEBYTECODE 1)
 
-# Share selected native versions with the oracle recorder, without changing /usr. The helper lives
-# in the bench checkout (git-ignored here); without it only the log-replay cases lose their pinned
-# native programs, and the tracked cases still run against the system ones.
-if [ -f bench/dev-tests/log-replay/native-tools.py ]; then
-    python3 bench/dev-tests/log-replay/native-tools.py > "$out/native-programs.json"
+# Share selected native versions with the oracle recorder, without changing /usr. FG_NATIVE_TOOLS names
+# a helper that prints them as JSON; without it every case runs against the system programs.
+if [ -n "${FG_NATIVE_TOOLS:-}" ] && [ -f "$FG_NATIVE_TOOLS" ]; then
+    python3 "$FG_NATIVE_TOOLS" > "$out/native-programs.json"
     [ "$?" -eq 0 ] || exit 2
 else
     echo '[]' > "$out/native-programs.json"

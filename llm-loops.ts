@@ -439,7 +439,7 @@ function _nudgeRole(provider: string | null): 'system' | 'user' {
     return provider === 'nvidia' ? 'system' : 'user';
 }
 
-// Shared tool execution (Issue 8 slice 2 — see bench/notes/refactor-loop-and-tools.md). The
+// Shared tool execution (Issue 8 slice 2). The
 // execute + error-wrap + tracking + step-box UI loop is shared with runTurn;
 // calls are normalized to {name, args} and
 // call this. Returns [{name, args, result}] in call order (Promise.all preserves order).

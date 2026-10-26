@@ -57,8 +57,8 @@ jq selects 1.8.2 after auditing the upstream 1.6 security issues. Compiler names
 in its embedded build-configuration string are stable, with the verified SDK
 first on PATH throughout configure and make. GNU feature declarations select
 real WASI secure entropy rather than a time/PID fallback. The native fixture
-binary is independently pinned by `bench/dev-tests/log-replay/native-tools.json`;
-prepare it with `python3 bench/dev-tests/log-replay/native-tools.py --prepare`.
+binary is independently pinned by the native-tools manifest of the byte-comparison corpus;
+its `native-tools.py --prepare` fetches it, and `FG_NATIVE_TOOLS` hands that helper to `scripts/exec-diff.sh`.
 References bind that binary read-only at `/usr/bin/jq` inside bubblewrap;
 the host installation is untouched. Prior 1.6 measurements are retained.
 

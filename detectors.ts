@@ -310,7 +310,7 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
 // 5/5), and SWE runs were stopped on missing pytest / blocked pip before editing anything
 // (pytest-8365: 14 steps, empty patch). Missing-environment failures get the env_failure nudge
 // instead; they don't mean the task is hopeless, only that the tool can't be installed.
-// The bench-log corpus (bench/dev-tests/error-taxonomy) found the gaps: a package the installed
+// The benchmark-log corpus (error taxonomy) found the gaps: a package the installed
 // version doesn't carry ("cannot import name 'X' from astropy.utils.state", "module 'x' has no
 // attribute") and a file the run can't read ("Permission denied") are all the environment, and
 // all were counting as real failures that eventually stop the run.
@@ -515,7 +515,7 @@ export function sameErrorNudge(sig: string, n: number): string {
 }
 
 // Backslashes doubled by the model's own escaping: a full rewrite of an existing file in which `\d`, `\n`, `\s` ... became
-// `\\d`, `\\n`, `\\s`. bench/selfanalysis W7r2 regenerated storage-usage.ts that way (the regex `(\d+)` turned into `(\\d+)`, three
+// `\\d`, `\\n`, `\\s`. self-analysis W7r2 regenerated storage-usage.ts that way (the regex `(\d+)` turned into `(\\d+)`, three
 // `\n` in a tooltip into `\\n`) and broke an existing test; the file still parsed, so no syntax check could see it. Counted as growth
 // against the previous text, so a file that legitimately contains such sequences is not flagged for keeping them.
 const _DOUBLED_ESC = /\\\\[A-Za-z]/g;
@@ -525,7 +525,7 @@ export function doubledBackslashGrowth(previous: string, content: string): numbe
 }
 
 // The same over-escaping inside a regular expression literal of a file that did not exist before: `h.match(/^(\\d+)\\.(\\d+)$/)` matches a backslash
-// and a "d", not a number. bench/selfanalysis SEC1-SEC5: five of nine access-check reviews blamed a correct function for a "bug" that only existed in the
+// and a "d", not a number. self-analysis SEC1-SEC5: five of nine access-check reviews blamed a correct function for a "bug" that only existed in the
 // copy the agent had written into a test script (its tool call had doubled the backslashes), so the test of the copy "proved" the original wrong.
 // Looked for only after a call, a test, a match or an assignment, so a regex written as text in a string is not counted; none of this repository's sources has one.
 const _OVERESCAPED_REGEX = /(?:\.match\(|\.test\(|\.replace\(|\.search\(|=\s*|\(\s*|,\s*)\/(?:[^/\n\\]|\\[^\\])*\\\\[dswDSW][^/\n]*\//g;
@@ -574,7 +574,7 @@ export function pseudoToolInShell(code: string, toolNames: Iterable<string>): st
 // A program the shell has to quote (python3 -c "...", a heredoc) that failed on syntax. The model rewrites the same program
 // with another quoting each time and the errors differ (`syntax error near unexpected token`, `f-string expression part cannot
 // include a backslash`, `command not found` for words the shell split off), so no two failures share an error line: the
-// same-error and environment counters never saw a loop, and bench/selfanalysis logged 5-22 wasted steps in each of six runs.
+// same-error and environment counters never saw a loop, and self-analysis logged 5-22 wasted steps in each of six runs.
 const _INLINE_PY_RE = /^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:python3?|py)\s+(?:-c\b|-\s*<<)/;
 const _INLINE_SYNTAX_RE = /SyntaxError|syntax error near|unexpected EOF|unexpected token|f-string|EOL while scanning|unterminated|command not found/i;
 export const INLINE_SCRIPT_SIG = 'inline python through the shell failed on syntax';

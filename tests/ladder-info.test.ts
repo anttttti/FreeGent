@@ -1,4 +1,4 @@
-// Long-context conversation results (bench/modelladder → generated model-ladder.ts) reach the ranking prompt and the update modal
+// Long-context conversation results (model ladder → generated model-ladder.ts) reach the ranking prompt and the update modal
 // through ladder-info.ts: best result over the providers serving a model, one summary line.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { MODEL_LADDER, MODEL_LADDER_DATE, type LadderResult } from '../model-ladder.ts';

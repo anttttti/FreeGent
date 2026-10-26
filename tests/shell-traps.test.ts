@@ -1,4 +1,4 @@
-// Two traps that cost the self-analysis runs (bench/selfanalysis) 5-22 steps each:
+// Two traps that cost the self-analysis runs 5-22 steps each:
 //   * a tool call typed into the shell as the code of execute_code (`read_file{path: "a.ts"}`);
 //   * an inline `python3 -c "..."` / heredoc whose quoting the model rewrites again and again.
 import { describe, it, expect, beforeAll } from 'vitest';

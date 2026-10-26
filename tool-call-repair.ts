@@ -474,7 +474,7 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
     _repairFetchBody(norm);                                  // step 4c
     const hasEmptyCode = _repairExecCodeArgs(norm);          // step 5
     // step 6: the model's own call syntax leaked into the argument names. vLLM's Gemma parser turns `path:<|"|>tools.ts<|"|>,start_line:402,...`
-    // into the single key `tools.ts<|"|>,start_line` and drops the other values (bench/selfanalysis P3: two replace_in_file calls, each
+    // into the single key `tools.ts<|"|>,start_line` and drops the other values (self-analysis P3: two replace_in_file calls, each
     // answered "old_string is empty"). The values cannot be recovered; the call is reported to the model like unparseable arguments.
     for (const c of norm) if (Object.keys(c.args ?? {}).some(k => k.includes('<|')) && !bad.includes(c.name)) bad.push(c.name);
     return { bad, norm, hasEmptyCode };

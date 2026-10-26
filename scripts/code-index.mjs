@@ -6,13 +6,14 @@
 // Every command takes --root-only (only the files directly in --dir).
 // Written after the self-analysis runs T03/T14 (hand-made brace matching ranked nested pseudo-functions above the real longest function and
 // reported indexes into a comment-stripped line list) and T02 (a scanner that did not read .tsx files called a live function dead).
-// Scope: *.ts, *.tsx, *.js, *.mjs under --dir, without node_modules, dist, bench, notes, logs, tmp, tests (tests only count as users for `exports`).
+// Scope: *.ts, *.tsx, *.js, *.mjs under --dir, without node_modules, dist, notes, logs, tmp, the directories this checkout keeps out of git, tests (tests only count as users for `exports`).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { localIgnoredDirs } from './local-ignored-dirs.mjs';
 const ts = createRequire(import.meta.url)('typescript');
 
-const SKIP = new Set(['node_modules', 'dist', 'bench', 'notes', 'logs', 'tmp', 'out', '.git', 'results', 'public', 'coverage', 'test-results', 'research', 'docs', '.vitepress']);
+const SKIP = new Set([...localIgnoredDirs(), 'node_modules', 'dist', 'notes', 'logs', 'tmp', 'out', '.git', 'results', 'public', 'coverage', 'test-results', 'research', 'docs', '.vitepress']);
 const argv = process.argv.slice(2), cmd = argv[0];
 const flag = (k, d) => { const i = argv.indexOf(k); return i < 0 ? d : (argv[i + 1]?.startsWith('--') || argv[i + 1] === undefined ? true : argv[i + 1]); };
 const dir = resolve(String(flag('--dir', '.')));

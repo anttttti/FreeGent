@@ -80,7 +80,7 @@ export let activeChatId: string | null          = null;
 export let _seenReadFiles: Map<string, any>        = new Map();
 export let _seenListFiles: Set<string>        = new Set();
 export let mainAgentRole: any         = null; // Role object ({name, body, tools, ...}) or null — not a bare string
-export let workflowMode: boolean      = false; // true = bench/background agent (must complete without user); false = interactive chat
+export let workflowMode: boolean      = false; // true = benchmark/background agent (must complete without user); false = interactive chat
 export let _toolCallHistory: any[]      = [];
 export let lastUserMessageText: string   = ''; // last real user message — read by handover/regen logic across files
 export let _currentUserIntent: string    = ''; // set at turn start (agent-core); read by edit-intent validation (tools)

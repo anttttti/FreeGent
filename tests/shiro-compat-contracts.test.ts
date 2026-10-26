@@ -1,5 +1,5 @@
 // Host-reporting and tool-compat behaviour that scripts rely on, held to the contracts recorded for the
-// exec-diff coverage cases (bench/dev-tests/log-replay): output a browser shell cannot make byte-identical
+// exec-diff coverage cases (the log-replay corpus): output a browser shell cannot make byte-identical
 // to a native run (it has no real host) must still have the shape native output has.
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 

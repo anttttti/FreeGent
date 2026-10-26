@@ -1,4 +1,4 @@
-// Fixes from the v0.70 last-20-commits review (bench/notes/2026_10_10_v0.70_codex_commitreview.md), one block per finding.
+// Fixes from the v0.70 last-20-commits review, one block per finding.
 import { setWorkflowMode } from '../state.ts';
 import { setReplyChannelHint } from '../reply-channel.ts';
 import { _handleTurnState } from '../turn-protocol.ts';

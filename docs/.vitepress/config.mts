@@ -76,7 +76,6 @@ export default defineConfig({
           { text: 'Cloudflare Worker', link: `${GH}/blob/main/cf-worker/README.md` },
           { text: 'Security', link: `${GH}/blob/main/SECURITY.md` },
           { text: 'Contributing', link: '/contributing' },
-          { text: 'Benchmarks and tests', link: `${GH}/blob/main/bench/BENCHMARKS.md` },
         ],
       },
     ],

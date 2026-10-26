@@ -46,14 +46,11 @@ scripts/fetch-logs.sh mark <id>… # or `mark --all`, once reviewed (so they're 
 Sessions that have a Developer key saved (Settings → API Credentials) also upload: console errors/warnings
 (`POST /errlog`, KV keys `err:<sessionId>:…`) and the chat of each finished/failed/blocked Autopilot task
 (`POST /log`, field `devSession`). The `sessionId` / `devSession` value joins the two streams. Turn a
-reproducible failure into a unit test or a `bench/sim` scenario (see `bench/BENCHMARKS.md` → "What tests what").
+reproducible failure into a unit test or a simulation scenario (see the benchmark repository's "What tests what").
 Logs and the reviewed list live outside the repo (`~/.local/share/freegent/logs/`,
 `~/.config/freegent/reviewed-logs.txt`) because they contain users' chats. Never copy them into the repo.
 
 ## Evaluation and smoke tests
 
-Smoke tests (`node bench/smoke/run.js`), simulations (`node bench/sim/sim.mjs`) and benchmarks live in the
-`bench/` repo; `bench/BENCHMARKS.md` ("What tests what") says which to use when. Unit tests: `npx vitest run`.
-Browser-level checks of the WebUI (real Chromium/Firefox, scripted model): `node bench/browser/run.mjs` (probes and
-regressions) and `node bench/browser/matrix.mjs` (device / OS / browser matrix); a defect found by hand gets a
-regression probe there.
+Unit tests: `npx vitest run`. Smoke tests, simulations, browser-level checks of the WebUI and benchmarks live in a
+separate benchmark repository, whose `CLAUDE.md` and `BENCHMARKS.md` ("What tests what") say which to use when.

@@ -15,12 +15,9 @@
     "moduleDetection": "force",
     "skipLibCheck": true
   },
+  "include": ["*.ts", "*.tsx", "exec-sandbox/**/*", "shiro/**/*"],
   "exclude": [
     "node_modules",
-    "tmp",
-    "bench",
-    "notes",
-    "code-review-artifacts-*",
     "tests",
     "vite.config.ts",
     "dev-api.ts",

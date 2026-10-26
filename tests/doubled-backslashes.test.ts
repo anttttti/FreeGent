@@ -1,4 +1,4 @@
-// A full rewrite that doubles the backslashes of an existing file is reported in the write result (bench/selfanalysis W7r2).
+// A full rewrite that doubles the backslashes of an existing file is reported in the write result (self-analysis W7r2).
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { doubledBackslashGrowth } from '../detectors.ts';
 const W: any = window;

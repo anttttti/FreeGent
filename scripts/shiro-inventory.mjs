@@ -136,15 +136,16 @@ for (const name of [...parserNames,'!','((...))']) {
   if (parserNames.has(name) || name === '!' || name === '((...))') row.route = 'shell parser';
   commands.set(name,row);
 }
-// bench/ is a separate optional repository. Retain a generated coverage snapshot
-// so fresh FreeGent checkouts can check routing documents without that checkout.
+// The byte-comparison corpus is a separate optional checkout. Retain a generated coverage snapshot
+// so fresh FreeGent checkouts can check routing documents without it; FG_COVERAGE_INDEX names the
+// corpus's cases/coverage-index.json to refresh the snapshot from.
 let coverageSnapshot;
-try {
-  const raw = await readFile(resolve(root,'bench/dev-tests/log-replay/cases/coverage-index.json'),'utf8');
+const coveragePath = process.env.FG_COVERAGE_INDEX;
+if (coveragePath) {
+  const raw = await readFile(resolve(coveragePath),'utf8');
   const coverage = JSON.parse(raw);
-  coverageSnapshot = {source:'bench/dev-tests/log-replay/cases/coverage-index.json',sha256:createHash('sha256').update(raw).digest('hex'),commands:coverage.commands.map(({name,cases})=>({name,cases}))};
-} catch (error) {
-  if (error.code !== 'ENOENT') throw error;
+  coverageSnapshot = {source:'log-replay cases/coverage-index.json',sha256:createHash('sha256').update(raw).digest('hex'),commands:coverage.commands.map(({name,cases})=>({name,cases}))};
+} else {
   coverageSnapshot = JSON.parse(await readFile(resolve(root,'docs/shiro/command-coverage.json'),'utf8'));
 }
 generated.set(resolve(output,'command-coverage.json'),JSON.stringify(coverageSnapshot,null,2)+'\n');

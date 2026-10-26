@@ -1,4 +1,4 @@
-// Regression tests for the v0.62 code review findings (bench/notes/2026_10_06_v0.62_codex_codereview.md).
+// Regression tests for the v0.62 code review findings.
 const W = globalThis;
 await import('../post-turn.ts');
 await import('../tasks.ts');

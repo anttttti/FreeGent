@@ -767,11 +767,11 @@ function getAllModels() {
 // Space Bunny Alpha (stealth) was withdrawn on 2026-10-05 and is gone from every provider.
 // Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
-    // MiniMax M3.1 Flash (2026-10-20): 1M ctx; tool calls verified; long-chat test (bench/modelladder) reached the 250K ceiling in all
+    // MiniMax M3.1 Flash (2026-10-20): 1M ctx; tool calls verified; long-chat test (model ladder) reached the 250K ceiling in all
     // three conversations, 88-92% of microtasks solved, ~90 tok/s. Its free variant (Kilo, OpenRouter) was retired on 2026-10-22
     // (HTTP 404); only the paid Vercel route remains.
     'vercel|minimax/minimax-m3.1-flash',
-    // Ordered by the share of long-chat microtasks solved (bench/results/modelladder/convo-latest.md, 2026-10-20):
+    // Ordered by the share of long-chat microtasks solved (model-ladder results, 2026-10-20):
     // GLM 5.3 98%, DeepSeek 92%, Step 5 90%, Longcat 88%, Nemotron Super VL 79%, Nemotron Ultra 69%.
     'nvidia|z-ai/glm-5.3',
     'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota

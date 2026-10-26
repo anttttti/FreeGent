@@ -1,4 +1,4 @@
-// Fixes from the v0.70 deep reviews (bench/notes/2026_10_12_v0.70_codex_deepreview_plan.md), one block per finding.
+// Fixes from the v0.70 deep reviews, one block per finding.
 import { runtime } from '../runtime.ts';
 import { _appendRunnerLog } from '../runner.ts';
 import { _capAnyResult, truncateResultForHistory } from '../history.ts';

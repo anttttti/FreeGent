@@ -4,6 +4,7 @@ import * as esbuildLib from 'esbuild';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { networkInterfaces } from 'node:os';
+import { localIgnoredDirs } from './scripts/local-ignored-dirs.mjs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   loadDotenv, configDir, serverKeys, serverKeyStatus, loadOrCreateToken,
@@ -273,8 +274,8 @@ export default defineConfig(() => {
         },
       } : {}),
       watch: {
-        // bench/ (notes/ with its campaign artifacts included) is a gitignored scratch area whose artifacts run to thousands of files: watching them exhausts inotify and the server dies
-        ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/bench/**', '**/test-results/**'],
+        // Directories this checkout keeps out of git (scratch areas, notes, results, sibling repositories) can hold thousands of files: watching them exhausts inotify and the server dies
+        ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/test-results/**', ...localIgnoredDirs().map(d => `**/${d}/**`)],
       },
       // HMR isolation policy:
       //   localhost-only (BIND=127.0.0.1): single-user, developer machine — keep HMR

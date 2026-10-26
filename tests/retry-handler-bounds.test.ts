@@ -82,7 +82,7 @@ describe('a local endpoint that answers with a web page (opencode §44)', () => 
     });
 });
 
-describe('429 from every model in the pool (retry-storm regression, bench/selfanalysis T10/T29)', () => {
+describe('429 from every model in the pool (retry-storm regression, self-analysis T10/T29)', () => {
     // A v0.71.29 session logged 5,149 failed requests with a median gap of 19 ms and 3,080 in one minute. At HEAD two models that
     // always answer 429 without a retry-after are switched once (a zero wait to the sibling is the rotation) and then waited out:
     // a zero wait is never followed by another zero, so the pool cannot ping-pong, and a simulated hour produces a handful of requests.

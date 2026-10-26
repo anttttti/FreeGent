@@ -767,7 +767,7 @@ function _renderSectionRows(items: Proposal[], sectionIdx: 'adds' | 'removes', a
             <span style="flex:1;min-width:0">
                 ${provBadge}<strong style="color:${color}">${_lnk(escapeHtml(p.label))}</strong>
                 <span style="color:var(--muted);margin-left:4px">${_lnk(escapeHtml(p.model))}</span>${filterTag}
-                <br><span style="color:var(--muted)">${escapeHtml(p.note)}</span>${(() => { const l = formatLadder(bestLadder([p.spec])); return l ? `<br><span style="color:var(--muted)" title="Measured by bench/modelladder">${escapeHtml(l)}</span>` : ''; })()}
+                <br><span style="color:var(--muted)">${escapeHtml(p.note)}</span>${(() => { const l = formatLadder(bestLadder([p.spec])); return l ? `<br><span style="color:var(--muted)" title="Measured by the model ladder">${escapeHtml(l)}</span>` : ''; })()}
             </span>
         </label>`;
     }).join('');

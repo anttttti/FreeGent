@@ -196,7 +196,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
      *  async readdir callbacks land on the event loop concurrently with Ink's
      *  render cycle and freeze the TUI for several seconds.  maxDepth=4 still
      *  covers every realistic source-tree layout while bounding the total entry
-     *  count to a few thousand regardless of how large tmp/, bench/, logs/ etc. grow.
+     *  count to a few thousand regardless of how large tmp/, notes/, logs/ etc. grow.
      */
     async agentListFilesNoStat(maxDepth = 4): Promise<Array<{name: string}>> {
         // In a git repository the project's own files are the answer, at any depth; elsewhere the depth cap keeps the walk small.
@@ -218,7 +218,7 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         try {
             const dirs = (await readdir(this._root, { withFileTypes: true })).filter(e => e.isDirectory() && !e.name.startsWith('.'));
             const hidden = new Set(dirs.filter(e => _SKIP.has(e.name)).map(e => e.name));
-            // In a git repository, a folder .gitignore leaves out has no listed files: say so too, or "there is no bench/ here" is concluded from the listing.
+            // In a git repository, a folder .gitignore leaves out has no listed files: say so too, or "there is no notes/ here" is concluded from the listing.
             const { listing } = await _projectFiles(this._root, false);
             if (listing.via === 'git') {
                 const shown = new Set(listing.files.map(f => f.split('/')[0]));

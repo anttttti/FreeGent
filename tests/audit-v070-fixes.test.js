@@ -1,4 +1,4 @@
-// Fixes from the v0.70 bug audit (bench/notes/2026_10_12_v0.70_bug_audit.md), one block per item.
+// Fixes from the v0.70 bug audit, one block per item.
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

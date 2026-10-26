@@ -6,7 +6,6 @@ node_modules/
 /fg-tasks/
 /planning_notes*.md
 /project_idea.md
-/bench/
 /notes/
 /tmp/
 /tmp_dev/
@@ -15,7 +14,6 @@ node_modules/
 /results/
 /memory/
 /research/
-/bench/benchmarks/terminalbench/uv-bin/
 /dist/
 
 # Development notes and chat exports
@@ -38,7 +36,6 @@ cf-worker/.wrangler/
 \#.env#
 .#.env
 
-CONTRIBUTING.md
 docs/adr/
 __pycache__/
 

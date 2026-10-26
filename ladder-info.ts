@@ -1,4 +1,4 @@
-// ladder-info.ts — reads the generated model-ladder.ts (bench/modelladder long-context conversation results) for the
+// ladder-info.ts — reads the generated model-ladder.ts (long-context conversation results of the model ladder) for the
 // model ranking prompt (settings-ui.ts) and the model update modal (model-update.ts).
 import { MODEL_LADDER, MODEL_LADDER_DATE, type LadderResult } from './model-ladder.js';
 

@@ -22,4 +22,3 @@ The user guide below is built with VitePress and published at <https://freegent.
 | [prompts/](prompts/README.md) | Generated snapshots of the runtime system prompts |
 | [example-system-prompts.md](example-system-prompts.md) | Example prompt configurations per agent path |
 | [shiro/](shiro) | Coverage of the in-browser shell's commands |
-| [../bench/BENCHMARKS.md](../bench/BENCHMARKS.md) | Tests, simulations, browser probes and benchmarks |

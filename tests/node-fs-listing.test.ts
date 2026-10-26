@@ -13,7 +13,7 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'pipe' });
 function repo(): string {
     const d = tmp(); git(d, 'init', '-q');
-    writeFileSync(join(d, '.gitignore'), '/bench/\n*.log\n');
+    writeFileSync(join(d, '.gitignore'), '/bulk/\n*.log\n');
     mkdirSync(join(d, 'src')); writeFileSync(join(d, 'src', 'a.ts'), 'a'); writeFileSync(join(d, 'README.md'), 'r');
     git(d, 'add', '-A'); git(d, 'commit', '-qm', 'i');
     return d;
@@ -23,7 +23,7 @@ const names = async (root: string) => (await new NodeFsAdapter(root).agentListFi
 describe('listing in a git repository', () => {
     it('is the tracked and the untracked-but-not-ignored files, with size and time', async () => {
         const d = repo();
-        mkdirSync(join(d, 'bench')); writeFileSync(join(d, 'bench', 'huge.bin'), 'x'); writeFileSync(join(d, 'run.log'), 'l');
+        mkdirSync(join(d, 'bulk')); writeFileSync(join(d, 'bulk', 'huge.bin'), 'x'); writeFileSync(join(d, 'run.log'), 'l');
         writeFileSync(join(d, 'new.ts'), 'n'); mkdirSync(join(d, 'node_modules')); writeFileSync(join(d, 'node_modules', 'm.js'), 'm');
         expect(await names(d)).toEqual(['.gitignore', 'README.md', 'new.ts', 'src/a.ts']);
         const f = (await new NodeFsAdapter(d).agentListFiles()).find(x => x.name === 'src/a.ts')!;
@@ -35,11 +35,11 @@ describe('listing in a git repository', () => {
         mkdirSync(join(d, 'dist')); writeFileSync(join(d, 'dist', 'o.js'), 'o'); git(d, 'add', '-f', 'dist/o.js');
         expect(await names(d)).toEqual(['.github/ci.yml', '.gitignore', 'README.md', 'src/a.ts']);
     });
-    it('names the folders it leaves out, so "there is no bench/" is never concluded from the listing; an empty folder is not one of them', async () => {
+    it('names the folders it leaves out, so "there is no bulk/" is never concluded from the listing; an empty folder is not one of them', async () => {
         const d = repo();
-        mkdirSync(join(d, 'bench')); writeFileSync(join(d, 'bench', 'huge.bin'), 'x'); mkdirSync(join(d, 'empty'));
+        mkdirSync(join(d, 'bulk')); writeFileSync(join(d, 'bulk', 'huge.bin'), 'x'); mkdirSync(join(d, 'empty'));
         mkdirSync(join(d, 'node_modules'));
-        expect(await new NodeFsAdapter(d).agentHiddenDirs()).toEqual(['bench', 'node_modules']);
+        expect(await new NodeFsAdapter(d).agentHiddenDirs()).toEqual(['bulk', 'node_modules']);
     });
     it('a file deleted but still tracked is listed with size 0, not a crash', async () => {
         const d = repo(); rmSync(join(d, 'README.md'));
@@ -47,7 +47,7 @@ describe('listing in a git repository', () => {
         expect(f.size).toBe(0);
     });
     it('the no-stat listing is the same set', async () => {
-        const d = repo(); mkdirSync(join(d, 'bench')); writeFileSync(join(d, 'bench', 'x'), 'x');
+        const d = repo(); mkdirSync(join(d, 'bulk')); writeFileSync(join(d, 'bulk', 'x'), 'x');
         expect((await new NodeFsAdapter(d).agentListFilesNoStat()).map(f => f.name).sort()).toEqual(['.gitignore', 'README.md', 'src/a.ts']);
     });
 });
@@ -62,13 +62,13 @@ describe('listing outside git', () => {
 
 describe('a big ignored folder costs nothing', () => {
     it('100k files in an ignored folder: the listing is a few files and quick', async () => {
-        const d = repo(); mkdirSync(join(d, 'bench'));
-        for (let g = 0; g < 100; g++) { const sub = join(d, 'bench', `g${g}`); mkdirSync(sub); for (let i = 0; i < 1000; i++) writeFileSync(join(sub, `f${i}`), ''); }
+        const d = repo(); mkdirSync(join(d, 'bulk'));
+        for (let g = 0; g < 100; g++) { const sub = join(d, 'bulk', `g${g}`); mkdirSync(sub); for (let i = 0; i < 1000; i++) writeFileSync(join(sub, `f${i}`), ''); }
         const t0 = Date.now();
         const a = new NodeFsAdapter(d);
         const [l, h] = await Promise.all([a.agentListFiles(), a.agentHiddenDirs()]);
         expect(l.map(f => f.name).sort()).toEqual(['.gitignore', 'README.md', 'src/a.ts']);
-        expect(h).toEqual(['bench']);
+        expect(h).toEqual(['bulk']);
         expect(Date.now() - t0).toBeLessThan(2_000);
     }, 120_000);
 });

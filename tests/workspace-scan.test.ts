@@ -133,7 +133,7 @@ describe('codex R12-001: nesting deeper than the walk goes is an incomplete scan
 });
 
 describe('a workspace folder that an enclosing repository ignores', () => {
-    // The sim writes workspaces under bench/logs/ of the FreeGent repo, whose .gitignore ignores /bench/: ls-files and status said "nothing" for them.
+    // The sim wrote workspaces under logs/ of the FreeGent repo, whose .gitignore ignores /logs/: ls-files and status said "nothing" for them.
     it('is listed by a walk, and its writes are seen', async () => {
         const d = repo(); mkdirSync(join(d, 'ignored-dir', 'ws'), { recursive: true });
         const ws = join(d, 'ignored-dir', 'ws');

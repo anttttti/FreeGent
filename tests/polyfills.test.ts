@@ -31,22 +31,16 @@ describe('polyfills', () => {
 
 // Syntax the build cannot lower and an older Safari rejects at parse time, which stops every module
 // that imports the file. Shipped = everything the page (or its static import graph) can load.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 
 describe('no unsupported syntax in page code', () => {
     const root = join(__dirname, '..');
-    // bench/ (with bench/notes, whose campaign artifacts include copies of built bundles) is not page code.
-    const skip = /^(tests|bench|docs|scripts|work|tmp|cf-worker|smoke|node_modules|dist|public|\.)/;
-    const files: string[] = [];
-    const walk = (d: string) => {
-        for (const e of readdirSync(d)) {
-            const p = join(d, e), rel = relative(root, p);
-            if (skip.test(rel) || /^(fg-tui|tui-app|headless|dev-api|native-exec|vite\.config|vitest)/.test(rel)) continue;
-            if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|js)$/.test(e)) files.push(rel);
-        }
-    };
-    walk(root);
+    // Tracked files only: untracked scratch areas (notes, sibling repositories) hold copies of built bundles and are not page code.
+    const skip = /^(tests|docs|scripts|work|tmp|cf-worker|smoke|node_modules|dist|public|\.)/;
+    const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\0')
+        .filter(rel => /\.(ts|tsx|js)$/.test(rel) && !skip.test(rel) && !/^(fg-tui|tui-app|headless|dev-api|native-exec|vite\.config|vitest)/.test(rel));
     // Sandbox/worker bundles are built for es2020 (own frame); the wasm/x86 runtime needs BigInt anyway.
     const bundled = /^(shiro\/(x86|wasi-runtime|wasi-host|wasi-worker|wasm-module)|exec-sandbox\/|pyodide-worker)/;
 

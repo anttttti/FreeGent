@@ -131,4 +131,4 @@ That is 22 distinct unsupported names and approximately 1,071 invocations. The d
 
 Since this v0.61 inventory was recorded, Shiro added `7z` as an on-demand WebAssembly command and `pytest` through its Pyodide runtime. The 23 `7z` and 257 `pytest` attempts remain classified as unsupported for the historical benchmark baseline above.
 
-Source logs: [v0.61 benchmark run summary](../bench/run_all_output_v0.61_seed102.log), [InterCode SQL `mysql` attempt](../bench/logs/gemma-intercode-sql-v0.61/events/c52ddf65534b7b460muq82y3veb7fb4-1790900775212.jsonl), [TerminalBench `cmake` attempt](../bench/logs/gemma-terminalbench-v0.61/events/c52ddf65534b7b460muqne8rs4c3e55-1790926496488.jsonl), and [InterCode Bash `whereis` attempt](../bench/logs/gemma-intercode-bash-v0.61/events/51375c6b4f21672c0muq75wd3e63b14-1790899233304.jsonl).
+Source logs: the v0.61 benchmark run summary and three agent attempts (InterCode SQL `mysql`, TerminalBench `cmake`, InterCode Bash `whereis`), kept in the maintainers' benchmark repository.

@@ -1995,7 +1995,7 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 [data-theme="dark"] .agent-msg-bubble code { color: #ff8fc2; }
 
 /* Phones and tablets: iOS Safari zooms the page when a field under 16px takes focus, and the three toolbar
-   selects were 24px tall. Found by the Playwright device matrix (bench/browser/matrix.mjs). */
+   selects were 24px tall. Found by the Playwright device matrix (the browser device matrix). */
 @media (max-width: 700px), (pointer: coarse) {
     #agent-input { font-size: 16px; }
     .chat-select { font-size: 16px; min-height: 36px; }

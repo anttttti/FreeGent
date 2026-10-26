@@ -1,5 +1,5 @@
 // skill-guidance.js — FreeGent: triggered + reactive skill guidance injection
-// Also owns skill trigger evaluation (R3/R5 in bench/notes/codebase-review-2026-06.md).
+// Also owns skill trigger evaluation (review items R3/R5).
 // Depends on: config.js globals (skillsRegistry, activeSkills),
 //             state.js (currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts).
 import { runtime } from './runtime.js';

@@ -1432,7 +1432,7 @@ type ModelRankGroup = {
     aa: { intelligence: number | null; coding: number | null; agentic: number | null } | null;
     live: boolean;              // details came from the live OpenRouter list
     successes: number;          // successful main-agent requests to this model, all providers (recordModelSuccess)
-    ladder: string;             // measured microtask/context ladder summary (bench/modelladder), '' when never run
+    ladder: string;             // measured microtask/context ladder summary (model ladder), '' when never run
 };
 
 // Group available catalog entries by canonical model id and merge their features — live

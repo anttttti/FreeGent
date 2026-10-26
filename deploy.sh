@@ -169,32 +169,9 @@ if [ -f "$WORKER" ]; then
     ok "CF Worker has no hardcoded secrets"
 fi
 
-# 5. No bench/ changes committed to FreeGent  (bench code belongs in FreeGentBench)
 # 6. No AI-agent-attributed commits            (only human-authored commits allowed)
 # 7. All commits authored by the repo owner    (bypass: FREEGENT_ALLOW_FOREIGN_AUTHOR=1)
 if [ -n "$_PUSH_RANGE" ]; then
-
-    # 5. No bench/ changes
-    _BENCH_HITS=$(git diff --name-only "$_PUSH_RANGE" 2>/dev/null \
-        | grep -E '^bench(/|$)' || true)
-    if [ -n "$_BENCH_HITS" ]; then
-        echo -e "${R}✗ bench/ changes found in commits to be pushed:${N}" >&2
-        echo "$_BENCH_HITS" | sed 's/^/    /' >&2
-        echo >&2
-        fail "Benchmark code belongs in FreeGentBench (the bench/ submodule).\n  Commit there — never directly to FreeGent."
-    fi
-    ok "No bench/ changes in pending commits"
-
-    # 5b. No tracked FreeGent file imports from bench/ — it is gitignored, so such code
-    #     (e.g. tests) breaks in CI, where bench/ isn't checked out. Tests for bench/ live there.
-    _BENCH_IMPORTS=$(git grep -nE "(from|import\()[[:space:]]*['\"](\.\./)+bench/" -- '*.ts' '*.tsx' '*.js' '*.mjs' 2>/dev/null || true)
-    if [ -n "$_BENCH_IMPORTS" ]; then
-        echo -e "${R}✗ Tracked files import from bench/:${N}" >&2
-        echo "$_BENCH_IMPORTS" | sed 's/^/    /' >&2
-        echo >&2
-        fail "bench/ is not part of FreeGent. Move this code or its tests to FreeGentBench."
-    fi
-    ok "No tracked files import from bench/"
 
     # 6. No AI-agent attribution in commit messages or author/committer email
     #    Known attribution patterns (updated 2025-09):
@@ -327,26 +304,23 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Deployment version: <benchmark version>.<counter>, e.g. v0.63.12.
-#   benchmark version = the newest vX.Y with a bench/run_all_output_vX.Y*.log (the version the
-#                       code was last benchmarked at); without bench/, the prefix of the latest
-#                       deployment tag.
-#   counter           = highest counter among existing vX.Y.N deployment tags + 1, so it is unique
-#                       and increasing across all deployments, whatever the prefix.
+# Deployment version: <series>.<counter>, e.g. v0.63.12.
+#   series  = vX.Y: FG_SERIES when set (e.g. FG_SERIES=v1.0 ./deploy.sh starts a new series),
+#             otherwise the prefix of the latest deployment tag.
+#   counter = highest counter among existing vX.Y.N deployment tags + 1, so it is unique
+#             and increasing across all deployments, whatever the prefix.
 # The version is baked into the build (FG_VERSION) and recorded as a git tag, which is pushed with
 # the commit; the Pages workflow reads it from that tag. Uploaded chat logs carry it.
 step "Deployment version"
 git fetch --tags --quiet 2>/dev/null || warn "Could not fetch tags — counter may repeat a deployment from another machine"
 _DEPLOY_TAGS=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
-_BENCH_V=$(ls bench/run_all_output_v*.log 2>/dev/null \
-    | sed -E 's#.*run_all_output_(v[0-9]+\.[0-9]+).*#\1#' | grep -E '^v[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
-if [ -z "$_BENCH_V" ] && [ -n "$_DEPLOY_TAGS" ]; then
-    _BENCH_V=$(echo "$_DEPLOY_TAGS" | sort -V | tail -1 | sed -E 's/\.[0-9]+$//')
-    warn "bench/ not found — reusing benchmark version $_BENCH_V from the latest deployment tag"
+_SERIES="${FG_SERIES:-}"
+if [ -z "$_SERIES" ] && [ -n "$_DEPLOY_TAGS" ]; then
+    _SERIES=$(echo "$_DEPLOY_TAGS" | sort -V | tail -1 | sed -E 's/\.[0-9]+$//')
 fi
-[ -n "$_BENCH_V" ] || fail "Cannot determine the benchmark version (no bench/run_all_output_vX.Y*.log and no deployment tag)."
+echo "$_SERIES" | grep -qE '^v[0-9]+\.[0-9]+$' || fail "Cannot determine the version series (no deployment tag); set FG_SERIES, e.g. FG_SERIES=v1.0"
 _LAST_N=$(echo "$_DEPLOY_TAGS" | sed -E 's/^v[0-9]+\.[0-9]+\.//' | sort -n | tail -1)
-FG_VERSION="${_BENCH_V}.$(( ${_LAST_N:-0} + 1 ))"
+FG_VERSION="${_SERIES}.$(( ${_LAST_N:-0} + 1 ))"
 export FG_VERSION
 ok "Deployment version $FG_VERSION"
 if $DO_DEPLOY; then

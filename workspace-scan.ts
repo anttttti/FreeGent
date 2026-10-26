@@ -64,7 +64,7 @@ async function _cdup(root: string): Promise<string | null> {
     if (hit && (hit.cdup !== null || Date.now() - hit.at < 10_000)) return hit.cdup;
     const r = await _git(root, ['rev-parse', '--show-cdup'], 4, 2_000);
     let cdup = r.ok ? r.out.trim() : null;
-    // A folder that an enclosing repository's .gitignore ignores (a workspace under its repo's /bench/, /tmp/ or /logs/) is not that repository's
+    // A folder that an enclosing repository's .gitignore ignores (a workspace under its repo's /notes/, /tmp/ or /logs/) is not that repository's
     // project: ls-files and status answer "nothing" for it, which read as an empty workspace and as "no file was written". Treat it as unmanaged.
     if (cdup !== null && (await _git(root, ['check-ignore', '-q', '--', '.'], 4, 2_000)).ok) cdup = null;
     _cdupCache.set(root, { cdup, at: Date.now() });
@@ -74,7 +74,7 @@ async function _cdup(root: string): Promise<string | null> {
 // ── the walk (outside git) ───────────────────────────────────────────────────
 
 // Directories the project's own .gitignore names, for a folder git does not manage. Only plain directory entries are honoured
-// (`/bench/`, `node_modules/`, `dist`); wildcards and `!` exceptions are not interpreted, so the walk errs on the side of seeing more.
+// (`/notes/`, `node_modules/`, `dist`); wildcards and `!` exceptions are not interpreted, so the walk errs on the side of seeing more.
 const _IGNORE_CACHE = new Map<string, { mtime: number; matcher: (rel: string, name: string) => boolean }>();
 export function ignoredDirs(root: string): (rel: string, name: string) => boolean {
     let mtime = 0, text = '';
