@@ -1,6 +1,6 @@
 # Local models
 
-Any server with an OpenAI-compatible `/v1/chat/completions` endpoint works: vLLM, Ollama, LM Studio, llama.cpp's `llama-server` and others. Use the WebUI from the [local dev server](/local/webui), the [TUI](/local/tui) or the [CLI](/local/cli). freegent.ai cannot reach `localhost` through its proxy, which only forwards to a fixed list of cloud providers. At the default Provider-only level, or at Local, the browser calls your server directly instead, if the server allows the page's origin (Ollama: `OLLAMA_ORIGINS=https://freegent.ai`).
+Any server with an OpenAI-compatible `/v1/chat/completions` endpoint works: vLLM, Ollama, LM Studio, llama.cpp's `llama-server` and others. Use the WebUI from the [local dev server](../local/webui.md), the [TUI](../local/tui.md) or the [CLI](../local/cli.md). freegent.ai cannot reach `localhost` through its proxy, which only forwards to a fixed list of cloud providers. At the default Provider-only level, or at Local, the browser calls your server directly instead, if the server allows the page's origin (Ollama: `OLLAMA_ORIGINS=https://freegent.ai`).
 
 - **WebUI:** add a custom model under **Settings → Models**, with the base URL, model ID, an optional key, the API format and **Context (K)**, the window size in thousands of tokens. The "Ollama" API format uses Ollama's OpenAI-compatible endpoint (`/v1`), so `http://localhost:11434` is enough.
 - **TUI and CLI:** `--api-url http://localhost:8000/v1 --provider custom --model <id>`. In the CLI, `--context-window` sets the window size.
@@ -35,7 +35,7 @@ LM Studio: load a model and start the server from the Developer tab. The endpoin
 - **Give the model enough context.** The agent's system prompt and tool definitions alone take several thousand tokens. Ollama's default context is small and silently cuts the start of the prompt, so raise it as above.
 - **Set Context (K) to what the server really allows** (vLLM's `--max-model-len`, Ollama's context length). FreeGent caps `max_tokens` to the room left in that window and compacts the history before it fills. A value larger than the server's limit leads to overflow errors.
 - **Sampling.** The overrides under Settings → Models (temperature, top-p, top-k, min-p, penalties) apply only to custom endpoints. Use the values the model's authors recommend.
-- **Compaction is slow on a local model.** Summarising a long history can take a few minutes on consumer hardware; see [Context and compaction](/harness/context).
+- **Compaction is slow on a local model.** Summarising a long history can take a few minutes on consumer hardware; see [Context and compaction](../harness/context.md).
 
 ## Troubleshooting
 

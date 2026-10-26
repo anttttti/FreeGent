@@ -4,25 +4,25 @@ FreeGent is an AI agent for free-tier cloud models and for models on your own ma
 
 ## What sets FreeGent apart
 
-- **It all runs in your browser.** The agent loop, the project filesystem and code execution (JavaScript, Python and bash) live in the page, isolated by the browser. No install, no account, no server of its own. See [Code execution](/code-execution/).
-- **Built for free tiers.** It rotates between providers and models as quotas run out or requests fail, and ranks models with its own long-conversation test results. See [Priority, fallbacks and retries](/models/rotation).
-- **Every message is a checkpoint.** Rewind removes the later messages and puts the project files back as they were; Rerun repeats a message. See [Chats](/webui/chats/).
-- **A task board the agent works through.** Tasks are Markdown files; Autopilot runs them one chat per task, with quality gates between columns, for as long as the tab is open. See [Tasks](/webui/tasks).
-- **You choose where requests may go.** Provider-only (the default: your browser calls providers directly, no Cloudflare Worker), Routed (through the Worker) or Local (your own network only). The sidebar's Privacy button switches between them. See [Settings → Privacy](/webui/settings#privacy).
+- **It all runs in your browser.** The agent loop, the project filesystem and code execution (JavaScript, Python and bash) live in the page, isolated by the browser. No install, no account, no server of its own. See [Code execution](code-execution/index.md).
+- **Built for free tiers.** It rotates between providers and models as quotas run out or requests fail, and ranks models with its own long-conversation test results. See [Priority, fallbacks and retries](models/rotation.md).
+- **Every message is a checkpoint.** Rewind removes the later messages and puts the project files back as they were; Rerun repeats a message. See [Chats](webui/chats/index.md).
+- **A task board the agent works through.** Tasks are Markdown files; Autopilot runs them one chat per task, with quality gates between columns, for as long as the tab is open. See [Tasks](webui/tasks.md).
+- **You choose where requests may go.** Provider-only (the default: your browser calls providers directly, no Cloudflare Worker), Routed (through the Worker) or Local (your own network only). The sidebar's Privacy button switches between them. See [Settings → Privacy](webui/settings.md#privacy).
 
 ## How the pieces fit
 
 ![FreeGent architecture: the WebUI, FreeGent harness, project files, code sandboxes and MCP run in your browser; model requests go straight to providers (Provider-only, the default), through a Cloudflare Worker (Routed), or to your own network (Local)](./assets/architecture.svg)
 
-The agent loop, files and sandboxes run in the page; what leaves it are requests to a model, to MCP servers, and for web search and fetch. The Privacy level chooses the route: straight to the provider, through the Worker (needed for providers that browsers cannot call, such as NVIDIA and Kilo), or to your own network only. The TUI and CLI run the same agent core in Node.js, with no proxy and, optionally, real bash. See [How requests reach providers](/models/proxy) and [Code execution](/code-execution/).
+The agent loop, files and sandboxes run in the page; what leaves it are requests to a model, to MCP servers, and for web search and fetch. The Privacy level chooses the route: straight to the provider, through the Worker (needed for providers that browsers cannot call, such as NVIDIA and Kilo), or to your own network only. The TUI and CLI run the same agent core in Node.js, with no proxy and, optionally, real bash. See [How requests reach providers](models/proxy.md) and [Code execution](code-execution/index.md).
 
 ## Free and local models first
 
 FreeGent ships with default providers (Gemini, OpenRouter, NVIDIA, Kilo, Groq and others) and works with any OpenAI-compatible endpoint, including Ollama, vLLM and LM Studio. FreeGent updates the latest available models and ranks them for priority. A model that returns a rate-limit error goes on a cooldown and the next one takes over, so a free tier running out mid-task does not stop the work.
 
-- [Default providers](/models/providers): which providers are built in and where to get keys
-- [Priority, fallbacks and retries](/models/rotation): cooldowns, rotation, retries, thinking level
-- [Local models](/models/local-models): connecting a model server on your machine
+- [Default providers](models/providers.md): which providers are built in and where to get keys
+- [Priority, fallbacks and retries](models/rotation.md): cooldowns, rotation, retries, thinking level
+- [Local models](models/local-models.md): connecting a model server on your machine
 
 ## Built for diverse models
 
@@ -35,7 +35,7 @@ The models FreeGent rotates through differ in size, context window and tool-call
 - System prompt optimized for the conciseness, often using as few as 4k tokens.
 - Mid-task rotation of available model endpoints based on quota and request failures.
 
-See [Context and compaction](/harness/context), [Checks and approval](/harness/checks), [Skills and rules](/harness/skills) and [Fallbacks and retries](/models/rotation).
+See [Context and compaction](harness/context.md), [Checks and approval](harness/checks.md), [Skills and rules](harness/skills.md) and [Fallbacks and retries](models/rotation.md).
 
 ## One agent core, three interfaces
 
@@ -47,22 +47,22 @@ The same agent loop, tools, skills, roles and model rotation are behind every in
 | **TUI** | An interactive terminal session | `freegent` (after `npm link`), or `npm run tui` |
 | **CLI** | One-off and scripted runs, for CI and benchmarks | `freegent -p "…"`, or `npx tsx fg-run.ts --task "…"` |
 
-The WebUI at freegent.ai needs no install and no account; you add API keys in Settings. It runs the agentic harness entirely inside the front-end of your browser, with its own filesystem and code execution paths isolated by the browser. To run any interface on your own machine, or host your own copy, see [Local or self-hosted](/local/). The [WebUI section](/webui/) describes the browser app.
+The WebUI at freegent.ai needs no install and no account; you add API keys in Settings. It runs the agentic harness entirely inside the front-end of your browser, with its own filesystem and code execution paths isolated by the browser. To run any interface on your own machine, or host your own copy, see [Local or self-hosted](local/index.md). The [WebUI section](webui/index.md) describes the browser app.
 
 ## Code runs in sandboxes
 
-The `execute_code` tool runs JavaScript, Python and bash. In the browser they run in an isolated frame: JavaScript in a Worker, Python in Pyodide, bash in a bash-compatible shell written in TypeScript. On your own machine, bash can run for real, optionally isolated. See [Code execution](/code-execution/).
+The `execute_code` tool runs JavaScript, Python and bash. In the browser they run in an isolated frame: JavaScript in a Worker, Python in Pyodide, bash in a bash-compatible shell written in TypeScript. On your own machine, bash can run for real, optionally isolated. See [Code execution](code-execution/index.md).
 
 ## Project, tasks and modes
 
-The **Project** is the agent's workspace, kept in your browser or in a folder you connect. **Tasks** are Markdown files shown on a board, and Autopilot works through them one chat per task, with quality gates between columns. **Chat** and **Cowork** modes switch the tool set between conversation and task work. See [Project](/webui/project/), [Tasks](/webui/tasks) and [Chats and modes](/webui/chats/).
+The **Project** is the agent's workspace, kept in your browser or in a folder you connect. **Tasks** are Markdown files shown on a board, and Autopilot works through them one chat per task, with quality gates between columns. **Chat** and **Cowork** modes switch the tool set between conversation and task work. See [Project](webui/project/index.md), [Tasks](webui/tasks.md) and [Chats and modes](webui/chats/index.md).
 
 ## Extensible
 
-- [Skills and rules](/harness/skills) are Markdown files you can add.
-- [MCP servers](/harness/mcp) add external tools.
-- [Profiles](/webui/settings#profiles) save and share model lists, tools and agent settings (never keys).
+- [Skills and rules](harness/skills.md) are Markdown files you can add.
+- [MCP servers](harness/mcp.md) add external tools.
+- [Profiles](webui/settings.md#profiles) save and share model lists, tools and agent settings (never keys).
 
 ## Your data stays with you
 
-Keys, chats, settings and project files are stored in your browser, or on your machine when you run locally. The hosted proxy forwards requests to a fixed list of provider hosts and stores nothing. See [How requests reach providers](/models/proxy) and [Where your data lives](/webui/settings#where-your-data-lives).
+Keys, chats, settings and project files are stored in your browser, or on your machine when you run locally. The hosted proxy forwards requests to a fixed list of provider hosts and stores nothing. See [How requests reach providers](models/proxy.md) and [Where your data lives](webui/settings.md#where-your-data-lives).

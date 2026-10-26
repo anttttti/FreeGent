@@ -22,8 +22,8 @@ Tool results are truncated before they enter the history (Settings → Agent →
 
 ## Custom endpoints
 
-For local and custom servers FreeGent clamps `max_tokens` to the room left in the window and uses the context length you configured. Set it to what the server really supports; see [Local models](/models/local-models).
+For local and custom servers FreeGent clamps `max_tokens` to the room left in the window and uses the context length you configured. Set it to what the server really supports; see [Local models](../models/local-models.md).
 
 ## Worker context
 
-Workers get scoped context by default (**Lean worker context**), and only director workers fork the full conversation. See [Roles and sub-agents](/harness/roles).
+Workers get scoped context by default (**Lean worker context**), and only director workers fork the full conversation. See [Roles and sub-agents](roles.md).

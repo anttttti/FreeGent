@@ -21,7 +21,7 @@ npx tsx fg-run.ts --task "Write unit tests for src/api.py" \
   --api-url http://localhost:8000/v1 --provider custom --model qwen3
 ```
 
-`freegent -p` (after `npm link`, see [Local or self-hosted](/local/#install)) is the short form of `npx tsx fg-run.ts`. For pipelines, `-p` (`--print`) runs the agent and prints only the answer on stdout (no metrics line, no progress banners). Text piped in is added to the request, and `-p` with no text reads the whole request from stdin:
+`freegent -p` (after `npm link`, see [Local or self-hosted](index.md#install)) is the short form of `npx tsx fg-run.ts`. For pipelines, `-p` (`--print`) runs the agent and prints only the answer on stdout (no metrics line, no progress banners). Text piped in is added to the request, and `-p` with no text reads the whole request from stdin:
 
 ```bash
 git diff | freegent -p "review this"

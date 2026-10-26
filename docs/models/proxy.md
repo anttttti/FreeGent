@@ -10,14 +10,14 @@ Browsers block most direct calls to model APIs (CORS), and some providers also r
 
 If you fill in **Settings → Privacy → CORS Proxy / CF Worker URL**, that Worker is used instead of the default.
 
-On freegent.ai you never set up a proxy for the [default providers](/models/providers); a key is enough. Choose Routed from the sidebar's **Privacy** button for NVIDIA and Kilo, which browsers cannot call directly. Saving a Developer key switches to Routed.
+On freegent.ai you never set up a proxy for the [default providers](providers.md); a key is enough. Choose Routed from the sidebar's **Privacy** button for NVIDIA and Kilo, which browsers cannot call directly. Saving a Developer key switches to Routed.
 
 ## Turning the Worker off
 
 The sidebar's **Privacy** button and **Settings → Privacy** have two levels that use no Worker; Provider-only is the default:
 
 - **Provider-only**: the browser calls providers directly. This works for Gemini, Groq, OpenRouter, Nous, Vercel, TokenHarbor, OpenAI and Tavily, which allow browser calls. NVIDIA, Kilo and Brave search do not, so they stop working on a hosted page, and web fetches only reach sites that send CORS headers.
-- **Local**: only `localhost` and local-network addresses; see [Settings → Privacy](/webui/settings#privacy).
+- **Local**: only `localhost` and local-network addresses; see [Settings → Privacy](../webui/settings.md#privacy).
 
 ## The hosted Worker
 
@@ -27,10 +27,10 @@ The Worker can also hold shared provider keys, but it uses them only for session
 
 ## When you do need your own proxy or Worker
 
-- **You host FreeGent yourself on a static site.** The hosted Worker only accepts its own origins. A fork on `yourname.github.io` or `*.pages.dev` is treated as a static host and sent to `proxy.freegent.ai`, which answers `403 Origin not allowed`. On any other domain the page assumes a local server and calls `/api/proxy` on its own host, which a static site does not have. Either way, deploy [the Worker](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md) to your Cloudflare account, add your origin to `ALLOWED_ORIGINS`, and paste its URL into **Settings → Privacy → CORS Proxy / CF Worker URL**. See [Local or self-hosted](/local/webui#hosting-your-own-site-and-worker).
+- **You host FreeGent yourself on a static site.** The hosted Worker only accepts its own origins. A fork on `yourname.github.io` or `*.pages.dev` is treated as a static host and sent to `proxy.freegent.ai`, which answers `403 Origin not allowed`. On any other domain the page assumes a local server and calls `/api/proxy` on its own host, which a static site does not have. Either way, deploy [the Worker](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md) to your Cloudflare account, add your origin to `ALLOWED_ORIGINS`, and paste its URL into **Settings → Privacy → CORS Proxy / CF Worker URL**. See [Local or self-hosted](../local/webui.md#hosting-your-own-site-and-worker).
 - **You want a provider that is not on the allow-list** from the hosted site. Add its host to `ALLOWED_HOSTS` in your own Worker.
 - **You want shared keys for your own users.** Store them as Worker secrets and set a Developer key; see the Worker README.
 
 ## Local models
 
-The hosted Worker cannot reach `localhost` or your LAN, so local model servers need the local dev server, the TUI or the CLI. See [Local models](/models/local-models).
+The hosted Worker cannot reach `localhost` or your LAN, so local model servers need the local dev server, the TUI or the CLI. See [Local models](local-models.md).

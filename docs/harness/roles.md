@@ -25,5 +25,5 @@ In **Settings → Agent → Workers**:
 | Director workers fork the full context | A Director worker starts with the main agent's prompt, tools and conversation, which providers can serve from the prompt cache (on by default). Coder and Researcher workers always get only their task. |
 | Worker output reduce | When workers return more than about 2,000 characters in total, their outputs are merged into one compact summary |
 | Max delegation depth | Whether workers may start workers of their own (0 to 2) |
-| Worker thinking budget | Reasoning budget for workers; see [Thinking level](/models/rotation#thinking-level) |
+| Worker thinking budget | Reasoning budget for workers; see [Thinking level](../models/rotation.md#thinking-level) |
 | Role model routing | Planning workers use your first model, execution workers the later ones |

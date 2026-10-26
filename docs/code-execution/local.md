@@ -1,6 +1,6 @@
 # Local execution
 
-Choose **Local** in Settings → Code Execution. Commands run on your machine through the dev server (`npm run dev`, see [Local or self-hosted](/local/)), so Local is not available on freegent.ai or any other static host. The dev server picks it automatically at `localhost`; from another device on your network, choose it yourself.
+Choose **Local** in Settings → Code Execution. Commands run on your machine through the dev server (`npm run dev`, see [Local or self-hosted](../local/index.md)), so Local is not available on freegent.ai or any other static host. The dev server picks it automatically at `localhost`; from another device on your network, choose it yourself.
 
 - **Linux with [bubblewrap](https://github.com/containers/bubblewrap)** (`apt install bubblewrap`): each command runs in its own mount namespace. Your home directory is absent, so the credentials file, SSH keys and other projects are invisible. System directories (read-only), the command's temp directory and the toolchains on your `PATH` (conda, nvm, …) remain, and so does network access.
 - **Without bubblewrap** (macOS, Windows, or user namespaces disabled): commands run as you and can read your files. Tool approval then defaults to asking before each command.

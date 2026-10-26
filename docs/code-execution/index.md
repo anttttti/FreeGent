@@ -16,5 +16,5 @@ In every case the workspace is mirrored: project files appear at their normal pa
 
 | Page | Covers |
 |---|---|
-| [Browser sandboxes](/code-execution/browser) | JavaScript, Python and WASM bash, their limits and network access |
-| [Local execution](/code-execution/local) | Real bash on your machine (optionally isolated), git, headless runs |
+| [Browser sandboxes](browser.md) | JavaScript, Python and WASM bash, their limits and network access |
+| [Local execution](local.md) | Real bash on your machine (optionally isolated), git, headless runs |

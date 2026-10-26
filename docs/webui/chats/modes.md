@@ -9,12 +9,12 @@ The mode selector in the chat toolbar switches between two tool sets, configured
 | `update_task_status` | Off | On |
 | Tasks runner | Not used | Uses this tool set, including Autopilot |
 
-The read-only tools (`list_files`, `read_file`, `search_workspace`), `execute_code`, `web_search`, `fetch_url`, `check_page` and `run_workers` are on in both by default. `apply_patch`, `append_file`, `delete_file` and `undo_write` are off in both until you turn them on. The full list is in [Tools](/harness/tools).
+The read-only tools (`list_files`, `read_file`, `search_workspace`), `execute_code`, `web_search`, `fetch_url`, `check_page` and `run_workers` are on in both by default. `apply_patch`, `append_file`, `delete_file` and `undo_write` are off in both until you turn them on. The full list is in [Tools](../../harness/tools.md).
 
 ## Choosing a mode
 
-Stay in **Chat** when you want answers or want to see code in the conversation before anything touches the project. Switch to **Cowork** when the agent should edit project files directly, or when you run [Tasks](/webui/tasks).
+Stay in **Chat** when you want answers or want to see code in the conversation before anything touches the project. Switch to **Cowork** when the agent should edit project files directly, or when you run [Tasks](../tasks.md).
 
-Turning a tool on in Settings → Tools affects only that mode. [Tool approval](/harness/checks#approval-and-safety) applies in both.
+Turning a tool on in Settings → Tools affects only that mode. [Tool approval](../../harness/checks.md#approval-and-safety) applies in both.
 
 The TUI has no mode switch. In the CLI, `--enable-tools` and `--disable-tools` select tools per run.

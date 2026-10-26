@@ -1,8 +1,8 @@
 # Default providers
 
-FreeGent ships with the providers below. One key is enough to start; each extra key adds models to fall back on when a free tier runs out. Any other OpenAI-compatible endpoint can be added as a custom model (see [Local models](/models/local-models)).
+FreeGent ships with the providers below. One key is enough to start; each extra key adds models to fall back on when a free tier runs out. Any other OpenAI-compatible endpoint can be added as a custom model (see [Local models](local-models.md)).
 
-Free-tier limits are set by the providers and change often, so check each provider's page for current numbers. When a model answers `429`, FreeGent puts it on a cooldown and moves to the next one in your [priority list](/models/rotation).
+Free-tier limits are set by the providers and change often, so check each provider's page for current numbers. When a model answers `429`, FreeGent puts it on a cooldown and moves to the next one in your [priority list](rotation.md).
 
 | Provider | Variable in the credentials file | Notes |
 |---|---|---|
@@ -16,7 +16,7 @@ Free-tier limits are set by the providers and change often, so check each provid
 | Groq | `GROQ_API_KEY` | Rate-limited free tier |
 | OpenAI | `OPENAI_API_KEY` | Paid. Also the key slot for any other OpenAI-compatible endpoint you add |
 | Hugging Face | `HF_API_KEY` (also `HUGGINGFACE_API_KEY`) | Image generation fallback |
-| Ollama, vLLM, LM Studio, any OpenAI-compatible server | none needed | See [Local models](/models/local-models) |
+| Ollama, vLLM, LM Studio, any OpenAI-compatible server | none needed | See [Local models](local-models.md) |
 
 Optional keys for tools:
 
@@ -37,9 +37,9 @@ Where a key goes depends on how you run FreeGent:
 |---|---|---|
 | freegent.ai | Settings → Models → API Credentials | Stored in your browser |
 | Local dev server | `~/.config/freegent/credentials`, or Settings | File keys stay on the server |
-| TUI | credentials file, shell variables, or `--api-key` | See [TUI](/local/tui) |
-| CLI | credentials file, shell variables, or `--api-key` | See [CLI](/local/cli) |
+| TUI | credentials file, shell variables, or `--api-key` | See [TUI](../local/tui.md) |
+| CLI | credentials file, shell variables, or `--api-key` | See [CLI](../local/cli.md) |
 
 API Credentials also has a paste box and an **Extract from file** button. Paste a block of keys (or pick a `.env`-style file) and FreeGent fills each provider's field by recognising the key's prefix. It asks before replacing a key you already saved.
 
-Keys are never included in [profiles](/webui/settings#profiles) or in chat logs you send.
+Keys are never included in [profiles](../webui/settings.md#profiles) or in chat logs you send.

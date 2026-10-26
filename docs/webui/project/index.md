@@ -7,7 +7,7 @@ The Project tab is the agent's workspace. Everything the agent reads, writes or 
 - A file tree and a CodeMirror editor, with tabs for open files.
 - Files are stored in your browser (IndexedDB). They stay there until you clear site data.
 - On browsers that support the File System Access API you can also attach a folder from your disk. It appears under `local/` and the agent reads and writes real files there. A bare path such as `notes.md` goes to the browser workspace; `local/notes.md` goes to the attached folder.
-- The agent works on the project through its file tools (see [Tools](/harness/tools)): `list_files`, `read_file`, `search_workspace` and, when enabled for the [mode](/webui/chats/modes), `write_file`, `replace_in_file` and others.
+- The agent works on the project through its file tools (see [Tools](../../harness/tools.md)): `list_files`, `read_file`, `search_workspace` and, when enabled for the [mode](../chats/modes.md), `write_file`, `replace_in_file` and others.
 
 ## Buttons
 
@@ -31,8 +31,8 @@ Writing these paths has an effect:
 | Path | Effect |
 |---|---|
 | `AGENTS.md` | Loaded as project instructions for the agent |
-| `skills/<name>/SKILL.md` | Adds a [skill](/harness/skills); the list reloads when the file is written |
-| `roles/*` | Adds or changes a [role](/harness/roles) |
-| `fg-tasks/*.md` | Tasks shown on the [board](/webui/tasks) |
+| `skills/<name>/SKILL.md` | Adds a [skill](../../harness/skills.md); the list reloads when the file is written |
+| `roles/*` | Adds or changes a [role](../../harness/roles.md) |
+| `fg-tasks/*.md` | Tasks shown on the [board](../tasks.md) |
 
-See [Media and previews](/webui/project/media) for how each file type opens.
+See [Media and previews](media.md) for how each file type opens.

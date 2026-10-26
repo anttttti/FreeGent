@@ -19,14 +19,14 @@ The built-in task guidance (the `task-setup` and `execution-workflow` skills) kn
 
 ## The board
 
-The Tasks tab shows the files as a board with columns **To do, In progress, Review, Done**. `todo`, `open` and `blocked` tasks sit in To do. Moving a task between columns changes its `status`, and the agent can do the same with `update_task_status` (available in [Cowork mode](/webui/chats/modes)).
+The Tasks tab shows the files as a board with columns **To do, In progress, Review, Done**. `todo`, `open` and `blocked` tasks sit in To do. Moving a task between columns changes its `status`, and the agent can do the same with `update_task_status` (available in [Cowork mode](chats/modes.md)).
 
 ## Running tasks
 
 - **Run** works on the next task in To do.
 - **Autopilot** keeps going, with one chat per task, until none are left. **Pause**, **Resume**, **Restart** and **Stop** control a run. Stopping a running Autopilot to import or delete a project asks first.
 
-The runner always uses the [Cowork](/webui/chats/modes) tool set.
+The runner always uses the [Cowork](chats/modes.md) tool set.
 
 ## Quality gates
 

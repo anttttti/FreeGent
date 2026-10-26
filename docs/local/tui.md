@@ -16,7 +16,7 @@ npm run tui -- --api-url http://localhost:8000/v1 --provider custom --model qwen
 
 ## Keys and provider detection
 
-The TUI loads `~/.config/freegent/credentials` and `.env` the same way the dev server does (shell variables win; see [API keys](/local/#api-keys)). With no `--provider` it picks the first of these variables that is set: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `NOUSPORTAL_API_KEY` / `NOUS_API_KEY`. For any other provider or endpoint, pass `--provider`, `--api-key` and, for a custom server, `--api-url`.
+The TUI loads `~/.config/freegent/credentials` and `.env` the same way the dev server does (shell variables win; see [API keys](index.md#api-keys)). With no `--provider` it picks the first of these variables that is set: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `NOUSPORTAL_API_KEY` / `NOUS_API_KEY`. For any other provider or endpoint, pass `--provider`, `--api-key` and, for a custom server, `--api-url`.
 
 ## Flags
 
@@ -72,4 +72,4 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `/project`, `/tasks`, `/agent`, `/settings`, `/help` | Open that panel |
 | `/queue N`, `/steer N`, `/cancel N` | Change the Nth queued message: wait its turn, interrupt the current turn, or remove it |
 
-Code execution in the TUI runs on your machine, in the project directory; see [Code execution](/code-execution/local#headless-runs) and [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md).
+Code execution in the TUI runs on your machine, in the project directory; see [Code execution](../code-execution/local.md#headless-runs) and [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md).

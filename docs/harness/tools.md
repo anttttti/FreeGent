@@ -1,10 +1,10 @@
 # Tools
 
-Tools are the actions the agent can take. Each can be turned on or off per [mode](/webui/chats/modes) in **Settings → Tools**. Fewer tools mean a shorter prompt and fewer wrong choices, so the defaults leave specialised tools off.
+Tools are the actions the agent can take. Each can be turned on or off per [mode](../webui/chats/modes.md) in **Settings → Tools**. Fewer tools mean a shorter prompt and fewer wrong choices, so the defaults leave specialised tools off.
 
 | Tool | What it does | Default |
 |---|---|---|
-| `execute_code` | Run JavaScript, Python or bash. See [Code execution](/code-execution/). | on |
+| `execute_code` | Run JavaScript, Python or bash. See [Code execution](../code-execution/index.md). | on |
 | `list_files`, `read_file`, `search_workspace` | Browse and search the project. `read_file` takes a line range. | on |
 | `write_file`, `replace_in_file`, `apply_patch`, `append_file`, `delete_file`, `undo_write` | Edit project files | off in Chat, `write_file` and `replace_in_file` on in Cowork |
 | `web_search` | Tavily, Brave or Wikipedia, or a named source: Hacker News, GitHub, Stack Overflow, dev.to, GDELT, DuckDuckGo | on |
@@ -19,4 +19,4 @@ Tools are the actions the agent can take. Each can be turned on or off per [mode
 | `update_task_status` | Move a task on the board | on in Cowork only |
 | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, … | Drive a text-only browser through a Playwright bridge (CLI: `--browser-url`) | off |
 
-Tool results are truncated before they enter the history; see [Keeping tool results small](/harness/context#keeping-tool-results-small). [MCP servers](/harness/mcp) add more tools, named `mcp__<server>__<tool>`.
+Tool results are truncated before they enter the history; see [Keeping tool results small](context.md#keeping-tool-results-small). [MCP servers](mcp.md) add more tools, named `mcp__<server>__<tool>`.

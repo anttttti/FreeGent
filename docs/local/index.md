@@ -4,9 +4,9 @@ freegent.ai needs nothing beyond an API key, but it cannot run bash or Python on
 
 | Page | Covers |
 |---|---|
-| [WebUI](/local/webui) | The dev server, using it from other devices, hosting your own site and Worker |
-| [TUI](/local/tui) | The terminal UI: flags, key bindings, slash commands |
-| [CLI](/local/cli) | The headless runner: flags, environment variables, examples |
+| [WebUI](webui.md) | The dev server, using it from other devices, hosting your own site and Worker |
+| [TUI](tui.md) | The terminal UI: flags, key bindings, slash commands |
+| [CLI](cli.md) | The headless runner: flags, environment variables, examples |
 
 ## Install
 
@@ -39,7 +39,7 @@ FG_PORT=8080 npm run dev     # different port (the server exits if the port is t
 npm run dev:lan              # reachable from your phone and other devices
 ```
 
-See [WebUI](/local/webui) for LAN access and its token.
+See [WebUI](webui.md) for LAN access and its token.
 
 ## What running locally adds
 
@@ -50,11 +50,11 @@ See [WebUI](/local/webui) for LAN access and its token.
 | `run_git` | no | yes (opt-in) |
 | Local models (Ollama, vLLM, LM Studio) | no | yes |
 
-See [Code execution](/code-execution/) for the sandboxes and approval prompts, [Local models](/models/local-models) for connecting a model server, and [WebUI](/local/webui) for using it from other devices or hosting your own copy.
+See [Code execution](../code-execution/index.md) for the sandboxes and approval prompts, [Local models](../models/local-models.md) for connecting a model server, and [WebUI](webui.md) for using it from other devices or hosting your own copy.
 
 ## API keys
 
-The variable names for each provider are in [Default providers](/models/providers). On the local server you can also type keys into **Settings → Models → API Credentials** as on freegent.ai.
+The variable names for each provider are in [Default providers](../models/providers.md). On the local server you can also type keys into **Settings → Models → API Credentials** as on freegent.ai.
 
 Where the local tools look for keys, highest priority first:
 

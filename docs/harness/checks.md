@@ -35,4 +35,4 @@ When the setting has never been changed it is Off, except where code runs on you
 
 Sub-workers are asked about less: only commands that run on your machine and MCP tools. Their file edits are staged and applied when the run ends, so under All writes the delegation itself is what you approve. After you press Stop, the rest of a tool batch does not start and does not ask for approval.
 
-See [Code execution](/code-execution/) for what each sandbox protects and [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md) for the threat model.
+See [Code execution](../code-execution/index.md) for what each sandbox protects and [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md) for the threat model.

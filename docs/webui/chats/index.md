@@ -1,6 +1,6 @@
 # Chats
 
-A chat is one conversation with the agent, with its own history, model and workspace snapshot. This section covers talking to the agent and managing saved chats; [Modes](/webui/chats/modes) covers the Chat and Cowork tool sets.
+A chat is one conversation with the agent, with its own history, model and workspace snapshot. This section covers talking to the agent and managing saved chats; [Modes](modes.md) covers the Chat and Cowork tool sets.
 
 ## Talking to the agent
 
@@ -13,7 +13,7 @@ A chat is one conversation with the agent, with its own history, model and works
 
 ## The toolbar
 
-The toolbar shows the active model and how much of its context window the chat uses, for example `4.2k / 128k` (yellow at 70%, red at 90%). Click the model to open model settings; hover it to see which models are on a rate-limit cooldown. FreeGent compacts long histories on its own ([Context and compaction](/harness/context)). The mode selector switches between [Chat and Cowork](/webui/chats/modes).
+The toolbar shows the active model and how much of its context window the chat uses, for example `4.2k / 128k` (yellow at 70%, red at 90%). Click the model to open model settings; hover it to see which models are on a rate-limit cooldown. FreeGent compacts long histories on its own ([Context and compaction](../../harness/context.md)). The mode selector switches between [Chat and Cowork](modes.md).
 
 ## Attachments
 

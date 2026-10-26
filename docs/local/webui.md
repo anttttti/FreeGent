@@ -1,6 +1,6 @@
 # WebUI: local or self-hosted
 
-The WebUI runs from the dev server on your machine (see [Install](/local/#install)), on other devices through the LAN mode, or from your own static site and Worker.
+The WebUI runs from the dev server on your machine (see [Install](index.md#install)), on other devices through the LAN mode, or from your own static site and Worker.
 
 ## Using it from other devices (LAN)
 

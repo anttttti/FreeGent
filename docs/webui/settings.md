@@ -1,6 +1,6 @@
 # Settings
 
-Settings are stored in your browser. Tabs below follow the order in the app. The TUI and CLI read the same agent settings through profiles and flags; see [Local or self-hosted](/local/).
+Settings are stored in your browser. Tabs below follow the order in the app. The TUI and CLI read the same agent settings through profiles and flags; see [Local or self-hosted](../local/index.md).
 
 ## Profiles
 
@@ -8,11 +8,11 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 
 ## Models
 
-- **Model Priority**: the ordered list FreeGent tries. **✦ Populate** asks a model to rank the available ones and keeps the top ten, **Defaults** restores the shipped list and resumes paused models. See [Priority, fallbacks and retries](/models/rotation).
+- **Model Priority**: the ordered list FreeGent tries. **✦ Populate** asks a model to rank the available ones and keeps the top ten, **Defaults** restores the shipped list and resumes paused models. See [Priority, fallbacks and retries](../models/rotation.md).
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
 - **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. They apply to custom endpoints only; other providers use their own defaults. A field you have never touched uses FreeGent's default (shown as its placeholder); clear a field and that parameter is left out of the request, so the server uses its own. [Profiles](#profiles) carry these values.
-- **API Credentials**: one field per provider, a paste box, **Extract from file**, and the Developer key. See [Default providers](/models/providers). Custom endpoints are added here too.
+- **API Credentials**: one field per provider, a paste box, **Extract from file**, and the Developer key. See [Default providers](../models/providers.md). Custom endpoints are added here too.
 - **Media Model Routing**: which models receive messages that contain images or audio.
 - **Model Catalog**: all known models, with **Check for updates**. Use ✕ to remove one.
 
@@ -38,32 +38,32 @@ Two limits apply at every level. Libraries the page loads from jsdelivr and esm.
 
 Also on this tab:
 
-- **CORS Proxy / CF Worker URL**: your own Worker, for FreeGent hosted on your own domain (Routed level only). See [Hosting your own site and Worker](/local/webui#hosting-your-own-site-and-worker).
+- **CORS Proxy / CF Worker URL**: your own Worker, for FreeGent hosted on your own domain (Routed level only). See [Hosting your own site and Worker](../local/webui.md#hosting-your-own-site-and-worker).
 - **Other requests**: location lookup through ipinfo.io (on by default; it sends your IP address to ipinfo.io) and the anonymous GoatCounter page-view counter (on by default, skipped when your browser sends Do Not Track; no cookies). The location lookup is off at Provider-only and Local; the counter is off at Local only.
 
 ## Code Execution
 
-JavaScript in the browser (always on), Python in the browser with Pyodide (with an auto-load option), the bash sandbox (**WASM**, **Local** or **None**), **Git Integration** and **Code Structure Queries (AST)**. See [Code execution](/code-execution/).
+JavaScript in the browser (always on), Python in the browser with Pyodide (with an auto-load option), the bash sandbox (**WASM**, **Local** or **None**), **Git Integration** and **Code Structure Queries (AST)**. See [Code execution](../code-execution/index.md).
 
 ## Agent
 
 | Group | Options |
 |---|---|
-| **Context Management** | Tool result truncation for workers and the main agent, proactive compaction and its threshold. See [Context and compaction](/harness/context). |
+| **Context Management** | Tool result truncation for workers and the main agent, proactive compaction and its threshold. See [Context and compaction](../harness/context.md). |
 | **Prompt Construction** | Script-generation steering, concise prompts, and a prompt template that is added at the top of the system prompt |
 | **Agent loop** | Max steps per turn, rate-limit cooldown, rotate endpoints every N steps |
-| **Workers** | Lean worker context, whether director workers fork the full context, worker output reduce, role model routing, max delegation depth, worker thinking budget, preserve thinking across turns (vLLM). See [Roles and sub-agents](/harness/roles). |
-| **QA gates** | Lifecycle gates, acceptance review, test runner, regression guard, rework limit. See [Tasks](/webui/tasks). |
-| **Checks** | Edit review for large file changes, tool-call intent validation, tool approval. See [Checks and approval](/harness/checks). |
+| **Workers** | Lean worker context, whether director workers fork the full context, worker output reduce, role model routing, max delegation depth, worker thinking budget, preserve thinking across turns (vLLM). See [Roles and sub-agents](../harness/roles.md). |
+| **QA gates** | Lifecycle gates, acceptance review, test runner, regression guard, rework limit. See [Tasks](tasks.md). |
+| **Checks** | Edit review for large file changes, tool-call intent validation, tool approval. See [Checks and approval](../harness/checks.md). |
 | **Autonomous Agent Loop** | QA gates after each task, task ledger, message log review, consecutive failure limit |
 
 ## Skills, Tools, MCP and Roles
 
 | Tab | What it controls |
 |---|---|
-| **Skills** | Switch built-in and custom skills and rules on or off, edit triggers, create one in a form, or **Import from file**. See [Skills and rules](/harness/skills). |
-| **Tools** | Enable tools separately for [Chat and Cowork](/webui/chats/modes) |
-| **MCP** | Connect Model Context Protocol servers and choose which of their tools the agent sees. See [MCP servers](/harness/mcp). |
+| **Skills** | Switch built-in and custom skills and rules on or off, edit triggers, create one in a form, or **Import from file**. See [Skills and rules](../harness/skills.md). |
+| **Tools** | Enable tools separately for [Chat and Cowork](chats/modes.md) |
+| **MCP** | Connect Model Context Protocol servers and choose which of their tools the agent sees. See [MCP servers](../harness/mcp.md). |
 | **Roles** | View and edit each role's system prompt and tool ceiling; uncheck a role to stop workers using it. **Reset** restores the built-in prompt. |
 
 ## Voice
@@ -79,6 +79,6 @@ Speech input (STT) and output (TTS) models, tried in order with the first one th
 | Keys in the credentials file | n/a | server only |
 | Chat logs | not sent unless you choose to send one | same |
 
-Everything stored in the browser is lost when you clear site data. Export projects from [Project](/webui/project/) and profiles from the Profiles tab to keep a copy.
+Everything stored in the browser is lost when you clear site data. Export projects from [Project](project/index.md) and profiles from the Profiles tab to keep a copy.
 
 Besides your model provider, the page loads its libraries (marked, DOMPurify, highlight.js, KaTeX, Bootstrap, CodeMirror) from jsDelivr or esm.sh. The two optional requests under [Privacy](#privacy) are the only others, and [Provider-only and Local](#privacy) switch off everything that goes through FreeGent's Worker.
