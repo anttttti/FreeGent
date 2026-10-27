@@ -34,6 +34,7 @@ export interface GateContext {
     gradedTestIds: () => string[];    // taskPolicy.gradedTestIds(task): benchmark runs only
     isScratchPath: (p: string) => boolean;
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
+    brokenFiles: (paths: Iterable<string>) => Promise<string[]>;   // parse errors of these files (tools.ts brokenFileReport)
 }
 export interface GateHit { name: string; text: string; force: boolean }
 export interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
@@ -54,6 +55,24 @@ const scratchOnly: CompletionGate = {
         c.ps.scratchOnlyCheck = 1;
         return { name: 'scratch_only_edits', force: false,
             text: `You declared COMPLETED, but the only files changed this turn are scratch files: ${[...c.editedPaths].slice(0, 6).join(', ')}. No project file was modified, so if the task was to change the code, the fix is not applied — read the file (or check \`git diff\` where git works) and apply it, then remove the scratch files. If these files are the deliverable, reply COMPLETED again.` };
+    },
+};
+
+// A file changed this run that no longer parses. Chat log 45cdc500 (task 107): an edit left render.js unparseable, check_page and a
+// test both failed to load it, the agent called that "pre-existing" and marked the task done with a game that did not start. The
+// edit result reports a parse error at once; this is the second look, at the end, over every file the run changed (workers too).
+const brokenSyntax: CompletionGate = {
+    name: 'broken_syntax',
+    async run(c) {
+        if (!completionDeclared(c) || c.ps.syntaxCheck || !c.editedPaths.size) return null;
+        const broken = await c.brokenFiles([...c.editedPaths].filter(p => !c.isScratchPath(p)));
+        if (!broken.length) return null;
+        c.ps.syntaxCheck = 1;
+        const one = broken.length === 1;
+        return { name: 'broken_syntax', force: true,
+            text: `You declared COMPLETED, but ${one ? 'a file' : `${broken.length} files`} you changed in this run no longer parse${one ? 's' : ''}:\n${broken.slice(0, 3).join('\n')}${broken.length > 3 ? `\n(and ${broken.length - 3} more)` : ''}\n` +
+                `${one ? 'It was' : 'They were'} changed in this run, so do not call the error pre-existing until you have checked that your change did not cause it: anything that loads ${one ? 'this file' : 'these files'} (the page, an import, a test) fails. ` +
+                `Fix it, or call undo_write on the path to restore the previous version, check that it parses, then reply COMPLETED.` };
     },
 };
 
@@ -112,7 +131,7 @@ const envConfig: CompletionGate = {
 };
 
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, failedCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {

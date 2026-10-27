@@ -7,13 +7,13 @@ const ctx = (over: Partial<GateContext> = {}): GateContext => ({
     text: 'Done.\nCOMPLETED', step: 3, loopMax: 20, softStopPending: false, ps: {}, workflowMode: true,
     editedPaths: new Set(), shellWrites: new Set(), editsThisRun: false, editEvents: 0, verdict: 'no_change', stateChanged: false, changeRequired: false,
     reactiveFired: new Set(), firstUserText: '', task: 'Answer the question.', editRequired: false,
-    gradedTestIds: () => [], isScratchPath: p => /(^|\/)(tmp|repro)/.test(p), envConfigEdits: async () => [], ...over,
+    gradedTestIds: () => [], isScratchPath: p => /(^|\/)(tmp|repro)/.test(p), envConfigEdits: async () => [], brokenFiles: async () => [], ...over,
 });
 
 describe('completion gates', () => {
     it('are tried in a fixed order', () => {
         expect(COMPLETION_GATES.map(g => g.name)).toEqual(
-            ['scratch_only_edits', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete',
+            ['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete',
              'no_change_fix', 'blocked_untried_fix']);
     });
     it('never fire for BLOCKED, on the last step, or in soft stop', async () => {
@@ -91,5 +91,31 @@ describe('gates added after the v0.72 review', () => {
         expect(await runCompletionGates(ctx({ text }))).toBeNull();
         expect(await runCompletionGates(ctx({ ...fix, text, step: 19 }))).toBeNull();
         expect(await runCompletionGates(ctx({ ...fix, text: 'BLOCKED: x\nCOMPLETED' }))).toBeNull();
+    });
+});
+
+// Chat log 45cdc500 (task 107): an edit broke render.js, the page's load error was called "pre-existing", the task was marked done.
+describe('broken_syntax', () => {
+    const report = 'src/render.js:1290:5: SyntaxError: Unexpected token';
+    it('bounces once, forced, when a changed file no longer parses, naming the error', async () => {
+        let asked: string[] = [];
+        const c = ctx({ editsThisRun: true, editedPaths: new Set(['src/render.js', 'tmp/probe.js']), brokenFiles: async (p) => { asked = [...p]; return [report]; } });
+        const hit = await runCompletionGates(c);
+        expect(hit?.name).toBe('broken_syntax');
+        expect(hit?.force).toBe(true);
+        expect(hit?.text).toContain(report);
+        expect(hit?.text).toMatch(/do not call the error pre-existing/);
+        expect(asked).toEqual(['src/render.js']);   // scratch files are not checked
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('says nothing when the changed files parse, or nothing was changed', async () => {
+        expect(await runCompletionGates(ctx({ editsThisRun: true, editedPaths: new Set(['src/a.js']) }))).toBeNull();
+        let called = false;
+        expect(await runCompletionGates(ctx({ brokenFiles: async () => { called = true; return [report]; } }))).toBeNull();
+        expect(called).toBe(false);
+    });
+    it('comes before the failed-check gate: a file that does not parse is the cause to fix first', async () => {
+        const hit = await runCompletionGates(ctx({ editsThisRun: true, verdict: 'failed_verification', editedPaths: new Set(['src/render.js']), brokenFiles: async () => [report] }));
+        expect(hit?.name).toBe('broken_syntax');
     });
 });

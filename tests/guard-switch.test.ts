@@ -21,7 +21,7 @@ describe('guardOff', () => {
         const c: any = { text: 'Done.\nCOMPLETED', step: 3, loopMax: 20, softStopPending: false, ps: {}, workflowMode: true,
             editedPaths: new Set(), shellWrites: new Set(), editsThisRun: false, editEvents: 0, verdict: 'no_change',
             reactiveFired: new Set(), firstUserText: '', task: 'Fix it.', editRequired: true, gradedTestIds: () => [],
-            isScratchPath: () => false, envConfigEdits: async () => [] };
+            isScratchPath: () => false, envConfigEdits: async () => [], brokenFiles: async () => [] };
         expect((await runCompletionGates({ ...c, ps: {} }))?.name).toBe('no_edit_complete');
         process.env.FG_DISABLE_GUARDS = 'review';
         expect(await runCompletionGates({ ...c, ps: {} })).toBeNull();

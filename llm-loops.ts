@@ -21,7 +21,7 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport } from './tools.js';
 import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
@@ -1544,7 +1544,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
-                isScratchPath, envConfigEdits,
+                isScratchPath, envConfigEdits, brokenFiles: brokenFileReport,
             });
             if (_gate) {
                 if (!_BLOCKED_DECLARATION_RE.test(textContent)) _saveAnswer(ps, textContent);   // a bounced BLOCKED is not an answer

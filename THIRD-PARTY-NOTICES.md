@@ -23,6 +23,7 @@ Loaded at pinned versions from jsDelivr or esm.sh. The scripts and styles in `in
 | [SheetJS Community Edition](https://sheetjs.com/) (`xlsx`) | 0.18.5 | Apache-2.0 |
 | [CodeMirror 6](https://codemirror.net/) (basic-setup and language packs, via esm.sh) | see `editor.ts` | MIT |
 | [diff](https://www.npmjs.com/package/diff) (jsdiff, via esm.sh) | 7 | BSD-3-Clause |
+| [acorn](https://github.com/acornjs/acorn) (JavaScript parser for the post-edit parse check, via esm.sh) | 8.15.0 | MIT |
 | [7-Zip](https://www.7-zip.org/) through [7z-wasm](https://www.npmjs.com/package/7z-wasm) | 1.2.0 | LGPL-2.1-or-later, with the unRAR restriction described in 7-Zip's license |
 | [Pyodide](https://pyodide.org/) (CPython for WebAssembly) | 0.28.3 | MPL-2.0. CPython is under the PSF license; Python packages loaded with `micropip` keep their own licenses. |
 
@@ -32,6 +33,7 @@ The TUI, CLI and dev server (`npm install`) use these runtime dependencies and t
 
 | Package | License |
 |---|---|
+| [acorn](https://github.com/acornjs/acorn) | MIT |
 | [diff](https://www.npmjs.com/package/diff) | BSD-3-Clause |
 | [fake-indexeddb](https://github.com/dumbmatter/fakeIndexedDB) | Apache-2.0 |
 | [ink](https://github.com/vadimdemedes/ink) | MIT |

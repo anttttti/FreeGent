@@ -429,7 +429,12 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
       const errMsg = err instanceof Error ? err.message : String(err);
       const enhancedErr = new Error(`Error loading module '${resolved}': ${errMsg}`);
       if (err instanceof Error && err.stack) {
-        enhancedErr.stack = `Error loading module '${resolved}':\n${err.stack}`;
+        // V8 starts a stack with "SyntaxError: <message>"; WebKit and Firefox give only the frames. A script that prints e.stack
+        // (most do) then saw "Function@[native code]" and no error at all on Safari (chat log 45cdc500), so the name and
+        // message head the stack whenever the engine left them out.
+        const head = `${err.name}: ${err.message}`;
+        const inner = err.stack.includes(err.message) ? err.stack : `${head}\n${err.stack}`;
+        enhancedErr.stack = `Error loading module '${resolved}':\n${inner}`;
       }
       throw enhancedErr;
     }

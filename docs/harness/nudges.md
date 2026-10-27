@@ -9,6 +9,7 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | `bad_args` | nudge | `llm-loops.ts` | the arguments of a tool call were not valid JSON or arrived damaged (call markers of the model itself inside the argument names) |
 | `bad_tool_format` | nudge | `llm-loops.ts` | the model wrote a tool call together with a fabricated result |
 | `blocked_untried_fix` | gate | `bench-policy.ts` | benchmark policy: BLOCKED declared before a fix was tried |
+| `broken_syntax` | gate | `completion-gates.ts` | gate: COMPLETED while a file changed this turn (by the agent or a worker) no longer parses; names the error |
 | `broken_tool_call` | nudge | `llm-loops.ts` | a tool call written as text (markup in the message), so nothing ran |
 | `calls_overflow` | nudge | `llm-loops.ts` | more than 20 tool calls in one response: only the first 20 ran |
 | `completion_gate` | nudge | `llm-loops.ts` | first COMPLETED after edits: the completion checklist (and, in benchmark runs, the graded-test bounce) |

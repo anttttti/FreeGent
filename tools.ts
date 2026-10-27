@@ -18,6 +18,7 @@ import { isTaskPath } from './task-status.js';
 import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
+import { checkSyntax, syntaxCheckable } from './syntax-check.js';
 
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
@@ -289,6 +290,31 @@ const _EDIT_REVIEW_THRESHOLD = 0.50; // fraction of lines changed that triggers 
 
 // search_workspace: skip files over this size without a path_filter (avoids context blowup).
 const _SEARCH_FILE_SIZE_CAP = 300_000;
+
+// search_workspace: images, audio, fonts and archives are stored as base64 text, so a short pattern "matched" inside them, and
+// inside a data: URL or base64 blob embedded in code (chat log 45cdc500: "loop" returned 30 KB of PNG base64 from assets/*.png and
+// src/atlas_data.js). Their contents are not searched (a name match still counts), and a hit lying inside a base64 run is dropped.
+const _SEARCH_BINARY_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|ico|avif|tiff?|psd|mp3|wav|ogg|oga|flac|m4a|aac|opus|mp4|m4v|webm|mov|avi|mkv|woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|tar|pdf|wasm|bin|exe|dll|so|dylib|class|jar|pyc|sqlite3?|db)$/i;
+const _SEARCH_DATA_RUN = 200;
+function _inDataRun(line: string, at: number, len: number): boolean {
+    const isData = (ch: string) => /[A-Za-z0-9+/=_-]/.test(ch);
+    let a = at, b = at + len;
+    while (a > 0 && isData(line[a - 1])) a--;
+    while (b < line.length && isData(line[b])) b++;
+    return b - a >= _SEARCH_DATA_RUN;
+}
+// Whether a line holds a hit outside base64 data. Lines shorter than a data run cannot hold one, so they skip the scan.
+function _realHit(re: RegExp, line: string): boolean {
+    re.lastIndex = 0;
+    if (!re.test(line)) return false;
+    if (line.length < _SEARCH_DATA_RUN) return true;
+    re.lastIndex = 0;
+    for (let m: RegExpExecArray | null; (m = re.exec(line)); ) {
+        if (!m[0].length) { re.lastIndex++; return true; }
+        if (!_inDataRun(line, m.index, m[0].length)) return true;
+    }
+    return false;
+}
 
 // repo_map: scan at most this many files when no path_filter is given / when one is given.
 const _REPO_MAP_LIMIT_UNFILTERED = 50;
@@ -1034,17 +1060,17 @@ async function _handleSearchWorkspace(args: any) {
                 nameMatched = re.test(f.name);
             }
             const _tooBig = () => { _skippedLarge.add(f.name); if (nameMatched && scope === 'both') { matches.push(`> ${f.name}  (filename match; contents not searched: file is over ${Math.round(_SEARCH_FILE_SIZE_CAP / 1000)} KB)`); } };
-            if (scope !== 'names' && !pathFilter.length && f.size > _SEARCH_FILE_SIZE_CAP) { _tooBig(); if (matches.length >= maxMatches) break; continue; }
+            const binary = _SEARCH_BINARY_EXT_RE.test(f.name);   // name only: its contents are base64
+            if (scope !== 'names' && !binary && !pathFilter.length && f.size > _SEARCH_FILE_SIZE_CAP) { _tooBig(); if (matches.length >= maxMatches) break; continue; }
 
-            const content = scope === 'names' ? null : await agentReadFile(f.name).catch(() => { _readErrors.add(f.name); return ''; });
+            const content = scope === 'names' || binary ? null : await agentReadFile(f.name).catch(() => { _readErrors.add(f.name); return ''; });
             // Recheck with actual content length — covers local/ FSA files with no size metadata
             if (content !== null && !pathFilter.length && content.length > _SEARCH_FILE_SIZE_CAP) { _tooBig(); if (matches.length >= maxMatches) break; continue; }
             const lines   = content !== null ? content.split('\n') : [];
             let contentMatched = false;
             const contentBlocks = [];
             for (let i = 0; i < lines.length; i++) {
-                re.lastIndex = 0;
-                if (!re.test(lines[i])) continue;
+                if (!_realHit(re, lines[i])) continue;
                 contentMatched = true;
                 const start = Math.max(0, i - ctxLines);
                 const end   = Math.min(lines.length - 1, i + ctxLines);
@@ -1196,23 +1222,50 @@ const _shSingleQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 const _SYNTAX_HINT = 'The file no longer parses. If the fix is not obvious, call undo_write on this path to restore the previous version instead of patching braces repeatedly.';
 
-// Returns an error string on failure, null if the file is clean or the check is unavailable.
-async function _syntaxCheck(path) {
+// Returns an error string on failure, null if the file is clean or the check is unavailable. `text` is the file as written: given
+// for a worker's staged edit (nothing on disk yet) and for write_file; otherwise it is read back. JS and Python go to the native
+// toolchain where there is one; JS, JSON and HTML inline scripts are checked in-process everywhere else (syntax-check.ts), so
+// the WebUI catches a broken edit too.
+async function _syntaxCheck(path, text: string | null = null, { staged = false } = {}) {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase();
-    if (!ext || !runtime.hasNativeExec) return null;
-    let r = null;
-    // A leading dash would be read as an option by node and python.
-    const qp = _shSingleQuote(path.startsWith('-') ? `./${path}` : path);
-    if (ext === 'py') {
-        // Compiled in memory: py_compile writes __pycache__/*.pyc into the workspace (git status
-        // noise), and a later edit within the same second ran the stale .pyc instead.
-        const check = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
-        r = await runtime.nativeExec('bash', `python3 -c ${_shSingleQuote(check)} ${qp} 2>&1`).catch(() => null);
-    } else if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
-        r = await runtime.nativeExec('bash', `node --check ${qp} 2>&1`).catch(() => null);
+    if (!ext) return null;
+    if (runtime.hasNativeExec && !staged && ['py', 'js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
+        let r = null;
+        // A leading dash would be read as an option by node and python.
+        const qp = _shSingleQuote(path.startsWith('-') ? `./${path}` : path);
+        if (ext === 'py') {
+            // Compiled in memory: py_compile writes __pycache__/*.pyc into the workspace (git status
+            // noise), and a later edit within the same second ran the stale .pyc instead.
+            const check = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
+            r = await runtime.nativeExec('bash', `python3 -c ${_shSingleQuote(check)} ${qp} 2>&1`).catch(() => null);
+        } else {
+            r = await runtime.nativeExec('bash', `node --check ${qp} 2>&1`).catch(() => null);
+        }
+        if (!r || r.exit_code === 0) return null;
+        return (r.stdout || r.stderr || '').trim().split('\n').slice(0, 5).join('\n') || null;
     }
-    if (!r || r.exit_code === 0) return null;
-    return (r.stdout || r.stderr || '').trim().split('\n').slice(0, 5).join('\n') || null;
+    if (!syntaxCheckable(path)) return null;
+    const content = text ?? await agentReadFile(path).catch(() => null);
+    return typeof content === 'string' ? checkSyntax(path, content) : null;
+}
+
+// The parse errors of the files a run changed, for the completion gate (completion-gates.ts broken_syntax). A file that is gone
+// or cannot be read is not reported; at most `limit` files are checked.
+export async function brokenFileReport(paths: Iterable<string>, limit = 20): Promise<string[]> {
+    const out: string[] = [];
+    for (const p of [...new Set(paths)].slice(0, limit)) {
+        const err = await _syntaxCheck(p).catch(() => null);
+        if (err) out.push(err);
+    }
+    return out;
+}
+
+// An edit result with the parse error attached: "No need to re-read the file to verify" is dropped, since the file now needs exactly that.
+function _withSyntaxError(result: any, synErr: string | null) {
+    if (!synErr) return result;
+    const { note, ...rest } = result;
+    const kept = typeof note === 'string' ? note.replace(/\s*No need to re-read the file to verify\./, '').trim() : '';
+    return { ...rest, ...(kept ? { note: kept } : {}), syntax_error: synErr, syntax_hint: _SYNTAX_HINT };
 }
 
 // Image / SVG inline-display helper for write_file.
@@ -1547,7 +1600,7 @@ async function _handleWriteFile(args, context) {
         context.binary?.delete(args.path);   // the latest staged operation on a path is the only one (text supersedes an earlier binary write)
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
-        return { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
+        return _withSyntaxError({ success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay }, await _syntaxCheck(args.path, args.content, { staged: true }));
     }
     try {
         let previous = '';
@@ -1566,13 +1619,13 @@ async function _handleWriteFile(args, context) {
         await agentWriteFile(args.path, args.content, null, { epoch: _ep });
         _pushCheckpoint(args.path, previous, existed, args.content, _ep);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
-        const synErr = await _syntaxCheck(args.path);
+        const synErr = await _syntaxCheck(args.path, args.content);
         const wfResult: any = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
         const doubled = existed ? doubledBackslashGrowth(previous, args.content) : 0;
         const badRegex = /\.(?:[cm]?js|[jt]sx?)$/i.test(String(args.path)) ? overEscapedRegexLiterals(args.content) : 0;
         if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
-        return synErr ? { ...wfResult, syntax_error: synErr, syntax_hint: _SYNTAX_HINT } : wfResult;
+        return _withSyntaxError(wfResult, synErr);
     } catch (e) { return { error: e.message }; }
 }
 
@@ -1706,13 +1759,14 @@ async function _handleReplaceInFile(args, context) {
                 : 'Change applied. No need to re-read the file to verify.') + decodedNote };
     };
     if (context) {
-        return doReplace(
+        const rif = await doReplace(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
             async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
+        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true })) : rif;
     }
     try {
         let existed = true;
@@ -1722,11 +1776,7 @@ async function _handleReplaceInFile(args, context) {
             () => Promise.resolve(before),
             async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, existed, c, _ep); }
         );
-        if (rif.success) {
-            const synErr = await _syntaxCheck(args.path);
-            if (synErr) return { ...rif, syntax_error: synErr, syntax_hint: _SYNTAX_HINT };
-        }
-        return rif;
+        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path)) : rif;
     } catch (e) { return { error: e.message }; }
 }
 
@@ -1795,13 +1845,14 @@ async function _handleApplyPatch(args, context) {
         return { error: `apply_patch: patch did not apply to "${args.path}". ${fixed?.hint ?? 'Context lines may not match — read the file first and regenerate the patch.'}` };
     };
     if (context) {
-        return doApply(
+        const ap: any = await doApply(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
             async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
+        return ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true })) : ap;
     }
     try {
         const _ep = workspaceEpoch();
@@ -1809,11 +1860,7 @@ async function _handleApplyPatch(args, context) {
             () => agentReadFile(args.path),
             c  => agentWriteFile(args.path, c, null, { epoch: _ep })
         );
-        if ('success' in ap && ap.success) {
-            const synErr = await _syntaxCheck(args.path);
-            if (synErr) return { ...ap, syntax_error: synErr };
-        }
-        return ap;
+        return 'success' in ap && ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path)) : ap;
     } catch (e) { return { error: e.message }; }
 }
 

@@ -10222,7 +10222,7 @@
     "shiro/node-compat/modules/util.ts": "28a99cd24caab60934fb47eeddaa1195348fae4e41ecfd071dfb60dc37f0c157",
     "shiro/node-compat/preload.ts": "2bc6a4d5444524f4713bd5e4a2c3c5143709fe0d8c74e87ea3578e65a280f171",
     "shiro/node-compat/process.ts": "00847d3e3c4983ac2983107792fd76a2861daa528256eaa0a684457efc00fedc",
-    "shiro/node-compat/require.ts": "9f45fc809321aa33efc5d19ed1ef6dd84b53f5a03bfa2b396e68306b90a50413",
+    "shiro/node-compat/require.ts": "59ea3e8fd15491d0382d985060dc9c33acd6abfe91fcc36464b1f7f241a1de34",
     "shiro/node-compat/shims/app-shims.ts": "fec171a296a069e7ba5a43575af9bb92b798ba9f9f1c4e92501ff8b53708295d",
     "shiro/node-compat/shims/express.ts": "f8a678bbed919e8999f7a5d4781432820ada666a19363c1fc198aff168252ab5",
     "shiro/node-compat/shims/index.ts": "98dfddd56f8aa08cb3e5669caafb9dbf0c952166b5c466a5cc3513880bb7ed32",

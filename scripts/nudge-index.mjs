@@ -20,6 +20,7 @@ export const WHEN = {
     bad_args: 'the arguments of a tool call were not valid JSON or arrived damaged (call markers of the model itself inside the argument names)',
     bad_tool_format: 'the model wrote a tool call together with a fabricated result',
     blocked_untried_fix: 'benchmark policy: BLOCKED declared before a fix was tried',
+    broken_syntax: 'gate: COMPLETED while a file changed this turn (by the agent or a worker) no longer parses; names the error',
     broken_tool_call: 'a tool call written as text (markup in the message), so nothing ran',
     calls_overflow: 'more than 20 tool calls in one response: only the first 20 ran',
     completion_gate: 'first COMPLETED after edits: the completion checklist (and, in benchmark runs, the graded-test bounce)',
