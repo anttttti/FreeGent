@@ -2797,13 +2797,21 @@ export function noteEmptyArgs(name: string, args: any, result: any): any {
     return { ...result, error: `${result.error} This is call ${n} in a row to ${name} that arrived with EMPTY arguments ({}): the arguments are being lost between you and the tool, so sending it again will fail the same way. Write the arguments on one line as plain JSON, or do this step with execute_code (bash: cat <file>, ls <directory>).` };
 }
 
+// Every string in a call's arguments, nested ones too (fetch_url headers and body, an MCP tool's structured input), unescaped:
+// JSON.stringify would hide a value holding a quote or a backslash.
+function _argStrings(v: any, out: string[] = [], depth = 0): string[] {
+    if (typeof v === 'string') out.push(v);
+    else if (typeof v === 'number') out.push(String(v));
+    else if (v && typeof v === 'object' && depth < 8) for (const x of Object.values(v)) _argStrings(x, out, depth + 1);
+    return out;
+}
+
 export async function executeToolAsync(name, args, context = null, onProgress?: (message:string)=>void) {
-    // A value read from a credential file does not leave through a network tool unless the request names the file (secret-egress.ts).
-    if (name === 'fetch_url' || name === 'web_search') {
-        const outgoing = name === 'fetch_url'
-            ? [args?.url, JSON.stringify(args?.headers ?? ''), typeof args?.body === 'string' ? args.body : JSON.stringify(args?.body ?? '')].join('\n')
-            : String(args?.query ?? '');
-        const leak = secretEgressReason(name, outgoing, String(_currentUserIntent ?? ''));
+    // A value read from a credential file does not leave through a tool that reaches outside unless the request names the file
+    // (secret-egress.ts). The tools whose content intent validation treats as external send their arguments out too: fetch_url and the
+    // search tools, a browser page (browser_navigate's URL, browser_type's text, browser_eval's script) and any MCP server.
+    if (_IV_EXTERNAL_SOURCES.test(name)) {
+        const leak = secretEgressReason(name, _argStrings(args).join('\n'), String(_currentUserIntent ?? ''));
         if (leak) return { error: leak };
     }
     const result = noteEmptyArgs(name, args, await _executeToolAsyncInner(name, args, context, onProgress));
