@@ -8,6 +8,7 @@ import { FILE_WRITE_TOOLS, MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effec
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { checkWriteAllowed, isWriteAllowActive } from './write-allow.js';
+import { isCredentialPath, credentialFilesIn, noteSecrets, secretEgressReason } from './secret-egress.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
 import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch } from './exec-limits.js';
@@ -2797,7 +2798,30 @@ export function noteEmptyArgs(name: string, args: any, result: any): any {
 }
 
 export async function executeToolAsync(name, args, context = null, onProgress?: (message:string)=>void) {
-    return noteEmptyArgs(name, args, await _executeToolAsyncInner(name, args, context, onProgress));
+    // A value read from a credential file does not leave through a network tool unless the request names the file (secret-egress.ts).
+    if (name === 'fetch_url' || name === 'web_search') {
+        const outgoing = name === 'fetch_url'
+            ? [args?.url, JSON.stringify(args?.headers ?? ''), typeof args?.body === 'string' ? args.body : JSON.stringify(args?.body ?? '')].join('\n')
+            : String(args?.query ?? '');
+        const leak = secretEgressReason(name, outgoing, String(_currentUserIntent ?? ''));
+        if (leak) return { error: leak };
+    }
+    const result = noteEmptyArgs(name, args, await _executeToolAsyncInner(name, args, context, onProgress));
+    _noteCredentialReads(name, args, result);
+    return result;
+}
+
+// Remember what a successful read of a credential file returned: read_file of such a path, or execute_code whose code names one
+// (`cat .env`, `open('.npmrc')`) — its output may be the file.
+function _noteCredentialReads(name: string, args: any, result: any): void {
+    if (!result || typeof result !== 'object' || result.error) return;
+    if (name === 'read_file') {
+        const path = String(result.path ?? args?.path ?? '');
+        if (isCredentialPath(path) && typeof result.content === 'string') noteSecrets(path, result.content);
+    } else if (name === 'execute_code') {
+        const files = credentialFilesIn(String(args?.code ?? ''));
+        if (files.length) noteSecrets(files[0], `${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+    }
 }
 
 async function _executeToolAsyncInner(name, args, context = null, onProgress?: (message:string)=>void) {

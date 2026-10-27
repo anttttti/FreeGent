@@ -22,6 +22,10 @@ The harness checks the agent's own output while it works, and asks you before ri
 
 The model check is meant to catch what patterns cannot, such as a fetched page telling the agent to send your files to another address. It runs only when it can matter: after the agent has read content from outside the conversation in the same turn (a fetched page, search results, a browser page or an MCP server), and only when the heuristic found nothing. The judge sees your request and the call, treats the call as data, and decides YES (block) or NO (allow). The same call is judged once per turn, at most 15 calls are judged per turn, and a judge that fails or does not answer lets the call through. It uses the utility model when one is set. It adds a model call for each risky call it judges, so it is off unless you choose it.
 
+### Credentials do not leave through network tools
+
+Independent of the setting above: when the agent reads a credential file (`.env` and `.env.*` except templates such as `.env.example`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `.aws/credentials`, key and certificate files) with `read_file`, or with `execute_code` code that names one (`cat .env`), the secret-looking values in it are remembered for the session. A `fetch_url` (URL, headers or body) or `web_search` query that contains one of them, plainly, URL-encoded or in base64, is refused and nothing is sent, unless your request names that file ("call the API with the key in .env"). Code the agent runs can still reach the network on its own (`curl` in `execute_code`); [Code execution](../code-execution/index.md) says which sandboxes allow that.
+
 ## Approval and safety
 
 **Settings → Agent → Tool approval** has three levels. A prompt offers Allow, Deny, and "Allow all *tool* calls this session".
