@@ -218,3 +218,60 @@ describe('a turn that stops at its step limit', () => {
         await idle();
     });
 });
+
+// IndexedDB failing mid-run (live logs 2026-10-26, browser run 2026-10-27): the unreadable task list was read as empty and
+// Autopilot ended with "All tasks complete" while tasks were still open; a one-second hiccup was enough.
+describe('task files that cannot be read', () => {
+    const IDB = 'An internal error was encountered in the Indexed Database server';
+    let retry, readable;
+    beforeEach(async () => {
+        readable = W.loadTaskFiles;
+        ({ TASK_LOAD_RETRY_MS: retry } = await import('../runner.ts'));
+        retry.splice(0, Infinity, 1, 1);
+    });
+    afterEach(() => { retry.splice(0, Infinity, 1000, 3000, 8000); });
+    const failing = (times) => {
+        let left = times; const calls = [];
+        W.loadTaskFiles = async (opts) => { calls.push(opts); if (left-- > 0) throw new Error(IDB); return readable(opts); };
+        return calls;
+    };
+
+    it('a short failure is retried and Autopilot goes on with the remaining tasks', async () => {
+        let n = 0;
+        const base = W.runAgentTurn;
+        W.runAgentTurn = async (p) => { const r = await base(p); if (++n === 1) failing(2); return r; };   // storage fails after task 001
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/001-a.md', 'fg-tasks/002-b.md']);
+        expect(files['fg-tasks/002-b.md']).toMatch(/^status: done$/m);
+    });
+
+    it('reads the list strictly: a failure is not taken for "no tasks left"', async () => {
+        const calls = failing(0);
+        W.runnerStart();
+        await idle();
+        expect(calls[0]).toEqual({ strict: true });
+    });
+
+    it('a lasting failure pauses the run with the reason; Resume tries again and finishes the tasks', async () => {
+        failing(Infinity);
+        W.runnerAutopilot();
+        const status = document.getElementById('runner-status');
+        await vi.waitFor(() => expect(status.textContent).toMatch(/^Paused: Cannot read the task files \(.*Indexed Database server\)/));
+        expect(W.isRunnerRunning()).toBe(true);
+        expect(turns).toEqual([]);
+        failing(0);                      // storage is back
+        W.runnerResume();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/001-a.md', 'fg-tasks/002-b.md']);
+    });
+
+    it('Stop while paused on the error ends the run', async () => {
+        failing(Infinity);
+        W.runnerAutopilot();
+        await vi.waitFor(() => expect(document.getElementById('runner-status').textContent).toMatch(/Cannot read the task files/));
+        W.runnerStop();
+        await idle();
+        expect(turns).toEqual([]);
+    });
+});

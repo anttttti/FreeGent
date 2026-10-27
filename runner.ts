@@ -220,7 +220,8 @@ async function _runLoop() {
 
             await _waitUntilQuiet();
             if (_runnerAbort) break;
-            const tasks = await loadTaskFiles();
+            const tasks = await _loadTasksForRun();
+            if (!tasks) break;   // stopped while the task files could not be read
             refreshTasks?.();   // keep kanban in sync with task-file state
 
             const task = _selectNextTask(tasks);
@@ -343,6 +344,27 @@ function _userNotesBlock(): string {
         'If a reply tells you to skip or drop a task, do not do it: mark that task failed with "skipped by the user". ' +
         'Never mark a task done unless its work exists.\n' +
         _runnerUserNotes.map(n => `- Asked while on "${n.task}": ${n.question}\n  User: ${n.answer}`).join('\n') + '\n\n';
+}
+
+// The task list the run picks from. A storage error read as an empty list ended Autopilot with "All tasks complete" while
+// tasks were still open (IndexedDB failing mid-run, live logs 2026-10-26; a one-second hiccup was enough). Retry, then pause
+// with the error so the user can Resume once storage is back. null: the run was stopped meanwhile.
+export const TASK_LOAD_RETRY_MS = [1000, 3000, 8000];
+async function _loadTasksForRun(): Promise<Task[] | null> {
+    for (let attempt = 0; !_runnerAbort; attempt++) {
+        try { return await loadTaskFiles({ strict: true }); }
+        catch (e: any) {
+            if (_runnerAbort) break;
+            if (attempt < TASK_LOAD_RETRY_MS.length) { await _sleepMs(TASK_LOAD_RETRY_MS[attempt]); continue; }
+            const msg = String(e?.message ?? e).slice(0, 160);
+            console.warn('[runner] cannot read the task files:', msg);
+            _runnerPaused      = true;
+            _runnerPauseReason = `Cannot read the task files (${msg}). Press Resume to try again, or reload the page`;
+            await _waitForUnblock();
+            attempt = -1;
+        }
+    }
+    return null;
 }
 
 function _selectNextTask(tasks: Task[]): Task | null {

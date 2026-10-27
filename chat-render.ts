@@ -5,6 +5,7 @@ import { type RenderAdapter } from './render-adapter.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { escapeHtml } from './html-escape.js';
 import { friendlyLabel } from './step-label.js';
+import { requestKeeper, trimKeptRequest } from './request-trim.js';
 
 // ── Media rendering helpers ────────────────────────────────────────────────
 
@@ -726,6 +727,14 @@ function _parseStepRole(label: string): { role: string; jobName: string } {
     return { role, jobName };
 }
 
+// The Prompt / Request panes of old steps keep only their start (request-trim.ts): every step's Request held the whole
+// conversation, twice (live column and event log), so a long Autopilot task chat grew with the square of its steps. Fewer
+// steps stay whole than in the TUI: each is two copies in the page, and they are saved with the chat's HTML.
+export const KEEP_WHOLE_STEP_PANES = 4;
+const _stepPanes = requestKeeper<() => HTMLPreElement[]>((panes) => {
+    for (const pre of panes()) if (pre.textContent) pre.textContent = trimKeptRequest(pre.textContent);
+}, KEEP_WHOLE_STEP_PANES);
+
 // continueFrom: rerun from a step box — the graph of `oldDiv` up to (not including) the step holding
 // the box with data-seq `cutSeq` is moved into this new bubble, which then continues it.
 export function createResponsePlaceholder(container: null | undefined = null, opts: { continueFrom?: { oldDiv: HTMLElement; cutSeq: number } } = {}): RenderAdapter & { div: HTMLDivElement } {
@@ -1086,6 +1095,7 @@ export function createResponsePlaceholder(container: null | undefined = null, op
             });
         }
 
+        const _panes = () => [colTabs.pres.Prompt, colTabs.pres.Request, ...(aggTabs ? [aggTabs.pres.Prompt, aggTabs.pres.Request] : [])];
         const handle = {
             markCompact() { badge.classList.add('seq-compact'); },
             setModel(name) {
@@ -1105,11 +1115,13 @@ export function createResponsePlaceholder(container: null | undefined = null, op
                 // shows content immediately (before Output/Thinking tokens arrive).
                 colTabs.openTab('Prompt');
                 _ensureAggEntry(); aggTabs.pres.Prompt.textContent = text;
+                _stepPanes.touch(_panes);
                 scrollBottom(msgs);
             },
             setRequest(text) {
                 colTabs.pres.Request.textContent = text;
                 _ensureAggEntry(); aggTabs.pres.Request.textContent = text;
+                _stepPanes.touch(_panes);
             },
             append(text, type) {
                 if (text && _ghostCol && _ghostCol !== colEl) { _ghostColClose?.(); _ghostColClose = null; _ghostCol.remove(); _ghostCol = null; }

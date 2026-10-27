@@ -14,7 +14,10 @@ function parseLastLogEntry(content) {
     return entries.length ? entries[entries.length - 1][1] : '';
 }
 
-async function loadTaskFiles() {
+// strict: a listing or read that fails (IndexedDB erroring on a low-memory device) throws instead of leaving tasks out. The lenient
+// default suits callers that only look; Autopilot read the short list as "no tasks left" and ended the run with "All tasks complete"
+// while tasks were still open (live logs 2026-10-26), and the board drew every column empty.
+async function loadTaskFiles({ strict = false }: { strict?: boolean } = {}) {
     const tasks: any[] = [];
     try {
         const files = await agentListFiles();
@@ -22,10 +25,16 @@ async function loadTaskFiles() {
             files
                 .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
                 .map(async f => {
+                    let content: string;
                     try {
                         // One retry: a transient read failure (IndexedDB hiccup on a low-memory device)
                         // otherwise drops the task from the board and from the runner's selection.
-                        const content = await agentReadFile(f.name).catch(() => agentReadFile(f.name));
+                        content = await agentReadFile(f.name).catch(() => agentReadFile(f.name));
+                    } catch (e: any) {
+                        if (strict) throw new Error(`cannot read ${f.name}: ${e?.message ?? e}`);
+                        return;
+                    }
+                    try {
                         const fm = parseFrontmatter(content);
                         // Accept any file that has id, title, or matches the NNN-slug.md naming
                         // convention — an AI-created task may lack frontmatter keys but is still valid.
@@ -34,7 +43,9 @@ async function loadTaskFiles() {
                     } catch {}
                 })
         );
-    } catch {}
+    } catch (e) {
+        if (strict) throw e;
+    }
     tasks.sort((a, b) => (Number(a.fm.id) || 0) - (Number(b.fm.id) || 0));
     // A copy of a task (same title) is not a second task: Autopilot once wrote one while working.
     return dedupeTasksByTitle(tasks);
@@ -532,9 +543,11 @@ async function refreshTasks(): Promise<void> {
 async function _doRefreshTasks() {
     const COLUMNS = ['todo', 'in-progress', 'review', 'done'];
     const counts: Record<string, number> = Object.fromEntries(COLUMNS.map(c => [c, 0]));
-    const tasks = await loadTaskFiles();
     // Build off-screen and swap in once loaded: the columns used to be emptied first, so a failed or
-    // slow load (low-memory iPad) left the board blank or half-drawn.
+    // slow load (low-memory iPad) left the board blank or half-drawn. A load that fails keeps the board as drawn.
+    let tasks: any[];
+    try { tasks = await loadTaskFiles({ strict: true }); }
+    catch (e: any) { console.warn('[tasks] board not refreshed, the task files could not be read:', e?.message ?? e); return; }
     const frags: Record<string, DocumentFragment> = {};
     for (const task of tasks) {
         const column = columnOfStatus(task.fm.status);

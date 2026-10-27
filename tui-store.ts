@@ -4,6 +4,7 @@
 // Mirror of msg-queue.ts types — kept in sync manually; msg-queue runs in JSDOM,
 // this module runs in Node.js, so we cannot share the module instance directly.
 import { typedText } from './tui-input-history.js';
+import { requestKeeper, trimKeptRequest } from './request-trim.js';
 
 export type QueueMode = 'steering' | 'queued';
 export interface QueuedMsg { id: string; text: string; mode: QueueMode; }
@@ -281,22 +282,13 @@ export function flushStep(step: StepState): void {
     _dirtySteps.delete(step);
 }
 
-// A step's request is the whole conversation as sent, so each step of a long run holds a larger copy of the history than the one before:
-// a few hundred steps were hundreds of MB of strings nobody opens. The latest steps keep theirs whole; older ones keep their start.
-const _KEEP_WHOLE = 24, _KEPT_CHARS = 6000;
-const _withRequest: StepState[] = [];
-function _trimOldRequests(): void {
-    while (_withRequest.length > _KEEP_WHOLE) {
-        const old = _withRequest.shift()!;
-        for (const k of ['request', 'prompt'] as const) {
-            const v = old[k];
-            if (typeof v === 'string' && v.length > _KEPT_CHARS + 200) old[k] = `${v.slice(0, _KEPT_CHARS)}\n… [${(v.length - _KEPT_CHARS).toLocaleString('en-US')} more characters dropped to save memory]`;
-        }
-    }
-}
+// Old steps' requests and prompts keep only their start (request-trim.ts).
+const _requests = requestKeeper<StepState>((old) => {
+    for (const k of ['request', 'prompt'] as const) { const v = old[k]; if (typeof v === 'string') old[k] = trimKeptRequest(v); }
+});
 export function patchStep(step: StepState, patch: Partial<StepState>): void {
     Object.assign(step, patch);
-    if (typeof patch.request === 'string' || typeof patch.prompt === 'string') { const at = _withRequest.indexOf(step); if (at < 0 || at !== _withRequest.length - 1) { if (at >= 0) _withRequest.splice(at, 1); _withRequest.push(step); } _trimOldRequests(); }   // one entry per step, newest last: evicting an old position cannot trim a step still being updated
+    if (typeof patch.request === 'string' || typeof patch.prompt === 'string') _requests.touch(step);
     _notify();
 }
 
