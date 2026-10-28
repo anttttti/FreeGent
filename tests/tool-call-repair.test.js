@@ -304,3 +304,34 @@ describe('hermes C13: a malformed entry does not discard the batch', () => {
         }
     });
 });
+
+// Autopilot exploration 2026-10-27 (AE-10), arguments as vLLM's Gemma 4 parser delivered them: a string closed with a backtick
+// instead of <|"|> made the next parameter's text an argument name, and the agent re-sent "path is required" calls 7 times.
+describe('_repairGluedArgs — file-edit arguments split at a backtick or <|"|>', () => {
+    const rebuild = (name, args) => repairAllToolCalls([{ function: { name, arguments: JSON.stringify(args) } }]);
+    it('rebuilds replace_in_file when every piece is accounted for', () => {
+        const r = rebuild('replace_in_file', { new_string: '  requestAnimationFrame(loop);\n`;old_string:', 'requestAnimationFrame(loop);\nrequestAnimationFrame(loop);\n<|"|>,path': 'src/main.js' });
+        expect(r.norm[0].args).toEqual({ new_string: '  requestAnimationFrame(loop);\n', old_string: 'requestAnimationFrame(loop);\nrequestAnimationFrame(loop);\n', path: 'src/main.js' });
+        expect(r.bad).toEqual([]);
+        const w = rebuild('write_file', { content: 'export const a = 1;\n`,path:', 'x': 1 });
+        expect(w.norm[0].args.path).toBeUndefined();
+        const w2 = rebuild('replace_in_file', { new_string: 'b\n`,old_string:', 'a\n`,path': 'src/x.js', end_line: 4 });
+        expect(w2.norm[0].args).toEqual({ new_string: 'b\n', old_string: 'a\n', path: 'src/x.js', end_line: 4 });
+    });
+    it('leaves a call the parser split further (spacing lost) as it was, reported as damaged', () => {
+        const args = { new_string: "  ctx.fillText('S…`,old_string:", "// Draw score\n  ctx.fillText('Score": "' + Math.floor(state.score)", '10, 20);\n}\n`,path': 'src/render.js' };
+        const r = rebuild('replace_in_file', args);
+        expect(r.norm[0].args).toEqual(args);
+        expect(r.bad).toEqual(['replace_in_file']);
+    });
+    it('a call with a missing value (the path itself swallowed) is not rebuilt', () => {
+        const args = { end_line: 94, new_string: '  }\n}\n`,path:' };
+        expect(rebuild('replace_in_file', args).norm[0].args).toEqual(args);
+    });
+    it('leaves well-formed calls and other tools alone', () => {
+        const ok = { path: 'a.js', old_string: 'x`,y', new_string: 'z' };
+        expect(rebuild('replace_in_file', ok).norm[0].args).toEqual(ok);
+        const other = { code: 'echo `,path', language: 'bash' };
+        expect(rebuild('execute_code', other).norm[0].args).toEqual(other);
+    });
+});

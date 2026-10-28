@@ -118,6 +118,12 @@ function _startRunner(all: boolean, onlyPath: string | null = null) {
     _runnerPriorChatId = activeChatId;
     _runnerSessionLog  = [];
     _renderRunnerLog();
+    // Task work needs the file tools, which Chat mode leaves off by default: started there, every task chat ended with the
+    // model saying "write_file is disabled" and the run paused (Autopilot exploration 2026-10-27, AE-02).
+    if (typeof getMode === 'function' && getMode() !== 'cowork' && typeof setMode === 'function') {
+        setMode('cowork');
+        _appendRunnerLog(null, 'Switched to Cowork mode', 'info', 'tasks need the file tools');
+    }
     _runLoop().catch(console.error);
 }
 
@@ -202,6 +208,7 @@ function runnerRestart() {
 
 async function _runLoop() {
     _runnerRunning       = true;
+    _interruptedNote     = '';
     setAiJob('runner');
     _runnerPaused        = false;
     _runnerAbort         = false;
@@ -226,7 +233,8 @@ async function _runLoop() {
 
             const task = _selectNextTask(tasks);
             if (!task) {
-                _appendRunnerLog(null, 'All tasks complete', 'info', '');
+                const left = _leftOpen(tasks);
+                _appendRunnerLog(null, left ? `Finished: ${left}` : 'All tasks complete', 'info', '');
                 break;
             }
 
@@ -365,6 +373,22 @@ async function _loadTasksForRun(): Promise<Task[] | null> {
         }
     }
     return null;
+}
+
+// Tasks the run leaves without finishing them: blocked (often waiting for an answer), failed, or refused by a start gate.
+// "All tasks complete" was shown with a task still waiting for the user (Autopilot exploration 2026-10-27, AE-06).
+function _leftOpen(tasks: Task[]): string {
+    const scope = _runnerOnlyPath ? tasks.filter(t => t.path === _runnerOnlyPath) : tasks;
+    const label = (t: Task) => `#${t.fm.id || t.path.split('/').pop()}`;
+    const by = (st: string[]) => scope.filter(t => st.includes(canonTaskStatus(t.fm.status)));
+    const blocked = by(['blocked']), failed = by(['failed']);
+    const deferred = scope.filter(t => _runnerDeferred.has(t.path) && !blocked.includes(t) && !failed.includes(t) && canonTaskStatus(t.fm.status) !== 'done');
+    const parts = [
+        blocked.length  ? `${blocked.length} blocked (${blocked.map(label).join(', ')}): answer in the task's chat or edit it, then run it again` : '',
+        failed.length   ? `${failed.length} failed (${failed.map(label).join(', ')})` : '',
+        deferred.length ? `${deferred.length} not started (${deferred.map(label).join(', ')}): a start gate refused ${deferred.length > 1 ? 'them' : 'it'}` : '',
+    ].filter(Boolean);
+    return parts.join('; ');
 }
 
 function _selectNextTask(tasks: Task[]): Task | null {
@@ -666,7 +690,46 @@ async function runnerInterrupt() {
 
 // ── UI ─────────────────────────────────────────────────────────────────────
 
+// A page reload ends the run (its state lives in this module), and the page came back Idle with nothing said: the task in
+// flight stayed In Progress and the rest open (Autopilot exploration 2026-10-27, AE-03; Safari reloads background tabs). What
+// the run was doing is kept in sessionStorage, which survives a reload of this tab only, and the reloaded page says so. It does
+// not restart by itself: a run that crashed the tab would crash it again.
+const _RUN_STATE_KEY = 'fg_runner_active';
+let _runnerTaskLabel = '';
+let _interruptedNote = '';   // shown as the idle status until a run starts
+function _persistRunState(): void {
+    try {
+        if (!_runnerRunning) { sessionStorage.removeItem(_RUN_STATE_KEY); return; }
+        sessionStorage.setItem(_RUN_STATE_KEY, JSON.stringify({ all: _runnerAll, task: _runnerTaskLabel, paused: _runnerPaused ? _runnerPauseReason : '', t: Date.now() }));
+    } catch {}
+}
+
+async function _reportInterruptedRun(st: any): Promise<void> {
+    if (!st || _runnerRunning) return;
+    let open = 0;
+    try { open = (await loadTaskFiles()).filter((t: Task) => ['todo', 'open', 'in-progress', 'in-review'].includes(canonTaskStatus(t.fm.status))).length; } catch {}
+    if (_runnerRunning) return;
+    const what = st.all ? 'Autopilot' : 'The task run';
+    const on = st.task ? ` while on ${st.task}` : '';
+    const asked = st.paused ? ` It was paused: ${String(st.paused).slice(0, 200)}` : '';
+    const msg = `${what} was interrupted by a page reload${on}.${asked}`;
+    _appendRunnerLog(null, msg, 'info', open ? `${open} task${open > 1 ? 's' : ''} open: press ${st.all ? 'Autopilot' : 'Run'} to continue` : '');
+    _interruptedNote = open ? `Interrupted by a reload: ${open} task${open > 1 ? 's' : ''} open. Press ${st.all ? 'Autopilot' : 'Run'} to continue` : 'Interrupted by a reload';
+    _updateRunnerUI();
+    toggleRunnerZone(true);
+}
+
+// At page load: a run this tab had going when it reloaded is reported on the Tasks tab, which is opened for it.
+function checkInterruptedRun(): void {
+    let pending = false;
+    try { pending = !!sessionStorage.getItem(_RUN_STATE_KEY); } catch {}
+    if (!pending) return;
+    if (typeof activateTab === 'function') activateTab('tasks');   // runs initRunner
+    else initRunner();
+}
+
 function _updateRunnerUI() {
+    _persistRunState();
     const runBtn      = document.getElementById('runner-run-btn');
     const autoBtn     = document.getElementById('autopilot-btn') as HTMLButtonElement | null;
     const pauseBtn    = document.getElementById('runner-pause-btn');
@@ -692,7 +755,7 @@ function _updateRunnerUI() {
     if (interruptBar) interruptBar.style.display = running ? 'flex' : 'none';
 
     if (statusEl) {
-        if (idle)         statusEl.textContent = 'Idle';
+        if (idle)         statusEl.textContent = _interruptedNote || 'Idle';
         else if (paused)  statusEl.textContent = `Paused: ${_runnerPauseReason}`;
         else              statusEl.textContent = 'Running…';
         statusEl.classList.toggle('runner-running', running);
@@ -714,11 +777,13 @@ function _updateRunnerUI() {
 }
 
 export function _updateRunnerCurrentTask(task: Task | null): void {
+    const id = task?.fm.id ? `#${task.fm.id} ` : '';
+    const label = task ? `${id}${task.fm.title || task.path}` : '';
+    _runnerTaskLabel = label;
+    _persistRunState();
     const el = document.getElementById('runner-current-task');
     if (!el) return;
     if (!task) { el.textContent = '—'; return; }
-    const id = task.fm.id ? `#${task.fm.id} ` : '';
-    const label = `${id}${task.fm.title || task.path}`;
     const chatId = _runnerChatId;
     if (chatId) {
         // Clickable link that switches to the runner's chat; stopPropagation
@@ -792,9 +857,12 @@ function toggleRunnerZone(forceExpand?: boolean): void {
 }
 
 function initRunner() {
-    _updateRunnerUI();
+    let interrupted: any = null;
+    try { interrupted = JSON.parse(sessionStorage.getItem(_RUN_STATE_KEY) || 'null'); } catch {}
+    _updateRunnerUI();   // not running: clears the record, read above
     _renderRunnerLog();
+    if (interrupted) _reportInterruptedRun(interrupted).catch(() => {});
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

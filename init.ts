@@ -549,6 +549,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Restore draft for the current chat on page load
     _restoreDraft(activeChatId);
+    (window as any).checkInterruptedRun?.();   // Autopilot was running when this tab reloaded
     window.refreshStorageUsage?.();
 
     // ── Message content search ─────────────────────────────────────────────

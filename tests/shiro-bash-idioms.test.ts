@@ -27,6 +27,11 @@ beforeEach(() => {
 // [name, script, bash's stdout]
 const CASES: [string, string, string][] = [
     ["multi-line if", "if true; then\n  echo yes\nfi", "yes\n"],
+    // A line of assignments has the status of its last command substitution: `out=$(node t.mjs); rc=$?` read 0 for a failing
+    // test, so the done gate's test runner saw every failure as a pass (Autopilot exploration 2026-10-27).
+    ["assignment keeps the substitution's status", "out=$(false); echo $?\nout=$(true); echo $?\nout=$(sh -c 'exit 3'); echo \"rc=$? out=$out\"\nx=1; echo $?", "1\n0\nrc=3 out=\n0\n"],
+    ["quoted expansion keeps quotes, backslashes and dollars", "x='File \"<frozen runpy>\", line 3'; printf '%s\\n' \"$x\"\ny=$(printf 'q \"a\" b \\\\n $HOME'); echo \"$y\" \"${y}\"", "File \"<frozen runpy>\", line 3\nq \"a\" b \\n $HOME q \"a\" b \\n $HOME\n"],
+    ["colon builtin in then", "if false; then :; else echo no; fi\nif true; then :; else echo no; fi\necho done", "no\ndone\n"],
     ["if/elif/else", "x=2\nif [ $x -eq 1 ]; then\n  echo one\nelif [ $x -eq 2 ]; then\n  echo two\nelse\n  echo other\nfi", "two\n"],
     ["multi-line for", "for i in 1 2 3; do\n  echo \"i=$i\"\ndone", "i=1\ni=2\ni=3\n"],
     ["multi-line while", "n=0\nwhile [ $n -lt 3 ]; do\n  n=$((n+1))\n  echo \"n=$n\"\ndone", "n=1\nn=2\nn=3\n"],

@@ -87,6 +87,8 @@ export class Shell {
   history: string[] = [];
   commands: CommandRegistry;
   lastExitCode: number = 0;
+  /** Exit status of the last command substitution expanded for the current command (null: none ran). */
+  private substitutionStatus: number | null = null;
   functions: Record<string, { body: string; group?: 'brace' | 'subshell' }> = {};
   /** Hidden functions standing in for { } / ( ) groups (hoistGroups), by group text. */
   private groupFunctions = new Map<string, string>();
@@ -501,6 +503,7 @@ export class Shell {
       expanded = await this.expandProcessSubstitutionText(expanded, baseStderrWriter);
       expanded = this.expandBraces(expanded);
       // Command substitution before arithmetic, as in bash: $(( $(cmd) * 2 )).
+      this.substitutionStatus = null;
       expanded = await this.expandCommandSubstitution(expanded, stderrWriter);
       expanded = this.expandArithmetic(expanded);
       expanded = this.expandVars(expanded);
@@ -781,6 +784,11 @@ export class Shell {
           }
           this.env[key] = val;
           if (key === 'PWD') this.cwd = val;
+          // A line of assignments only has the status of its last command substitution, or 0 (bash): `out=$(node t.mjs); rc=$?`
+          // read 0 for a failing test, so a test runner wrapped that way saw every failure as a pass.
+          exitCode = this.substitutionStatus ?? 0;
+          this.lastExitCode = exitCode;
+          this.env['?'] = String(exitCode);
           // Persist API keys to localStorage
           const persistKeys: Record<string, string> = {
             ANTHROPIC_API_KEY: 'shiro_anthropic_key',
@@ -2598,7 +2606,7 @@ export class Shell {
           }
           const expanded = this.expandParamExpression(inner);
           if (expanded !== null) {
-            result += expanded;
+            result += inDouble ? this.dqEscape(expanded) : expanded;
             i = j + 1;
             continue;
           }
@@ -2621,7 +2629,7 @@ export class Shell {
           if (varName === 'EPOCHREALTIME') { const now = Date.now(); result += `${Math.floor(now / 1000)}.${String(now % 1000).padStart(3, '0')}`; i += m[0].length; continue; }
           // Resolve namerefs: if varName is a nameref, follow it
           const resolved = this.namerefs.has(varName) ? this.namerefs.get(varName)! : varName;
-          result += this.env[resolved] ?? '';
+          result += inDouble ? this.dqEscape(this.env[resolved] ?? '') : (this.env[resolved] ?? '');
           i += m[0].length;
           continue;
         }
@@ -2659,6 +2667,13 @@ export class Shell {
     }
     return result;
   }
+
+  /**
+   * A value expanded inside double quotes, escaped for the tokenizer that reads the line next: a quote in it ended the quoted
+   * word there, so `out=$(python3 t.py); printf '%s\n' "$out"` with a traceback line `File "<frozen runpy>"` read `<frozen` as
+   * a redirect and failed ("frozen: No such file or directory").
+   */
+  private dqEscape(v: string): string { return v.replace(/[\\"$`]/g, '\\$&'); }
 
   /** The positional parameters $1..$N as a list ($@ keeps them only space-joined). */
   private positionalParams(): string[] {
@@ -3916,6 +3931,7 @@ export class Shell {
     };
     const run = async (subCmd: string) => {
       const r = await this.fork().exec(subCmd);
+      this.substitutionStatus = r.exitCode;
       if (r.stderr) stderrWriter(r.stderr.replace(/\n/g, '\r\n'));
       return r.stdout.replace(/\n+$/, '');
     };

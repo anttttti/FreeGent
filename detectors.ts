@@ -591,6 +591,23 @@ export function doubledBackslashGrowth(previous: string, content: string): numbe
     return count(content) - count(previous);
 }
 
+// A whole file whose line breaks arrived escaped: one line holding `\n` sequences instead of lines. Autopilot exploration 2026-10-27
+// (AE-05): src/enemies.js was written as `// Enemies module\nexport function spawnEnemy…` with 13 literal \n; to JavaScript that is one
+// comment, so it parsed, every export was gone, the page drew nothing, and the task was marked done. Counted only for source and
+// text files of a few lines' worth: three or more `\n` (not `\\n`) and at most one real line break.
+const _TEXT_FILE = /\.(?:[cm]?js|jsx|tsx?|py|rb|go|rs|java|c|cc|cpp|h|hpp|sh|css|s[ac]ss|html?|json|ya?ml|toml|md|txt|csv|svg|xml|vue|svelte)$/i;
+export function escapedLineBreaks(path: string, content: string): number {
+    if (!_TEXT_FILE.test(String(path)) || typeof content !== 'string') return 0;
+    if ((content.match(/\n/g) ?? []).length > 1) return 0;
+    let n = 0;   // backslash pairs read left to right, so `\\n` (an escaped backslash, then n) is not counted
+    for (let i = content.indexOf('\\'); i >= 0 && i < content.length - 1; i = content.indexOf('\\', i + 2)) if (content[i + 1] === 'n') n++;
+    return n >= 3 ? n : 0;
+}
+// The text with one level of escaping removed (\n \t \r \" \' \\), as the writer meant it.
+export function unescapeOnce(content: string): string {
+    return content.replace(/\\([ntr"'\\])/g, (_, c) => (c === 'n' ? '\n' : c === 't' ? '\t' : c === 'r' ? '\r' : c));
+}
+
 // The same over-escaping inside a regular expression literal of a file that did not exist before: `h.match(/^(\\d+)\\.(\\d+)$/)` matches a backslash
 // and a "d", not a number. self-analysis SEC1-SEC5: five of nine access-check reviews blamed a correct function for a "bug" that only existed in the
 // copy the agent had written into a test script (its tool call had doubled the backslashes), so the test of the copy "proved" the original wrong.

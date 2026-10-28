@@ -275,3 +275,61 @@ describe('task files that cannot be read', () => {
         expect(turns).toEqual([]);
     });
 });
+
+// Autopilot exploration 2026-10-27.
+describe('what the run says when it ends or is interrupted', () => {
+    const log = () => document.getElementById('runner-session-log').textContent;
+    beforeEach(() => { document.body.insertAdjacentHTML('beforeend', '<div id="runner-session-log"></div>'); sessionStorage.clear(); });
+
+    // AE-06: "All tasks complete ✓" with a task still waiting for the user.
+    it('names the tasks it leaves blocked or failed instead of "All tasks complete"', async () => {
+        files['fg-tasks/003-c.md'] = task('003', 'Needs a key').replace('status: todo', 'status: blocked');
+        files['fg-tasks/004-d.md'] = task('004', 'Broken').replace('status: todo', 'status: failed');
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/001-a.md', 'fg-tasks/002-b.md']);
+        expect(log()).toMatch(/Finished: 1 blocked \(#003\): answer in the task's chat or edit it, then run it again; 1 failed \(#004\)/);
+        expect(log()).not.toMatch(/All tasks complete/);
+    });
+    it('still says "All tasks complete" when nothing is left', async () => {
+        W.runnerAutopilot();
+        await idle();
+        expect(log()).toMatch(/All tasks complete/);
+    });
+
+    // AE-03: a reload ended the run silently: Idle, the task in flight In Progress, the rest open.
+    it('keeps what the run is doing in sessionStorage while it runs, and clears it when the run ends', async () => {
+        let seen = null;
+        const base = W.runAgentTurn;
+        W.runAgentTurn = async (p) => { seen ??= JSON.parse(sessionStorage.getItem('fg_runner_active')); return base(p); };
+        W.runnerAutopilot();
+        await idle();
+        expect(seen).toMatchObject({ all: true, task: '#001 First', paused: '' });
+        expect(sessionStorage.getItem('fg_runner_active')).toBeNull();
+    });
+    it('after a reload, the Tasks tab says the run was interrupted and how many tasks are open, and starts nothing', async () => {
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: todo', 'status: in-progress');
+        sessionStorage.setItem('fg_runner_active', JSON.stringify({ all: true, task: '#001 First', paused: '', t: Date.now() }));
+        W.initRunner();
+        const status = document.getElementById('runner-status');
+        await vi.waitFor(() => expect(status.textContent).toBe('Interrupted by a reload: 2 tasks open. Press Autopilot to continue'));
+        expect(log()).toMatch(/Autopilot was interrupted by a page reload while on #001 First/);
+        expect(W.isRunnerRunning()).toBe(false);
+        expect(turns).toEqual([]);
+        expect(sessionStorage.getItem('fg_runner_active')).toBeNull();
+        W.runnerAutopilot();                 // pressing Autopilot continues with the task left in progress
+        await idle();
+        expect(turns[0]).toBe('fg-tasks/001-a.md');
+        expect(status.textContent).toBe('Idle');
+    });
+
+    // AE-02: started in Chat mode, the task chats had no file tools and the run paused on "write_file is disabled".
+    it('switches to Cowork mode when started in Chat mode, and says so', async () => {
+        W.setMode('chat');
+        W.runnerAutopilot();
+        await idle();
+        expect(W.getMode()).toBe('cowork');
+        expect(log()).toMatch(/Switched to Cowork mode/);
+        W.setMode('chat');
+    });
+});

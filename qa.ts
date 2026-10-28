@@ -5,14 +5,15 @@
 import { canonTaskStatus, TASK_DIRS } from './task-status.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
+import { runtime } from './runtime.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
     'open->in-progress':      ['dependency-check', 'task-enrichment'],
     'in-progress->in-review': ['completeness-check'],
-    'in-review->done':        ['acceptance-review', 'test-runner'],
+    'in-review->done':        ['acceptance-review', 'test-runner', 'page-check'],
     // Direct in-progress→done (model skipped in-review): run the full review suite
-    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner'],
+    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner', 'page-check'],
 };
 
 // The body of the first "## <name>" section (any of `names`, case-insensitive), up to the next
@@ -432,6 +433,68 @@ async function gate_acceptance_review(taskPath, content) {
 }
 
 
+// The project's own test files, by the conventions people use without a test framework: `test_x.mjs` / `test_x.py` run with
+// node or python3, `x.test.js`, `x_test.py`, anything of those shapes under tests/. The gate used to look only for `X.test.js`
+// next to files named in a `## Files` section, which tasks written by users do not have: in the Autopilot exploration of
+// 2026-10-27 it was skipped in 144 of 144 done transitions, and tasks that broke a test written by an earlier task were done.
+const _QA_TEST_FILE_RE = /(?:^|\/)(?:test_[^/]+\.(?:mjs|cjs|js|py)|[^/]+[._](?:test|spec)\.(?:mjs|cjs|js)|[^/]+_test\.py)$/;
+const _QA_TEST_FILES_MAX = 12;
+const _QA_PY_TEST_FILES_MAX = 6;   // each python3 start costs seconds in the browser
+// Runs a test module the way pytest would without needing pytest: its test_* functions that take no arguments, then any
+// unittest.TestCase in it, with the file's folder on sys.path. A file that runs its own tests under `__main__` runs as a script.
+const _QA_PY_RUNNER = 'import sys,os,runpy,inspect,unittest\n' +
+    'p=sys.argv[1]; sys.path.insert(0, os.path.dirname(os.path.abspath(p)))\n' +
+    'g=runpy.run_path(p, run_name="fg_qa_tests")\n' +
+    'for k,v in list(g.items()):\n' +
+    '    if k.startswith("test") and inspect.isfunction(v) and not any(x.default is x.empty for x in inspect.signature(v).parameters.values()): v()\n' +
+    'cases=[v for v in g.values() if isinstance(v,type) and issubclass(v,unittest.TestCase)]\n' +
+    's=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(c) for c in cases])\n' +
+    'sys.exit(0 if not s.countTestCases() or unittest.TextTestRunner(verbosity=0).run(s).wasSuccessful() else 1)\n';
+// A command the sandbox does not have (a test framework that is not installed) says nothing about the code under test.
+const _QA_RUNNER_MISSING_RE = /command not found|: not found\b|Cannot find (?:module|package) '(?:node:test|vitest|jest|mocha|pytest)'|No module named '?pytest/i;
+
+const _shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+export async function findProjectTests(named: string[] = []): Promise<string[]> {
+    const found = new Set<string>();
+    for (const fp of named) {
+        const base = fp.replace(/\.[^.]+$/, '');
+        const name = fp.split('/').pop()!.replace(/\.[^.]+$/, '');
+        for (const c of [`${base}.test.js`, `${base}.spec.js`, `tests/${name}.test.js`, `__tests__/${name}.js`]) {
+            try { await agentReadFile(c); found.add(c); break; } catch {}
+        }
+    }
+    let all: Array<{ name: string }> = [];
+    try { all = (await agentListFiles()) || []; } catch {}
+    const conv = all.map(f => f?.name).filter((n): n is string => !!n && _QA_TEST_FILE_RE.test(n) && !_QA_NOT_SOURCE_RE.test(n) && !n.startsWith('local/') && !/['"$`\\]/.test(n))
+        .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+    for (const n of conv) found.add(n);
+    const py = [...found].filter(f => f.endsWith('.py')).slice(0, _QA_PY_TEST_FILES_MAX);
+    return [...found].filter(f => !f.endsWith('.py') || py.includes(f)).slice(0, _QA_TEST_FILES_MAX);
+}
+
+// One command that runs every file on its own, so the result names the files that failed. The shape is the one
+// _tailKeepStatus already relies on ($(…), $?, printf), which the in-browser shell runs too.
+function _testCommand(files: string[]): string {
+    const lines = ['fg_qa_failed=""'];
+    for (const f of files) {
+        const run = f.endsWith('.py') ? `python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `node ${_shq(f)}`;
+        lines.push(`fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed ${f}"; printf '%s\\n' "== ${f} (exit $fg_qa_rc)" "$fg_qa_out" | tail -n 15; fi`);
+    }
+    lines.push(`if [ -n "$fg_qa_failed" ]; then echo "FAILED:$fg_qa_failed"; exit 1; fi; echo "${files.length} test file(s) passed"`);
+    return lines.join('\n');
+}
+
+// A failure the agent was already shown for this task, met again unchanged at its next "done", is accepted as unverified:
+// it may predate the task, and the completion gates follow the same rule (one bounce, then the agent's reason stands).
+const _qaBounced = new Map<string, string>();
+const _bouncedBefore = (taskPath: string, gate: string, sig: string): boolean => {
+    const key = `${gate}\u0000${taskPath}`;
+    if (_qaBounced.get(key) === sig) return true;
+    _qaBounced.set(key, sig);
+    return false;
+};
+
 async function gate_test_runner(taskPath, content) {
     if (!getQaTestRunner()) return { blocks: false, outcome: 'skipped', detail: 'Test runner is turned off' };
     if (!_hasBashOrCode())  return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping tests' };
@@ -441,35 +504,66 @@ async function gate_test_runner(taskPath, content) {
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1])
         : [];
 
-    const testFiles = [];
-    for (const fp of filePaths) {
-        const base = fp.replace(/\.[^.]+$/, '');
-        const name = fp.split('/').pop().replace(/\.[^.]+$/, '');
-        for (const c of [`${base}.test.js`, `${base}.spec.js`, `tests/${name}.test.js`, `__tests__/${name}.js`]) {
-            try { await agentReadFile(c); testFiles.push(c); break; } catch {}
-        }
-    }
-    if (!testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found for changed files' };
-
     let cmd: string | null = null;
     try {
         const pkg = JSON.parse(await agentReadFile('package.json'));
-        if (pkg.scripts?.test) cmd = _tailKeepStatus('npm test', 40);
+        // `npm init` writes a test script that always fails ("Error: no test specified").
+        if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus('npm test', 40);
     } catch {}
-    if (!cmd) cmd = _tailKeepStatus(`node ${testFiles.join(' ')}`, 40);
+    const testFiles = cmd ? [] : await findProjectTests(filePaths);
+    if (!cmd && !testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found in the project' };
+    if (!cmd) cmd = _testCommand(testFiles);
 
     try {
         const res    = await executeToolAsync('execute_code', { language: 'bash', code: cmd }, null);
-        const output = ((res.stdout || '') + (res.stderr || '')).slice(0, _QA_OUTPUT_MAX);
+        const output = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
+        if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
         if (res.exit_code !== 0) {
+            const failed = /FAILED:(.*)$/m.exec(output)?.[1].trim().split(/\s+/) ?? [];
+            if (res.exit_code === 127 || _QA_RUNNER_MISSING_RE.test(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _QA_RUNNER_MISSING_RE.test(l)) || '').trim().slice(0, 160)}` };
+            const which = failed.length ? failed.join(', ') : 'the test command';
+            // What the first failing file printed (its header is "== <file> (exit N)"): the first line, or for a Python traceback the
+            // exception at its end. Without a header, the first error-looking line.
+            const lines = output.split('\n');
+            const hdr = lines.findIndex(l => /^== .+ \(exit \d+\)$/.test(l));
+            const block = hdr < 0 ? [] : lines.slice(hdr + 1, (i => i < 0 ? undefined : hdr + 1 + i)(lines.slice(hdr + 1).findIndex(l => /^== |^FAILED:/.test(l)))).filter(l => l.trim());
+            const first = (/^Traceback/.test(block[0] ?? '') ? block[block.length - 1] : block[0])?.trim().slice(0, 200)
+                || lines.find(l => /error|fail|assert/i.test(l) && !/^FAILED:/.test(l))?.trim().slice(0, 200) || 'see the task file';
+            if (_bouncedBefore(taskPath, 'test-runner', failed.join(' ') || first))
+                return { blocks: false, outcome: 'unknown', detail: `${which} still fail${failed.length === 1 ? 's' : ''} (accepted on the second attempt): ${first}` };
             const ts = new Date().toISOString().slice(0, 16) + 'Z';
-            await appendGateNote(taskPath, `## QA: Test Failures (${ts})\nCommand: ${cmd}\n${output}`);
-            return { blocks: true, reason: `Tests failed (exit ${res.exit_code}): ${output.split('\n').find(l => /fail|error/i.test(l)) || 'see task file'}` };
+            await appendGateNote(taskPath, `## QA: Test Failures (${ts})\nCommand: ${testFiles.length ? `each of ${testFiles.join(', ')}` : cmd}\n${output}`);
+            return { blocks: true, reason: `Tests failed: ${which}. ${first}. Fix the code (or the test, if this task changed the behaviour it checks), run it, then set the status again. If the failure was there before this task and is not yours, say so in the summary and set the status again.` };
         }
     } catch (e) {
         return { blocks: false, outcome: 'unknown', detail: `Test runner error: ${e.message}` };
     }
     return { blocks: false };
+}
+
+// Loads the project's page the way check_page does and refuses "done" while it reports errors. No gate loaded the page: in the
+// Autopilot exploration of 2026-10-27 three of ten projects ended with a page that drew nothing (a module that lost its exports,
+// a call to a function main.js no longer imported, a TypeError at start-up) while every task was done. Browser only; the page
+// is the root index.html (else the only .html file at the root). Errors already bounced once for this task are accepted.
+async function gate_page_check(taskPath) {
+    if (!getQaTestRunner()) return { blocks: false, outcome: 'skipped', detail: 'Test runner is turned off' };
+    if (typeof runPageCheck !== 'function' || runtime.hasNativeExec) return { blocks: false, outcome: 'skipped', detail: 'No browser page check here' };
+    let names: string[] = [];
+    try { names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean); } catch {}
+    const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
+    const page = roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : null);
+    if (!page) return { blocks: false, outcome: 'skipped', detail: 'No page at the project root' };
+    let r: any;
+    try { r = await runPageCheck(page, { waitMs: 1500 }); }
+    catch (e) { return { blocks: false, outcome: 'unknown', detail: `Page check error: ${(e as any)?.message ?? e}` }; }
+    if (r?.error) return { blocks: false, outcome: 'unknown', detail: `Page check: ${String(r.error).slice(0, 160)}` };
+    const errors: string[] = (r?.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
+    if (!errors.length) return r?.loaded === false ? { blocks: false, outcome: 'unknown', detail: `${page}: ${r.summary}` } : { blocks: false };
+    if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')))
+        return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt): ${errors[0].slice(0, 160)}` };
+    const ts = new Date().toISOString().slice(0, 16) + 'Z';
+    await appendGateNote(taskPath, `## QA: Page Errors (${ts})\n${page}:\n${errors.map(e => `- ${e.slice(0, 300)}`).join('\n')}`);
+    return { blocks: true, reason: `${page} reports ${errors.length > 1 ? `${errors.length} errors` : 'an error'} when it loads: ${errors.map(e => e.slice(0, 200)).join(' | ')}. Find the cause (check_page shows the details), fix it, then set the status again. If the error was there before this task and is not yours, say so in the summary and set the status again.` };
 }
 
 
@@ -513,6 +607,7 @@ const GATES = {
     'self-review':        gate_self_review,
     'acceptance-review':  gate_acceptance_review,
     'test-runner':        gate_test_runner,
+    'page-check':         gate_page_check,
     'regression-guard':   gate_regression_guard,
 };
 

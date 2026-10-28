@@ -433,6 +433,47 @@ export function _repairPathArg(normCalls: any[]): void {
     }
 }
 
+// File-edit arguments split apart by the server's parser. Gemma 4 writes `replace_in_file{new_string:<|"|>…<|"|>,old_string:…}`
+// and sometimes closes a string with a backtick instead of <|"|>; vLLM's parser then reads on, so the next parameter's text
+// becomes an argument NAME: {new_string: "x\n`,old_string:", "y\n<|"|>,path": "src/main.js"}. Autopilot exploration 2026-10-27
+// (AE-10): 26 of 388 file edits in one session arrived that way, and the agent re-sent the same call up to 7 times on
+// "path is required" before the task failed. Rebuilt only when nothing was lost: every piece is a known parameter or one
+// continuing piece that names the next parameter. A piece that the parser split again (the text held a ':' or a ',') loses
+// the separator's spacing, and is left for the bad-arguments nudge.
+const _GLUE_PARAMS: Record<string, Set<string>> = {
+    write_file:      new Set(['path', 'content']),
+    append_file:     new Set(['path', 'content']),
+    replace_in_file: new Set(['path', 'old_string', 'new_string', 'start_line', 'end_line']),
+};
+const _GLUE_TAIL = /^([\s\S]*?)(?:<\|"\|>|`)\s*[,;]\s*([a-z_]+):\s*$/;   // a value that runs on into the next name
+const _GLUE_KEY  = /^([\s\S]*?)(?:<\|"\|>|`)\s*[,;]\s*([a-z_]+)$/;         // a name that is the previous value's end
+export function _repairGluedArgs(normCalls: any[]): void {
+    for (const nc of normCalls) {
+        const known = _GLUE_PARAMS[nc.name];
+        const a = nc.args;
+        if (!known || !a || typeof a !== 'object' || Array.isArray(a)) continue;
+        const entries = Object.entries(a);
+        if (entries.every(([k]) => known.has(k))) continue;
+        const out: Record<string, any> = {};
+        let pending: string | null = null, ok = true;
+        const take = (name: string, v: any) => {
+            const m = typeof v === 'string' ? _GLUE_TAIL.exec(v) : null;
+            if (m && known.has(m[2]) && !(m[2] in out) && m[2] !== name) { out[name] = m[1]; pending = m[2]; }
+            else { out[name] = typeof v === 'string' ? v.replace(/<\|"\|>$/, '') : v; pending = null; }
+        };
+        for (const [k, v] of entries) {
+            if (pending) {
+                const m = _GLUE_KEY.exec(k);
+                if (!m || !known.has(m[2]) || m[2] in out) { ok = false; break; }
+                out[pending] = m[1];
+                take(m[2], v);
+            } else if (known.has(k) && !(k in out)) take(k, v);
+            else { ok = false; break; }
+        }
+        if (ok && !pending && typeof out.path === 'string' && out.path) nc.args = out;
+    }
+}
+
 // Other names models give fetch_url's request body. v0.60 AutomationBench: 640 of 1,125
 // POST /execute calls had no body, and 153 of them held a complete {tool, params} body under
 // `params` or `parameters` — each answered "Missing field tool" and retried. Only for methods that
@@ -464,6 +505,7 @@ export function _repairFetchBody(normCalls: any[]): void {
  *   2. normalize            — JSON.parse the now-repaired argument strings into {name, args}
  *   3. _repairToolNames     — extract valid tool name from embedded XML artifacts
  *   4. _repairArgEnvelope   — unwrap arg_keys/arg_values double-serialization
+ *   4a. _repairGluedArgs    — file-edit arguments the server's parser split at a backtick or <|"|>
  *   4b. _repairPathArg      — file_name/file_path/… → path on file tools
  *   4c. _repairFetchBody    — params/parameters/json/… → body on non-GET fetch_url
  *   5. _repairExecCodeArgs  — execute_code alias resolution, fence stripping, lang canon
@@ -482,13 +524,15 @@ export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: s
     });
     _repairToolNames(norm);                                  // step 3
     _repairArgEnvelope(norm);                                // step 4
+    _repairGluedArgs(norm);                                  // step 4a
     _repairPathArg(norm);                                    // step 4b
     _repairFetchBody(norm);                                  // step 4c
     const hasEmptyCode = _repairExecCodeArgs(norm);          // step 5
     // step 6: the model's own call syntax leaked into the argument names. vLLM's Gemma parser turns `path:<|"|>tools.ts<|"|>,start_line:402,...`
     // into the single key `tools.ts<|"|>,start_line` and drops the other values (self-analysis P3: two replace_in_file calls, each
     // answered "old_string is empty"). The values cannot be recovered; the call is reported to the model like unparseable arguments.
-    for (const c of norm) if (Object.keys(c.args ?? {}).some(k => k.includes('<|')) && !bad.includes(c.name)) bad.push(c.name);
+    // A name holding a line break or ending in "`,path" is the same damage with a backtick as the string's end (step 4a rebuilds what it can).
+    for (const c of norm) if (Object.keys(c.args ?? {}).some(k => k.includes('<|') || k.includes('\n') || /`\s*[,;]\s*[a-z_]+$/.test(k)) && !bad.includes(c.name)) bad.push(c.name);
     return { bad, norm, hasEmptyCode };
 }
 
@@ -497,5 +541,5 @@ Object.assign(window, {
     EXEC_CODE_ALIASES, EXEC_LANG_ALIASES,
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
     _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope,
-    _repairPathArg, _repairFetchBody, repairAllToolCalls,
+    _repairGluedArgs, _repairPathArg, _repairFetchBody, repairAllToolCalls,
 });

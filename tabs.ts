@@ -729,7 +729,9 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
 
     // Scan for quoted asset paths (audio, images, fonts) referenced in the inlined scripts.
     // For any that exist in the workspace, build a fetch() interceptor so runtime fetches resolve.
-    const assetRe = /["']([^"']+\.(?:wav|mp3|ogg|flac|aac|png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot))["']/gi;
+    // Data files too: a page that does fetch('data.json') got a CORS error from origin 'null' in the preview and in check_page, and
+    // the agent replaced the file with mock data pasted into the script (Autopilot exploration 2026-10-27, AE-08).
+    const assetRe = /["']([^"']+\.(?:wav|mp3|ogg|flac|aac|png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot|json|geojson|csv|tsv|txt|xml))["']/gi;
     const assetPaths = new Set<string>();
     let am: RegExpExecArray | null;
     while ((am = assetRe.exec(html)) !== null) {
@@ -742,7 +744,8 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
         await Promise.all([...assetPaths].map(async p => {
             deps?.add(ref(p));
             if (markupAssets.has(ref(p))) { assetMap[p] = '@' + ref(p); return; }   // already in the page as an element's src
-            try { const d = await readDataUrl(ref(p)); if (d) assetMap[p] = d; } catch {}
+            try { const d = await readDataUrl(ref(p)); if (d) assetMap[p] = d; }
+            catch { try { const d = await _textDataUrl(ref(p)); if (d) assetMap[p] = d; } catch {} }
         }));
     }
 
@@ -977,10 +980,43 @@ const _clampMs = (v: any, dflt: number, max: number) => Math.max(0, Math.min(Num
 // check_page calls in a row where the page never ran (reset by any call where it did).
 let _checkPageNeverRan = 0;
 
+// A text data file (stored as text, which readFileAsDataUrl does not serve) as a data: URL for the page's fetch shim. Bounded:
+// the whole file is carried inside the page.
+const _DATA_FILE_MIME: Record<string, string> = { json: 'application/json', geojson: 'application/geo+json', csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain', xml: 'application/xml' };
+const _DATA_FILE_MAX = 5_000_000;
+async function _textDataUrl(path: string): Promise<string | null> {
+    const mime = _DATA_FILE_MIME[(path.match(/\.([^.]+)$/)?.[1] ?? '').toLowerCase()];
+    if (!mime) return null;
+    const text = await agentReadFile(path);
+    if (typeof text !== 'string' || text.length > _DATA_FILE_MAX) return null;
+    const bytes = new TextEncoder().encode(text);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:${mime};charset=utf-8;base64,${btoa(bin)}`;
+}
+
+// WebKit hides the message of every error thrown by a page's inline scripts in a sandboxed srcdoc frame ("Script error.", no error
+// object), and of code run through eval or new Function there too; a script the frame loads from a blob: URL it made itself
+// reports in full (tested on Playwright WebKit 2026-10-28). check_page then told the agent only "Script error." for a page whose
+// main.js called a function it no longer imported, on the engine most users' logs come from. For check_page on WebKit, each
+// inline classic script is written back by document.write as a script loaded from such a URL: still run in order during parsing,
+// and its errors keep their message and the script's own line numbers.
+const _MUTES_INLINE_ERRORS = typeof navigator !== 'undefined' && /AppleWebKit/.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent);
+export function _unmuteInlineScripts(html: string): string {
+    return html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (m, attrs, code) => {
+        if (/\bsrc\s*=/i.test(attrs) || !code.trim()) return m;
+        const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs)?.[1]?.toLowerCase();
+        if (type && !/^(?:text|application)\/(?:java|ecma)script$/.test(type)) return m;   // modules, JSON, templates
+        const lit = JSON.stringify(code).replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
+        return `<script>document.write('<scr'+'ipt src="'+URL.createObjectURL(new Blob([${lit}],{type:'text/javascript'}))+'"></scr'+'ipt>')</script>`;
+    });
+}
+
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
     let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
+    if (_MUTES_INLINE_ERRORS) content = _unmuteInlineScripts(content);
     // The capture script must run before every other script, so it goes first in <head>.
     content = /<head[^>]*>/i.test(content) ? content.replace(/(<head[^>]*>)/i, `$1${_CHECK_CAPTURE}`) : _CHECK_CAPTURE + content;
 

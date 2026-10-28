@@ -301,9 +301,10 @@ describe('exec sandbox bundle', () => {
         expect(realm.files.get('result.txt').content).toBe('saved\n');
     });
 
+    // A quoted name is not a reference: storage-shim.ts names them to make them undefined for the code the shell runs.
     it('has no direct Web Storage or IndexedDB references', () => {
-        expect(code).not.toMatch(/[^.\w$]localStorage\b/);
-        expect(code).not.toMatch(/[^.\w$]sessionStorage\b/);
+        expect(code).not.toMatch(/[^.\w$'"]localStorage\b/);
+        expect(code).not.toMatch(/[^.\w$'"]sessionStorage\b/);
         expect(code).not.toMatch(/[^.\w$]indexedDB\.open/);
     });
 

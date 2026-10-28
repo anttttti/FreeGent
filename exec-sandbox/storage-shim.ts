@@ -29,4 +29,13 @@ class MemStorage {
     },
 };
 
+// The same names as seen by code the shell runs (`node file.mjs`, `node -e`): there the frame's own properties threw a
+// SecurityError on any touch, even `typeof localStorage`, so the usual guard for code shared between browser and node,
+// `typeof localStorage !== 'undefined'`, killed the program (Autopilot exploration 2026-10-27, AE-04: the agent concluded the
+// environment was broken and blocked the task). Node has none of them, so they are undefined here too, and assignable for
+// code that installs its own stand-in. The shell itself reaches the stand-ins above through the bundle rewrite.
+for (const name of ['localStorage', 'sessionStorage', 'indexedDB']) {
+    try { Object.defineProperty(globalThis, name, { value: undefined, writable: true, configurable: true }); } catch {}
+}
+
 export {};

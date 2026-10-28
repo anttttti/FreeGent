@@ -10234,7 +10234,7 @@
     "shiro/server-window.ts": "f4fa3dd8a63b9ac52add70da6b6caaace80dbbd70ad11b0c7ff542aa9b70ee43",
     "shiro/service-manager.ts": "7b86751ac897895a8201a7db22d02af4ac1c9767a5e016da395e1fd9e007093e",
     "shiro/shell-singleton.ts": "9c486bff6b96797899bac18976f8f813a439d0ee68ee299b42a6605b637848ad",
-    "shiro/shell.ts": "b8f7c00fb0a01d25960d277a46c1ef7b3acd726d478acf4320a84ae9a05c6c00",
+    "shiro/shell.ts": "47b6de67b6604ae154fbf125981330cca82df48737d275ff6aa1e450287832ea",
     "shiro/split-view.ts": "053435fd81ccf45d7e07226e9a880efa734a72c281e9e30eac8dd4c27bf6ba5a",
     "shiro/terminal.ts": "104b70ca7d01d1672d6440e1c9b88b78a8930f2dc7a04cc925b95fb89a6babaf",
     "shiro/utils/bytes.ts": "0518b471bd97a9a469f0f7acd0f949fd655f87225216bc1f875da264825e5c3d",

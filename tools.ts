@@ -16,7 +16,7 @@ import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath } from './task-status.js';
-import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals } from './detectors.js';
+import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
 import { checkSyntax, syntaxCheckable } from './syntax-check.js';
@@ -1261,6 +1261,20 @@ export async function brokenFileReport(paths: Iterable<string>, limit = 20): Pro
     return out;
 }
 
+// write_file content whose line breaks arrived escaped (detectors.ts escapedLineBreaks). Unescaped in place when the type can be
+// parsed here and the unescaped text parses, since that is certainly what was meant; otherwise written as sent, with a warning
+// the agent cannot miss. Returns the result fields to add.
+async function _escapedLineBreakFix(args: { path: string; content: string }): Promise<Record<string, string>> {
+    const n = escapedLineBreaks(args.path, args.content);
+    if (!n) return {};
+    const fixed = unescapeOnce(args.content);
+    if (syntaxCheckable(args.path) && !(await checkSyntax(args.path, fixed).catch(() => 'unchecked'))) {
+        args.content = fixed;
+        return { escape_fixed: `The content arrived as one line holding ${n} escaped line breaks (\\n). It was unescaped and written as ${fixed.split('\n').length} lines. In "content", a line break is the JSON escape \\n, never \\\\n.` };
+    }
+    return { escape_warning: `This file was written as ONE line holding ${n} literal \\n sequences: its line breaks were escaped twice, so the code is not what you meant${/\.(?:[cm]?js|py|sh)$/i.test(args.path) ? ' (a leading comment swallows the whole file)' : ''}. Write it again with real line breaks.` };
+}
+
 // An edit result with the parse error attached: "No need to re-read the file to verify" is dropped, since the file now needs exactly that.
 function _withSyntaxError(result: any, synErr: string | null) {
     if (!synErr) return result;
@@ -1585,6 +1599,7 @@ async function _handleWriteFile(args, context) {
     if (_hasTruncationMarkers(args.content)) {
         return { error: `write_file: Truncation placeholder detected in content (e.g. "// ... rest of code", "[existing code]"). Write the COMPLETE file — never use ellipsis or placeholder comments to stand in for omitted content.` };
     }
+    const lineBreakNote = await _escapedLineBreakFix(args);
     if (context) {
         const old = context.staging.has(args.path)
             ? (context.staging.get(args.path) ?? '')
@@ -1601,7 +1616,7 @@ async function _handleWriteFile(args, context) {
         context.binary?.delete(args.path);   // the latest staged operation on a path is the only one (text supersedes an earlier binary write)
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
-        return _withSyntaxError({ success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay }, await _syntaxCheck(args.path, args.content, { staged: true }));
+        return _withSyntaxError({ success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay, ...lineBreakNote }, await _syntaxCheck(args.path, args.content, { staged: true }));
     }
     try {
         let previous = '';
@@ -1626,6 +1641,7 @@ async function _handleWriteFile(args, context) {
         const badRegex = /\.(?:[cm]?js|[jt]sx?)$/i.test(String(args.path)) ? overEscapedRegexLiterals(args.content) : 0;
         if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
+        Object.assign(wfResult, lineBreakNote);
         return _withSyntaxError(wfResult, synErr);
     } catch (e) { return { error: e.message }; }
 }

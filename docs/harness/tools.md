@@ -9,7 +9,7 @@ Tools are the actions the agent can take. Each can be turned on or off per [mode
 | `write_file`, `replace_in_file`, `apply_patch`, `append_file`, `delete_file`, `undo_write` | Edit project files | off in Chat, `write_file` and `replace_in_file` on in Cowork |
 | `web_search` | Tavily, Brave or Wikipedia, or a named source: Hacker News, GitHub, Stack Overflow, dev.to, GDELT, DuckDuckGo | on |
 | `fetch_url` | HTTP request (GET/POST/…) with headers and body; HTML is reduced to text, and an optional `extract` goal returns only the relevant passages | on |
-| `check_page` | Load a project HTML page in a hidden sandbox and report errors, failed resources and console output | on |
+| `check_page` | Load a project HTML page in a hidden sandbox and report errors, failed resources and console output. The project's scripts, styles, media and data files (JSON, CSV, text, XML) the page loads or fetches come from the workspace. On Safari and other WebKit browsers its inline scripts are run so that their errors keep the message (WebKit otherwise reports only "Script error.") | on |
 | `generate_image` | Pollinations.ai (no key), Hugging Face fallback | on |
 | `run_workers` | Run sub-agents in parallel | on |
 | `deep_research` | Multi-round research that plans sub-questions, reads sources and writes a cited report | off |

@@ -2440,7 +2440,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         if (_repeatedNames.length)            _emitNudge('tool_repeat', _nudge(`You repeated tool call(s) you already made this turn: ${_repeatedNames.join(', ')}. Here are the cached results — no need to re-execute, move forward.`));
         if (_badArgCalls.length) {
-            _emitNudge('bad_args', _nudge(`The arguments of your ${_badArgCalls.join(', ')} tool call(s) were not valid JSON, or arrived damaged (stray <|"|> markers in the argument names) — they were executed with missing or EMPTY arguments and their errors reflect that, not the tool itself. Re-emit each call with plain JSON arguments: every value a normal JSON string, no <|"|> markers.`));
+            _emitNudge('bad_args', _nudge(`The arguments of your ${_badArgCalls.join(', ')} tool call(s) were not valid JSON, or arrived damaged (stray <|"|> markers, or code, in the argument names: a string value was closed with a backtick or the wrong marker, so the rest of the call was read as names) — they were executed with missing or EMPTY arguments and their errors reflect that, not the tool itself. Re-emit each call with plain JSON arguments: every value a normal JSON string in double quotes, no <|"|> markers, no backticks around values.`));
             _forceToolCall = true;
         }
         if (_hasEmptyCode)        _emitNudge('empty_code', _nudge('execute_code was called with no code argument. Provide the code as: {"code": "...", "language": "bash"}.'));
