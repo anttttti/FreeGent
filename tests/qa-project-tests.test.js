@@ -97,6 +97,21 @@ describe('test-runner gate', () => {
     });
 });
 
+describe('test-runner gate timeout', () => {
+    it('gives up on a test run that never returns (AE-11) and accepts the task as unverified', async () => {
+        vi.useFakeTimers();
+        try {
+            files['test_a.mjs'] = 'x';
+            W.executeToolAsync = () => new Promise(() => {});
+            const p = W.transitionTask(TASK, 'done');
+            await vi.advanceTimersByTimeAsync(91_000);
+            const r = await p;
+            expect(r.transitioned).toBe(true);
+            expect(files['memory/log.md']).toMatch(/test-runner \?/);
+        } finally { vi.useRealTimers(); }
+    });
+});
+
 describe('page-check gate', () => {
     it('loads the root index.html and blocks done on a page error; the same errors next time are accepted as unverified', async () => {
         files['index.html'] = '<script type="module" src="src/main.js"></script>';
@@ -110,6 +125,14 @@ describe('page-check gate', () => {
         const second = await W.transitionTask(TASK, 'done');
         expect(second.transitioned).toBe(true);
         expect(second.unverified.join(' ')).toMatch(/still reports errors/);
+    });
+    it('blocks a page that loads without an error but shows nothing (AE-18), once', async () => {
+        files['index.html'] = '<canvas id="c"></canvas><script type="module" src="src/main.js"></script>';
+        W.runPageCheck = async (p) => ({ path: p, loaded: true, blank: true, summary: 'Loaded fine; no errors.', errors: [] });
+        const first = await W.transitionTask(TASK, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/index\.html reports an error when it loads: The page shows nothing/);
+        expect((await W.transitionTask(TASK, 'done')).transitioned).toBe(true);
     });
     it('passes a page without errors, and skips a project with no page at the root', async () => {
         W.runPageCheck = async (p) => ({ path: p, loaded: true, summary: 'Loaded fine; no errors.', errors: [] });

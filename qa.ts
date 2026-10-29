@@ -439,6 +439,7 @@ async function gate_acceptance_review(taskPath, content) {
 // 2026-10-27 it was skipped in 144 of 144 done transitions, and tasks that broke a test written by an earlier task were done.
 const _QA_TEST_FILE_RE = /(?:^|\/)(?:test_[^/]+\.(?:mjs|cjs|js|py)|[^/]+[._](?:test|spec)\.(?:mjs|cjs|js)|[^/]+_test\.py)$/;
 const _QA_TEST_FILES_MAX = 12;
+const _QA_TEST_TIMEOUT_MS = 90_000;
 const _QA_PY_TEST_FILES_MAX = 6;   // each python3 start costs seconds in the browser
 // Runs a test module the way pytest would without needing pytest: its test_* functions that take no arguments, then any
 // unittest.TestCase in it, with the file's folder on sys.path. A file that runs its own tests under `__main__` runs as a script.
@@ -515,7 +516,13 @@ async function gate_test_runner(taskPath, content) {
     if (!cmd) cmd = _testCommand(testFiles);
 
     try {
-        const res    = await executeToolAsync('execute_code', { language: 'bash', code: cmd }, null);
+        // A test run that never returns (the in-browser node hung on the second start after a test that replaced
+        // globalThis.location, AE-11) would hold the task for the tool's 10 minutes; the gate gives up after a minute and a half.
+        let timer: any;
+        const res    = await Promise.race([
+            executeToolAsync('execute_code', { language: 'bash', code: cmd }, null),
+            new Promise<any>(r => { timer = setTimeout(() => r({ exit_code: null, error: `the tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s` }), _QA_TEST_TIMEOUT_MS); }),
+        ]).finally(() => clearTimeout(timer));
         const output = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
         if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
         if (res.exit_code !== 0) {
@@ -558,6 +565,8 @@ async function gate_page_check(taskPath) {
     catch (e) { return { blocks: false, outcome: 'unknown', detail: `Page check error: ${(e as any)?.message ?? e}` }; }
     if (r?.error) return { blocks: false, outcome: 'unknown', detail: `Page check: ${String(r.error).slice(0, 160)}` };
     const errors: string[] = (r?.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
+    // No error but nothing on the page either (no text, no media, canvases transparent): its start-up code did not run.
+    if (!errors.length && r?.blank) errors.push('The page shows nothing: no text and no drawing after it loaded, so its start-up code probably does not run (a function that is defined but no longer called, a script that only exports).');
     if (!errors.length) return r?.loaded === false ? { blocks: false, outcome: 'unknown', detail: `${page}: ${r.summary}` } : { blocks: false };
     if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')))
         return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt): ${errors[0].slice(0, 160)}` };

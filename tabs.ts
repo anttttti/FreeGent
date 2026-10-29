@@ -1012,6 +1012,15 @@ export function _unmuteInlineScripts(html: string): string {
     });
 }
 
+// Evaluated in the checked page after its wait: 'blank' when nothing is visible, i.e. no text, no media/SVG/form control and every
+// canvas (if any) is still transparent. A page whose start-up code never ran (a module that only exports) is clean for the
+// error capture but blank (Autopilot exploration 2026-10-28, AE-18: 21 tasks done on a game that drew nothing).
+const _BLANK_PAGE_EXPR = `(function(){var b=document.body;if(!b)return 'blank';if((b.innerText||'').trim())return 'content';` +
+    `if(b.querySelector('img,svg,video,iframe,input,textarea,select,button,object,embed'))return 'content';` +
+    `var cs=b.querySelectorAll('canvas');for(var i=0;i<cs.length;i++){var c=cs[i];if(!c.width||!c.height)continue;` +
+    `try{var g=c.getContext('2d');if(!g)return 'content';var d=g.getImageData(0,0,Math.min(c.width,1024),Math.min(c.height,1024)).data;` +
+    `for(var j=3;j<d.length;j+=4)if(d[j])return 'content'}catch(e){return 'content'}}return 'blank'})()`;
+
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
@@ -1083,7 +1092,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
 
     const steps: any[] = [];
     const expectResults: ExpectResult[] = [];
-    let loaded = false, fps: number | null = null;
+    let loaded = false, blank = false, fps: number | null = null;
     window.addEventListener('message', onMsg);
     try {
         iframe.srcdoc = content;
@@ -1126,6 +1135,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         }
         const st = await cmd({ cmd: 'stats' });
         if (typeof st?.frames === 'number' && st.ms > 0) fps = Math.round(st.frames / (st.ms / 1000));
+        if (loaded) blank = (await cmd({ cmd: 'eval', expr: _BLANK_PAGE_EXPR })).value === 'blank';
     } finally {
         window.removeEventListener('message', onMsg);
         signal?.removeEventListener('abort', stopCheck);
@@ -1177,7 +1187,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // "Loaded fine" says the page ran, not that it did what was asked: with expectations the verdict is theirs.
     const summary = expectResults.length ? `${baseSummary} ${summarizeExpectations(expectResults)}` : baseSummary;
     return {
-        path, loaded, summary, ...(fps !== null ? { fps } : {}),
+        path, loaded, summary, ...(blank ? { blank } : {}), ...(fps !== null ? { fps } : {}),
         errors, ...(warnings.length ? { warnings } : {}), console: consoleOut,
         ...(expectResults.length ? { expectations: expectResults, expectations_met: expectResults.every(r => r.ok) } : {}),
         ...(steps.length ? { steps } : {}), ...(notes.length ? { notes } : {}),

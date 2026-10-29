@@ -124,7 +124,21 @@ function _startRunner(all: boolean, onlyPath: string | null = null) {
         setMode('cowork');
         _appendRunnerLog(null, 'Switched to Cowork mode', 'info', 'tasks need the file tools');
     }
-    _runLoop().catch(console.error);
+    // The run state lives in this tab; a Web Lock held for the whole run is what tells a second tab that a run is active
+    // (Autopilot exploration 2026-10-28, AE-16: two loops worked the same board). No Web Locks API: no check, as before.
+    const locks = typeof navigator !== 'undefined' ? (navigator as any).locks : null;
+    if (!locks?.request) { _runLoop().catch(console.error); return; }
+    _runnerRunning = true;   // from now to the lock answer, a second press must not start another request
+    locks.request('fg-autopilot', { ifAvailable: true }, async (lock: any) => {
+        if (!lock) {
+            _runnerRunning = false;
+            _updateRunnerUI();
+            const statusEl = document.getElementById('runner-status');
+            if (statusEl) statusEl.textContent = 'Autopilot is already running in another tab';
+            return;
+        }
+        await _runLoop();
+    }).catch(console.error);
 }
 
 function runnerPause() {
