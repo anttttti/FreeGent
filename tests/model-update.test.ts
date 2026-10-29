@@ -24,24 +24,31 @@ afterEach(() => {
     document.body.innerHTML = '';
 });
 
-async function openUpdate(missing: string[], extraLive: string[] = []) {
+async function openUpdate(missing: string[], extraLive: string[] = [], paid: Record<string, { prompt: string; completion: string }> = {}) {
     // Exercise the real discovery, checkbox, Apply, persistence and rendering paths.
     const live = W.getAllModels().filter((m: any) => m.provider === 'openrouter'
         && !missing.includes(`openrouter|${m.model}`)).map((m: any) => m.model);
     vi.stubGlobal('fetch', vi.fn(async (input: string) => ({
         ok: true,
         json: async () => input === 'https://openrouter.ai/api/v1/models'
-            ? { data: [...live, ...extraLive].map((id: string) => ({ id, pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'] })) }
+            ? { data: [...live, ...extraLive].map((id: string) => ({ id, pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'] }))
+                .concat(Object.entries(paid).map(([id, pricing]) => ({ id, pricing, supported_parameters: ['tools'] }))) }
             : null,
     })));
     showModelUpdateModal();
-    await vi.waitFor(() => expect(document.querySelector('#fg-mu-apply')).not.toBeNull());
+    // Apply appears with proposals; with none the body says so ("up to date", or "No changes proposed" when a provider could not be read).
+    await vi.waitFor(() => expect(document.querySelector('#fg-mu-apply') || /up to date|No changes proposed/.test(document.getElementById('fg-mu-body')?.textContent ?? '')).toBeTruthy());
+}
+
+function removeBox(spec: string, mustExist = true) {
+    const cb = Array.from(document.querySelectorAll<HTMLInputElement>('#fg-mu-section-removes input'))
+        .find(el => el.dataset.spec === spec)!;
+    if (mustExist) expect(cb).toBeTruthy();
+    return cb;
 }
 
 function selectRemove(spec: string) {
-    const cb = Array.from(document.querySelectorAll<HTMLInputElement>('#fg-mu-section-removes input'))
-        .find(el => el.dataset.spec === spec)!;
-    expect(cb).toBeTruthy();
+    const cb = removeBox(spec);
     cb.checked = true;
     cb.dispatchEvent(new Event('change', { bubbles: true }));
 }
@@ -80,12 +87,41 @@ describe('catalog updates reconcile Model Priority', () => {
         expect(W.getMainModelList()).toEqual([paused, noKey, kept]);
     });
 
-    it('keeps unchecked removal proposals in both the catalog and ranking', async () => {
+    it('keeps unchecked removal proposals in both the catalog and ranking, and does not propose them again', async () => {
         W.saveMainModelList([removed, kept]);
         await openUpdate([removed]);
+        const cb = removeBox(removed);
+        expect(cb.checked).toBe(true);   // removals start checked
+        cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true }));
         apply();
         expect(W.getMainModelList()).toEqual([removed, kept]);
         expect(W.getAllModels().some((m: any) => `${m.provider}|${m.model}` === removed)).toBe(true);
+        document.body.innerHTML = '<div id="model-catalog-table"></div><div id="main-model-list"></div>';
+        await openUpdate([removed]);
+        expect(removeBox(removed, false)).toBeUndefined();
+    });
+
+    it('removes a model by default once Apply is clicked', async () => {
+        W.saveMainModelList([removed, kept]);
+        await openUpdate([removed]);
+        apply();
+        expect(W.getMainModelList()).toEqual([kept]);
+        expect(W.getAllModels().some((m: any) => `${m.provider}|${m.model}` === removed)).toBe(false);
+    });
+
+    it('proposes removing a model OpenRouter still lists but no longer serves free', async () => {
+        W.saveCustomModels([{ provider: 'openrouter', model: 'inclusionai/ling-3.1-flash', label: 'Ling 3.1 Flash' }]);
+        await openUpdate(['openrouter|inclusionai/ling-3.1-flash'], [], { 'inclusionai/ling-3.1-flash': { prompt: '0.000000075', completion: '0.000000225' } });
+        const cb = removeBox('openrouter|inclusionai/ling-3.1-flash');
+        expect(cb.checked).toBe(true);
+        expect(cb.closest('label, div')!.textContent).toMatch(/Not free on OpenRouter/);
+    });
+
+    it('drops the old suppression list, whose entries came from removals that started unchecked', async () => {
+        localStorage.setItem('fg_suppressed_removes', JSON.stringify([removed]));
+        await openUpdate([removed]);
+        expect(removeBox(removed).checked).toBe(true);
+        expect(localStorage.getItem('fg_suppressed_removes')).toBeNull();
     });
 
     it('makes a previously removed built-in available again when its addition is accepted', async () => {

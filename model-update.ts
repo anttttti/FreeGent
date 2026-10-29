@@ -423,10 +423,14 @@ function _isTooOld(created: number | undefined): boolean {
     return created < (Date.now() / 1000) - _ONE_YEAR_SECS;
 }
 
+// Providers whose fetcher keeps only the free models: a catalog entry missing from their result may still be listed, but priced.
+const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor']);
+
 // Generic helper: compare a provider's live model list against the catalog.
 // Produces add proposals (for new models) and remove proposals (for missing catalog models).
 // Filtered/rejected models appear as add proposals with `filteredBy` set — hidden by default in UI.
-// Removal proposals always use the full live+rejected set to avoid false removals.
+// Removal proposals always use the full live+rejected set to avoid false removals. They start checked: a model that is gone or
+// no longer free fails on every request, so keeping it is the choice that needs a click (and is then remembered, see _applyProposals).
 function _diffProvider(
     provider: string,
     result: FetchResult,
@@ -434,7 +438,7 @@ function _diffProvider(
     catalogKeys: Set<string>,
     addNote: string,
     addSelected = true,
-    removeSelected = false,
+    removeSelected = true,
 ): Proposal[] {
     const { live, rejected } = result;
     // Use the full set (live + rejected) for removal detection — we don't want to falsely
@@ -478,7 +482,7 @@ function _diffProvider(
         if (!allLiveIds.has(entry.model)) {
             out.push({
                 type: 'remove', provider, model: entry.model,
-                label: entry.label, note: `No longer listed by ${provider}`,
+                label: entry.label, note: _FREE_ONLY_FETCH.has(provider) ? `Not listed as free by ${provider}` : `No longer listed by ${provider}`,
                 url: _modelPageUrl(provider, entry.model),
                 spec: `${provider}|${entry.model}`, selected: removeSelected,
             });
@@ -528,8 +532,9 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             m.id?.endsWith(':free') ||
             (String(m.pricing?.prompt ?? '1') === '0' && String(m.pricing?.completion ?? '1') === '0')
         );
-        // For removal check, compare all OR catalog entries against all OR live IDs (not just free)
+        // Removal check against the free models: a $0 id without ":free" (inclusionai/ling-3.1-flash) stays listed when it becomes paid
         const orAllIds = new Set(orModels.map((m: any) => m.id));
+        const orFreeIds = new Set(orFree.map((m: any) => m.id));
         const orCreated = _createdReader(orModels);
         const orFreeWithName = orFree.map((m: any) => ({ id: m.id, name: m.name, created: orCreated(m) }));
 
@@ -546,15 +551,15 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
                 });
             }
         }
-        // Remove proposals for catalog entries no longer in any OR model list
+        // Remove proposals for catalog entries that OpenRouter no longer lists, or no longer serves free
         for (const entry of catalog) {
             if (entry.provider !== 'openrouter') continue;
-            if (!orAllIds.has(entry.model)) {
+            if (!orFreeIds.has(entry.model)) {
                 proposals.push({
                     type: 'remove', provider: 'openrouter', model: entry.model,
-                    label: entry.label, note: 'No longer listed by OpenRouter',
+                    label: entry.label, note: orAllIds.has(entry.model) ? 'Not free on OpenRouter' : 'No longer listed by OpenRouter',
                     url: _modelPageUrl('openrouter', entry.model),
-                    spec: `openrouter|${entry.model}`, selected: false,
+                    spec: `openrouter|${entry.model}`, selected: true,
                 });
             }
         }
@@ -667,12 +672,16 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
 // ── Modal UI ──────────────────────────────────────────────────────────────
 
 
+// Removals the person unchecked on Apply. Until 2026-10-29 removals started unchecked, so one Apply (to take the additions)
+// suppressed every pending removal for good; that list (fg_suppressed_removes) held no real choices and is dropped.
+const _SUPPRESSED_REMOVES_KEY = 'fg_suppressed_removes_v2';
 function _getSuppressedRemoves(): Set<string> {
-    try { return new Set(JSON.parse(localStorage.getItem('fg_suppressed_removes') || '[]')); }
+    try { localStorage.removeItem('fg_suppressed_removes'); } catch {}
+    try { return new Set(JSON.parse(localStorage.getItem(_SUPPRESSED_REMOVES_KEY) || '[]')); }
     catch { return new Set(); }
 }
 function _saveSuppressedRemoves(s: Set<string>): void {
-    try { localStorage.setItem('fg_suppressed_removes', JSON.stringify([...s])); } catch {}  // best-effort
+    try { localStorage.setItem(_SUPPRESSED_REMOVES_KEY, JSON.stringify([...s])); } catch {}  // best-effort
 }
 
 function _applyProposals(proposals: Proposal[]): void {
@@ -845,7 +854,7 @@ export function showModelUpdateModal(): void {
         const removesHtml = removes.length ? `
             <div style="margin-bottom:14px">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-                    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);flex:1">Models no longer listed</span>
+                    <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);flex:1">Models no longer listed or no longer free</span>
                     <button class="ws-action-btn fg-mu-selall" data-section="removes" data-action="select"   style="font-size:11px;padding:2px 8px">All</button>
                     <button class="ws-action-btn fg-mu-selall" data-section="removes" data-action="deselect" style="font-size:11px;padding:2px 8px">None</button>
                 </div>

@@ -4,8 +4,8 @@ const W: any = globalThis;
 describe('getMainModelList prunes withdrawn models', () => {
     beforeEach(() => localStorage.clear());
     it('drops blacklisted and unknown specs from a saved list and saves the clean one', () => {
-        const keep = 'nvidia|z-ai/glm-5.3';
-        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|minimax/minimax-m3.1-flash:free', 'vercel|reflection/beam', 'nous|no/such-model', keep]));
+        const keep = 'nvidia|z-ai/glm-5.3-flash';
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|minimax/minimax-m3.1-flash:free', 'vercel|stealth/glyph-cluster', 'nous|no/such-model', keep]));
         expect(W.getMainModelList()).toEqual([keep]);
         expect(JSON.parse(localStorage.getItem('fg_main_models')!)).toEqual([keep]);
     });

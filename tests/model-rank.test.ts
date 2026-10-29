@@ -57,7 +57,9 @@ describe('buildModelRankGroups', () => {
     it('prompt lines carry model ids only — no provider names', () => {
         const groups = M.buildModelRankGroups(catalog, live);
         const line = M.formatModelRankLine(1, groups[0]);
-        expect(line).toBe('1. nvidia/nemotron-3-ultra-550b-a55b — 550B (55B active), 1000K ctx, tools, reasoning, released 2026-06, AA intelligence 22.9 / coding 49.3 / agentic 20.1, not used here yet');
+        // The model-ladder result ("long chats: ...") sits between the two when model-ladder.ts has one for the model.
+        expect(line.startsWith('1. nvidia/nemotron-3-ultra-550b-a55b — 550B (55B active), 1000K ctx, tools, reasoning, released 2026-06, AA intelligence 22.9 / coding 49.3 / agentic 20.1, ')).toBe(true);
+        expect(line.endsWith(', not used here yet')).toBe(true);
         expect(line).not.toMatch(/openrouter|kilo|free/i);
     });
 });

@@ -500,7 +500,6 @@ const MODEL_CATALOG = [
     { provider:'nvidia',     model:'nvidia/nemotron-3-super-120b-a12b',                   label:'Nemotron Super 120B',           released:'2026-03', contextK:128,  params:120,  media:['text'],                        tools:false, thinking:true,  note:'High-capability reasoning model' },
     { provider:'nvidia',     model:'nvidia/nemotron-3-ultra-550b-a55b',                   label:'Nemotron Ultra 550B',           released:'2026-06', contextK:1000, params:550,  media:['text'],                        tools:true,  thinking:true,  note:'550B MoE (55B active); 1M context; highest-capability Nemotron reasoning model; fn-tag tool calls' },
     { provider:'nvidia',     model:'deepseek-ai/deepseek-v4.1-flash',                    label:'DeepSeek V4.1 Flash (NVIDIA)',  released:'2026-09', contextK:1000, params:null, media:['text','image'],                tools:true,  thinking:true,  note:'KiloBench (Terminal Bench 2.0) 75.3%, S tier; tool calls work but ~45 s per call on NIM (2026-10-06) — TokenHarbor free is faster' },
-    { provider:'nvidia',     model:'z-ai/glm-5.3',                                        label:'GLM 5.3 (NVIDIA)',              released:'2026-10', contextK:200,  params:null, media:['text'],                        tools:true,  thinking:true,  note:'Tool call verified 2026-10-17; NIM free credits' },
     { provider:'nvidia',     model:'z-ai/glm-5.3-flash',                                  label:'GLM 5.3 Flash (NVIDIA)',        released:'2026-10', contextK:200,  params:null, media:['text'],                        tools:true,  thinking:true,  note:'Tool call verified 2026-10-17; NIM free credits' },
     { provider:'nvidia',     model:'stepfun-ai/step-5-preview',                           label:'Step 5 Preview (NVIDIA)',       released:'2026-10', contextK:1000, params:600,  media:['text','image'],               tools:true,  thinking:true,  note:'StepFun flagship; tool call verified 2026-10-17; NIM free credits' },
     { provider:'nvidia',     model:'nvidia/nemotron-3.5-super-vl-120b-a12b',              label:'Nemotron 3.5 Super VL 120B',    released:'2026-10', contextK:1000, params:120,  media:['text','image'],               tools:true,  thinking:true,  note:'Tool call verified 2026-10-17; NIM free credits' },
@@ -510,7 +509,6 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'nvidia/nemotron-3-ultra-550b-a55b:free',             label:'Nemotron Ultra 550B (free)',    released:'2026-06', contextK:1000, params:550,  media:['text'],                        tools:true,  thinking:true,  rpm:20,  rpd:50,   note:'550B MoE (55B active); 1M context; highest-capability Nemotron reasoning; fn-tag tool calls; free via OpenRouter' },
     { provider:'openrouter', model:'nvidia/nemotron-3.5-lightning:free',                 label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'30B MoE (3B active); 1M context; fast tool-capable model; free via OpenRouter' },
     { provider:'openrouter', model:'nvidia/nemotron-3.5-super-vl:free',                  label:'Nemotron 3.5 Super VL (free)', released:'2026-10', contextK:1000, params:120,  media:['text','image'],                tools:true,  thinking:true,  note:'Tool call verified 2026-10-17' },
-    { provider:'openrouter', model:'nvidia/nemotron-3-super-120b-a12b:free',              label:'Nemotron Super 120B (free)',    released:'2026-03', contextK:262,  params:120,  media:['text'],                        tools:true, thinking:true,  rpm:20,  rpd:50,   note:'High-capability reasoning; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron Nano Omni 30B (free)',released:'2026-04', contextK:256,  params:30,   media:['text','image'],                tools:true, thinking:true,  rpm:20,  rpd:50,   note:'Multimodal reasoning; 256K context; free via OpenRouter' },
     { provider:'openrouter', model:'google/gemma-4-31b-it:free',                         label:'Gemma 4 31B (free)',           released:'2026-04', contextK:262,  params:31,   media:['text','image'],                tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Google Gemma 4 31B; 262K context; free via OpenRouter' },
     { provider:'openrouter', model:'google/gemma-4-26b-a4b-it:free',                     label:'Gemma 4 MoE 27B (free)',       released:'2026-04', contextK:262,  params:25.2,   media:['text','image'],                tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Google Gemma 4 MoE (3.8B active); 262K context; free via OpenRouter' },
@@ -527,7 +525,8 @@ const MODEL_CATALOG = [
     { provider:'nous', model:'stepfun/step-3.7-flash:free',          label:'Step 3.7 Flash (free)',        released:'2026-05', contextK:262, params:196, media:['text','image','video'], tools:true, thinking:true,  note:'196B MoE; 262K ctx; multimodal text/image/video; agent efficiency, coding, search; mandatory thinking; free via Nous Portal' },
     { provider:'nous', model:'poolside/laguna-s-2.1:free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:262, params:118, media:['text'],                 tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent, 70.2% Terminal-Bench; free via Nous Portal. Kilo lists it as retiring 2026-10-31' },
     { provider:'nous', model:'poolside/laguna-xs-2.1:free',          label:'Laguna XS 2.1 (free)',         released:'2026-07', contextK:262, params:33,  media:['text'],                 tools:true, thinking:true,  note:'33B MoE (3B active); 262K ctx; fast coding agent; free via Nous Portal' },
-    { provider:'nous', model:'meituan/longcat-2.5-preview:free',     label:'LongCat 2.5 Preview (free)',   released:'2026-09', contextK:1048, params:null,media:['text','image'],        tools:true, thinking:true,  note:'Meituan LongCat 2.5 preview; 1M ctx; $0 on Nous Portal; tool calls verified through Nous 2026-10-06 (longcat-2.0:free now returns 404 "no longer free")' },
+    { provider:'nous', model:'reflection/beam-1.0-501b-a23b:free', label:'Beam 1.0 501B (free)',      released:'2026-10', contextK:262, params:501, media:['text'],                 tools:true, thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 262K ctx on Nous; reasoning always on; tool call verified 2026-10-29; free via Nous Portal' },
+    { provider:'nous', model:'ornith/ornith-1.5-122b:free',          label:'Ornith 1.5 122B (free)',       released:'2026-10', contextK:262, params:122, media:['text','image'],         tools:true, thinking:true,  note:'122B reasoning model; 262K ctx; image input; tool call verified 2026-10-29; free via Nous Portal' },
     { provider:'nous', model:'upstage/solar-mini4:free',      label:'Solar Mini 4 (free)',          released:'2026-09', contextK:524, params:35,  media:['text'],                 tools:true, thinking:true,  note:'35B MoE (3B active); 524K ctx; built for agentic use; free via Nous Portal' },
     // ── TokenHarbor ───────────────────────────────────────────────────────────
     // https://tokenharbor.ai/models — unified multi-provider gateway; API key prefix: thk_live_
@@ -542,9 +541,9 @@ const MODEL_CATALOG = [
     { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
     { provider:'kilo', model:'recursive/flint-v1.0:free',                       label:'Flint v1.0 (free)',                released:'2026-10', contextK:262,  params:40,   media:['text'],        tools:true, thinking:false, note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23; free via Kilo' },
     { provider:'kilo', model:'xingchen-agi/xing4.0-29b-a4b:free',               label:'Xing4.0 29B (free)',               released:'2026-10', contextK:262,  params:29,   media:['text'],        tools:true, thinking:true,  note:'China Telecom TeleAI; 29B MoE (4B active); 262K ctx; tool call verified 2026-10-23; free via Kilo' },
-    { provider:'kilo', model:'nvidia/nemotron-3-super-120b-a12b:free',          label:'Nemotron 3 Super 120B (free)',     released:'2026-03', contextK:262,  params:120, media:['text'],        tools:true, thinking:true,  note:'120B MoE (12B active); 262K ctx; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
+    { provider:'kilo', model:'reflection/beam-free',                            label:'Beam 1.0 (free)',                  released:'2026-10', contextK:1048, params:501, media:['text'],        tools:true, thinking:true, note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; tool call verified 2026-10-29; long-chat test: 88% of microtasks, 150 tok/s, Kilo\'s free limit stopped the second conversation at 210K; the provider may retain prompts and outputs; free via Kilo' },
     { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
@@ -555,10 +554,10 @@ const MODEL_CATALOG = [
     // ── Vercel AI Gateway ──────────────────────────────────────────────────────
     // https://vercel.com/ai-gateway — OAI-compatible gateway; API key required for inference.
     // Free ($0/token) models; the public /models list tags them "free" (the updater probes known ids if it omits them).
+    // Every request, $0 models included, needs a positive credit balance on the account (402 otherwise, 2026-10-29).
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token). Kilo lists it as retiring 2026-10-31' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
-    { provider:'vercel', model:'minimax/minimax-m3.1-flash',       label:'MiniMax M3.1 Flash',           released:'2026-10', contextK:1000, params:null, media:['text'],        tools:true,  thinking:true,  note:'1M ctx; $0/token; tool call verified 2026-10-20' },
 ];
 
 function getEnabledModels() {
@@ -719,12 +718,15 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'nvidia|stepfun-ai/step-3.7-flash',          // HTTP 410 Gone: end of life 2026-08-28 on NVIDIA (still on Nous/Kilo)
     'kilo|stepfun/step-3.7-flash:free',          // HTTP 404 "model does not exist" (2026-10-10)
     'nvidia|moonshotai/kimi-k2.6',               // HTTP 404 "Function ... Not found for account" (2026-10-17)
-    'vercel|reflection/beam-free',               // HTTP 403 "Free tier users do not have access" despite $0 price (2026-10-17)
-    'vercel|reflection/beam',                    // same 403 (2026-10-17)
     'vercel|stealth/glyph-cluster',              // HTTP 403 "requires an active Pro plan with purchased AI Gateway credits" despite $0 price (2026-10-18)
     'nous|stepfun/step-5-preview:free',          // HTTP 404 "This model's free period has ended" (2026-10-20)
     'openrouter|minimax/minimax-m3.1-flash:free', // HTTP 404 "free launch period ended Oct 22" (2026-10-23)
     'kilo|minimax/minimax-m3.1-flash:free',      // HTTP 404 "model does not exist" (2026-10-23)
+    'nous|meituan/longcat-2.5-preview:free',     // HTTP 404 "This model is no longer free" (2026-10-29)
+    // Beam on Vercel answers once the account has credit (2026-10-29), but from the second request on it is HTTP 400 "Missing required parameter:
+    // 'messages[1].reasoning_content'": it needs each earlier reply's reasoning sent back, and buildChatPayload strips that field for every provider but vLLM.
+    'vercel|reflection/beam-free',
+    'vercel|reflection/beam',
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
@@ -767,30 +769,23 @@ function getAllModels() {
 // Space Bunny Alpha (stealth) was withdrawn on 2026-10-05 and is gone from every provider.
 // Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
-    // MiniMax M3.1 Flash (2026-10-20): 1M ctx; tool calls verified; long-chat test (model ladder) reached the 250K ceiling in all
-    // three conversations, 88-92% of microtasks solved, ~90 tok/s. Its free variant (Kilo, OpenRouter) was retired on 2026-10-22
-    // (HTTP 404); only the paid Vercel route remains.
-    'vercel|minimax/minimax-m3.1-flash',
-    // Ordered by the share of long-chat microtasks solved (model-ladder results, 2026-10-20):
-    // GLM 5.3 98%, DeepSeek 92%, Step 5 90%, Longcat 88%, Nemotron Super VL 79%, Nemotron Ultra 69%.
-    'nvidia|z-ai/glm-5.3',
-    'tokenharbor|deepseek-v4.1-flash:free',            // S tier; weekly quota
-    'nvidia|stepfun-ai/step-5-preview',                // same model on NVIDIA NIM; separate quota
-    'nous|meituan/longcat-2.5-preview:free',           // 1M ctx; tool calls verified through Nous
+    // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-10-29): share of microtasks solved,
+    // context held before a quota stopped it, speed. DeepSeek 92%, Step 5 90%, Beam 88% (150 tok/s), MiMo V2.6 Flash 82% (250K in all
+    // three conversations), Step 3.7 87% of 15 (Nous's hourly token cap at 107K), Nemotron Super VL 79%, Nemotron Ultra 69%.
+    // Withdrawn on 2026-10-29: MiniMax M3.1 Flash (Vercel now charges $0.15 / $0.60 per M tokens; its free variants ended 2026-10-22), GLM 5.3 (no longer
+    // listed by NVIDIA), LongCat 2.5 Preview (Nous: 404 "no longer free"), Nemotron 3 Super 120B (no longer listed by Kilo or OpenRouter).
+    // Tool calls of every entry checked 2026-10-29, except NVIDIA's (the test key got 403 on every model).
+    'tokenharbor|deepseek-v4.1-flash:free',            // S tier (KiloBench 75.3%); weekly quota
+    'nvidia|stepfun-ai/step-5-preview',                // NIM free credits
+    'kilo|reflection/beam-free',                       // 501B MoE, 1M ctx
+    'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
+    'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
+    'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
     'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx
     'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
-    // Notes on the top tier: KiloBench (Terminal Bench 2.0): DeepSeek V4.1 Flash 75.3% (S tier). Step 5 Preview
-    // is the most used free model on the Kilo leaderboard (kilo.ai/leaderboard/llm.txt, 2026-10-17)
-    // but Kilo itself withdrew it (HTTP 404 "unavailable_model"); it still answers on Nous and NVIDIA.
-    // Ling 3.1 Flash is paid everywhere now (Kilo 402, Nous 404 "requires credits").
-    // Tool calls of the entries above and below were checked on 2026-10-17 (Nemotron Ultra only timed out).
     'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    // Large reasoning models
-    'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; weekly quota
-    'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning (gone from Kilo)
     'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
-    'kilo|nvidia/nemotron-3-super-120b-a12b:free',     // #4 by tokens on the Kilo leaderboard
     // Last: it writes tool calls as <dots_function_call> text (repaired, but often garbled).
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
