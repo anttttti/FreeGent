@@ -11,7 +11,7 @@ export type LadderResult = {
     tokens: number;
     micro?: { solved: number; planned: number };   // 15-task baseline ladder, when it was run
 };
-export const MODEL_LADDER_DATE = '2026-10-29';
+export const MODEL_LADDER_DATE = '2026-10-30';
 export const MODEL_LADDER: Record<string, LadderResult> = {
     "vercel|reflection/beam-free": { correct: 92, attempted: 99, capK: [245, 240, 243], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 148.2, tokens: 65461570 },
     "openrouter|minimax/minimax-m3.1-flash:free": { correct: 61, attempted: 66, capK: [245, 242, 237], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 93.7, tokens: 43943531 },
@@ -24,7 +24,9 @@ export const MODEL_LADDER: Record<string, LadderResult> = {
     "kilo|stealth/glyph-cluster": { correct: 55, attempted: 63, capK: [243, 144], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 43.8, tokens: 39059346 },
     "nous|stepfun/step-3.7-flash:free": { correct: 13, attempted: 15, capK: [107], stops: ["quota"], ceilingK: 250, tokPerS: 80.1, tokens: 3376373 },
     "tokenharbor|mimo-v2.6-flash:free": { correct: 86, attempted: 105, capK: [243, 245, 241], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 65.4, tokens: 41044973, micro: { solved: 14, planned: 15 } },
+    "kilo|dots-studio/dots-3-note-preview:free": { correct: 69, attempted: 85, capK: [241, 244, 111], stops: ["ceiling", "ceiling", "quota"], ceilingK: 250, tokPerS: 55.5, tokens: 40722093 },
     "kilo|nvidia/nemotron-3.5-super-vl:free": { correct: 88, attempted: 111, capK: [244, 246, 245], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 95.5, tokens: 34226629, micro: { solved: 15, planned: 15 } },
     "nous|reflection/beam-1.0-501b-a23b:free": { correct: 9, attempted: 12, capK: [95], stops: ["quota"], ceilingK: 250, tokPerS: 154.3, tokens: 6007277 },
     "kilo|nvidia/nemotron-3-ultra-550b-a55b:free": { correct: 72, attempted: 105, capK: [242, 246, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 36.1, tokens: 138338185 },
+    "kilo|nvidia/nemotron-3.5-lightning:free": { correct: 11, attempted: 30, capK: [186], stops: ["quota"], ceilingK: 250, tokPerS: 46.8, tokens: 35261082 },
 };

@@ -29,10 +29,15 @@ describe('_repairToolCallArgs — OAI tool_calls arguments', () => {
         expect(calls[0].function.arguments).toBe('{"path":"a.txt"}');
         expect(bad).toEqual(['write_file']);
     });
-    it('leaves valid JSON and empty strings untouched', () => {
-        const calls = [tc('read_file', '{"path":"a"}'), tc('list_files', '')];
+    it('leaves a JSON object untouched and makes empty arguments {}, unflagged', () => {
+        const calls = [tc('read_file', '{"path":"a"}'), tc('list_files', ''), tc('run_tests', '  ')];
         expect(_repairToolCallArgs(calls)).toEqual([]);
-        expect(calls[0].function.arguments).toBe('{"path":"a"}');
+        expect(calls.map(c => c.function.arguments)).toEqual(['{"path":"a"}', '{}', '{}']);
+    });
+    it('keeps only JSON objects in the history (Nous: "function.arguments must be a JSON object encoded as a string")', () => {
+        const calls = [tc('read_file', JSON.stringify('{"path":"a"}')), tc('write_file', '[1,2]'), tc('list_files', 'null'), tc('run_tests', '"x"')];
+        expect(_repairToolCallArgs(calls)).toEqual(['write_file', 'list_files', 'run_tests']);
+        expect(calls.map(c => c.function.arguments)).toEqual(['{"path":"a"}', '{}', '{}', '{}']);
     });
 });
 

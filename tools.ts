@@ -1646,6 +1646,7 @@ async function _handleWriteFile(args, context) {
     } catch (e) { return { error: e.message }; }
 }
 
+const _RANGE_ECHO_MAX_LINES = 60;   // the most lines of the given range a failed replace_in_file shows back
 async function _handleReplaceInFile(args, context) {
     // Normalise parameter aliases that small models sometimes emit
     args = { ...args,
@@ -1736,10 +1737,11 @@ async function _handleReplaceInFile(args, context) {
         }
         if (idx === -1) {
             let hint = '';
-            if (args.start_line != null || args.end_line != null) {
-                const s = Math.max(0, (args.start_line ?? 1) - 1);
-                const e = Math.min(lines.length, (args.end_line ?? lines.length));
-                hint = `\nActual content at lines ${s + 1}–${e}:\n${lines.slice(s, e).join('\n')}`;
+            // A range is echoed only when it is short: self-analysis P1 2026-10-29 gave end_line 2520 alone, the whole of tools.ts (99k
+            // characters) came back in the error, and the next request no longer fit the 60k window (552 failed requests in 29 min).
+            const _rs = Math.max(0, (args.start_line ?? 1) - 1), _re = Math.min(lines.length, args.end_line ?? lines.length);
+            if ((args.start_line != null || args.end_line != null) && _re - _rs <= _RANGE_ECHO_MAX_LINES) {
+                hint = `\nActual content at lines ${_rs + 1}–${_re}:\n${lines.slice(_rs, _re).join('\n')}`;
             } else {
                 // Find the closest matching lines so the model can adjust without re-reading the file.
                 const needle = args.old_string.split('\n')[0].trim().toLowerCase();
@@ -1757,8 +1759,8 @@ async function _handleReplaceInFile(args, context) {
             }
             // The region of the whole file that old_string most nearly describes, when it is not what was
             // already echoed: the text to copy old_string from.
-            const _winS = args.start_line != null || args.end_line != null ? Math.max(0, (args.start_line ?? 1) - 1) : -1;
-            const _winE = _winS >= 0 ? Math.min(lines.length, args.end_line ?? lines.length) : -1;
+            const _winS = (args.start_line != null || args.end_line != null) && _re - _rs <= _RANGE_ECHO_MAX_LINES ? _rs : -1;
+            const _winE = _winS >= 0 ? _re : -1;
             const region = runtime.guardOff('replace_region') ? null : _bestRegion(lines, args.old_string);
             if (region && !(_winS >= 0 && region.start - 1 >= _winS && region.end <= _winE)) {
                 const body = region.text.length > 1500 ? region.text.slice(0, 1500) + '\n[…]' : region.text;

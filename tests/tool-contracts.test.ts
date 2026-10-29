@@ -196,6 +196,19 @@ describe('replace_in_file', () => {
         expect(r.error).toMatch(/not found/);
         expect(await stored('r.txt')).toBe('dup\ndup\nthree\nfour\n');
     });
+
+    // Self-analysis P1 2026-10-29: end_line 2520 alone echoed the whole file (99k characters) and the next request did not fit the window.
+    it('echoes a short range back on a miss, but only the closest lines for a long one', async () => {
+        const text = Array.from({ length: 3000 }, (_, i) => `const value_${i} = ${i};`).join('\n');
+        await W.agentWriteFile('big.ts', text);
+        const wide = await tool('replace_in_file', { path: 'big.ts', old_string: 'const value_12 = twelve;', new_string: 'x', end_line: 2520 });
+        expect(wide.error).toMatch(/not found in "big.ts" within lines 1–2520/);
+        expect(wide.error).not.toMatch(/Actual content/);
+        expect(wide.error).toMatch(/L13: const value_12 = 12;/);
+        expect(wide.error.length).toBeLessThan(5000);
+        const short = await tool('replace_in_file', { path: 'big.ts', old_string: 'nope', new_string: 'x', start_line: 10, end_line: 12 });
+        expect(short.error).toMatch(/Actual content at lines 10–12:\nconst value_9 = 9;\nconst value_10 = 10;\nconst value_11 = 11;/);
+    });
 });
 
 describe('apply_patch', () => {

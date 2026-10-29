@@ -58,8 +58,15 @@ export function _repairToolCallArgs(calls: any[], repairFn: (s: string) => strin
         const tc = calls[i];
         if (!tc.function || typeof tc.function !== 'object') tc.function = { name: typeof tc.name === 'string' ? tc.name : '', arguments: typeof tc.arguments === 'string' ? tc.arguments : '{}' };
         const s = tc.function.arguments;
-        if (typeof s !== 'string' || !s.trim()) continue;
-        try { JSON.parse(s); continue; } catch {}
+        if (typeof s !== 'string') continue;
+        // The history must hold a JSON object for each call: Nous refuses the next request otherwise (HTTP 400 "messages[20].tool_calls[5].function.arguments
+        // must be a JSON object encoded as a string", Ornith 1.5). No arguments are {}; a JSON string holding an object is unwrapped; any other value is bad.
+        if (!s.trim()) { tc.function.arguments = '{}'; continue; }
+        let v: any, parsed = false;
+        try { v = JSON.parse(s); parsed = true; } catch {}
+        if (parsed && typeof v === 'string') { try { const o = JSON.parse(v); if (o && typeof o === 'object' && !Array.isArray(o)) { tc.function.arguments = v; continue; } } catch {} }
+        if (parsed && v && typeof v === 'object' && !Array.isArray(v)) continue;
+        if (parsed) { bad.push(tc.function.name); tc.function.arguments = '{}'; continue; }
         const fixed = repairFn(s);
         if (fixed !== null) tc.function.arguments = fixed;
         else {

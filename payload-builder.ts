@@ -174,6 +174,15 @@ export function buildRequestMessages(hist: any[], provider: string): any[] {
         : raw;
 }
 
+// Each earlier tool call goes back with a JSON object as its arguments: Nous refuses the whole request otherwise (HTTP 400 "messages[20].tool_calls[5]
+// .function.arguments must be a JSON object encoded as a string", Ornith 1.5), and the history keeps a call as the model sent it ("" for no arguments,
+// or text that is not JSON). Messages whose calls are all objects are passed through unchanged.
+const _isObjectJson = (s: unknown) => { if (typeof s !== 'string') return false; try { const v = JSON.parse(s); return !!v && typeof v === 'object' && !Array.isArray(v); } catch { return false; } };
+export function withObjectArgs(messages: any[]): any[] {
+    return messages.map(m => m.role !== 'assistant' || !Array.isArray(m.tool_calls) || m.tool_calls.every((tc: any) => _isObjectJson(tc?.function?.arguments)) ? m
+        : { ...m, tool_calls: m.tool_calls.map((tc: any) => _isObjectJson(tc?.function?.arguments) ? tc : { ...tc, function: { ...tc?.function, arguments: '{}' } }) });
+}
+
 export function buildChatPayload(ep: any, {
     messages,               // full messages array including system prompt — caller-sanitized
     tools = null,           // tool schema array, or null/[] for no tools
@@ -205,12 +214,12 @@ export function buildChatPayload(ep: any, {
     // a model that needs it back (modelNeedsReasoningEcho) gets it on every assistant message;
     // all other providers — including strict ones like Mistral/Devstral that reject unknown
     // fields with HTTP 422 — must not receive it.
-    const _messages = provider === 'vllm'
+    const _messages = withObjectArgs(provider === 'vllm'
         ? messages
         : modelNeedsReasoningEcho(`${provider}|${ep?.model ?? ''}`) ? withReasoningEcho(messages)
         : messages.map(m => (m.role === 'assistant' && m.reasoning_content != null)
             ? (({ reasoning_content: _rc, ...rest }) => rest)(m)
-            : m);
+            : m));
 
     const payload: any = {
         model: ep?.model ?? '',
