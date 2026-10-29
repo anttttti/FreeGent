@@ -63,7 +63,7 @@ let _metricsWriter: ((record: object) => void) | null = null;
 export function setMetricsWriter(fn: ((record: object) => void) | null): void { _metricsWriter = fn; }
 /** Report a model request that is not a main-loop step (a worker's request) to the run's metrics
  *  only: it is counted, not added to the conversation log. No-op outside a headless run. */
-export function metricsNote(record: { type: string; promptTokens?: number; responseTokens?: number; cachedTokens?: number }): void {
+export function metricsNote(record: { type: string; promptTokens?: number; responseTokens?: number; cachedTokens?: number; error?: string; attempt?: number }): void {
     try { _metricsWriter?.(record); } catch {}
 }
 

@@ -1,8 +1,8 @@
 // native-exec.ts — execute_code in headless runs: bash, python3 and node as real processes in the
 // workspace directory (or `docker exec` in a task container). headless-runner.ts installs it as
 // globalThis.nativeExec; tests/headless-tools.test.ts runs the tool tests on it.
-import { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS } from './exec-limits.js';
-import { readdirSync, unlinkSync } from 'node:fs';
+import { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS, shrinkNote } from './exec-limits.js';
+import { readdirSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
@@ -92,6 +92,13 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
                     if (postSnap) for (const rel of await changedSince(workspaceRoot, preSnap, postSnap)) if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
                 } catch {}
                 if (written.length > 0) result.files_written = written;
+                // A written file that is now empty or lost much of its size: the marks are `mtime:size` (a clean tracked file has none, so it is not judged).
+                const note = shrinkNote(written.map(rel => {
+                    const m = preSnap.get(rel), before = m && m !== 'gone' ? Number(m.split(':').pop()) : NaN;
+                    let after = -1; try { after = statSync(join(workspaceRoot, rel)).size; } catch {}
+                    return { path: rel, before: Number.isFinite(before) && after >= 0 ? before : null, after: Math.max(after, 0) };
+                }), (result.exit_code ?? 0) !== 0);
+                if (note) result.note = result.note ? `${result.note} ${note}` : note;
             }
             // Detect .git/hooks planted by the executed code (hook-injection guard).
             if (hooksDir && preHooks !== null) {

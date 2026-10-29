@@ -54,3 +54,15 @@ export async function staleGuard(snap: Map<string, string>, omitted: Set<string>
     try { now = snapshotWorkspace((await list()) || []); } catch { return () => false; }
     return (path: string) => !omitted.has(path) && (snap.has(path) !== now.has(path) || (snap.has(path) && snap.get(path) !== now.get(path)));
 }
+
+/** What a run did to files it wrote that are now empty or much smaller, for the tool result; null when nothing shrank like that.
+ *  Self-analysis 2026-10-29: Python's open(path, 'w') empties the file at once, a write that then failed left model-caps.ts at 0 bytes
+ *  (P6), a regex rewrite cut 590 lines out of tools.ts (P2); the result said only files_written, and the agent searched the emptied file
+ *  for 75 steps. `before`/`after` are sizes (bytes or characters, the same unit for both); `before` null = unknown, not judged. */
+export function shrinkNote(changes: { path: string; before: number | null; after: number }[], failed: boolean): string | null {
+    const fmt = (n: number) => n.toLocaleString('en-US');
+    const hits = changes.filter(c => c.before != null && c.before > 0 && (c.after === 0 || (c.before - c.after >= 4000 && c.after <= c.before * 0.8)))
+        .map(c => c.after === 0 ? `${c.path} is now EMPTY (it was ${fmt(c.before!)} bytes)` : `${c.path} shrank from ${fmt(c.before!)} to ${fmt(c.after)} bytes (-${Math.round((1 - c.after / c.before!) * 100)}%)`);
+    if (!hits.length) return null;
+    return `Check this before going on: ${hits.join('; ')}. ${failed ? 'The code failed, and ' : ''}a file opened for writing is emptied at once, so code that stops after open(path, "w") leaves it empty or cut short. If that was not meant, write the file again from the content you read earlier (or restore it from git), and check its size.`;
+}

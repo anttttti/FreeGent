@@ -733,7 +733,7 @@ interface RunFinish {
 export async function run(task: any, opts: Record<string, any> = {}): Promise<{ output: string; error: any; metrics: RunMetrics; finish?: RunFinish }> {
     if (typeof task !== 'string' || task.trim().length < 8)
         return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 } };
-    const { timeoutMs, workspaceRoot } = _parseOpts(opts);
+    const { timeoutMs, workspaceRoot, logFile: _runLog } = _parseOpts(opts);
     await setup(opts);
     // Per-chat state of earlier tasks in this process (worker budget, lookalike-refusal counts, replace
     // failures) must not carry over: a second run() would inherit the first one's spent worker budget.
@@ -749,6 +749,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     const _metrics: RunMetrics = { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 };
     const _verification = newVerification();
     const _ledgerPath = (globalThis as any).process?.env?.FG_REQUEST_LEDGER as string | undefined;
+    const _failSeen = new Map<string, number>();   // failed-request messages already logged, and how often
     setMetricsWriter((record: any) => {
         appendLedger(_ledgerPath, record);
         if (record.type === 'history_snapshot') { _metrics.compactions++; return; }
@@ -760,7 +761,18 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             opts.onMetrics?.({ ..._metrics, elapsed_s: (Date.now() - _t0) / 1000 });
             return;
         }
-        if (record.type === 'request_failed') { _metrics.failed_requests++; return; }
+        if (record.type === 'request_failed') {
+            _metrics.failed_requests++;
+            // The error itself goes to the run's log: self-analysis P1 (2026-10-29) counted 552 failed requests in 29 minutes and kept none of
+            // their messages, so the loop could not be diagnosed. The first 20 of each message (digits ignored) are written, then every 50th.
+            if (_runLog && record.error) {
+                const key = String(record.error).replace(/\d+/g, '#').slice(0, 160);
+                const n = (_failSeen.get(key) ?? 0) + 1; _failSeen.set(key, n);
+                if (n <= 20 || n % 50 === 0)
+                    try { logAppend(_runLog, JSON.stringify({ ts: new Date().toISOString(), type: 'request_failed', error: record.error, attempt: record.attempt, count: n }) + '\n', 'utf8'); } catch {}
+            }
+            return;
+        }
         if (record.type === 'worker_step' || record.type === 'validation' || record.type === 'compaction') {
             const w = record.type === 'worker_step';
             if (w) _metrics.worker_steps++; else _metrics.aux_requests++;

@@ -126,3 +126,38 @@ describe('HTTP 410 (a model that has reached its end of life)', () => {
         } finally { delete (window as any).getActiveMainModelList; }
     });
 });
+
+// Self-analysis P1 2026-10-29: a CLI run's endpoint is `custom|m`, its model list holds `openai|m` (the same server), and every reply was cut
+// off at the output cap; "rotating" to `openai|m` resent the request at once, 551 times in 29 minutes, without a step or a compaction.
+describe('rotation never goes to the endpoint it is leaving', () => {
+    const cutOff = () => Object.assign(new Error('TruncatedResponse(tool_call_cut_off:256)'), { isTruncated: true, outputCapHit: { tokens: 256, toolCall: true, maxTokens: 256 } });
+    afterEach(() => { delete (window as any).getActiveMainModelList; localStorage.clear(); });
+
+    it('a cut-off reply leaves withRetry when the only other entry is the same server and model', () => {
+        localStorage.setItem('fg_openai_url', 'http://127.0.0.1:8795/v1');
+        (window as any).getActiveMainModelList = () => ['openai|m-same'];
+        const { h, ep } = handler({ provider: 'custom', model: 'm-same', url: 'http://127.0.0.1:8795/v1/chat/completions' });
+        expect(h(0, cutOff(), 1000)).toBe(false);
+        expect(ep().provider).toBe('custom');
+    });
+
+    it('still rotates to a different model', () => {
+        (window as any).getActiveMainModelList = () => ['kilo|other-model-x'];
+        const { h, ep } = handler({ provider: 'kilo', model: 'cut-model-x', url: 'https://api.kilo.ai/api/gateway/chat/completions' });
+        expect(h(0, cutOff(), 1000)).toBe(0);
+        expect(ep().model).toBe('other-model-x');
+    });
+
+    it('gives up after MAX_INSTANT_RETRIES immediate retries of one request, however the next model is chosen', async () => {
+        const { MAX_INSTANT_RETRIES } = await import('../retry.ts');
+        // every rotation finds a fresh free model (a long pool): each one is legitimate, together they are a loop
+        let k = 0;
+        (window as any).getActiveMainModelList = () => [`kilo|pool-${k}`, `kilo|pool-${k + 1}`];
+        const { h, notes } = handler({ provider: 'kilo', model: 'pool-0', url: 'https://api.kilo.ai/api/gateway/chat/completions' });
+        let n = 0, out: any = 0;
+        for (; n < 200; n++) { out = h(n, cutOff(), 1000); if (out !== 0) break; k++; }
+        expect(out).toBe(false);
+        expect(n).toBe(MAX_INSTANT_RETRIES);
+        expect(notes.at(-1)).toMatch(/immediate retries/);
+    });
+});

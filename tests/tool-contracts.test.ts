@@ -197,6 +197,16 @@ describe('replace_in_file', () => {
         expect(await stored('r.txt')).toBe('dup\ndup\nthree\nfour\n');
     });
 
+    // Self-analysis P2 2026-10-29: "// ... (rest of imports)" went into tools.ts through replace_in_file.
+    it('refuses a placeholder that stands for omitted lines, and keeps an ordinary comment', async () => {
+        await W.agentWriteFile('m.ts', "import { a } from './a.js';\nimport { b } from './b.js';\n");
+        const r = await tool('replace_in_file', { path: 'm.ts', old_string: "import { a } from './a.js';\nimport { b } from './b.js';", new_string: "import { c } from './c.js';\n// ... (rest of imports)" });
+        expect(r.error).toMatch(/Truncation placeholder/);
+        expect(await stored('m.ts')).toBe("import { a } from './a.js';\nimport { b } from './b.js';\n");
+        const ok = await tool('replace_in_file', { path: 'm.ts', old_string: "import { b } from './b.js';", new_string: "import { b } from './b.js';   // the rest of the module uses b (see below)" });
+        expect(ok.success).toBe(true);
+    });
+
     // Self-analysis P1 2026-10-29: end_line 2520 alone echoed the whole file (99k characters) and the next request did not fit the window.
     it('echoes a short range back on a miss, but only the closest lines for a long one', async () => {
         const text = Array.from({ length: 3000 }, (_, i) => `const value_${i} = ${i};`).join('\n');

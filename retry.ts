@@ -241,7 +241,7 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
         try { return await fn(); }
         catch (e) {
             // Every failed attempt is a request that ran and is in no token total: count it.
-            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed' }); } catch {}
+            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: String(e?.message ?? e).slice(0, 400), attempt }); } catch {}
             try { onFailure?.(e); } catch {}
             // Soft-stop is active (timeout or UI stop button): never retry — the caller will
             // see the error and return *(break)* or propagate it cleanly.
@@ -286,6 +286,7 @@ export function isModelGone(e: any, ep: any): boolean { return !_isLocalEp(ep) &
 
 // HTTP statuses that reject the request itself; 408/409/425/429 are left out (they can pass on a retry).
 export const SAME_ENDPOINT_WAIT_LIMIT_MS = 20 * 60_000;
+export const MAX_INSTANT_RETRIES = 20;
 const _CLIENT_ERROR_RE = /\bHTTP (?:400|401|403|404|405|410|413|415|422)\b|answered with a web page/;
 export const CUSTOM_CLIENT_ERROR_ATTEMPTS = 3;
 // Attempts (with backoff) on an empty or cut-off reply when no other model is free to cycle to.
@@ -315,11 +316,19 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             : 'openai';
         return fmt === _sessionFormat;
     };
+    // Where a spec actually sends requests. A CLI run's endpoint is `custom|m` while its model list holds `openai|m`: the same server and
+    // model under another name, so "rotating" to it re-sent the same request at once, forever (self-analysis P1 2026-10-29: 551 cut-off
+    // replies in 29 minutes, no step, no compaction; a mock gave 10756 requests in 60 s).
+    const _target = (spec: string): string => {
+        try { const ep = typeof specToEndpoint === 'function' ? specToEndpoint(spec) : null; return ep ? `${ep.url ?? ''}|${ep.model ?? ''}` : spec; }
+        catch { return spec; }
+    };
     const _anyFreeSpecSameFormat = (curKey: string): string | null => {
         if (typeof getActiveMainModelList !== 'function') return _anyFreeSpec(curKey);
         const list = getActiveMainModelList().filter(_sameFormat);
+        const here = _target(curKey);
         for (const candidate of list) {
-            if (candidate === curKey) continue;
+            if (candidate === curKey || _target(candidate) === here) continue;
             if (typeof getCooldownRemaining === 'function' && getCooldownRemaining(candidate) === 0) return candidate;
         }
         return null;
@@ -338,7 +347,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         onNote(`[${ep.provider}|${ep.model}][giving up: ${Math.round(_sameEpWaitedMs / 60_000)} min of retries on this endpoint with nowhere to rotate: ${String(e.message || '').slice(0, 120)}]`);
         return false;
     };
-    return (n, e, d) => {
+    const decide = (n, e, d) => {
         // Truncated/empty response: cycle through the model pool, same as for 429s.
         // Use a short exact cooldown (30s) so each provider is skipped in turn while
         // the others are tried, then becomes available again when the pool has cycled.
@@ -505,6 +514,17 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         // to retryDelay()'s raw exponential (1500*2^attempt) with no ceiling — hours of sleep.
         // Custom endpoints: use same 5s flat cap as the non-worker path.
         if (isCustom) return Math.min(d, 60_000);
+    };
+    // Every rotation answers 0 (resend at once). However the next model is chosen, more than this many in a row for one request is a loop:
+    // the error goes to the caller, whose own recovery (compaction, the cut-off and empty-reply limits) runs.
+    let _instant = 0;
+    return (n, e, d) => {
+        const r = decide(n, e, d);
+        if (r === 0 && ++_instant > MAX_INSTANT_RETRIES) {
+            onNote(`[${getEp().provider}|${getEp().model}][giving up: ${MAX_INSTANT_RETRIES} immediate retries of one request: ${String(e?.message || '').slice(0, 120)}]`);
+            return false;
+        }
+        return r;
     };
 }
 

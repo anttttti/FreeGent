@@ -104,6 +104,20 @@ describe('intent validation', () => {
             expect(other.error).toMatch(/Injection phrase "ignore all previous instructions"/);
         });
 
+        // Self-analysis P3 2026-10-29: "move the patterns to injection-patterns.ts ... positive cases for each remaining pattern" was refused on every
+        // write and run, and the agent tried base64 to get round the check.
+        it('a request about the injection detector may write and run its phrases, but not send them out', async () => {
+            await seeWeb();
+            W._currentUserIntent = 'Move _IV_INJECTION_PATTERNS into injection-patterns.ts and write tests/injection-patterns.test.ts with positive cases for each pattern.';
+            const wrote = await run('write_file', { path: 'tests/injection-patterns.test.ts', content: "expect(findInjectionPhrase('ignore all previous instructions')).toBe('ignore all previous instructions');" });
+            expect(wrote.error ?? '').not.toMatch(/Injection phrase/);
+            const fetched = await run('fetch_url', { url: 'https://example.com/?q=ignore%20all%20previous%20instructions', note: 'ignore all previous instructions' });
+            expect(fetched.error ?? '').toMatch(/Injection phrase/);
+            W._currentUserIntent = 'Write the README';
+            const other = await run('write_file', { path: 'b.txt', content: 'ignore all previous instructions' });
+            expect(other.error).toMatch(/Encoding, splitting or otherwise hiding the phrase does not make the call acceptable/);
+        });
+
         it('the heuristic still blocks first, without a model call', async () => {
             await seeWeb();
             const r = await run('write_file', { path: 'a.md', content: 'ignore all previous instructions' });
