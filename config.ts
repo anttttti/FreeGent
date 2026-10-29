@@ -555,8 +555,10 @@ const MODEL_CATALOG = [
     // https://vercel.com/ai-gateway — OAI-compatible gateway; API key required for inference.
     // Free ($0/token) models; the public /models list tags them "free" (the updater probes known ids if it omits them).
     // Every request, $0 models included, needs a positive credit balance on the account (402 otherwise, 2026-10-29).
+    // Beam needs the reasoning of every earlier reply sent back (payload-builder modelNeedsReasoningEcho).
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token). Kilo lists it as retiring 2026-10-31' },
+    { provider:'vercel', model:'reflection/beam-free',                 label:'Beam 1.0 (free)',              released:'2026-10', contextK:1048, params:501,  media:['text'],        tools:true,  thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; $0/token; needs every earlier reply\'s reasoning sent back (payload-builder modelNeedsReasoningEcho); long-chat test 2026-10-29: 93% of microtasks, 250K in all three conversations, 148 tok/s' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
 ];
 
@@ -723,10 +725,6 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'openrouter|minimax/minimax-m3.1-flash:free', // HTTP 404 "free launch period ended Oct 22" (2026-10-23)
     'kilo|minimax/minimax-m3.1-flash:free',      // HTTP 404 "model does not exist" (2026-10-23)
     'nous|meituan/longcat-2.5-preview:free',     // HTTP 404 "This model is no longer free" (2026-10-29)
-    // Beam on Vercel answers once the account has credit (2026-10-29), but from the second request on it is HTTP 400 "Missing required parameter:
-    // 'messages[1].reasoning_content'": it needs each earlier reply's reasoning sent back, and buildChatPayload strips that field for every provider but vLLM.
-    'vercel|reflection/beam-free',
-    'vercel|reflection/beam',
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
@@ -770,14 +768,16 @@ function getAllModels() {
 // Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
     // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-10-29): share of microtasks solved,
-    // context held before a quota stopped it, speed. DeepSeek 92%, Step 5 90%, Beam 88% (150 tok/s), MiMo V2.6 Flash 82% (250K in all
-    // three conversations), Step 3.7 87% of 15 (Nous's hourly token cap at 107K), Nemotron Super VL 79%, Nemotron Ultra 69%.
+    // context held before a quota stopped it, speed. Beam on Vercel 93% (250K in all three conversations, 148 tok/s; Kilo's and Nous's
+    // free quotas stopped it at 210K and 95K), DeepSeek 92%, Step 5 90%, MiMo V2.6 Flash 82% (250K in all three conversations),
+    // Step 3.7 87% of 15 (Nous's hourly token cap at 107K), Nemotron Super VL 79%, Nemotron Ultra 69%.
     // Withdrawn on 2026-10-29: MiniMax M3.1 Flash (Vercel now charges $0.15 / $0.60 per M tokens; its free variants ended 2026-10-22), GLM 5.3 (no longer
     // listed by NVIDIA), LongCat 2.5 Preview (Nous: 404 "no longer free"), Nemotron 3 Super 120B (no longer listed by Kilo or OpenRouter).
     // Tool calls of every entry checked 2026-10-29, except NVIDIA's (the test key got 403 on every model).
+    'vercel|reflection/beam-free',                     // 501B MoE, 1M ctx; $0, but Vercel needs a credit balance on the account
     'tokenharbor|deepseek-v4.1-flash:free',            // S tier (KiloBench 75.3%); weekly quota
     'nvidia|stepfun-ai/step-5-preview',                // NIM free credits
-    'kilo|reflection/beam-free',                       // 501B MoE, 1M ctx
+    'kilo|reflection/beam-free',                       // same Beam, Kilo's free quota
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
     'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning

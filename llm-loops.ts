@@ -6,7 +6,7 @@ import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTe
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
+import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isReasoningEchoDemand, isProviderSide400, parseContextOverflow, fmtDelay, sleepInterruptible, withRetry, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, asTransportError, _makeOAIRetryHandler, _httpErrorFromResponse, _parseRetryAfter } from './retry.js';
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName, withEndpointSlot } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
@@ -14,7 +14,7 @@ import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlP
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, userForbidsExecution, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
-import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages, markModelRefusesImages, modelRefusesImages, stripImageParts, markModelRejectsThinkingFields, modelRejectsThinkingFields, stripThinkingFields } from './payload-builder.js';
+import { isCustomEndpoint, buildChatPayload, buildRequestMessages, fnTagMessages, markModelRefusesImages, modelRefusesImages, stripImageParts, markModelRejectsThinkingFields, modelRejectsThinkingFields, stripThinkingFields, markModelNeedsReasoningEcho, modelNeedsReasoningEcho, withReasoningEcho } from './payload-builder.js';
 import { buildOAITools, activeTools } from './tool-schemas.js';
 import { decodeOAIResponse } from './stream-decode.js';
 import { compactHistory } from './llm-shared.js';
@@ -2018,7 +2018,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         _evtAppend(_s, 'assistant/message', {
             turn: _s._evtTurn ?? 0,
             step,
-            message: { role: 'assistant', content: msg.content ?? null, ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) },
+            message: { role: 'assistant', content: msg.content ?? null, ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
+                       // kept only for a model that needs it back (payload-builder modelNeedsReasoningEcho); for the others it would only fill the chat
+                       ...(typeof msg.reasoning_content === 'string' && msg.reasoning_content && modelNeedsReasoningEcho(_epKey) ? { reasoning_content: msg.reasoning_content } : {}) },
             ...(usage?.prompt_tokens ? { usage: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens ?? 0 } } : {}),
         }, { surfaceOp: 'append' });
         if (usage?.prompt_tokens) _lastInputTokens = usage.prompt_tokens;
@@ -2703,10 +2705,17 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // Schema rejected → learn 'none' and resend right away without tools, so the turn goes on.
     // A model that takes none of the thinking controls we send (NVIDIA z-ai/glm-5.3: 400 "Unsupported parameter(s): `reasoning_budget`") is remembered,
     // and this request is resent without them: the worker that hit it was blocked for a setting, not for anything the task asked.
+    // A model that wants the earlier replies' reasoning back (Vercel's Beam: 400 "Missing required parameter: 'messages[1].reasoning_content'")
+    // is remembered the same way, and this request is resent with it (a stand-in where it was not kept).
     const _send = async (p: any) => {
         try { return await callLLM(ep, p, _timestampedOnChunk, { onRequest }); }
         catch (e: any) {
             const _mkey = `${provider}|${model}`;
+            if (isReasoningEchoDemand(e?.message) && !modelNeedsReasoningEcho(_mkey)) {
+                markModelNeedsReasoningEcho(_mkey);
+                console.warn(`[reasoning] ${_mkey}: wants the earlier replies' reasoning back — sent with it from now on:`, e.message);
+                return await callLLM(ep, { ...p, messages: withReasoningEcho(p.messages) }, _timestampedOnChunk, { onRequest });
+            }
             if (!isThinkingFieldRefusal(e?.message) || modelRejectsThinkingFields(_mkey)) throw e;
             markModelRejectsThinkingFields(_mkey);
             console.warn(`[thinking] ${_mkey}: thinking controls rejected — sent without them from now on:`, e.message);

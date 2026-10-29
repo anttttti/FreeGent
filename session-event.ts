@@ -50,7 +50,7 @@ export interface SessionEventMap {
     // Assembled assistant response with optional usage accounting.
     'assistant/message': {
         turn: number; step: number;
-        message: { role: 'assistant'; content: string | null; tool_calls?: unknown[] };
+        message: { role: 'assistant'; content: string | null; tool_calls?: unknown[]; reasoning_content?: string };
         usage?: TokenUsage;
     };
     // Executed tool result. replace surfaceOp = non-destructive pruned stub;

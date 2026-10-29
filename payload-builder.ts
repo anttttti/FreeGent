@@ -126,6 +126,22 @@ export const modelRejectsThinkingFields = (key: string) => {
     if (Date.now() - at > THINKING_REFUSAL_TTL_MS) { _noThinkingFieldModels.delete(key); return false; }
     return true;
 };
+// Models that need the reasoning of every earlier assistant message sent back (Vercel's Beam: HTTP 400 "Missing required parameter:
+// 'messages[1].reasoning_content'. This model needs the reasoning of every earlier assistant message"). The known ones are listed; another
+// is learned from that 400 (llm-loops _send) for the session. Their replies keep reasoning_content in the chat history, and the payload sends it.
+const _REASONING_ECHO_MODELS: ReadonlySet<string> = new Set(['vercel|reflection/beam-free', 'vercel|reflection/beam']);
+const _learnedReasoningEcho = new Set<string>();
+export const markModelNeedsReasoningEcho = (key: string) => { _learnedReasoningEcho.add(key); };
+export const clearReasoningEchoModels = () => { _learnedReasoningEcho.clear(); };
+export const modelNeedsReasoningEcho = (key: string) => _REASONING_ECHO_MODELS.has(key) || _learnedReasoningEcho.has(key);
+// The stand-in for a reply whose reasoning was not kept (said before the model was known, or replaced by a repair or truncation):
+// the endpoint refuses an empty reasoning_content but takes any text.
+export const REASONING_NOT_KEPT = '(earlier reasoning not kept)';
+/** Every assistant message with a reasoning_content: its own, or the stand-in. */
+export function withReasoningEcho(messages: any[]): any[] {
+    return messages.map(m => m.role !== 'assistant' ? m
+        : { ...m, reasoning_content: (typeof m.reasoning_content === 'string' && m.reasoning_content.trim()) ? m.reasoning_content : REASONING_NOT_KEPT });
+}
 /** The request without the thinking controls (the resend after a model refused them). */
 export function stripThinkingFields(payload: any): any {
     const { reasoning_budget: _rb, thinking: _th, thinking_token_budget: _tb, ...rest } = payload;
@@ -186,10 +202,12 @@ export function buildChatPayload(ep: any, {
 
     // Strip reasoning_content from assistant messages for non-vllm providers.
     // vLLM understands the field (used by preserve_thinking to re-insert <think> blocks);
+    // a model that needs it back (modelNeedsReasoningEcho) gets it on every assistant message;
     // all other providers — including strict ones like Mistral/Devstral that reject unknown
     // fields with HTTP 422 — must not receive it.
     const _messages = provider === 'vllm'
         ? messages
+        : modelNeedsReasoningEcho(`${provider}|${ep?.model ?? ''}`) ? withReasoningEcho(messages)
         : messages.map(m => (m.role === 'assistant' && m.reasoning_content != null)
             ? (({ reasoning_content: _rc, ...rest }) => rest)(m)
             : m);

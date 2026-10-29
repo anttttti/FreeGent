@@ -117,6 +117,14 @@ export function isThinkingFieldRefusal(message: unknown): boolean {
     return /\bHTTP 400\b/.test(m) && _THINKING_FIELD_RE.test(m) && _FIELD_REFUSAL_RE.test(m);
 }
 
+// The server wants the reasoning of the earlier assistant messages back (Vercel, reflection/beam-free: "HTTP 400: Missing required parameter:
+// 'messages[1].reasoning_content'. This model needs the reasoning of every earlier assistant message"). The caller remembers the model and
+// resends with it (payload-builder withReasoningEcho).
+export function isReasoningEchoDemand(message: unknown): boolean {
+    const m = String(message ?? '');
+    return /\bHTTP 400\b/.test(m) && /reasoning_content/.test(m) && /missing|required|send back/i.test(m);
+}
+
 export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
     const msg = e.message || '';
     // vLLM (current): "you requested M output tokens and your prompt contains at least N input
