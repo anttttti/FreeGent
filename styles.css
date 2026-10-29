@@ -790,10 +790,10 @@ html, body {
 .seq-task-truncated-note { font-size: 9px; color: #ef5350; display: block; font-style: italic; }
 .seq-live-detail, .seq-selected-detail { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .seq-detail-col { background: #f7f9fc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 200px; max-width: 400px; flex: 1; font-size: 12px; }
-.seq-col-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.seq-col-header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }   /* wraps at 320 px: the 4th step tab was cut off (AE-20) */
 .seq-col-header > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
 .step-toggle { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: var(--faint); flex-shrink: 0; }
-.step-tabs { display: flex; gap: 1px; align-items: center; margin-left: auto; flex-shrink: 0; }
+.step-tabs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 1px; align-items: center; margin-left: auto; min-width: 0; }
 .step-tab-btn { background: none; border: none; padding: 1px 6px; cursor: pointer; font-size: 10px; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: 0.4px; border-radius: 3px; transition: color 0.1s, background 0.1s; }
 .step-tab-btn:hover { color: #555; background: rgba(0,0,0,0.06); }
 .step-tab-btn.step-tab-active { color: var(--accent, #4a7cf7); background: rgba(74,124,247,0.1); }
@@ -1186,6 +1186,7 @@ html, body {
 /* Runner label (⚡ Runner) and status text — glow while actively running (not paused) */
 .runner-label.runner-running  { color: var(--accent) !important; animation: runner-pulse 1.4s ease-in-out infinite; }
 .runner-status-text.runner-running { color: var(--accent) !important; animation: runner-pulse 1.4s ease-in-out infinite; }
+.runner-status-text.runner-model-down { color: #d97706 !important; animation: none; }   /* AE-13: the model is not answering */
 
 /* Chat link inside the runner header */
 .runner-chat-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
@@ -1975,6 +1976,10 @@ body.fg-viewing-other #img-strip,
 body.fg-viewing-other #chat-welcome { display: none !important; }
 #fg-chat-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .fg-chat-viewer-bar { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 10px; font-size: 12px; background: var(--surface2, #2a2a2a); border-bottom: 1px solid var(--border, #444); }
+/* AE-22: the paused task's question, answerable from the read-only viewer */
+.fg-chat-viewer-question { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 8px 10px; font-size: 13px; border-bottom: 1px solid var(--border, #444); border-left: 3px solid #d97706; }
+.fg-chat-viewer-question span { flex: 1 1 100%; color: var(--text); }
+.fg-chat-viewer-question textarea { flex: 1 1 200px; min-width: 0; resize: vertical; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit; }
 .fg-chat-viewer-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 8px; }
 
 /* Contrast: inline code in dark mode (was #d63384 on the code background, 3.7:1) */

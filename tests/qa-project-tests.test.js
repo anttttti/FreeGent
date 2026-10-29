@@ -164,3 +164,36 @@ describe('the failure the reason quotes', () => {
         expect((await W.transitionTask('fg-tasks/006-other.md', 'done')).reason).toMatch(/Tests failed: test_b\.py\. ImportError: no f\./);
     });
 });
+
+// Autopilot exploration 2026-10-28, AE-12: task 004 rewrote index.html from scratch and the search box of the done task 001 was gone;
+// every gate passed. kept-features names what the task removed that an earlier done task mentions, once.
+describe('kept-features gate', () => {
+    const T1 = 'fg-tasks/001-search-box.md', T4 = 'fg-tasks/004-chart-small-screens.md';
+    const done1 = `---\nid: 001\ntitle: Search box\nstatus: done\n---\n# Search box\nAdd a search input that filters the table.\n`;
+    const t4 = (st) => `---\nid: 004\ntitle: Fix the chart on small screens\nstatus: ${st}\n---\n# Chart\nMake the chart fit.\n`;
+    const page = (search) => `<html><body>${search ? '<input id="search">' : ''}<canvas id="chart"></canvas><script>function drawChart(){}${search ? 'function filterRows(){}' : ''}</script></body></html>`;
+    beforeEach(() => { localStorage.setItem('fg_qa_test_runner', 'false'); });
+
+    it('bounces a done that removed the earlier task\'s #search, then accepts it the second time', async () => {
+        Object.assign(files, { [T1]: done1, [T4]: t4('todo'), 'index.html': page(true) });
+        delete files[TASK];
+        W.loadTaskFiles = async () => Object.keys(files).filter(f => /^fg-tasks\/\d+-/.test(f)).map(f => ({ path: f, fm: { id: f.slice(9, 12), title: /title: (.*)/.exec(files[f])[1], status: /status: (.*)/.exec(files[f])[1] } }));
+        expect((await W.transitionTask(T4, 'in-progress')).transitioned).toBe(true);
+        files['index.html'] = page(false);                       // the full rewrite
+        const first = await W.transitionTask(T4, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/search \(index\.html; task #001 "Search box"\)/);
+        expect(first.reason).not.toMatch(/filterRows/);          // not mentioned by any done task
+        const second = await W.transitionTask(T4, 'done');
+        expect(second.transitioned).toBe(true);
+    });
+
+    it('says nothing when the earlier work is still there or nothing mentions it', async () => {
+        Object.assign(files, { [T1]: done1, [T4]: t4('todo'), 'index.html': page(true) });
+        delete files[TASK];
+        W.loadTaskFiles = async () => Object.keys(files).filter(f => /^fg-tasks\/\d+-/.test(f)).map(f => ({ path: f, fm: { id: f.slice(9, 12), title: /title: (.*)/.exec(files[f])[1], status: /status: (.*)/.exec(files[f])[1] } }));
+        await W.transitionTask(T4, 'in-progress');
+        files['index.html'] = page(true).replace('<canvas id="chart"></canvas>', '<canvas id="chart" width="320"></canvas>');
+        expect((await W.transitionTask(T4, 'done')).transitioned).toBe(true);
+    });
+});

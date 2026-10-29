@@ -256,6 +256,17 @@ const _REPEAT_CACHE_MAX = 150;
 // Consecutive all-failing tool turns before the loop bails with a graceful synthesis.
 const _MAX_CONSEC_TOOL_FAILS = 10;
 const _MAX_COMPACT_STREAK = 4;   // compactions in a row with no model response between them before the turn stops
+// The system prompt goes into a chat's turn log when it differs from the one logged last for that chat, not with every step: about 10 kB a
+// step, so 600 kB of a 60-step Autopilot task's storage was the same text (autopilot exploration AE-19, 2026-10-28: 3.4 MB per task).
+const _lastLoggedPrompt = new Map<string, string>();
+function _loggedSystemPrompt(): { systemPrompt?: string } {
+    const sp = buildSystemPrompt();
+    const key = String(activeChatId ?? '');
+    if (_lastLoggedPrompt.get(key) === sp) return {};
+    _lastLoggedPrompt.set(key, sp);
+    if (_lastLoggedPrompt.size > 50) _lastLoggedPrompt.delete(_lastLoggedPrompt.keys().next().value!);
+    return { systemPrompt: sp };
+}
 const _MAX_EMPTY_STREAK = 2;       // times a whole backoff round (retry.ts EMPTY_REPLY_ATTEMPTS) ends empty before the turn stops
 const _MAX_CUT_OFF_STREAK = 4;   // consecutive responses discarded at the output cap before the turn stops
 
@@ -2115,7 +2126,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
                 cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens ?? 0,
                 response: textContent, toolCalls: [], loopDetected: false,
-                systemPrompt: buildSystemPrompt(),
+                ..._loggedSystemPrompt(),
                 lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
             });
             _updateLogBadge?.();
@@ -2259,7 +2270,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             response: textContent,
             toolCalls: _exec.map(r => ({ name: r.name, args: r.args, result: r.result })),
             loopDetected: _repeatedNames.length > 0 || consecutiveToolFails >= 5,
-            systemPrompt: buildSystemPrompt(),
+            ..._loggedSystemPrompt(),
             lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
         });
         _noteStopAttempts(_exec);   // before any stop below, so the step that ends the run is included

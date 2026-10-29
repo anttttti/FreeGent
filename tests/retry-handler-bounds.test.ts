@@ -161,3 +161,20 @@ describe('rotation never goes to the endpoint it is leaving', () => {
         expect(notes.at(-1)).toMatch(/immediate retries/);
     });
 });
+
+// Autopilot exploration 2026-10-28, AE-13: five minutes of outage read as a bare "Running…". withRetry counts the failed model requests in a
+// row (the runner shows them from three on); a cut-off reply is not a failure to reach the model, and a success ends the run.
+describe('modelFailureRun', () => {
+    it('counts failures across requests, ignores cut-off replies, and resets on success', async () => {
+        const { withRetry, modelFailureRun, clearModelFailureRun } = await import('../retry.ts');
+        clearModelFailureRun();
+        let n = 0;
+        const seen: number[] = [];
+        await withRetry(async () => { if (++n <= 3) throw new Error('HTTP 502 Bad Gateway'); return 'ok'; },
+            () => { seen.push(modelFailureRun().n); return 0; }, 10, () => true);
+        expect(seen).toEqual([1, 2, 3]);
+        expect(modelFailureRun().n).toBe(0);
+        await withRetry(async () => { throw Object.assign(new Error('TruncatedResponse(x)'), { isTruncated: true }); }, () => false, 2, () => true).catch(() => {});
+        expect(modelFailureRun().n).toBe(0);
+    });
+});

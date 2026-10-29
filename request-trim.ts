@@ -24,3 +24,21 @@ export function requestKeeper<T>(trim: (step: T) => void, keep = KEEP_WHOLE_REQU
         },
     };
 }
+
+// The saved copy of a chat's messages (a string, rewritten after every turn) keeps the start of each step's Request and Prompt pane, the
+// four newest included: those are whole on the page for inspection, but in the saved copy they were 292 of a 23-step task chat's 428 kB,
+// most of a task's storage (autopilot exploration AE-19, 2026-10-28: 3.4 MB per task). A pane's text is HTML-escaped, so it holds no
+// literal "</pre>", and the cut is moved back before an unfinished entity.
+const _SAVED_PANE_RE = /(<pre\b[^>]*\bdata-tab-name="(?:Request|Prompt)"[^>]*>)([\s\S]*?)(<\/pre>)/g;
+// 1500 characters: every request starts with the same system prompt and tool list, so more of it says nothing new about a step.
+export const SAVED_PANE_CHARS = 1500;
+export function trimSavedPanes(html: string, keep = SAVED_PANE_CHARS): string {
+    if (html.length < keep * 4) return html;
+    return html.replace(_SAVED_PANE_RE, (m, open, body, close) => {
+        if (body.length <= keep + 200) return m;
+        let cut = keep;
+        const amp = body.lastIndexOf('&', cut);
+        if (amp >= 0 && body.indexOf(';', amp) >= cut) cut = amp;
+        return `${open}${body.slice(0, cut)}\n… [${(body.length - cut).toLocaleString('en-US')} more characters not kept in the saved chat]${close}`;
+    });
+}

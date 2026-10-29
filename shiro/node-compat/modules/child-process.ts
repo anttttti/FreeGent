@@ -234,6 +234,20 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
 
     return { stdout, stderr, exitCode };
   };
+  // The browser shell cannot block, so the *Sync functions start the command and hand back a placeholder that `await` resolves. Reading it
+  // before then gave `{}`, an empty string or empty stdout with no word of why (autopilot exploration AE-17, 2026-10-28: a CLI's own test
+  // `execSync('node cli.js')` paused a task three times). Now such a read says what happened and what works instead.
+  const notFinished = (api: string, cmd: string) => Object.assign(new Error(
+    `child_process.${api}(${JSON.stringify(cmd.slice(0, 80))}) has not finished: the in-browser shell runs child commands asynchronously and ${api} `
+    + `cannot wait for them. Write \`await ${api}(...)\` (here it returns a promise-like value), or use exec/execFile with a callback, `
+    + `or import the module and call it directly instead of starting another node.`), { code: 'ERR_SYNC_CHILD_NOT_FINISHED' });
+  // A placeholder whose `then` waits for `done`; any other string-keyed read before that throws `notFinished`.
+  const guarded = <T extends object>(target: T, isDone: () => boolean, api: string, cmd: string): T => new Proxy(target, {
+    get(t, prop, recv) {
+      if (prop === 'then' || isDone() || typeof prop === 'symbol' && prop !== Symbol.toPrimitive) return Reflect.get(t, prop, recv);
+      throw notFinished(api, cmd);
+    },
+  });
   const cpModule: any = {
     execSync: (cmd: string, opts?: any) => {
       // In browser, execSync cannot truly block. We return a placeholder
@@ -263,7 +277,8 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       let resultErr = '';
       let resultCode = 0;
       const wantString = opts?.encoding && opts.encoding !== 'buffer';
-      const p = execAsync(effectiveCmd).then(r => { result = r.stdout; resultErr = r.stderr; resultCode = r.exitCode; });
+      let done = false;
+      const p = execAsync(effectiveCmd).then(r => { result = r.stdout; resultErr = r.stderr; resultCode = r.exitCode; done = true; });
       if (wantString) {
         const str: any = new String('');
         str.then = (resolve: any, reject: any) => p.then(() => {
@@ -273,6 +288,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         return new Proxy(str, {
           get(target, prop) {
             if (prop === 'then') return str.then;
+            if (!done && (typeof prop === 'string' || prop === Symbol.toPrimitive)) throw notFinished('execSync', cmd);
             const val = (result as any)[prop];
             if (typeof val === 'function') return val.bind(result);
             return val;
@@ -287,7 +303,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         }).catch(reject),
         [Symbol.toPrimitive]: () => result,
       };
-      return buf;
+      return guarded(buf, () => done, 'execSync', cmd);
     },
     spawnSync: (cmd: string, args?: string[], opts?: any) => {
       // Handle overload: spawnSync(cmd, opts) without args
@@ -323,15 +339,16 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       let stdout = '';
       let stderr = '';
       let status = 0;
-      const p = execAsync(fullCmd).then(r => { stdout = r.stdout; stderr = r.stderr; status = r.exitCode; });
+      let done = false;
+      const p = execAsync(fullCmd).then(r => { stdout = r.stdout; stderr = r.stderr; status = r.exitCode; done = true; });
       pendingPromises.push(p);
-      return {
+      return guarded({
         get stdout() { return wrap(stdout); },
         get stderr() { return wrap(stderr); },
         get status() { return status; },
         get error() { return status !== 0 ? new Error(`spawnSync exited with ${status}`) : undefined; },
         then: (resolve: any, reject: any) => p.then(() => resolve({ stdout: wrap(stdout), stderr: wrap(stderr), status })).catch(reject),
-      };
+      }, () => done, 'spawnSync', fullCmd);
     },
     exec: (cmd: string, opts: any, cb?: any) => {
       const callback = typeof opts === 'function' ? opts : cb;
@@ -578,13 +595,13 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         buf.then = (resolve: any) => resolve(FakeBuffer.from(syncResponse.stdout));
         return buf;
       }
-      let result = '';
-      const p = execAsync(fullCmd).then(r => { result = r.stdout; });
+      let result = '', done = false;
+      const p = execAsync(fullCmd).then(r => { result = r.stdout; done = true; });
       pendingPromises.push(p);
       // Return thenable Buffer so await resolves to actual result
       const buf: any = FakeBuffer.from('');
       buf.then = (resolve: any, reject: any) => p.then(() => resolve(FakeBuffer.from(result))).catch(reject);
-      return buf;
+      return guarded(buf, () => done, 'execFileSync', fullCmd);
     },
     // fork() — spawn a new Node.js process (delegates to spawn)
     fork: (modulePath: string, args?: string[], options?: any) => {

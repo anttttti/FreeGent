@@ -8,6 +8,7 @@ import { isStepLimitStop } from './loop-director.js';
 import { sendTaskLog } from './dev-log.js';
 import { playTurnSound } from './turn-sound.js';
 import { buildRedactedChatJson } from './convo-log.js';
+import { modelFailureRun } from './retry.js';
 
 interface Task {
     path: string;
@@ -223,6 +224,7 @@ function runnerRestart() {
 async function _runLoop() {
     _runnerRunning       = true;
     _interruptedNote     = '';
+    _runnerStartedPaths.clear();
     setAiJob('runner');
     _runnerPaused        = false;
     _runnerAbort         = false;
@@ -282,6 +284,16 @@ async function _runLoop() {
                 const _asked = _runnerPauseReason;
                 const userReply = await _waitForUnblock();
                 if (_runnerAbort) break;
+                // Deleted while it waited for the answer (the card's delete): it is not continued, so its file is not written again (AE-15).
+                if (!(await agentReadFile(task.path).then(() => true, () => false))) {
+                    const last = _runnerSessionLog[_runnerSessionLog.length - 1];
+                    if (last) { last.outcome = 'failed'; last.reason = 'Deleted while it waited for an answer; not continued.'; }
+                    _renderRunnerLog();
+                    _appendRunnerLog(task.fm.id || '', `${task.fm.title || task.path}`, 'info', 'task deleted while paused: not continued');
+                    if (!_runnerAll) break;
+                    await refreshTasks();
+                    continue;
+                }
                 if (userReply) {
                     _runnerUserNotes.push({ task: String(task.fm.title || task.path), question: _asked.slice(0, 300), answer: userReply.slice(0, 500) });
                     await _runnerTurn(userReply);
@@ -469,6 +481,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     // before any agent work (or a new chat) begins.
     const _startStatus = canonTaskStatus((parseFrontmatter(await agentReadFile(task.path).catch(() => '')).status));
     forgetGatePass(task.path);
+    _runnerStartedPaths.add(task.path);
     if (getRunnerQa()) {
         const start = await transitionTask(task.path, 'in-progress');
         if (!start.transitioned) {
@@ -571,7 +584,10 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         const _stepLimited = shouldContinueAfterStepLimit(_lastResult, stepLimitContinues);
         if (!_stepLimited && (_signal === 'blocked' || _statusBlocked)) {
             blocked       = true;
-            blockedReason = (_statusBlocked?.[1] ?? lastMsg.trim().split('\n').find(l => l.trim()) ?? '').trim().slice(0, 200)
+            // The question: the BLOCKED line if it is still there, else the reply's last line (the prompt asks for it last). The first line
+            // was a preamble ("I need to know one thing.") and the user saw no question (found while checking AE-22, 2026-10-30).
+            const _blockedLine = /^\s*\**BLOCKED\**:?\s*(.+)$/im.exec(lastMsg)?.[1];
+            blockedReason = (_statusBlocked?.[1] ?? _blockedLine ?? lastMsg.trim().split('\n').filter(l => l.trim()).pop() ?? '').trim().slice(0, 200)
                 || 'Task blocked — needs user input';
             break;
         }
@@ -742,6 +758,26 @@ function checkInterruptedRun(): void {
     else initRunner();
 }
 
+// "Running…" while the model answers; after three failed requests in a row, that it does not, for how long and why (AE-13).
+function _renderRunnerStatus() {
+    const statusEl = document.getElementById('runner-status');
+    if (!statusEl) return;
+    const running = _runnerRunning && !_runnerPaused;
+    const fails = running ? (modelFailureRun?.() ?? { n: 0, since: 0, message: '' }) : { n: 0, since: 0, message: '' };
+    const down = fails.n >= 3;
+    if (!_runnerRunning)     statusEl.textContent = _interruptedNote || 'Idle';
+    else if (_runnerPaused)  statusEl.textContent = `Paused: ${_runnerPauseReason}`;
+    else if (down) {
+        const sec = Math.round((Date.now() - fails.since) / 1000);
+        const span = sec < 90 ? `${Math.max(sec, 1)} s` : `${Math.round(sec / 60)} min`;
+        statusEl.textContent = `Running… the model is not answering: ${fails.n} failed requests in ${span} (${fails.message}); retrying`;
+    }
+    else                     statusEl.textContent = 'Running…';
+    statusEl.classList.toggle('runner-running', running);
+    statusEl.classList.toggle('runner-model-down', down);
+}
+try { window.addEventListener('fg-model-failures', () => _renderRunnerStatus()); } catch {}
+
 function _updateRunnerUI() {
     _persistRunState();
     const runBtn      = document.getElementById('runner-run-btn');
@@ -768,12 +804,7 @@ function _updateRunnerUI() {
     if (inputBar)    inputBar.style.display    = paused   ? 'flex' : 'none';
     if (interruptBar) interruptBar.style.display = running ? 'flex' : 'none';
 
-    if (statusEl) {
-        if (idle)         statusEl.textContent = _interruptedNote || 'Idle';
-        else if (paused)  statusEl.textContent = `Paused: ${_runnerPauseReason}`;
-        else              statusEl.textContent = 'Running…';
-        statusEl.classList.toggle('runner-running', running);
-    }
+    _renderRunnerStatus();
 
     // Glow the Tasks rail nav button and the Runner label while the loop is active.
     const tasksRailBtn = document.querySelector('.left-rail .rail-nav-btn[data-tab="tasks"]');
@@ -786,8 +817,10 @@ function _updateRunnerUI() {
     // Auto-expand runner zone when loop becomes active; don't auto-collapse on idle
     // so the session log stays visible after a run.
     if (_runnerRunning) toggleRunnerZone(true);
+    // A user viewing another chat on the Chat tab gets the question and a reply box there (AE-22).
+    try { (window as any).chatViewerShowQuestion?.(paused ? _runnerPauseReason || 'it asked a question' : null); } catch {}
     // Paused for the user: the answer goes in the reply box, so put the cursor there.
-    if (paused) { try { (document.getElementById('runner-unblock-input') as HTMLTextAreaElement | null)?.focus(); } catch {} }
+    if (paused && !document.body.classList.contains('fg-viewing-other')) { try { (document.getElementById('runner-unblock-input') as HTMLTextAreaElement | null)?.focus(); } catch {} }
 }
 
 export function _updateRunnerCurrentTask(task: Task | null): void {
@@ -879,4 +912,11 @@ function initRunner() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+// Task files this run has started: a later update_task_status on one that is gone means it was deleted, not that it is new (AE-15).
+const _runnerStartedPaths = new Set<string>();
+function runnerStartedTask(path: string): boolean { return _runnerRunning && _runnerStartedPaths.has(path); }
+
+/** What the paused run waits for, or null when it is not paused. */
+function getRunnerPauseReason(): string | null { return _runnerRunning && _runnerPaused ? (_runnerPauseReason || 'it asked a question') : null; }
+
+Object.assign(window, { getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

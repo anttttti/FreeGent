@@ -102,6 +102,18 @@ describe('update_task_status', () => {
         expect(files.get('fg-tasks/new-042.md')).toMatch(/^status: done$/m);
     });
 
+    // Autopilot exploration 2026-10-28, AE-15: the user deleted the card of the task the runner was on; the agent set its status and the
+    // deleted task came back as Done. A task the runner started that is now gone is refused, and nothing is written.
+    it('refuses a status for a task the runner started and the user then deleted', async () => {
+        const saved = W.runnerStartedTask;
+        W.runnerStartedTask = (p) => p === 'fg-tasks/204-delete-me.md';
+        try {
+            const res = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/204-delete-me.md', status: 'done' }, null);
+            expect(res.error).toMatch(/no longer exists: the task was deleted/);
+            expect(files.has('fg-tasks/204-delete-me.md')).toBe(false);
+        } finally { W.runnerStartedTask = saved; }
+    });
+
     // Audit §4.3 — setTaskStatus used to swallow write failures, so an unwritable
     // workspace produced ok:true (and, since the status never changed on disk, made the
     // autopilot/agent-loop task selectors re-pick the same task forever).

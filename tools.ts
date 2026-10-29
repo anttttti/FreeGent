@@ -1181,6 +1181,12 @@ async function _handleUpdateTaskStatus(args: any) {
         const fallback = path.replace(/^local\//, '');
         return { error: `update_task_status: No local folder is open — use the workspace path "${fallback}" instead of "${path}".` };
     }
+    // A task file that is gone was deleted (by the user, from the board): setting a status would write it again, and the deleted task came
+    // back as Done with its change made (autopilot exploration AE-15, 2026-10-28).
+    // Only a task the runner started this run (it existed then): a status for a path never seen creates the task, as before.
+    let _exists = true;
+    try { await agentReadFile(path); } catch { _exists = false; }
+    if (!_exists && (window as any).runnerStartedTask?.(path)) return { error: `update_task_status: "${path}" no longer exists: the task was deleted, most likely by the user. Do not create it again and do not go on with its work; say in your answer that it was deleted.` };
     try {
         // One task in progress at a time: a model that marks every task in-progress up front
         // leaves the whole board "In progress" when the turn ends early. Scoped to the task's

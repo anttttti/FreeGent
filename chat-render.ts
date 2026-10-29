@@ -735,6 +735,23 @@ const _stepPanes = requestKeeper<() => HTMLPreElement[]>((panes) => {
     for (const pre of panes()) if (pre.textContent) pre.textContent = trimKeptRequest(pre.textContent);
 }, KEEP_WHOLE_STEP_PANES);
 
+// Thinking and Output of finished steps: the newest stay whole, older ones keep their start and end. A 60-step task chat held 3.1 MB of
+// page text in 53k nodes after 22 minutes (autopilot exploration AE-23, 2026-10-28): every step's thinking and output, twice (live column
+// and event log), although the answers are in the chat's own messages.
+export const KEEP_WHOLE_STEP_OUTPUTS = 12;
+const _STEP_TEXT_KEEP = 1500;
+export function trimStepText(text: string, keep = _STEP_TEXT_KEEP): string {
+    if (text.length <= keep * 2 + 200) return text;
+    return `${text.slice(0, keep)}\n[… ${(text.length - keep * 2).toLocaleString('en-US')} characters of an older step not kept …]\n${text.slice(-keep)}`;
+}
+const _stepOutputs = requestKeeper<() => HTMLPreElement[]>((panes) => {
+    for (const pre of panes()) {
+        const t = pre.textContent || '';
+        const cut = trimStepText(t);
+        if (cut !== t) pre.textContent = cut;   // spans (error marks) go with the cut text
+    }
+}, KEEP_WHOLE_STEP_OUTPUTS);
+
 // continueFrom: rerun from a step box — the graph of `oldDiv` up to (not including) the step holding
 // the box with data-seq `cutSeq` is moved into this new bubble, which then continues it.
 export function createResponsePlaceholder(container: null | undefined = null, opts: { continueFrom?: { oldDiv: HTMLElement; cutSeq: number } } = {}): RenderAdapter & { div: HTMLDivElement } {
@@ -1224,6 +1241,7 @@ export function createResponsePlaceholder(container: null | undefined = null, op
                 _liveHandles.delete(handle);
                 commit(latestOut,   v => latestOut  = v);
                 commit(latestThink, v => latestThink = v);
+                _stepOutputs.touch(() => [colTabs.pres.Thinking, colTabs.pres.Output, ...(aggTabs ? [aggTabs.pres.Thinking, aggTabs.pres.Output] : [])]);
                 if (entryTimeEl) entryTimeEl.textContent += ` – ${_fmtTime()}`;
                 _removeStepTimer(_timerEntry); timers.delete(_timerEntry);
                 timerEl.textContent = ` ${((Date.now()-start)/1000).toFixed(1)}s`;

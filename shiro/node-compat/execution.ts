@@ -36,6 +36,33 @@ import { createMiscModule } from './modules/misc';
 import { createAppShim } from './shims/app-shims';
 import { getShiroOrigin } from '../utils/shiro-origin';
 
+
+// `x.location = …` or a bare `location = …` (not ==, not a property of something else like obj.location).
+export const _ASSIGNS_LOCATION_RE = /(?:\b(?:globalThis|window|self|global)\s*\.\s*|(?:^|[^.\w$]))location\s*=(?!=)/;
+// The real global with `location` replaced by a per-run value. Methods without a prototype (setTimeout, fetch, atob …) are bound to the
+// real global, because a Window method called on the proxy throws "Illegal invocation"; constructors stay the same objects.
+function _scriptGlobals(): any[] {
+  const real: any = globalThis;
+  let loc: any = { ...(() => { try { const l = real.location; return { href: l.href, origin: l.origin, protocol: l.protocol, host: l.host, hostname: l.hostname, port: l.port, pathname: l.pathname, search: l.search, hash: l.hash }; } catch { return {}; } })(),
+    reload() {}, assign() {}, replace() {}, toString() { return String(this.href ?? ''); } };
+  const bound = new Map<any, any>();
+  const view: any = new Proxy(real, {
+    get(t, prop) {
+      if (prop === 'location') return loc;
+      if (prop === 'globalThis' || prop === 'window' || prop === 'self' || prop === 'global') return view;
+      const v = Reflect.get(t, prop, t);
+      if (typeof v !== 'function' || v.prototype !== undefined) return v;
+      if (!bound.has(v)) bound.set(v, v.bind(t));
+      return bound.get(v);
+    },
+    set(t, prop, value) {
+      if (prop === 'location') { loc = value; return true; }
+      return Reflect.set(t, prop, value, t);
+    },
+  });
+  return [view, view, view, view, loc];
+}
+
 /**
  * Execute a Node.js script in Shiro's browser-based JS VM.
  * This is the main entry point that wires together all node-compat modules.
@@ -194,10 +221,17 @@ export async function executeNodeScript(
     }
 
     const wrappedCode = printResult ? `return (${transformedCode})` : transformedCode;
+    // A script that assigns `location` (a test stubbing `globalThis.location = { reload() {} }`) navigated the shell's own frame on a
+    // real Window: the run never answered and every later `node` hung (autopilot exploration AE-11, 2026-10-28: the test-runner gate
+    // waited 10 minutes per task). Such a script gets its own globalThis/window/self/global, a view of the real one whose `location`
+    // is a per-run value. Other scripts run as before.
+    const ownLocation = typeof window !== 'undefined' && _ASSIGNS_LOCATION_RE.test(transformedCode);
+    const scopeNames = ownLocation ? ['globalThis', 'window', 'self', 'global', 'location'] : [];
     const fn = new AsyncFunction(
-      'console', 'process', 'require', 'Buffer', '__filename', '__dirname', 'shiro', '__import_meta', 'module', 'exports', '__dynamic_import',
+      'console', 'process', 'require', 'Buffer', '__filename', '__dirname', 'shiro', '__import_meta', 'module', 'exports', '__dynamic_import', ...scopeNames,
       wrappedCode
     );
+    const scopeValues = ownLocation ? _scriptGlobals() : [];
 
     // Fake import.meta for ES modules
     const entryFilename = scriptPath || ctx.cwd + '/repl.js';
@@ -438,7 +472,7 @@ export async function executeNodeScript(
           shell: ctx.shell,
           env: ctx.env,
           cwd: ctx.cwd,
-        }, fakeImportMeta, fakeModule, fakeExports, dynamicImport),
+        }, fakeImportMeta, fakeModule, fakeExports, dynamicImport, ...scopeValues),
         timeoutPromise,
       ]);
     } catch (e: any) {

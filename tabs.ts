@@ -963,6 +963,14 @@ function run(d){
   var r=el.getBoundingClientRect(),cs=getComputedStyle(el),o={bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window};
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){try{el.dispatchEvent(new (t.charAt(0)==='p'&&window.PointerEvent?PointerEvent:MouseEvent)(t,o))}catch(e){}});
   el.click();return{ok:true,visible:cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0,disabled:!!el.disabled}}
+ if(d.cmd==='type'){var el=document.querySelector(d.selector);if(!el)return{error:'no element matches '+d.selector};
+  var ed=el.isContentEditable,proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:el instanceof HTMLSelectElement?HTMLSelectElement.prototype:HTMLInputElement.prototype;
+  if(!ed&&!('value' in el))return{error:d.selector+' is not a text field (no value to type into)'};
+  var desc=Object.getOwnPropertyDescriptor(proto,'value'),set=function(v){if(ed)el.textContent=v;else if(desc&&desc.set)desc.set.call(el,v);else el.value=v};
+  try{el.focus()}catch(e){}var cur=d.clear===false?(ed?el.textContent:el.value)||'':'';if(d.clear!==false)set('');
+  String(d.text).split('').forEach(function(ch){var o={key:ch,code:code(ch),bubbles:true,cancelable:true};el.dispatchEvent(new KeyboardEvent('keydown',o));el.dispatchEvent(new KeyboardEvent('keypress',o));cur+=ch;set(cur);
+   try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:ch,inputType:'insertText'}))}catch(e){el.dispatchEvent(new Event('input',{bubbles:true}))}el.dispatchEvent(new KeyboardEvent('keyup',o))});
+  el.dispatchEvent(new Event('change',{bubbles:true}));return{ok:true,value:String(ed?el.textContent:el.value).slice(0,200)}}
  if(d.cmd==='key'){var tg=document.activeElement||document.body;tg.dispatchEvent(new KeyboardEvent(d.kind,{key:d.key,code:code(d.key),bubbles:true,cancelable:true}));return{ok:true}}
  if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,4000)}}
  if(d.cmd==='stats'){return{frames:FR,ms:Date.now()-T0}}
@@ -1113,6 +1121,10 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
             if (!a || typeof a !== 'object') continue;
             if (typeof a.click === 'string') {
                 steps.push({ click: a.click, ...(await cmd({ cmd: 'click', selector: a.click })) });
+            } else if (typeof a.type === 'string') {
+                // Typing into a field (AE-14, 2026-10-28: a search box could not be tested, and the run paused on a question the user could not answer).
+                const r = await cmd({ cmd: 'type', selector: a.type, text: String(a.text ?? '').slice(0, 500), clear: a.clear !== false });
+                steps.push({ type: a.type, text: String(a.text ?? '').slice(0, 80), ...r });
             } else if (typeof a.key === 'string') {
                 const hold = _clampMs(a.hold_ms, 0, 5000);
                 const down = await cmd({ cmd: 'key', kind: 'keydown', key: a.key });

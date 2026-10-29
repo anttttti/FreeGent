@@ -39,3 +39,41 @@ describe('WebUI step panes', () => {
         expect(ph.div.textContent!.length).toBeLessThan(2 * 2 * KEEP_WHOLE_STEP_PANES * 100_010 + 4 * n * (KEPT_REQUEST_CHARS + 200));   // was 4 * n * 100 KB
     });
 });
+
+// Autopilot exploration 2026-10-28: AE-19 (3.4 MB of storage per task, most of it whole request panes in the saved chat HTML) and AE-23
+// (3.1 MB of page text in one task chat: every step's thinking and output, twice).
+describe('saved chat panes and old step text', () => {
+    it('trimSavedPanes keeps the start of Request and Prompt panes, never cuts an entity, and leaves other panes alone', async () => {
+        const { trimSavedPanes } = await import('../request-trim.ts');
+        const req = '&quot;x&quot;'.repeat(400) + 'END';
+        const html = `<div><pre class="step-content-pre" data-tab-name="Request">${req}</pre><pre data-tab-name="Output">${'o'.repeat(9000)}</pre>`
+            + `<pre data-tab-name="Prompt">${'p'.repeat(3000)}</pre></div>`;
+        const out = trimSavedPanes(html, 1500);
+        const reqOut = /data-tab-name="Request">([\s\S]*?)<\/pre>/.exec(out)![1];
+        expect(reqOut).toMatch(/more characters not kept in the saved chat\]$/);
+        expect(reqOut).not.toMatch(/END/);
+        expect(reqOut.split('\n')[0]).toMatch(/&quot;$/);   // ends on a whole entity
+        expect(out).toContain('o'.repeat(9000));
+        expect(/data-tab-name="Prompt">([\s\S]*?)<\/pre>/.exec(out)![1].length).toBeLessThan(1700);
+        expect(trimSavedPanes('<pre data-tab-name="Request">short</pre>')).toBe('<pre data-tab-name="Request">short</pre>');
+    });
+    it('trimStepText keeps the start and the end of a long step', async () => {
+        const { trimStepText } = await import('../chat-render.ts');
+        const t = 'a'.repeat(2000) + 'MIDDLE' + 'b'.repeat(2000);
+        const cut = trimStepText(t);
+        expect(cut.startsWith('a'.repeat(1500))).toBe(true);
+        expect(cut.endsWith('b'.repeat(1500))).toBe(true);
+        expect(cut).toMatch(/characters of an older step not kept/);
+        expect(cut).not.toMatch(/MIDDLE/);
+        expect(trimStepText('short')).toBe('short');
+    });
+});
+
+// AE-11: a test that stubs `globalThis.location = {...}` navigated the in-browser shell's frame, and every later node hung.
+describe('scripts that assign location get their own', () => {
+    it('recognises an assignment, not a read or a comparison', async () => {
+        const { _ASSIGNS_LOCATION_RE: re } = await import('../shiro/node-compat/execution.ts');
+        for (const s of ['globalThis.location = { reload() {} }', 'window.location={}', 'location = "x"', 'self . location = 1']) expect(re.test(s)).toBe(true);
+        for (const s of ['const u = location.href', 'if (window.location == x) {}', 'obj.location = 3', 'myLocation = 1', 'location === y']) expect(re.test(s)).toBe(false);
+    }, 30_000);   // the shell's execution module is a large import under a full-suite load
+});

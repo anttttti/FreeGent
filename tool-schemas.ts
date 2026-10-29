@@ -289,18 +289,21 @@ function execToolSpec() {
 // check_page: browser-only (runs the page in a hidden sandboxed iframe — tabs.ts runPageCheck).
 const CHECK_PAGE_TOOL_SPEC = {
     name: 'check_page',
-    description: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code. Pages run with internet access, like the ▶ Preview: CDN scripts and styles (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com) and fetch() of public URLs work, so load libraries from a CDN rather than inlining or downloading them. Add integrity= attributes only when copied from the library\'s docs: a wrong hash blocks the file.',
+    description: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements, type into fields and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code. Pages run with internet access, like the ▶ Preview: CDN scripts and styles (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com) and fetch() of public URLs work, so load libraries from a CDN rather than inlining or downloading them. Add integrity= attributes only when copied from the library\'s docs: a wrong hash blocks the file.',
     parameters: {
         type: 'object',
         properties: {
             path:    { type: 'string', description: 'The HTML file, e.g. "index.html".' },
             actions: {
                 type: 'array',
-                description: 'Steps run in order after load. Each is one of {"click": "<CSS selector>"}, {"key": "ArrowRight", "hold_ms": 500} (keydown, hold, keyup), {"wait_ms": 1000}.',
+                description: 'Steps run in order after load. Each is one of {"click": "<CSS selector>"}, {"type": "<CSS selector of an input, textarea or editable element>", "text": "abc"} (types the text with key and input events; replaces what is there unless "clear": false), {"key": "ArrowRight", "hold_ms": 500} (keydown, hold, keyup), {"wait_ms": 1000}.',
                 items: {
                     type: 'object',
                     properties: {
                         click:   { type: 'string', description: 'CSS selector of the element to click.' },
+                        type:    { type: 'string', description: 'CSS selector of a text field to type "text" into.' },
+                        text:    { type: 'string', description: 'The text to type (with "type").' },
+                        clear:   { type: 'boolean', description: 'With "type": false keeps the field\'s current text and types after it (default true: replace it).' },
                         key:     { type: 'string', description: 'Key to press: "ArrowRight", " ", "Enter", "a", …' },
                         hold_ms: { type: 'number', description: 'How long to hold the key before releasing (default 0, max 5000).' },
                         wait_ms: { type: 'number', description: 'Pause before the next step (max 5000).' },

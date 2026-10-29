@@ -11,9 +11,9 @@ const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
     'open->in-progress':      ['dependency-check', 'task-enrichment'],
     'in-progress->in-review': ['completeness-check'],
-    'in-review->done':        ['acceptance-review', 'test-runner', 'page-check'],
+    'in-review->done':        ['acceptance-review', 'test-runner', 'page-check', 'kept-features'],
     // Direct in-progress→done (model skipped in-review): run the full review suite
-    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner', 'page-check'],
+    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner', 'page-check', 'kept-features'],
 };
 
 // The body of the first "## <name>" section (any of `names`, case-insensitive), up to the next
@@ -576,6 +576,81 @@ async function gate_page_check(taskPath) {
 }
 
 
+// What earlier tasks built must survive a later task (autopilot exploration AE-12, 2026-10-28: task 004 rewrote index.html from scratch,
+// the search box of the done task 001 was gone, and every later gate passed). At the start of a task the identifiers of the project's
+// source files are noted (HTML ids, declared functions and classes, exported names); at "done", those the task removed and an earlier
+// done task's file mentions are named, once. A removal that is meant stands when the status is set again.
+const _SRC_RE = /\.(?:html?|m?[jt]sx?|css|py|vue|svelte)$/i;
+const _taskStartIds = new Map<string, Map<string, Set<string>>>();
+export function sourceIdentifiers(path: string, text: string): Set<string> {
+    const ids = new Set<string>();
+    const add = (re: RegExp) => { for (const m of text.matchAll(re)) if (m[1] && m[1].length >= 3) ids.add(m[1]); };
+    if (/\.(?:html?|vue|svelte|[jt]sx)$/i.test(path)) add(/\bid\s*=\s*["']([\w-]+)["']/g);
+    if (/\.(?:m?[jt]sx?|html?|vue|svelte)$/i.test(path)) {
+        add(/\bfunction\s*\*?\s+([A-Za-z_$][\w$]*)/g);
+        add(/\bclass\s+([A-Za-z_$][\w$]*)/g);
+        add(/\bexport\s+(?:default\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g);
+    }
+    if (/\.py$/i.test(path)) add(/^\s*(?:def|class)\s+([A-Za-z_]\w*)/gm);
+    return ids;
+}
+async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    let names: string[] = [];
+    try { names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter((n: any) => typeof n === 'string' && _SRC_RE.test(n) && !/^(?:fg-tasks|node_modules|\.git)\//.test(n)); } catch {}
+    for (const n of names.slice(0, 300)) {
+        let t = '';
+        try { t = await agentReadFile(n); } catch { continue; }
+        if (t.length > 400_000) continue;
+        out.set(n, sourceIdentifiers(n, t));
+    }
+    return out;
+}
+async function noteTaskStart(taskPath: string): Promise<void> {
+    try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
+}
+const _GENERIC_IDS = new Set(['main', 'init', 'start', 'setup', 'update', 'render', 'draw', 'loop', 'run', 'app', 'root', 'game', 'data', 'handle',
+    'click', 'value', 'item', 'items', 'list', 'test', 'tests', 'helper', 'utils', 'content', 'container', 'wrapper', 'output', 'input', 'result', 'state',
+    'reset', 'load', 'save', 'show', 'hide', 'toggle', 'tick', 'step', 'config', 'options', 'index', 'default', 'error', 'status', 'button', 'header', 'footer']);
+// The words of an identifier: searchBox, search-box and search_box are "search" and "box".
+const _idWords = (id: string): string[] => id.replace(/([a-z])([A-Z])/g, '$1 $2').split(/[\s_-]+/).map(w => w.toLowerCase()).filter(w => w.length >= 4);
+async function gate_kept_features(taskPath) {
+    const before = _taskStartIds.get(taskPath);
+    if (!before) return { blocks: false, outcome: 'skipped', detail: 'No record of the files at the start of this task' };
+    const now = await _projectIdentifiers();
+    const removed: Array<{ file: string; id: string }> = [];
+    for (const [file, ids] of before) {
+        const cur = now.get(file);
+        if (!cur) continue;   // a removed file is the task's visible decision, and the page and test gates see what it breaks
+        for (const id of ids) if (!cur.has(id) && ![...now.values()].some(set => set.has(id))) removed.push({ file, id });
+    }
+    if (!removed.length) return { blocks: false };
+    let tasks: any[] = [];
+    try { tasks = typeof loadTaskFiles === 'function' ? await loadTaskFiles() : []; } catch {}
+    const doneOthers: Array<{ t: any; text: string }> = [];
+    for (const t of tasks.filter((t: any) => t.path !== taskPath && canonTaskStatus(t.fm?.status) === 'done').slice(0, 200)) {
+        let text = ''; try { text = (await agentReadFile(t.path)).toLowerCase(); } catch {}
+        if (text) doneOthers.push({ t, text });
+    }
+    const hits: string[] = [];
+    const has = (text: string, w: string) => new RegExp(`(?:^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[^a-z0-9]|$)`).test(text);
+    for (const { file, id } of removed) {
+        // The identifier itself, or all of its words ("searchBox" for a task about a "search box"); a generic single word says nothing.
+        const words = _idWords(id), whole = id.toLowerCase();
+        if (words.length <= 1 && _GENERIC_IDS.has(whole)) continue;
+        const found = doneOthers.find(({ text }) => has(text, whole) || (words.length >= 2 && words.every(w => has(text, w))));
+        const owner = found?.t;
+        if (owner) hits.push(`${id} (${file}; task ${owner.fm?.id ? '#' + owner.fm.id + ' ' : ''}"${owner.fm?.title ?? owner.path}")`);
+        if (hits.length >= 6) break;
+    }
+    if (!hits.length) return { blocks: false };
+    if (_bouncedBefore(taskPath, 'kept-features', hits.join('|')))
+        return { blocks: false, outcome: 'unknown', detail: `Removed what earlier done tasks mention (accepted on the second attempt): ${hits.join(', ').slice(0, 200)}` };
+    const ts = new Date().toISOString().slice(0, 16) + 'Z';
+    await appendGateNote(taskPath, `## QA: Removed Earlier Work (${ts})\n${hits.map(h => `- ${h}`).join('\n')}`);
+    return { blocks: true, reason: `This task removed what earlier finished tasks built or mention: ${hits.join(', ')}. A rewrite of a file must keep the earlier features: put them back. If removing them is what the task asks for, say so in the summary and set the status again.` };
+}
+
 async function gate_regression_guard(taskPath) {
     if (!getQaRegressionGuard()) return { blocks: false, outcome: 'skipped', detail: 'Regression guard is turned off' };
     if (!_hasBashOrCode())       return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping regression guard' };
@@ -618,6 +693,7 @@ const GATES = {
     'test-runner':        gate_test_runner,
     'page-check':         gate_page_check,
     'regression-guard':   gate_regression_guard,
+    'kept-features':      gate_kept_features,
 };
 
 
@@ -630,6 +706,7 @@ export const gatesPassedDone = (taskPath: string): boolean => _gatesPassedDone.h
 async function transitionTask(taskPath, toStatus) {
     const r = await _transitionTask(taskPath, toStatus);
     if (r.transitioned && canonTaskStatus(toStatus) === 'done') _gatesPassedDone.add(taskPath);
+    if (r.transitioned && canonTaskStatus(toStatus) === 'in-progress' && getQaEnabled()) await noteTaskStart(taskPath);   // for kept-features
     return r;
 }
 

@@ -3,6 +3,7 @@
 import { KEYS, chatKey } from './storage-keys.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
 import { computeStorageUsage, fmtStorageSize, refreshStorageUsage } from './storage-usage.js';
+import { trimSavedPanes } from './request-trim.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { escapeHtml } from './html-escape.js';
 import { lease } from './lease.js';
@@ -362,7 +363,7 @@ function saveHistory() {
         const el = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
         if (el && !(_wfMode && !el.childElementCount)) {
             const id   = activeChatId;
-            const html = el.innerHTML;
+            const html = trimSavedPanes(el.innerHTML);   // AE-19: whole request panes are for the live page only
             // Write to localStorage synchronously — same pattern as the history above.
             // This ensures the snapshot survives a screen-lock/browser-suspension that kills
             // the async server/IDB saves before they complete.
@@ -1007,6 +1008,40 @@ function refreshChatViewer() {
     if (label) label.textContent = `${(label.textContent || '').split(' — ')[0]} — the turn has finished. Go back to the chat to continue.`;
 }
 
+// A paused task's question, shown in the viewer: the composer is hidden while another chat is viewed, and the runner's reply box is on the
+// Tasks tab, so a user on the Chat tab had nowhere to answer and nothing said where (autopilot exploration AE-22, 2026-10-28).
+// `reason` null removes it (the run went on or stopped).
+function chatViewerShowQuestion(reason: string | null) {
+    const viewer = document.getElementById('fg-chat-viewer');
+    const old = viewer?.querySelector('.fg-chat-viewer-question') as HTMLElement | null;
+    if (old && reason && old.dataset.reason === reason) return;   // the same question: keep what is being typed
+    old?.remove();
+    if (!viewer || !reason) return;
+    const row = document.createElement('div');
+    row.className = 'fg-chat-viewer-question';
+    row.dataset.reason = reason;
+    const text = document.createElement('span');
+    text.textContent = `The running task is waiting for you: ${reason}`;
+    const input = document.createElement('textarea');
+    input.rows = 2;
+    input.placeholder = 'Your answer to the task';
+    input.setAttribute('aria-label', 'Answer to the running task');
+    const send = document.createElement('button');
+    send.className = 'ws-action-btn';
+    send.textContent = 'Send answer';
+    const submit = () => {
+        const val = input.value.trim();
+        if (!val) { input.focus(); return; }
+        (window as any).runnerSendUnblockWith?.(val);
+        closeChatViewer();
+    };
+    send.onclick = submit;
+    input.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+    row.append(text, input, send);
+    viewer.querySelector('.fg-chat-viewer-bar')?.after(row);
+    try { input.focus(); } catch {}
+}
+
 function closeChatViewer() {
     _viewingChatId = null;
     document.body.classList.remove('fg-viewing-other');
@@ -1057,6 +1092,7 @@ async function viewChatReadOnly(id: string) {
         body.textContent = 'No saved messages in this chat.';
     }
     body.scrollTop = body.scrollHeight;
+    chatViewerShowQuestion((window as any).getRunnerPauseReason?.() ?? null);   // opened while a task already waits for an answer
 }
 
 async function switchToChat(id, force = false) {
@@ -1257,7 +1293,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, chatViewerShowQuestion, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

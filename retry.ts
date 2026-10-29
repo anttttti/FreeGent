@@ -231,6 +231,18 @@ function _retryNote(ep: any, n: number, e: any, waitMs: number): string {
         : `[${ep.provider}|${ep.model}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(waitMs)}]`;
 }
 
+// Model requests that failed in a row, across calls, until one succeeds: the runner shows them, so an outage reads as one instead of a
+// bare "Running…" for five minutes (autopilot exploration AE-13, 2026-10-28). A cut-off reply or a stop is not a failure to reach the model.
+let _failRun = { n: 0, since: 0, message: '' };
+export function modelFailureRun(): { n: number; since: number; message: string } { return _failRun; }
+const _emitFailRun = () => { try { window.dispatchEvent(new CustomEvent('fg-model-failures')); } catch {} };
+function _noteFailRun(e: any): void {
+    if (e?.isTruncated || e?.name === 'AbortError') return;
+    _failRun = { n: _failRun.n + 1, since: _failRun.n ? _failRun.since : Date.now(), message: String(e?.message ?? e).slice(0, 140) };
+    _emitFailRun();
+}
+export function clearModelFailureRun(): void { if (_failRun.n) { _failRun = { n: 0, since: 0, message: '' }; _emitFailRun(); } }
+
 export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverride = null, onFailure = null) {
     let weakProse = 0;
     // This call's own turn: activeAbortController is replaced when the next turn starts, and softStopPending is cleared by that send,
@@ -238,8 +250,9 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
     // landed after the next message: campaign 5 OC7-ABORT-RESEND).
     const _turnSignal = activeAbortController?.signal;
     for (let attempt = 0; ; attempt++) {
-        try { return await fn(); }
+        try { const r = await fn(); clearModelFailureRun(); return r; }
         catch (e) {
+            _noteFailRun(e);
             // Every failed attempt is a request that ran and is in no token total: count it.
             try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: String(e?.message ?? e).slice(0, 400), attempt }); } catch {}
             try { onFailure?.(e); } catch {}
@@ -589,6 +602,7 @@ export function _parseRetryAfter(resp) {
 
 // Window bridge for free-variable access from sibling modules (house pattern).
 Object.assign(window, {
+    modelFailureRun, clearModelFailureRun,
     _isTimeoutError, isTransient, isProviderSide400, parseContextOverflow, retryDelay, fmtDelay,
     sleepInterruptible, withRetry, _parseRetryAfter, _httpErrorFromResponse,
     _makeOAIRetryHandler,
