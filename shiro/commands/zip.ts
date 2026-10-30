@@ -175,7 +175,9 @@ export const zipCmd: Command = {
     let existed = false;
     if (!toStdout) {
       try { entries = readArchive(await readFileBytes(ctx, archivePath)); existed = true; } catch (e: any) {
-        if (!/ENOENT|no such file|not found/i.test(String(e?.message)) && existed) return bad(e.message);
+        // An archive that is there but cannot be read is an error, as in Info-ZIP (exit 3). The check also required `existed`, which is set
+        // only after a good read, so it never fired and a corrupt archive was replaced by a new one (codex R290).
+        if (await ctx.fs.exists(archivePath)) { ctx.stderr += `\nzip error: Zip file structure invalid (${archiveName})\n`; return 3; }
       }
     }
     const matchesAny = (list: RegExp[], n: string) => list.some(r => r.test(n));
@@ -194,6 +196,9 @@ export const zipCmd: Command = {
     const added: { name: string; path: string; isDir: boolean }[] = [];
     const collect = async (path: string, shown: string, top: boolean) => {
       const full = ctx.fs.resolvePath(path, ctx.cwd);
+      // The archive being written is never one of its own members (a glob like * names it): it was added to itself, and with -m deleted
+      // after it was written (codex R296). Info-ZIP skips it too.
+      if (!toStdout && full === archivePath) return;
       let st;
       try { st = await statEntry(ctx.fs, full); }
       catch { if (top) ctx.stderr += `\tzip warning: name not matched: ${shown}\n`; return; }
@@ -213,6 +218,7 @@ export const zipCmd: Command = {
     if (todo.length === 0 && !existed) { ctx.stderr += `\nzip error: Nothing to do! (${archiveName})\n`; return 12; }
 
     let changed = false;
+    const written = new Set<string>();   // what this run put into the archive: -m removes only those (codex R294)
     for (const f of todo) {
       const idx = entries.findIndex(e => e.name === f.name);
       let st;
@@ -239,6 +245,7 @@ export const zipCmd: Command = {
         say(`${idx >= 0 ? 'updating' : '  adding'}: ${f.name} (${method === 8 ? 'deflated' : 'stored'} ${method === 8 ? pct : 0}%)`);
       }
       if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+      written.add(f.path);
       changed = true;
     }
     if (!changed) {
@@ -248,8 +255,8 @@ export const zipCmd: Command = {
     if (toStdout) ctx.stdout += bytesToText(bytes);
     else await ctx.fs.writeFile(archivePath, bytes);
     if (move) {
-      for (const f of todo.filter(x => !x.isDir)) { try { await ctx.fs.unlink(f.path); } catch { /* gone */ } }
-      for (const f of todo.filter(x => x.isDir).reverse()) { try { await ctx.fs.rmdir(f.path); } catch { /* not empty */ } }
+      for (const f of todo.filter(x => !x.isDir && written.has(x.path))) { try { await ctx.fs.unlink(f.path); } catch { /* gone */ } }
+      for (const f of todo.filter(x => x.isDir && written.has(x.path)).reverse()) { try { await ctx.fs.rmdir(f.path); } catch { /* not empty */ } }
     }
     return 0;
   },
@@ -269,7 +276,8 @@ export const unzipCmd: Command = {
     for (let i = 0; i < a.length; i++) {
       const x = a[i];
       if (x === '--') { operands.push(...a.slice(i + 1)); break; }
-      if (x === '-d') { dir = a[++i] ?? null; continue; }
+      // A -d with nothing after it extracted into the current directory (codex R291); Info-ZIP refuses it.
+      if (x === '-d') { if (i + 1 >= a.length || !a[i + 1]) { ctx.stderr += 'error:  must specify directory to which to extract with -d option\n'; return 10; } dir = a[++i]; continue; }
       if (x.startsWith('-d') && x.length > 2) { dir = x.slice(2); continue; }
       if (x === '-x') { while (i + 1 < a.length && !a[i + 1].startsWith('-')) excludes.push(globToRegex(a[++i])); continue; }
       if (x === '-Z') { zipinfo = true; continue; }

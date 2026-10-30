@@ -1,13 +1,22 @@
 /**
  * dd — copy and convert data
+ *
+ * Works on bytes throughout. It used to read files as UTF-8 text, so invalid sequences became U+FFFD and the copy changed (codex R301);
+ * conv=ucase/lcase used Unicode case mapping on byte values ("ß" became "SS", R298); conv=notrunc was accepted and ignored (R297);
+ * /dev/urandom asked Web Crypto for more than its 65,536-byte limit at once (R299); the status line echoed count= instead of what was
+ * copied (R300); and a malformed size such as bs=4banana fell back to its numeric prefix (R305).
  */
 
 import type { Command } from './index';
-import { fromByteString, toByteString } from '../utils/bytes';
-import { parseSize as parseSizeStrict } from './flags';
+import { bytesToText, textToBytes } from '../utils/bytes';
+import { parseSize } from './flags';
 
-// dd falls back to 512 for an unparsable block size.
-function parseSize(s: string): number { return parseSizeStrict(s) ?? (parseInt(s, 10) || 512); }
+const CONVERSIONS = new Set(['ucase', 'lcase', 'swab', 'notrunc', 'noerror', 'sync', 'fsync', 'fdatasync']);
+
+function count(key: string, val: string): number {
+  if (!/^\d+$/.test(val)) throw new Error(`invalid number: '${val}' (${key}=)`);
+  return Number(val);
+}
 
 export const ddCmd: Command = {
   name: 'dd',
@@ -17,10 +26,10 @@ export const ddCmd: Command = {
       let ifPath = '';
       let ofPath = '';
       let bs = 512;
-      let count = -1;
+      let blocks = -1;
       let skip = 0;
       let seek = 0;
-      let conv = '';
+      const convs = new Set<string>();
       let status = '';
 
       for (const arg of ctx.args) {
@@ -29,81 +38,81 @@ export const ddCmd: Command = {
         switch (key) {
           case 'if': ifPath = val; break;
           case 'of': ofPath = val; break;
-          case 'bs': bs = parseSize(val); break;
-          case 'count': count = parseInt(val, 10); break;
-          case 'skip': skip = parseInt(val, 10); break;
-          case 'seek': seek = parseInt(val, 10); break;
-          case 'conv': conv = val; break;
+          case 'bs': case 'ibs': case 'obs': {
+            const n = parseSize(val);
+            if (n === null || !(n > 0)) throw new Error(`invalid number: '${val}' (${key}=)`);
+            bs = n; break;
+          }
+          case 'count': blocks = count(key, val); break;
+          case 'skip': skip = count(key, val); break;
+          case 'seek': seek = count(key, val); break;
+          case 'conv':
+            for (const c of val.split(',').filter(Boolean)) {
+              if (!CONVERSIONS.has(c)) throw new Error(`invalid conversion: '${c}'`);
+              convs.add(c);
+            }
+            break;
           case 'status': status = val; break;
+          case 'iflag': case 'oflag': case 'cbs': break;   // accepted; nothing here depends on them
+          default: throw new Error(`unrecognized operand '${arg}'`);
         }
       }
 
       // Read input
-      let data: string;
-      if (ifPath) {
-        if (ifPath === '/dev/zero') {
-          const totalBytes = count >= 0 ? bs * count : bs;
-          data = '\0'.repeat(totalBytes);
-        } else if (ifPath === '/dev/random' || ifPath === '/dev/urandom') {
-          const totalBytes = count >= 0 ? bs * count : bs;
-          const bytes = new Uint8Array(totalBytes);
-          crypto.getRandomValues(bytes);
-          data = String.fromCharCode(...bytes);
-        } else {
-          const resolved = ctx.fs.resolvePath(ifPath, ctx.cwd);
-          try {data = toByteString(await ctx.fs.readFile(resolved,'utf8') as string);}
-          catch (error:any) {if (error.code === 'ENOENT') throw new Error(`failed to open '${ifPath}': No such file or directory`); throw error;}
+      let data: Uint8Array<ArrayBufferLike>;
+      if (ifPath === '/dev/zero') {
+        data = new Uint8Array(blocks >= 0 ? bs * blocks : bs);
+      } else if (ifPath === '/dev/random' || ifPath === '/dev/urandom') {
+        data = new Uint8Array(blocks >= 0 ? bs * blocks : bs);
+        for (let i = 0; i < data.length; i += 65536) crypto.getRandomValues(data.subarray(i, i + 65536) as Uint8Array<ArrayBuffer>);   // Web Crypto's per-call limit
+      } else if (ifPath) {
+        const resolved = ctx.fs.resolvePath(ifPath, ctx.cwd);
+        try {
+          const raw = await ctx.fs.readFile(resolved);
+          data = typeof raw === 'string' ? textToBytes(raw) : raw;
+        } catch (error: any) {
+          if (error.code === 'ENOENT') throw new Error(`failed to open '${ifPath}': No such file or directory`);
+          throw error;
         }
       } else {
-        data = toByteString(ctx.stdin);
+        data = textToBytes(ctx.stdin);
       }
 
-      // Apply skip (in blocks)
-      if (skip > 0) {
-        data = data.substring(skip * bs);
-      }
+      if (skip > 0) data = data.subarray(Math.min(data.length, skip * bs));
+      if (blocks >= 0) data = data.subarray(0, Math.min(data.length, blocks * bs));
+      const inLength = data.length;
 
-      // Apply count (in blocks)
-      if (count >= 0) {
-        data = data.substring(0, count * bs);
-      }
-
-      // Apply conversions
-      if (conv) {
-        const convs = conv.split(',');
-        for (const c of convs) {
-          switch (c) {
-            case 'ucase': data = data.toUpperCase(); break;
-            case 'lcase': data = data.toLowerCase(); break;
-            case 'swab': {
-              const chars = data.split('');
-              for (let i = 0; i + 1 < chars.length; i += 2) {
-                [chars[i], chars[i + 1]] = [chars[i + 1], chars[i]];
-              }
-              data = chars.join('');
-              break;
-            }
-          }
-        }
+      // Conversions: on bytes, ASCII letters only, as dd does
+      if (convs.has('ucase') || convs.has('lcase') || convs.has('swab')) {
+        const out = data.slice();
+        if (convs.has('ucase')) for (let i = 0; i < out.length; i++) if (out[i] >= 0x61 && out[i] <= 0x7a) out[i] -= 0x20;
+        if (convs.has('lcase')) for (let i = 0; i < out.length; i++) if (out[i] >= 0x41 && out[i] <= 0x5a) out[i] += 0x20;
+        if (convs.has('swab')) for (let i = 0; i + 1 < out.length; i += 2) { const t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; }
+        data = out;
       }
 
       // Write output
       if (ofPath) {
         const resolved = ctx.fs.resolvePath(ofPath, ctx.cwd);
-        if (seek > 0) {
-          let existing = '';
-          try { existing = await ctx.fs.readFile(resolved, 'utf8') as string; } catch {}
-          const padded = existing.padEnd(seek * bs, '\0');
-          data = padded + data;
+        let existing: Uint8Array = new Uint8Array(0);
+        if (seek > 0 || convs.has('notrunc')) {
+          try { const raw = await ctx.fs.readFile(resolved); existing = typeof raw === 'string' ? textToBytes(raw) : raw; } catch { /* new file */ }
         }
-        await ctx.fs.writeFile(resolved, fromByteString(data));
+        const start = seek * bs;
+        // Without notrunc the output ends where the copy ends; with it, what follows in the existing file stays.
+        const end = start + data.length;
+        const size = convs.has('notrunc') ? Math.max(existing.length, end) : end;
+        const out = new Uint8Array(size);
+        out.set(existing.subarray(0, Math.min(existing.length, convs.has('notrunc') ? size : start)));
+        out.set(data, start);
+        await ctx.fs.writeFile(resolved, out);
       } else {
-        ctx.stdout += fromByteString(data);
+        ctx.stdout += bytesToText(data);
       }
 
-      // Status line to stderr
-      const blocks = count >= 0 ? count : Math.ceil(data.length / bs);
-      if (status !== 'none') ctx.stderr += `${blocks}+0 records in\n${blocks}+0 records out\n${data.length} bytes copied\n`;
+      // Status line to stderr: whole and partial records actually copied
+      const full = Math.floor(inLength / bs), part = inLength % bs ? 1 : 0;
+      if (status !== 'none') ctx.stderr += `${full}+${part} records in\n${full}+${part} records out\n${data.length} bytes copied\n`;
       return 0;
     } catch (e: unknown) {
       ctx.stderr += `dd: ${e instanceof Error ? e.message : e}\n`;

@@ -80,3 +80,42 @@ describe('decompression has a ceiling', () => {
         expect((await transformBytes(new TransformStream() as any, new Uint8Array(10), 1024)).length).toBe(10);
     });
 });
+
+// codex R290/R291/R294/R296: zip replaced a corrupt archive, put the archive into itself and with -m deleted it (or files it skipped),
+// and unzip extracted a trailing -d into the current directory.
+describe('zip / unzip edge cases', () => {
+    beforeAll(async () => { sh = await getShell(); });
+    it('zip refuses a corrupt archive instead of replacing it (R290)', async () => {
+        files.set('bad.zip', { content: 'junk', encoding: null }); files.set('a.txt', { content: 'a', encoding: null });
+        const r = await run('zip -q bad.zip a.txt');
+        expect(r.code).toBe(3);
+        expect(files.get('bad.zip')!.content).toBe('junk');
+    });
+    it('zip -m * leaves out the archive itself and keeps it (R296)', async () => {
+        for (const k of [...files.keys()]) files.delete(k);
+        files.set('w/x.txt', { content: 'x', encoding: null });
+        await run('cd /workspace/w && zip -q arch.zip x.txt');
+        files.set('w/y.txt', { content: 'y', encoding: null });
+        const r = await run('cd /workspace/w && zip -q -m arch.zip *');
+        expect(r.code).toBe(0);
+        expect(files.has('w/arch.zip')).toBe(true);
+        expect(files.has('w/y.txt')).toBe(false);
+        const l = await run('cd /workspace/w && unzip -l arch.zip');
+        expect(l.out).not.toMatch(/\d\d:\d\d\s+arch\.zip/);
+    });
+    it('zip -m -u removes only the files it put in (R294)', async () => {
+        for (const k of [...files.keys()]) files.delete(k);
+        files.set('u/old.txt', { content: 'old', encoding: null });
+        await run('cd /workspace/u && zip -q arch.zip old.txt');
+        files.set('u/new.txt', { content: 'new', encoding: null });
+        await run('cd /workspace/u && zip -q -m -u arch.zip old.txt new.txt');
+        expect(files.has('u/old.txt')).toBe(true);   // not newer than its archived copy: skipped, so kept
+        expect(files.has('u/new.txt')).toBe(false);
+    });
+    it('unzip -d without a directory is an error (R291)', async () => {
+        files.set('t.zip', files.get('u/arch.zip')!);
+        const r = await run('unzip -o t.zip -d');
+        expect(r.code).toBe(10);
+        expect(r.err).toMatch(/must specify directory/);
+    });
+});

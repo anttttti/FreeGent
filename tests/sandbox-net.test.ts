@@ -100,7 +100,7 @@ describe('curl', () => {
         const c = ctx(['-X', 'PUT', '-H', 'Authorization: Bearer t', '-d', 'a=1', 'https://api.example.com/x']);
         expect(await curlCmd.exec(c)).toBe(0);
         expect(directFetch).toHaveBeenCalledWith('https://api.example.com/x',
-            { method: 'PUT', headers: { Authorization: 'Bearer t' }, body: new TextEncoder().encode('a=1') });
+            { method: 'PUT', headers: { Authorization: 'Bearer t' }, body: new TextEncoder().encode('a=1'), signal: expect.any(AbortSignal) });
     });
 
     it('-f fails on HTTP errors, -w prints the status', async () => {
@@ -149,5 +149,29 @@ describe('wget', () => {
     it('exits 8 on server errors', async () => {
         directFetch.mockResolvedValue(new Response('', { status: 500 }));
         expect(await wgetCmd.exec(ctx(['-q', 'https://example.com/x']))).toBe(8);
+    });
+});
+
+// codex R302/R303: direct responses had no deadline or size limit, --max-time was ignored, and -O decoded %2F into a path.
+describe('curl limits and file names', () => {
+    it('ends a request that does not answer within --max-time', async () => {
+        directFetch.mockImplementation((_u: string, init: any) => new Promise((_r, rej) => init.signal.addEventListener('abort', () => rej(init.signal.reason))));
+        const c = ctx(['-m', '0.05', 'https://slow.example/']);
+        expect(await curlCmd.exec(c as any)).toBe(28);
+        expect(c.stderr).toMatch(/Operation timed out after 0.05 seconds/);
+    });
+    it('refuses a body announced larger than the limit', async () => {
+        directFetch.mockResolvedValue(new Response('x', { headers: { 'Content-Length': String(512 * 1024 * 1024) } }));
+        const c = ctx(['https://big.example/']);
+        expect(await curlCmd.exec(c as any)).toBe(63);
+    });
+    it('-O keeps an encoded slash in the name instead of making it a path', async () => {
+        directFetch.mockImplementation(async () => new Response('data'));
+        const c = ctx(['-O', 'https://x.example/dir/%2F..%2F..%2Fproject.txt']);
+        expect(await curlCmd.exec(c as any)).toBe(0);
+        expect(Object.keys(c.written)).toEqual(['/workspace/%2F..%2F..%2Fproject.txt']);
+        const d = ctx(['-O', 'https://x.example/a%20b.txt']);
+        await curlCmd.exec(d as any);
+        expect(Object.keys(d.written)).toEqual(['/workspace/a b.txt']);
     });
 });

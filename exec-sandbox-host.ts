@@ -138,8 +138,13 @@ function sandboxScriptUrl(): string {
     return new URL('fg-exec-sandbox.js', document.baseURI).href;
 }
 
+// The CSP the current frame was made with. The policy is fixed when the frame loads, so a frame made at Routed kept running without the
+// Local-privacy CSP after the level was switched (codex R304, P1): the next call after a change of level gets a new frame.
+let _frameCsp = '';
 function _ensureFrame(): Promise<void> {
+    if (ready && sandboxCspMeta() !== _frameCsp && !pending.size) resetSandbox('the privacy level changed; the code sandbox was restarted with its rules');
     if (ready) return ready;
+    _frameCsp = sandboxCspMeta();
     window.addEventListener('message', _onMessage);
     frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
@@ -147,7 +152,7 @@ function _ensureFrame(): Promise<void> {
     frame.tabIndex = -1;
     frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
     const src = sandboxScriptUrl().replace(/"/g, '&quot;');
-    const srcdoc = (retry: boolean) => `<!DOCTYPE html><html><head><meta charset="utf-8">${sandboxCspMeta()}<script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body><!--${retry ? 'retry' : 'first'}--></body></html>`;
+    const srcdoc = (retry: boolean) => `<!DOCTYPE html><html><head><meta charset="utf-8">${_frameCsp}<script src="${src}" onerror="parent.postMessage({fg:'load-error'},'*')"></script></head><body><!--${retry ? 'retry' : 'first'}--></body></html>`;
     frame.srcdoc = srcdoc(false);
     const ownedFrame = frame;
     ready = new Promise<void>((resolve, reject) => {

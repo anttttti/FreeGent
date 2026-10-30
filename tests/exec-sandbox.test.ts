@@ -428,3 +428,41 @@ describe('approval default with isolation', () => {
         expect(W.getToolApproval()).toBe('high');
     });
 });
+
+// codex R304: a frame made at Routed kept its policy (no CSP) after the level was switched to Local.
+describe('a privacy level change', () => {
+    it('gives the next call a frame with the new CSP', async () => {
+        const { sandboxCall: call, resetSandbox: reset } = await import('../exec-sandbox-host.ts');
+        reset();
+        localStorage.setItem('fg_privacy_level', 'routed');
+        const first = call('js', { code: '1' }); first.catch(() => {});
+        const f1 = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        expect(f1.srcdoc).not.toMatch(/Content-Security-Policy/);
+        localStorage.setItem('fg_privacy_level', 'local');
+        reset();   // what a pending call would wait for; here: the next call after the change
+        const second = call('js', { code: '1' }); second.catch(() => {});
+        const f2 = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        expect(f2.srcdoc).toMatch(/Content-Security-Policy/);
+        reset();
+        localStorage.removeItem('fg_privacy_level');
+    });
+    it('restarts a ready frame at its next call when the level changed meanwhile', async () => {
+        const host = await import('../exec-sandbox-host.ts');
+        host.resetSandbox();
+        localStorage.setItem('fg_privacy_level', 'routed');
+        const a = host.sandboxCall('js', { code: '1' });
+        const fa = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        const sent: any[] = []; fa.contentWindow!.postMessage = ((m: any) => sent.push(m)) as any;
+        window.dispatchEvent(new MessageEvent('message', { source: fa.contentWindow, data: { fg: 'ready' } }));
+        await vi.waitFor(() => expect(sent.some(m => m.fg === 'call')).toBe(true));
+        window.dispatchEvent(new MessageEvent('message', { source: fa.contentWindow, data: { fg: 'reply', id: sent.find(m => m.fg === 'call').id, value: 'ok' } }));
+        expect(await a).toBe('ok');
+        localStorage.setItem('fg_privacy_level', 'local');
+        const b = host.sandboxCall('js', { code: '1' }); b.catch(() => {});
+        const fb = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
+        expect(fb).not.toBe(fa);
+        expect(fb.srcdoc).toMatch(/Content-Security-Policy/);
+        localStorage.removeItem('fg_privacy_level');
+        host.resetSandbox();
+    });
+});

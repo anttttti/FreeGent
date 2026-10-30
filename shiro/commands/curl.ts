@@ -19,6 +19,7 @@ interface Req {
   showErrors: boolean;
   verbose: boolean;
   writeOut?: string;
+  maxTime?: number;      // -m / --max-time, seconds
 }
 
 const CURL_HELP = `Usage: curl [options] URL
@@ -32,9 +33,36 @@ const CURL_HELP = `Usage: curl [options] URL
 Sites that refuse browser requests are fetched through FreeGent's proxy: plain GET only,
 without custom headers.`;
 
+// The last path segment, decoded, unless decoding makes it a path: %2F..%2F..%2Fx decoded to "/../../x" after the split and was written
+// there (codex R303). Such a name is kept as sent, as curl -O does.
 function fileNameFromUrl(url: string): string {
-  try { return decodeURIComponent(new URL(url).pathname.split('/').pop() || '') || 'index.html'; }
+  try {
+    const seg = new URL(url).pathname.split('/').pop() || '';
+    let name = seg; try { name = decodeURIComponent(seg); } catch { /* malformed escape: as sent */ }
+    if (/[\/\\]/.test(name) || name === '.' || name === '..') name = seg;
+    return name || 'index.html';
+  }
   catch { return 'index.html'; }
+}
+
+// Direct responses had no deadline and no size limit; only the page proxy had them (codex R302). --max-time is honoured now.
+const DEFAULT_MAX_TIME_S = 300;
+const MAX_BODY_BYTES = 256 * 1024 * 1024;
+async function readBodyCapped(resp: Response): Promise<Uint8Array> {
+  if (Number(resp.headers.get('content-length')) > MAX_BODY_BYTES) { resp.body?.cancel().catch(() => {}); throw Object.assign(new Error(`Maximum file size exceeded (${MAX_BODY_BYTES >> 20} MB)`), { curlCode: 63 }); }
+  if (!resp.body) return new Uint8Array(await resp.arrayBuffer());
+  const reader = resp.body.getReader(), chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) { reader.cancel().catch(() => {}); throw Object.assign(new Error(`Maximum file size exceeded (${MAX_BODY_BYTES >> 20} MB)`), { curlCode: 63 }); }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size); let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
 }
 
 async function readData(ctx: CommandContext, v: string): Promise<string> {
@@ -47,13 +75,20 @@ async function run(ctx: CommandContext, name: string, req: Req): Promise<number>
   const err = (msg: string) => { if (!req.silent || req.showErrors) ctx.stderr += `${name}: ${msg}\n`; };
   if (!/^https?:\/\//i.test(req.url)) req.url = `https://${req.url}`;
   let resp: Response;
+  const maxTime = req.maxTime ?? DEFAULT_MAX_TIME_S;
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new DOMException('timed out', 'TimeoutError')), maxTime * 1000);
+  const timedOut = () => { err(`(28) Operation timed out after ${maxTime} seconds`); return 28; };
   try {
     resp = await sandboxFetch(req.url, {
       method: req.method,
       headers: req.headers,
+      signal: deadline.signal,
       ...(req.body !== undefined && { body: textToBytes(req.body) as BodyInit }),
     });
   } catch (e: any) {
+    clearTimeout(timer);
+    if (deadline.signal.aborted) return timedOut();
     const proxied = (req.method === 'GET' || req.method === 'HEAD') && req.body === undefined;
     err(proxied
       ? `(7) ${e?.message ?? e}`
@@ -71,10 +106,14 @@ async function run(ctx: CommandContext, name: string, req: Req): Promise<number>
     return h + '\n';
   };
   if (req.fail && resp.status >= 400) {
+    clearTimeout(timer);
     if (name !== 'wget') err(`(22) The requested URL returned error: ${resp.status}`);
     return 22;
   }
-  const bytes = req.method === 'HEAD' ? new Uint8Array() : new Uint8Array(await resp.arrayBuffer());
+  let bytes: Uint8Array;
+  try { bytes = req.method === 'HEAD' ? new Uint8Array() : await readBodyCapped(resp); }
+  catch (e: any) { clearTimeout(timer); if (deadline.signal.aborted) return timedOut(); err(`(${e?.curlCode ?? 56}) ${e?.message ?? e}`); return e?.curlCode ?? 56; }
+  clearTimeout(timer);
   const out = req.remoteName ? fileNameFromUrl(req.url) : req.output;
   if (req.includeHeaders || req.method === 'HEAD') ctx.stdout += headerText();
   if (out && out !== '-') {
@@ -136,7 +175,8 @@ export const curlCmd: Command = {
         case '-A': case '--user-agent':     req.headers['User-Agent'] = next(); break;
         case '-u': case '--user':           req.headers['Authorization'] = `Basic ${btoa(next())}`; break;
         case '-L': case '--location': case '-k': case '--insecure': case '--compressed': break;
-        case '--max-time': case '-m': case '--connect-timeout': case '--retry': next(); break;
+        case '--max-time': case '-m': { const v = Number(next()); if (v > 0) req.maxTime = v; break; }
+        case '--connect-timeout': case '--retry': next(); break;
         default:
           if (arg.startsWith('-')) { ctx.stderr += `curl: option ${arg}: not supported in the browser shell (curl --help)\n`; return 2; }
           req.url = arg;

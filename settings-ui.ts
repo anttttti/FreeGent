@@ -3,7 +3,8 @@ import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
-import { specBlockedByPrivacy, samplingRangeError } from './config.js';
+import { specBlockedByPrivacy, samplingRangeError, pyodideStatus } from './config.js';
+import { resetSandbox } from './exec-sandbox-host.js';
 import { clearAllCooldowns } from './model-router.js';
 import { fmtDelay } from './retry.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
@@ -214,6 +215,11 @@ function onPrivacyLevelChange(level: string) {
     renderMainModelList?.();
     renderModelCatalogTable?.();
     updateActiveModelDisplay?.();
+    // The code sandbox's network rules are set when its frame loads: restart it now (with Python, if that was loaded), so the new level
+    // applies at once (codex R304). Its next call would also notice the change.
+    const wasPy = pyodideStatus === 'ready';
+    resetSandbox('the privacy level changed; the code sandbox was restarted with its rules');
+    if (wasPy) (window as any).startPyodide?.()?.catch?.(() => {});
 }
 
 function onPrivacyChange(which: 'geo' | 'analytics', checked: boolean) {
