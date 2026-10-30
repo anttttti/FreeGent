@@ -930,9 +930,9 @@ function openEditModelDialog(key: string) {
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Released</td>
           <td><input class="settings-input" id="emd-released" type="text" value="${escapeHtml(m.released)}" placeholder="YYYY-MM" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">RPM limit</td>
-          <td><input class="settings-input" id="emd-rpm" type="number" min="0" value="${m.rpm ?? ''}" placeholder="(no limit)" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-rpm" type="number" min="1" value="${m.rpm ?? ''}" placeholder="(no limit)" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">RPD limit</td>
-          <td><input class="settings-input" id="emd-rpd" type="number" min="0" value="${m.rpd ?? ''}" placeholder="(no limit)" style="margin:0;width:100%"></td></tr>
+          <td><input class="settings-input" id="emd-rpd" type="number" min="1" value="${m.rpd ?? ''}" placeholder="(no limit)" style="margin:0;width:100%"></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Tools</td>
           <td style="padding-top:4px"><input type="checkbox" id="emd-tools" ${m.tools ? 'checked' : ''}></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Thinking</td>
@@ -1014,7 +1014,10 @@ function saveEditModel() {
     for (const [field, parse] of [['params', parseFloat], ['rpm', (x: string) => parseInt(x, 10)], ['rpd', (x: string) => parseInt(x, 10)]] as const) {
         if (!changed(field)) continue;
         const raw = String(cur[field]);
-        if (raw) set[field] = (parse as any)(raw); else drop.push(field);   // blank = unknown / no limit: the field leaves the entry
+        // blank = unknown / no limit: the field leaves the entry. So does a limit below 1: zero requests a minute is no limit anyone sets on purpose,
+        // and it let the first request through on NaN arithmetic (codex R243).
+        const n = raw ? (parse as any)(raw) : NaN;
+        if (raw && !(field !== 'params' && !(n >= 1))) set[field] = n; else drop.push(field);
     }
     // Emptied means removed, as for the other optional fields: a rotated or revoked key, or an address given up, could not be cleared here and the old
     // value kept being sent (opencode §9). (An untouched field is not "changed", so a key that is never shown in full is not wiped by an unrelated edit.)

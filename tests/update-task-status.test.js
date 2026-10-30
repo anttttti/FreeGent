@@ -114,6 +114,27 @@ describe('update_task_status', () => {
         } finally { W.runnerStartedTask = saved; }
     });
 
+    // codex R236: two tabs each passed the one-in-progress check before either wrote. The check and the write hold a Web Lock now.
+    it('two concurrent moves to in-progress in one folder: the second is refused', async () => {
+        files.set('fg-tasks/001-a.md', TASK.replace('id: 007', 'id: 001'));
+        files.set('fg-tasks/002-b.md', TASK.replace('id: 007', 'id: 002'));
+        const savedLocks = navigator.locks, savedLoad = W.loadTaskFiles;
+        W.loadTaskFiles = async () => [...files].filter(([p]) => /^fg-tasks\/\d+-/.test(p)).map(([p, c]) => ({ path: p, fm: W.parseFrontmatter(c) }));
+        W.agentWriteFile = async (p, c) => { await new Promise(r => setTimeout(r, 20)); files.set(p, c); };   // a slow write: the window the other tab used
+        let chain = Promise.resolve();
+        Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (_name, fn) => { const run = chain.then(fn); chain = run.catch(() => {}); return run; } } });
+        try {
+            const [a, b] = await Promise.all([
+                W.executeToolAsync('update_task_status', { path: 'fg-tasks/001-a.md', status: 'in-progress' }, null),
+                W.executeToolAsync('update_task_status', { path: 'fg-tasks/002-b.md', status: 'in-progress' }, null)]);
+            expect([a.ok, b.ok]).toEqual([true, false]);
+            expect(b.reason).toMatch(/Only one task may be in-progress/);
+        } finally {
+            W.loadTaskFiles = savedLoad;
+            if (savedLocks) Object.defineProperty(navigator, 'locks', { configurable: true, value: savedLocks }); else delete navigator.locks;
+        }
+    });
+
     // Audit §4.3 — setTaskStatus used to swallow write failures, so an unwritable
     // workspace produced ok:true (and, since the status never changed on disk, made the
     // autopilot/agent-loop task selectors re-pick the same task forever).

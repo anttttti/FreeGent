@@ -1,7 +1,7 @@
 import { workflowMode, activeChatId, activeAbortController, setPendingAgentsContextInject, type AgentSession, defaultSession } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay, _httpErrorFromResponse } from './retry.js';
-import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName, withEndpointSlot,
+import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName, withEndpointSlot, recordSuccess,
          firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payload-builder.js';
@@ -315,6 +315,9 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
                 : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body })
             ).catch(e => { throw asTransportError(e); });
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
+            // A summary the endpoint served is a success like a chat reply: without it, the next 429 there got the one-hour penalty for an
+            // endpoint with "no success since its cooldown" (codex R237).
+            recordSuccess(ep);
             return resp.json();
         }), _makeCompactRetryHandler({
             getEp: () => ep,

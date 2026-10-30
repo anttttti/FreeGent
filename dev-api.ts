@@ -33,6 +33,7 @@ import { Readable } from 'node:stream';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { scrubEnv } from './secret-env.js';
+import { injectIntoHead } from './html-inject.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -447,12 +448,17 @@ async function _refuseLinkLocal(rawUrl: string): Promise<void> {
 // fetch that follows redirects itself, checking every hop. With a server key in the request it
 // refuses to follow a redirect to a different origin — host, port or scheme, so an HTTPS-to-HTTP
 // downgrade is refused too (the key would travel with the headers).
+// Without a server key a cross-origin redirect was followed as is (codex R229): a 307/308 carried the request body (a prompt) and the user's own
+// Authorization header to the new origin, past FG_PROXY_POST_ALLOW, which was checked on the first URL only. Now a cross-origin hop never
+// carries a body or credential headers, and `hopRefusal` (the allow-list) is checked on every hop.
+const _CREDENTIAL_HEADERS = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|x-goog-api-key)$/i;
 export async function guardedFetch(
     url: string, init: RequestInit & { method: string }, serverPort: number,
-    keyUsed: boolean, fetchImpl: typeof fetch = fetch,
+    keyUsed: boolean, fetchImpl: typeof fetch = fetch, hopRefusal: (url: string) => string | null = () => null,
 ): Promise<Response> {
     let cur = url, req = { ...init };
     for (let hop = 0; hop <= 5; hop++) {
+        if (hop > 0) { const why = hopRefusal(cur); if (why) throw new ProxyRefusal(`redirect refused: ${why}`); }
         if (await isSelfTarget(cur, serverPort)) throw new ProxyRefusal('requests to the FreeGent dev server itself are not allowed');
         await _refuseLinkLocal(cur);
         const resp = await fetchImpl(cur, { ...req, redirect: 'manual' });
@@ -465,6 +471,10 @@ export async function guardedFetch(
             throw new ProxyRefusal('redirect to another origin refused: the request carries a server key');
         if (resp.status === 303 || ((resp.status === 301 || resp.status === 302) && req.method !== 'GET' && req.method !== 'HEAD'))
             req = { ...req, method: 'GET', body: undefined };
+        if (new URL(next).origin !== new URL(cur).origin) {
+            if (req.body != null) throw new ProxyRefusal('redirect to another origin refused: it would resend the request body there');
+            req = { ...req, headers: Object.fromEntries(Object.entries((req.headers ?? {}) as Record<string, string>).filter(([k]) => !_CREDENTIAL_HEADERS.test(k))) };
+        }
         cur = next;
     }
     throw new ProxyRefusal('too many redirects');
@@ -923,7 +933,8 @@ export function createDevApi(opts: DevApiOptions) {
             // prompts piled up in vLLM's queue until it stopped answering anyone (found by the real-model browser run).
             const upstreamAbort = new AbortController();
             res.on('close', () => { if (!res.writableEnded) upstreamAbort.abort(); });
-            const upstream = await guardedFetch(s.url, { method, headers: s.headers, body: reqBody as any, signal: upstreamAbort.signal }, port, s.used, fetchImpl);
+            const upstream = await guardedFetch(s.url, { method, headers: s.headers, body: reqBody as any, signal: upstreamAbort.signal }, port, s.used, fetchImpl,
+                next => postTargetRefusal(next, process.env.FG_PROXY_POST_ALLOW));
             _copyRespHeaders(upstream, res);
             res.setHeader('Content-Type', upstream.headers.get('Content-Type') ?? 'application/octet-stream');
             res.writeHead(upstream.status);
@@ -1126,8 +1137,7 @@ window.fetch=function(input,init){
 // Insert the page script right after <head> (used by the preview server, where Vite's
 // transformIndexHtml doesn't run).
 export function injectClientScript(html: string, script: string): string {
-    const tag = `<script>${script}</script>`;
-    return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + tag) : tag + html;
+    return injectIntoHead(html, `<script>${script}</script>`);
 }
 
 // URLs to open from other devices when the server is LAN-bound.

@@ -5,7 +5,8 @@
 import { splitFrontmatter, parseFmLines } from './frontmatter.js';
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { setMainAgentRoleObject, activePlaceholder, softStopPending, activeChatId, workflowMode } from './state.js';
+import { setMainAgentRoleObject, activePlaceholder, softStopPending, activeChatId, workflowMode, mainAgentRole } from './state.js';
+import { _skillExcludedForRole, _skillExcludedForMode } from './skill-guidance.js';
 import type { ForkBase } from './llm-loops.js';
 import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
@@ -480,6 +481,9 @@ function _roleSkillBodies(roleName: string, toolSet?: Set<string>): string {
         if (!skill.roles) continue;
         const names = skill.roles.split(',').map(s => s.trim().toLowerCase());
         if (!names.includes(roleName.toLowerCase())) continue;
+        // The exclusions every other skill path applies: exclude_roles names main-agent roles (here the one that launched the worker),
+        // exclude_mode the runtime (codex R222/R223).
+        if (_skillExcludedForRole(skill, mainAgentRole?.name?.toLowerCase() ?? null) || _skillExcludedForMode(skill)) continue;
         if (skill.requires && localStorage.getItem(String(skill.requires).trim()) !== 'true') continue;   // same rule as _skillRequiresUnmet
         if (skill.requires_tools && skill.requires_tools.split(',').some(t => !_toolCheck(t.trim()))) continue;
         const body = typeof skill.body_fn === 'function' ? skill.body_fn() : skill.body;
@@ -2031,7 +2035,7 @@ async function executeWorkers(args: any): Promise<any> {
 Object.assign(window, {
     splitLines, diffRegions, loadRoles, rolesRegistry,
     setMainAgentRole, clearMainAgentRole, restoreRoleForChat, takeWorkspaceSnapshot,
-    buildWorkerSystemPrompt, _filterRoleBody,
+    buildWorkerSystemPrompt, _filterRoleBody, _roleSkillBodies,
     callLLMComplete,
     runWorkerTurn, executeWorkers,
 });

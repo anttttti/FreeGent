@@ -18,6 +18,7 @@
     "globals.d.ts",
     "dev-api.ts",
     "secret-env.ts",
+    "html-inject.ts",
     "fg-run.ts",
     "dotenv.ts",
     "headless-runner.ts",

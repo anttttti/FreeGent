@@ -1017,6 +1017,9 @@ function getMediaCapableSpec(requiredMedia) {
     for (const spec of _configured) {
         const bar   = spec.indexOf('|');
         if (bar < 0) continue;
+        // A saved override the privacy level rules out is skipped, as the main list skips it: it was chosen, routed, then refused by the
+        // fetch guard when sent (codex R245; the guard did stop it, so nothing left the machine).
+        if (specBlockedByPrivacy(spec)) continue;
         const entry = all.find(m => m.provider === spec.slice(0, bar) && m.model === spec.slice(bar + 1));
         if (!entry) continue;
         if (_coversMedia(entry, requiredMedia)) return spec;

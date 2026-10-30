@@ -1,6 +1,7 @@
 // tabs.js — FreeGent: tab management, file tabs, notify local file changed
 // Depends on: config.js, settings-ui.js, skills.js, tasks.js, editor.js
 import { escapeHtml } from './html-escape.js';
+import { injectIntoHead } from './html-inject.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { judgeExpectation, summarizeExpectations, type Expectation, type ExpectResult } from './page-expect.js';
 import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
@@ -520,11 +521,8 @@ function _wrapArtifact(content) {
     if (/^\s*(<\?xml[^>]*\?>\s*)?<svg[\s>]/i.test(content)) {
         return `<!DOCTYPE html><html><head>${_STORAGE_POLYFILL}<style>html,body{margin:0;background:#fff;display:flex;justify-content:center;align-items:flex-start;}svg{max-width:100%;height:auto;}</style></head><body>${content}</body></html>`;
     }
-    // Inject the storage polyfill into HTML: right after <head> if present, else at the top.
-    if (/<head[^>]*>/i.test(content)) {
-        return content.replace(/(<head[^>]*>)/i, `$1${_STORAGE_POLYFILL}`);
-    }
-    return _STORAGE_POLYFILL + content;
+    // Inject the storage polyfill into HTML: right after <head> if present, else after the doctype.
+    return injectIntoHead(content, _STORAGE_POLYFILL);
 }
 
 // The workspace file a page's reference points to, resolved as a browser would: relative to the
@@ -874,10 +872,10 @@ window.fetch=function(u,opts){
 })();
 </script>
 `;
-    html = html.includes('</head>') ? html.replace('</head>', shimTag + '</head>') : shimTag + html;
+    html = html.includes('</head>') ? html.replace('</head>', shimTag + '</head>') : injectIntoHead(html, shimTag);
     // Local privacy level: the page's own fetch/XHR may reach only this machine (the CSP must precede the scripts).
     const _csp = sandboxCspMeta();
-    if (_csp) html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + _csp) : _csp + html;
+    if (_csp) html = injectIntoHead(html, _csp);
 
     return html;
 }
@@ -1035,7 +1033,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
     if (_MUTES_INLINE_ERRORS) content = _unmuteInlineScripts(content);
     // The capture script must run before every other script, so it goes first in <head>.
-    content = /<head[^>]*>/i.test(content) ? content.replace(/(<head[^>]*>)/i, `$1${_CHECK_CAPTURE}`) : _CHECK_CAPTURE + content;
+    content = injectIntoHead(content, _CHECK_CAPTURE);
 
     const iframe = document.createElement('iframe');
     // artifact-iframe: lets the page's cross-origin GETs use the preview fetch relay.

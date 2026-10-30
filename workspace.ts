@@ -1572,8 +1572,10 @@ export async function agentReadFile(path) {
 export async function agentReadFileBytes(path: string): Promise<Uint8Array> {
     if (_wa) return (_wa as any).agentReadFileBytes ? (_wa as any).agentReadFileBytes(path) : new TextEncoder().encode(await agentReadFile(path));
     path = workspaceName(path);
+    // As agentReadFile: with a folder synced, local/… IS the folder. Falling back to the snapshot here gave attachments and exports bytes of a
+    // file the folder no longer has (codex R232).
     if (path.startsWith('local/') && fsaHandle) {
-        try { return _base64ToUint8(await readFsaFile(path.slice(6), true)); } catch {}
+        try { return _base64ToUint8(await readFsaFile(path.slice(6), true)); } catch { throw new Error(`File not found: ${path}`); }
     }
     const rec = await readWorkspaceFile(path);
     if (rec) return rec.encoding === 'base64' ? _base64ToUint8(rec.content) : new TextEncoder().encode(rec.content);
@@ -1627,6 +1629,12 @@ export interface WriteOpts { epoch?: number }
 function _assertEpoch(what: string, path: string, opts?: WriteOpts): void {
     if (opts?.epoch !== undefined && workspaceEpoch() !== opts.epoch) throw new Error(`${what}: the project was cleared or replaced while this was pending, so ${path} was not changed`);
 }
+// Checked right before each mutation, after every await: the generation was checked once near the start, so a write or delete paused in the
+// folder could land in a project cleared or imported meanwhile (codex R233/R234).
+function _stillCurrent(generation: number, what: string, path: string, opts?: WriteOpts): void {
+    if (generation !== _workspaceGeneration) throw new Error(`${what}: the project was cleared or replaced while this ${what} of ${path} was pending; it was not applied`);
+    _assertEpoch(what, path, opts);
+}
 export async function agentWriteFile(path, content, encoding = null, opts?: WriteOpts) {
     _assertEpoch('write', path, opts);
     if (_wa) { const r = await _wa.agentWriteFile(path, content, encoding); _reloadAfterWorkspaceChange(path); return r; }
@@ -1634,8 +1642,7 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
     path = workspaceName(path);
     _refuseGitMetadata(path, 'write');
     await _refuseDuplicateTask(path, content);
-    if (generation !== _workspaceGeneration) throw new Error(`write: the project was cleared or replaced while this write of ${path} was pending; it was not applied`);
-    _assertEpoch('write', path, opts);
+    _stillCurrent(generation, 'write', path, opts);
     if (path.startsWith('local/')) {
         if (fsaHandle) {
             await writeFsaFile(path.slice(6), content, encoding);
@@ -1645,6 +1652,7 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
             const snapshot = (await listWorkspaceFilesMetaOnly()).some(f => f.name.startsWith('local/'));
             if (!snapshot) throw new Error(`No local folder is synced — "local/" is reserved for one. Use the path without "local/" (e.g. "${path.slice(6)}").`);
             // No FSA — write back to IDB (imported snapshot; no write-back to filesystem)
+            _stillCurrent(generation, 'write', path, opts);
             await writeWorkspaceFile(path, content, null, encoding);
         }
     } else {
@@ -1657,7 +1665,9 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
         // A file the synced folder has is written there too, and a failure to write it (read-only, no room) is the write's failure: the workspace
         // copy is not changed either, so the two cannot differ while the tool says it worked (opencode §12). A file the folder does not have stays a
         // workspace file; `local/` is the way to put one on disk.
-        if (await _fsaHas(path)) await writeFsaFile(path, content, encoding);
+        const inFolder = await _fsaHas(path);
+        _stillCurrent(generation, 'write', path, opts);
+        if (inFolder) { await writeFsaFile(path, content, encoding); _stillCurrent(generation, 'write', path, opts); }
         await writeWorkspaceFile(path, content, null, encoding);
     }
     _scheduleFileListRender();
@@ -1673,13 +1683,16 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
 export async function agentDeleteFile(path, opts?: WriteOpts) {
     _assertEpoch('delete', path, opts);
     if (_wa) { const r = await _wa.agentDeleteFile(path); _reloadAfterWorkspaceChange(path); return r; }
+    const generation = _workspaceGeneration;
     path = workspaceName(path);
     _refuseGitMetadata(path, 'delete');
     _assertEpoch('delete', path, opts);
     // The file goes from the folder (when it has it; a failure there is the delete's failure and nothing else changes) and from the workspace store,
     // both: a snapshot record left behind brought a deleted file back on the next read, and the export (opencode §4.2, §4.3, §12).
     const rel = path.startsWith('local/') ? path.slice('local/'.length) : path;
-    if (fsaHandle && await _fsaHas(rel)) await deleteFsaFile(rel);
+    const inFolder = !!fsaHandle && await _fsaHas(rel);
+    _stillCurrent(generation, 'delete', path, opts);
+    if (inFolder) { await deleteFsaFile(rel); _stillCurrent(generation, 'delete', path, opts); }
     await deleteWorkspaceFile(path);
     await renderFileList();
     if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();

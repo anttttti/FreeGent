@@ -8,7 +8,7 @@
 //           refuse, and the user's MCP credentials must not go through a shared proxy. On a static
 //           host or headless it is '' (direct fetch), which is a deliberate policy, not an omission.
 import { isStaticHost } from './static-hosts.js';
-import { getPrivacyLevel, privacyBlockReason, proxiedTarget } from './privacy.js';
+import { getPrivacyLevel, privacyBlockReason, proxiedTarget, PRIVACY_LABELS } from './privacy.js';
 
 export const DEFAULT_CF_WORKER = 'https://proxy.freegent.ai';
 type ProxyKind = 'get' | 'post' | 'local';
@@ -81,9 +81,17 @@ export function installPrivacyGuard(): void {
                 const pageOrigin = window.location.origin;
                 const manual = (() => { try { return new URL(localStorage.getItem('fg_search_proxy') || '').origin; } catch { return ''; } })();
                 const ctx = { pageOrigin, workerOrigins: [DEFAULT_CF_WORKER, manual].filter(Boolean) };
-                const target = proxiedTarget(url, init?.body, pageOrigin) ?? url;
-                const why = privacyBlockReason(target, level, ctx);
-                if (why) { const e = new Error(why); e.name = 'PrivacyBlockedError'; return Promise.reject(e); }
+                const refuse = (why: string) => { const e = new Error(why); e.name = 'PrivacyBlockedError'; return Promise.reject(e); };
+                const check = (body: unknown) => privacyBlockReason(proxiedTarget(url, body, pageOrigin) ?? url, level, ctx);
+                // A call to the local proxy whose envelope is not in init.body as a string: a prebuilt Request carries it inside, and its
+                // target was never looked at (codex R228). The Request's copy is read first; a body that cannot be read as text is refused.
+                if (proxiedTarget(url, '{"url":"x"}', pageOrigin) !== null && init?.body == null && typeof Request !== 'undefined' && input instanceof Request && input.method !== 'GET') {
+                    return input.clone().text().then(body => { const why = check(body); return why ? refuse(why) : _origFetch.call(window, input, init); });
+                }
+                if (init?.body != null && typeof init.body !== 'string' && proxiedTarget(url, '{"url":"x"}', pageOrigin) !== null)
+                    return refuse(`Blocked by Settings → Privacy (${PRIVACY_LABELS[level]}): a request to the local proxy whose target cannot be read.`);
+                const why = check(init?.body);
+                if (why) return refuse(why);
             }
         } catch {}
         return _origFetch.call(window, input, init);

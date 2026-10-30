@@ -119,3 +119,17 @@ describe('parseContextOverflow — vLLM lower-bound wording', () => {
         expect(parseContextOverflow(e)).toBe(0);
     });
 });
+
+// codex R237: a summary the endpoint served did not count as a success, so its next 429 got the one-hour "no success since the cooldown" penalty.
+describe('compaction success and the shared cooldown state', () => {
+    it('after a successful compaction the next 429 there is not the one-hour penalty', async () => {
+        const { _markCooldown, getCooldownRemaining } = await import('../model-router.ts');
+        const CLOUD = { provider: 'groq', url: 'https://api.groq.test/v1/chat/completions', model: 'r237-model', key: 'k' };
+        _markCooldown(CLOUD, null, new Error('HTTP 429'));
+        expect(getCooldownRemaining('groq|r237-model')).toBeGreaterThan(3000);   // no success yet: the penalty
+        serve([ok('GOAL: x\nNEXT: y')]);
+        await W.compactHistory(NULL_RENDER_ADAPTER, CLOUD, W.createSession({ workflowMode: true }), history(), PREFIX);
+        _markCooldown(CLOUD, null, new Error('HTTP 429'));
+        expect(getCooldownRemaining('groq|r237-model')).toBeLessThan(3000);
+    });
+});

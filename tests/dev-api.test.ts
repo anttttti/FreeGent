@@ -79,6 +79,18 @@ describe('guardedFetch', () => {
         expect(f).toHaveBeenCalledTimes(1);   // the plaintext hop was never requested
     });
 
+    // codex R229: without a server key, a 307 to another origin resent the body and the user's Authorization there.
+    it('without a server key, a cross-origin hop carries no body and no credentials, and the allow-list is checked on it', async () => {
+        const f = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/v1', 307));
+        await expect(guardedFetch('http://192.168.1.5:8000/v1', { method: 'POST', body: '{"prompt":"secret"}' }, 5000, false, f)).rejects.toThrow(/resend the request body/);
+        expect(f).toHaveBeenCalledTimes(1);
+        const g = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/doc')).mockResolvedValueOnce(new Response('ok'));
+        await guardedFetch('http://192.168.1.5:8000/doc', { method: 'GET', headers: { Authorization: 'Bearer mine', Accept: 'text/html' } }, 5000, false, g);
+        expect(g.mock.calls[1][1].headers).toEqual({ Accept: 'text/html' });
+        const h = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/doc'));
+        await expect(guardedFetch('http://192.168.1.5:8000/doc', { method: 'GET' }, 5000, false, h, u => u.includes('elsewhere') ? 'not allowed' : null)).rejects.toThrow(/redirect refused: not allowed/);
+    });
+
     it('follows ordinary redirects, turning POST into GET on 303', async () => {
         const f = vi.fn()
             .mockResolvedValueOnce(redirect('https://public.example/next', 303))

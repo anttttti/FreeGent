@@ -503,6 +503,12 @@ async function _ivLog(name, args, check) {
 // ── Tool approval ──────────────────────────────────────────────────────────
 
 const _toolApprovalSession = new Set(); // tools the user has whitelisted for this session
+// Grants are kept by tool name. An MCP server removed and added again under the same name (another URL, other tools) got the same names,
+// and so the grants given to the old server (codex R247): removing or adding a server revokes the grants under its prefix.
+export const hasSessionApproval = (name: string): boolean => _toolApprovalSession.has(name);
+export function revokeToolApprovals(prefix: string): void {
+    for (const name of [..._toolApprovalSession] as string[]) if (name.startsWith(prefix)) _toolApprovalSession.delete(name);
+}
 
 // FIFO queue so parallel tool calls (Promise.all) don't overwrite each other's resolver.
 // Each entry is shown one at a time; the next shows as soon as the user responds.
@@ -1191,25 +1197,34 @@ async function _handleUpdateTaskStatus(args: any) {
         // One task in progress at a time: a model that marks every task in-progress up front
         // leaves the whole board "In progress" when the turn ends early. Scoped to the task's
         // own folder so unrelated task dirs don't interfere.
-        if (String(status).toLowerCase() === 'in-progress' && typeof loadTaskFiles === 'function') {
-            const dir = path.slice(0, path.lastIndexOf('/') + 1);
-            const others = (await loadTaskFiles()).filter((t: any) =>
-                t.path !== path && t.path.startsWith(dir)
-                && t.path.lastIndexOf('/') === dir.length - 1
-                && (t.fm.status || '').toLowerCase() === 'in-progress');
-            if (others.length) {
-                const list = others.map((t: any) => t.path).join(', ');
-                return { ok: false, path, status, blocked: true,
-                    reason: `Only one task may be in-progress at a time; ${list} is still in-progress. Finish it first (update_task_status to "done", "failed" or "blocked"), or set it back to "open" if you have not started it.` };
+        const dir = path.slice(0, path.lastIndexOf('/') + 1);
+        const toInProgress = String(status).toLowerCase() === 'in-progress' && typeof loadTaskFiles === 'function';
+        const checkAndTransition = async (): Promise<any> => {
+            if (toInProgress) {
+                const others = (await loadTaskFiles()).filter((t: any) =>
+                    t.path !== path && t.path.startsWith(dir)
+                    && t.path.lastIndexOf('/') === dir.length - 1
+                    && (t.fm.status || '').toLowerCase() === 'in-progress');
+                if (others.length) {
+                    const list = others.map((t: any) => t.path).join(', ');
+                    return { blocked: { ok: false, path, status, blocked: true,
+                        reason: `Only one task may be in-progress at a time; ${list} is still in-progress. Finish it first (update_task_status to "done", "failed" or "blocked"), or set it back to "open" if you have not started it.` } };
+                }
             }
-        }
-        // Route through transitionTask so QA gates fire on every status change.
-        // transitionTask calls setTaskStatus internally on success, and short-circuits
-        // straight to it when gates are disabled (fg_qa_enabled=false, the headless
-        // default). qa.js is loaded by every entry point — index.html and
-        // headless-runner.ts, which also backs fg-run and the TUI — so no typeof guard:
-        // if this throws, the tool is genuinely broken and must not report success.
-        const result = await transitionTask(path, status);
+            // Route through transitionTask so QA gates fire on every status change.
+            // transitionTask calls setTaskStatus internally on success, and short-circuits
+            // straight to it when gates are disabled (fg_qa_enabled=false, the headless
+            // default). qa.js is loaded by every entry point — index.html and
+            // headless-runner.ts, which also backs fg-run and the TUI — so no typeof guard:
+            // if this throws, the tool is genuinely broken and must not report success.
+            return { result: await transitionTask(path, status) };
+        };
+        // Two tabs on one workspace each passed the check before either wrote (codex R236): the check and the write to in-progress hold one
+        // Web Lock per task folder, shared by every tab of this origin.
+        const locks = typeof navigator !== 'undefined' ? (navigator as any).locks : null;
+        const step = toInProgress && locks?.request ? await locks.request(`fg-task-status:${dir}`, checkAndTransition) : await checkAndTransition();
+        if (step.blocked) return step.blocked;
+        const result = step.result;
         if (!result.transitioned) {
             return { ok: false, path, status, blocked: true, reason: result.reason || 'QA gate blocked transition' };
         }
@@ -3014,4 +3029,4 @@ export function toolLabel(name, args) {
 
 
 // Window bridge for classic scripts.
-Object.assign(window, { executeToolAsync, toolLabel, _rewriteHunkCounts });
+Object.assign(window, { executeToolAsync, toolLabel, _rewriteHunkCounts, revokeToolApprovals });

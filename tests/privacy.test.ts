@@ -149,4 +149,14 @@ describe('installPrivacyGuard', () => {
         await win.fetch('http://localhost:11434/v1/chat/completions');
         expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
+    // codex R228: a prebuilt Request carried the proxy envelope inside it, where the guard never looked.
+    it('local reads the envelope of a prebuilt Request, and refuses a body it cannot read', async () => {
+        const { win, fetchSpy } = stubPage('localhost', 'local');
+        installPrivacyGuard();
+        const req = (url: string) => new Request('https://localhost/api/proxy', { method: 'POST', body: JSON.stringify({ url }) });
+        await expect(win.fetch(req('https://api.groq.com/x'))).rejects.toMatchObject({ name: 'PrivacyBlockedError' });
+        await win.fetch(req('http://192.168.1.50:8000/v1/chat/completions'));
+        await expect(win.fetch('https://localhost/api/proxy', { method: 'POST', body: new Blob(['{"url":"https://api.groq.com/x"}']) })).rejects.toMatchObject({ name: 'PrivacyBlockedError' });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
 });

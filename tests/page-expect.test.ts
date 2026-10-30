@@ -27,3 +27,17 @@ describe('check_page expectations', () => {
         expect(summarizeExpectations([r[0]])).toBe('1/1 expectations met.');
     });
 });
+
+// codex R239: the pattern runs on the app thread; `(a+)+$` against a long near-match froze it.
+describe('unsafe patterns are not run', () => {
+    it('refuses nested repetition, alternation under repetition, back-references and long patterns; ordinary ones run', async () => {
+        const { unsafePatternReason, judgeExpectation } = await import('../page-expect.ts');
+        for (const p of ['(a+)+$', '(a*)*b', '(x+x+)+y', '(a|aa)+$', '(\\w+\\s?)*$', '(.*a){2,}', '(a)\\1', 'x'.repeat(301)]) expect(unsafePatternReason(p), p).not.toBeNull();
+        for (const p of ['^\\d+$', 'score: \\d+', '(foo|bar)', '^(ab)+$', '[a-z]+@[a-z]+\\.com', '(\\d{3})-\\d{4}']) expect(unsafePatternReason(p), p).toBeNull();
+        const t0 = Date.now();
+        const r = judgeExpectation({ expr: 'x', matches: '(a+)+$' }, 'a'.repeat(4000) + '!');
+        expect(Date.now() - t0).toBeLessThan(100);
+        expect(r.ok).toBe(false);
+        expect(r.actual).toMatch(/pattern not run/);
+    });
+});

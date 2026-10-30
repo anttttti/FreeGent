@@ -417,17 +417,20 @@ async function refreshMcpServer(id: string): Promise<McpServer> {
     // Discovery takes a while, and the registry can change meanwhile (a tool switched off, a server added or removed, another tab). The outcome is applied
     // to the registry as it is when the answer arrives, touching only this server's discovered fields: writing back the list read before the request
     // undid the user's edits and brought a removed server back (codex R19-001).
+    // The entry the answer belongs to: same id AND the same endpoint and credentials. A server removed and added again under the freed id
+    // while the request ran is another server, and got the old one's tools (codex R231).
+    const _same = (x: McpServer) => x.id === id && x.url === asked.url && JSON.stringify(x.headers ?? {}) === JSON.stringify(asked.headers ?? {});
     let found: Awaited<ReturnType<typeof _listTools>>;
     try { found = await _listTools(asked); }
     catch (e) {
         const message = redactMcpSecrets(e.message, asked.headers);
-        const list = getMcpServers(); const cur = list.find(x => x.id === id);
+        const list = getMcpServers(); const cur = list.find(_same);
         if (cur) { cur.error = message; saveMcpServers(list); }
         throw new Error(message);
     }
     const list = getMcpServers();
-    const cur = list.find(x => x.id === id);
-    if (!cur) return asked;                          // removed while refreshing: nothing to update, and it must not come back
+    const cur = list.find(_same);
+    if (!cur) return asked;                          // removed or replaced while refreshing: nothing to update, and it must not come back
     const { tools, instructions, incomplete } = found;
     if (incomplete) {
         // Only the first pages were read. What the server lists beyond them is unknown, not gone: the tools already known stay, and so do the user's choices.
@@ -518,6 +521,7 @@ async function addMcpServer(opts: { name: string; url: string; headers?: Record<
     if (opts.libraryId) entry.libraryId = opts.libraryId;
     list.push(entry);
     saveMcpServers(list);
+    (window as any).revokeToolApprovals?.(`mcp__${entry.id}__`);   // grants given in this tab to an earlier server with this id do not carry over
     return entry;
 }
 
@@ -539,6 +543,7 @@ function removeMcpServer(id: string): void {
     const s = list.find(x => x.id === id);
     if (s) _conns.delete(_connKey(s));
     saveMcpServers(list.filter(x => x.id !== id));
+    (window as any).revokeToolApprovals?.(`mcp__${id}__`);   // a later server under this id must be approved again (codex R247)
 }
 
 function setMcpServerEnabled(id: string, on: boolean): void {

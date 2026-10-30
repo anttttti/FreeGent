@@ -86,3 +86,35 @@ describe('local/ paths', () => {
         await expect(W.agentReadFile('local/old.txt')).rejects.toThrow(/not found/i);
     });
 });
+
+// codex R232: a byte read of local/… served an old snapshot of a file the synced folder no longer has.
+// codex R233/R234: a write or delete paused in the folder committed into the project that replaced the one it was started in.
+describe('folder authority and project changes during a folder operation', () => {
+    it('agentReadFileBytes of a local/ path the folder lacks is not found, like agentReadFile', async () => {
+        await connect({});
+        await W.writeWorkspaceFile('local/gone.txt', 'OLD SNAPSHOT');
+        await expect(W.agentReadFile('local/gone.txt')).rejects.toThrow(/not found/);
+        await expect(W.agentReadFileBytes('local/gone.txt')).rejects.toThrow(/not found/);
+    });
+    it('a write or delete whose project changes while the folder works is not applied to the workspace store', async () => {
+        const { workspaceEpoch, bumpWorkspaceEpoch } = await import('../exec-limits.ts');
+        const dir = await connect({ 'shared.txt': 'DISK' });
+        await W.agentWriteFile('shared.txt', 'V1');
+        let release!: () => void;
+        const slowHas = vi.spyOn(dir, 'getFileHandle').mockImplementation(async function (this: any, name: string, opts: any) {
+            await new Promise<void>(r => { release = r; });
+            slowHas.mockRestore();
+            return dir.getFileHandle(name, opts);
+        } as any);
+        const writing = W.agentWriteFile('shared.txt', 'FROM OLD PROJECT', null, { epoch: workspaceEpoch() });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        bumpWorkspaceEpoch();
+        release();
+        await expect(writing).rejects.toThrow(/cleared or replaced/);
+        expect(await W.agentReadFile('shared.txt')).toBe('V1');
+        const deleting = W.agentDeleteFile('shared.txt', { epoch: workspaceEpoch() });
+        bumpWorkspaceEpoch();
+        await expect(deleting).rejects.toThrow(/cleared or replaced/);
+        expect(await W.readWorkspaceFile('shared.txt')).toBeTruthy();
+    });
+});

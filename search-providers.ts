@@ -56,10 +56,12 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
             return { error: `Tavily HTTP ${resp.status}` };
         }
         const data = await resp.json();
+        // A reply with no results list is not "nothing found": Auto mode must try the next provider (codex R225).
+        if (!Array.isArray(data?.results)) return { error: 'Tavily returned a reply without a results list' };
         const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
         return {
             source:  'Tavily',
-            results: (data.results || []).map((r: any) => ({ title: r.title, url: _an(r.url), snippet: (r.content || '').slice(0, 400) }))
+            results: data.results.map((r: any) => ({ title: r.title, url: _an(r.url), snippet: (r.content || '').slice(0, 400) }))
         };
     } catch (e: any) { return { error: `Tavily: ${e.message}` }; }
 }
@@ -105,12 +107,12 @@ export async function braveSearch(query: any): Promise<any> {
         const data = await resp.json();
         // Brave Search API v1 returns { web: { results: [...] } }; legacy proxies
         // may return { results: [...] } directly — support both.
-        const results = data.web?.results ?? data.results;
+        // A search with no web hits has no `web` section at all; any other reply without a list is not a search result, and is an error so
+        // Auto mode tries the next provider instead of stopping at `results: undefined` (codex R224).
+        const results = data?.web?.results ?? data?.results ?? (data?.type === 'search' ? [] : undefined);
+        if (!Array.isArray(results)) return { error: 'Brave returned a reply without a results list' };
         const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
-        const mapped = Array.isArray(results)
-            ? results.map((r: any) => r?.url ? { ...r, url: _an(r.url) } : r)
-            : results;
-        return { source: 'Brave', results: mapped };
+        return { source: 'Brave', results: results.map((r: any) => r?.url ? { ...r, url: _an(r.url) } : r) };
     } catch (e: any) { return { error: `Brave: ${e.message}` }; }
 }
 
@@ -130,7 +132,9 @@ export async function wikipediaSearch(query: any): Promise<{ error: string; sour
                 );
                 if (!sr.ok) { failedSummaries++; firstFailure ||= `HTTP ${sr.status}`; return null; }
                 const d = await sr.json();
-                const _u = d.content_urls?.desktop?.page || '';
+                // A summary with no title, link or text is no result; counted as a failed one so an all-empty set is an error (codex R235).
+                if (!d?.title || !d?.content_urls?.desktop?.page || !d?.extract) { failedSummaries++; firstFailure ||= 'summary without title, link or text'; return null; }
+                const _u = d.content_urls.desktop.page;
                 const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
                 return { title: d.title, url: _an(_u), snippet: d.extract || '' };
             } catch (e: any) { failedSummaries++; firstFailure ||= String(e?.message ?? e).slice(0, 80); return null; }

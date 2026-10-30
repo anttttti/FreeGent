@@ -65,8 +65,22 @@ export const RATE_LIMIT_PENALTY_MS  = 60 * 60_000; // 1h penalty when no success
 
 // ── Known rate limit tracking ────────────────────────────────────────────────
 // Proactively enforces rpm/rpd limits from MODEL_CATALOG before hitting the API.
-const _rlTs  = new Map(); // key → number[] (request timestamps, last 60s)
-const _rlDay = new Map(); // key → {count, day}
+// Kept in localStorage, so every tab of the page counts against the same limit: each tab had its own maps, and two tabs on one key could send
+// twice the account's RPM/RPD (codex R242). Read and written synchronously around each request (no await between check and record).
+// The in-memory map is the fallback when storage cannot be used.
+type _RlRec = { ts: number[]; day: string; count: number };
+const _rlMem = new Map<string, _RlRec>();
+function _rlLoad(key: string): _RlRec {
+    try {
+        const raw = localStorage.getItem('fg_rl:' + key);
+        if (raw) { const r = JSON.parse(raw); if (Array.isArray(r?.ts)) return { ts: r.ts.filter((t: any) => typeof t === 'number'), day: String(r.day ?? ''), count: Number(r.count) || 0 }; }
+    } catch {}
+    return _rlMem.get(key) ?? { ts: [], day: '', count: 0 };
+}
+function _rlSave(key: string, rec: _RlRec): void {
+    _rlMem.set(key, rec);
+    try { localStorage.setItem('fg_rl:' + key, JSON.stringify(rec)); } catch {}
+}
 
 // Cache the known-limits Map so _getKnownLimits is O(1) per call instead of O(n).
 // Rebuilt whenever getAllModels() returns a different array reference (config change).
@@ -79,7 +93,8 @@ function _getKnownLimits(key: string) {
         _knownLimitsModels = models;
         _knownLimitsMap = new Map(models.map(x => [
             `${x.provider}|${x.model}`,
-            { rpm: x.rpm ?? null, rpd: x.rpd ?? null },
+            // A limit below 1 is no limit (blank in the editor); 0 made the first request pass on NaN and then waited (codex R243).
+            { rpm: x.rpm >= 1 ? x.rpm : null, rpd: x.rpd >= 1 ? x.rpd : null },
         ]));
     }
     return _knownLimitsMap.get(key) ?? { rpm: null, rpd: null };
@@ -92,15 +107,16 @@ export function knownLimitWaitMs(endpoint: any): number {
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
+    if (rpm == null && rpd == null) return 0;
+    const rec = _rlLoad(key);
     if (rpm != null) {
-        const ts = (_rlTs.get(key) || []).filter(t => now - t < 60_000);
-        _rlTs.set(key, ts); // prune while we're here
+        const ts = rec.ts.filter(t => now - t < 60_000);
         if (ts.length >= rpm) return 60_000 - (now - ts[0]) + 250; // ms until window clears
     }
     if (rpd != null) {
         const today = new Date().toISOString().slice(0, 10);
-        const d = _rlDay.get(key);
-        if (d?.day === today && d.count >= rpd) {
+        const d = rec;
+        if (d.day === today && d.count >= rpd) {
             // The counter's day is a UTC date (above), so it resets at the next UTC midnight —
             // not local midnight, which is hours off outside UTC.
             const d0 = new Date(now);
@@ -116,18 +132,15 @@ export function recordRequest(endpoint: any): void {
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
-    if (rpm != null) {
-        const ts = (_rlTs.get(key) || []).filter(t => now - t < 60_000);
-        ts.push(now);
-        _rlTs.set(key, ts);
-    }
+    if (rpm == null && rpd == null) return;
+    const rec = _rlLoad(key);
+    if (rpm != null) { rec.ts = rec.ts.filter(t => now - t < 60_000); rec.ts.push(now); }
     if (rpd != null) {
         const today = new Date().toISOString().slice(0, 10);
-        const d = _rlDay.get(key) || { count: 0, day: today };
-        if (d.day !== today) { d.count = 0; d.day = today; }
-        d.count++;
-        _rlDay.set(key, d);
+        if (rec.day !== today) { rec.count = 0; rec.day = today; }
+        rec.count++;
     }
+    _rlSave(key, rec);
 }
 
 // ── Prefix-cache capability detection ───────────────────────────────────────

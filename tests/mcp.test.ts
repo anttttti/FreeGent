@@ -225,6 +225,34 @@ describe('dispatch through executeToolAsync', () => {
         expect(err.message).not.toContain('echo-secret-abcdef123');
     });
 
+    it('a refresh answered after the server was removed and re-added under the same id leaves the new one alone (codex R231)', async () => {
+        W.fetch.mockReset();
+        mockServer(standardHandler);
+        const s = await W.addMcpServer({ name: 'twin', url: 'https://twin-old.example.com/mcp' });
+        let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+        const real = W.fetch.getMockImplementation();
+        W.fetch.mockImplementation(async (url: string, init: any) => { if (String(url).includes('twin-old') && JSON.parse(init.body).method === 'tools/list') await gate; return real(url, init); });
+        const refreshing = W.refreshMcpServer(s.id);
+        await new Promise(r => setTimeout(r, 10));
+        W.removeMcpServer(s.id);
+        W.saveMcpServers([...W.getMcpServers(), { id: s.id, name: 'twin', url: 'https://twin-new.example.com/mcp', enabled: true, enabledTools: [], tools: [{ name: 'new_tool' }] }]);
+        release(); await refreshing;
+        expect(W.getMcpServers().find((x: any) => x.id === s.id).tools.map((t: any) => t.name)).toEqual(['new_tool']);
+    });
+
+    it('a session grant for a server\'s tool ends when the server is removed (codex R247)', async () => {
+        const { hasSessionApproval } = await import('../tools.ts');
+        W.fetch.mockReset(); mockServer(standardHandler);
+        const s = await W.addMcpServer({ name: 'granted', url: 'https://granted-a.example.com/mcp' });
+        const name = W.mcpExposedName(s.id, 'search_places');
+        document.body.insertAdjacentHTML('beforeend', `<div id="tool-approval-toast"></div><input type="checkbox" id="tool-approval-session" checked><span id="tool-approval-session-name">${name}</span>`);
+        W.resolveToolApproval(true);
+        expect(hasSessionApproval(name)).toBe(true);
+        W.removeMcpServer(s.id);
+        expect(hasSessionApproval(name)).toBe(false);
+        for (const id of ['tool-approval-toast', 'tool-approval-session', 'tool-approval-session-name']) document.getElementById(id)?.remove();
+    });
+
     it('returns isError results and disabled tools as errors', async () => {
         mockServer(standardHandler);
         const s = await W.addMcpServer({ name: 'maps', url: 'https://e.example.com/mcp' });

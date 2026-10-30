@@ -426,6 +426,36 @@ describe('performWebSearch routing', () => {
         expect(callUrl).toMatch(/^https:\/\/proxy\.example\.com/);
     });
 
+    // codex R224/R225: an HTTP-200 reply without a results list stopped Auto at the first provider with nothing to show.
+    it('auto: a Tavily or Brave reply without a results list goes on to the next provider', async () => {
+        const wiki = () => window.fetch
+            .mockResolvedValueOnce({ ok: true, json: async () => [null, ['Cat'], [], []] })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ title: 'Cat', extract: 'A mammal.', content_urls: { desktop: { page: 'https://en.wikipedia.org/wiki/Cat' } } }) });
+        localStorage.setItem('fg_search_provider', 'auto');
+        localStorage.setItem('fg_tavily_key', 'tvly-test');
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ detail: 'odd' }) });
+        wiki();
+        expect((await W.performWebSearch('cats')).source).toBe('Wikipedia');
+        localStorage.removeItem('fg_tavily_key');
+        localStorage.setItem('fg_search_proxy', 'https://proxy.example.com');
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+        wiki();
+        expect((await W.performWebSearch('cats')).source).toBe('Wikipedia');
+        // a real search with no web hits is still Brave's answer
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ type: 'search', query: { original: 'cats' } }) });
+        expect(await W.performWebSearch('cats')).toMatchObject({ source: 'Brave', results: [] });
+    });
+
+    it('a Wikipedia search whose summaries are all empty objects is an error, not a result (codex R235)', async () => {
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValueOnce({ ok: true, json: async () => [null, ['Cat', 'Dog'], [], []] })
+            .mockResolvedValue({ ok: true, json: async () => ({}) });
+        expect((await W.wikipediaSearch('cats')).error).toMatch(/summary without title, link or text/);
+    });
+
     it('explicit "wikipedia" → calls Wikipedia', async () => {
         localStorage.setItem('fg_search_provider', 'wikipedia');
         window.fetch

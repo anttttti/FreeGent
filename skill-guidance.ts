@@ -6,7 +6,7 @@ import { runtime } from './runtime.js';
 import { currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts, _toolCallHistory, setReactiveFired } from './state.js';
 
 // R5 — single role-exclusion predicate. roleName is lowercased or null.
-function _skillExcludedForRole(skill, roleName) {
+export function _skillExcludedForRole(skill, roleName) {
     return !!(roleName && skill.exclude_roles &&
         skill.exclude_roles.split(',').some(r => r.trim().toLowerCase() === roleName));
 }
@@ -15,7 +15,7 @@ function _skillExcludedForRole(skill, roleName) {
 //   'container' — headless benchmark container (nativeExec + fgTargetContainer)
 //   'native'    — headless CLI without a container (TUI, fg-run non-containerised)
 //   'browser'   — WebUI (no nativeExec)
-function _skillExcludedForMode(skill: any): boolean {
+export function _skillExcludedForMode(skill: any): boolean {
     if (!skill.exclude_mode) return false;
     const modes = skill.exclude_mode.split(',').map((m: string) => m.trim().toLowerCase());
     const _n = runtime.hasNativeExec;

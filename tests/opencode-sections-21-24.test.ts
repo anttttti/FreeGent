@@ -69,3 +69,20 @@ describe('hermes C19: the judge verdict and the stateful pattern', async () => {
         expect(!!b).toBe(!!a);
     });
 });
+
+// codex R245: at Local privacy a saved cloud image override was chosen and routed, then refused by the fetch guard when sent.
+describe('a media override the privacy level rules out is not chosen', () => {
+    it('Local privacy skips a cloud image override', async () => {
+        const getMediaCapableSpec = (window as any).getMediaCapableSpec;
+        const all = (window as any).getAllModels();
+        const cloud = all.find((m: any) => m.provider === 'openrouter' && (m.media || []).includes('image'));
+        expect(cloud).toBeTruthy();
+        const spec = `${cloud.provider}|${cloud.model}`;
+        localStorage.setItem('fg_image_model', spec);
+        localStorage.setItem('fg_privacy_level', 'routed');
+        expect(getMediaCapableSpec(['image'])).toBe(spec);
+        localStorage.setItem('fg_privacy_level', 'local');
+        expect(getMediaCapableSpec(['image'])).not.toBe(spec);
+        localStorage.removeItem('fg_image_model'); localStorage.removeItem('fg_privacy_level');
+    });
+});

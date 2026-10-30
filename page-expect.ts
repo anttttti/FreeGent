@@ -25,6 +25,17 @@ export function parseExpectations(raw: unknown): Expectation[] {
     return out;
 }
 
+// The pattern runs on the app's own thread (the probe value comes back from the sandbox), so one that backtracks without end froze the
+// whole UI (codex R239: `(a+)+$` against a long near-match). Refused: a quantified group that contains a quantifier or an alternation,
+// a back-reference, and patterns over 300 characters. The value is at most 4,000 characters, so what is left runs in bounded time.
+const _NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*(?:[+*}]|\|)(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,)/;
+export function unsafePatternReason(pattern: string): string | null {
+    if (pattern.length > 300) return 'longer than 300 characters';
+    if (/\\[1-9]|\\k</.test(pattern)) return 'it uses a back-reference';
+    if (_NESTED_QUANTIFIER.test(pattern)) return 'a repeated group contains a repetition or alternation, which can take very long';
+    return null;
+}
+
 /** Judge one probe value (the page's JSON/string rendering of the expression) against its expectation. */
 export function judgeExpectation(e: Expectation, value: unknown, error?: string): ExpectResult {
     const actual = error ? `error: ${error}` : String(value ?? 'undefined');
@@ -35,6 +46,8 @@ export function judgeExpectation(e: Expectation, value: unknown, error?: string)
         // probe values arrive as the page's string form: "5", "true", "\"title\""; accept the bare string too
         ok = actual === want || actual === JSON.stringify(e.equals) || actual.replace(/^"|"$/g, '') === String(e.equals);
     } else if (e.matches !== undefined) {
+        const unsafe = unsafePatternReason(e.matches);
+        if (unsafe) return { expr: e.expr, ok: false, expected: describe(e), actual: `pattern not run: ${unsafe}; use a simpler pattern` };
         try { ok = new RegExp(e.matches).test(actual); } catch { ok = false; }
     } else {
         ok = !_FALSY.has(actual.trim()) === (e.truthy !== false);

@@ -188,3 +188,27 @@ describe('knownLimitWaitMs: daily quota resets at UTC midnight (R20)', () => {
         expect(knownLimitWaitMs(ep)).toBe(30 * 60_000);
     });
 });
+
+// codex R243: RPM/RPD 0 let the first request through on NaN arithmetic and then waited a minute / until midnight. Below 1 is no limit.
+describe('knownLimitWaitMs: a limit of 0 is no limit', () => {
+    afterEach(() => { delete globalThis.getAllModels; });
+    it('never waits, and never returns NaN', () => {
+        const models = [{ provider: 'zeroprov', model: 'z', rpm: 0, rpd: 0 }];
+        globalThis.getAllModels = () => models;
+        const ep = { provider: 'zeroprov', model: 'z' };
+        for (let i = 0; i < 3; i++) { expect(knownLimitWaitMs(ep)).toBe(0); recordRequest(ep); }
+    });
+});
+
+// codex R242: each tab counted its own requests. The counters live in localStorage, so a second tab (another module instance) sees them.
+describe('known limits are counted across tabs', () => {
+    afterEach(() => { delete globalThis.getAllModels; localStorage.removeItem('fg_rl:tabprov|t'); });
+    it('a request recorded by one tab counts in another', async () => {
+        const models = [{ provider: 'tabprov', model: 't', rpm: 1 }];
+        globalThis.getAllModels = () => models;
+        const ep = { provider: 'tabprov', model: 't' };
+        recordRequest(ep);
+        const other = await import('../model-router.ts?other-tab');
+        expect(other.knownLimitWaitMs(ep)).toBeGreaterThan(50_000);
+    });
+});
