@@ -49,7 +49,7 @@ export function _skillRequiresUnmet(skill): boolean {
     try { return localStorage.getItem(String(skill.requires).trim()) !== 'true'; } catch { return true; }
 }
 // Not usable this turn: a required setting is off or a required tool is inactive.
-function _skillUnavailable(skill) { return _skillRequiresUnmet(skill) || _skillMissingTools(skill); }
+export function _skillUnavailable(skill) { return _skillRequiresUnmet(skill) || _skillMissingTools(skill); }
 
 // R3 — table-driven skill trigger evaluation.
 // inputs is precomputed by the caller; this stays pure + testable.
@@ -123,7 +123,7 @@ export function evaluateSkillTriggers(registry: any, seed: any, inputs: any): Se
 // empty history. So guidance fired in chat A was withheld from chat B that never got it, and after a rewind removed the guided turn
 // it was withheld from the replacement (campaign 8 cases 190-200). Now the fired set belongs to a chat and to the history it was
 // given in: each name remembers the history length when its turn started, and a history that has been cut back to that point forgets it.
-type _GuidanceMemory = { fired: Set<string>; since: Map<string, number>; lastLen: number; fpFirst: string; fpLast: string };
+type _GuidanceMemory = { fired: Set<string>; since: Map<string, number>; sinceFp?: Map<string, string>; lastLen: number; fpFirst: string; fpLast: string };
 const _guidanceMemory = new Map<string, _GuidanceMemory>();
 let _guidanceOwner: string | null = null;
 const _guidanceBodies = new Map<string, string>();   // `${chat}\0${name}` → the body that was given
@@ -143,7 +143,7 @@ export function syncGuidanceMemory(chatKey: string | null | undefined, historyLe
         // Leaving a chat: keep its set where it is; the next one starts from its own (or an empty) set.
         if (_guidanceOwner !== null) { const m = _guidanceMemory.get(_guidanceOwner); if (m) m.fired = _reactiveFired; }
         let m = _guidanceMemory.get(key);
-        if (!m) { m = { fired: new Set(), since: new Map(), lastLen: 0, fpFirst: '', fpLast: '' }; _guidanceMemory.set(key, m); }
+        if (!m) { m = { fired: new Set(), since: new Map(), sinceFp: new Map(), lastLen: 0, fpFirst: '', fpLast: '' }; _guidanceMemory.set(key, m); }
         _guidanceOwner = key;
         setReactiveFired(m.fired);
     }
@@ -151,13 +151,19 @@ export function syncGuidanceMemory(chatKey: string | null | undefined, historyLe
     m.fired = _reactiveFired;
     if (history && m.lastLen > 0 && historyLen >= m.lastLen && (_msgFp(history, 0) !== m.fpFirst || _msgFp(history, m.lastLen - 1) !== m.fpLast)) {
         for (const n of m.fired) _guidanceBodies.delete(`${key}\0${n}`);
-        m.fired.clear(); m.since.clear(); m.lastLen = 0;
+        m.fired.clear(); m.since.clear(); m.sinceFp?.clear(); m.lastLen = 0;
     }
     // Names added since the last turn started were given in that turn: they sit at its first message or later.
     for (const n of m.fired) if (!m.since.has(n)) m.since.set(n, m.lastLen);
+    m.sinceFp ??= new Map();
     for (const [n, at] of m.since) {
-        if (!m.fired.has(n)) { m.since.delete(n); continue; }
-        if (historyLen === 0 || at >= historyLen) { m.fired.delete(n); m.since.delete(n); _guidanceBodies.delete(`${key}\0${n}`); }
+        if (!m.fired.has(n)) { m.since.delete(n); m.sinceFp.delete(n); continue; }
+        // The message the guidance was given with must still be that message: an edit or import that kept the first and the last message but
+        // replaced this one left the skill counted as delivered (codex R250).
+        const fp = history && at < historyLen ? _msgFp(history, at) : null;
+        const moved = fp !== null && m.sinceFp.has(n) && m.sinceFp.get(n) !== fp;
+        if (historyLen === 0 || at >= historyLen || moved) { m.fired.delete(n); m.since.delete(n); m.sinceFp.delete(n); _guidanceBodies.delete(`${key}\0${n}`); continue; }
+        if (fp !== null && !m.sinceFp.has(n)) m.sinceFp.set(n, fp);
     }
     m.lastLen = historyLen;
     if (history) { m.fpFirst = _msgFp(history, 0); m.fpLast = _msgFp(history, historyLen - 1); }

@@ -160,4 +160,13 @@ describe('forceSkillsNextTurn (/skill in the TUI)', () => {
         W.applyTurnTriggers({ rawText: 'hello again', history: [], wsPaths: [] });
         expect(W.currentTurnSkills.has('commit')).toBe(false);   // taken by the first turn
     });
+    // codex R249: a forced skill whose required tool is switched off was delivered, with a procedure the agent could not run.
+    it('does not deliver a skill whose required tools are off', async () => {
+        const { forceSkillsNextTurn } = await import('../turn-context.ts');
+        W.skillsRegistry.set('needs-exec', skill({ name: 'needs-exec', requires_tools: 'zz_no_such_tool' }));
+        forceSkillsNextTurn(['needs-exec']);
+        W.applyTurnTriggers({ rawText: 'hello there', history: [], wsPaths: [] });
+        expect(W.currentTurnSkills.has('needs-exec')).toBe(false);
+        W.skillsRegistry.delete('needs-exec');
+    });
 });

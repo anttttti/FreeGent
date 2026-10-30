@@ -1,6 +1,7 @@
 // tools.js — FreeGent: tool specs, search implementations, tool execution, system prompt
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
+import { _searchSignal } from './search-providers.js';
 import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
@@ -930,7 +931,7 @@ async function _handleAcademicSearch(args: any) {
             const searchQ = /^[a-z]+:/.test(rawQ.trim()) ? q : `all:${q}`;
             const url = `https://export.arxiv.org/api/query?search_query=${searchQ}&max_results=${n}&sortBy=relevance`;
             const proxy = getEffectiveProxy();
-            const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: activeAbortController?.signal });
+            const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
             if (!resp.ok) return { error: `arXiv HTTP ${resp.status}` };
             const xml = await resp.text();
             const doc = new DOMParser().parseFromString(xml, 'application/xml');
@@ -952,7 +953,7 @@ async function _handleAcademicSearch(args: any) {
             const q    = encodeURIComponent(args.query || '');
             const url  = `https://api.semanticscholar.org/graph/v1/paper/search?query=${q}&fields=title,abstract,url,year,authors,citationCount&limit=${n}`;
             const proxy = getEffectiveProxy();
-            const resp  = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: activeAbortController?.signal });
+            const resp  = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
             if (!resp.ok) return { error: `Semantic Scholar HTTP ${resp.status}` };
             const data  = await resp.json();
             return { results: (data.data || []).map(p => ({
@@ -966,7 +967,7 @@ async function _handleAcademicSearch(args: any) {
     if (src === 'crossref') {
         try {
             const q    = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://api.crossref.org/works?query=${q}&rows=${n}`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://api.crossref.org/works?query=${q}&rows=${n}`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `CrossRef HTTP ${resp.status}` };
             const data = await resp.json();
             return { results: (data.message?.items || []).map(i => `\n1. [${i.title?.[0]}] — ${i.DOI || 'N/A'}\n   ${i.author?.map(a => a.family).slice(0, 3).join(', ') || ''} | ${i.published?.['date-parts']?.[0]?.[0] || ''} | citations: ${i['is-referenced-by-count'] || 0}`).join('') };
@@ -975,11 +976,11 @@ async function _handleAcademicSearch(args: any) {
     if (src === 'pubmed') {
         try {
             const q        = encodeURIComponent(args.query || '');
-            const searchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${q}&retmode=json&retmax=${n}`, { signal: activeAbortController?.signal });
+            const searchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${q}&retmode=json&retmax=${n}`, { signal: _searchSignal() });
             if (!searchResp.ok) return { error: `PubMed HTTP ${searchResp.status}` };
             const ids = (await searchResp.json()).esearchresult?.idlist || [];
             if (!ids.length) return { results: [] };
-            const fetchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`, { signal: activeAbortController?.signal });
+            const fetchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`, { signal: _searchSignal() });
             if (!fetchResp.ok) return { error: `PubMed fetch HTTP ${fetchResp.status}` };
             const doc = new DOMParser().parseFromString(await fetchResp.text(), 'application/xml');
             if (doc.getElementsByTagName('parsererror').length || !/^PubmedArticleSet$/i.test(doc.documentElement?.localName ?? ''))
@@ -995,7 +996,7 @@ async function _handlePackageSearch(args: any) {
     if (reg === 'npm') {
         try {
             const q    = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://registry.npmjs.org/-/v1/search?text=${q}&size=10`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://registry.npmjs.org/-/v1/search?text=${q}&size=10`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `npm HTTP ${resp.status}` };
             const data = await resp.json();
             return { results: (data.objects || []).map(o => `\n1. [${o.package.name}] — ${o.package.links.npm}\n   ${o.package.description || 'N/A'} | Version: ${o.package.version}`).join('') };
@@ -1005,7 +1006,7 @@ async function _handlePackageSearch(args: any) {
         try {
             const q = encodeURIComponent(args.query || '');
             // PyPI JSON API only does exact package lookup; use the search endpoint via fetch
-            const resp = await fetch(`https://pypi.org/pypi/${q}/json`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://pypi.org/pypi/${q}/json`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `PyPI HTTP ${resp.status}` };
             const data = await resp.json();
             return { results: `\n1. [${data.info.name}] — ${data.info.package_url}\n   ${data.info.summary || 'N/A'} | Version: ${data.info.version} | Homepage: ${data.info.home_page || 'N/A'}` };
@@ -1911,7 +1912,7 @@ async function _handleWebSearch(args) {
     if (src === 'hackernews') {
         try {
             const q = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://hn.algolia.com/api/v1/search?query=${q}&tags=story&hitsPerPage=10`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://hn.algolia.com/api/v1/search?query=${q}&tags=story&hitsPerPage=10`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `Hacker News HTTP ${resp.status}` };
             const data = await resp.json();
             const _an = annotateUrl;
@@ -1924,7 +1925,7 @@ async function _handleWebSearch(args) {
             const headers: Record<string, string> = {};
             const token = getGithubToken();
             if (token) headers.Authorization = `Bearer ${token}`;
-            const resp = await fetch(`https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=10`, { headers, signal: activeAbortController?.signal });
+            const resp = await fetch(`https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=10`, { headers, signal: _searchSignal() });
             if (!resp.ok) return { error: `GitHub HTTP ${resp.status}` };
             const data = await resp.json();
             const _an = annotateUrl;
@@ -1935,7 +1936,7 @@ async function _handleWebSearch(args) {
         try {
             const q = encodeURIComponent(args.query || '');
             const key = getStackExchangeKey();
-            const resp = await fetch(`https://api.stackexchange.com/2.3/search/advanced?q=${q}&site=stackoverflow&pagesize=10${key ? '&key=' + encodeURIComponent(key) : ''}`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://api.stackexchange.com/2.3/search/advanced?q=${q}&site=stackoverflow&pagesize=10${key ? '&key=' + encodeURIComponent(key) : ''}`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `Stack Overflow HTTP ${resp.status}` };
             const data = await resp.json();
             const _an = annotateUrl;
@@ -1945,7 +1946,7 @@ async function _handleWebSearch(args) {
     if (src === 'devto') {
         try {
             const tag = (args.query || '').replace(/\s+/g, '').toLowerCase();
-            const resp = await fetch(`https://dev.to/api/articles?tag=${tag}&per_page=10&top=30`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://dev.to/api/articles?tag=${tag}&per_page=10&top=30`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `DEV.to HTTP ${resp.status}` };
             const data = await resp.json();
             const _an = annotateUrl;
@@ -1958,7 +1959,7 @@ async function _handleWebSearch(args) {
             // GDELT sends no CORS headers, so a browser call needs the proxy.
             const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=artlist&maxrecords=10&format=json`;
             const proxy = getEffectiveProxy();
-            const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: activeAbortController?.signal });
+            const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
             if (resp.status === 429) return { error: 'GDELT allows one request per 5 seconds — wait a few seconds and retry once, or use another source.' };
             if (!resp.ok) return { error: `GDELT HTTP ${resp.status}` };
             const data = await resp.json().catch(() => null);
@@ -1970,7 +1971,7 @@ async function _handleWebSearch(args) {
     if (src === 'duckduckgo') {
         try {
             const q = encodeURIComponent(args.query || '');
-            const resp = await fetch(`https://api.duckduckgo.com/?q=${q}&format=json&no_redirect=1`, { signal: activeAbortController?.signal });
+            const resp = await fetch(`https://api.duckduckgo.com/?q=${q}&format=json&no_redirect=1`, { signal: _searchSignal() });
             if (!resp.ok) return { error: `DuckDuckGo HTTP ${resp.status}` };
             const data = await resp.json();
             return { results: (data.RelatedTopics || []).map(t => `\n1. [${t.Text}] — ${t.FirstURL}`).join('') || data.AbstractText || 'No results' };

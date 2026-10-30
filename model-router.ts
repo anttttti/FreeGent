@@ -102,20 +102,26 @@ function _getKnownLimits(key: string) {
 
 // Returns ms to wait before sending a request to this endpoint (0 = ok to proceed).
 // Does NOT modify counters — call recordRequest() after the fetch is dispatched.
+// Providers whose free daily allowance is one budget for the account, whatever free model is asked: OpenRouter's ~50 requests a day. Each
+// free model counted its own 50, so rotating among them sent several times the account's allowance (codex R253).
+const _ACCOUNT_DAILY_FREE = new Set(['openrouter']);
+const _dayKey = (key: string): string => {
+    const bar = key.indexOf('|');
+    return _ACCOUNT_DAILY_FREE.has(key.slice(0, bar)) && /(:|-)free$/i.test(key.slice(bar + 1)) ? `${key.slice(0, bar)}|*free` : key;
+};
 export function knownLimitWaitMs(endpoint: any): number {
     if (!endpoint?.model) return 0;
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
     if (rpm == null && rpd == null) return 0;
-    const rec = _rlLoad(key);
     if (rpm != null) {
-        const ts = rec.ts.filter(t => now - t < 60_000);
+        const ts = _rlLoad(key).ts.filter(t => now - t < 60_000);
         if (ts.length >= rpm) return 60_000 - (now - ts[0]) + 250; // ms until window clears
     }
     if (rpd != null) {
         const today = new Date().toISOString().slice(0, 10);
-        const d = rec;
+        const d = _rlLoad(_dayKey(key));
         if (d.day === today && d.count >= rpd) {
             // The counter's day is a UTC date (above), so it resets at the next UTC midnight —
             // not local midnight, which is hours off outside UTC.
@@ -132,15 +138,14 @@ export function recordRequest(endpoint: any): void {
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
-    if (rpm == null && rpd == null) return;
-    const rec = _rlLoad(key);
-    if (rpm != null) { rec.ts = rec.ts.filter(t => now - t < 60_000); rec.ts.push(now); }
+    if (rpm != null) { const rec = _rlLoad(key); rec.ts = rec.ts.filter(t => now - t < 60_000); rec.ts.push(now); _rlSave(key, rec); }
     if (rpd != null) {
         const today = new Date().toISOString().slice(0, 10);
+        const rec = _rlLoad(_dayKey(key));
         if (rec.day !== today) { rec.count = 0; rec.day = today; }
         rec.count++;
+        _rlSave(_dayKey(key), rec);
     }
-    _rlSave(key, rec);
 }
 
 // ── Prefix-cache capability detection ───────────────────────────────────────

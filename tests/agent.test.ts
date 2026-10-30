@@ -420,6 +420,7 @@ describe('performWebSearch routing', () => {
         localStorage.setItem('fg_search_provider', 'auto');
         localStorage.removeItem('fg_tavily_key');
         localStorage.setItem('fg_search_proxy', 'https://proxy.example.com');
+        localStorage.setItem('fg_privacy_level', 'routed');   // the manual proxy is a Routed-level setting (codex R251)
         window.fetch.mockResolvedValue({ ok: true, json: async () => ({ results: [] }) });
         await W.performWebSearch('dogs');
         const callUrl = window.fetch.mock.calls[0][0];
@@ -439,6 +440,7 @@ describe('performWebSearch routing', () => {
         expect((await W.performWebSearch('cats')).source).toBe('Wikipedia');
         localStorage.removeItem('fg_tavily_key');
         localStorage.setItem('fg_search_proxy', 'https://proxy.example.com');
+        localStorage.setItem('fg_privacy_level', 'routed');
         window.fetch.mockReset();
         window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
         wiki();
@@ -454,6 +456,17 @@ describe('performWebSearch routing', () => {
         window.fetch.mockResolvedValueOnce({ ok: true, json: async () => [null, ['Cat', 'Dog'], [], []] })
             .mockResolvedValue({ ok: true, json: async () => ({}) });
         expect((await W.wikipediaSearch('cats')).error).toMatch(/summary without title, link or text/);
+    });
+
+    it('a saved Brave proxy is not used below the Routed privacy level (codex R251)', async () => {
+        localStorage.setItem('fg_search_provider', 'brave');
+        localStorage.setItem('fg_search_proxy', 'http://192.168.1.9:8080/brave');
+        localStorage.setItem('fg_privacy_level', 'local');
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValue({ ok: true, json: async () => ({ results: [] }) });
+        await W.performWebSearch('secret query');
+        expect(window.fetch.mock.calls.some((c: any[]) => String(c[0]).includes('192.168.1.9'))).toBe(false);
+        localStorage.removeItem('fg_privacy_level');
     });
 
     it('explicit "wikipedia" → calls Wikipedia', async () => {
@@ -534,6 +547,9 @@ describe('tavilySearch', () => {
 // ── braveSearch ───────────────────────────────────────────────────────────────
 
 describe('braveSearch', () => {
+    // The manual proxy is a Routed-level setting (codex R251).
+    beforeEach(() => localStorage.setItem('fg_privacy_level', 'routed'));
+    afterEach(() => localStorage.removeItem('fg_privacy_level'));
     it('returns error when no proxy configured', async () => {
         localStorage.removeItem('fg_search_proxy');
         const r = await W.braveSearch('query');

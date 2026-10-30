@@ -212,3 +212,16 @@ describe('known limits are counted across tabs', () => {
         expect(other.knownLimitWaitMs(ep)).toBeGreaterThan(50_000);
     });
 });
+
+// codex R253: OpenRouter's free allowance is ~50 a day for the account; each free model counted its own 50.
+describe('OpenRouter free models share one daily count', () => {
+    afterEach(() => { delete globalThis.getAllModels; localStorage.removeItem('fg_rl:openrouter|*free'); });
+    it('requests to one free model count against its free siblings', () => {
+        const models = [{ provider: 'openrouter', model: 'a/x:free', rpd: 2 }, { provider: 'openrouter', model: 'b/y:free', rpd: 2 }, { provider: 'openrouter', model: 'c/paid', rpd: 2 }];
+        globalThis.getAllModels = () => models;
+        recordRequest({ provider: 'openrouter', model: 'a/x:free' });
+        recordRequest({ provider: 'openrouter', model: 'a/x:free' });
+        expect(knownLimitWaitMs({ provider: 'openrouter', model: 'b/y:free' })).toBeGreaterThan(0);
+        expect(knownLimitWaitMs({ provider: 'openrouter', model: 'c/paid' })).toBe(0);
+    });
+});

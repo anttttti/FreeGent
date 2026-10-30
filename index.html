@@ -424,27 +424,27 @@
                         <table style="border-collapse:collapse">
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Temperature</span></td>
-                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="0.6" onchange="saveSamplingSetting('fg_temperature',this.value)"></td>
+                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="0.6" onchange="saveSamplingSetting('fg_temperature',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top P</span></td>
-                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="0.95" onchange="saveSamplingSetting('fg_top_p',this.value)"></td>
+                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="0.95" onchange="saveSamplingSetting('fg_top_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top K</span></td>
-                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="20" onchange="saveSamplingSetting('fg_top_k',this.value)"></td>
+                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="20" onchange="saveSamplingSetting('fg_top_k',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Min P</span></td>
-                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_min_p',this.value)"></td>
+                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_min_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Presence penalty</span></td>
-                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_presence_penalty',this.value)"></td>
+                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_presence_penalty',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Repetition penalty</span></td>
-                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="1.0" onchange="saveSamplingSetting('fg_repetition_penalty',this.value)"></td>
+                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="1.0" onchange="saveSamplingSetting('fg_repetition_penalty',this.value,this)"></td>
                             </tr>
                         </table>
                         <p class="settings-hint" style="margin-top:6px;margin-bottom:0">Applied as defaults to <b>custom endpoints</b> (vLLM / Ollama / LM Studio). Other providers use their own defaults. Set a value to override; leave blank for provider default.</p>

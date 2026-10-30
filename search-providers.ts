@@ -3,11 +3,18 @@
 //             state.js (activeAbortController live binding).
 import { activeAbortController } from './state.js';
 import { combineSignals } from './abort.js';
+import { getPrivacyLevel } from './privacy.js';
+
+// The manual proxy is a Routed-level setting (Settings disables it below that) and resolveProxy() ignores it there; the Brave branch read it
+// directly, so at Local privacy a saved LAN proxy still received every query (codex R251).
+const _manualSearchProxy = (): string => getPrivacyLevel() === 'routed' ? getSearchProxy() : '';
 
 // Combines the user-facing abort controller with a per-request hard timeout so
 // search fetches always terminate even if the global controller is null or stale.
 const SEARCH_TIMEOUT_MS = 30_000;
-function _searchSignal(): AbortSignal { return combineSignals(activeAbortController?.signal, SEARCH_TIMEOUT_MS)!; }
+// Every network-backed search source gets it: the alternate web, academic and package sources in tools.ts had only Stop, so a source that
+// stalled held the turn until the user stopped it (codex R252).
+export function _searchSignal(): AbortSignal { return combineSignals(activeAbortController?.signal, SEARCH_TIMEOUT_MS)!; }
 
 export async function tavilySearch(query: any): Promise<{ error: string; authFailed?: boolean; source?: undefined; results?: undefined; } | { source: string; results: any; error?: undefined; }> {
     const localKey  = getTavilyKey();
@@ -68,7 +75,7 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
 
 export async function braveSearch(query: any): Promise<any> {
     const localKey    = getBraveKey();
-    const manualProxy = getSearchProxy();   // user-configured custom proxy (legacy)
+    const manualProxy = _manualSearchProxy();   // user-configured custom proxy (legacy)
     const cfProxy     = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
     const cfHasKey    = typeof hasCfBraveKey === 'function' && hasCfBraveKey();
 
@@ -153,7 +160,7 @@ export async function performWebSearch(query: any): Promise<any> {
     const sp        = getSearchProvider();
     const tavilyKey = getTavilyKey();
     const braveKey  = getBraveKey();
-    const proxy     = getSearchProxy();
+    const proxy     = _manualSearchProxy();
     const cfTavily  = typeof hasCfTavilyKey === 'function' && hasCfTavilyKey();
     const cfBrave   = typeof hasCfBraveKey  === 'function' && hasCfBraveKey();
 

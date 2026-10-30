@@ -14,7 +14,7 @@
 // Follows the payload-builder/step-validator pattern: ES module, exports, window bridge.
 
 import { runtime } from './runtime.js';
-import { _skillRequiresUnmet } from './skill-guidance.js';
+import { _skillUnavailable } from './skill-guidance.js';
 import {
     setCurrentTurnSkills,
     mainAgentRole, pendingAgentsContextInject,
@@ -157,7 +157,8 @@ export function applyTurnTriggers({
         turn:             Math.floor(history.length / 2),
         wsExts, wsNames, wsAllPaths, msgMedia, histTools,
     });
-    for (const n of _forcedSkills) { const sk = skillsRegistry.get(n); if (sk && !_skillRequiresUnmet(sk)) _fired.add(n); }   // forcing a skill does not switch on the setting it requires (R37)
+    // Forcing a skill does not switch on the setting it requires (R37), nor the tools it needs: its procedure could not run (codex R249).
+    for (const n of _forcedSkills) { const sk = skillsRegistry.get(n); if (sk && !_skillUnavailable(sk)) _fired.add(n); }
     _forcedSkills.clear();
     setCurrentTurnSkills(_fired);
 }

@@ -289,43 +289,39 @@ function _sampling(key: string, def: string): string | null {
     try { v = localStorage.getItem(key); } catch {}
     return v === null ? ls(key, def) : v;
 }
-// LLM sampling temperature (0–2). Stored as string; null/empty → use provider default (0.2).
-export function getTemperature() {
-    const v = _sampling('fg_temperature', '0.6');
-    if (v === '' || v === null) return null;
-    const n = parseFloat(v);
-    return isNaN(n) ? null : n;
+// The accepted range of each sampling field. The Settings inputs declare it, but they save on change, outside a form, so the browser never
+// enforced it, and a profile or import can set any value: a temperature of 3 or a top_p of 2 was saved and sent, and a strict server refused
+// every request (codex R255). A stored value outside its range is left out of the request (the server's default applies), as an empty one is.
+const SAMPLING_RANGES: Record<string, { def: string; min: number; max: number; int?: boolean }> = {
+    fg_temperature:        { def: '0.6',  min: 0,  max: 2 },
+    fg_top_p:              { def: '0.95', min: 0,  max: 1 },
+    fg_top_k:              { def: '20',   min: -1, max: 1_000_000, int: true },   // -1: off (vLLM)
+    fg_min_p:              { def: '0.0',  min: 0,  max: 1 },
+    fg_presence_penalty:   { def: '0.0',  min: -2, max: 2 },
+    fg_repetition_penalty: { def: '1.0',  min: 0,  max: 2 },
+};
+/** Why `value` is not a valid setting for sampling field `key`, or null when it is (an empty value is valid: it means "not sent"). */
+export function samplingRangeError(key: string, value: string): string | null {
+    const r = SAMPLING_RANGES[key];
+    if (!r || value.trim() === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 'not a number';
+    if (r.int && !Number.isInteger(n)) return 'must be a whole number';
+    if (n < r.min || n > r.max) return `must be between ${r.min} and ${r.max}`;
+    return null;
 }
-export function getTopP() {
-    const v = _sampling('fg_top_p', '0.95');
-    if (v === '' || v === null) return null;
-    const n = parseFloat(v);
-    return isNaN(n) ? null : n;
+function _samplingNumber(key: string): number | null {
+    const v = _sampling(key, SAMPLING_RANGES[key].def);
+    if (v === '' || v === null || samplingRangeError(key, v)) return null;
+    return Number(v);
 }
-export function getTopK() {
-    const v = _sampling('fg_top_k', '20');
-    if (v === '' || v === null) return null;
-    const n = parseInt(v, 10);
-    return isNaN(n) ? null : n;
-}
-function getMinP() {
-    const v = _sampling('fg_min_p', '0.0');
-    if (v === '' || v === null) return null;
-    const n = parseFloat(v);
-    return isNaN(n) ? null : n;
-}
-function getPresencePenalty() {
-    const v = _sampling('fg_presence_penalty', '0.0');
-    if (v === '' || v === null) return null;
-    const n = parseFloat(v);
-    return isNaN(n) ? null : n;
-}
-function getRepetitionPenalty() {
-    const v = _sampling('fg_repetition_penalty', '1.0');
-    if (v === '' || v === null) return null;
-    const n = parseFloat(v);
-    return isNaN(n) ? null : n;
-}
+// LLM sampling temperature (0–2). Stored as string; null/empty → use provider default.
+export function getTemperature() { return _samplingNumber('fg_temperature'); }
+export function getTopP()        { return _samplingNumber('fg_top_p'); }
+export function getTopK()        { return _samplingNumber('fg_top_k'); }
+function getMinP()               { return _samplingNumber('fg_min_p'); }
+function getPresencePenalty()    { return _samplingNumber('fg_presence_penalty'); }
+function getRepetitionPenalty()  { return _samplingNumber('fg_repetition_penalty'); }
 // Returns a flat object of all non-null sampling params for injection into OpenAI-compatible payloads.
 export function getSamplingParams() {
     const p: any = {};
@@ -1391,7 +1387,7 @@ for (const [name, getter, setter] of [
 
 // Constants, reference types, and all public functions:
 Object.assign(window, {
-    MAX_STEPS, ALL_TOOL_NAMES, OPT_IN_TOOLS, runWithPyodide, runWithWasm, skillsRegistry, activeSkills, disabledRoles, enabledTools, coworkEnabledTools, ls,
+    MAX_STEPS, samplingRangeError, ALL_TOOL_NAMES, OPT_IN_TOOLS, runWithPyodide, runWithWasm, skillsRegistry, activeSkills, disabledRoles, enabledTools, coworkEnabledTools, ls,
     getMode, setMode, isToolActive,
     isRoleEnabled, getRoleBody, setRoleBody, getRoleBodyFn, setRoleBodyFn, getProvider,
     getGeminiKey, getGeminiModel,

@@ -38,4 +38,17 @@ describe('guidance memory', () => {
         syncGuidanceMemory('D', 4, other);           // same chat id, same length, other messages
         expect(_reactiveFired.has('documents')).toBe(false);
     });
+    // codex R250: the first and the last message stayed, the turn the guidance came with was replaced: it still counted as given.
+    it('forgets guidance when the message it was given with is replaced in the middle of the history', () => {
+        const h = [{ role: 'user', content: 'start' }, { role: 'assistant', content: 'a' }];
+        syncGuidanceMemory('E', 2, h);
+        h.push({ role: 'user', content: 'write the report.docx' });
+        _reactiveFired.add('documents');                 // given with the turn at index 2
+        h.push({ role: 'assistant', content: 'done' }, { role: 'user', content: 'thanks' }, { role: 'assistant', content: 'end' });
+        syncGuidanceMemory('E', 6, h);
+        expect(_reactiveFired.has('documents')).toBe(true);
+        const edited = [...h]; edited[2] = { role: 'user', content: 'something else entirely' };
+        syncGuidanceMemory('E', 6, edited);
+        expect(_reactiveFired.has('documents')).toBe(false);
+    });
 });

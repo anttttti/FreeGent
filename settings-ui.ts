@@ -3,7 +3,7 @@ import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
-import { specBlockedByPrivacy } from './config.js';
+import { specBlockedByPrivacy, samplingRangeError } from './config.js';
 import { clearAllCooldowns } from './model-router.js';
 import { fmtDelay } from './retry.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
@@ -613,7 +613,11 @@ function applyHdrReasoning() {
     if (sel) setPref('fg_thinking_level', sel.value);
 }
 
-function saveSamplingSetting(key, value) {
+function saveSamplingSetting(key, value, el?: HTMLInputElement) {
+    // A value outside the field's range is not saved, and the field says why (codex R255): it used to be saved and sent as it was.
+    const why = samplingRangeError(key, value);
+    el?.setCustomValidity?.(why ? `Not saved: ${why}` : '');
+    if (why) { el?.reportValidity?.(); return; }
     // An emptied field is kept as empty: the parameter is then not sent. Removing the key made FreeGent's default come back.
     setPref(key, value.trim());
 }
