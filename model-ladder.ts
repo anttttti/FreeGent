@@ -21,6 +21,7 @@ export const MODEL_LADDER: Record<string, LadderResult> = {
     "kilo|minimax/minimax-m3.1-flash:free": { correct: 45, attempted: 51, capK: [245, 228, 247], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 95.9, tokens: 30502628 },
     "kilo|reflection/beam-free": { correct: 59, attempted: 67, capK: [244, 210], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 150.4, tokens: 41043319 },
     "nous|meituan/longcat-2.5-preview:free": { correct: 28, attempted: 32, capK: [212], stops: ["quota"], ceilingK: 250, tokPerS: 33.3, tokens: 8296347, micro: { solved: 14, planned: 15 } },
+    "nous|ornith/ornith-1.5-122b:free": { correct: 21, attempted: 24, capK: [161], stops: ["quota"], ceilingK: 250, tokPerS: 50.2, tokens: 5800705 },
     "kilo|stealth/glyph-cluster": { correct: 55, attempted: 63, capK: [243, 144], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 43.8, tokens: 39059346 },
     "nous|stepfun/step-3.7-flash:free": { correct: 13, attempted: 15, capK: [107], stops: ["quota"], ceilingK: 250, tokPerS: 80.1, tokens: 3376373 },
     "tokenharbor|mimo-v2.6-flash:free": { correct: 86, attempted: 105, capK: [243, 245, 241], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 65.4, tokens: 41044973, micro: { solved: 14, planned: 15 } },
