@@ -2,6 +2,7 @@ import { patchPrefs } from './prefs.js';
 // profiles.js — FreeGent settings profiles
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
 import { escapeHtml } from './html-escape.js';
+import { isCredentialKey } from './profile-keys.js';
 
 // Settings captured in a profile — everything except API credentials (keys are never captured)
 const PROFILE_KEYS = [
@@ -210,6 +211,15 @@ export function stripModelKeys(json: string | null | undefined): string | null |
     } catch { return json; }
 }
 
+// One sanitizer for every way a profile is stored or written out: an imported file or a profile saved before keys were dropped can carry scalar keys
+// (fg_openai_key, fg_tavily_key), which were stored as given and exported again (codex R140).
+function credentialFreeSettings(settings: Record<string, any>): Record<string, any> {
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(settings ?? {})) if (!isCredentialKey(k)) clean[k] = v;
+    if ('fg_custom_models' in clean) clean.fg_custom_models = stripModelKeys(clean.fg_custom_models);
+    return clean;
+}
+
 function captureCurrentProfile() {
     const p = {};
     for (const k of PROFILE_KEYS) {
@@ -265,20 +275,21 @@ function getSavedProfiles() {
 
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
 const _originOf = (u: string | null | undefined): string => { try { return new URL(u || 'https://api.openai.com/v1').origin; } catch { return String(u ?? ''); } };
-/** Removes the global key (and the keys of custom models that use the global address) when `patch` moves the endpoint to another origin. Returns what was removed. */
+/** Adds to `patch` the removal of the global key (and of the keys of custom models that use the global address) when `patch` moves the endpoint to
+ *  another origin, so they are written, and rolled back, with the rest of the profile (codex R142: a failed apply had already deleted them). Returns what is removed. */
 function _dropKeysIfEndpointMoves(patch: Record<string, string | null>, settings: Record<string, any>): string[] {
     // Only an address the profile NAMES counts: a profile that says nothing about it resets the address to the default, which is not a destination chosen by its author.
     if (!settings?.fg_openai_url) return [];
     const before = _originOf(localStorage.getItem('fg_openai_url')), after = _originOf(patch.fg_openai_url);
     if (before === after) return [];
     const cleared: string[] = [];
-    if (localStorage.getItem('fg_openai_key')) { localStorage.removeItem('fg_openai_key'); cleared.push('the endpoint key'); }
+    if (localStorage.getItem('fg_openai_key')) { patch.fg_openai_key = null; cleared.push('the endpoint key'); }
     try {
         const models = JSON.parse(localStorage.getItem('fg_custom_models') || '[]');
         let n = 0;
         if (Array.isArray(models)) {
             for (const m of models) if (m && m.key && !m.url) { delete m.key; n++; }
-            if (n) { localStorage.setItem('fg_custom_models', JSON.stringify(models)); cleared.push(`${n} custom model key${n > 1 ? 's' : ''}`); }
+            if (n) { patch.fg_custom_models = JSON.stringify(models); cleared.push(`${n} custom model key${n > 1 ? 's' : ''}`); }
         }
     } catch {}
     return cleared;
@@ -340,8 +351,7 @@ function profileDelete(name) {
 
 function profileDownload(name, settings) {
     // Profiles saved before keys were dropped still carry them: never write those out.
-    const clean = { ...settings };
-    if ('fg_custom_models' in clean) clean.fg_custom_models = stripModelKeys(clean.fg_custom_models);
+    const clean = credentialFreeSettings(settings);
     const data = JSON.stringify({ name, version: 1, savedAt: new Date().toISOString(), settings: clean }, null, 2);
     const a    = document.createElement('a');
     const _url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
@@ -362,7 +372,10 @@ function profileUpload() {
         try {
             const data     = JSON.parse(await file.text());
             const name     = data.name || file.name.replace(/\.json$/, '');
-            const settings = data.settings || data;
+            const raw      = data.settings || data;
+            // A list or a primitive as the settings broke the profile list, and an empty list applied as "reset every setting" (codex R141).
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('the file holds no settings object');
+            const settings = credentialFreeSettings(raw);
             const profiles = getSavedProfiles();
             profiles[name] = { settings, savedAt: new Date().toISOString() };
             localStorage.setItem('fg_profiles', JSON.stringify(profiles));

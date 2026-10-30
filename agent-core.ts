@@ -17,7 +17,7 @@ import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
 import { runtime } from './runtime.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider } from './config.js';
+import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider, getContextThreshold } from './config.js';
 import { getPrivacyLevel } from './privacy.js';
 import { acquireChatLease, releaseChatLease, chatLeaseHolderAlive } from './chat-lease.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
@@ -1229,6 +1229,30 @@ const _turnPreparing = (): boolean => currentPreparation()?.kind === 'turn';
 function cancelSendPreparation(): boolean { return cancelPreparation(); }
 // The response placeholder (the working indicator) made right after the user's message is shown, until the turn adopts it.
 let _earlyPlaceholder: RenderAdapter | null = null;
+// Text attachments are capped at 50,000 characters each, but there was no cap on all of them together: 12 files made one 601,080-character
+// message (codex R155). Together they get at most 40% of the model's context (about 4 characters a token; never less than one whole file).
+// A file past the budget is not inlined: the model is told where its workspace copy is, or, with no copy, gets what still fits.
+export function attachmentBudgetChars(contextTokens: number): number {
+    return Math.max(50_100, Math.floor(contextTokens * 4 * 0.4));
+}
+export function attachmentTextBlocks(files: { name: string; content: string; workspacePath?: string }[], budget: number): string {
+    let left = budget;
+    return files.map(f => {
+        const lang = _LANG_MAP[f.name.split('.').pop()?.toLowerCase() || ''] || '';
+        const where = f.workspacePath ? `\nOriginal file: ${f.workspacePath}` : '';
+        let content = f.content;
+        if (content.length > left) {
+            if (f.workspacePath || left < 2000) {
+                return `<file name="${esc(f.name)}">${where}\n[Not included here: the attachments together are larger than this model's context allows${f.workspacePath ? '. Read the original file with the file tools' : ''}.]\n</file>`;
+            }
+            const cut = content.charCodeAt(left - 1) >= 0xd800 && content.charCodeAt(left - 1) <= 0xdbff ? left - 1 : left;   // not between a surrogate pair
+            content = content.slice(0, cut) + `\n…[cut: the attachments together are larger than this model's context allows]`;
+        }
+        left -= content.length;
+        return `<file name="${esc(f.name)}">${where}\n\`\`\`${lang}\n${content}\n\`\`\`\n</file>`;
+    }).join('\n\n');
+}
+
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
     // Busy turns still accept queued text. Only preparation (file reads, intent,
     // workspace context) is serialized so a double tap cannot start two turns.
@@ -1526,12 +1550,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         } catch {}
     }
     // Build text-file attachment blocks (injected for all providers)
-    const _attachText = sendFiles
-        .filter(f => f.contentType === 'text')
-        .map(f => {
-            const lang = _LANG_MAP[f.name.split('.').pop()?.toLowerCase() || ''] || '';
-            return `<file name="${esc(f.name)}">${f.workspacePath ? `\nOriginal file: ${f.workspacePath}` : ''}\n\`\`\`${lang}\n${f.content}\n\`\`\`\n</file>`;
-        }).join('\n\n');
+    const _attachText = attachmentTextBlocks(sendFiles.filter(f => f.contentType === 'text'), attachmentBudgetChars(getContextThreshold()));
 
     // Guidance + memory/project context blocks (turn-context.js). Attached file names
     // enrich the semantic-recall query. Shared with runAgentTurn.

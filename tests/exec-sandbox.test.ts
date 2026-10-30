@@ -348,6 +348,21 @@ describe('bubblewrap isolation', () => {
             expect(r.stdout.trim()).toBe('ok');   // the work directory is writable
         } finally { rmSync(secretDir, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
     });
+    // codex R146: an FG_EXEC_BIND path under /tmp was bound before the /tmp tmpfs, which then hid it.
+    it.runIf(hasBwrap)('mounts an FG_EXEC_BIND path under /tmp over the sandbox /tmp', () => {
+        const work = mkdtempSync('/tmp/fg-work-');
+        const shared = mkdtempSync('/tmp/fg-bind-');
+        const saved = process.env.FG_EXEC_BIND;
+        try {
+            writeFileSync(join(shared, 'data.txt'), 'BOUND');
+            process.env.FG_EXEC_BIND = shared;
+            const r = spawnSync('bwrap', [...bwrapArgs(work, '/usr/bin:/bin', '/nonexistent-home'), '--', 'cat', join(shared, 'data.txt')], { encoding: 'utf-8' });
+            expect(r.stdout).toBe('BOUND');
+        } finally {
+            if (saved === undefined) delete process.env.FG_EXEC_BIND; else process.env.FG_EXEC_BIND = saved;
+            rmSync(shared, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('approval default with isolation', () => {

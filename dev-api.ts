@@ -510,8 +510,12 @@ export function toolchainBinds(pathVar: string, home: string): string[] {
         }
         out.add(prefix);
     }
-    for (const extra of (process.env.FG_EXEC_BIND ?? '').split(',').map(x => x.trim()).filter(Boolean)) out.add(extra);
     return [...out];
+}
+
+// FG_EXEC_BIND paths are bound after the /tmp tmpfs, so a path under /tmp is mounted over it instead of being hidden by it (codex R146).
+function explicitBinds(): string[] {
+    return (process.env.FG_EXEC_BIND ?? '').split(',').map(x => x.trim()).filter(Boolean);
 }
 
 export function bwrapArgs(workDir: string, pathVar: string, home: string): string[] {
@@ -526,7 +530,9 @@ export function bwrapArgs(workDir: string, pathVar: string, home: string): strin
         if (!resolv.startsWith('/etc/')) args.push('--ro-bind-try', dirname(resolv), dirname(resolv));
     } catch { /* no resolv.conf */ }
     for (const d of toolchainBinds(pathVar, home)) args.push('--ro-bind-try', d, d);
-    args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--bind', workDir, workDir, '--chdir', workDir);
+    args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp');
+    for (const d of explicitBinds()) args.push('--ro-bind-try', d, d);
+    args.push('--bind', workDir, workDir, '--chdir', workDir);
     return args;
 }
 

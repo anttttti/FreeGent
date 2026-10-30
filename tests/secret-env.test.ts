@@ -14,6 +14,14 @@ describe('scrubEnv', () => {
         const env = scrubEnv({ ...base, PWDX: 'x', SPASS: 'y', KEYBOARD: 'us', MONKEY_PATCH: '1' });
         expect(Object.keys(env)).toEqual(expect.arrayContaining(['PWD', 'OLDPWD', 'PWDX', 'SPASS', 'KEYBOARD', 'MONKEY_PATCH']));
     });
+    // codex R143/R144: credential formats whose name holds no secret word reached native commands and /api/execute.
+    it('removes Docker registry auth and Bundler host credentials, keeps Bundler settings', () => {
+        const env = scrubEnv({ ...base, DOCKER_AUTH_CONFIG: '{"auths":{"r.example":{"auth":"dTpw"}}}', BUNDLE_GEMS__EXAMPLE__COM: 'user:secret',
+            BUNDLE_BUILD__NOKOGIRI: '--use-system-libraries', BUNDLE_PATH: 'vendor/bundle', GIT_AUTHOR_NAME: 'A' });
+        expect(Object.keys(env)).toEqual(expect.arrayContaining(['BUNDLE_BUILD__NOKOGIRI', 'BUNDLE_PATH', 'GIT_AUTHOR_NAME']));
+        expect(env.DOCKER_AUTH_CONFIG).toBeUndefined();
+        expect(env.BUNDLE_GEMS__EXAMPLE__COM).toBeUndefined();
+    });
     it('FG_EXEC_KEEP_ENV still passes a named variable through', () => {
         expect(scrubEnv({ ...base, PGPASSWORD: 'pg', FG_EXEC_KEEP_ENV: 'PGPASSWORD' }).PGPASSWORD).toBe('pg');
     });
