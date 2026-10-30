@@ -69,6 +69,8 @@ export const cp: Command = {
             ctx.stderr += `cp: -r not specified; omitting directory '${src}'\n`;
             return 1;
           }
+          // A target inside the source: copyDir made it, then found it in the source and copied it into itself again, without end (codex R282).
+          if (target === srcResolved || target.startsWith(srcResolved + '/')) throw new Error(`cannot copy a directory, '${src}', into itself, '${target}'`);
           await copyDir(srcResolved, target);
         } else {
           await copyFile(srcResolved, target);

@@ -425,7 +425,13 @@ async function createBinSymlinks(
           // Doesn't exist, that's fine
         }
 
-        await ctx.fs.symlink(targetPath, symlinkPath);
+        // The workspace filesystem has no symlinks (it throws ENOTSUP), and the error was swallowed: no command was installed (codex R278).
+        // Then a bin stub: the file holds the script's absolute path, which the shell runs with node.
+        try { await ctx.fs.symlink(targetPath, symlinkPath); }
+        catch {
+          await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(`node_modules/${pkg.name}/${cleanBinPath}`, ctx.cwd));
+          try { await ctx.fs.chmod(symlinkPath, 0o755); } catch { /* no modes here */ }
+        }
         binCount++;
       }
     } catch {
@@ -491,14 +497,13 @@ async function npmInstall(ctx: CommandContext): Promise<number> {
       pkg[targetSection]![name] = version === 'latest' ? '*' : version;
     }
 
-    // Save updated package.json
-    await ctx.fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
     ctx.stdout += 'Installing packages...\n';
   }
 
   // Resolve dependency tree for each package
   const allResolved = new Map<string, ResolvedPackage>();
 
+  const errorsBefore = ctx.stderr.length;
   for (const [name, range] of Object.entries(depsToResolve)) {
     try {
       const resolved = await resolveDependencyTree(name, range, ctx);
@@ -511,13 +516,27 @@ async function npmInstall(ctx: CommandContext): Promise<number> {
     }
   }
 
+  // The resolver reports what it could not resolve on stderr and goes on: anything it wrote there is a failed install (codex R274).
+  const unresolved = ctx.stderr.length > errorsBefore;
+
+  // One node_modules/<name> per name: two versions of one package were both extracted there at once, and the directory held a mix (codex R275).
+  const byName = new Map<string, string[]>();
+  for (const p of allResolved.values()) byName.set(p.name, [...(byName.get(p.name) ?? []), p.version]);
+  const conflicts = [...byName].filter(([, v]) => v.length > 1);
+  if (conflicts.length) {
+    ctx.stderr += `npm: the dependencies need more than one version of ${conflicts.map(([n, v]) => `${n} (${v.join(', ')})`).join(', ')}; nested node_modules are not supported here. Nothing was installed.\n`;
+    return 1;
+  }
+
   // Install all resolved packages in parallel - browser handles connection pooling
   ctx.stdout += `\nResolved ${allResolved.size} package(s):\n`;
 
   const packages = Array.from(allResolved.values());
+  const failed: string[] = [];
 
   // Fire all install requests at once
   const installPromises = packages.map(pkg => installPackage(pkg, ctx).catch(err => {
+    failed.push(pkg.name);
     ctx.stderr += `Error installing ${pkg.name}: ${err.message}\n`;
   }));
 
@@ -526,6 +545,12 @@ async function npmInstall(ctx: CommandContext): Promise<number> {
   // Create .bin symlinks for packages with bin entries
   await createBinSymlinks(ctx, allResolved);
 
+  if (failed.length || unresolved) {
+    ctx.stderr += `npm: the install is incomplete${failed.length ? ` (${failed.join(', ')} failed)` : ''}; see the errors above.\n`;
+    return 1;
+  }
+  // package.json names the new packages only once they are installed: it used to be written first, and kept a dependency that failed.
+  if (packagesToInstall.length) await ctx.fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   ctx.stdout += '\nPackages installed successfully.\n';
   return 0;
 }
@@ -565,6 +590,7 @@ async function npmInstallGlobal(
 
   // Resolve dependency tree
   const allResolved = new Map<string, ResolvedPackage>();
+  const errorsBefore = ctx.stderr.length;
   for (const [name, range] of Object.entries(depsToResolve)) {
     try {
       const resolved = await resolveDependencyTree(name, range, ctx);
@@ -639,7 +665,13 @@ async function createGlobalBinSymlinks(
           // Doesn't exist
         }
 
-        await ctx.fs.symlink(targetPath, symlinkPath);
+        // The workspace filesystem has no symlinks (it throws ENOTSUP), and the error was swallowed: no command was installed (codex R278).
+        // Then a bin stub: the file holds the script's absolute path, which the shell runs with node.
+        try { await ctx.fs.symlink(targetPath, symlinkPath); }
+        catch {
+          await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(`node_modules/${pkg.name}/${cleanBinPath}`, ctx.cwd));
+          try { await ctx.fs.chmod(symlinkPath, 0o755); } catch { /* no modes here */ }
+        }
         binCount++;
       }
     } catch {

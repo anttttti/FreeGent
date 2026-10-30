@@ -337,12 +337,31 @@ export class FWFileSystem extends FileSystem {
                 this.dirs.add(target);
                 this.metadata.set(target, {...this.metadata.get(p)!, ctime:Date.now()});
             }
+            // Every file is copied first, and the sources go only once all copies are written. Moving them one by one left a split tree
+            // when a later write failed (quota, a refused folder write), and the retry was refused because the target was no longer empty
+            // (codex R279). A failed copy removes the copies made so far, so the source is as it was.
+            const moves: Array<[string, string]> = [];
             for (const p of paths) {
                 if (!p.startsWith(prefix) || this.dirs.has(p)) continue;
                 const s2 = await this.stat(p);
                 if (!s2 || s2.isDirectory()) continue;
-                await moveFile(p, newPath + '/' + p.slice(prefix.length));
+                moves.push([p, newPath + '/' + p.slice(prefix.length)]);
             }
+            const copied: string[] = [];
+            try {
+                for (const [from, to] of moves) {
+                    const old = {...this.metadata.get(from)!};
+                    await this.writeFile(to, await this.readFile(from));
+                    await this.stat(to);
+                    this.metadata.set(to, {...old, source:this.metadata.get(to)!.source, ctime:Date.now()});
+                    copied.push(to);
+                }
+            } catch (e) {
+                for (const to of copied) { try { await this.unlink(to); } catch { /* best effort */ } }
+                for (const d of [...this.dirs]) if ((d === newPath && !dest) || d.startsWith(newPath + '/')) { this.dirs.delete(d); this.metadata.delete(d); }
+                throw e;
+            }
+            for (const [from] of moves) await this.unlink(from);
             for (const d of [...this.dirs]) {
                 if (d === oldPath || d.startsWith(prefix)) { this.dirs.delete(d); this.metadata.delete(d); }
             }

@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { satisfiesRange } from '../utils/semver-utils';
 
 /**
  * npx: Execute npm package binaries
@@ -45,7 +46,9 @@ export const npxCmd: Command = {
 
     // Parse package@version and scoped packages
     let binName: string;
-    let installSpec: string = packageArg;
+    let pkgName: string;
+    let version = '';
+    const installSpec: string = packageArg;
     if (packageArg.startsWith('@')) {
       // Scoped: @scope/pkg or @scope/pkg@version
       const slashIdx = packageArg.indexOf('/');
@@ -55,24 +58,32 @@ export const npxCmd: Command = {
       }
       const afterSlash = packageArg.slice(slashIdx + 1);
       const atIdx = afterSlash.indexOf('@');
-      if (atIdx > 0) {
-        binName = afterSlash.slice(0, atIdx);
-      } else {
-        binName = afterSlash;
-      }
+      binName = atIdx > 0 ? afterSlash.slice(0, atIdx) : afterSlash;
+      if (atIdx > 0) version = afterSlash.slice(atIdx + 1);
+      pkgName = packageArg.slice(0, slashIdx + 1) + binName;
     } else {
       // Unscoped: pkg or pkg@version
       const atIdx = packageArg.indexOf('@');
-      if (atIdx > 0) {
-        binName = packageArg.slice(0, atIdx);
-      } else {
-        binName = packageArg;
-      }
+      binName = atIdx > 0 ? packageArg.slice(0, atIdx) : packageArg;
+      if (atIdx > 0) version = packageArg.slice(atIdx + 1);
+      pkgName = binName;
     }
+    // The installed package's own manifest: its version, and the command its `bin` field names (codex R277: the guessed name, the package's
+    // name, is often not the command, e.g. a package "foo-cli" whose bin is "foo").
+    const manifest = async (): Promise<any> => { try { return JSON.parse(await ctx.fs.readFile(ctx.fs.resolvePath(`node_modules/${pkgName}/package.json`, ctx.cwd), 'utf8') as string); } catch { return null; } };
+    const binOf = (m: any): string => {
+      if (!m?.bin) return binName;
+      if (typeof m.bin === 'string') return binName;
+      const names = Object.keys(m.bin);
+      return names.includes(binName) ? binName : names.length === 1 ? names[0] : binName;
+    };
 
-    // Check if binary already exists in PATH
-    const localBin = ctx.fs.resolvePath('node_modules/.bin/' + binName,ctx.cwd);
-    const existingBin = await ctx.fs.exists(localBin) ? localBin : await ctx.shell.findExecutableInPath(binName);
+    // An explicit version runs the local copy only when it is that version: a same-named command already on PATH, or another version in
+    // node_modules, ran instead of the one asked for (codex R276).
+    const installed = await manifest();
+    const localOk = !version || (installed?.version && satisfiesRange(installed.version, version));
+    const localBin = ctx.fs.resolvePath('node_modules/.bin/' + binOf(installed),ctx.cwd);
+    const existingBin = !localOk ? null : await ctx.fs.exists(localBin) ? localBin : version ? null : await ctx.shell.findExecutableInPath(binName);
     const child = ctx.shell.fork();
     child.env.PATH = ctx.fs.resolvePath('node_modules/.bin',ctx.cwd) + ':' + child.env.PATH;
     const run = async(argv:string[]) => {
@@ -93,7 +104,7 @@ export const npxCmd: Command = {
       return installCode;
     }
 
-    // Now execute the binary
-    return run([binName,...passthrough]);
+    // Now execute the binary the package declares
+    return run([binOf(await manifest()),...passthrough]);
   },
 };

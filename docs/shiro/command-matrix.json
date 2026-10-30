@@ -6400,7 +6400,8 @@
       "path": "shiro/commands/npx.ts",
       "reachable": true,
       "imports": [
-        "shiro/commands/index.ts"
+        "shiro/commands/index.ts",
+        "shiro/utils/semver-utils.ts"
       ],
       "referencedBy": [
         "shiro/commands/index.ts"
@@ -10077,7 +10078,7 @@
     "shiro/commands/column.ts": "cf5bd70c0d756469c3e4f44789395c628b31b219d07b0434a437f50a1556a502",
     "shiro/commands/comm.ts": "9fbb5ee207ba528181837519950a1fee96b68184848832e860a28ae0a84b154d",
     "shiro/commands/continue.ts": "23a69954445e00d4335ce64d0a9867eb48dca270df3cd9a9d22dfa9569477ea9",
-    "shiro/commands/cp.ts": "1444f76f23f3318ad4c6e8b6978772120db6f0539506f2f1b157cdbe1bceaeab",
+    "shiro/commands/cp.ts": "af0297c3ec619fa74739d5b44e9c91f4d605fae7421bf89b662d360b7e36c4c2",
     "shiro/commands/csplit.ts": "e84c7aca5eb958c635ee49bcddaf900bf25f60166d9beb595175910b8104ba52",
     "shiro/commands/curl.ts": "94d45beefed87b759ec0560a6a7cd9c9cd60a4ef1c94cc6c092212fcc2cb52f5",
     "shiro/commands/cut.ts": "36f1513ef44adeec85437398f22dc02d19b4e5768fea57b18864789ec839d095",
@@ -10133,12 +10134,12 @@
     "shiro/commands/md5sum.ts": "5d25692b0d9ac9f5657522b0a9ac63491ebcc599b06c5f887ed0b7712cca50a9",
     "shiro/commands/mkdir.ts": "e0f31f1bfb61ef42ee90b54e1b4cedca8dc42db2d1c3ea52f6d2264170bda3e5",
     "shiro/commands/mktemp.ts": "46b02db9ec5fa3c678bf3ce8e10c671eb5b6d93763c42da2ed96f5cd2b95155b",
-    "shiro/commands/mv.ts": "fa9506db9803ce1106d1ff179f402883fe35d4edc80da739272f7567e49fd08f",
+    "shiro/commands/mv.ts": "804902222a767fa9ee7598be455b6c2aea5db80eb5a788609effe04e08ebd9b5",
     "shiro/commands/nl.ts": "74fcb997193b6932f9ffb8976923c65122db7e8966e211c00283f97c76c13b09",
     "shiro/commands/nohup.ts": "76c49c225adee2c7fddd367685aec66aceb60ee48fb03ca16091524a0110ad13",
-    "shiro/commands/npm.ts": "07d84b267c9a81f621fb6c9135427ac111b01cf29e6a782190ce939eafe7dbfe",
+    "shiro/commands/npm.ts": "2c5b54a8f4ce94a70b59e74bd2ce89f23b5ae968b91519f334ab93f7034ca249",
     "shiro/commands/nproc.ts": "a62f3525ab213a707914ab24bd8b16780dea34a6869b0c41c9e78aa12895fd99",
-    "shiro/commands/npx.ts": "0b72ee176c37465b2f965d71f6c2298e28af71fd33195bea4bd2232a7db8e99b",
+    "shiro/commands/npx.ts": "998f9191df3478a9be6ec36df07f4d091abc862e16c49c5c82da0898f3bb68a2",
     "shiro/commands/numfmt.ts": "b70bc079f7d57aee0ac6cf2fa52d4cc01571d0087bc42dfddb02716bdf6bce12",
     "shiro/commands/od.ts": "efc34c0d1fdcd3c96c9977bf9044d6b99726a4bdc8bdbee2e4a0fc973c82134e",
     "shiro/commands/openssl.ts": "d706c9434a0ca3dc9840e5d2b3d899bca7fd7585d4bd3cc4e089cc044f7a5e64",
@@ -10164,7 +10165,7 @@
     "shiro/commands/sha256sum.ts": "38667d747bb26b1a01fa2cf69ce0805409f1abe3e50c8dec8eed0043d075c162",
     "shiro/commands/shell-builtins.ts": "0adca3a2732e28f90c5e23ad655b6f432000aa05ee6acf1eea72c71dc9f540a1",
     "shiro/commands/shift.ts": "d8cd3730840d8eecfd82e2e96588df3c42ef8315c4d4d1f411c123a8a2ea608f",
-    "shiro/commands/shiro-cmds.ts": "b92e918b33593c584f69c73545e49983b53fb178d87345acfd4b3656b0d18cea",
+    "shiro/commands/shiro-cmds.ts": "fd1a88597239ebe30c686625234da6fa0138f47b739d4bc126049a7fac289a18",
     "shiro/commands/sleep.ts": "037b9b8c67b516429ff9de46adfd7f9e3eaf18ee4ff4513326896e73233a7f4f",
     "shiro/commands/sort.ts": "bf6520b7700ab454d534f4af2b993799fd54adc025de3040873b5e87b2485bdf",
     "shiro/commands/split.ts": "175981a5e1283ce22f5c6980adede56213445165be038548e072d6b02b83705f",
@@ -10199,7 +10200,7 @@
     "shiro/commands/zip.ts": "48acd415a5438c1c8ec0641efee0f86d691faafdbdf9da7830ba0776481d181f",
     "shiro/commands/zstd.ts": "74b032ee6c3d7da384196395fda828f5192c5a5c6a0f34b43adc8fe751c0d5ad",
     "shiro/favicon.ts": "83781e9653ed3e7d7bf8cbc9e41450bd3036ab149cf620cbfc9f3003aa0e85ef",
-    "shiro/fg-filesystem.ts": "bb78db491a6b066bb9b87c0b1a20a04dd5c4eb2e4ff2b97a295ed60e3c57d4fb",
+    "shiro/fg-filesystem.ts": "924a3beec325eb0f2802741991880554b89d67aeb4bfaf8e0e5c0693bc8f8b10",
     "shiro/file-associations.ts": "2cb289ec97e9d45b11babf77dfbba70a14c4577c38ecff02268fc02c8743c92a",
     "shiro/filesystem.ts": "52a6d69a8b3452407912701bc9bfce6f317caf5d0882d6c50b5375c632200c5d",
     "shiro/iframe-server.ts": "eb0baa74f3247070bb5b9383788ca37adc6d69352b4e21b2f1d2e4d8fb1861d2",

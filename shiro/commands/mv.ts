@@ -6,7 +6,8 @@ export const mv: Command = {
   description: "Move or rename files",
   async exec(ctx) {
     const args = ctx.args;
-    const { positional } = parseArgs(args);
+    const { positional, flags } = parseArgs(args);
+    const noClobber = !!(flags.n || flags['no-clobber']);   // parsed and then ignored: mv -n overwrote the destination (codex R280)
 
     if (positional.length < 2) {
       ctx.stderr += "mv: missing operand\n";
@@ -26,14 +27,22 @@ export const mv: Command = {
       ctx.stderr += "mv: target is not a directory\n";
       return 1;
     }
+    // "dir/" names a directory: resolvePath dropped the slash, and a missing dir/ became a plain rename to "dir" (codex R281). As cp does.
+    const destArg = positional[positional.length - 1];
+    if (destArg.endsWith('/') && !destIsDir) {
+      ctx.stderr += `mv: cannot move '${sources[0]}' to '${destArg}': Not a directory\n`;
+      return 1;
+    }
 
     let currentSource = '';
     try {
       for (const src of sources) {
         currentSource = src;
         const srcResolved = ctx.fs.resolvePath(src, ctx.cwd);
-        const name = src.split("/").pop()!;
+        const name = src.replace(/\/+$/, '').split("/").pop()!;
         const target = destIsDir ? dest + "/" + name : dest;
+        if (noClobber && await ctx.fs.exists(target)) continue;
+        if (target === srcResolved || target.startsWith(srcResolved + '/')) throw new Error(`cannot move '${src}' to a subdirectory of itself, '${target}'`);
         const why = await cannotCreate(ctx.fs, target);
         if (why) throw new Error(`cannot move '${src}' to '${positional[positional.length - 1]}': ${why}`);
         await ctx.fs.rename(srcResolved, target);
