@@ -3105,6 +3105,7 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         // iCloud leaves a hidden `.name.icloud` stub for a file that is not on the device yet: it is not imported (a placeholder is not the file),
         // and it is counted so the person is told to download it.
         let stubs = 0;
+        const tooLarge: string[] = [];
         // Filter out skip-dirs and oversized files before touching IDB.
         const files = allFiles.filter(f => {
             const rel  = f.webkitRelativePath || f.name;
@@ -3114,6 +3115,7 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             if (/^\..+\.icloud$/.test(f.name)) { stubs++; return false; }
             if (f.size > UPLOAD_MAX_BYTES) {
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);
+                tooLarge.push(rel);
                 return false;
             }
             return true;
@@ -3124,11 +3126,19 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
         if (toImport.length !== files.length) {
             console.warn(`[workspace] capped import at ${UPLOAD_MAX_FILES} of ${files.length} files (${skipped} filtered by dir/size)`);
         }
+        // Files left out by the size or count cap were only logged to the console: the import looked complete (codex R201).
+        const overCap = files.length - toImport.length;
+        const _list = (names: string[]) => names.slice(0, 8).join('\n') + (names.length > 8 ? `\n…and ${names.length - 8} more` : '');
         const reportNotDownloaded = (unreadable: string[]) => {
-            if (!unreadable.length && !stubs) return;
-            const list = unreadable.slice(0, 8).join('\n') + (unreadable.length > 8 ? `\n…and ${unreadable.length - 8} more` : '');
-            alert(`${unreadable.length + stubs} file${unreadable.length + stubs === 1 ? ' was' : 's were'} not imported because iCloud has not downloaded ${unreadable.length + stubs === 1 ? 'it' : 'them'} to this device.\n`
-                + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
+            const parts: string[] = [];
+            if (unreadable.length || stubs) {
+                const list = _list(unreadable);
+                parts.push(`${unreadable.length + stubs} file${unreadable.length + stubs === 1 ? ' was' : 's were'} not imported because iCloud has not downloaded ${unreadable.length + stubs === 1 ? 'it' : 'them'} to this device.\n`
+                    + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
+            }
+            if (tooLarge.length) parts.push(`${tooLarge.length} file${tooLarge.length === 1 ? ' was' : 's were'} not imported because ${tooLarge.length === 1 ? 'it is' : 'they are'} larger than ${UPLOAD_MAX_BYTES / 1024 / 1024} MB:\n${_list(tooLarge)}`);
+            if (overCap) parts.push(`Only the first ${UPLOAD_MAX_FILES} files were imported; ${overCap} more ${overCap === 1 ? 'was' : 'were'} left out. Import a smaller folder to get the rest.`);
+            if (parts.length) alert(parts.join('\n\n'));
         };
         if (toImport.length === 0) {
             console.warn('[workspace] no importable files after filtering');

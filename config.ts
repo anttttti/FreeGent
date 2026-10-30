@@ -17,6 +17,21 @@ export const MAX_STEPS = 500; // hard ceiling on the per-turn step setting (fg_a
 // ── Session state ──────────────────────────────────────────────────────────
 let agentsContext       = ''; // content of AGENTS.md, injected at top of system prompt
 let _pyodideImageStore: Record<string, any> = {}; // image store for browser UI rendering
+// The store had no bound: every image a run wrote, read or generated stayed in memory for the page's lifetime (codex R189). It keeps the newest
+// images up to IMAGE_STORE_CHARS; an older chat's evicted image shows as its [IMAGE:…] marker (the file itself is still in the workspace).
+const IMAGE_STORE_CHARS = 48_000_000;
+let _imageStoreChars = 0;
+const _imageChars = (v: any): number => typeof v === 'string' ? v.length : (v?.content?.length ?? 0);
+export function rememberImage(key: string, value: string | { type: 'svg'; content: string }): void {
+    if (key in _pyodideImageStore) { _imageStoreChars -= _imageChars(_pyodideImageStore[key]); delete _pyodideImageStore[key]; }   // re-inserted as the newest
+    _pyodideImageStore[key] = value;
+    _imageStoreChars += _imageChars(value);
+    for (const k of Object.keys(_pyodideImageStore)) {
+        if (_imageStoreChars <= IMAGE_STORE_CHARS || k === key) break;
+        _imageStoreChars -= _imageChars(_pyodideImageStore[k]);
+        delete _pyodideImageStore[k];
+    }
+}
 export const skillsRegistry     = new Map(); // name → { name, description, body, path }
 // A stored JSON value that no longer parses (hand-edited, truncated by a full quota) must not stop the module from loading:
 // the page rendered but nothing could be sent, because the rest of the app is wired up after this file.
@@ -1181,6 +1196,20 @@ function updatePyodideStatusEl(text) {
     const el = document.getElementById('pyodide-status');
     if (el) el.textContent = text;
 }
+// Loading Pyodide from the CDN takes seconds to a minute; a worker that says neither "ready" nor "error" by then is not going to (codex R196).
+const PYODIDE_START_MS = 180_000;
+// Ends the worker and settles every run still waiting on it. A crash after "ready" left those runs pending for ever (codex R195): the
+// startup promise they had awaited was long fulfilled, and nothing else answered them.
+function _endPyodideWorker(status: string, label: string, message: string) {
+    pyodideStatus = status;
+    updatePyodideStatusEl(label);
+    const w = pyodideWorker; pyodideWorker = null;
+    try { w?.terminate(); } catch {}
+    for (const id of Object.keys(pyodideCallbacks)) {
+        const cb = pyodideCallbacks[id]; delete pyodideCallbacks[id];
+        try { cb({ stdout: '', stderr: message, exit_code: 1 }); } catch {}
+    }
+}
 function startPyodide() {
     if (pyodideWorker) return pyodideReadyPromise;
     pyodideStatus = 'loading';
@@ -1188,29 +1217,36 @@ function startPyodide() {
     localStorage.setItem(KEYS.PYODIDE_AUTOLOAD, '1');
     let resolve, reject;
     pyodideReadyPromise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    pyodideReadyPromise.catch(() => {});   // a failed start is reported to the runs that wait on it, and in the status
     // The worker runs inside the exec sandbox frame (opaque origin), not in the page's origin:
     // Python code can't reach the app's storage or the dev server. See exec-sandbox-host.ts.
-    pyodideWorker = createSandboxedPyodideWorker();
-    pyodideWorker.onmessage = ({ data }) => {
+    const worker = pyodideWorker = createSandboxedPyodideWorker();
+    const startTimer = setTimeout(() => {
+        if (pyodideWorker !== worker || pyodideStatus !== 'loading') return;
+        reject(new Error(`Pyodide did not start within ${PYODIDE_START_MS / 1000} s`));
+        _endPyodideWorker('error', 'Failed to load (timed out)', `Pyodide did not start within ${PYODIDE_START_MS / 1000} s`);
+    }, PYODIDE_START_MS);
+    worker.onmessage = ({ data }) => {
+        if (pyodideWorker !== worker) return;   // a worker that was ended
         if (data.type === 'ready') {
+            clearTimeout(startTimer);
             pyodideStatus = 'ready';
             updatePyodideStatusEl('Ready ✓');
             resolve();
         } else if (data.type === 'error') {
-            pyodideStatus = 'error';
-            updatePyodideStatusEl('Failed to load');
+            clearTimeout(startTimer);
             reject(new Error(data.message));
-            pyodideWorker = null;
+            _endPyodideWorker('error', 'Failed to load', `Pyodide failed: ${data.message}`);
         } else if (data.type === 'result') {
             const cb = pyodideCallbacks[data.id];
             if (cb) { cb(data); delete pyodideCallbacks[data.id]; }
         }
     };
-    pyodideWorker.onerror = () => {
-        pyodideStatus = 'error';
-        updatePyodideStatusEl('Worker error');
+    worker.onerror = (e) => {
+        if (pyodideWorker !== worker) return;
+        clearTimeout(startTimer);
         reject(new Error('Pyodide worker failed'));
-        pyodideWorker = null;
+        _endPyodideWorker('error', 'Worker error', `Pyodide worker failed${e?.message ? `: ${e.message}` : ''}`);
     };
     return pyodideReadyPromise;
 }
@@ -1221,8 +1257,8 @@ function autoloadPyodideIfEnabled() {
     if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) === '0') return;
     try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
 }
-async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
-    if (pyodideStatus === 'loading') await pyodideReadyPromise;
+async function runWithPyodide(code, { filepath, signal }: { filepath?: string; signal?: AbortSignal } = {}) {
+    if (pyodideStatus === 'loading') await pyodideReadyPromise.catch(() => {});
     if (pyodideStatus !== 'ready') throw new Error('Pyodide not loaded');
     const wsFiles = await listWorkspaceFiles();
     const sentSnap = snapshotWorkspace(wsFiles);
@@ -1271,14 +1307,13 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                         writeErrors.push(`write ${name}: ${(e as any).message ?? e}`);
                         continue;
                     }
-                    _pyodideImageStore = _pyodideImageStore || {};
                     if (imageMime) {
                         // Shown inline in the chat
-                        _pyodideImageStore[name] = `data:${imageMime};base64,${fileData}`;
+                        rememberImage(name, `data:${imageMime};base64,${fileData}`);
                         imageNames.push(name);
                     } else if (/\.svg$/i.test(name) && !encoding && fileData.includes('<svg')) {
                         // SVG files are text but need special inline rendering in the chat
-                        _pyodideImageStore[name] = { type: 'svg', content: fileData };
+                        rememberImage(name, { type: 'svg', content: fileData });
                         imageNames.push(name);
                     }
                 }
@@ -1295,6 +1330,21 @@ async function runWithPyodide(code, { filepath }: { filepath?: string } = {}) {
                 ...(imageNames.length ? { image_note: 'Copy the [IMAGE:…] lines from stdout into your reply to display each image inline.' } : {}),
             });
         };
+        // Stop Now: Python cannot be interrupted inside the worker, so the worker ends (with every run on it) and a fresh one starts. Its
+        // callback is gone first, so the stopped code's file changes are never applied when it finishes late (codex R194).
+        if (signal) {
+            const onAbort = () => {
+                if (!pyodideCallbacks[id]) return;
+                delete pyodideCallbacks[id];
+                _endPyodideWorker('idle', 'Restarting…', 'The Python worker was restarted because another run was stopped');
+                resolve({ stdout: '', stderr: 'Stopped: the Python run was ended and its file changes were not applied', exit_code: 130 });
+                try { startPyodide(); } catch {}
+            };
+            if (signal.aborted) { delete pyodideCallbacks[id]; resolve({ stdout: '', stderr: 'Stopped before the Python run started', exit_code: 130 }); return; }
+            signal.addEventListener('abort', onAbort, { once: true });
+            const settle = pyodideCallbacks[id];
+            pyodideCallbacks[id] = data => { signal.removeEventListener('abort', onAbort); return settle(data); };
+        }
         pyodideWorker.postMessage({ type: 'run', id, code, files, filepath });
     });
 }
@@ -1377,7 +1427,7 @@ Object.assign(window, {
     updatePyodideStatusEl, startPyodide, autoloadPyodideIfEnabled, parseFrontmatter,
     loadServerKeys, isServerKeyPlaceholder,
     modelSupportsThinking,
-    _pyodideImageStore,
+    _pyodideImageStore, rememberImage,
     setDisabledTools,
 });
 

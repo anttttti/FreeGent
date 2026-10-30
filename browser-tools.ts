@@ -1,4 +1,5 @@
 import { combineSignals } from './abort.js';
+import { readTextCapped } from './read-capped.js';
 // Text-only browser tools. The configured bridge owns Playwright and session state;
 // page modules never execute agent-supplied JavaScript or attach to arbitrary CDP servers.
 let _browserUrl = '';
@@ -42,6 +43,7 @@ export function setBrowserBridge(url: string): void {
     _browserUrl = u.href.replace(/\/$/, '');
 }
 export function browserBridgeAvailable(): boolean { return !!_browserUrl; }
+const BRIDGE_REPLY_MAX_BYTES = 2 * 1024 * 1024;
 export async function executeBrowserTool(name: string, args: any = {}): Promise<any> {
     if (!_browserUrl) return { error: 'No browser bridge configured.' };
     if (!BROWSER_TOOL_NAMES.includes(name)) return { error: 'Unknown browser tool.' };
@@ -52,8 +54,10 @@ export async function executeBrowserTool(name: string, args: any = {}): Promise<
             // Stop must interrupt a hung bridge call, so the turn's signal joins the timeout.
             signal: combineSignals((globalThis as any).activeAbortController?.signal, 60_000),
         });
-        // A proxy or bridge error page is not JSON: read the text first so the HTTP status survives.
-        const text = await res.text();
+        // A proxy or bridge error page is not JSON: read the text first so the HTTP status survives. At most BRIDGE_REPLY_MAX_BYTES: a page
+        // with a huge text or accessibility tree reached the turn in full; only the saved history was capped (codex R210).
+        const text = await readTextCapped(res, BRIDGE_REPLY_MAX_BYTES,
+            () => new Error(`the observation is larger than ${BRIDGE_REPLY_MAX_BYTES / 1024 / 1024} MB; scroll, or use a smaller part of the page`));
         let value: any;
         try { value = JSON.parse(text); } catch { value = null; }
         if (!res.ok) return { error: typeof value?.error === 'string' ? value.error.slice(0, 300) : `Browser operation failed (HTTP ${res.status}${value ? '' : `: ${text.slice(0, 200)}`}).` };

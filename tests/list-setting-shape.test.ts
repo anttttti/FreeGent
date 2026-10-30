@@ -112,3 +112,29 @@ describe('codex R140/R142: profiles never hold or export keys, and a failed appl
         expect((globalThis as any).alert).toHaveBeenCalledWith(expect.stringMatching(/Nothing was changed/));
     });
 });
+
+describe('codex R199/R200: malformed saved profile data', () => {
+    beforeAll(async () => { await import('../profiles.ts'); });
+    it('a custom-model value that is not a list of models is left out of the download', () => {
+        let text = '';
+        vi.stubGlobal('Blob', class { constructor(parts: any[]) { text = parts.join(''); } });
+        const url = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+        const a = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        try {
+            W.profileDownload('old', { fg_custom_models: '[{"model":"m","key":"SYNTH-SECRET"', fg_temperature: '0.2' });
+            expect(text).not.toContain('SYNTH-SECRET');
+            W.profileDownload('old', { fg_custom_models: '{"model":"m","key":"SYNTH-SECRET"}' });
+            expect(text).not.toContain('SYNTH-SECRET');
+        } finally { url.mockRestore(); a.mockRestore(); vi.unstubAllGlobals(); }
+    });
+    it('stored profiles of the wrong shape are skipped and the tab still renders the good ones', () => {
+        document.body.innerHTML = '<div id="profiles-list"></div>';
+        for (const root of ['null', '[1]', '"x"', JSON.stringify({ good: { settings: { fg_temperature: '0.2' } }, bad: { settings: 'oops' }, worse: 5 })]) {
+            localStorage.setItem('fg_profiles', root);
+            expect(() => W.renderProfilesTab()).not.toThrow();
+        }
+        expect(Object.keys(W.getSavedProfiles())).toEqual(['good']);
+        expect(document.getElementById('profiles-list')!.textContent).toContain('good');
+        localStorage.clear();
+    });
+});

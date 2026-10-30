@@ -37,6 +37,17 @@ describe('configured text browser tools', () => {
         W.fetch.mockResolvedValue(new Response(JSON.stringify({ error: 'Unknown ref; take a fresh snapshot' }), { status: 400 }));
         expect((await W.executeBrowserTool('browser_click', { ref: 'stale' })).error).toMatch('fresh snapshot');
     });
+    // codex R210: the bridge reply was read and parsed whole; only the saved history was capped.
+    it('stops reading a bridge reply past 2 MB, with or without a Content-Length', async () => {
+        W.setBrowserBridge('http://bridge');
+        let pulled = 0;
+        const stream = () => new ReadableStream({ pull(c) { pulled++; if (pulled > 50) c.close(); else c.enqueue(new Uint8Array(256 * 1024).fill(0x61)); } });
+        W.fetch.mockResolvedValueOnce(new Response(stream(), { status: 200 }));
+        expect((await W.executeBrowserTool('browser_snapshot')).error).toMatch(/larger than 2 MB/);
+        expect(pulled).toBeLessThan(20);
+        W.fetch.mockResolvedValueOnce(new Response('{}', { status: 200, headers: { 'Content-Length': String(50 * 1024 * 1024) } }));
+        expect((await W.executeBrowserTool('browser_snapshot')).error).toMatch(/larger than 2 MB/);
+    });
     it('truncates browser observations and consumes the shared step budget', () => {
         const budget = { remaining: 200 };
         const out = W.truncateResultForHistory('browser_snapshot', { url: 'http://shopping', text: 'x'.repeat(20_000) }, { stepBudget: budget });

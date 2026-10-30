@@ -29,10 +29,14 @@ let frame: HTMLIFrameElement | null = null;
 let ready: Promise<void> | null = null;
 let boot: { frame: HTMLIFrameElement; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; onReady: (e: MessageEvent) => void } | null = null;
 let seq = 0;
-const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; cleanup?: () => void; onProgress?: (message: string) => void }>();
+const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any; cleanup?: () => void; onProgress?: (message: string) => void; kind?: string }>();
 const eventListeners = new Map<string, Set<(data: any) => void>>();
 // Calls already answered to their callers (aborted, timed out) whose code may still be running in the frame.
 const abandoned = new Set<number>();
+// Abandoned Bash calls. Bash writes the workspace as it runs (JavaScript and Python hand back their changes at the end, which an abandoned call's
+// caller no longer applies), so while one of them may still be running, workspace writes from the frame are refused (codex R212).
+const abandonedBash = new Set<number>();
+const _WS_WRITES = new Set(['agentWriteFile', 'agentDeleteFile']);
 
 // Workspace operations the frame may request (the page's bridged workspace functions).
 const WS_OPS = new Set(['agentWriteFile', 'agentDeleteFile', 'agentListFiles', 'readWorkspaceFile']);
@@ -47,7 +51,7 @@ function _onMessage(e: MessageEvent): void {
         if (typeof d.message === 'string') pending.get(d.id)?.onProgress?.(d.message);
     } else if (d.fg === 'reply') {
         const p = pending.get(d.id);
-        if (!p) { abandoned.delete(d.id); return; }      // an abandoned call finished by itself
+        if (!p) { abandoned.delete(d.id); abandonedBash.delete(d.id); return; }      // an abandoned call finished by itself
         pending.delete(d.id);
         clearTimeout(p.timer);
         p.cleanup?.();
@@ -68,6 +72,7 @@ async function _answerWorkspace(d: any, target:Window): Promise<void> {
     const reply = (msg: any) => target.postMessage({ fg: 'ws-reply', id: d.id, ...msg }, '*');
     try {
         if (!WS_OPS.has(d.op) || !Array.isArray(d.args)) throw new Error(`workspace op not allowed: ${d.op}`);
+        if (abandonedBash.size && _WS_WRITES.has(d.op)) throw new Error('the command was stopped (cancelled or timed out): its file changes are not applied');
         const fn = (globalThis as any)[d.op];
         if (typeof fn !== 'function') throw new Error(`workspace op unavailable: ${d.op}`);
         reply({ value: await fn(...d.args) });
@@ -94,7 +99,8 @@ async function _answerPackageCache(d:any, target:Window): Promise<void> {
 // dev server its token) — and the frame never reaches the proxy directly: the CF Worker would
 // have to accept Origin: null, which any site's sandboxed iframe can send.
 const NET_TIMEOUT_MS = 30_000;
-const NET_MAX_BYTES  = 25 * 1024 * 1024;
+// Room for the largest pinned WASI package, Ruby at 34.3 MB: at 25 MB its download failed whenever the CDN's CORS refusal sent it this way (codex R213).
+export const NET_MAX_BYTES = 48 * 1024 * 1024;
 
 async function _answerNet(d: any, target:Window): Promise<void> {
     const reply = (msg: any, transfer: Transferable[] = []) =>
@@ -110,6 +116,13 @@ async function _answerNet(d: any, target:Window): Promise<void> {
         if (resp.headers.get('X-FG-Proxy-Error')) {
             const why = await resp.json().then(j => j?.error, () => '').catch(() => '');
             throw new Error(`the proxy refused this URL${why ? ` — ${why}` : ''}`);
+        }
+        // The proxy fetches with GET; for a HEAD only the headers are wanted, so the body is cancelled instead of downloaded (codex R214).
+        if (d.method === 'HEAD') {
+            resp.body?.cancel().catch(() => {});
+            const body = new ArrayBuffer(0);
+            reply({ value: { status: resp.status, contentType: resp.headers.get('Content-Type') ?? '', body } }, [body]);
+            return;
         }
         if (Number(resp.headers.get('Content-Length') ?? 0) > NET_MAX_BYTES) throw new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`);
         const body = await resp.arrayBuffer();
@@ -180,6 +193,7 @@ export function resetSandbox(reason = 'the code sandbox was reset', errorName = 
     for (const [, p] of pending) { clearTimeout(p.timer); p.cleanup?.(); p.reject(error); }
     pending.clear();
     abandoned.clear();
+    abandonedBash.clear();
     for (const l of eventListeners.get('py-error') ?? []) l(reason);
     frame?.remove();
     frame = null;
@@ -198,6 +212,12 @@ function _detach(id: number, error: Error): void {
     p.cleanup?.();
     p.reject(error);
     abandoned.add(id);
+    if (p.kind === 'bash') {
+        // The refusal cannot tell this call's writes from another Bash call's: with one still running, the frame restarts now and that call
+        // fails with the reason; with only JavaScript or Python left, they keep running and only workspace writes are refused.
+        if ([...pending.values()].some(o => o.kind === 'bash')) { resetSandbox(`${error.message} (another bash command in the same sandbox was ended with it; run it again)`, error.name); return; }
+        abandonedBash.add(id);
+    }
     _restartIfOnlyAbandonedRemain(error);
 }
 function _restartIfOnlyAbandonedRemain(why?: Error): void {
@@ -225,7 +245,7 @@ export async function sandboxCall(kind: string, payload: Record<string, any> = {
             : null;
         const abort = () => _detach(id, cancelled());
         const cleanup = () => signal?.removeEventListener('abort', abort);
-        pending.set(id, { resolve, reject, timer, cleanup, onProgress });
+        pending.set(id, { resolve, reject, timer, cleanup, onProgress, kind });
         signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) { abort(); return; }
         try { frame!.contentWindow!.postMessage({ fg: 'call', id, kind, ...payload }, '*'); }
@@ -247,6 +267,8 @@ export function createSandboxedPyodideWorker(): { postMessage(msg: any): void; o
     const offErr = _on('py-error', message => handle.onerror?.({ message }));
     const started = sandboxCall('py-start').catch(err => { handle.onerror?.({ message: String(err?.message ?? err) }); });
     handle.postMessage = (msg: any) => { void started.then(() => sandboxCall('py-post', { msg })).catch(err => handle.onerror?.({ message: String(err?.message ?? err) })); };
-    handle.terminate = () => { offMsg(); offErr(); };
+    // Sent at once, not after `started`: a replacement worker's py-start is issued right after this, and the frame must see the stop first
+    // (chained, the stop arrived second and ended the new worker, so Python never became ready again after Stop).
+    handle.terminate = () => { offMsg(); offErr(); void sandboxCall('py-stop').catch(() => {}); };
     return handle;
 }

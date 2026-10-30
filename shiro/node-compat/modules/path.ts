@@ -1,4 +1,5 @@
 import type { CommandContext } from '../../commands/index';
+import { basename, dirname, extname } from '../../utils/posix-path';
 
 export function createPathModule(ctx: CommandContext): any {
   const pathMod: any = {
@@ -7,12 +8,7 @@ export function createPathModule(ctx: CommandContext): any {
       let p = parts.reduce((a, b) => b.startsWith('/') ? b : a + '/' + b);
       return ctx.fs.resolvePath(p, ctx.cwd);
     },
-    dirname: (p: string) => p.substring(0, p.lastIndexOf('/')) || '/',
-    basename: (p: string, ext?: string) => {
-      const base = p.split('/').pop() || '';
-      return ext && base.endsWith(ext) ? base.slice(0, -ext.length) : base;
-    },
-    extname: (p: string) => { const m = p.match(/\.[^./]+$/); return m ? m[0] : ''; },
+    dirname, basename, extname,   // Node's (codex R191/R192)
     isAbsolute: (p: string) => p.startsWith('/'),
     normalize: (p: string) => ctx.fs.resolvePath(p, '/'),
     relative: (from: string, to: string) => {
@@ -23,13 +19,12 @@ export function createPathModule(ctx: CommandContext): any {
     },
     sep: '/',
     delimiter: ':',
-    parse: (p: string) => ({
-      root: p.startsWith('/') ? '/' : '',
-      dir: p.substring(0, p.lastIndexOf('/')),
-      base: p.split('/').pop() || '',
-      ext: (p.match(/\.[^./]+$/) || [''])[0],
-      name: (p.split('/').pop() || '').replace(/\.[^.]+$/, ''),
-    }),
+    parse: (p: string) => {
+      let end = p.length; while (end > 1 && p[end - 1] === '/') end--;
+      const slash = p.lastIndexOf('/', end - 1);
+      const base = basename(p), ext = extname(p);
+      return { root: p.startsWith('/') ? '/' : '', dir: slash > 0 ? p.slice(0, slash) : slash === 0 ? '/' : '', base, ext, name: ext ? base.slice(0, -ext.length) : base };
+    },
     format: (obj: any) => (obj.dir ? obj.dir + '/' : '') + (obj.base || obj.name + (obj.ext || '')),
     toNamespacedPath: (p: string) => p,
   };

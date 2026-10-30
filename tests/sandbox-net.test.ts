@@ -44,10 +44,20 @@ describe('sandboxFetch', () => {
         directFetch.mockImplementation(corsRefusal);
         pageFetch.mockResolvedValue({ status: 200, contentType: 'text/html', body: bytes('<p>hi</p>') });
         const r = await sandboxFetch('https://example.com/');
-        expect(pageFetch).toHaveBeenCalledWith('https://example.com/');
+        expect(pageFetch).toHaveBeenCalledWith('https://example.com/', 'GET');
         expect(await r.text()).toBe('<p>hi</p>');
         expect(r.headers.get('Content-Type')).toBe('text/html');
         expect(r.headers.get(VIA_PROXY_HEADER)).toBe('1');
+    });
+
+    // codex R214: the fallback for a refused HEAD fetched the whole body as a GET.
+    it('asks the page for a HEAD and returns no body for it', async () => {
+        directFetch.mockImplementation(corsRefusal);
+        pageFetch.mockResolvedValue({ status: 200, contentType: 'text/html', body: new ArrayBuffer(0) });
+        const r = await sandboxFetch('https://example.com/big', { method: 'HEAD' });
+        expect(pageFetch).toHaveBeenCalledWith('https://example.com/big', 'HEAD');
+        expect(r.status).toBe(200);
+        expect(r.body).toBeNull();
     });
 
     it('keeps HTTP errors from the proxied fetch', async () => {

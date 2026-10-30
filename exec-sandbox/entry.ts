@@ -121,6 +121,9 @@ onCall(async (d: any) => {
         case 'py-start':
             startPython();
             return true;
+        case 'py-stop':   // Stop Now, a crash or a start that never finished: the worker and the code running in it end
+            if (pyWorker) { const w = pyWorker; pyWorker = null; w.terminate(); }
+            return true;
         case 'py-post':
             if (!pyWorker) throw new Error('Pyodide worker is not running');
             pyWorker.postMessage(d.msg);

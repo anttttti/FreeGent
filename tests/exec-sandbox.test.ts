@@ -135,6 +135,28 @@ describe('exec sandbox host', () => {
             expect(new TextDecoder().decode(r.value.body)).toBe('page');
         });
 
+        it('for a HEAD, cancels the proxied body instead of reading it (codex R214)', async () => {
+            W.getEffectiveProxy = () => 'https://proxy.test';
+            let cancelled = false;
+            const body = new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1024)); }, cancel() { cancelled = true; } });
+            globalThis.fetch = vi.fn(async () => new Response(body, { headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(1 << 30) } })) as any;
+            fromFrame({ fg: 'net', id: 16, url: 'https://example.com/huge.mp4', method: 'HEAD' });
+            await vi.waitFor(() => expect(posted.some(m => m.id === 16)).toBe(true));
+            const r = posted.find(m => m.id === 16);
+            expect(r.error).toBeUndefined();
+            expect(r.value.contentType).toBe('video/mp4');
+            expect(r.value.body.byteLength).toBe(0);
+            expect(cancelled).toBe(true);
+        });
+
+        it('has room for the largest pinned package (codex R213)', async () => {
+            const { NET_MAX_BYTES } = await import('../exec-sandbox-host.ts');
+            const src = (await import('node:fs')).readFileSync((await import('node:path')).join(process.cwd(), 'shiro', 'wasi-packages.ts'), 'utf8');
+            const largest = Math.max(...[...src.matchAll(/size:\s*([\d_]+)/g)].map(m => Number(m[1].replace(/_/g, ''))));
+            expect(largest).toBeGreaterThan(30_000_000);
+            expect(NET_MAX_BYTES).toBeGreaterThan(largest);
+        });
+
         it('refuses non-http URLs and reports proxy refusals', async () => {
             W.getEffectiveProxy = () => 'https://proxy.test';
             globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'private address' }),
@@ -170,6 +192,36 @@ describe('exec sandbox host', () => {
         const cancelled=expect(call).rejects.toMatchObject({name:'AbortError'});
         await vi.waitFor(()=>expect(posted.some(m=>m.fg==='call')).toBe(true));
         controller.abort();await cancelled;
+        expect(document.querySelector('iframe[sandbox]')).toBeNull();
+    });
+    // codex R212: a timed-out bash call kept writing the workspace while another call kept the frame alive.
+    it('refuses workspace writes from a stopped bash call while a JavaScript call keeps the frame',async()=>{
+        W.agentWriteFile=vi.fn(async()=>{});W.agentListFiles=vi.fn(async()=>[]);
+        const controller=new AbortController();
+        const bash=sandboxCall('bash',{code:'sleep 5; echo x > late.txt'},0,undefined,controller.signal);
+        const stopped=expect(bash).rejects.toMatchObject({name:'AbortError'});
+        const js=sandboxCall('js',{code:'1'});
+        await vi.waitFor(()=>expect(posted.filter(m=>m.fg==='call')).toHaveLength(2));
+        controller.abort();await stopped;
+        expect(frame.isConnected).toBe(true);
+        fromFrame({fg:'ws',id:31,op:'agentWriteFile',args:['late.txt','x']});
+        fromFrame({fg:'ws',id:32,op:'agentListFiles',args:[]});
+        await vi.waitFor(()=>expect(posted.filter(m=>m.fg==='ws-reply')).toHaveLength(2));
+        expect(posted.find(m=>m.id===31).error).toMatch(/command was stopped/);
+        expect(W.agentWriteFile).not.toHaveBeenCalled();
+        expect(posted.find(m=>m.id===32).value).toEqual([]);
+        const jsId=posted.find(m=>m.fg==='call'&&m.kind==='js').id;
+        fromFrame({fg:'reply',id:jsId,value:'js done'});
+        expect(await js).toBe('js done');
+    });
+    it('restarts the frame when a stopped bash call shares it with another bash call',async()=>{
+        const controller=new AbortController();
+        const first=sandboxCall('bash',{code:'sleep 5'},0,undefined,controller.signal);
+        const firstStopped=expect(first).rejects.toMatchObject({name:'AbortError'});
+        const second=sandboxCall('bash',{code:'echo ok'});
+        const secondFailed=expect(second).rejects.toThrow(/another bash command in the same sandbox was ended with it/);
+        await vi.waitFor(()=>expect(posted.filter(m=>m.fg==='call')).toHaveLength(2));
+        controller.abort();await firstStopped;await secondFailed;
         expect(document.querySelector('iframe[sandbox]')).toBeNull();
     });
     it('finishes the current sandbox operation on stop-after-step',async()=>{

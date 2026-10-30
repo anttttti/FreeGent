@@ -117,13 +117,16 @@ describe('HTTP 410 (a model that has reached its end of life)', () => {
     });
     it('the retry handler pauses the model and rotates to the next one', () => {
         (window as any).getActiveMainModelList = () => ['nvidia|moonshotai/kimi-k3', 'openrouter|other-410'];
+        // Both in one tool format: a rotation never changes it (codex R209, tests/model-gone-rotation.test.ts); kimi-k3 is fn-tag in the table.
+        const savedFmt = (window as any).getModelToolFormat;
+        (window as any).getModelToolFormat = () => 'fn-tag';
         try {
             const { h, notes, ep } = handler({ provider: 'nvidia', model: 'moonshotai/kimi-k3' });
             const out = h(0, err("HTTP 410: The model 'moonshotai/kimi-k3' has reached its end of life"), 1000);
             expect(out).toBe(0);
             expect(notes.join('\n')).toMatch(/paused: HTTP 410/);
             expect(ep().model).toBe('other-410');
-        } finally { delete (window as any).getActiveMainModelList; }
+        } finally { delete (window as any).getActiveMainModelList; (window as any).getModelToolFormat = savedFmt; }
     });
 });
 

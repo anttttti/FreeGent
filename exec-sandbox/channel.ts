@@ -8,7 +8,7 @@
 //   frame → page   { fg: 'reply', id, value } | { fg: 'reply', id, error }
 //   frame → page   { fg: 'ws', id, op, args }                    workspace file operation
 //   page → frame   { fg: 'ws-reply', id, value } | { ..., error }
-//   frame → page   { fg: 'net', id, url }                        proxied plain GET (net.ts)
+//   frame → page   { fg: 'net', id, url, method }                proxied plain GET or HEAD (net.ts)
 //   page → frame   { fg: 'net-reply', id, value: { status, contentType, body } } | { ..., error }
 //   frame → page   { fg: 'event', name, data }                   unsolicited (Pyodide worker)
 //   frame → page   { fg: 'ready' }
@@ -46,8 +46,8 @@ export function packageCacheCall(request:import('../shiro/wasi-packages').Packag
 export interface PageFetchResult { status: number; contentType: string; body: ArrayBuffer; }
 
 // Ask the page for a plain GET through the fetch proxy (exec-sandbox-host.ts _answerNet).
-export function pageFetch(url: string): Promise<PageFetchResult> {
-    return requestToPage({ fg: 'net', url });
+export function pageFetch(url: string, method: 'GET' | 'HEAD' = 'GET'): Promise<PageFetchResult> {
+    return requestToPage({ fg: 'net', url, method });
 }
 
 window.addEventListener('message', async (e: MessageEvent) => {

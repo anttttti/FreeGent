@@ -90,3 +90,45 @@ describe('execute_code JavaScript fs', () => {
         expect(fs.existsSync('constructor')).toBe(false);
     });
 });
+
+// codex R191/R192: the sandbox's path helpers normalised before splitting and used a regex for the extension, so extname('foo.') was ''
+// and basename('a/') was ''. They are Node's now, here and in the in-browser shell's `path` module.
+describe('path.basename / dirname / extname agree with Node', async () => {
+    const { posix } = await import('node:path');
+    const { createPathModule } = await import('../shiro/node-compat/modules/path.ts');
+    const shiroPath = createPathModule({ fs: { resolvePath: (a: string) => a }, cwd: '/' } as any);
+    const cases = ['', '/', '//', 'a', 'a/', 'a//', '/a', '//a', 'a/b', 'a//b/', '/workspace/..', '.', '..', '...', 'foo.', 'foo..', 'foo.bar.', '.env', '..foo', 'a/b/.hidden', 'x.tar.gz'];
+    it.each([['execute_code', path], ['shell', shiroPath]] as const)('%s', (_, p: any) => {
+        for (const c of cases) {
+            expect([c, p.basename(c)]).toEqual([c, posix.basename(c)]);
+            expect([c, p.dirname(c)]).toEqual([c, posix.dirname(c)]);
+            expect([c, p.extname(c)]).toEqual([c, posix.extname(c)]);
+            for (const s of ['a', '.gz', 'foo.', '.']) expect([c, s, p.basename(c, s)]).toEqual([c, s, posix.basename(c, s)]);
+        }
+    });
+});
+
+describe('codex R193: changes are reported against the files the run was given', () => {
+    it('create-then-delete is no change; delete-then-recreate is a write; overwrite-then-delete is a deletion', () => {
+        const w = ws();
+        w.fs.writeFileSync('ephemeral.txt', 'x'); w.fs.unlinkSync('ephemeral.txt');
+        w.fs.unlinkSync('a.txt'); w.fs.writeFileSync('a.txt', 'again');
+        w.fs.writeFileSync('src/app.js', 'new'); w.fs.unlinkSync('src/app.js');
+        expect([...w.deleted]).toEqual(['src/app.js']);
+        expect(Object.keys(w.written)).toEqual(['a.txt']);
+    });
+});
+
+// codex R211: mkdirSync ignored its options: a missing parent and an existing directory both succeeded.
+describe('mkdirSync follows Node', async () => {
+    const nodeFs = await import('node:fs'), { mkdtempSync } = nodeFs, { join } = await import('node:path'), { tmpdir } = await import('node:os');
+    const outcome = (f: () => any) => { try { const r = f(); return r === undefined ? 'undefined' : 'path'; } catch (e: any) { return e.code; } };
+    const steps: [string, any][] = [['a', undefined], ['a', undefined], ['b/c', undefined], ['b/c', { recursive: true }], ['b/c', { recursive: true }], ['b', { recursive: true }], ['f.txt', undefined], ['f.txt/x', { recursive: true }]];
+    it('gives the same result as node:fs for each step of one sequence', () => {
+        const real = mkdtempSync(join(tmpdir(), 'fg-mkdir-'));
+        nodeFs.writeFileSync(join(real, 'f.txt'), 'x');
+        const v = createWorkspaceFs({ 'f.txt': 'x' });
+        for (const [p, o] of steps) expect([p, o, outcome(() => v.fs.mkdirSync(p, o))]).toEqual([p, o, outcome(() => nodeFs.mkdirSync(join(real, p), o))]);
+        nodeFs.rmSync(real, { recursive: true, force: true });
+    });
+});

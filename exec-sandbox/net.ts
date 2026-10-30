@@ -18,10 +18,10 @@ const directFetch = globalThis.fetch.bind(globalThis);
 
 const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
 
-function responseFromPage(r: PageFetchResult): Response {
+function responseFromPage(r: PageFetchResult, head = false): Response {
     const headers: Record<string, string> = { [VIA_PROXY_HEADER]: '1' };
     if (r.contentType) headers['Content-Type'] = r.contentType;
-    return new Response(NULL_BODY_STATUS.has(r.status) ? null : r.body, { status: r.status, headers });
+    return new Response(head || NULL_BODY_STATUS.has(r.status) ? null : r.body, { status: r.status, headers });
 }
 
 // Whether a request the browser refused may be retried as a proxied plain GET.
@@ -38,6 +38,6 @@ export async function sandboxFetch(input: string | URL | Request, init: RequestI
         const url    = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
         if (!proxyable(url, method, init.body != null)) throw err;
-        return responseFromPage(await pageFetch(url));
+        return responseFromPage(await pageFetch(url, method === 'HEAD' ? 'HEAD' : 'GET'), method === 'HEAD');
     }
 }

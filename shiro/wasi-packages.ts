@@ -216,13 +216,13 @@ const PACKAGE_MANIFEST: WasmPackage[] = [
   {
     name: 'util-linux',
     family: true,
-    description: 'Linux utilities: hexdump, cal, rev, col',
+    description: 'Linux utilities: hexdump, cal (the BSD calendar build), rev, col, colcrt',
     version: '0.0.1',
     url: 'https://cdn.wasmer.io/webcimages/3af9902aebda64554afa9b05c8726d3d183ba5c1ac57d902637e3894f3187c98.webc',
     size: 543_000,
     category: 'utility',
     aliases: ['hexdump', 'rev'],
-    entrypoints: ['hexdump', 'cal', 'rev'],
+    entrypoints: ['hexdump', 'cal', 'rev', 'col', 'colcrt'],   // every pinned program (codex R217: col and colcrt were pinned, not reachable)
     format: 'webc',
   },
   // ── Shells ──────────────────────────────────────────────────────────
@@ -416,8 +416,10 @@ export function findPackage(name: string): WasmPackage | undefined {
 }
 
 /** One package command mapping, shared by discovery, installation and execution. */
-export function resolvePackageCommand(name: string): { package: WasmPackage; atom:string; argv0: string; leadingArgs: string[] } | undefined {
-  const pkg = findPackage(name);
+type PackageCommandMapping = { package: WasmPackage; atom:string; argv0: string; leadingArgs: string[] };
+// `owner`: look the command up in that package (a family's own atom) instead of by name across the manifest.
+export function resolvePackageCommand(name: string, owner?: WasmPackage): PackageCommandMapping | undefined {
+  const pkg = owner ?? findPackage(name);
   if (!pkg) return undefined;
   if (pkg.family && name === pkg.name) return undefined;
   const pin = ARTIFACT_PINS[pkg.name];
@@ -578,8 +580,8 @@ async function downloadArtifact(pkg: WasmPackage, onProgress?: (msg:string) => v
 export async function getPackage(
   name: string,
   onProgress?: (msg: string) => void,
+  mapping = resolvePackageCommand(name),
 ): Promise<ArrayBuffer> {
-  const mapping = resolvePackageCommand(name);
   if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
   const raw = await downloadPackage(mapping.package.name, onProgress);
   const atom = ARTIFACT_PINS[mapping.package.name].atoms[mapping.atom];
@@ -629,18 +631,17 @@ const moduleCache: Map<string, WebAssembly.Module> = new Map();
 export async function getCompiledModule(
   name: string,
   onProgress?: (msg: string) => void,
+  mapping = resolvePackageCommand(name),
 ): Promise<WebAssembly.Module> {
-  const pkg = findPackage(name);
-  if (!pkg) throw new Error(`Unknown package: ${name}`);
-  const mapping = resolvePackageCommand(name);
+  if (!findPackage(name) && !mapping) throw new Error(`Unknown package: ${name}`);
   if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
-  const key = artifactKey(pkg) + ':' + mapping.atom;
+  const key = artifactKey(mapping.package) + ':' + mapping.atom;
   const cached = moduleCache.get(key);
   if (cached) return cached;
   let pending = compiling.get(key);
   if (!pending) {
     pending = (async () => {
-      const binary = await getPackage(name, onProgress);
+      const binary = await getPackage(name, onProgress, mapping);
       const module = await compileWasm(binary);
       moduleCache.set(key, module);
       return module;
@@ -675,23 +676,26 @@ async function packageResources(name:string): Promise<[string,Uint8Array][]> {
 /** One execution adapter for catalog commands, lazy packages, and installed PATH stubs. */
 export async function runPackageCommand(ctx:CommandContext, name:string, args=ctx.args): Promise<number> {
   const pkg = findPackage(name);
+  let mapping: PackageCommandMapping | undefined;
   if (pkg?.family && name === pkg.name) {
     const entrypoints = pkg.entrypoints ?? pkg.aliases ?? [];
     const [entry,...rest] = args;
-    if (!entry || !entrypoints.includes(entry) || !resolvePackageCommand(entry)) {
+    // A program that also has a reviewed local build of its own (hexdump, rev, cal: the BSD calendar) runs that build; the others run the
+    // family's atom (col, colcrt, codex R217). util-linux cal running the local BSD cal is that preference, not a mix-up (codex R216).
+    mapping = entry && entrypoints.includes(entry) ? (resolvePackageCommand(entry) ?? resolvePackageCommand(entry, pkg)) : undefined;
+    if (!mapping) {
       ctx.stderr += `${name}: expected an entrypoint: ${entrypoints.join(', ')}\n`;
       return 2;
     }
     name = entry;
     args = rest;
-  }
-  const mapping = resolvePackageCommand(name);
+  } else mapping = resolvePackageCommand(name);
   if (!mapping) throw new Error(`Package command has no declared entrypoint: ${name}`);
   if (mapping.package.adaptArgs) {
     try { args = mapping.package.adaptArgs(args); }
     catch (e: any) { ctx.stderr += `${name}: ${e.message}\n`; return 2; }
   }
-  const module = await getCompiledModule(name, ctx.shell.onProgress);
+  const module = await getCompiledModule(name, ctx.shell.onProgress, mapping);
   await writePackageStubs(ctx.fs, mapping.package.name);
   const resourceFiles = await packageResources(mapping.package.name);
   const preopens:Record<string,string> = {'/':'/'};

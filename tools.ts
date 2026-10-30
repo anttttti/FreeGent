@@ -1301,20 +1301,18 @@ function _withSyntaxError(result: any, synErr: string | null) {
 }
 
 // Image / SVG inline-display helper for write_file.
-// Returns a display object for image/SVG content, or {} for all other content.
-function _writeFileImageDisplay(path, content) {
+// An image or SVG file written or read in the browser is kept for the chat to show inline: returns its [IMAGE:…] marker and kind, or null.
+function _rememberFileImage(path, content): { display: string; svg: boolean } | null {
     if (runtime.hasNativeExec) return null; // headless: no browser UI to display images
     const imgKey = `img_${path.replace(/\W/g, '_')}`;
-    _pyodideImageStore = _pyodideImageStore || {};
-    if (/^data:image\//i.test(content)) {
-        _pyodideImageStore[imgKey] = content;
-        return { display: `[IMAGE:${imgKey}]` };
-    }
-    if (/\.svg$/i.test(path) && /^\s*(<\?xml[^>]*\?>\s*)?<svg[\s>]/i.test(content)) {
-        _pyodideImageStore[imgKey] = { type: 'svg', content };
-        return { display: `[IMAGE:${imgKey}]` };
-    }
-    return {};
+    if (/^data:image\//i.test(content)) { rememberImage(imgKey, content); return { display: `[IMAGE:${imgKey}]`, svg: false }; }
+    if (/\.svg$/i.test(path) && /^\s*(<\?xml[^>]*\?>\s*)?<svg[\s>]/i.test(content)) { rememberImage(imgKey, { type: 'svg', content }); return { display: `[IMAGE:${imgKey}]`, svg: true }; }
+    return null;
+}
+// Returns a display object for image/SVG content, or {} for all other content.
+function _writeFileImageDisplay(path, content) {
+    const img = _rememberFileImage(path, content);
+    return img ? { display: img.display } : {};
 }
 
 // A worker context's snapshot is a LazySnapshot (workers.ts) or, in tests, a plain Map of contents.
@@ -1487,18 +1485,8 @@ async function _handleReadFile(args, context) {
         };
     };
     const _imgPreview = (path, content) => {
-        if (runtime.hasNativeExec) return null; // headless: no browser UI to display images
-        const imgKey = `img_${path.replace(/\W/g, '_')}`;
-        _pyodideImageStore = _pyodideImageStore || {};
-        if (/^data:image\//i.test(content)) {
-            _pyodideImageStore[imgKey] = content;
-            return { path, display: `[IMAGE:${imgKey}]`, length: content.length, note: 'Image file — displayed inline above.' };
-        }
-        if (/\.svg$/i.test(path) && /^\s*(<\?xml[^>]*\?>\s*)?<svg[\s>]/i.test(content)) {
-            _pyodideImageStore[imgKey] = { type: 'svg', content };
-            return { path, display: `[IMAGE:${imgKey}]`, length: content.length, note: 'SVG file — displayed inline above.' };
-        }
-        return null;
+        const img = _rememberFileImage(path, content);
+        return img && { path, display: img.display, length: content.length, note: img.svg ? 'SVG file — displayed inline above.' : 'Image file — displayed inline above.' };
     };
     // Content-header binary detection: catches unlabeled PDFs and binary files not caught
     // by the extension check above. Runs after read so extension check should handle common cases.
@@ -2234,8 +2222,7 @@ async function _handleGenerateImage(args) {
         const dataUri = `data:${imgType};base64,${b64}`;
         const imgKey  = `fg_img_${Date.now()}`;
         if (!runtime.hasNativeExec) {
-            _pyodideImageStore = _pyodideImageStore || {};
-            _pyodideImageStore[imgKey] = dataUri;
+            rememberImage(imgKey, dataUri);
         }
         try { await writeWorkspaceFile(outFilename, dataUri); } catch {}
         return { success: true, path: outFilename, model, prompt, display: `[IMAGE:${imgKey}]` };
@@ -2597,7 +2584,9 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const deletedOk: string[] = [];
             for (const path of (run.deleted ?? []) as string[]) {
                 if (changedMeanwhile(path)) { write_errors.push(`${path}: not deleted, the file changed while the code ran; kept the newer version`); continue; }
-                await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }).catch(() => {});
+                // A deletion that failed is reported as one, not listed as done (codex R193).
+                try { await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }); }
+                catch (e) { write_errors.push(`${path}: not deleted: ${e.message ?? e}`); continue; }
                 if (context?.staging) context.staging.set(path, null);
                 _invalidateReadDedup(path);
                 deletedOk.push(path);
@@ -2641,7 +2630,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             'Write the game to a .py file using write_file, then tell the user to open it from the file panel — ' +
             'the browser pygame runner provides a full canvas and synthesised audio.' };
     } else if (args.language !== 'bash' && args.language !== 'javascript' && (pyodideStatus === 'ready' || pyodideStatus === 'loading')) {
-        try { execResult = await runWithPyodide(args.code); }
+        try { execResult = await runWithPyodide(args.code, { signal: activeAbortController?.signal }); }
         catch (e) { return { error: `Pyodide: ${e.message}` }; }
     } else {
         const provider = getSandboxProvider();

@@ -78,7 +78,7 @@ Artifact identities count distinct manifest package/version/pin cache keys, incl
 | `lua` | 5.3.6 | none | lua: shiro/wasi-packages.ts (wasm package; selected artifact lua@5.3.6) |
 | `sqlite` | 0.2.2 | `sqlite3` | sqlite: shiro/wasi-packages.ts (wasm package; selected artifact sqlite@0.2.2); sqlite3: shiro/wasi-packages.ts (wasm package; selected artifact sqlite@0.2.2) |
 | `viu` | 0.2.3 | none | viu: shiro/wasi-packages.ts (wasm package; selected artifact viu@0.2.3) |
-| `util-linux` | 0.0.1 | `hexdump`, `rev` | util-linux: shiro/commands/index.ts (adapter; family launcher); hexdump: shiro/commands/unix.ts (wasm; selected artifact hexdump@2.37.2-fg1); rev: shiro/commands/unix.ts (wasm; selected artifact rev@2.37.2-fg1); cal: shiro/wasi-packages.ts (wasm package; selected artifact cal@12.1.7-fg1) |
+| `util-linux` | 0.0.1 | `hexdump`, `rev` | util-linux: shiro/commands/index.ts (adapter; family launcher); hexdump: shiro/commands/unix.ts (wasm; selected artifact hexdump@2.37.2-fg1); rev: shiro/commands/unix.ts (wasm; selected artifact rev@2.37.2-fg1); cal: shiro/wasi-packages.ts (wasm package; selected artifact cal@12.1.7-fg1); col: shiro/commands/shiro-cmds.ts (native-only); colcrt: absent (absent) |
 | `dash` | 1.0.19 | none | dash: shiro/wasi-packages.ts (wasm package; selected artifact dash@1.0.19) |
 | `bash` | 1.0.25 | none | bash: shiro/commands/shell-builtins.ts (typescript; selected artifact bash@1.0.25) |
 | `ruby` | 0.1.2 | `irb` | ruby: shiro/wasi-packages.ts (wasm package; selected artifact ruby@0.1.2); irb: shiro/wasi-packages.ts (wasm package; selected artifact ruby@0.1.2) |
@@ -97,6 +97,8 @@ Artifact identities count distinct manifest package/version/pin cache keys, incl
 | util-linux | hexdump | hexdump@2.37.2-fg1 / hexdump |
 | util-linux | cal | cal@12.1.7-fg1 / cal |
 | util-linux | rev | rev@2.37.2-fg1 / rev |
+| util-linux | col | unavailable |
+| util-linux | colcrt | unavailable |
 | wabt | wat2wasm | wabt@1.0.37 / wat2wasm |
 | wabt | wasm2wat | wabt@1.0.37 / wasm2wat |
 | wabt | wasm-validate | wabt@1.0.37 / wasm-validate |

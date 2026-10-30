@@ -163,6 +163,20 @@ describe('separate-atom package families', () => {
             }
         }
     });
+    // codex R216/R217: every declared entrypoint resolves, and to a pinned atom; one with a reviewed local build of its own runs that build.
+    it('resolves every util-linux entrypoint, preferring a local reviewed build', async () => {
+        const { findPackage } = await import('../shiro/wasi-packages');
+        const fam: any = findPackage('util-linux');
+        expect(fam.entrypoints).toEqual(expect.arrayContaining(Object.keys(ARTIFACT_PINS['util-linux'].commands)));
+        for (const e of fam.entrypoints) {
+            const m = resolvePackageCommand(e) ?? resolvePackageCommand(e, fam);
+            expect(m, e).toBeTruthy();
+            expect(ARTIFACT_PINS[m!.package.name].atoms[m!.atom], e).toBeTruthy();
+        }
+        expect(resolvePackageCommand('col')).toBeUndefined();
+        expect(resolvePackageCommand('col', fam)?.package.name).toBe('util-linux');
+        expect(resolvePackageCommand('cal')?.package.name).toBe('cal');
+    });
     it('installs a family launcher and only declared program stubs', async () => {
         const sh = await getShell();
         await writePackageStubs(sh.fs,'wabt');

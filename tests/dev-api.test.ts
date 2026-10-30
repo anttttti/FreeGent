@@ -4,7 +4,7 @@
 import { createServer, type Server } from 'node:http';
 import {
     substituteServerKeys, ProxyRefusal, isSelfTarget, guardedFetch, gitArgsRefusal,
-    createDevApi, buildClientScript, serverKeyStatus, placeholderFor, classifyAddress, publicGet,
+    createDevApi, buildClientScript, serverKeyStatus, placeholderFor, classifyAddress, publicGet, pinnedFetch,
 } from '../dev-api.ts';
 import { scrubEnv } from '../secret-env.ts';
 
@@ -131,6 +131,28 @@ describe('publicGet', () => {
         for (const u of ['http://127.0.0.1:8000/', 'http://10.0.0.1/', 'http://169.254.169.254/latest/meta-data/',
                          'http://[::1]:8000/', 'http://localhost:8000/'])
             await expect(publicGet(u, {}, 5000, false), u).rejects.toThrow(ProxyRefusal);
+    });
+});
+
+// codex R202/R203: a server that drips a byte now and then never reached the GET's inactivity timeout, and the POST proxy had no timeout.
+describe('proxy deadlines', () => {
+    const listen = (handler: (req: any, res: any) => void) => new Promise<{ srv: Server; port: number }>(r => {
+        const srv = createServer(handler); srv.listen(0, '127.0.0.1', () => r({ srv, port: (srv.address() as any).port }));
+    });
+    const toLoopback = () => (_h: string, opts: any, cb: any) => opts?.all ? cb(null, [{ address: '127.0.0.1', family: 4 }]) : cb(null, '127.0.0.1', 4);
+    it('the public GET ends at its total deadline even while bytes keep coming', async () => {
+        const { srv, port } = await listen((_req, res) => { res.writeHead(200); const t = setInterval(() => res.write('x'), 50); res.on('close', () => clearInterval(t)); });
+        try {
+            const t0 = Date.now();
+            await expect(publicGet(`http://drip.test:${port}/`, {}, 1, false, { timeoutMs: 1000, totalMs: 600, lookup: toLoopback as any })).rejects.toThrow(/timed out after 0.6 s in all/);
+            expect(Date.now() - t0).toBeLessThan(3000);
+        } finally { srv.closeAllConnections(); srv.close(); }
+    });
+    it('the POST transport gives up on a server that sends nothing', async () => {
+        const { srv, port } = await listen(() => { /* accepts, never answers */ });
+        try {
+            await expect(pinnedFetch(1, 300)(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', body: '{}' })).rejects.toThrow(/no data for 0.3 s/);
+        } finally { srv.closeAllConnections(); srv.close(); }
     });
 });
 
@@ -370,6 +392,21 @@ describe('page script', () => {
             const payload = JSON.parse(init.body);
             expect(payload).toMatchObject({ url: 'https://api.groq.com/openai/v1/chat/completions', method: 'POST', body: '{"a":1}' });
             expect(payload.headers.Authorization).toBe('Bearer __fgsk__fg_groq_key__');
+        });
+
+        it('sends a Request object that carries a placeholder through /api/proxy, with its body (codex R204)', async () => {
+            await window.fetch(new Request('https://api.groq.com/openai/v1/chat/completions?k=__fgsk__fg_groq_key__',
+                { method: 'POST', headers: { Authorization: 'Bearer __fgsk__fg_groq_key__', 'Content-Type': 'application/json' }, body: '{"a":1}' }));
+            const [url, init] = calls[0];
+            expect(url).toBe(`${location.origin}/api/proxy`);
+            const payload = JSON.parse(init.body);
+            expect(payload).toMatchObject({ url: 'https://api.groq.com/openai/v1/chat/completions?k=__fgsk__fg_groq_key__', method: 'POST' });
+            expect(payload.headers.authorization).toBe('Bearer __fgsk__fg_groq_key__');
+            expect(atob(payload.bodyB64)).toBe('{"a":1}');
+            // a Request without one is passed through untouched
+            const plain = new Request('https://example.com/x');
+            await window.fetch(plain);
+            expect(calls[1][0]).toBe(plain);
         });
 
         it('takes a LAN token from the URL fragment and removes it', () => {

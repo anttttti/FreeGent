@@ -311,10 +311,24 @@ interface PublicGetResult { status: number; headers: IncomingHttpHeaders; body: 
 
 export async function publicGet(
     url: string, headers: Record<string, string>, serverPort: number, keyUsed: boolean,
-    { maxBytes = 50 * 1024 * 1024, timeoutMs = 30_000 } = {},
+    { maxBytes = 50 * 1024 * 1024, timeoutMs = 30_000, totalMs = 120_000, lookup = _publicOnlyLookup }: { maxBytes?: number; timeoutMs?: number; totalMs?: number; lookup?: typeof _publicOnlyLookup } = {},
+): Promise<PublicGetResult> {
+    // timeoutMs is the socket's inactivity limit: a server that drips a byte every few seconds never reached it. totalMs bounds the whole
+    // fetch, redirects and body included (codex R202).
+    const deadline = Date.now() + totalMs;
+    let current: { destroy(e: Error): void } | null = null;
+    const overall = setTimeout(() => current?.destroy(new Error(`timed out after ${totalMs / 1000} s in all`)), totalMs);
+    try { return await _publicGetHops(url, headers, serverPort, keyUsed, maxBytes, timeoutMs, deadline, lookup, x => { current = x; }); }
+    finally { clearTimeout(overall); }
+}
+
+async function _publicGetHops(
+    url: string, headers: Record<string, string>, serverPort: number, keyUsed: boolean,
+    maxBytes: number, timeoutMs: number, deadline: number, lookup: typeof _publicOnlyLookup, track: (x: { destroy(e: Error): void }) => void,
 ): Promise<PublicGetResult> {
     let cur = new URL(url);
     for (let hop = 0; hop <= 5; hop++) {
+        if (Date.now() >= deadline) throw new Error('timed out');
         if (cur.protocol !== 'http:' && cur.protocol !== 'https:') throw new ProxyRefusal(`only http(s) URLs can be fetched`);
         const port = cur.port ? parseInt(cur.port, 10) : (cur.protocol === 'https:' ? 443 : 80);
         const host = cur.hostname.replace(/^\[|\]$/g, '');
@@ -325,13 +339,15 @@ export async function publicGet(
             const req = (cur.protocol === 'https:' ? httpsRequest : httpRequest)(cur, {
                 method: 'GET',
                 headers: { ...headers, 'accept-encoding': 'identity' },
-                lookup: _publicOnlyLookup(serverPort, port) as any,
+                lookup: lookup(serverPort, port) as any,
                 timeout: timeoutMs,
             }, resolve);
             req.on('timeout', () => req.destroy(new Error(`timed out after ${timeoutMs / 1000} s`)));
             req.on('error', reject);
+            track(req);
             req.end();
         });
+        track(res);
         const status = res.statusCode ?? 502;
         const loc = res.headers.location;
         if ([301, 302, 303, 307, 308].includes(status) && loc) {
@@ -387,8 +403,9 @@ export function postTargetRefusal(url: string, spec: string | undefined): string
     return allowed.includes(origin) ? null : `${origin} is not in FG_PROXY_POST_ALLOW`;
 }
 
+const POST_IDLE_MS = 10 * 60_000;
 /** fetch for the POST proxy: node:http(s) with the connect-time address check, streaming the response. */
-export function pinnedFetch(serverPort: number): typeof fetch {
+export function pinnedFetch(serverPort: number, idleMs = POST_IDLE_MS): typeof fetch {
     return (async (input: any, init: any = {}) => {
         const u = new URL(String(input));
         if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ProxyRefusal('only http(s) URLs can be fetched');
@@ -407,6 +424,9 @@ export function pinnedFetch(serverPort: number): typeof fetch {
                 resolve(new Response(nullBody ? null : (Readable.toWeb(res) as any), { status, headers: h }));
             });
             req.on('error', reject);
+            // The page ends a request it gave up on, and that ends this one; this is the backstop for a server that accepts the request and
+            // then sends nothing, neither headers nor body, for 10 minutes (codex R203). Not a total limit: a long generation keeps streaming.
+            req.setTimeout(idleMs, () => req.destroy(new Error(`no data for ${idleMs / 1000} s`)));
             init.signal?.addEventListener?.('abort', () => req.destroy(new Error('aborted')));
             if (init.body != null) req.write(init.body);
             req.end();
@@ -1084,9 +1104,12 @@ window.fetch=function(input,init){
       if(isReq){var r=new Request(input,init);if(token)r.headers.set('X-FG-Token',token);return orig(r);}
       var h0=hdrs(init.headers);if(token)h0['X-FG-Token']=token;
       return orig(input,Object.assign({},init,{headers:h0}));}
-    if(isReq)return orig(input,init);
-    var h=hdrs(init.headers),body=init.body;
-    if(!hasPH(u.href,h,body))return orig(input,init);
+    var h,body;
+    // fetch(new Request(...)) with a placeholder went out as is (codex R204): read the Request's URL, headers and body like init's.
+    if(isReq){var rq=new Request(input,init);h=hdrs(rq.headers);
+      if(!hasPH(rq.url,h,null))return orig(input,init);
+      body=rq.method==='GET'||rq.method==='HEAD'?null:rq.body;init={method:rq.method,signal:rq.signal};}
+    else{h=hdrs(init.headers);body=init.body;if(!hasPH(u.href,h,body))return orig(input,init);}
     var send=function(p){var ph={'Content-Type':'application/json'};if(token)ph['X-FG-Token']=token;
       return orig(location.origin+'/api/proxy',{method:'POST',headers:ph,body:JSON.stringify(p),signal:init.signal});};
     var p={url:u.href,method:(init.method||'GET').toUpperCase(),headers:h};

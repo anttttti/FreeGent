@@ -154,6 +154,7 @@ declare global {
     var modelSupportsThinking: (provider: string, model: string) => boolean;
     var MAX_STEPS: any;
     var _pyodideImageStore: any;
+    var rememberImage: (key: string, value: any) => void;
     var activeSkills: any;
     var agentsContext: any;
     var buildModelCatalogText: any;

@@ -58,6 +58,12 @@ describe('mcpToolName', () => {
         expect(a).not.toBe(b);
         expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
     });
+    it('keeps apart the long pair whose 4-character hashes collided (codex R208)', () => {
+        const p = 'very_long_tool_name_' + 'x'.repeat(55);
+        const a = W.mcpToolName('demo', p + '000n'), b = W.mcpToolName('demo', p + '0020');
+        expect(a).not.toBe(b);
+        expect(a.length).toBe(64);
+    });
 });
 
 describe('sanitizeMcpSchema', () => {
@@ -182,6 +188,41 @@ describe('dispatch through executeToolAsync', () => {
         expect(r).toEqual({ content: 'found: coffee\n[image (image/png) omitted]' });
         const call = calls.find(c => c.body.method === 'tools/call')!;
         expect(call.body.params).toEqual({ name: 'search_places', arguments: { query: 'coffee' } });
+    });
+
+    // codex R205: a reply was read and parsed whole before the result was capped.
+    it('refuses a reply larger than 16 MB, as JSON or as one SSE event without an end', async () => {
+        const huge = (ct: string) => {
+            let sent = 0;
+            const body = new ReadableStream({ pull(c) { if (sent++ < 20) c.enqueue(new Uint8Array(1024 * 1024).fill(0x61)); else c.close(); } });
+            return new Response(body, { status: 200, headers: { 'Content-Type': ct, 'Mcp-Session-Id': 'sess-1' } });
+        };
+        for (const ct of ['application/json', 'text/event-stream']) {
+            mockServer((msg) => msg.method === 'tools/call' ? huge(ct) : standardHandler(msg));
+            const s = await W.addMcpServer({ name: `big${ct.length}`, url: `https://big${ct.length}.example.com/mcp` });
+            W.setMcpToolEnabled(s.id, 'search_places', true);
+            const r = await W.executeToolAsync(W.mcpExposedName(s.id, 'search_places'), { query: 'x' });
+            expect(r.error).toMatch(/larger than 16 MB/);
+        }
+    });
+
+    it('a server add sees the list as it is after discovery, and redacts the key in its error (codex R206/R207)', async () => {
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        W.fetch.mockReset();
+        mockServer(standardHandler);
+        await W.addMcpServer({ name: 'old', url: 'https://old.example.com/mcp', headers: { 'X-Key': 'old-secret-123456' } });
+        const real = W.fetch.getMockImplementation();
+        W.fetch.mockImplementation(async (url: string, init: any) => { if (String(url).includes('slow')) await gate; return real(url, init); });
+        const adding = W.addMcpServer({ name: 'slow', url: 'https://slow.example.com/mcp' });
+        await expect(W.addMcpServer({ name: 'again', url: 'https://slow.example.com/mcp' })).rejects.toThrow(/already added/);
+        W.removeMcpServer(W.getMcpServers().find((x: any) => x.name === 'old').id);
+        release(); await adding;
+        expect(W.getMcpServers().map((x: any) => x.name)).toEqual(['slow']);
+        W.fetch.mockImplementation(async () => new Response('bad key: Bearer echo-secret-abcdef123', { status: 401 }));
+        const err = await W.addMcpServer({ name: 'echo', url: 'https://echo.example.com/mcp', headers: { Authorization: 'Bearer echo-secret-abcdef123' } }).catch((e: Error) => e);
+        expect(err.message).toMatch(/authentication failed/);
+        expect(err.message).not.toContain('echo-secret-abcdef123');
     });
 
     it('returns isError results and disabled tools as errors', async () => {

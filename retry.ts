@@ -417,7 +417,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             const noVisionKey = `${ep.provider}|${ep.model}`;
             _markExactCooldown(ep, 30 * 60_000);
             onNote(`[${noVisionKey}][no image input — skipped for 30 min]`);
-            const next = _anyFreeSpec(noVisionKey);
+            const next = _anyFreeSpecSameFormat(noVisionKey);   // every rotation keeps the session's tool format (codex R209)
             if (next) { setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next); return 0; }
             return false;
         }
@@ -450,7 +450,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 if (!_paused.includes(goneKey)) savePausedMainModels([..._paused, goneKey]);
             }
             onNote(`[${goneKey}][paused: ${e.message?.slice(0, 80) ?? 'HTTP 401/404'}]`);
-            const next = _anyFreeSpec(goneKey);
+            const next = _anyFreeSpecSameFormat(goneKey);
             if (next) { setEp(specToEndpoint(next)); setFallback?.(specToEndpoint(next)); onModelChange?.(next); return 0; }
             return false;
         }
@@ -488,7 +488,7 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         if ((is429 || effectiveErr) && !forWorker) {
             const fb = getRateLimitFallbackEndpoint();
-            if (fb && fb.model !== ep.model) {
+            if (fb && fb.model !== ep.model && _sameFormat(`${fb.provider}|${fb.model}`)) {
                 const fbKey   = `${fb.provider}|${fb.model}`;
                 const fbDelay = getCooldownRemaining(fbKey) * 1000;
                 setEp(fb);

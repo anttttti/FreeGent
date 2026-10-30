@@ -76,3 +76,20 @@ describe('the callers pass it', () => {
         expect(src('workers.ts')).toMatch(/isCustomEndpoint\(ep\) \|\| isModelGone\(e, ep\)/);
     });
 });
+
+// codex R209: the image-input 404, the gone 401/404 and the configured fallback rotated without the session's tool-format lock.
+describe('every rotation keeps the tool format the session started with', () => {
+    const FN = 'nvidia|fn-tag-model', NATIVE = 'groq|native-model', FN2 = 'kilo|fn-tag-two';
+    let saved: any;
+    beforeEach(() => { const W: any = window; saved = W.getModelToolFormat; W.getModelToolFormat = (_p: string, m: string) => /fn-tag/.test(m) ? 'fn-tag' : 'openai'; });
+    afterEach(() => { (window as any).getModelToolFormat = saved; });
+    for (const [what, message] of [['image input 404', 'HTTP 404: No endpoints found that support image input'], ['model gone 404', 'HTTP 404: model not found']] as const) {
+        it(what, () => {
+            pool = [FN, NATIVE, FN2];
+            let cur: any = specToEndpoint(FN);
+            const h = _makeOAIRetryHandler({ getEp: () => cur, setEp: (e: any) => { cur = e; }, onNote: () => {} });
+            h(0, Object.assign(new Error(`[${FN}] ${message}`), { status: 404 }), 1000);
+            expect(`${cur.provider}|${cur.model}`).toBe(FN2);
+        });
+    }
+});

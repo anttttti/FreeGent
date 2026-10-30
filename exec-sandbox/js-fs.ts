@@ -1,5 +1,6 @@
 import { base64ToBytes } from '../shiro/utils/bytes.js';
 import { fsError as makeFsError } from '../shiro/utils/errors.js';
+import { basename, dirname, extname } from '../shiro/utils/posix-path.js';
 // exec-sandbox/js-fs.ts — the `fs` and `path` modules for execute_code JavaScript.
 //
 // The same /workspace the bash shell and Python see: the working directory is /workspace, and
@@ -33,9 +34,7 @@ export const path = {
     normalize: posix.normalize,
     resolve: posix.resolve,
     join:     (...a: string[]) => posix.normalize(a.filter(Boolean).join('/')),
-    dirname:  (p: string) => { const n = posix.normalize(p); const i = n.lastIndexOf('/'); return i > 0 ? n.slice(0, i) : i === 0 ? '/' : '.'; },
-    basename: (p: string, e?: string) => { const b = posix.normalize(p).split('/').pop()!; return e && b.endsWith(e) ? b.slice(0, -e.length) : b; },
-    extname:  (p: string) => { const m = path.basename(p).match(/.(\.[^.]+)$/); return m ? m[1] : ''; },
+    dirname, basename, extname,   // Node's, without normalising first (codex R191/R192)
     isAbsolute: (p: string) => p.startsWith('/'),
     relative: (from: string, to: string) => {
         const a = posix.resolve(from).split('/').filter(Boolean), b = posix.resolve(to).split('/').filter(Boolean);
@@ -45,7 +44,8 @@ export const path = {
 };
 
 function fsError(code: string, op: string, p: string): Error {
-    const what = code === 'ENOENT' ? 'no such file or directory' : code === 'EISDIR' ? 'illegal operation on a directory' : 'operation failed';
+    const what = code === 'ENOENT' ? 'no such file or directory' : code === 'EISDIR' ? 'illegal operation on a directory'
+        : code === 'EEXIST' ? 'file already exists' : code === 'ENOTDIR' ? 'not a directory' : 'operation failed';
     return makeFsError(code, `${code}: ${what}, ${op} '${p}'`, op, p);
 }
 
@@ -133,12 +133,26 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
             if (c === undefined && !dir) throw fsError('ENOENT', 'stat', p);
             return { size: c === undefined ? 0 : size(c), isFile: () => !dir, isDirectory: () => dir, mtime: new Date(), mtimeMs: Date.now() };
         },
-        mkdirSync(p: string, _opts?: any) { dirs.add(posix.resolve(p)); },
+        // As Node: without { recursive: true } the parent must exist and the path must not (codex R211). Recursive returns the first
+        // directory it made, or undefined when there was none to make.
+        mkdirSync(p: string, opts?: any) {
+            const abs = posix.resolve(p), recursive = !!(opts && typeof opts === 'object' && opts.recursive);
+            if (get(p) !== undefined) throw fsError('EEXIST', 'mkdir', p);
+            if (isDir(p)) { if (recursive) return undefined; throw fsError('EEXIST', 'mkdir', p); }
+            const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
+            if (!recursive) { if (!isDir(parent)) throw fsError('ENOENT', 'mkdir', p); dirs.add(abs); return undefined; }
+            let first = abs;
+            for (let d = parent; d && !isDir(d); d = d.slice(0, d.lastIndexOf('/')) || '/') { if (get(d) !== undefined) throw fsError('ENOTDIR', 'mkdir', p); first = d; }
+            dirs.add(abs);
+            return first;
+        },
         unlinkSync(p: string) {
             const abs = posix.resolve(p), name = wsName(abs);
             if (get(p) === undefined) throw fsError('ENOENT', 'unlink', p);
             if (name === null) { scratch.delete(abs); return; }
-            delete files[name]; delete written[name]; deleted.add(name);
+            delete files[name]; delete written[name];
+            // Only a file the run was given is a deletion: one it created and removed again never reached the workspace (codex R193).
+            if (Object.prototype.hasOwnProperty.call(sent, name)) deleted.add(name);
         },
         rmSync(p: string, opts?: { recursive?: boolean; force?: boolean }) {
             if (get(p) !== undefined) return fs.unlinkSync(p);

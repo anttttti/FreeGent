@@ -16,6 +16,7 @@
 
 import { resolveProxy } from './proxy.js';
 import { redactText } from './secrets.js';
+import { readTextCapped } from './read-capped.js';
 import { combineSignals } from './abort.js';
 import { activeAbortController } from './state.js';
 
@@ -170,6 +171,12 @@ function _isSessionError(err: any, method: string): boolean {
 }
 
 // One JSON-RPC exchange. `id` undefined = notification (no response body expected).
+// A reply was read whole and parsed before the tool result was capped, so a server could make the page hold any amount (codex R205).
+// JSON and SSE replies are read up to this many bytes and then refused.
+const MCP_REPLY_MAX_BYTES = 16 * 1024 * 1024;
+const _tooLarge = () => new Error(`MCP: the server's reply is larger than ${MCP_REPLY_MAX_BYTES / 1024 / 1024} MB and was not read`);
+const _readTextCapped = (resp: Response): Promise<string> => readTextCapped(resp, MCP_REPLY_MAX_BYTES, _tooLarge);
+
 async function _rpc(server: { url: string; headers?: Record<string, string> }, method: string, params: any, id?: any): Promise<any> {
     const c = _conn(server);
     const headers: Record<string, string> = {
@@ -218,7 +225,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
     const ct = resp.headers.get('content-type') || '';
     let msg: any = null;
     if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await _readTextCapped(resp).catch(() => '');
         // Some servers put a JSON-RPC reply on an HTTP error (Google's mapstools answers a bad
         // API key with 400 + an isError result) — use it when it matches the request.
         if (id !== undefined) { try { msg = _parseRpcBody(text, ct, id); } catch { msg = null; } }
@@ -233,7 +240,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
 
     msg = msg ?? (/text\/event-stream/i.test(ct) && typeof resp.body?.getReader === 'function'
         ? await _readSseAnswer(resp, id)
-        : _parseRpcBody(await resp.text(), ct, id));
+        : _parseRpcBody(await _readTextCapped(resp), ct, id));
     if (msg.error) {
         const m = msg.error.message || JSON.stringify(msg.error);
         if (_isSessionError(msg.error, method)) throw new McpSessionExpired(m);
@@ -247,7 +254,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
 async function _readSseAnswer(resp: Response, id: any): Promise<any> {
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = '', size = 0;
     const scan = (event: string): any => {
         const data = event.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
         if (!data.trim()) return null;
@@ -256,7 +263,7 @@ async function _readSseAnswer(resp: Response, id: any): Promise<any> {
     try {
         for (;;) {
             const { done, value } = await reader.read();
-            if (value) buffer += decoder.decode(value, { stream: !done });
+            if (value) { size += value.byteLength; if (size > MCP_REPLY_MAX_BYTES) throw _tooLarge(); buffer += decoder.decode(value, { stream: !done }); }
             const events = buffer.split(/\r?\n\r?\n/);
             buffer = events.pop() ?? '';
             for (const ev of events) { const hit = scan(ev); if (hit) return hit; }
@@ -355,11 +362,19 @@ function _hash4(s: string): string {
     return h.toString(36).slice(-4).padStart(4, '0');
 }
 
+// Eight base-36 characters from two independent 32-bit hashes. Four characters of one hash made two long names of one server
+// collide (codex R208: ..._000n and ..._0020 both became ..._fm4y).
+function _hash8(s: string): string {
+    let a = 0x811c9dc5, b = 0;
+    for (let i = 0; i < s.length; i++) { a = Math.imul(a ^ s.charCodeAt(i), 0x01000193) >>> 0; b = (b * 31 + s.charCodeAt(i)) >>> 0; }
+    return (a.toString(36).padStart(7, '0').slice(-4) + b.toString(36).padStart(7, '0').slice(-4));
+}
+
 // mcp__<server>__<tool>, restricted to [A-Za-z0-9_-] and 64 chars; a hash keeps clipped names unique.
 function mcpToolName(serverId: string, toolName: string): string {
     const full = `mcp__${serverId}__${String(toolName).replace(/[^A-Za-z0-9_-]/g, '_')}`;
     if (full.length <= _MAX_NAME) return full;
-    return `${full.slice(0, _MAX_NAME - 5)}_${_hash4(full)}`;
+    return `${full.slice(0, _MAX_NAME - 9)}_${_hash8(full)}`;
 }
 
 // The names the model sees for a server's tools: mcpToolName(server, tool) — except where two tools would get the same one
@@ -375,6 +390,10 @@ function _exposedNames(s: McpServer): Map<string, string> {
         // name the model was given to another tool (codex R102). A name that is already plain keeps the base name.
         out.set(t.name, /^[A-Za-z0-9_-]+$/.test(t.name) ? b : `${b.slice(0, _MAX_NAME - 5)}_${_hash4(t.name)}`);
     }
+    // Two tools that still share a name are neither offered nor dispatched: a call by that name could reach either of them.
+    const seen = new Map<string, number>();
+    for (const n of out.values()) seen.set(n, (seen.get(n) ?? 0) + 1);
+    for (const [tool, n] of out) if (seen.get(n)! > 1) out.set(tool, '');
     return out;
 }
 
@@ -464,6 +483,8 @@ export function plainHttpAllowed(hostname: string): boolean {
 }
 
 // Connect to a new server and save it (only if the handshake and tools/list succeed).
+// URLs whose add is waiting for discovery: a second add of one of them is refused at once instead of saving the server twice.
+const _adding = new Set<string>();
 async function addMcpServer(opts: { name: string; url: string; headers?: Record<string, string>; id?: string;
                                     enabledTools?: string[]; toolNote?: string; libraryId?: string; readOnly?: boolean;
                                     trustAnnotations?: boolean }): Promise<McpServer> {
@@ -473,11 +494,18 @@ async function addMcpServer(opts: { name: string; url: string; headers?: Record<
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('URL must be http(s)');
     if (u.protocol === 'http:' && !plainHttpAllowed(u.hostname))
         throw new Error('Use https:// for a server on the public internet (plain http is allowed only for localhost and private-network addresses)');
-    const list = getMcpServers();
-    if (list.some(s => s.url === url)) throw new Error('This server is already added');
+    if (getMcpServers().some(s => s.url === url) || _adding.has(url)) throw new Error('This server is already added');
     const name = String(opts.name || '').trim() || u.hostname;
     const headers = opts.headers && Object.keys(opts.headers).length ? opts.headers : undefined;
-    const { tools, instructions } = await _listTools({ url, headers });
+    let tools, instructions;
+    _adding.add(url);
+    try { ({ tools, instructions } = await _listTools({ url, headers })); }
+    // The setup error can quote the response body, and a server may echo the submitted key there (codex R207).
+    catch (e) { throw new Error(redactMcpSecrets(String((e as any)?.message ?? e), headers)); }
+    finally { _adding.delete(url); }
+    // The list as it is now, not as it was before discovery: a server removed or added meanwhile stays removed or added (codex R206).
+    const list = getMcpServers();
+    if (list.some(s => s.url === url)) throw new Error('This server is already added');
     const entry: McpServer = {
         id: _uniqueId(opts.id || name, list), name, url, headers, enabled: true,
         enabledTools: (opts.enabledTools || []).filter(n => tools.some(t => t.name === n)),
@@ -619,7 +647,7 @@ function mcpToolSpecs(): any[] {
         const on = new Set(s.enabledTools || []);
         const names = _exposedNames(s);
         for (const t of s.tools || []) {
-            if (!on.has(t.name)) continue;
+            if (!on.has(t.name) || !names.get(t.name)) continue;
             const note = s.toolNote ? `\n${s.toolNote}` : '';
             const max = _MAX_DESC - note.length;
             // The description is the server's own text, in the list the model takes for its capabilities: said to be that, like the server's usage notes

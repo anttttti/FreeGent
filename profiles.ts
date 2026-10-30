@@ -198,17 +198,18 @@ let _previewedId: string | null = null;
 
 // fg_custom_models holds each model's API key beside its settings. Profiles are shared files and are
 // documented as credential-free, so the keys are dropped from every profile and put back on apply.
+// A value that is not a JSON list of models (truncated, another shape) is dropped, not passed on: it can still hold a key (codex R199).
 export function stripModelKeys(json: string | null | undefined): string | null | undefined {
-    if (typeof json !== 'string') return json;
+    if (json == null) return json;
     try {
-        const arr = JSON.parse(json);
-        if (!Array.isArray(arr)) return json;
+        const arr = typeof json === 'string' ? JSON.parse(json) : null;
+        if (!Array.isArray(arr)) return undefined;
         return JSON.stringify(arr.map((m: any) => {
             if (!m || typeof m !== 'object') return m;
             const { key: _k, apiKey: _a, ...rest } = m;
             return rest;
         }));
-    } catch { return json; }
+    } catch { return undefined; }
 }
 
 // One sanitizer for every way a profile is stored or written out: an imported file or a profile saved before keys were dropped can carry scalar keys
@@ -216,7 +217,10 @@ export function stripModelKeys(json: string | null | undefined): string | null |
 function credentialFreeSettings(settings: Record<string, any>): Record<string, any> {
     const clean: Record<string, any> = {};
     for (const [k, v] of Object.entries(settings ?? {})) if (!isCredentialKey(k)) clean[k] = v;
-    if ('fg_custom_models' in clean) clean.fg_custom_models = stripModelKeys(clean.fg_custom_models);
+    if ('fg_custom_models' in clean) {
+        const models = stripModelKeys(clean.fg_custom_models);
+        if (models === undefined) delete clean.fg_custom_models; else clean.fg_custom_models = models;
+    }
     return clean;
 }
 
@@ -268,9 +272,16 @@ function _fmtVal(key, val) {
     return val.length > 42 ? val.slice(0, 39) + '…' : val;
 }
 
+const _isPlainObject = (v: any): boolean => !!v && typeof v === 'object' && !Array.isArray(v);
+// Valid JSON of another shape (null, a list, a record whose settings are a string) broke the Profiles tab half-way through rendering
+// (codex R198/R200): only object records with object settings are profiles.
 function getSavedProfiles() {
-    try { return JSON.parse(localStorage.getItem('fg_profiles') || '{}'); }
-    catch { return {}; }
+    let root: any;
+    try { root = JSON.parse(localStorage.getItem('fg_profiles') || '{}'); } catch { return {}; }
+    if (!_isPlainObject(root)) return {};
+    const out: Record<string, any> = {};
+    for (const [name, rec] of Object.entries(root)) if (_isPlainObject(rec) && _isPlainObject((rec as any).settings)) out[name] = rec;
+    return out;
 }
 
 // Keys absent from the profile are removed (reset to default); API keys are never touched.
