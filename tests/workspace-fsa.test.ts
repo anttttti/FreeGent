@@ -96,6 +96,15 @@ describe('folder authority and project changes during a folder operation', () =>
         await expect(W.agentReadFile('local/gone.txt')).rejects.toThrow(/not found/);
         await expect(W.agentReadFileBytes('local/gone.txt')).rejects.toThrow(/not found/);
     });
+    it('the record read the exec sandbox shell uses goes through the folder too (codex R268)', async () => {
+        const dir = await connect({ 'live.txt': 'LIVE' });
+        await W.writeWorkspaceFile('local/gone.txt', 'OLD SNAPSHOT');
+        expect(await W.readWorkspaceRecord('local/gone.txt')).toBeNull();
+        const rec = await W.readWorkspaceRecord('local/live.txt');
+        expect(rec.encoding).toBe('base64');
+        expect(atob(rec.content)).toBe('LIVE');
+        void dir;
+    });
     it('a write or delete whose project changes while the folder works is not applied to the workspace store', async () => {
         const { workspaceEpoch, bumpWorkspaceEpoch } = await import('../exec-limits.ts');
         const dir = await connect({ 'shared.txt': 'DISK' });

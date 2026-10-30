@@ -942,6 +942,9 @@ onPrefChange(/^fg_(active_skills|disabled_roles|builtin_skills|builtin_rules|ski
 // were being read (after another tab toggled an unrelated rule) found its matching rule gone and went out without its guidance
 // (codex 343). A load that a newer one has overtaken does not swap.
 let _skillsLoadSeq = 0;
+/** Workspace skill/rule files left out because an earlier one has their name (shown in the skills list). */
+export const _skillNameConflicts: string[] = [];
+
 export async function loadSkills() {
     const seq = ++_skillsLoadSeq;
     const next = new Map<string, any>();
@@ -988,15 +991,15 @@ export async function loadSkills() {
         }
 
         // Helper: parse and register one markdown file
-        const _load = async (f, type) => {
+        const _load = async (f, type): Promise<any> => {
             try {
                 const content = await agentReadFile(f.name);
                 const fm = parseFrontmatter(content);
-                if (!fm.name) return;
+                if (!fm.name) return null;
                 const norm = content.replace(/\r\n/g, '\n');
                 const body = (splitFrontmatter(norm)?.body ?? norm).trim();
-                next.set(fm.name, { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type });
-            } catch { complete = false; }
+                return { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type };
+            } catch { complete = false; return null; }
         };
 
         // Re-filter with patterns after path normalisation (works for both code paths)
@@ -1008,10 +1011,21 @@ export async function loadSkills() {
             /^(?:local\/)?rules\/[^/]+\/RULE\.md$/i.test(f.name) ||
             /^(?:local\/)?rules\/[^/]+\.rule\.md$/i.test(f.name)
         );
-        await Promise.all([
-            ...finalSkillFiles.map(f => _load(f, 'skill')),
-            ...finalRuleFiles.map(f => _load(f, 'rule')),
+        // Registered in a fixed order (skills, then rules, each by path) once all are read. Each file used to register itself as its read
+        // finished, so a skill and a rule with one name replaced each other in whatever order the reads ended (codex R266). The first one
+        // keeps the name; the others are reported and left out. A workspace file still replaces a built-in of that name.
+        const byPath = (a, b) => a.name.localeCompare(b.name);
+        const loaded = await Promise.all([
+            ...[...finalSkillFiles].sort(byPath).map(f => _load(f, 'skill')),
+            ...[...finalRuleFiles].sort(byPath).map(f => _load(f, 'rule')),
         ]);
+        _skillNameConflicts.length = 0;
+        for (const entry of loaded) {
+            if (!entry) continue;
+            const had = next.get(entry.name);
+            if (had && had.path !== 'builtin') { _skillNameConflicts.push(`${entry.path} (also ${had.path})`); console.warn(`[skills] "${entry.name}" is defined twice: ${had.path} is used, ${entry.path} is not`); continue; }
+            next.set(entry.name, entry);
+        }
     } catch { complete = false; }
     if (seq !== _skillsLoadSeq) return;
     if (!complete) {
@@ -1094,6 +1108,13 @@ function toggleSkill(name) {
     renderSkillsChecklist();
 }
 
+// A skill's or rule's name becomes one folder under skills/ or rules/. A name with "/" or ".." (from an imported file's frontmatter, or typed
+// in the form) left that folder after normalisation: `name: ../notes` overwrote notes/SKILL.md (codex R265).
+export const SAFE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export function unsafeSkillName(name: string): string | null {
+    return SAFE_SKILL_NAME.test(name) && !name.includes('..') ? null : `"${name}" is not a usable name: letters, digits, ".", "_" and "-" only, no "/" or ".."`;
+}
+
 async function installSkillFromFiles() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -1106,6 +1127,8 @@ async function installSkillFromFiles() {
                 const text = await file.text();
                 const fm = parseFrontmatter(text);
                 if (!fm.name) { alert(`Skipped ${file.name}: no "name:" in frontmatter`); continue; }
+                const bad = unsafeSkillName(String(fm.name));
+                if (bad) { alert(`Skipped ${file.name}: ${bad}`); continue; }
                 await agentWriteFile(`skills/${fm.name}/SKILL.md`, text);
                 installed++;
             } catch (e) { alert(`Failed to install ${file.name}: ${e.message}`); }
@@ -1141,6 +1164,7 @@ async function createSkillFromForm() {
     const body = (bodyEl?.value || '').trim();
 
     if (!name) { if (msgEl) { msgEl.textContent = '⚠ Skill name is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
+    if (unsafeSkillName(name)) { if (msgEl) { msgEl.textContent = `⚠ ${unsafeSkillName(name)}.`; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
     if (!body) { if (msgEl) { msgEl.textContent = '⚠ Skill content is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
 
     const frontmatter = buildFrontmatter({ name, description: desc }) + '\n';
@@ -1172,6 +1196,7 @@ async function createRuleFromForm() {
     const body    = (bodyEl?.value || '').trim();
 
     if (!name) { if (msgEl) { msgEl.textContent = '⚠ Rule name is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
+    if (unsafeSkillName(name)) { if (msgEl) { msgEl.textContent = `⚠ ${unsafeSkillName(name)}.`; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
     if (!body) { if (msgEl) { msgEl.textContent = '⚠ Rule content is required.'; msgEl.style.color = '#d32f2f'; msgEl.style.display = ''; } return; }
 
     const frontmatter = buildFrontmatter({ name, description: desc, trigger }) + '\n';

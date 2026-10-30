@@ -5,6 +5,9 @@
  * Implements tar extraction from scratch (tar format is simple)
  */
 
+import { memberPath } from './archive-path';
+import { MAX_EXPANDED_BYTES } from './streams';
+
 /**
  * Decompress gzip data using browser-native DecompressionStream
  */
@@ -16,7 +19,8 @@ export async function gunzip(compressedData: Uint8Array): Promise<Uint8Array> {
 
   // Create a readable stream from the compressed data
   // Wrap in Blob and use type assertion to work around strict TypeScript types
-  const blob = new Blob([compressedData.buffer as ArrayBuffer]);
+  // The view's own bytes: `.buffer` is the whole underlying buffer, more than the data when the view has an offset (a Node Buffer from the pool).
+  const blob = new Blob([compressedData.slice() as Uint8Array<ArrayBuffer>]);
   const stream = new Response(blob).body;
   if (!stream) {
     throw new Error('Failed to create stream from compressed data');
@@ -31,9 +35,12 @@ export async function gunzip(compressedData: Uint8Array): Promise<Uint8Array> {
   const reader = decompressedStream.getReader();
   const chunks: Uint8Array[] = [];
 
+  let size = 0;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    size += value.length;
+    if (size > MAX_EXPANDED_BYTES) { await reader.cancel().catch(() => {}); throw new Error(`package archive expands to more than ${MAX_EXPANDED_BYTES >> 20} MB`); }   // codex R288
     chunks.push(value);
   }
 
@@ -208,10 +215,6 @@ async function untar(tarData: Uint8Array): Promise<TarEntry[]> {
 /**
  * Extract tar.gz (tgz) archive
  */
-async function extractTarGz(compressedData: Uint8Array): Promise<TarEntry[]> {
-  const decompressed = await gunzip(compressedData);
-  return untar(decompressed);
-}
 
 /**
  * Extract tar.gz to filesystem
@@ -243,7 +246,12 @@ export async function extractTarGzToFS(
   baseDir: string,
   fs: FileSystemWriter
 ): Promise<void> {
-  const entries = await extractTarGz(compressedData);
+  return extractTarToFS(await gunzip(compressedData), baseDir, fs);
+}
+
+/** The uncompressed tar of an npm package into `baseDir`; every member stays inside it. */
+export async function extractTarToFS(tarData: Uint8Array, baseDir: string, fs: FileSystemWriter): Promise<void> {
+  const entries = await untar(tarData);
 
   // Sort entries so directories come before files
   entries.sort((a, b) => {
@@ -254,8 +262,10 @@ export async function extractTarGzToFS(
 
   for (const entry of entries) {
     if (!entry.name || entry.name === '.') continue;
+    const rel = memberPath(entry.name);
+    if (rel === null) throw new Error(`package archive member "${entry.name}" leaves the package directory`);
 
-    const fullPath = `${baseDir}/${entry.name}`;
+    const fullPath = `${baseDir}/${rel}`;
 
     if (entry.type === 'directory') {
       try {
@@ -275,6 +285,8 @@ export async function extractTarGzToFS(
       }
       await fs.writeFile(fullPath, entry.data);
     } else if (entry.type === 'symlink' && entry.linkname && fs.symlink) {
+      // A link out of the package (absolute, or with "..") would let a later member write through it; npm packages need none.
+      if (entry.linkname.startsWith('/') || entry.linkname.split('/').includes('..')) continue;
       await fs.symlink(entry.linkname, fullPath);
     }
   }

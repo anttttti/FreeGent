@@ -1,4 +1,4 @@
-import { transformBytes } from '../utils/streams';
+import { transformBytes, MAX_EXPANDED_BYTES } from '../utils/streams';
 /**
  * tar — create, append, list and extract archives (POSIX ustar, GNU long names, pax paths).
  *
@@ -6,6 +6,7 @@ import { transformBytes } from '../utils/streams';
  * bytes, writes them with -z -j -J --zstd or -a (by file suffix), and takes archives from stdin or
  * puts them on stdout with -f -. Exit status follows GNU tar: 0 ok, 2 on fatal or per-file errors.
  */
+import { memberPath } from '../utils/archive-path';
 import type { Command, CommandContext } from './index';
 import { readdirEntries, statEntry } from './flags';
 import { bytesToText, textToBytes } from '../utils/bytes';
@@ -42,7 +43,7 @@ function detectCodec(b: Uint8Array): Codec {
 
 async function decompress(codec: Codec, data: Uint8Array,ctx:CommandContext): Promise<Uint8Array> {
   switch (codec) {
-    case 'gzip': return transformBytes(new DecompressionStream('gzip') as any, data);
+    case 'gzip': return transformBytes(new DecompressionStream('gzip') as any, data, MAX_EXPANDED_BYTES);
     case 'bzip2': return (await import('./bzip2')).bzip2Decompress(data);
     case 'xz': return (await import('./xz')).xzDecompress(data);
     case 'zstd': return (await import('./zstd')).zstdDecompress(data,ctx);
@@ -482,8 +483,9 @@ export const tar: Command = {
           if (parts.length <= o.strip) continue;
           name = parts.slice(o.strip).join('/') + (e.kind === 'dir' ? '/' : '');
         }
-        name = name.replace(/^\/+/, '');
-        if (name.split('/').includes('..')) { ctx.stderr += `tar: ${e.name}: Member name contains '..'\n`; hadError = true; continue; }
+        const _safe = memberPath(name);
+        if (_safe === null) { if (name.split('/').includes('..')) { ctx.stderr += `tar: ${e.name}: Member name contains '..'\n`; hadError = true; } continue; }
+        name = _safe + (e.kind === 'dir' ? '/' : '');
         if (o.toStdout) {
           if (e.kind === 'file') ctx.stdout += bytesToText(e.data);
           continue;
@@ -500,7 +502,9 @@ export const tar: Command = {
               try { await ctx.fs.unlink(target); } catch { /* absent */ }
               await ctx.fs.symlink(e.linkname, target);
             } else if (e.kind === 'hardlink') {
-              const src = ctx.fs.resolvePath(e.linkname.replace(/^\/+/, ''), work);
+              const linkSrc = memberPath(e.linkname);
+              if (linkSrc === null) throw new Error(`hard link to '${e.linkname}' leaves the extraction directory`);
+              const src = ctx.fs.resolvePath(linkSrc, work);
               await ctx.fs.writeFile(target, await ctx.fs.readFile(src));
             } else if (e.kind === 'file') {
               await ctx.fs.writeFile(target, e.data);
@@ -544,7 +548,9 @@ async function extractOldFormat(content: string, ctx: any, workingDir: string, v
     }
     const fileContent = contentLines.join('\n');
     i++; // Skip DATA-END
-    const targetPath = ctx.fs.resolvePath(filePath, workingDir);
+    const safePath = memberPath(filePath);
+    if (safePath === null) { ctx.stderr += `tar: ${filePath}: Member name contains '..'\n`; continue; }
+    const targetPath = ctx.fs.resolvePath(safePath, workingDir);
     if (type === 'dir') {
       await ctx.fs.mkdir(targetPath, { recursive: true });
     } else {

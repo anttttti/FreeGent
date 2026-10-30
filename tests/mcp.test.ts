@@ -253,6 +253,28 @@ describe('dispatch through executeToolAsync', () => {
         for (const id of ['tool-approval-toast', 'tool-approval-session', 'tool-approval-session-name']) document.getElementById(id)?.remove();
     });
 
+    it('a session id the browser cannot read sends discovery through the local proxy (codex R263)', async () => {
+        W.fetch.mockReset();
+        const via: string[] = [];
+        W.fetch.mockImplementation(async (url: string, init: any) => {
+            const proxied = String(url).endsWith('/api/proxy');
+            let msg = JSON.parse(init.body); if (proxied) msg = JSON.parse(msg.body);
+            via.push(`${proxied ? 'proxy' : 'direct'}:${msg.method}`);
+            if (msg.id === undefined) return new Response(null, { status: 202 });
+            const sess = proxied || msg.method === 'initialize';
+            const hdrs = init.headers?.['Mcp-Session-Id'] ?? (proxied ? JSON.parse(init.body).headers?.['Mcp-Session-Id'] : undefined);
+            if (msg.method !== 'initialize' && !hdrs) return new Response('session required', { status: 404 });
+            const rh: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (proxied) rh['Mcp-Session-Id'] = 'sess-hidden';   // the browser sees it only through the proxy
+            void sess;
+            return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...standardHandler(msg) }), { status: 200, headers: rh });
+        });
+        const s = await W.addMcpServer({ name: 'hidden', url: 'https://hidden.example.com/mcp' });
+        expect(s.tools.map((t: any) => t.name)).toEqual(['search_places', 'delete.everything']);
+        expect(via).toContain('direct:tools/list');
+        expect(via).toContain('proxy:tools/list');
+    });
+
     it('returns isError results and disabled tools as errors', async () => {
         mockServer(standardHandler);
         const s = await W.addMcpServer({ name: 'maps', url: 'https://e.example.com/mcp' });

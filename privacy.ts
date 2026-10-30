@@ -122,8 +122,26 @@ export function providerBlockedByPrivacy(provider: string, level: PrivacyLevel, 
 
 /** `<meta>` CSP for sandboxed frames: at the "local" level their own fetch/XHR/WebSocket may reach only this
  *  machine (plus the CDN that serves the runtimes). Empty at the other levels. */
-export function sandboxCspMeta(level: PrivacyLevel = getPrivacyLevel()): string {
+// The runtimes the sandbox loads from the CDN: Pyodide and the 7-Zip WASM build. Only these paths, not the whole host: with all of
+// cdn.jsdelivr.net allowed, code in the sandbox could send workspace data out in the path or query of any request there (codex R269).
+const _RUNTIME_CDN = ['https://cdn.jsdelivr.net/pyodide/', 'https://cdn.jsdelivr.net/npm/7z-wasm@'];
+const _LOCAL_HOSTS = 'http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*';
+export function sandboxCspMeta(level: PrivacyLevel = getPrivacyLevel(), pageOrigin: string = (() => { try { return location.origin; } catch { return ''; } })()): string {
     if (level !== 'local') return '';
-    const src = "connect-src data: blob: http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:* https://cdn.jsdelivr.net";
+    const page = pageOrigin && pageOrigin !== 'null' ? ` ${pageOrigin}` : '';
+    const cdn = _RUNTIME_CDN.join(' ');
+    // connect-src alone left every other kind of request open: an <img>, a font, a frame or a script URL could carry data anywhere, and the
+    // in-frame JavaScript fallback has Image (codex R267). Each kind is limited to this machine, the page and the runtime paths.
+    const src = [
+        `default-src 'none'`,
+        `connect-src data: blob: ${_LOCAL_HOSTS}${page} ${cdn}`,
+        `script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' data: blob: ${_LOCAL_HOSTS}${page} ${cdn}`,
+        `worker-src blob: data: ${_LOCAL_HOSTS}${page}`,
+        `style-src 'unsafe-inline' data: blob: ${_LOCAL_HOSTS}${page}`,
+        `img-src data: blob: ${_LOCAL_HOSTS}${page}`,
+        `media-src data: blob: ${_LOCAL_HOSTS}${page}`,
+        `font-src data: blob: ${_LOCAL_HOSTS}${page}`,
+        `frame-src data: blob: ${_LOCAL_HOSTS}${page}`,
+    ].join('; ');
     return `<meta http-equiv="Content-Security-Policy" content="${src}">`;
 }

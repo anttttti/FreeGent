@@ -1,9 +1,9 @@
 import type { Command } from './index';
 import { bytesToText, textToBytes } from '../utils/bytes';
 
-import { transformBytes } from '../utils/streams';
+import { transformBytes, MAX_EXPANDED_BYTES } from '../utils/streams';
 const compress = (data:Uint8Array) => transformBytes(new CompressionStream('gzip') as any,data);
-const decompress = (data:Uint8Array) => transformBytes(new DecompressionStream('gzip') as any,data);
+const decompress = (data:Uint8Array) => transformBytes(new DecompressionStream('gzip') as any,data,MAX_EXPANDED_BYTES);
 
 export const gzipCmd: Command = {
   name: 'gzip',

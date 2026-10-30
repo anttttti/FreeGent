@@ -1,4 +1,4 @@
-import { transformBytes } from '../utils/streams';
+import { transformBytes, MAX_EXPANDED_BYTES } from '../utils/streams';
 /**
  * zip / unzip — Info-ZIP compatible archives: stored and deflated entries, central directory,
  * CRC-32 checks, Unix modes, binary-safe contents. No encryption and no ZIP64 (4 GiB limits).
@@ -6,6 +6,7 @@ import { transformBytes } from '../utils/streams';
  * zip:   -r -j -q -0..-9 -m -u -f -d -x PAT... -i PAT... -X -D -@ -z (archive "-" is stdout)
  * unzip: -l -v -Z -Z1 -p -c -t -q -qq -o -n -j -d DIR -x PAT... [members]
  */
+import { memberPath } from '../utils/archive-path';
 import type { Command, CommandContext } from './index';
 import { crc32 } from './checksums';
 import { dosStamp } from '../utils/dos-stamp';
@@ -17,7 +18,7 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 const deflateRaw = (d: Uint8Array) => transformBytes(new CompressionStream('deflate-raw') as any, d);
-const inflateRaw = (d: Uint8Array) => transformBytes(new DecompressionStream('deflate-raw') as any, d);
+const inflateRaw = (d: Uint8Array) => transformBytes(new DecompressionStream('deflate-raw') as any, d, MAX_EXPANDED_BYTES);
 
 interface Entry {
   name: string;
@@ -361,6 +362,8 @@ export const unzipCmd: Command = {
       if (junk) rel = rel.replace(/\/+$/, '').split('/').pop()! + (e.isDir ? '/' : '');
       if (junk && e.isDir) continue;
       if (rel.split('/').includes('..')) { ctx.stderr += `warning:  skipped "../" path component(s) in ${e.name}\n`; rel = rel.split('/').filter(p => p !== '..').join('/'); }
+      if (/^\/+/.test(rel)) ctx.stderr += `warning:  stripped absolute path spec from ${e.name}\n`;
+      { const safe = memberPath(rel); if (safe === null) continue; rel = safe + (e.isDir ? '/' : ''); }
       const shown = (dir ? dir.replace(/\/+$/, '') + '/' : '') + rel;
       const target = ctx.fs.resolvePath(rel, base);
       try {

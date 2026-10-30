@@ -73,7 +73,8 @@ async function _answerWorkspace(d: any, target:Window): Promise<void> {
     try {
         if (!WS_OPS.has(d.op) || !Array.isArray(d.args)) throw new Error(`workspace op not allowed: ${d.op}`);
         if (abandonedBash.size && _WS_WRITES.has(d.op)) throw new Error('the command was stopped (cancelled or timed out): its file changes are not applied');
-        const fn = (globalThis as any)[d.op];
+        // The shell's raw record read goes through the folder for local/ paths, as every other read does (codex R268).
+        const fn = (globalThis as any)[d.op === 'readWorkspaceFile' ? 'readWorkspaceRecord' : d.op] ?? (globalThis as any)[d.op];
         if (typeof fn !== 'function') throw new Error(`workspace op unavailable: ${d.op}`);
         reply({ value: await fn(...d.args) });
     } catch (err: any) {

@@ -322,13 +322,17 @@ function parsePackageSpec(spec: string): { name: string; version: string } {
   return { name: spec, version: 'latest' };
 }
 
+const MAX_TARBALL_BYTES = 64 * 1024 * 1024;
 /** Download a package tarball and extract it into `packageDir` (created if missing). */
 async function downloadAndExtract(pkg: ResolvedPackage, ctx: CommandContext, packageDir: string): Promise<void> {
   const response = await fetch(pkg.tarballUrl);
   if (!response.ok) {
     throw new Error(`Failed to download ${pkg.name}: ${response.statusText}`);
   }
+  // A registry tarball of any size was buffered whole (codex R288); real packages are far below this.
+  if (Number(response.headers.get('content-length')) > MAX_TARBALL_BYTES) throw new Error(`${pkg.name}: the package archive is larger than ${MAX_TARBALL_BYTES >> 20} MB`);
   const tarballData = new Uint8Array(await response.arrayBuffer());
+  if (tarballData.length > MAX_TARBALL_BYTES) throw new Error(`${pkg.name}: the package archive is larger than ${MAX_TARBALL_BYTES >> 20} MB`);
 
   await ctx.fs.mkdir(packageDir, { recursive: true });
 

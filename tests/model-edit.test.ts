@@ -42,6 +42,16 @@ describe('model edit dialog', () => {
         expect('key' in e).toBe(false);
         expect('url' in e).toBe(false);
     });
+    it('can declare image, audio or video input, so the model can be chosen for them (codex R259)', () => {
+        W.openEditModelDialog('custom|mine');
+        (document.getElementById('emd-media-image') as HTMLInputElement).checked = true;
+        W.saveEditModel();
+        expect(stored()[0].media).toEqual(['text', 'image']);
+        W.openEditModelDialog('custom|mine');
+        expect((document.getElementById('emd-media-image') as HTMLInputElement).checked).toBe(true);
+        set('emd-label', 'Renamed'); W.saveEditModel();
+        expect(stored()[0].media).toEqual(['text', 'image']);   // an unrelated edit keeps it
+    });
     it('an unrelated edit leaves the key and address alone', () => {
         localStorage.setItem('fg_custom_models', JSON.stringify([{ ...stored()[0], key: 'KEEP-ME' }]));
         W.openEditModelDialog('custom|mine');

@@ -941,6 +941,8 @@ function openEditModelDialog(key: string) {
           <td style="padding-top:4px"><input type="checkbox" id="emd-tools" ${m.tools ? 'checked' : ''}></td></tr>
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Thinking</td>
           <td style="padding-top:4px"><input type="checkbox" id="emd-thinking" ${m.thinking ? 'checked' : ''}></td></tr>
+      <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">Input</td>
+          <td style="padding-top:4px">text${['image', 'audio', 'video'].map(t => ` <label style="margin-left:8px"><input type="checkbox" id="emd-media-${t}" ${(m.media || []).includes(t) ? 'checked' : ''}> ${t}</label>`).join('')}</td></tr>
       ${isCustomProvider ? `
       <tr><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap">URL</td>
           <td><input class="settings-input" id="emd-url" type="url" value="${escapeHtml(m.url)}" placeholder="http://localhost:8000/v1" style="margin:0;width:100%">
@@ -975,6 +977,8 @@ function _readEditModelForm(): Record<string, string | boolean> {
     const out: Record<string, string | boolean> = {
         label: v('emd-label').trim(), params: v('emd-params').trim(), ctx: v('emd-ctx').trim(), released: v('emd-released').trim(),
         rpm: v('emd-rpm').trim(), rpd: v('emd-rpd').trim(), tools: c('emd-tools'), thinking: c('emd-thinking'), note: v('emd-note').trim(),
+        // What the model takes besides text. Not editable before, so a custom or vLLM model that reads images could never be chosen for one (codex R259).
+        media: ['image', 'audio', 'video'].filter(t => c(`emd-media-${t}`)).join(','),
     };
     if (document.getElementById('emd-url'))     out.url = v('emd-url').trim();
     if (document.getElementById('emd-api-key')) out.key = v('emd-api-key').trim();
@@ -1014,6 +1018,7 @@ function saveEditModel() {
     if (changed('tools'))    set.tools = cur.tools;
     if (changed('thinking')) set.thinking = cur.thinking;
     if (changed('note'))     set.note = cur.note;
+    if (changed('media'))    set.media = ['text', ...String(cur.media).split(',').filter(Boolean)];
     if (changed('released')) { if (cur.released) { set.released = cur.released; set.releasedEstimated = false; } else drop.push('released'); }
     for (const [field, parse] of [['params', parseFloat], ['rpm', (x: string) => parseInt(x, 10)], ['rpd', (x: string) => parseInt(x, 10)]] as const) {
         if (!changed(field)) continue;
@@ -1467,6 +1472,34 @@ type ModelRankGroup = {
 // OpenRouter details where the model is listed there, else the catalog entries combined
 // (largest context and parameter count; tools/thinking if any provider has them; the most
 // common release month). Order: first appearance in the catalog.
+// The endpoints auto-rank may ask, in preference order, deduped by provider|model: the utility model, the first free model, the rest of the
+// priority list, the OpenAI-compatible endpoint. Auto-rank sends a tool_choice call, so a catalog entry with tools: false is left out;
+// a model not in the catalog, or in it without a tools field, is assumed capable.
+export function rankCandidateEndpoints(): any[] {
+    const _rankModelMap = new Map(
+        (typeof getAllModels === 'function' ? getAllModels() as any[] : [])
+            .map(m => [`${m.provider}|${m.model}`, m])
+    );
+    // Only an explicit tools: false rules a model out. A model-update addition is in the catalog with no tools field at all, and was taken
+    // for unsupported although the update only adds models that list tools (codex R261).
+    const _supportsTools = (ep: any) => _rankModelMap.get(`${ep.provider}|${ep.model}`)?.tools !== false;
+    const _seen = new Set<string>();
+    const epCandidates: any[] = [];
+    const _add = (ep: any) => {
+        if (!ep || !_supportsTools(ep)) return; // skip models that don't support tool_choice
+        const key = `${ep.provider}|${ep.model}`;
+        if (!_seen.has(key)) { _seen.add(key); epCandidates.push(ep); }
+    };
+    if (typeof utilityEndpoint === 'function') _add(utilityEndpoint());
+    if (typeof firstFreeEndpoint === 'function') _add(firstFreeEndpoint());
+    // The first free model may be one without tools, which ended the list there; the rest of the priority list is tried in order (codex R258).
+    if (typeof getActiveMainModelList === 'function' && typeof specToEndpoint === 'function')
+        for (const spec of getActiveMainModelList()) { try { if (!getCooldownRemaining?.(spec)) _add(specToEndpoint(spec)); } catch {} }
+    if (typeof oaiEndpoint === 'function') _add(oaiEndpoint());
+    epCandidates.splice(5);   // a ranking that fails tries a few models, not the whole list
+    return epCandidates;
+}
+
 export function buildModelRankGroups(available: any[], orModels: any[] = [], successCounts: Record<string, number> = {}): ModelRankGroup[] {
     const live = new Map<string, any>();   // canonical id → best OpenRouter record (prefer non-:free)
     const liveCtx = new Map<string, number>();   // canonical id → largest context over all its listings
@@ -1512,7 +1545,9 @@ export function buildModelRankGroups(available: any[], orModels: any[] = [], suc
             g.contextK = liveCtx.has(canonicalModelId(om.id)) ? Math.round(liveCtx.get(canonicalModelId(om.id))! / 1000) : _max(g.entries.map(e => e.contextK));
             g.tools    = sp.includes('tools');
             g.thinking = sp.includes('reasoning') || sp.includes('include_reasoning');
-            g.released = typeof om.created === 'number' ? new Date(om.created * 1000).toISOString().slice(0, 7) : _mode(g.entries.map(e => e.released));
+            // A `created` outside Date's range (or Infinity, from JSON 1e400) threw in toISOString() and ended the whole ranking (codex R260).
+            const _d = typeof om.created === 'number' ? new Date(om.created * 1000) : null;
+            g.released = _d && Number.isFinite(_d.getTime()) ? _d.toISOString().slice(0, 7) : _mode(g.entries.map(e => e.released));
             g.paramsB  = p.total ?? catParams ?? fromCat.total;
             g.activeB  = p.active ?? fromCat.active;
             const aa = om.benchmarks?.artificial_analysis;
@@ -1641,31 +1676,7 @@ Call rank_models with a ranked list of the model NUMBERS above (1-indexed intege
             },
         };
 
-        // Collect candidate endpoints in preference order, deduped by provider|model.
-        // Auto-rank sends a tool_choice call, so only use models with tools:true in the catalog.
-        // Unknown/custom models (not in catalog) are assumed capable.
-        const _rankModelMap = new Map(
-            (typeof getAllModels === 'function' ? getAllModels() as any[] : [])
-                .map(m => [`${m.provider}|${m.model}`, m])
-        );
-        const _supportsTools = (ep: any) => {
-            const entry = _rankModelMap.get(`${ep.provider}|${ep.model}`);
-            return !entry || !!entry.tools;
-        };
-        const _seen = new Set<string>();
-        const epCandidates: any[] = [];
-        for (const getter of [
-            typeof utilityEndpoint   === 'function' ? utilityEndpoint   : null,
-            typeof firstFreeEndpoint === 'function' ? firstFreeEndpoint : null,
-            typeof oaiEndpoint       === 'function' ? oaiEndpoint       : null,
-        ]) {
-            if (!getter) continue;
-            const ep = getter();
-            if (!ep) continue;
-            if (!_supportsTools(ep)) continue; // skip models that don't support tool_choice
-            const key = `${ep.provider}|${ep.model}`;
-            if (!_seen.has(key)) { _seen.add(key); epCandidates.push(ep); }
-        }
+        const epCandidates = rankCandidateEndpoints();
         if (!epCandidates.length) return _fail('no tool-capable endpoint available');
 
         let result: any;

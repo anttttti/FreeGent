@@ -1569,6 +1569,16 @@ export async function agentReadFile(path) {
 }
 
 /** Raw bytes of a workspace file (binary-safe; used to attach workspace files to a chat message). */
+/** A workspace record as readWorkspaceFile returns it, but with a folder synced a local/ path is read from the folder (null when the folder
+ *  lacks it): the exec sandbox's shell read the raw record, so an old snapshot of a deleted local/ file was still there (codex R268, R232). */
+export async function readWorkspaceRecord(name: string): Promise<any> {
+    const path = workspaceName(name);
+    if (path.startsWith('local/') && fsaHandle) {
+        try { return { name: path, content: await readFsaFile(path.slice(6), true), encoding: 'base64' }; } catch { return null; }
+    }
+    return readWorkspaceFile(path);
+}
+
 export async function agentReadFileBytes(path: string): Promise<Uint8Array> {
     if (_wa) return (_wa as any).agentReadFileBytes ? (_wa as any).agentReadFileBytes(path) : new TextEncoder().encode(await agentReadFile(path));
     path = workspaceName(path);
@@ -3932,7 +3942,7 @@ try { if (typeof document !== 'undefined') { if (document.readyState === 'loadin
 // fsaHandle is mutable module state — expose a live accessor, not a snapshot.
 Object.defineProperty(window, 'fsaHandle', { get: () => fsaHandle, configurable: true });
 Object.assign(window, { documentLibrary: _documentLibrary });
-Object.assign(window, { writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolder,
+Object.assign(window, { readWorkspaceRecord, writeFsaFile, deleteFsaFile, hasLocalFolder, hasFsaFolder,
     // IDB storage (called directly in tools.js, config.js, and tests)
     getChatSnapshotInfo,
     initDB, ensureDB, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile, applyWorkspaceBatch,

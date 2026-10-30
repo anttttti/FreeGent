@@ -222,6 +222,10 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
     if (newSession) c.sessionId = newSession;
 
     if (resp.status === 404 && c.sessionId) throw new McpSessionExpired('MCP session expired');
+    // A 404 after a good initialize, with no session id the browser can read: the server most likely issued one in a header its CORS policy
+    // does not expose. Taken as an expired session, so _request() starts again through the local proxy, which sees every header (codex R263).
+    if (resp.status === 404 && !c.sessionId && !c.viaProxy && c.ready && method !== 'initialize' && _proxyUrl())
+        throw new McpSessionExpired('MCP session id not readable in the browser');
     const ct = resp.headers.get('content-type') || '';
     let msg: any = null;
     if (!resp.ok) {

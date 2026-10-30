@@ -54,6 +54,12 @@ describe('buildModelRankGroups', () => {
         expect(medium).toMatchObject({ id: 'openai/gpt-oss-120b', live: false, paramsB: 117, tools: true, released: '2025-08' });
     });
 
+    it('a live `created` outside Date\'s range falls back to the catalog date instead of ending the ranking (codex R260)', () => {
+        const bad = [{ ...live[0], created: Infinity }, { ...live[1], created: 1e300 }];
+        const [ultra] = M.buildModelRankGroups(catalog, bad);
+        expect(ultra.released).toBe('2026-06');
+    });
+
     it('prompt lines carry model ids only — no provider names', () => {
         const groups = M.buildModelRankGroups(catalog, live);
         const line = M.formatModelRankLine(1, groups[0]);
@@ -128,5 +134,23 @@ describe('priority arrows move to the top or bottom', () => {
         expect(W.getMainModelList()).toEqual([c, a, b]);
         W._movePriorityItem('main-model-list', 0, 1);
         expect(W.getMainModelList()).toEqual([a, b, c]);
+    });
+});
+
+// codex R258/R261: when the first free model had tools: false, auto-rank found "no tool-capable endpoint" although later models had tools;
+// a model-update addition (in the catalog, no tools field) was taken for one without tools.
+describe('auto-rank candidates', () => {
+    it('skips a model marked without tools, takes the next ones and models whose tools are unknown', () => {
+        const saved = { all: W.getAllModels, list: W.getActiveMainModelList, util: W.utilityEndpoint, first: W.firstFreeEndpoint, oai: W.oaiEndpoint, cd: W.getCooldownRemaining, ste: W.specToEndpoint };
+        try {
+            W.getAllModels = () => [{ provider: 'p', model: 'no-tools', tools: false }, { provider: 'p', model: 'added' }, { provider: 'p', model: 'yes', tools: true }];
+            W.getActiveMainModelList = () => ['p|no-tools', 'p|added', 'p|yes'];
+            W.utilityEndpoint = () => null;
+            W.firstFreeEndpoint = () => ({ provider: 'p', model: 'no-tools' });
+            W.oaiEndpoint = () => ({ provider: 'p', model: 'no-tools' });
+            W.getCooldownRemaining = () => 0;
+            W.specToEndpoint = (spec: string) => ({ provider: spec.split('|')[0], model: spec.split('|')[1] });
+            expect(M.rankCandidateEndpoints().map((e: any) => e.model)).toEqual(['added', 'yes']);
+        } finally { Object.assign(W, { getAllModels: saved.all, getActiveMainModelList: saved.list, utilityEndpoint: saved.util, firstFreeEndpoint: saved.first, oaiEndpoint: saved.oai, getCooldownRemaining: saved.cd, specToEndpoint: saved.ste }); }
     });
 });
