@@ -737,7 +737,9 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
             bashRules.push(hasWasm
-                ? '**State across calls:** the browser shell keeps functions, variables, aliases and the current directory between calls until the page reloads — a `cd` also applies to later calls, so `cd /workspace` first if you moved elsewhere. Write important results to workspace files so they survive compaction and reloads.'
+                // Each call runs in a fresh browser shell (exec-sandbox/bash-run.ts, since 2026-10-02); this line still said the shell
+                // kept variables and cd until the page reloaded, against the execute_code description in the same prompt.
+                ? '**State across calls:** each call starts in a fresh browser shell in `/workspace`: variables, functions, aliases, `cd` and `export` do not carry over to the next call; files do (the workspace and `/tmp`). Write important results to workspace files so they survive compaction and reloads.'
                 : '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
