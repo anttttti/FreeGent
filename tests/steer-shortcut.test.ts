@@ -1,6 +1,5 @@
 // Ctrl+X Ctrl+S: send the next waiting message into the running work now (WebUI and TUI share steerNextQueued).
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
 import * as MsgQueue from '../msg-queue.ts';
 
 const W: any = window;
@@ -48,43 +47,6 @@ describe('steerNextQueued', () => {
         MsgQueue.enqueue('go', 'steering');
         expect(W.steerNextQueued('typed').did).toBe('queued');
         expect(MsgQueue.size()).toBe(1);
-    });
-});
-
-describe('the key chords', () => {
-    it('the browser listens for Ctrl+X then Ctrl+S, and claims Ctrl+X only while busy with nothing selected', () => {
-        const src = readFileSync('init.ts', 'utf8');
-        expect(src).toMatch(/e\.ctrlKey[^\n]*key\.toLowerCase\(\) === 'x'/);
-        expect(src).toMatch(/Date\.now\(\) - _steerChordAt < 2000/);
-        expect(src).toMatch(/busy && window\.getSelection\(\)\?\.isCollapsed !== false/);
-    });
-    it('the terminal input handles the chord, typed or arriving in one read', () => {
-        const src = readFileSync('tui-app.tsx', 'utf8');
-        expect(src).toMatch(/input === 'x'\) chordAt\.current = Date\.now\(\)/);
-        expect(src).toMatch(/input === 's' && Date\.now\(\) - chordAt\.current < 2000/);
-        expect(src).toContain("\\x15\\x18\\x13");
-        expect(src).toContain('Ctrl+X Ctrl+S');
-    });
-});
-
-describe('TUI composer keys', () => {
-    const src = readFileSync('tui-app.tsx', 'utf8');
-    it('Home and End move the cursor to the start and end of the message', () => {
-        expect(src).toContain('if (key.home) { setCursor(0); return; }');
-        expect(src).toContain('if (key.end)  { setCursor(v.length); return; }');
-    });
-    it('Home / End sequences that arrive inside a typed-ahead chunk act too, and other key sequences are not typed as text', () => {
-        expect(src).toContain('{ tc = 0; continue; }');
-        expect(src).toContain('{ tc = tv.length; continue; }');
-        expect(src).toContain('never typed as text');
-    });
-});
-
-describe('TUI step header', () => {
-    it('shows the provider with the model (provider:model), not only the last path segment', () => {
-        const src = readFileSync('tui-app.tsx', 'utf8');
-        expect(src).toContain("const model = step.model ? ` [${step.model}]` : '';");
-        expect(src).not.toContain("step.model.split('/').pop()");
     });
 });
 

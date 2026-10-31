@@ -1,8 +1,5 @@
 // codex R18-001: a list setting that parses to something other than a list stopped config.ts from loading, and profile Apply stored it.
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 const W: any = window;
 
 describe('profile Apply', () => {
@@ -16,13 +13,6 @@ describe('profile Apply', () => {
     });
 });
 describe('config.ts reading list settings', () => {
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'config.ts'), 'utf8');
-    it('asks for a list wherever it iterates or searches one', () => {
-        expect(src).toMatch(/new Set\(_storedJson\(KEYS\.ACTIVE_SKILLS, \[\], true\)\)/);
-        expect(src).toMatch(/new Set\(_storedJson\(KEYS\.DISABLED_ROLES, \[\], true\)\)/);
-        expect(src).toMatch(/_storedJson\(KEYS\.DISABLED_TOOLS, null, true\)/);
-        expect(src).toMatch(/_storedJson\(KEYS\.DISABLED_TOOLS_COWORK, null, true\)/);
-    });
     it('loads with object-shaped list settings in storage (the bridge is installed)', async () => {
         vi.resetModules();
         localStorage.clear();

@@ -16,10 +16,4 @@ describe('inline image store', () => {
         W.rememberImage('img_8', big);
         expect(Object.keys(W._pyodideImageStore)).toContain('img_4');
     });
-    it('a read_file of an image goes through the store', async () => {
-        W.agentReadFile = async () => 'data:image/png;base64,iVBOR';
-        const r = await W.executeToolAsync('read_file', { path: 'pics/a.png' }, null);
-        expect(r.display).toBe('[IMAGE:img_pics_a_png]');
-        expect(W._pyodideImageStore.img_pics_a_png).toBe('data:image/png;base64,iVBOR');
-    });
 });

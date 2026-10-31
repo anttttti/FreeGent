@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, EXEC_CODE_ALIASES,
+    _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls,
 } from '../tool-call-repair.ts';
 
 describe('_repairJsonArgs — fence strip only', () => {
@@ -92,8 +92,7 @@ describe('_repairExecCodeArgs — alias + fence + language-token cleanup', () =>
         expect(_repairExecCodeArgs(calls)).toBe(true);
         expect(calls[1].args).toEqual({ path: 'a' });
     });
-    it('alias priority follows EXEC_CODE_ALIASES order (code wins over bash)', () => {
-        expect(EXEC_CODE_ALIASES[0]).toBe('code');
+    it('code wins over bash when both are given', () => {
         const calls = [{ name: 'execute_code', args: { code: 'echo a', bash: 'echo b' } }];
         _repairExecCodeArgs(calls);
         expect(calls[0].args.code).toBe('echo a');

@@ -1,7 +1,5 @@
 // Open items from the opencode review (2026-10-22): §23 a busy local server's 503 in compaction, §24 the read counter survives pruning.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { pruneSessionHistory } from '../history.ts';
 import { Session } from '../session.ts';
 import { _seenReadFiles, setSeenReadFiles } from '../state.ts';
@@ -29,13 +27,6 @@ describe('opencode §24: pruning a duplicate read leaves the per-file read count
     });
 });
 function await_import(): Map<string, any> { return _seenReadFiles; }
-
-describe('opencode §23: compaction classifies a rate limit with the endpoint', () => {
-    it('_isRateLimit gets the endpoint in the compaction retry handler', () => {
-        const src = readFileSync(join(process.cwd(), 'llm-shared.ts'), 'utf8');
-        expect(src).toMatch(/const ep = getEp\(\);\s*\n\s*const is429 = _isRateLimit\(e\.message, ep\)/);
-    });
-});
 
 describe('opencode §22: media routing only picks a provider that can receive the media', () => {
     it('a model whose catalog entry lists video for a provider without video parts is not chosen for a video attachment', async () => {

@@ -108,6 +108,7 @@ const PROVIDER_KEY_MAP = {
     'api.tavily.com':                    'TAVILY_API_KEY',
     'integrate.api.nvidia.com':          'NVIDIA_API_KEY',
     'ai-gateway.vercel.sh':              'VERCEL_API_KEY',
+    'api.kilo.ai':                       'KILO_API_KEY',
 };
 
 // Search providers that use non-standard auth headers (not Authorization: Bearer).

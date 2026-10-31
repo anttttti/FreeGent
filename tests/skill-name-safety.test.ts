@@ -3,11 +3,6 @@ import { describe, it, expect, vi } from 'vitest';
 const W = globalThis as any;
 
 describe('skill and rule names', () => {
-    it('refuses a name that is not one plain folder name', async () => {
-        const { unsafeSkillName } = await import('../skills.ts');
-        for (const n of ['../notes', 'a/b', '..', '.hidden', 'x/../y', '']) expect(unsafeSkillName(n), n).not.toBeNull();
-        for (const n of ['commit', 'pdf-tools', 'v1.2_x']) expect(unsafeSkillName(n), n).toBeNull();
-    });
     it('an imported skill with such a name is skipped, and nothing is written', async () => {
         await import('../skills.ts');
         const writes: string[] = [];

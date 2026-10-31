@@ -10084,7 +10084,7 @@
     "shiro/commands/cut.ts": "36f1513ef44adeec85437398f22dc02d19b4e5768fea57b18864789ec839d095",
     "shiro/commands/date.ts": "946a8ded853f07fcfe9577a81ceadc2123b3a7288d52d68fa2fff318ca3866ed",
     "shiro/commands/dc.ts": "6d4ca5c9bd536601598592c9f88948973b9af9c8e0b437aa0e23a53cb3970416",
-    "shiro/commands/dd.ts": "5903ed8772b4bb26ae6e21ccef4c475db47f249797ad150f7baec4d4565b5f6e",
+    "shiro/commands/dd.ts": "43b57909a142dd6e82725cae002617c90c9055eac483b3704f0e87242462fbe5",
     "shiro/commands/df.ts": "dec388ade1b47a803593c1a1f69fbac7e7dcc3e2f338d213b730c6ca91a96cde",
     "shiro/commands/diff.ts": "6b8552ff511e717387470d3bb88a607b754337b7033aae079dd45f411e3d98c4",
     "shiro/commands/dirname.ts": "0ec134a394337625a0daa5e26d1951d6c5a4357a846a541f0d71c62d37530436",

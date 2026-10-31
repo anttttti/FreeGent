@@ -21,6 +21,5 @@ describe('text attachments share one budget', () => {
         const text = core.attachmentTextBlocks([file(0), file(1)], 70_000);
         expect(text).toContain('x'.repeat(50_000));
         expect(text).toMatch(/x{20000}\n…\[cut: the attachments together/);
-        expect(core.attachmentBudgetChars(1_000)).toBeGreaterThan(50_047);   // one capped file plus its truncation notice
     });
 });

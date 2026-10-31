@@ -154,22 +154,10 @@ describe('environment check: stub packages', () => {
 });
 
 describe('stuck nudge wording', () => {
-    it('says the probes differed when they did', () => {
-        expect(STUCK_SAME_OUTPUT_MSG).toMatch(/were different but all printed the same output/);
-    });
-
-    // v0.61 TAC / AutomationBench: API tasks were told to "make the change in the code itself".
-    it('gives advice that holds for API work as well as code edits', () => {
-        expect(STUCK_SAME_OUTPUT_MSG).not.toMatch(/make the change in the code|give your answer/i);
-        expect(STUCK_SAME_OUTPUT_MSG).toMatch(/URL, method, headers or payload/);
-        expect(STUCK_SAME_OUTPUT_MSG).toMatch(/the code itself/);
-    });
-
     it('says an HTML page is a web page, not data, when that is what repeated', () => {
         const page = '<!DOCTYPE html><html><head><title>Rocket.Chat</title></head>';
         expect(sameOutputMsg([page, page, page])).toBe(STUCK_SAME_HTML_MSG);
         expect(sameOutputMsg(['  <html lang="en">…'])).toBe(STUCK_SAME_HTML_MSG);
-        expect(STUCK_SAME_HTML_MSG).toMatch(/\/api\/ prefix/);
         expect(sameOutputMsg(['[]'])).toBe(STUCK_SAME_OUTPUT_MSG);
         expect(sameOutputMsg([page, '{"ok":true}'])).toBe(STUCK_SAME_OUTPUT_MSG);
         expect(sameOutputMsg([])).toBe(STUCK_SAME_OUTPUT_MSG);

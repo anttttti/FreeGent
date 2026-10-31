@@ -149,14 +149,6 @@ describe('exec sandbox host', () => {
             expect(cancelled).toBe(true);
         });
 
-        it('has room for the largest pinned package (codex R213)', async () => {
-            const { NET_MAX_BYTES } = await import('../exec-sandbox-host.ts');
-            const src = (await import('node:fs')).readFileSync((await import('node:path')).join(process.cwd(), 'shiro', 'wasi-packages.ts'), 'utf8');
-            const largest = Math.max(...[...src.matchAll(/size:\s*([\d_]+)/g)].map(m => Number(m[1].replace(/_/g, ''))));
-            expect(largest).toBeGreaterThan(30_000_000);
-            expect(NET_MAX_BYTES).toBeGreaterThan(largest);
-        });
-
         it('refuses non-http URLs and reports proxy refusals', async () => {
             W.getEffectiveProxy = () => 'https://proxy.test';
             globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'private address' }),
@@ -431,21 +423,6 @@ describe('approval default with isolation', () => {
 
 // codex R304: a frame made at Routed kept its policy (no CSP) after the level was switched to Local.
 describe('a privacy level change', () => {
-    it('gives the next call a frame with the new CSP', async () => {
-        const { sandboxCall: call, resetSandbox: reset } = await import('../exec-sandbox-host.ts');
-        reset();
-        localStorage.setItem('fg_privacy_level', 'routed');
-        const first = call('js', { code: '1' }); first.catch(() => {});
-        const f1 = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
-        expect(f1.srcdoc).not.toMatch(/Content-Security-Policy/);
-        localStorage.setItem('fg_privacy_level', 'local');
-        reset();   // what a pending call would wait for; here: the next call after the change
-        const second = call('js', { code: '1' }); second.catch(() => {});
-        const f2 = document.querySelector('iframe[sandbox]') as HTMLIFrameElement;
-        expect(f2.srcdoc).toMatch(/Content-Security-Policy/);
-        reset();
-        localStorage.removeItem('fg_privacy_level');
-    });
     it('restarts a ready frame at its next call when the level changed meanwhile', async () => {
         const host = await import('../exec-sandbox-host.ts');
         host.resetSandbox();

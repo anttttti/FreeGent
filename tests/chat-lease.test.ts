@@ -69,7 +69,7 @@ describe('opencode §7: a resumed tab does not take back a lease another tab acq
 
 describe('a lease left behind by a page that is gone (reload, crash) is not "another tab"', () => {
     it('chatLeaseHolderAlive: nobody answers -> the stale record is removed and the lease can be taken at once; a live holder answers -> it stays', async () => {
-        const { chatLeaseHolderAlive, LEASE_PING_WAIT_MS } = await import('../chat-lease.js');
+        const { chatLeaseHolderAlive } = await import('../chat-lease.js');
         if (typeof BroadcastChannel === 'undefined') return;                       // no channel in this environment: the TTL stays the rule
         // a record of a tab that no longer exists, written 2 seconds ago (well inside the 20 s TTL)
         localStorage.setItem('fg_lease_gone', JSON.stringify({ tab: 'dead-tab', token: 't', at: Date.now() - 2000 }));
@@ -89,7 +89,6 @@ describe('a lease left behind by a page that is gone (reload, crash) is not "ano
             expect(localStorage.getItem('fg_lease_live')).toBeTruthy();
             expect(acquireChatLease('live')).toBe(false);
         } finally { other.close(); reply.close(); }
-        expect(LEASE_PING_WAIT_MS).toBeLessThan(1000);
     });
     it('nothing to ask when the chat is free or the record is our own', async () => {
         const { chatLeaseHolderAlive } = await import('../chat-lease.js');

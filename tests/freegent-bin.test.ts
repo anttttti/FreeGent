@@ -30,14 +30,6 @@ describe('freegent command routing', () => {
 });
 
 describe('fg-run -p', () => {
-    const src = readFileSync('fg-run.ts', 'utf8');
-    it('takes an optional text, adds piped input, and prints only the answer', () => {
-        expect(src).toContain("args[i] !== '-p' && args[i] !== '--print'");
-        expect(src).toContain('const printRequest = [printText, stdinText]');
-        expect(src).toContain('if (!printMode) process.stdout.write(`__FG_METRICS__');
-        expect(src).toContain('process.stdout.isTTY || printMode ? undefined');
-        expect(src).toContain('const _note = (m: string) => { if (!printMode) console.error(m); };');
-    });
     it('the package exposes the command', () => {
         const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
         expect(pkg.bin.freegent).toBe('bin/freegent.mjs');

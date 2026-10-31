@@ -205,7 +205,7 @@ async function _fetchKiloModels(): Promise<FetchResult> {
 // priced now and must not be accepted just for being on this list.
 const _VERCEL_FREE_IDS = [
     'poolside/laguna-s-2.1-free',
-    'inclusionai/ling-3.1-flash-free',
+    'inclusionai/ling-3.1-flash-1019',
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
 const _VERCEL_DOMAIN_SPECIFIC = new Set([

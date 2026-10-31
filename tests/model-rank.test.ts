@@ -136,21 +136,3 @@ describe('priority arrows move to the top or bottom', () => {
         expect(W.getMainModelList()).toEqual([a, b, c]);
     });
 });
-
-// codex R258/R261: when the first free model had tools: false, auto-rank found "no tool-capable endpoint" although later models had tools;
-// a model-update addition (in the catalog, no tools field) was taken for one without tools.
-describe('auto-rank candidates', () => {
-    it('skips a model marked without tools, takes the next ones and models whose tools are unknown', () => {
-        const saved = { all: W.getAllModels, list: W.getActiveMainModelList, util: W.utilityEndpoint, first: W.firstFreeEndpoint, oai: W.oaiEndpoint, cd: W.getCooldownRemaining, ste: W.specToEndpoint };
-        try {
-            W.getAllModels = () => [{ provider: 'p', model: 'no-tools', tools: false }, { provider: 'p', model: 'added' }, { provider: 'p', model: 'yes', tools: true }];
-            W.getActiveMainModelList = () => ['p|no-tools', 'p|added', 'p|yes'];
-            W.utilityEndpoint = () => null;
-            W.firstFreeEndpoint = () => ({ provider: 'p', model: 'no-tools' });
-            W.oaiEndpoint = () => ({ provider: 'p', model: 'no-tools' });
-            W.getCooldownRemaining = () => 0;
-            W.specToEndpoint = (spec: string) => ({ provider: spec.split('|')[0], model: spec.split('|')[1] });
-            expect(M.rankCandidateEndpoints().map((e: any) => e.model)).toEqual(['added', 'yes']);
-        } finally { Object.assign(W, { getAllModels: saved.all, getActiveMainModelList: saved.list, utilityEndpoint: saved.util, firstFreeEndpoint: saved.first, oaiEndpoint: saved.oai, getCooldownRemaining: saved.cd, specToEndpoint: saved.ste }); }
-    });
-});

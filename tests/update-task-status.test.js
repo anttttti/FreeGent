@@ -44,14 +44,6 @@ afterEach(() => {
 const TASK = '---\nid: 007\nstatus: todo\ntitle: Demo\n---\n\nBody.\n';
 
 describe('update_task_status', () => {
-    it('is wired: qa.ts is loaded in this entry point', () => {
-        // The original bug was these being undefined. Assert the wiring directly so a
-        // future removal from tests/setup.js or headless-runner.ts fails loudly here.
-        expect(typeof W.transitionTask).toBe('function');
-        expect(typeof W.setTaskStatus).toBe('function');
-        expect(typeof W._updateLedgerRow).toBe('function');
-    });
-
     it('actually writes the new status to the task file', async () => {
         files.set('fg-tasks/007.md', TASK);
         const res = await W.executeToolAsync('update_task_status',

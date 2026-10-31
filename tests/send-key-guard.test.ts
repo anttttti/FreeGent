@@ -40,6 +40,22 @@ describe('send key guard', () => {
         localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(W.specHasKey('kilo|acme/old-free:free')).toBe(true);
     });
+    it("counts the Worker's shared Kilo key once the Developer key unlocks it", async () => {
+        localStorage.setItem('fg_dev_key', 'dev-test');
+        localStorage.setItem('fg_privacy_level', 'routed');
+        localStorage.setItem('fg_search_proxy', 'https://worker.example.dev');   // a Worker on another host, as on the deployed site
+        const orig = W.fetch;
+        W.fetch = async () => new Response(JSON.stringify({ KILO_API_KEY: true }), { status: 200 });
+        try {
+            expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(false);
+            await W.loadCfWorkerKeys();
+            expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(true);
+        } finally {
+            W.fetch = orig;
+            localStorage.removeItem('fg_dev_key'); localStorage.removeItem('fg_privacy_level'); localStorage.removeItem('fg_search_proxy');
+            await W.loadCfWorkerKeys();   // no Worker at the default level: clears the cached shared keys
+        }
+    });
     it('showSettings opens the Models tab, not Profiles', () => {
         document.body.insertAdjacentHTML('beforeend', '<button class="settings-tab-btn" data-tab="profiles"></button><button class="settings-tab-btn" data-tab="model"></button>');
         const orig = W.activateTab; W.activateTab = () => {};

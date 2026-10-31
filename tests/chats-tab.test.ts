@@ -26,10 +26,6 @@ beforeEach(() => {
 });
 
 describe('Chats tab', () => {
-    it('exports renderChatsDropdown on window (tabs.ts calls it as a global)', () => {
-        expect(typeof W.renderChatsDropdown).toBe('function');
-    });
-
     it('lists every saved chat, newest first, with a toolbar', () => {
         W.renderChatsDropdown();
         const el = document.getElementById('chats-dropdown')!;

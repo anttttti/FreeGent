@@ -555,6 +555,7 @@ const MODEL_CATALOG = [
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
     { provider:'kilo', model:'reflection/beam-free',                            label:'Beam 1.0 (free)',                  released:'2026-10', contextK:1048, params:501, media:['text'],        tools:true, thinking:true, note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; tool call verified 2026-10-29; long-chat test: 88% of microtasks, 150 tok/s, Kilo\'s free limit stopped the second conversation at 210K; the provider may retain prompts and outputs; free via Kilo' },
+    { provider:'kilo', model:'inclusionai/ling-3.1-flash-1019-free',            label:'Ling 3.1 Flash (free)',            released:'2026-10', contextK:1000, params:560, media:['text'],        tools:true, thinking:true, note:'inclusionAI Ling 3.1 Flash, 2026-10-19 snapshot; hybrid reasoning, 560B MoE (25B active); 1M ctx; tool call verified 2026-10-31; long-chat test 2026-10-31: 88% of microtasks, 250K in all three conversations, 80 tok/s; free via Kilo' },
     { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
     { provider:'kilo', model:'poolside/laguna-s-2.1:free',                      label:'Laguna S 2.1 (free)',              released:'2026-07', contextK:262,  params:118, media:['text'],        tools:true, thinking:true,  note:'118B MoE (8B active); 262K ctx; coding agent; free via Kilo. Kilo lists it as retiring 2026-10-31' },
@@ -570,6 +571,7 @@ const MODEL_CATALOG = [
     // Model IDs use provider/model format (e.g. poolside/laguna-s-2.1-free).
     { provider:'vercel', model:'poolside/laguna-s-2.1-free',           label:'Laguna S 2.1 (free)',          released:'2026-07', contextK:256,  params:118,  media:['text'],        tools:true,  thinking:true,  note:'118B MoE (8B active); coding agent; reasoning; free via Vercel AI Gateway ($0/token). Kilo lists it as retiring 2026-10-31' },
     { provider:'vercel', model:'reflection/beam-free',                 label:'Beam 1.0 (free)',              released:'2026-10', contextK:1048, params:501,  media:['text'],        tools:true,  thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; $0/token; needs every earlier reply\'s reasoning sent back (payload-builder modelNeedsReasoningEcho); long-chat test 2026-10-29: 93% of microtasks, 250K in all three conversations, 148 tok/s' },
+    { provider:'vercel', model:'inclusionai/ling-3.1-flash-1019',      label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:1000, params:560,  media:['text'],        tools:true,  thinking:true,  note:'inclusionAI Ling 3.1 Flash, 2026-10-19 snapshot; hybrid reasoning, 560B MoE (25B active); 1M ctx; $0/token (the undated inclusionai/ling-3.1-flash is paid); tool call verified 2026-10-31; long-chat test 2026-10-31: 78% of microtasks, 250K in all three conversations, 82 tok/s' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
 ];
 
@@ -782,6 +784,7 @@ const _DEFAULT_MAIN_MODELS = [
     // context held before a quota stopped it, speed. Beam on Vercel 93% (250K in all three conversations, 148 tok/s; Kilo's and Nous's
     // free quotas stopped it at 210K and 95K), DeepSeek 92%, Step 5 90%, MiMo V2.6 Flash 82% (250K in all three conversations),
     // Step 3.7 87% of 15 (Nous's hourly token cap at 107K), Nemotron Super VL 79%, Nemotron Ultra 69%.
+    // Added on 2026-10-31: Ling 3.1 Flash, 88% on Kilo and 78% on Vercel, 250K in all three conversations on both (no free-tier limit hit).
     // Withdrawn on 2026-10-29: MiniMax M3.1 Flash (Vercel now charges $0.15 / $0.60 per M tokens; its free variants ended 2026-10-22), GLM 5.3 (no longer
     // listed by NVIDIA), LongCat 2.5 Preview (Nous: 404 "no longer free"), Nemotron 3 Super 120B (no longer listed by Kilo or OpenRouter).
     // Tool calls of every entry checked 2026-10-29, except NVIDIA's (the test key got 403 on every model).
@@ -790,6 +793,8 @@ const _DEFAULT_MAIN_MODELS = [
     'nvidia|stepfun-ai/step-5-preview',                // NIM free credits
     'kilo|reflection/beam-free',                       // same Beam, Kilo's free quota
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
+    'kilo|inclusionai/ling-3.1-flash-1019-free',       // 560B MoE (25B active), 1M ctx; held 250K three times on Kilo's free quota
+    'vercel|inclusionai/ling-3.1-flash-1019',          // same Ling, Vercel's $0 route
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
     'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
     'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx
@@ -898,6 +903,7 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     tokenharbor: 'TOKENHARBOR_API_KEY',
     nvidia:      'NVIDIA_API_KEY',
     vercel:      'VERCEL_API_KEY',
+    kilo:        'KILO_API_KEY',
     tavily:      'TAVILY_API_KEY',
     brave:       'BRAVE_API_KEY',
 };
@@ -964,7 +970,7 @@ export function specHasKey(spec: string): boolean {
     if (provider === 'nvidia')      return _k(getNvidiaKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nvidia];
     if (provider === 'nous')        return _k(getNousKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.nous];
     if (provider === 'tokenharbor') return _k(getTokenHarborKey) || !!_cfWorkerKeys[_CF_PROVIDER_ENV.tokenharbor];
-    if (provider === 'kilo')        return _k(getKiloKey);
+    if (provider === 'kilo')        return _k(getKiloKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.kilo];
     if (provider === 'vercel')      return _k(getVercelKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.vercel];
     if (provider === 'openai')      return _k(getOAIKey);
     return true; // unknown provider — don't filter

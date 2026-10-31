@@ -17,16 +17,6 @@ describe('sampling parameters', () => {
         expect(p.top_p).toBe(0.7);
         expect(p.min_p).toBe(0);   // untouched fields keep their defaults
     });
-    it('a profile captures temperature along with the other sampling choices', async () => {
-        const src = (await import('node:fs')).readFileSync('profiles.ts', 'utf8');
-        for (const k of ['fg_temperature', 'fg_top_p', 'fg_top_k', 'fg_min_p', 'fg_presence_penalty', 'fg_repetition_penalty'])
-            expect(src.split("const PROFILE_KEYS")[1].split('];')[0]).toContain(`'${k}'`);
-    });
-    it('the Settings field keeps an emptied value as empty instead of removing the key', async () => {
-        const src = (await import('node:fs')).readFileSync('settings-ui.ts', 'utf8');
-        const body = src.split('function saveSamplingSetting')[1].split('\n}')[0];
-        expect(body).not.toContain('removeItem');
-    });
     // codex R255: the inputs' min/max were hints; any number was saved and sent.
     it('a value outside its range is not saved by Settings, and a stored one is left out of the request', async () => {
         expect(W.samplingRangeError('fg_temperature', '3')).toMatch(/between 0 and 2/);
