@@ -24,7 +24,6 @@
     "headless-runner.ts",
     "finish-summary.ts",
     "native-exec.ts",
-    "exec-session.ts",
     "workspace-scan.ts",
     "safe-log.ts",
     "tui-env.ts",

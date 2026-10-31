@@ -2608,22 +2608,6 @@ function _canonLanguage(lang: string): string {
     return _LANGS[l] ?? l;
 }
 
-// Native execute_code options. Experiment persistent_exec: the session is the chat's, or the worker's own (exec-session.ts).
-const _workerSessions = new WeakMap<object, string>();
-let _workerSessionSeq = 0;
-function _execOpts(args: any, context: any): { timeoutMs?: number; session?: string; reset?: boolean } | undefined {
-    const o: { timeoutMs?: number; session?: string; reset?: boolean } = {};
-    if (args.timeout_s != null) o.timeoutMs = execTimeoutMs(args.timeout_s);
-    if (runtime.experiment('persistent_exec')) {
-        if (context && typeof context === 'object') {
-            if (!_workerSessions.has(context)) _workerSessions.set(context, `worker:${++_workerSessionSeq}`);
-            o.session = _workerSessions.get(context);
-        } else o.session = `chat:${activeChatId ?? 'default'}`;
-        if (args.reset === true || args.reset === 'true') o.reset = true;
-    }
-    return Object.keys(o).length ? o : undefined;
-}
-
 async function _handleExecuteCode(args, context, onProgress?: (message:string)=>void) {
     const _rawCode = EXEC_CODE_ALIASES.map(k => args?.[k]).find(v => typeof v === 'string' && v) ?? '';
     // After the alias lookup above (a call that sent its code under `command` or `cmd` is still a shell command).
@@ -2825,7 +2809,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
         // Must come before Pyodide and local-sandbox so headless runs never
         // hit localhost:5000 or the Pyodide-loading-forever path.
-        try { execResult = await runtime.nativeExec(args.language, args.code, _execOpts(args, context)); }
+        try { execResult = await runtime.nativeExec(args.language, args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined); }
         catch (e) { return { error: `nativeExec: ${e.message}` }; }
     } else if (_needsDisplay && args.language !== 'bash' && args.language !== 'javascript') {
         // pygame / tkinter / etc. need a real canvas — execute_code can't provide one.
@@ -2925,7 +2909,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     if (args.language === 'python' && runtime.hasNativeExec && _isShellCompileError(args.code, execResult)) {
         try {
             // The same limit as the first attempt: changing the language is not changing the time the caller asked for (codex R50-001).
-            const asBash = await runtime.nativeExec('bash', args.code, _execOpts(args, context));
+            const asBash = await runtime.nativeExec('bash', args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined);
             // No note: the main loop records the call itself as language "bash" (_ranAsBash, removed
             // before the result reaches history), so the model sees the call that ran. Any note made
             // it re-send the call still as python: v0.57 "use language bash" → 68 of 90 CTF

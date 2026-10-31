@@ -263,11 +263,7 @@ function execToolSpec() {
         description += ' On this older engine, use ES2019 JavaScript syntax in executed code; avoid optional chaining, nullish coalescing and BigInt.';
     // Every backend starts each call fresh (a new process headless; a new shell and namespace
     // in the browser).
-    // Experiment persistent_exec (headless): bash and python each keep one session per chat or worker (exec-session.ts).
-    const _persist = hasNative && runtime.experiment('persistent_exec');
-    description += _persist
-        ? ' Bash and Python each run in a persistent environment: variables, functions, imports, cd and exports carry over to the next call in the same language, and workspace files are always current (an edited workspace module is re-imported before the next Python call). JavaScript starts fresh each call. reset: true starts that language\'s session afresh.'
-        : ' Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over to the next call; files do.';
+    description += ' Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over to the next call; files do.';
     const hasBashLang = languages.includes('bash');
     if (hasBashLang) description += ' A Python program goes in language "python", not into python3 -c or a heredoc in bash (shell quoting breaks it).';
     const languageDesc = hasBashLang
@@ -284,7 +280,6 @@ function execToolSpec() {
                 ...(typeof (globalThis as any).nativeExec === 'function'
                     ? { timeout_s: { type: 'number', description: 'Optional. Seconds to wait before the command is killed (default 120, at most 900). Set it only for a step that really needs longer, such as training a model.' } }
                     : {}),
-                ...(_persist ? { reset: { type: 'boolean', description: 'Optional. true: discard this language\'s session (variables, cd, exports) and run in a fresh one.' } } : {}),
             },
             required: ['language', 'code']
         }

@@ -31,7 +31,7 @@ export const runtime = {
         return list.includes(name) || (list.includes('review') && REVIEW_GUARDS.includes(name));
     },
     /** Experiment switch, never set in ordinary runs: FG_EXPERIMENTS=name,name turns on a feature under A/B test
-     *  (persistent_exec, syntax_watch, edit_assist) for the whole process. */
+     *  (syntax_watch, edit_assist) for the whole process. */
     experiment(name: string): boolean {
         const v = g.process?.env?.FG_EXPERIMENTS;
         return !!v && String(v).split(',').map((x: string) => x.trim()).includes(name);
@@ -42,7 +42,7 @@ export const runtime = {
     get nativeBusy(): boolean { return nativeRunning > 0; },
     /** End the commands running natively (a hard Stop). Only commands run by the built-in executor are registered; an executor of another kind cannot be cancelled. */
     killNative(): number { return killRunningNative(); },
-    async nativeExec(language: string, code: string, opts?: { timeoutMs?: number; session?: string; reset?: boolean }): Promise<any> {
+    async nativeExec(language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> {
         nativeRunning++;
         try { return await g.nativeExec(language, code, opts); } finally { nativeRunning--; }
     },

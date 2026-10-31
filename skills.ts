@@ -646,11 +646,8 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                     if (_avail.length)   _pkgNote += `\n- Pre-installed (no pip needed): ${_avail.join(', ')}`;
                     if (_missing.length) _pkgNote += `\n- Not installed — use lighter alternatives: ${_missing.join(', ')}`;
                 }
-                // Experiment persistent_exec: one python session per chat or worker (exec-session.ts).
-                const _persist = runtime.experiment('persistent_exec');
-                parts.push(`### Environment (native python3 process${_persist ? ', persistent environment' : ''})
-- Runs in the workspace directory — use relative paths directly${_persist ? `
-- Persistent environment: variables, functions, imports and loaded data stay from one python call to the next — use them instead of re-importing or reloading. A workspace module you edited is re-imported before the next call. A timeout or crash ends the session, and the next result says so; \`reset: true\` starts a fresh one` : ''}
+                parts.push(`### Environment (native python3 process)
+- Runs in the workspace directory — use relative paths directly
 - Full filesystem and network access
 - Install packages: \`execute_code(language="bash", code="pip3 install pkg")\`; if pip refuses with "externally-managed-environment", add \`--break-system-packages\`
 - \`subprocess\`, \`os.system\` work normally
@@ -702,11 +699,8 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
             const hasLocal  = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
             if (!hasNative && !hasLocal && !browserBashAvailable()) return `## execute_code — Bash\n\nBrowser bash is unavailable in this engine. Use the languages in the environment description and enabled file tools. ${_buildLangsDesc()}`;
             const parts = ['## execute_code — Bash\n\nCall `execute_code(language="bash", code="...")` to run shell commands.\n'];
-            // Experiment persistent_exec: one bash session per chat or worker (exec-session.ts).
-            const _persist = hasNative && runtime.experiment('persistent_exec');
-            if (hasNative) parts.push(`### Environment (native bash process${_persist ? ', persistent environment' : ''})
-- Runs in the workspace directory — relative paths work directly${_persist ? `
-- Persistent environment: variables, functions, cd and exports stay from one bash call to the next — no need to repeat them` : ''}
+            if (hasNative) parts.push(`### Environment (native bash process)
+- Runs in the workspace directory — relative paths work directly
 - Full shell access: grep, sed, awk, jq, find, git, python3, pip3, npm, etc.
 - stdout / stderr / exit_code returned; exit_code != 0 means failure
 - 2-minute timeout per call`);
@@ -738,14 +732,11 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
             if (_bashGit) {
                 bashRules.push('Use `run_git(...)` for git operations rather than calling `git` inside bash.');
             }
-            if (hasNative || hasLocal) bashRules.push(_persist
-                ? '**PATH persistence:** bash is a persistent environment — `export PATH=...` and `cd` in one call still apply in the next. A timeout, `exit` or `set -e` failure ends the session: the next result says so, and exports and cd must be set again.'
-                : '**PATH persistence:** each execute_code call runs in a fresh shell — `export PATH=...` in one call does NOT carry over to the next. To persist a new PATH entry: append it to `~/.bashrc` (`echo \'export PATH=$PATH:/new/dir\' >> ~/.bashrc`) and source it at the start of subsequent calls (`source ~/.bashrc && ...`), or use the full absolute path in every call.',
+            if (hasNative || hasLocal) bashRules.push(
+                '**PATH persistence:** each execute_code call runs in a fresh shell — `export PATH=...` in one call does NOT carry over to the next. To persist a new PATH entry: append it to `~/.bashrc` (`echo \'export PATH=$PATH:/new/dir\' >> ~/.bashrc`) and source it at the start of subsequent calls (`source ~/.bashrc && ...`), or use the full absolute path in every call.',
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
-            bashRules.push(_persist
-                ? '**State across calls:** the bash session keeps variables, functions, cd and exports between calls, and installed tools stay installed. Write important paths and results to workspace files so they survive compaction and session restarts.'
-                : hasWasm
+            bashRules.push(hasWasm
                 ? '**State across calls:** the browser shell keeps functions, variables, aliases and the current directory between calls until the page reloads — a `cd` also applies to later calls, so `cd /workspace` first if you moved elsewhere. Write important results to workspace files so they survive compaction and reloads.'
                 : '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
