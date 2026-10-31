@@ -4,13 +4,32 @@
 import { createServer, type Server } from 'node:http';
 import {
     substituteServerKeys, ProxyRefusal, isSelfTarget, guardedFetch, gitArgsRefusal,
-    createDevApi, buildClientScript, serverKeyStatus, placeholderFor, classifyAddress, publicGet, pinnedFetch,
+    createDevApi, buildClientScript, serverKeys, serverKeyStatus, placeholderFor, classifyAddress, publicGet, pinnedFetch,
 } from '../dev-api.ts';
 import { scrubEnv } from '../secret-env.ts';
 
 const KEYS = { fg_gemini_key: 'AIzaREALKEYVALUE123456', fg_brave_key: 'brave-real-value-789' };
 
 describe('substituteServerKeys', () => {
+    it('loads a Zro key server-side and substitutes it only for the exact Zro HTTPS host', () => {
+        const keys = serverKeys({ ZRO_API_KEY: 'synthetic-zro-key' });
+        expect(keys.fg_zro_key).toBe('synthetic-zro-key');
+        expect(serverKeys({ MOONMATH_API_KEY: 'synthetic-moonmath-key' }).fg_zro_key).toBe('synthetic-moonmath-key');
+        const headers = { Authorization: `Bearer ${placeholderFor('fg_zro_key')}` };
+        expect(substituteServerKeys('https://zro.moonmath.ai/v1/chat/completions', headers, '{}', keys).headers.Authorization)
+            .toBe('Bearer synthetic-zro-key');
+        for (const url of ['https://evil.zro.moonmath.ai/v1', 'https://zro.moonmath.ai.evil.com/v1', 'http://zro.moonmath.ai/v1'])
+            expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
+    });
+    it('loads a APInex key server-side and substitutes it only for the exact APInex HTTPS host', () => {
+        const keys = serverKeys({ APINEX_API_KEY: 'synthetic-apinex-key' });
+        expect(keys.fg_apinex_key).toBe('synthetic-apinex-key');
+        const headers = { Authorization: `Bearer ${placeholderFor('fg_apinex_key')}` };
+        expect(substituteServerKeys('https://api.apinex.bond/v1/chat/completions', headers, '{}', keys).headers.Authorization)
+            .toBe('Bearer synthetic-apinex-key');
+        for (const url of ['https://evil.api.apinex.bond/v1', 'https://api.apinex.bond.evil.com/v1', 'http://api.apinex.bond/v1'])
+            expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
+    });
     it('fills a placeholder for the key\'s own host', () => {
         const r = substituteServerKeys('https://generativelanguage.googleapis.com/v1beta/models?key=__fgsk__fg_gemini_key__',
             {}, undefined, KEYS);

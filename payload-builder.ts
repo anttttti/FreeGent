@@ -38,12 +38,21 @@ export function isCustomEndpoint(ep: any): boolean {
 //   preserve_thinking not sent: no reasoning parser → no reasoning_content field.
 // - provider 'openai': cloud OpenAI or any endpoint explicitly declared as 'openai'.
 //   These are assumed NOT to use a Qwen3 chat template — chat_template_kwargs is not sent.
+// - APInex maps DeepSeek/GLM budgets to documented low/medium/high effort.
+// - Zro maps the shared budget to its documented reasoning_effort levels.
 // - All other hosted providers → emit nothing (unknown fields risk strict-API 400s).
-function _thinkingFields(provider: string, isCustom: boolean, budget: number, preserveThinking: boolean): object {
+function _thinkingFields(provider: string, isCustom: boolean, budget: number, preserveThinking: boolean, model: string): object {
     // Sentinel -1 = 'default' thinking level: no thinking field sent at all so the endpoint
     // uses its own built-in default behaviour. Distinct from 'off' (budget 0) which actively
     // disables thinking on custom/vLLM endpoints via chat_template_kwargs.enable_thinking:false.
     if (budget < 0) return {};
+    // APInex documents low/medium/high for its DeepSeek and GLM routes; no disabled level is advertised.
+    if (provider === 'apinex' && /^(?:free\/)?(?:glm-|deepseek-)/.test(model))
+        return { reasoning_effort: budget >= 24576 ? 'high' : budget >= 8192 ? 'medium' : 'low' };
+    // Zro supports low/high/max, not medium. GLM Flash cannot disable reasoning; none maps to low there.
+    if (provider === 'zro') return { reasoning_effort: budget === 0
+        ? (model.replace(/^zro\//, '').startsWith('glm-') ? 'low' : 'none')
+        : budget >= 24576 ? 'max' : budget >= 8192 ? 'high' : 'low' };
     if (provider === 'google' && budget > 0)
         return { thinking: { type: 'enabled', budget_tokens: budget } };
     if (provider === 'nvidia' && budget > 0)
@@ -144,7 +153,7 @@ export function withReasoningEcho(messages: any[]): any[] {
 }
 /** The request without the thinking controls (the resend after a model refused them). */
 export function stripThinkingFields(payload: any): any {
-    const { reasoning_budget: _rb, thinking: _th, thinking_token_budget: _tb, ...rest } = payload;
+    const { reasoning_budget: _rb, reasoning_effort: _re, thinking: _th, thinking_token_budget: _tb, ...rest } = payload;
     if (rest.chat_template_kwargs) {
         const { enable_thinking: _et, preserve_thinking: _pt, ...kw } = rest.chat_template_kwargs;
         if (Object.keys(kw).length) rest.chat_template_kwargs = kw; else delete rest.chat_template_kwargs;
@@ -238,7 +247,7 @@ export function buildChatPayload(ep: any, {
             }),
         }),
         ...(provider === 'openrouter' && { include_reasoning: true }),
-        ..._thinkingFields(provider, isCustom, modelRejectsThinkingFields(`${provider}|${ep?.model ?? ''}`) ? -1 : thinkingBudget, preserveThinking),
+        ..._thinkingFields(provider, isCustom, modelRejectsThinkingFields(`${provider}|${ep?.model ?? ''}`) ? -1 : thinkingBudget, preserveThinking, ep?.model ?? ''),
         // No value (the user cleared the field): the key is left out, so the server uses its own default.
         ...(temperature != null && { temperature }),
         // Opt-in sampling seed for OpenAI-compatible servers (FREEGENT_SAMPLING_SEED). The benchmark's

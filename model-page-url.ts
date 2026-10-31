@@ -26,6 +26,10 @@ export function modelPageUrl(provider: string, model: string): string {
             return 'https://kilo.ai/models';
         case 'vercel':
             return 'https://vercel.com/ai-gateway/models';
+        case 'zro':
+            return `https://zro.moonmath.ai/docs/models/${encodeURIComponent(model.replace(/^zro\//, ''))}`;
+        case 'apinex':
+            return 'https://apinex.bond/models';
         default:
             return '';
     }

@@ -225,6 +225,8 @@ declare global {
     var getTokenHarborKey: any;
     var getKiloKey: any;
     var getVercelKey: any;
+    var getZroKey: any;
+    var getApinexKey: any;
     var getNousKey: any;
     var getOAIContextTokens: any;
     var getEndpointContextTokens: any;

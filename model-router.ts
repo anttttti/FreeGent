@@ -417,6 +417,8 @@ function _hostedEndpoint(provider: string, model: string): any {
         case 'tokenharbor': return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: viaProxy };
         case 'kilo':        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: viaProxy };
         case 'vercel':      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: viaProxy };
+        case 'zro':         return { provider, url: 'https://zro.moonmath.ai/v1/chat/completions',          key: getZroKey(), model, proxy: sp };
+        case 'apinex':      return { provider, url: 'https://api.apinex.bond/v1/chat/completions',          key: getApinexKey(), model, proxy: sp };
         case 'nous':        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
         case 'nvidia':      return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: viaProxy };
         default:            return null;

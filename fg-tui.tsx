@@ -88,6 +88,9 @@ const PROVIDER_ENV_MAP: Array<[string, string]> = [
     ['NVIDIA_API_KEY',     'nvidia'],
     ['NOUSPORTAL_API_KEY', 'nous'],
     ['NOUS_API_KEY',       'nous'],   // alias
+    ['ZRO_API_KEY',        'zro'],
+    ['MOONMATH_API_KEY',   'zro'],
+    ['APINEX_API_KEY',     'apinex'],
 ];
 
 function _detectProvider(): { provider: string; apiKey: string } | null {

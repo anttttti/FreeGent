@@ -32,7 +32,11 @@ Exactly one of `--task` (alias `--workflow`), `--task-file` or `--prompt` is nee
 
 ## Keys
 
-`fg-run.ts` loads `.env` and `~/.config/freegent/credentials` and maps these variables to providers: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `TOKENHARBOR_API_KEY`, `NOUSPORTAL_API_KEY` / `NOUS_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`, `HF_API_KEY`, `STACKEXCHANGE_API_KEY`. `--api-key` (or `FREEGENT_API_KEY`) overrides the key for the selected provider. For providers that are not in that list, such as Kilo and Vercel AI Gateway, point `--api-url` at their OpenAI-compatible endpoint with `--provider custom` and pass the key with `--api-key`.
+`fg-run.ts` loads `.env` and `~/.config/freegent/credentials`. Supported provider keys and aliases
+are listed in [Default providers](../models/providers.md), including `APINEX_API_KEY` and
+`ZRO_API_KEY` / `MOONMATH_API_KEY`. `--api-key` (or `FREEGENT_API_KEY`) overrides the key for
+the selected provider. For another OpenAI-compatible endpoint, use `--provider custom`
+with `--api-url` and `--api-key`.
 
 ## Flags
 

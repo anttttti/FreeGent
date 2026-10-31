@@ -191,6 +191,47 @@ async function _fetchKiloModels(): Promise<FetchResult> {
     }
 }
 
+// APInex separates free/ routes from paid IDs, but that prefix alone does not guarantee access.
+async function _fetchApinexModels(): Promise<FetchResult> {
+    try {
+        const key = typeof getApinexKey === 'function' ? getApinexKey() : '';
+        if (!key && !specHasKey('apinex|free/glm-5.3-flash')) return { live: [], rejected: [] };
+        const json = await _proxyFetch('https://api.apinex.bond/v1/models', key || undefined);
+        const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
+        const live = new Map<string, LiveModel>();
+        const rejected: FetchResult['rejected'] = [];
+        for (const m of all) {
+            if (typeof m.id !== 'string' || !m.id.startsWith('free/')) continue;
+            const model: LiveModel = { id: m.id, name: m.name, created: created(m) };
+            // Live check 2026-11-01: Jev requires /v1/decisions, not chat completions.
+            if (m.id === 'free/jev-1.13') rejected.push({ model, reason: 'non-chat' });
+            else live.set(m.id, model);
+        }
+        return { live: [...live.values()], rejected };
+    } catch { return { live: [], rejected: [] }; }
+}
+
+// Zro's Free plan grants a daily allowance on these IDs despite their nonzero paid-plan prices.
+// Other /models entries are paid and must not enter the free-model catalog automatically.
+const _ZRO_FREE_IDS = new Set(['deepseek-v4.1-flash', 'glm-5.3-flash']);
+async function _fetchZroModels(): Promise<FetchResult> {
+    try {
+        const key = typeof getZroKey === 'function' ? getZroKey() : '';
+        if (!key && !specHasKey('zro|deepseek-v4.1-flash')) return { live: [], rejected: [] };
+        const json = await _proxyFetch('https://zro.moonmath.ai/v1/models', key || undefined);
+        const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
+        const live = new Map<string, LiveModel>();
+        for (const m of all) {
+            if (typeof m.id !== 'string') continue;
+            const id = m.id.replace(/^zro\//, '');
+            if (_ZRO_FREE_IDS.has(id)) live.set(id, { id, name: m.name, created: created(m) });
+        }
+        return { live: [...live.values()], rejected: [] };
+    } catch { return { live: [], rejected: [] }; }
+}
+
 // ── Vercel AI Gateway ─────────────────────────────────────────────────────────
 // https://vercel.com/ai-gateway — OAI-compatible gateway requiring an API key.
 // Free models carry tags:["free"] and pricing {input:"0",output:"0"}.
@@ -424,7 +465,7 @@ function _isTooOld(created: number | undefined): boolean {
 }
 
 // Providers whose fetcher keeps only the free models: a catalog entry missing from their result may still be listed, but priced.
-const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor']);
+const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor', 'zro', 'apinex']);
 
 // Generic helper: compare a provider's live model list against the catalog.
 // Produces add proposals (for new models) and remove proposals (for missing catalog models).
@@ -500,7 +541,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     const catalogKeys = new Set(catalog.map((m: ModelEntry) => `${m.provider}|${m.model}`));
 
     // Fetch all providers in parallel
-    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult] =
+    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult, zroResult, apinexResult] =
         await Promise.all([
             _fetchOpenRouterModels(),
             _fetchGoogleModels(),
@@ -510,6 +551,8 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             _fetchKiloModels(),
             _fetchVercelModels(),
             _fetchNousModels(),
+            _fetchZroModels(),
+            _fetchApinexModels(),
         ]);
 
     // Remember real provider release dates so custom models can show them in the catalog table.
@@ -518,7 +561,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         const orCreatedAll = _createdReader(orModels);
         for (const m of orModels) { const c = orCreatedAll(m); if (c) seen[`openrouter|${m.id}`] = c; }
         for (const [prov, r] of [['google', googleResult], ['groq', groqResult], ['nvidia', nvidiaResult], ['tokenharbor', thResult],
-                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult]] as [string, FetchResult][]) {
+                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult], ['zro', zroResult], ['apinex', apinexResult]] as [string, FetchResult][]) {
             for (const m of [...r.live, ...r.rejected.map(x => x.model)]) if (m.created) seen[`${prov}|${m.id}`] = m.created;
         }
         rememberModelCreated(seen);
@@ -646,6 +689,20 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             'Free ($0/token) via Vercel AI Gateway; API key required',
         ));
     }
+
+    // Only free/ routes are eligible. Unverified additions start unchecked: free-labelled routes can require a paid subscription.
+    if (apinexResult.live.length) proposals.push(..._diffProvider(
+        'apinex', apinexResult, catalog, catalogKeys,
+        'APInex free/ route; account-wide rate limits and allowance; some models require a subscription', false,
+    ));
+    else if (specHasKey('apinex|free/glm-5.3-flash')) errors.push('APInex: could not fetch free models (check key or connection)');
+
+    // Zro: a failed or unauthenticated discovery must not remove catalog models.
+    if (zroResult.live.length) proposals.push(..._diffProvider(
+        'zro', zroResult, catalog, catalogKeys,
+        'Zro Free plan daily allowance; API key required; paid plans meter usage',
+    ));
+    else if (specHasKey('zro|deepseek-v4.1-flash')) errors.push('Zro: could not fetch free-plan models (check key, region, or connection)');
 
     // ── Nous Portal ────────────────────────────────────────────────────────────
     {

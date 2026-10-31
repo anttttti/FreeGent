@@ -255,6 +255,9 @@ const ENV_KEY_MAP: Record<string, { ls: string; input: string; label: string; pr
     TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key',   label: 'TokenHarbor',   prefixes: ['thk_'] },
     KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key',          label: 'Kilo',          prefixes: ['sk-kilo-'] },
     VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key',        label: 'Vercel',        prefixes: ['aig_'] },
+    ZRO_API_KEY:          { ls: 'fg_zro_key',           input: 'zro-key',           label: 'Zro',           prefixes: [] }, // sk- is not provider-specific
+    MOONMATH_API_KEY:     { ls: 'fg_zro_key',           input: 'zro-key',           label: 'Zro',           prefixes: [] }, // alias
+    APINEX_API_KEY:       { ls: 'fg_apinex_key',        input: 'apinex-key',        label: 'APInex',        prefixes: [] },
     NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['nsk-'] },
     HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key',            label: 'HuggingFace',   prefixes: ['hf_'] },
     TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key',        label: 'Tavily',        prefixes: ['tvly-'] },
@@ -436,6 +439,8 @@ function saveSettings() {
     saveKey('fg_tokenharbor_key',   'tokenharbor-key');
     saveKey('fg_kilo_key',          'kilo-key');
     saveKey('fg_vercel_key',        'vercel-key');
+    saveKey('fg_zro_key',           'zro-key');
+    saveKey('fg_apinex_key',        'apinex-key');
     saveKey('fg_nous_key',          'nous-key');
     saveSelect('fg_sandbox_provider', 'sandbox-provider', 'wasm');
     saveSelect('fg_search_provider', 'search-provider', 'auto');
@@ -479,6 +484,8 @@ function populateSettingsForm() {
     set('tokenharbor-key',   getTokenHarborKey());
     set('kilo-key',          getKiloKey());
     set('vercel-key',        getVercelKey());
+    set('zro-key',           getZroKey());
+    set('apinex-key',        getApinexKey());
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
     if (pyAuto) pyAuto.checked = localStorage.getItem('fg_pyodide_autoload') !== '0';
@@ -664,7 +671,7 @@ function updateReasoningSelect() {
 
 
 function _providerLabel(p) {
-    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', custom:'Custom' }[p] || p;
+    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', zro:'Zro', apinex:'APInex', custom:'Custom' }[p] || p;
 }
 
 let _modelSort: { col: string | null; dir: string } = { col: null, dir: 'asc' };

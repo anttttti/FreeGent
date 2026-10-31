@@ -2643,6 +2643,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     const customThinkBudget = isCustom
         ? (_workerBudgetSet ? (() => { const wb = parseInt(ls('fg_worker_thinking_budget', '-1'), 10); return !Number.isFinite(wb) || wb === -1 ? thinkingLevelBudget('custom') : Math.max(0, wb); })() : thinkingLevelBudget('custom'))
         : 0; // 0 = off
+    // Other hosted reasoning models follow the same setting; payload-builder owns which API fields they support.
+    const hostedThinkBudget = !isCustom && !isGoogle && !isNvidia && modelSupportsThinking(provider, model)
+        ? (_workerBudgetSet ? getWorkerThinkingBudget() : thinkingLevelBudget(provider)) : 0;
     // The history is the event log's projection (deriveMessages). A fn-tag model gets the text-tag
     // shape of it (fnTagMessages). Workers are excluded: their localOH is the authoritative history
     // (it includes the task message which is never added to the worker's event session). On step 0
@@ -2714,7 +2717,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         temperature: getTemperature(),
         maxTokens: effectiveMaxTokens,
         stream: true,
-        thinkingBudget: thinkBudget || customThinkBudget || googleThinkBudget,
+        thinkingBudget: thinkBudget || customThinkBudget || googleThinkBudget || hostedThinkBudget,
         preserveThinking: getPreserveThinking(),
         sampling: isCustom ? getSamplingParams() : null,
         forceToolCall: _ftc,

@@ -119,6 +119,8 @@ const _KEY_MAP = {
     nvidia:       'fg_nvidia_key',
     openrouter:   'fg_openrouter_key',
     tokenharbor:  'fg_tokenharbor_key',
+    zro:          'fg_zro_key',
+    apinex:       'fg_apinex_key',
 };
 
 // All known env-var → localStorage-key mappings, applied at startup so
@@ -131,6 +133,9 @@ const _ENV_KEY_MAP: Record<string, string> = {
     NVIDIA_API_KEY:        'fg_nvidia_key',
     OPENROUTER_API_KEY:    'fg_openrouter_key',
     TOKENHARBOR_API_KEY:   'fg_tokenharbor_key',
+    ZRO_API_KEY:           'fg_zro_key',
+    MOONMATH_API_KEY:      'fg_zro_key',  // alias
+    APINEX_API_KEY:        'fg_apinex_key',
     NOUSPORTAL_API_KEY:  'fg_nous_key',
     NOUS_API_KEY:        'fg_nous_key',  // alias
     TAVILY_API_KEY:        'fg_tavily_key',

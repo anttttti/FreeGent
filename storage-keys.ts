@@ -29,6 +29,8 @@ export const KEYS = {
     NVIDIA_KEY:         'fg_nvidia_key',
     OPENROUTER_KEY:     'fg_openrouter_key',
     TOKENHARBOR_KEY:    'fg_tokenharbor_key',
+    ZRO_KEY:            'fg_zro_key',
+    APINEX_KEY:         'fg_apinex_key',
     BRAVE_KEY:          'fg_brave_key',
     TAVILY_KEY:         'fg_tavily_key',
     HF_KEY:             'fg_hf_key',

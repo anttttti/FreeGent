@@ -22,6 +22,26 @@ describe('CF Worker', () => {
         vi.stubGlobal('fetch', upstream);
     });
 
+    it('routes Zro with its shared credential and rejects lookalike hosts', async () => {
+        const env = { ZRO_API_KEY: 'synthetic-zro-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+        const url = 'https://zro.moonmath.ai/v1/chat/completions';
+        expect((await worker.fetch(post({ ...LLM, url }), env)).status).toBe(200);
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-zro-key');
+        upstream.mockClear();
+        expect((await worker.fetch(post({ ...LLM, url: 'https://evil.zro.moonmath.ai/v1/chat/completions' }), env)).status).toBe(403);
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it('routes APInex with its shared credential and rejects lookalike hosts', async () => {
+        const env = { APINEX_API_KEY: 'synthetic-apinex-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+        const url = 'https://api.apinex.bond/v1/chat/completions';
+        expect((await worker.fetch(post({ ...LLM, url }), env)).status).toBe(200);
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-apinex-key');
+        upstream.mockClear();
+        expect((await worker.fetch(post({ ...LLM, url: 'https://evil.api.apinex.bond/v1/chat/completions' }), env)).status).toBe(403);
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
     it('hermes C7: only the listed hosts, not their subdomains, are proxied (the shared key is injected before the request leaves)', async () => {
         const env = { OPENROUTER_API_KEY: 'shared', OPENAI_API_KEY: 'shared2', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const url of ['https://evil.openrouter.ai/api/v1/x', 'https://x.api.openai.com/v1/x', 'https://a.ai-gateway.vercel.sh/v1/x', 'https://openrouter.ai.evil.com/x']) {
