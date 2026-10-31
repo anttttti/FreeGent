@@ -15,11 +15,12 @@ describe('text attachments share one budget', () => {
         expect(text.length).toBeLessThan(budget + 12 * 300);
         expect(text).toContain('Original file: attachments/1/part-11.txt');
         expect(text).toMatch(/part-11\.txt">\nOriginal file: attachments\/1\/part-11\.txt\n\[Not included here.*Read the original file/);
-        expect((text.match(/x{50000}/g) || []).length).toBe(Math.floor(budget / 50_000));
+        // Plain substring checks: a regex like /x{20000}\n/ backtracks at every position of a 50,000-character run (seconds on CI).
+        expect(text.split('x'.repeat(50_000) + '\n```').length - 1).toBe(Math.floor(budget / 50_000));
     });
     it('cuts a file with no workspace copy to what fits, and always sends one whole file', () => {
         const text = core.attachmentTextBlocks([file(0), file(1)], 70_000);
         expect(text).toContain('x'.repeat(50_000));
-        expect(text).toMatch(/x{20000}\n…\[cut: the attachments together/);
+        expect(text).toContain('```\n' + 'x'.repeat(20_000) + '\n…[cut: the attachments together');
     });
 });
