@@ -36,6 +36,7 @@ export const WHEN = {
     output_stalled: 'generation stalled mid-response and was discarded; nothing ran',
     quality_check: 'runaway or low-quality response (repeated characters, long loops)',
     reactive_guidance: 'a skill whose trigger matched the situation this step; forces a tool call',
+    syntax_watch: 'experiment syntax_watch: a file the model changed has not parsed for 2 steps (again after 6); lists every file that does not parse',
     replace_fail: 'repeated replace_in_file failures on the same file',
     rewrite_loop: 'the same file written in full 4, 8, 12 ... times with no passing check between',
     same_error: 'the same error repeated several times in a row',

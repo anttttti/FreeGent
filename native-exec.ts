@@ -10,6 +10,7 @@ import { scrubEnv } from './secret-env.js';
 import { snapshotMarks, changedSince } from './workspace-scan.js';
 import { appendOut, clipOutput, stripCurlProgress, type OutBuf } from './exec-output.js';
 import { registerNativeRun } from './native-running.js';
+import { createExecSessions } from './exec-session.js';
 
 // Write detection (which files did the command touch) is workspace-scan.ts: git's own change list in a repository, a budgeted walk
 // elsewhere, and "unknown" (no files_written; the loop then reads the command) when neither is quick. It is asynchronous and never
@@ -28,7 +29,10 @@ export function signalExitCode(signal: string | null | undefined): number {
 
 export function createNativeExec({ workspaceRoot, targetContainer }: { workspaceRoot?: string | null; targetContainer?: string | null }) {
     const MAX_OUTPUT = 200_000;
-    return (language: string, code: string, opts?: { timeoutMs?: number }): Promise<any> => new Promise((resolve) => { void (async () => {
+    // Persistent sessions (experiment persistent_exec), used only for calls that name one; ended with the process.
+    const sessions = createExecSessions({ workspaceRoot, targetContainer, env: scrubEnv(process.env), maxOutput: MAX_OUTPUT });
+    process.once('exit', () => sessions.closeAll());
+    return (language: string, code: string, opts?: { timeoutMs?: number; session?: string; reset?: boolean }): Promise<any> => new Promise((resolve) => { void (async () => {
         const TIMEOUT_MS = opts?.timeoutMs && opts.timeoutMs > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, opts.timeoutMs) : EXEC_TIMEOUT_MS;
         // JavaScript runs as the body of an async function, as in the browser (exec-sandbox/js-run.ts):
         // top-level await and return work the same in both.
@@ -51,6 +55,51 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             try { return new Set(readdirSync(hooksDir).filter(f => !f.endsWith('.sample'))); }
             catch { return null; }
         })() : null;
+        // What every run reports after it: the files it wrote (pre/post snapshot) and .git/hooks it planted.
+        const _post = async (result: Record<string, any>) => {
+            // Detect files written/modified during execution via post-snapshot diff.
+            // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
+            // Whatever the exit code: a failing command can have changed files too.
+            if (preSnap && workspaceRoot) {
+                const written: string[] = [];
+                try {
+                    const postSnap = await snapshotMarks(workspaceRoot);
+                    if (postSnap) for (const rel of await changedSince(workspaceRoot, preSnap, postSnap)) if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
+                } catch {}
+                if (written.length > 0) result.files_written = written;
+                // A written file that is now empty or lost much of its size: the marks are `mtime:size` (a clean tracked file has none, so it is not judged).
+                const note = shrinkNote(written.map(rel => {
+                    const m = preSnap.get(rel), before = m && m !== 'gone' ? Number(m.split(':').pop()) : NaN;
+                    let after = -1; try { after = statSync(join(workspaceRoot, rel)).size; } catch {}
+                    return { path: rel, before: Number.isFinite(before) && after >= 0 ? before : null, after: Math.max(after, 0) };
+                }), (result.exit_code ?? 0) !== 0);
+                if (note) result.note = result.note ? `${result.note} ${note}` : note;
+            }
+            // Detect .git/hooks planted by the executed code (hook-injection guard).
+            if (hooksDir && preHooks !== null) {
+                try {
+                    const postHooks = readdirSync(hooksDir).filter(f => !f.endsWith('.sample'));
+                    const planted = postHooks.filter(h => !preHooks.has(h));
+                    if (planted.length > 0) {
+                        for (const h of planted) { try { unlinkSync(join(hooksDir, h)); } catch {} }
+                        result.warning = `execute_code planted .git/hooks — removed: ${planted.join(', ')}. Check for other .git/ writes.`;
+                    }
+                } catch {}
+            }
+        };
+        // Experiment persistent_exec: bash and python run in the caller's session (exec-session.ts), not a new process.
+        if (opts?.session && (language === 'bash' || language === 'python')) {
+            const r = await sessions.run(opts.session, language, code, { timeoutMs: TIMEOUT_MS, reset: opts.reset, register: registerNativeRun });
+            const result: Record<string, any> = { stdout: clipOutput(r.stdout, r.dropped[0]), stderr: clipOutput(stripCurlProgress(r.stderr), r.dropped[1]), exit_code: r.exit_code };
+            const notes: string[] = [];
+            if (r.restarted) notes.push(`The earlier ${language} session had ended, so this ran in a fresh one: variables, cd and exports from before are gone.`);
+            if (r.ended === 'timeout') result.error = `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s and its ${language} session was ended (variables, cd and exports are gone; the next call starts a fresh one). If it was waiting for input, pass input through a pipe or file. ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.`;
+            else if (r.ended) notes.push(`The ${language} session ${r.ended === 'killed' ? 'was stopped' : `ended (exit code ${r.exit_code})`}: the next call starts a fresh one, without the variables, cd and exports from before.${language === 'bash' && r.ended === 'exited' ? ' (exit and set -e end the session.)' : ''}`);
+            if (notes.length) result.note = notes.join(' ');
+            await _post(result);
+            resolve(result);
+            return;
+        }
         const out: OutBuf = { text: '', dropped: 0 }, err: OutBuf = { text: '', dropped: 0 };
         let done = false;
         // Head + tail of each stream (exec-output.ts); curl's progress meter is dropped from stderr.
@@ -82,35 +131,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             // Ended by a signal (OOM killer, kill, a crash): never a success.
             const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
                 ...(exitCode == null && signal ? { signal } : {}) };
-            // Detect files written/modified during execution via post-snapshot diff.
-            // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
-            // Whatever the exit code: a failing command can have changed files too.
-            if (preSnap && workspaceRoot) {
-                const written: string[] = [];
-                try {
-                    const postSnap = await snapshotMarks(workspaceRoot);
-                    if (postSnap) for (const rel of await changedSince(workspaceRoot, preSnap, postSnap)) if (!TOOL_CACHE_PATH_RE.test(rel)) written.push(rel);
-                } catch {}
-                if (written.length > 0) result.files_written = written;
-                // A written file that is now empty or lost much of its size: the marks are `mtime:size` (a clean tracked file has none, so it is not judged).
-                const note = shrinkNote(written.map(rel => {
-                    const m = preSnap.get(rel), before = m && m !== 'gone' ? Number(m.split(':').pop()) : NaN;
-                    let after = -1; try { after = statSync(join(workspaceRoot, rel)).size; } catch {}
-                    return { path: rel, before: Number.isFinite(before) && after >= 0 ? before : null, after: Math.max(after, 0) };
-                }), (result.exit_code ?? 0) !== 0);
-                if (note) result.note = result.note ? `${result.note} ${note}` : note;
-            }
-            // Detect .git/hooks planted by the executed code (hook-injection guard).
-            if (hooksDir && preHooks !== null) {
-                try {
-                    const postHooks = readdirSync(hooksDir).filter(f => !f.endsWith('.sample'));
-                    const planted = postHooks.filter(h => !preHooks.has(h));
-                    if (planted.length > 0) {
-                        for (const h of planted) { try { unlinkSync(join(hooksDir, h)); } catch {} }
-                        result.warning = `execute_code planted .git/hooks — removed: ${planted.join(', ')}. Check for other .git/ writes.`;
-                    }
-                } catch {}
-            }
+            await _post(result);
             _done(result);
         });
         child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));

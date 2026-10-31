@@ -39,8 +39,15 @@ export function _buildLangsDesc(): string {
     if (typeof _hasBashOrCode !== 'function' || !_hasBashOrCode()) return '';
     const _n = runtime.hasNativeExec;
     const _inContainer = _n && typeof fgTargetContainer !== 'undefined' && fgTargetContainer;
-    if (_inContainer) return 'Languages: **python**, **bash**, **javascript** (Node.js). All run inside a task container — execute_code bash commands and file operations (read_file, write_file) route to the container filesystem.';
-    if (_n) return 'Languages: **python** (python3, pip3), **bash** (shell + npm), **javascript** (Node.js) — all run in the workspace with real filesystem access.';
+    // Experiment persistent_exec: bash and python keep one session each (exec-session.ts).
+    const _persist = _n && runtime.experiment('persistent_exec');
+    const _persistNote = _persist ? ' Python and bash are each a persistent environment: variables, functions, imports, loaded data, cd and exports stay from one execute_code call to the next in the same language, so build on earlier calls instead of re-importing, reloading or repeating them.' : '';
+    if (_inContainer) return (_persist
+        ? 'Languages: **python** (persistent environment), **bash** (persistent environment), **javascript** (Node.js, fresh each call). All run inside a task container — execute_code bash commands and file operations (read_file, write_file) route to the container filesystem.'
+        : 'Languages: **python**, **bash**, **javascript** (Node.js). All run inside a task container — execute_code bash commands and file operations (read_file, write_file) route to the container filesystem.') + _persistNote;
+    if (_n) return (_persist
+        ? 'Languages: **python** (persistent environment; python3, pip3), **bash** (persistent environment; shell + npm), **javascript** (Node.js, fresh each call) — all run in the workspace with real filesystem access.'
+        : 'Languages: **python** (python3, pip3), **bash** (shell + npm), **javascript** (Node.js) — all run in the workspace with real filesystem access.') + _persistNote;
     const _l = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'local';
     if (_l) return 'Languages: **python**, **bash**, **javascript** — run via local sandbox with workspace files at relative paths.';
     const _p = typeof pyodideStatus !== 'undefined' && (pyodideStatus === 'ready' || pyodideStatus === 'loading');

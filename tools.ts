@@ -21,6 +21,7 @@ import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEs
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
 import { checkSyntax, syntaxCheckable } from './syntax-check.js';
+import { noteSeen, seenShare, assistLocate, alreadyAt, trimBoundaryDup } from './edit-assist.js';
 
 
 // Browser JavaScript execute_code: a stuck script restarts the sandbox after this long.
@@ -1263,6 +1264,12 @@ const _SYNTAX_HINT = 'The file no longer parses. If the fix is not obvious, call
 async function _syntaxCheck(path, text: string | null = null, { staged = false } = {}) {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase();
     if (!ext) return null;
+    // Experiment syntax_watch: shell scripts too, and a worker's staged text (not on disk) through a temporary copy.
+    const _watch = runtime.experiment('syntax_watch');
+    if (runtime.hasNativeExec && _watch && ['py', 'js', 'mjs', 'cjs', 'jsx', 'sh', 'bash'].includes(ext)
+            && (!staged || (typeof text === 'string' && text.length <= 400_000))) {
+        return _nativeSyntaxCheck(path, ext, staged ? text : null);
+    }
     if (runtime.hasNativeExec && !staged && ['py', 'js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
         let r = null;
         // A leading dash would be read as an option by node and python.
@@ -1281,6 +1288,53 @@ async function _syntaxCheck(path, text: string | null = null, { staged = false }
     if (!syntaxCheckable(path)) return null;
     const content = text ?? await agentReadFile(path).catch(() => null);
     return typeof content === 'string' ? checkSyntax(path, content) : null;
+}
+
+// syntax_watch: the parse check of a file on disk, or of `text` copied to a temporary file of the same name (a worker's staged
+// version). The temporary path is replaced by the file's own in the message.
+async function _nativeSyntaxCheck(path: string, ext: string, text: string | null): Promise<string | null> {
+    const pyCheck = 'import sys, traceback\ntry:\n    compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")\nexcept SyntaxError as e:\n    print("".join(traceback.format_exception_only(type(e), e)), end="")\n    sys.exit(1)';
+    const checker = (f: string) => ext === 'py' ? `python3 -c ${_shSingleQuote(pyCheck)} ${f} 2>&1` : ext === 'sh' || ext === 'bash' ? `bash -n ${f} 2>&1` : `node --check ${f} 2>&1`;
+    let cmd: string;
+    const base = path.split('/').pop() || `file.${ext}`;
+    if (text == null) { const q = _shSingleQuote(path.startsWith('-') ? `./${path}` : path); cmd = `[ -f ${q} ] || exit 0; ${checker(q)}`; }
+    else {
+        const b64 = bytesToBase64(new TextEncoder().encode(text));
+        cmd = `d=$(mktemp -d) && printf %s ${_shSingleQuote(b64)} | base64 -d > "$d"/${_shSingleQuote(base)} && { ${checker(`"$d"/${_shSingleQuote(base)}`)}; rc=$?; rm -rf "$d"; exit $rc; }`;
+    }
+    const r = await runtime.nativeExec('bash', cmd).catch(() => null);
+    if (!r || r.exit_code === 0) return null;
+    let msg = (r.stdout || r.stderr || '').trim();
+    if (text != null) msg = msg.split(/\/tmp\/[^\s"':]*\//).join(path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '');
+    return msg.split('\n').slice(0, 5).join('\n') || null;
+}
+
+// syntax_watch: the files of this chat that do not parse after the last change to them, with the error. Every edit tool and
+// every execute_code that changed a checkable file updates it; llm-loops.ts reminds the model of files left broken.
+const _openSyntax = new Map<string, Map<string, string>>();
+function _noteSyntax(path: unknown, err: string | null): void {
+    if (!runtime.experiment('syntax_watch') || typeof path !== 'string' || !path) return;
+    const k = String(activeChatId ?? '');
+    let m = _openSyntax.get(k);
+    if (!m) _openSyntax.set(k, m = new Map());
+    if (err) m.set(path, err); else m.delete(path);
+}
+export function openSyntaxErrors(): Array<[string, string]> { return [...(_openSyntax.get(String(activeChatId ?? '')) ?? [])]; }
+const _WATCH_EXT_RE = /\.(?:py|[cm]?js|jsx|json|html?|sh|bash)$/i;
+// syntax_watch: the parse check of the checkable files an execute_code run changed (at most 10), as syntax_errors on its result.
+async function _watchExecSyntax(result: any): Promise<any> {
+    if (!result || typeof result !== 'object') return result;
+    for (const p of (Array.isArray(result.files_deleted) ? result.files_deleted : [])) _noteSyntax(p, null);
+    const changed = (Array.isArray(result.files_written) ? result.files_written : []).filter((p: any) => typeof p === 'string' && _WATCH_EXT_RE.test(p)).slice(0, 10);
+    // Files still open from earlier: a command may have fixed or deleted them without being seen to write them.
+    for (const [p] of openSyntaxErrors().slice(0, 10)) if (!changed.includes(p)) _noteSyntax(p, await _syntaxCheck(p).catch(() => null));
+    const errors: string[] = [];
+    for (const p of changed) {
+        const err = await _syntaxCheck(p).catch(() => null);
+        _noteSyntax(p, err);
+        if (err) errors.push(`${p}: ${err}`);
+    }
+    return errors.length ? { ...result, syntax_errors: errors, syntax_hint: 'A file this command changed no longer parses. Fix it before going on.' } : result;
 }
 
 // The parse errors of the files a run changed, for the completion gate (completion-gates.ts broken_syntax). A file that is gone
@@ -1310,6 +1364,7 @@ async function _escapedLineBreakFix(args: { path: string; content: string }): Pr
 
 // An edit result with the parse error attached: "No need to re-read the file to verify" is dropped, since the file now needs exactly that.
 function _withSyntaxError(result: any, synErr: string | null) {
+    _noteSyntax(result?.path, synErr);
     if (!synErr) return result;
     const { note, ...rest } = result;
     const kept = typeof note === 'string' ? note.replace(/\s*No need to re-read the file to verify\./, '').trim() : '';
@@ -1668,6 +1723,63 @@ async function _handleWriteFile(args, context) {
 }
 
 const _RANGE_ECHO_MAX_LINES = 60;   // the most lines of the given range a failed replace_in_file shows back
+
+// The parse error of `text` as the file at `path` (Python, JavaScript or shell natively, else what syntax-check.ts covers), or null.
+async function _parseError(path: string, text: string): Promise<string | null> {
+    const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase() ?? '';
+    if (runtime.hasNativeExec && ['py', 'js', 'mjs', 'cjs', 'jsx', 'sh', 'bash'].includes(ext) && text.length <= 400_000)
+        return _nativeSyntaxCheck(path, ext, text).catch(() => null);
+    return syntaxCheckable(path) ? checkSyntax(path, text).catch(() => null) : null;
+}
+// An edit whose change is already in the file. The first time a success that says so; sent again, an error, so the loop's
+// failure handling sees it (A/B 2026-10-31: one change re-sent 16 times in a row, each answered "already in the file").
+const _alreadySent = new Map<string, number>();
+// `view`: the lines as they stand, so the model sees its change there (A/B 2026-10-31: 13 repeats in 5 of 18 Lite tasks).
+function _alreadyDone(args: any, note: string, view?: string) {
+    const key = `${String(activeChatId ?? '')}\u0000${args.path}\u0000${String(args.new_string ?? '')}`;
+    const n = (_alreadySent.get(key) ?? 0) + 1;
+    _alreadySent.set(key, n);
+    if (_alreadySent.size > 500) _alreadySent.clear();
+    const now = view ? `\nThe lines now:\n${view}` : '';
+    if (n === 1) return { success: true, path: args.path, replacements_made: 0, note: `${note} Do not send this edit again.${now}` };
+    return { error: `replace_in_file: this same change has been sent ${n === 2 ? 'twice' : `${n} times`} after it was already in the file. Nothing was changed. Stop editing these lines: the file has your change. Run the test or check, or read the code around it if the result is not what you expect. ${note}${now}` };
+}
+// Experiment edit_assist (edit-assist.ts): an old_string/new_string edit, helped from the text alone. Nothing about it is shown in
+// the tool schema or prompt; only its results say what was done.
+const _numbered = (lines: string[], from: number) => lines.map((l, i) => `L${from + i}: ${l.replace(/\r$/, '')}`).join('\n');
+// Lines s–e (1-based) with one line of context each side, at most 20 lines.
+const _viewAt = (lines: string[], s: number, e: number) => { const a = Math.max(1, s - 1); return _numbered(lines.slice(a - 1, Math.min(lines.length, e + 1, a + 19)), a); };
+// A file that parsed must still parse: `updated` as written, or `retry()` (the edit with one level of escaping removed) when that
+// parses, or an error that shows lines from..to of what the edit would have written. `tail` is the last line of the new text.
+async function _assistParseGuard(path: string, original: string, updated: string, retry: () => string | null, at: { s: number; tail: number }): Promise<{ updated: string; note: string } | { error: string }> {
+    const broke = await _parseError(path, updated);
+    if (!broke || await _parseError(path, original)) return { updated, note: '' };
+    const alt = retry();
+    if (alt != null && alt !== updated && !(await _parseError(path, alt)))
+        return { updated: alt, note: ' new_string was over-escaped (\\" or \\n where the code has " or a line break); it was read with one level of escaping removed. Send the code as it should appear.' };
+    const errLine = Number((/line (\d+)/.exec(broke) ?? [])[1]) || 0;
+    const tailHint = errLine > at.tail && errLine <= at.tail + 3
+        ? ' The error is just after your new text: old_string probably ends before the end of the statement it changes, and the rest of that statement is still there. Include it in old_string.' : '';
+    const would = updated.split('\n'), now = original.split('\n');
+    const from = Math.max(1, at.s - 2);
+    return { error: `replace_in_file: this edit would leave "${path}" unparseable, so nothing was changed.${tailHint}\n${broke}\nThe lines would have read:\n${_numbered(would.slice(from - 1, Math.min(would.length, at.tail + 3)), from)}\nThe lines now:\n${_numbered(now.slice(from - 1, Math.min(now.length, from + 2 + (at.tail - at.s + 1) + 2)), from)}` };
+}
+// Lines s–e replaced with `out` (dropping a repeat of the line just above or below), parse-guarded, written.
+// `retryOut` is the same edit made from new_string with one level of escaping removed (null: none).
+async function _assistReplaceLines(args: any, original: string, lines: string[], s: number, e: number, out: string[], retryOut: string[] | null, note: string, write: (c: string) => Promise<void>) {
+    const dup = trimBoundaryDup(lines, s, e, out);
+    out = dup.lines;
+    const join = (o: string[]) => [...lines.slice(0, s - 1), ...o, ...lines.slice(e)].join('\n');
+    const updated = join(out);
+    if (updated === original) return _alreadyDone(args, `Lines ${s}–${e} already read like that: the change is in the file. Nothing was changed.`, _viewAt(lines, s, e));
+    const g = await _assistParseGuard(String(args.path), original, updated, () => retryOut ? join(trimBoundaryDup(lines, s, e, retryOut).lines) : null, { s, tail: s - 1 + out.length });
+    if ('error' in g) return g;
+    await write(g.updated);
+    const n = g.updated.split('\n').length - (lines.length - (e - s + 1));
+    return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated),
+        note: `${note}Change applied at lines ${s}–${s + Math.max(n, 1) - 1}.${dup.note}${g.note} No need to re-read the file to verify.` };
+}
+
 async function _handleReplaceInFile(args, context) {
     // Normalise parameter aliases that small models sometimes emit
     args = { ...args,
@@ -1679,10 +1791,12 @@ async function _handleReplaceInFile(args, context) {
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `replace_in_file: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
     }
+    // Experiment edit_assist (edit-assist.ts): close matches, edits already made, repeated boundary lines, the parse guard.
+    const _assist = runtime.experiment('edit_assist');
     if (!args.old_string) {
         return { error: `replace_in_file: old_string is empty. To REPLACE text, set old_string to the exact lines to find. To INSERT text, include the surrounding lines as old_string and repeat them plus your addition in new_string. Example — insert after a function signature: old_string='def foo():\\n    pass', new_string='def foo():\\n    # new line\\n    pass'. Read the file first to get exact content.` };
     }
-    if (args.old_string === args.new_string) {
+    if (!_assist && args.old_string === args.new_string) {
         return { error: `replace_in_file: old_string and new_string are identical — this would change nothing. If the text is already what you want, the edit is already in the file: read those lines to confirm instead of repeating it; otherwise change the part of new_string that must differ.` };
     }
     const nulNew = _nulReport(args.new_string);
@@ -1690,9 +1804,22 @@ async function _handleReplaceInFile(args, context) {
     if (_hasTruncationMarkers(args.new_string || '')) {
         return { error: `replace_in_file: Truncation placeholder detected in new_string (e.g. "// ... rest of code"). Provide the complete replacement text — no ellipsis or omission placeholders.` };
     }
-    const doReplace = async (read, write) => {
+    const doReplace = async (read, write): Promise<any> => {
         const original = await read();
         const lines = original.split('\n');
+        // The same text as old_string and new_string (A/B 2026-10-31: the most common failed edit of the tags arm): when it is in the
+        // file, the file already reads as wanted.
+        if (_assist && args.old_string === args.new_string) {
+            const at = original.indexOf(args.old_string);
+            if (at !== -1) { const ln = original.slice(0, at).split('\n').length; return _alreadyDone(args, `old_string and new_string are the same, and that text is in the file at line ${ln}: there is nothing to change.`, _viewAt(lines, ln, ln + args.old_string.split('\n').length - 1)); }
+            // At another indentation, or sent with escaped line breaks (A/B 2026-10-31: astropy-6938, requests-1963).
+            const _r = { s: args.start_line, e: args.end_line };
+            const same = assistLocate(lines, args.old_string, args.old_string, _r)
+                ?? (args.old_string.includes('\\n') ? assistLocate(lines, unescapeOnce(args.old_string), unescapeOnce(args.old_string), _r) : null);
+            if (same && same.misremembered === 0)
+                return _alreadyDone(args, `old_string and new_string are the same, and lines ${same.s}–${same.e} read like that${same.reindent ? ' (at another indentation)' : ''}: there is nothing to change.`, _viewAt(lines, same.s, same.e));
+            return { error: `replace_in_file: old_string and new_string are identical, and that text is not in "${args.path}". Nothing was changed. Put the text the file has now in old_string and the text you want in new_string.${same ? `\nThe closest lines (${same.misremembered} of your lines differ):\n${_viewAt(lines, same.s, same.e)}` : ''}` };
+        }
         // Compute character offset for the search window
         let searchOffset = 0, searchText = original;
         if (args.start_line != null || args.end_line != null) {
@@ -1756,6 +1883,31 @@ async function _handleReplaceInFile(args, context) {
                 idx = at - searchOffset; matchLen = args.old_string.length; outsideRange = true;
             }
         }
+        // edit_assist: new_string already in the file (the edit was made), or old_string close enough to one region the model has
+        // been shown to be its memory of it: the edit is replayed there as a line diff.
+        // The same once more with escaped line breaks (\n) read as line breaks (A/B 2026-10-31: flask-5063 sent its old_string as
+        // one line of \n-joined text; django-12497 a first line holding three); the parse guard checks what that writes.
+        if (idx === -1 && _assist) {
+            const _r = { s: args.start_line, e: args.end_line };
+            const chat = String(activeChatId ?? '');
+            const variants: Array<{ o: string; n: string; esc: string }> = [{ o: args.old_string, n: args.new_string, esc: '' }];
+            if (args.old_string.includes('\\n')) variants.push({ o: unescapeOnce(args.old_string), n: unescapeOnce(args.new_string),
+                esc: ' old_string and new_string held escaped line breaks (\\n); they were read as line breaks. Send real line breaks next time.' });
+            for (const v of variants) {
+                const done = alreadyAt(lines, v.n);
+                if (done > 0) return _alreadyDone(args, `old_string is not in the file, but new_string already stands at line ${done}: that change is in the file. Nothing was changed.`, _viewAt(lines, done, done + v.n.replace(/\n$/, '').split('\n').length - 1));
+                const hit = assistLocate(lines, v.o, v.n, _r);
+                if (!hit || seenShare(chat, lines.slice(hit.s - 1, hit.e)) < 0.6) continue;
+                const alt = unescapeOnce(v.n);
+                const altHit = alt !== v.n ? assistLocate(lines, v.o, alt, _r) : null;
+                const retry = altHit && altHit.s === hit.s && altHit.e === hit.e ? altHit.out : null;
+                const how = hit.misremembered
+                    ? `it most nearly matches lines ${hit.s}–${hit.e} (${hit.misremembered} of its lines differ from the file there), so the change was made there, keeping the file's own text in the lines you did not change${hit.reindent ? ' and with new_string re-indented to the file\'s indentation' : ''}`
+                    : `it matches lines ${hit.s}–${hit.e} ${hit.reindent ? 'except for indentation, so the change was made there with new_string re-indented to the file\'s indentation' : 'apart from whitespace, so the change was made there'}`;
+                const r = await _assistReplaceLines(args, original, lines, hit.s, hit.e, hit.out, retry, `old_string did not match the file exactly: ${how}. `, write);
+                return 'note' in r && v.esc ? { ...r, note: r.note + v.esc } : r;
+            }
+        }
         if (idx === -1) {
             let hint = '';
             // A range is echoed only when it is short: self-analysis P1 2026-10-29 gave end_line 2520 alone, the whole of tools.ts (99k
@@ -1790,6 +1942,27 @@ async function _handleReplaceInFile(args, context) {
             return { error: `replace_in_file: old_string not found in "${args.path}"${args.start_line != null || args.end_line != null ? ` within lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}` : ''}.${hint}` };
         }
         const absIdx = searchOffset + idx;
+        if (_assist) {
+            // Whole lines matched: replaced as lines (a repeated boundary line dropped); otherwise as text. Either way parse-guarded.
+            const end = absIdx + matchLen, matched = original.slice(absIdx, end);
+            const s = original.slice(0, absIdx).split('\n').length;
+            const pre = outsideRange ? `old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}, but occurs exactly once in the file. ` : '';
+            const aligned = (absIdx === 0 || original[absIdx - 1] === '\n') && (end === original.length || original[end] === '\n' || matched.endsWith('\n'));
+            const nl = matched.endsWith('\n');
+            if (aligned && (!nl || newText === '' || newText.endsWith('\n'))) {
+                const m = nl ? matched.slice(0, -1) : matched;
+                const e = s + m.split('\n').length - 1;
+                const toLines = (t: string) => nl && t === '' ? [] : (nl ? t.slice(0, -1) : t).split('\n');
+                const alt = unescapeOnce(newText);
+                const r = await _assistReplaceLines(args, original, lines, s, e, toLines(newText), alt !== newText && (!nl || alt.endsWith('\n')) ? toLines(alt) : null, pre, write);
+                return 'note' in r && decodedNote ? { ...r, note: r.note + decodedNote } : r;
+            }
+            const upd = original.slice(0, absIdx) + newText + original.slice(end);
+            const g = await _assistParseGuard(String(args.path), original, upd, () => original.slice(0, absIdx) + unescapeOnce(newText) + original.slice(end), { s, tail: s + newText.split('\n').length - 1 });
+            if ('error' in g) return g;
+            await write(g.updated);
+            return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated), note: `${pre}Change applied at line ${s}. No need to re-read the file to verify.${decodedNote}${g.note}` };
+        }
         const updated = original.slice(0, absIdx) + newText + original.slice(absIdx + matchLen);
         await write(updated);
         const _line = outsideRange ? original.slice(0, absIdx).split('\n').length : 0;
@@ -2435,6 +2608,22 @@ function _canonLanguage(lang: string): string {
     return _LANGS[l] ?? l;
 }
 
+// Native execute_code options. Experiment persistent_exec: the session is the chat's, or the worker's own (exec-session.ts).
+const _workerSessions = new WeakMap<object, string>();
+let _workerSessionSeq = 0;
+function _execOpts(args: any, context: any): { timeoutMs?: number; session?: string; reset?: boolean } | undefined {
+    const o: { timeoutMs?: number; session?: string; reset?: boolean } = {};
+    if (args.timeout_s != null) o.timeoutMs = execTimeoutMs(args.timeout_s);
+    if (runtime.experiment('persistent_exec')) {
+        if (context && typeof context === 'object') {
+            if (!_workerSessions.has(context)) _workerSessions.set(context, `worker:${++_workerSessionSeq}`);
+            o.session = _workerSessions.get(context);
+        } else o.session = `chat:${activeChatId ?? 'default'}`;
+        if (args.reset === true || args.reset === 'true') o.reset = true;
+    }
+    return Object.keys(o).length ? o : undefined;
+}
+
 async function _handleExecuteCode(args, context, onProgress?: (message:string)=>void) {
     const _rawCode = EXEC_CODE_ALIASES.map(k => args?.[k]).find(v => typeof v === 'string' && v) ?? '';
     // After the alias lookup above (a call that sent its code under `command` or `cmd` is still a shell command).
@@ -2636,7 +2825,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         // Headless mode: execute directly via Node child_process (bash/python/javascript).
         // Must come before Pyodide and local-sandbox so headless runs never
         // hit localhost:5000 or the Pyodide-loading-forever path.
-        try { execResult = await runtime.nativeExec(args.language, args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined); }
+        try { execResult = await runtime.nativeExec(args.language, args.code, _execOpts(args, context)); }
         catch (e) { return { error: `nativeExec: ${e.message}` }; }
     } else if (_needsDisplay && args.language !== 'bash' && args.language !== 'javascript') {
         // pygame / tkinter / etc. need a real canvas — execute_code can't provide one.
@@ -2736,7 +2925,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     if (args.language === 'python' && runtime.hasNativeExec && _isShellCompileError(args.code, execResult)) {
         try {
             // The same limit as the first attempt: changing the language is not changing the time the caller asked for (codex R50-001).
-            const asBash = await runtime.nativeExec('bash', args.code, args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : undefined);
+            const asBash = await runtime.nativeExec('bash', args.code, _execOpts(args, context));
             // No note: the main loop records the call itself as language "bash" (_ranAsBash, removed
             // before the result reaches history), so the model sees the call that ran. Any note made
             // it re-send the call still as python: v0.57 "use language bash" → 68 of 90 CTF
@@ -2752,6 +2941,10 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // output — stderr also carries legitimate output (gcc -v, progress, warnings).
     if (execResult && !execResult.error && !(execResult.exit_code > 0) && _STDERR_ERROR_RE.test(execResult.stderr ?? ''))
         execResult = { ...execResult, note: 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.' };
+    // Experiment syntax_watch: the files the run changed are parse-checked while they are on disk (a worker's run included).
+    if (runtime.hasNativeExec && runtime.experiment('syntax_watch')) execResult = await _watchExecSyntax(execResult);
+    // Experiment edit_assist: file lines printed by the run (cat, sed -n, grep) count as shown to the model.
+    if (runtime.experiment('edit_assist') && execResult) { noteSeen(String(activeChatId ?? ''), execResult.stdout); noteSeen(String(activeChatId ?? ''), execResult.stderr); }
     return execResult;
 }
 
@@ -2958,13 +3151,24 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
         return executeBrowserTool(name, args);
     if (name === 'run_workers')        return _handleRunWorkers(args, context);
     if (name === 'list_files')         return _handleListFiles(args, context);
-    if (name === 'read_file')          return _handleReadFile(args, context);
+    if (name === 'read_file') {
+        const r = await _handleReadFile(args, context);
+        if (runtime.experiment('edit_assist')) noteSeen(String(activeChatId ?? ''), (r as any)?.content);
+        return r;
+    }
 
     // SWE-bench test-file gate (benchmark policy, see isTestEditProtected) — must precede write-tool dispatch.
     if ((name === 'write_file' || name === 'replace_in_file' || name === 'append_file' || name === 'apply_patch') &&
         isTestEditProtected(args.path))
         return _testEditRefusal(args.path);
 
+    // Experiment edit_assist: text the model wrote counts as text it has seen (A/B 2026-10-31: flask-5063, astropy-7746 missed a
+    // close match because the region held the model's own earlier edit, never read back).
+    if (runtime.experiment('edit_assist') && (name === 'write_file' || name === 'replace_in_file')) {
+        const r = name === 'write_file' ? await _handleWriteFile(args, context) : await _handleReplaceInFile(args, context);
+        if (r && (r as any).success) noteSeen(String(activeChatId ?? ''), name === 'write_file' ? args?.content : args?.new_string);
+        return r;
+    }
     if (name === 'write_file')         return _handleWriteFile(args, context);
     if (name === 'ast_query')          return _handleAstQuery(args);
     if (name === 'run_git')            return _handleRunGit(args);

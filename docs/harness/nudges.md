@@ -32,6 +32,7 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | `step_validation` | nudge | `llm-loops.ts` | a step output check (pseudo tool call, missing state line, ...) failed |
 | `steps_left` | nudge | `llm-loops.ts` | few steps left in the turn |
 | `stuck_detected` | nudge | `llm-loops.ts` | three identical full results in a row |
+| `syntax_watch` | nudge | `llm-loops.ts` | experiment syntax_watch: a file the model changed has not parsed for 2 steps (again after 6); lists every file that does not parse |
 | `tool_failure` | nudge | `llm-loops.ts` | two to four consecutive tool errors |
 | `tool_failures` | nudge | `llm-loops.ts` | five or more consecutive failing tool calls |
 | `tool_repeat` | nudge | `llm-loops.ts` | a tool call repeated within the turn: cached results are returned |

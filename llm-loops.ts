@@ -21,7 +21,7 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, openSyntaxErrors } from './tools.js';
 import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
@@ -1282,6 +1282,8 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const _editedPaths = new Set<string>();   // files changed this run (scratch-only completion check)
     const _rewrites = newRewriteState();      // full rewrites per file since a check passed (rewrite_loop nudge)
     const _verif = newVerification();         // state of the change, for the failed-check bounce at COMPLETED
+    // Experiment syntax_watch: when each file that does not parse was first seen broken, and how often the model was reminded.
+    const _syntaxSeen = new Map<string, { since: number; reminded: number }>();
     const _shellWrites = new Set<string>();   // paths a shell command redirected into (container runs report no files_written)
     let _stateChanged = false;                // a successful command changed the system without a reported file (install, chmod, ...)
     let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
@@ -2377,6 +2379,19 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
         const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, args: r.args, result: r.result })));
         if (_reactive) { _emitNudge('reactive_guidance', _nudge(_reactive)); _forceToolCall = true; }
+        // Experiment syntax_watch: a file left broken for 2 steps is named again (twice at most, the second time after 6 steps),
+        // with every file that still does not parse.
+        if (runtime.experiment('syntax_watch')) {
+            const open = openSyntaxErrors();
+            for (const p of [..._syntaxSeen.keys()]) if (!open.some(([q]) => q === p)) _syntaxSeen.delete(p);
+            let due = false;
+            for (const [p] of open) {
+                const seen = _syntaxSeen.get(p) ?? { since: step, reminded: 0 };
+                _syntaxSeen.set(p, seen);
+                if ((seen.reminded === 0 && step - seen.since >= 2) || (seen.reminded === 1 && step - seen.since >= 6)) { seen.reminded++; due = true; }
+            }
+            if (due) _emitNudge('syntax_watch', _nudge(`[OPEN SYNTAX ERRORS] ${open.length === 1 ? 'This file does' : 'These files do'} not parse since your last change:\n${open.map(([p, e]) => `- ${p}: ${e.split('\n').slice(-1)[0]}${/line \d+/.test(e) ? ` (${(/line \d+/.exec(e) as RegExpExecArray)[0]})` : ''}`).join('\n')}\nFix ${open.length === 1 ? 'it' : 'them'} before going on: read the lines around the error.`));
+        }
         // Track successful file edits — feeds the completion gate ('edit' condition).
         // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
         if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
