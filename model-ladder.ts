@@ -11,23 +11,38 @@ export type LadderResult = {
     tokens: number;
     micro?: { solved: number; planned: number };   // 15-task baseline ladder, when it was run
 };
-export const MODEL_LADDER_DATE = '2026-10-30';
+export const MODEL_LADDER_DATE = '2026-11-01';
 export const MODEL_LADDER: Record<string, LadderResult> = {
-    "vercel|reflection/beam-free": { correct: 92, attempted: 99, capK: [245, 240, 243], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 148.2, tokens: 65461570 },
+    "nvidia|z-ai/glm-5.3-flash": { correct: 102, attempted: 105, capK: [240, 247, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 35.6, tokens: 48998858 },
+    "vercel|reflection/beam-free": { correct: 96, attempted: 101, capK: [246, 243, 244], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 191.7, tokens: 52731794 },
+    "vercel|reflection/beam": { correct: 96, attempted: 103, capK: [243, 245, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 152.1, tokens: 66397153 },
     "openrouter|minimax/minimax-m3.1-flash:free": { correct: 61, attempted: 66, capK: [245, 242, 237], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 93.7, tokens: 43943531 },
     "tokenharbor|deepseek-v4.1-flash:free": { correct: 61, attempted: 66, capK: [242, 197], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 135.4, tokens: 17517360, micro: { solved: 15, planned: 15 } },
+    "moonmath|deepseek-v4.1-flash": { correct: 11, attempted: 12, capK: [81], stops: ["quota"], ceilingK: 250, tokPerS: 123.2, tokens: 2050480 },
     "nvidia|stepfun-ai/step-5-preview": { correct: 82, attempted: 91, capK: [238, 245, 199], stops: ["ceiling", "ceiling", "limit"], ceilingK: 250, tokPerS: 21.6, tokens: 45479932, micro: { solved: 15, planned: 15 } },
     "vercel|minimax/minimax-m3.1-flash": { correct: 51, attempted: 57, capK: [243, 241, 238], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 89.3, tokens: 30272076 },
     "kilo|minimax/minimax-m3.1-flash:free": { correct: 45, attempted: 51, capK: [245, 228, 247], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 95.9, tokens: 30502628 },
     "kilo|reflection/beam-free": { correct: 59, attempted: 67, capK: [244, 210], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 150.4, tokens: 41043319 },
+    "kilo|inclusionai/ling-3.1-flash-1019-free": { correct: 85, attempted: 97, capK: [247, 247, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 79.7, tokens: 30193775 },
+    "nvidia|nvidia/nemotron-3.5-super-vl-120b-a12b": { correct: 92, attempted: 105, capK: [243, 246, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 95.8, tokens: 31901441 },
     "nous|meituan/longcat-2.5-preview:free": { correct: 28, attempted: 32, capK: [212], stops: ["quota"], ceilingK: 250, tokPerS: 33.3, tokens: 8296347, micro: { solved: 14, planned: 15 } },
     "nous|ornith/ornith-1.5-122b:free": { correct: 21, attempted: 24, capK: [161], stops: ["quota"], ceilingK: 250, tokPerS: 50.2, tokens: 5800705 },
     "kilo|stealth/glyph-cluster": { correct: 55, attempted: 63, capK: [243, 144], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 43.8, tokens: 39059346 },
+    "openrouter|nvidia/nemotron-3.5-super-vl:free": { correct: 91, attempted: 105, capK: [245, 247, 243], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 74.5, tokens: 33395330, micro: { solved: 15, planned: 15 } },
     "nous|stepfun/step-3.7-flash:free": { correct: 13, attempted: 15, capK: [107], stops: ["quota"], ceilingK: 250, tokPerS: 80.1, tokens: 3376373 },
+    "nvidia|deepseek-ai/deepseek-v4.1-flash": { correct: 35, attempted: 42, capK: [245, 51], stops: ["ceiling", "limit"], ceilingK: 250, tokPerS: 25.7, tokens: 12139154 },
     "tokenharbor|mimo-v2.6-flash:free": { correct: 86, attempted: 105, capK: [243, 245, 241], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 65.4, tokens: 41044973, micro: { solved: 14, planned: 15 } },
     "kilo|dots-studio/dots-3-note-preview:free": { correct: 69, attempted: 85, capK: [241, 244, 111], stops: ["ceiling", "ceiling", "quota"], ceilingK: 250, tokPerS: 55.5, tokens: 40722093 },
+    "nvidia|nvidia/nemotron-3-ultra-550b-a55b": { correct: 84, attempted: 104, capK: [247, 246, 245], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 27.6, tokens: 139189340 },
     "kilo|nvidia/nemotron-3.5-super-vl:free": { correct: 88, attempted: 111, capK: [244, 246, 245], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 95.5, tokens: 34226629, micro: { solved: 15, planned: 15 } },
+    "requesty|nvidia/muse-glimmer-30b": { correct: 14, attempted: 18, capK: [117], stops: ["limit"], ceilingK: 250, tokPerS: 36.6, tokens: 2863255 },
+    "vercel|inclusionai/ling-3.1-flash-1019": { correct: 80, attempted: 103, capK: [246, 247, 244], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 81.5, tokens: 32978254 },
+    "nvidia|minimaxai/minimax-m3.1-flash": { correct: 33, attempted: 43, capK: [242, 225], stops: ["ceiling", "context"], ceilingK: 250, tokPerS: 22.9, tokens: 37143158 },
     "nous|reflection/beam-1.0-501b-a23b:free": { correct: 9, attempted: 12, capK: [95], stops: ["quota"], ceilingK: 250, tokPerS: 154.3, tokens: 6007277 },
+    "requesty|novita/ling-3.1-flash": { correct: 41, attempted: 55, capK: [246, 161], stops: ["ceiling", "quota"], ceilingK: 250, tokPerS: 76.7, tokens: 15451916 },
     "kilo|nvidia/nemotron-3-ultra-550b-a55b:free": { correct: 72, attempted: 105, capK: [242, 246, 242], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 36.1, tokens: 138338185 },
+    "apinex|free/gpt-6-luna": { correct: 12, attempted: 21, capK: [153], stops: ["quota"], ceilingK: 250, tokPerS: 85.2, tokens: 6670821 },
+    "vercel|nvidia/nemotron-3.5-lightning-free": { correct: 43, attempted: 111, capK: [244, 245, 245], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 148.6, tokens: 74264488 },
     "kilo|nvidia/nemotron-3.5-lightning:free": { correct: 11, attempted: 30, capK: [186], stops: ["quota"], ceilingK: 250, tokPerS: 46.8, tokens: 35261082 },
+    "kilo|nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": { correct: 16, attempted: 184, capK: [246, 247, 246], stops: ["ceiling", "ceiling", "ceiling"], ceilingK: 250, tokPerS: 71.1, tokens: 29491913 },
 };
