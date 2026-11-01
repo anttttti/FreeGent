@@ -2,6 +2,8 @@
 
 Settings are stored in your browser. Tabs below follow the order in the app. The TUI and CLI read the same agent settings through profiles and flags; see [Local or self-hosted](../local/index.md).
 
+The bottom of the Settings panel shows the version you are running, linked to its code on GitHub. A copy you run yourself shows `git describe` (for example `v1.0.77-3-gabc1234-dirty`).
+
 ## Profiles
 
 A profile is a named snapshot of your model list, tools, skills and agent settings. **Save Current** creates one, you can load, export and import them as `.json`, and sharing one never shares API keys.

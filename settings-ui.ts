@@ -10,6 +10,7 @@ import { fmtDelay } from './retry.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
 import { modelPageUrl as _modelPageUrl } from './model-page-url.js';
 import { detectEndpoint, LOCAL_ENDPOINT_PRESETS } from './endpoint-detect.js';
+import { FG_VERSION, FG_VERSION_URL } from './build-info.js';
 // settings-ui.js — FreeGent: settings modal, populateSettingsForm, header model displays
 // Depends on: config.js, llm-loops.js
 
@@ -459,6 +460,8 @@ function saveSettings() {
 
 function populateSettingsForm() {
     window._settingsPopulating = true;
+    const ver = document.getElementById('settings-version') as HTMLAnchorElement | null;
+    if (ver) { ver.textContent = FG_VERSION; ver.href = FG_VERSION_URL; }
     // Mark each input as populated so saveKey() can distinguish a deliberately-cleared
     // field from one that was never shown a value (race with the keys endpoint).
     const set = (id, val, keyPrefix = '') => {

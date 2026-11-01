@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitepress';
+import { fgVersion, fgVersionUrl } from '../../bin/version.mjs';
 
 const GH = 'https://github.com/anttttti/FreeGent';
+// The version these pages were built from, shown in the top bar (the sidebar layout hides VitePress's footer).
+const VERSION = fgVersion();
 
 // Served at https://freegent.ai/docs/ next to the app. `npm run docs:build` writes to dist/docs and must
 // run after `npm run build`, which empties dist/.
@@ -18,6 +21,7 @@ export default defineConfig({
     nav: [
       { text: 'Open the app', link: 'https://freegent.ai/', target: '_self' },
       { text: 'GitHub', link: GH },
+      { text: VERSION, link: fgVersionUrl(VERSION) },
     ],
     sidebar: [
       { text: 'Overview', link: '/overview' },

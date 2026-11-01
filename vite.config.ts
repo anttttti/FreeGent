@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { localIgnoredDirs } from './scripts/local-ignored-dirs.mjs';
+import { fgVersion, fgVersionUrl } from './bin/version.mjs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   loadDotenv, configDir, serverKeys, serverKeyStatus, loadOrCreateToken,
@@ -311,10 +312,11 @@ export default defineConfig(() => {
     // Dev-mode syntax downleveling for Safari 12 is handled by the safari12Plugin above
     // (Vite 8 dev server ignores esbuild.target for transforms; plugin enforce:'post' wins).
     // build.target covers production bundles.
-    // Deployment version (<benchmark version>.<counter>, set by deploy.sh / the Pages workflow from
-    // the deploy tag); 'dev' for local servers and untagged builds. Sent with uploaded chat logs.
+    // Deployment version (<series>.<counter>, set by deploy.sh / the Pages workflow from the deploy
+    // tag); local servers get `git describe` (see bin/version.mjs). Shown in Settings, sent with uploaded chat logs.
     define: {
-      __FG_VERSION__: JSON.stringify(process.env.FG_VERSION || 'dev'),
+      __FG_VERSION__: JSON.stringify(fgVersion()),
+      __FG_VERSION_URL__: JSON.stringify(fgVersionUrl(fgVersion())),
     },
     esbuild: {
       target: 'safari12',

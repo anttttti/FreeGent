@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // freegent — one command for the terminal UI and the command-line (pipeline) form. See route.mjs for which runs when.
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { route, HELP } from './route.mjs';
+import { fgVersion } from './version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const r = route(process.argv.slice(2), { stdinTTY: !!process.stdin.isTTY, stdoutTTY: !!process.stdout.isTTY });
 
 if (r.program === 'help') { console.log(HELP); process.exit(0); }
-if (r.program === 'version') { console.log(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version); process.exit(0); }
+if (r.program === 'version') { console.log(fgVersion()); process.exit(0); }
 
 const entry = join(root, r.program === 'tui' ? 'fg-tui.tsx' : 'fg-run.ts');
 // The TypeScript sources run through tsx; it is resolved from this package, not from the directory the command is run in.
