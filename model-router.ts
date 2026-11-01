@@ -324,6 +324,13 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
         _endpointCooldown.set(key, Date.now() + 24 * 60 * 60_000);
         return;
     }
+    // APInex free routes need a daily check-in on its site ("Daily check-in required to use free models", HTTP 402, seen 2026-11-01).
+    // The account owner can check in at any time, so the free routes are tried again after 15 minutes, not at the next reset.
+    if (endpoint.provider === 'apinex' && /HTTP 402\b/.test(_msg) && /check-in required/i.test(_msg)) {
+        _endpointCooldown.set(key, Date.now() + 15 * 60_000);
+        _cooldownSiblings(endpoint, 15 * 60_000);
+        return;
+    }
     // MoonMath's Free plan runs two requests at once per key (x-ratelimit-api_key-limit-max_parallel_requests: 2) and refuses a third
     // with 429 + Retry-After: 60, although a slot frees as soon as one finishes (checked 2026-11-01). Retry this model shortly; no quota is spent.
     if (endpoint.provider === 'moonmath' && /HTTP 429\b/.test(_msg) && /requests at once|parallel/i.test(_msg)) {

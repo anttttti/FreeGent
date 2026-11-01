@@ -84,6 +84,12 @@ describe('APInex and MoonMath quota policies', () => {
         expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(0);
     });
 
+    it('re-tries APInex free routes 15 minutes after a daily check-in refusal, not at the next reset', () => {
+        _markCooldown(apinex, null, new Error('HTTP 402: Daily check-in required to use free models. Please visit https://apinex.bond/airdrop?tab=quests to check in.'));
+        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(900);
+        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(900);
+    });
+
     it('shares APInex wallet/key allowance refusals with paid routes and honors a temporary reservation wait', () => {
         localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'glm-5.3', label: 'Paid route' }]));
         _markCooldown(apinex, 30_000, new Error('HTTP 402: Insufficient spendable balance or API-key allowance'));

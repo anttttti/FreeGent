@@ -164,5 +164,7 @@ currently available only with a subscription", observed live) skips only that mo
 A wallet/API-key allowance error affects all APInex routes, honoring an explicit
 temporary-reservation retry delay, else one hour. A free-allowance error cools the `free/`
 routes until the reset it names, else until the next 00:00 UTC, when the daily budget resets.
+Free use also needs a **daily check-in** on the APInex site (Airdrop → Quests): without it every `free/` route answers `402` "Daily check-in
+required to use free models" (seen 2026-11-01, just after the 00:00 UTC reset). FreeGent then tries the free routes again every 15 minutes.
 Daily exhaustion was not deliberately triggered. Regression tests cover documented error classes and reset
 formats, without claiming that synthetic reset-message fixtures are exact provider payloads.
