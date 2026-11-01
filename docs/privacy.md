@@ -17,6 +17,7 @@ Clearing the site's data in your browser removes all of it. If you run FreeGent 
 | Prompts, chat history, tool results, and file contents the agent reads | The model provider you chose, with your key | Every model call. The provider's own privacy terms apply, and some free tiers allow the provider to use prompts to improve their products. Check the terms of each provider you use. |
 | The same requests | Through FreeGent's Cloudflare Worker (`proxy.freegent.ai`) first | Only at the **Routed** level. The Worker forwards the request and stores nothing. Cloudflare, which runs it, handles the traffic like any host. |
 | Search queries and fetched URLs | Tavily, Brave, Wikipedia, GitHub or Stack Exchange; or the site being fetched | When the agent uses `web_search` or `fetch_url`. Never at the **Local** level. |
+| Browser signals for a bot check (Cloudflare Turnstile) | Cloudflare (`challenges.cloudflare.com`) | Only at the **Routed** level, once a session, before the first page fetch through the Worker. Turnstile sets no tracking cookies and Cloudflare does not use the data for ads. |
 | Requests to MCP servers you added | Those servers | When the agent uses their tools |
 | Library and runtime downloads | jsDelivr and esm.sh (libraries, Pyodide); `cdn.wasmer.io` and `uutils.org` (WebAssembly packages, fetched on first use and checked against pinned hashes) | When the page or a command first needs them |
 | A page-view count | GoatCounter, a cookie-free counter | On by default at Provider-only and Routed. Off when your browser sends Do Not Track, at the Local level, or when you clear the checkbox in **Settings → Privacy**. |
@@ -32,7 +33,7 @@ Change the level with the **Privacy** button in the sidebar or under **Settings 
 | Level | Model calls | Everything else |
 |---|---|---|
 | **Provider-only** (default) | Straight from your browser to the provider | No Worker. No location lookup and no log uploads. The page-view counter is on. |
-| **Routed** | Through FreeGent's Worker | Location lookup, page-view counter and log sending are available. |
+| **Routed** | Through FreeGent's Worker | Location lookup, page-view counter and log sending are available. Page fetches through the Worker first pass a Cloudflare Turnstile check. |
 | **Local** | Only to `localhost` and private-network addresses (Ollama, vLLM, LM Studio) | Cloud providers, web search and `fetch_url` are refused. No page-view counter. Libraries and runtimes you have not yet cached still download. |
 
 Details are in [Settings → Privacy](webui/settings.md#privacy) and [How requests reach providers](models/proxy.md).

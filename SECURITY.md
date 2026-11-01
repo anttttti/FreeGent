@@ -43,8 +43,11 @@ FreeGent has four parts, and they have different exposure:
   requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every
   attempt spends from a per-IP rate limit (`FG_RATE_LIMITER` in `wrangler.toml`), so the key cannot
   be guessed online. Other clients never receive a shared key. An `Origin` check keeps other
-  websites out, but any non-browser client can send any `Origin`; the same rate limit also bounds
-  the open `?url=` fetch path.
+  websites out, but any non-browser client can send any `Origin`. The `?url=` fetch path therefore
+  also needs a session token from a Cloudflare Turnstile check (`POST /session`): an HMAC over the
+  expiry and the client's network (IPv4 address or IPv6 /64), valid for four hours, signed with the
+  `FG_SESSION_KEY` secret. A Worker without the Turnstile secrets refuses that path unless
+  `FG_OPEN_RELAY=1` says it is private. The same per-IP rate limit bounds it as well.
 - **The headless runner** (`fg-run.ts`, benchmarks) runs agent commands on the host or in a task
   container. Credentials are removed from command environments; `FG_EXEC_KEEP_ENV=NAME,…` passes
   named variables through when a task needs one.

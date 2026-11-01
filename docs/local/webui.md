@@ -38,14 +38,21 @@ A static site without a Worker still loads, but these requests fail. Providers t
 1. Create a free Cloudflare account.
 2. In `cf-worker/wrangler.toml`, delete the `workers_dev = false` and `routes = …` lines. They bind the official Worker to `proxy.freegent.ai` and fail in other accounts. Change `name` if you want a different URL slug.
 3. Add your site's origin (for example `https://chat.example.com`) to `ALLOWED_ORIGINS` in `cf-worker/worker.js`. Requests from other origins get `403`.
-4. Deploy:
+4. Set up the bot check that guards page fetches. Without it the Worker refuses them with `503`, because otherwise anyone could use your Worker as an open web relay. In the Cloudflare dashboard go to **Turnstile → Add widget**, add your site's hostname, and choose mode **Managed**. Put the site key in `wrangler.toml` as `TURNSTILE_SITE_KEY`, then store the two secrets:
+   ```bash
+   cd cf-worker
+   npx wrangler secret put TURNSTILE_SECRET     # the widget's secret key
+   npx wrangler secret put FG_SESSION_KEY       # any long random string, e.g. openssl rand -hex 32
+   ```
+   A Worker that nobody else can reach can skip this with `FG_OPEN_RELAY = "1"` under `[vars]`.
+5. Deploy:
    ```bash
    cd cf-worker
    npx wrangler deploy
    # or, if the browser login cannot reach localhost:
    CLOUDFLARE_API_TOKEN=<token> npx wrangler deploy
    ```
-5. In your site, open **Settings → Privacy → CORS Proxy / CF Worker URL** and paste the Worker URL (`https://freegent-proxy.<you>.workers.dev`).
+6. In your site, open **Settings → Privacy → CORS Proxy / CF Worker URL** and paste the Worker URL (`https://freegent-proxy.<you>.workers.dev`).
 
 The URL field takes precedence over everything else, so this works on any domain. Without it, a page on a host that is not a known static host calls `/api/proxy` on its own server, which a static site does not have.
 

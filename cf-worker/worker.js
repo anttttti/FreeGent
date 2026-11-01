@@ -32,14 +32,16 @@
  * Three request shapes are supported:
  *
  *   GET  /keys                   – returns which provider keys are configured
- *   GET  ?url=<encoded>          – used by fetch_url and web-search tools
+ *   GET  ?url=<encoded>          – used by fetch_url and web-search tools (X-FG-Session from POST /session)
+ *   POST /session {token}        – a passed Turnstile challenge for a session token
  *   POST {url, headers?, body?}  – used by all LLM provider calls
  *
  * Security
  * ──────────────────
  * - Origin check: only browsers from ALLOWED_ORIGINS may call this worker.
  * - POST (LLM proxy): strict domain allowlist — only known LLM/search providers.
- * - GET  (fetch_url): any public HTTPS URL; private/reserved IPs are blocked (SSRF guard).
+ * - GET  (fetch_url): any public HTTPS URL; private/reserved IPs are blocked (SSRF guard). Needs a session
+ *   token from a Cloudflare Turnstile check (POST /session), the Developer key, or FG_OPEN_RELAY=1.
  * - Secrets never leave the worker; /keys only returns true/false per provider.
  *
  * Privacy
@@ -124,9 +126,9 @@ const SEARCH_HEADER_MAP = {
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass, X-FG-Sync-Token, X-FG-Sync-Base',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass, X-FG-Sync-Token, X-FG-Sync-Base, X-FG-Session',
     'Access-Control-Max-Age':       '86400',
-    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens',
+    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error, X-FG-Session-Required, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens',
 };
 
 // ── POST /log: a user-sent chat log, stored for debugging ─────────────────────
@@ -213,6 +215,75 @@ async function _syncTokenOk(request, env) {
     return d === 0;
 }
 const _json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
+// ── Relay sessions: the open page-fetch path (GET ?url=) needs a Cloudflare Turnstile check ──────
+// Anyone can call this Worker (an Origin header is easy to fake), so ?url= would be an open web relay. The page
+// passes an invisible Turnstile challenge once (POST /session {token}), and gets a session token: "<exp>.<hmac>",
+// signed with FG_SESSION_KEY over the expiry and the client's network, so it is stateless and useless from another
+// network. Requests carry it as X-FG-Session; a missing or stale one gets 401 with X-FG-Session-Required and the
+// public site key, and the page (relay-session.ts) runs the challenge again. Requests with the Developer key skip it.
+// Off only with FG_OPEN_RELAY=1 (a Worker nobody else can reach); without that and without the Turnstile settings
+// the fetch path answers 503, so a Worker cannot be left open by accident.
+const RELAY_SESSION_TTL_MS = 4 * 3600 * 1000;
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+const _turnstileReady = (env) => !!(env && env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET && env.FG_SESSION_KEY);
+// The client's network: the IPv4 address, or the /64 of an IPv6 one (its temporary addresses rotate within it).
+function _clientNet(request) {
+    const ip = (request.headers.get('CF-Connecting-IP') || '').toLowerCase();
+    if (!ip.includes(':')) return ip;
+    const [head, tail] = ip.split('::');
+    const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
+    const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+    return groups.slice(0, 4).map(g => g.replace(/^0+(?=.)/, '')).join(':');
+}
+async function _relayMac(env, exp, net) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(env.FG_SESSION_KEY)),
+        { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return _hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`fg-relay:${exp}:${net}`)));
+}
+async function _relaySessionOk(request, env) {
+    const t = request.headers.get('X-FG-Session') || '';
+    const dot = t.indexOf('.');
+    const exp = Number(t.slice(0, dot));
+    if (dot < 1 || !(exp > Date.now()) || exp > Date.now() + RELAY_SESSION_TTL_MS + 1000) return false;
+    const want = await _relayMac(env, exp, _clientNet(request)), got = t.slice(dot + 1);
+    if (want.length !== got.length) return false;
+    let d = 0;
+    for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
+    return d === 0;
+}
+// null when the request may use the fetch path, otherwise the refusal.
+async function _relayGate(request, env) {
+    if (env && env.FG_OPEN_RELAY === '1') return null;
+    if (await _unlocked(request, env)) return null;
+    if (!_turnstileReady(env))
+        return _err(503, 'Page fetches are off on this Worker: set TURNSTILE_SITE_KEY, TURNSTILE_SECRET and FG_SESSION_KEY (Cloudflare Turnstile), or FG_OPEN_RELAY=1 for a Worker nobody else can reach');
+    if (await _relaySessionOk(request, env)) return null;
+    return new Response(JSON.stringify({ error: 'Session check required', turnstileSiteKey: env.TURNSTILE_SITE_KEY }), {
+        status: 401, headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', 'X-FG-Session-Required': '1' },
+    });
+}
+// POST /session {token}: a passed Turnstile challenge for a session token. The widget's hostname list (Cloudflare
+// dashboard) decides which sites can produce a token for this site key.
+async function _relaySession(request, env) {
+    if (request.method !== 'POST') return _err(405, 'POST only');
+    if (!_turnstileReady(env)) return _err(503, 'Cloudflare Turnstile is not set up on this Worker');
+    if (await _rateLimited(request, env, 'session')) return _err(429, 'Rate limit exceeded — try again in a minute');
+    let token = '';
+    try { token = String((await request.json()).token || ''); } catch {}
+    if (!token || token.length > 4096) return _err(400, 'Missing Turnstile token');
+    const form = new FormData();
+    form.append('secret', env.TURNSTILE_SECRET);
+    form.append('response', token);
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (ip) form.append('remoteip', ip);
+    let result;
+    try { result = await (await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form, signal: AbortSignal.timeout(10_000) })).json(); }
+    catch { return _err(502, 'Could not reach Cloudflare Turnstile'); }
+    if (!result || result.success !== true) return _err(403, 'Turnstile check failed');
+    const exp = Date.now() + RELAY_SESSION_TTL_MS;
+    return _json({ session: `${exp}.${await _relayMac(env, exp, _clientNet(request))}`, expires: exp });
+}
 
 async function _sync(request, env, url) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -323,6 +394,8 @@ export default {
 
         const workerUrl = new URL(request.url);
 
+        if (workerUrl.pathname === '/session') return _relaySession(request, env);
+
         // ── GET /keys — which provider secrets are configured ─────────────────
         if (request.method === 'GET' && workerUrl.pathname === '/keys') {
             const available = {};
@@ -343,6 +416,8 @@ export default {
                 const target = workerUrl.searchParams.get('url');
                 if (!target) return _err(400, 'Missing url parameter');
                 if (await _rateLimited(request, env, 'get')) return _err(429, 'Rate limit exceeded — try again in a minute');
+                const refused = await _relayGate(request, env);
+                if (refused) return refused;
                 // Allow any public HTTPS URL; block private/reserved IPs (SSRF guard).
                 if (!_publicUrlOk(target)) return _err(403, 'URL blocked (private address or non-HTTPS)');
 

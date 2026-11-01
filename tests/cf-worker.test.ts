@@ -13,6 +13,9 @@ function post(body: any, origin: string | null = ORIGIN) {
 const get = (target: string) => new Request(`https://fg-proxy.example.workers.dev/?url=${encodeURIComponent(target)}`,
     { headers: { Origin: ORIGIN, 'CF-Connecting-IP': '203.0.113.9' } });
 
+// The fetch-path tests below are about the relay itself; its Turnstile gate has its own tests.
+const OPEN = { FG_OPEN_RELAY: '1' };
+
 const LLM = { url: 'https://openrouter.ai/api/v1/chat/completions', headers: {}, body: '{}' };
 
 describe('CF Worker', () => {
@@ -140,7 +143,7 @@ describe('CF Worker', () => {
 
     it('re-checks redirects on the fetch path', async () => {
         upstream.mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: 'https://169.254.169.254/latest/' } }));
-        const r = await worker.fetch(get('https://example.com/r'), {});
+        const r = await worker.fetch(get('https://example.com/r'), OPEN);
         expect(r.status).toBe(403);
         expect(upstream).toHaveBeenCalledTimes(1);
     });
@@ -154,7 +157,7 @@ describe('CF Worker', () => {
         upstream.mockResolvedValueOnce(redirect('https://example.com/auth', 'signin=1; Path=/; Secure'))
                 .mockResolvedValueOnce(redirect('https://other.example.org/x'))
                 .mockResolvedValueOnce(new Response('ok', { status: 200 }));
-        const r = await worker.fetch(get('https://example.com/page'), {});
+        const r = await worker.fetch(get('https://example.com/page'), OPEN);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Cookie).toBeUndefined();
         expect(upstream.mock.calls[1][1].headers.Cookie).toBe('signin=1');
@@ -164,7 +167,7 @@ describe('CF Worker', () => {
 
     it('retries an https -> http redirect over https', async () => {
         upstream.mockResolvedValueOnce(new Response(null, { status: 301, headers: { Location: 'http://example.com/events/' } }));
-        const r = await worker.fetch(get('https://www.example.com/events/'), {});
+        const r = await worker.fetch(get('https://www.example.com/events/'), OPEN);
         expect(r.status).toBe(200);
         expect(upstream.mock.calls[1][0]).toBe('https://example.com/events/');
     });
@@ -173,11 +176,11 @@ describe('CF Worker', () => {
         for (const t of ['https://169.254.169.254/latest/meta-data/', 'https://127.0.0.2/', 'https://0.0.0.0/',
                          'https://100.64.1.1/', 'https://[::1]/', 'https://[fd00::1]/', 'https://[::ffff:127.0.0.1]/',
                          'https://localhost./', 'http://example.com/']) {
-            const r = await worker.fetch(get(t), {});
+            const r = await worker.fetch(get(t), OPEN);
             expect(r.status, t).toBe(403);
         }
         expect(upstream).not.toHaveBeenCalled();
-        expect((await worker.fetch(get('https://example.com/'), {})).status).toBe(200);
+        expect((await worker.fetch(get('https://example.com/'), OPEN)).status).toBe(200);
     });
 });
 
@@ -258,5 +261,82 @@ describe('CF Worker key guessing', () => {
         lim.limit.mockResolvedValue({ success: false });
         expect((await worker.fetch(mk('pw'), env)).status).toBe(429);
         expect(kvPut).not.toHaveBeenCalled();
+    });
+});
+
+describe('CF Worker relay sessions (Turnstile)', () => {
+    const TS = { TURNSTILE_SITE_KEY: '0xSITE', TURNSTILE_SECRET: 'secret', FG_SESSION_KEY: 'k'.repeat(32) };
+    const getFrom = (ip: string, session?: string, extra: Record<string, string> = {}) =>
+        new Request(`https://fg-proxy.example.workers.dev/?url=${encodeURIComponent('https://example.com/')}`,
+            { headers: { Origin: ORIGIN, 'CF-Connecting-IP': ip, ...(session ? { 'X-FG-Session': session } : {}), ...extra } });
+    const sessionReq = (ip: string, token = 'tok') => new Request('https://fg-proxy.example.workers.dev/session',
+        { method: 'POST', headers: { Origin: ORIGIN, 'CF-Connecting-IP': ip, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    let upstream: any;
+    beforeEach(() => {
+        upstream = vi.fn(async (url: string) => String(url).includes('siteverify')
+            ? new Response(JSON.stringify({ success: true }), { status: 200 })
+            : new Response('page', { status: 200 }));
+        vi.stubGlobal('fetch', upstream);
+    });
+    afterEach(() => vi.unstubAllGlobals());
+    const session = async (ip: string) => (await (await worker.fetch(sessionReq(ip), TS)).json()).session as string;
+
+    it('refuses the fetch path with 503 when Turnstile is not set up and the relay is not opened explicitly', async () => {
+        const r = await worker.fetch(getFrom('203.0.113.9'), {});
+        expect(r.status).toBe(503);
+        expect((await r.json()).error).toMatch(/TURNSTILE_SECRET.*FG_OPEN_RELAY/);
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it('asks for a session with the public site key, never fetching the target first', async () => {
+        const r = await worker.fetch(getFrom('203.0.113.9'), TS);
+        expect(r.status).toBe(401);
+        expect(r.headers.get('X-FG-Session-Required')).toBe('1');
+        expect(r.headers.get('Access-Control-Expose-Headers')).toMatch(/X-FG-Session-Required/);
+        expect((await r.json()).turnstileSiteKey).toBe('0xSITE');
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it('trades a passed Turnstile token for a session that opens the fetch path from the same network', async () => {
+        const s = await session('203.0.113.9');
+        const verify = upstream.mock.calls[0];
+        expect(verify[0]).toMatch(/challenges\.cloudflare\.com\/turnstile\/v0\/siteverify/);
+        expect(verify[1].body.get('secret')).toBe('secret');
+        expect(verify[1].body.get('response')).toBe('tok');
+        expect(verify[1].body.get('remoteip')).toBe('203.0.113.9');
+        expect((await worker.fetch(getFrom('203.0.113.9', s), TS)).status).toBe(200);
+    });
+
+    it('a session is refused from another network, but survives an IPv6 address change within the /64', async () => {
+        const s4 = await session('203.0.113.9');
+        expect((await worker.fetch(getFrom('198.51.100.7', s4), TS)).status).toBe(401);
+        const s6 = await session('2001:db8:aa:bb:1111:2222:3333:4444');
+        expect((await worker.fetch(getFrom('2001:db8:aa:bb::9', s6), TS)).status).toBe(200);
+        expect((await worker.fetch(getFrom('2001:db8:aa:cc::9', s6), TS)).status).toBe(401);
+    });
+
+    it('refuses a tampered, expired, or differently keyed session', async () => {
+        const s = await session('203.0.113.9');
+        const [exp, mac] = s.split('.');
+        expect((await worker.fetch(getFrom('203.0.113.9', `${Number(exp) + 1}.${mac}`), TS)).status).toBe(401);
+        expect((await worker.fetch(getFrom('203.0.113.9', `${exp}.${mac.replace(/.$/, c => c === '0' ? '1' : '0')}`), TS)).status).toBe(401);
+        expect((await worker.fetch(getFrom('203.0.113.9', s), { ...TS, FG_SESSION_KEY: 'other' })).status).toBe(401);
+        vi.useFakeTimers({ now: Date.now() + 5 * 3600 * 1000 });
+        try { expect((await worker.fetch(getFrom('203.0.113.9', s), TS)).status).toBe(401); }
+        finally { vi.useRealTimers(); }
+    });
+
+    it('gives no session when Turnstile says the check failed, or without a token', async () => {
+        upstream.mockImplementation(async () => new Response(JSON.stringify({ success: false, 'error-codes': ['invalid-input-response'] })));
+        expect((await worker.fetch(sessionReq('203.0.113.9'), TS)).status).toBe(403);
+        expect((await worker.fetch(sessionReq('203.0.113.9', ''), TS)).status).toBe(400);
+        expect((await worker.fetch(sessionReq('203.0.113.9'), {})).status).toBe(503);
+    });
+
+    it('the Developer key and FG_OPEN_RELAY skip the check', async () => {
+        const env = { ...TS, FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+        expect((await worker.fetch(getFrom('203.0.113.9', undefined, { 'X-FG-Dev-Key': 'pw' }), env)).status).toBe(200);
+        expect((await worker.fetch(getFrom('203.0.113.9', undefined, { 'X-FG-Dev-Key': 'wrong' }), env)).status).toBe(401);
+        expect((await worker.fetch(getFrom('203.0.113.9'), { ...TS, FG_OPEN_RELAY: '1' })).status).toBe(200);
     });
 });

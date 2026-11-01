@@ -23,6 +23,8 @@ The sidebar's **Privacy** button and **Settings → Privacy** have two levels th
 
 The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, MoonMath, Requesty, OpenAI, Tavily and Brave. For `GET` (page fetches and searches) it forwards to any public HTTPS address. It accepts requests only from the FreeGent sites and local dev ports, applies a per-IP rate limit and stores nothing.
 
+Because any program can call the Worker, its page-fetch path first asks for a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) check. The first page fetch of a session runs it in the background, usually with nothing to see. Cloudflare shows a checkbox only when your browser or network looks unusual. The check gives the page a session token for about four hours, tied to your network. If a content blocker stops `challenges.cloudflare.com`, page fetches through the Worker fail with a message saying so. Provider-only and Local never contact the Worker, so they never run the check.
+
 The Worker can also hold shared provider keys, but it uses them only for sessions that present the maintainer's Developer key (Settings → Models → API Credentials → Developer key). Ordinary visitors always use their own keys.
 
 ## When you do need your own proxy or Worker
@@ -30,6 +32,8 @@ The Worker can also hold shared provider keys, but it uses them only for session
 - **You host FreeGent yourself on a static site.** The hosted Worker only accepts its own origins. A fork on `yourname.github.io` or `*.pages.dev` is treated as a static host and sent to `proxy.freegent.ai`, which answers `403 Origin not allowed`. On any other domain the page assumes a local server and calls `/api/proxy` on its own host, which a static site does not have. Either way, deploy [the Worker](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md) to your Cloudflare account, add your origin to `ALLOWED_ORIGINS`, and paste its URL into **Settings → Privacy → CORS Proxy / CF Worker URL**. See [Local or self-hosted](../local/webui.md#hosting-your-own-site-and-worker).
 - **You want a provider that is not on the allow-list** from the hosted site. Add its host to `ALLOWED_HOSTS` in your own Worker.
 - **You want shared keys for your own users.** Store them as Worker secrets and set a Developer key; see the Worker README.
+
+Your own Worker needs a Turnstile widget for your domain before page fetches work, or `FG_OPEN_RELAY = "1"` if nobody else can reach it; see the Worker README.
 
 ## Local models
 

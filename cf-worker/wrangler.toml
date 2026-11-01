@@ -25,6 +25,15 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 #
 # Keys are injected server-side and never visible to browser clients.
 
+# Cloudflare Turnstile for the page-fetch path (GET ?url=), which would otherwise be an open web relay: the page
+# passes an invisible check once per session (see "Relay sessions" in worker.js). The site key is public; the widget
+# (Cloudflare dashboard → Turnstile, hostname freegent.ai, mode Managed) holds the matching secret:
+#   npx wrangler secret put TURNSTILE_SECRET
+#   npx wrangler secret put FG_SESSION_KEY      # any long random string (openssl rand -hex 32); signs session tokens
+# Without all three the fetch path answers 503. A Worker nobody else can reach may set FG_OPEN_RELAY = "1" instead.
+[vars]
+TURNSTILE_SITE_KEY = "0x4AAAAAAFvcqAzSWCvGLnTU"
+
 # Per-client-IP rate limit for requests that use a shared key above (only sent with the Developer
 # key), for guesses at the Developer key, and for the open ?url= fetch path. Anyone can call this
 # Worker (an Origin header is easy to fake). worker.js keys the limit as "key:<ip>" / "get:<ip>" /

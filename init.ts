@@ -2,6 +2,7 @@
 // Depends on: all other modules (loaded last)
 import { sanitizePastedHtml } from './paste-sanitize.js';
 import { installPassHeader, installPrivacyGuard } from './proxy.js';
+import { installRelaySession } from './relay-session.js';
 import { getPrivacyLevel } from './privacy.js';
 import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
@@ -151,6 +152,7 @@ installDevLog();   // capture errors/warnings from the start; sends only while a
 document.addEventListener('DOMContentLoaded', async () => {
     installPassHeader();
     installPrivacyGuard();
+    installRelaySession();   // outermost: its own /session call still passes the privacy guard
     await loadServerKeys(); // load env-var keys from Python server before anything else
     // Query the CF Worker for shared provider keys (non-blocking — re-renders model lists when done)
     loadCfWorkerKeys?.().catch(() => {});
