@@ -100,8 +100,8 @@ describe('Requesty cooldowns', () => {
 
     it('cools every Requesty model together on the shared free-model rate limit', () => {
         _markCooldown(W.specToEndpoint(LING), null, new Error("HTTP 429: You've hit the rate limit for free models. Retry later or switch to a paid model, which requires a positive account balance"));
-        expect(getCooldownRemaining(LING)).toBe(900);
-        expect(getCooldownRemaining(ULTRA)).toBe(900);
+        expect(getCooldownRemaining(LING)).toBe(3_600);
+        expect(getCooldownRemaining(ULTRA)).toBe(3_600);
         expect(getCooldownRemaining('kilo|reflection/beam-free')).toBe(0);
     });
 

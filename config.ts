@@ -835,17 +835,19 @@ const _DEFAULT_MAIN_MODELS = [
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
     'kilo|inclusionai/ling-3.1-flash-1019-free',       // 560B MoE (25B active), 1M ctx; held 250K three times on Kilo's free quota
     'vercel|inclusionai/ling-3.1-flash-1019',          // same Ling, Vercel's $0 route
-    'requesty|novita/ling-3.1-flash',                  // same Ling, Requesty's $0 route (256K ctx); not yet benchmarked
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
     'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
     'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx
     'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
     'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
     'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    'requesty|nvidia/nemotron-3-ultra-550b-a55b',      // Requesty's $0 route; not yet benchmarked
     'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
     'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance; not yet benchmarked
     'moonmath|glm-5.3-flash',
+    // Requesty last but one: its $0 routes share a budget that ran out after about 15M tokens and stayed refused for over an hour,
+    // and Ling scored 74.5% there (88% on Kilo, 78% on Vercel); the same models are on other providers above.
+    'requesty|novita/ling-3.1-flash',                  // same Ling, Requesty's $0 route (256K ctx)
+    'requesty|nvidia/nemotron-3-ultra-550b-a55b',      // Requesty's $0 route
     // Last: it writes tool calls as <dots_function_call> text (repaired, but often garbled).
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
