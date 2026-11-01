@@ -823,12 +823,13 @@ function getAllModels() {
 const _DEFAULT_MAIN_MODELS = [
     // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-11-01): share of microtasks solved,
     // context held before a quota stopped it, speed; one model's providers sit together, so a quota stop moves to the same model
-    // elsewhere. Beam 93% on Vercel (148 tok/s), 88% on Kilo; DeepSeek V4.1 Flash 92% on TokenHarbor and MoonMath (MoonMath's daily
+    // elsewhere. Beam 93% on Vercel under both IDs (148-152 tok/s), 88% on Kilo; DeepSeek V4.1 Flash 92% on TokenHarbor and MoonMath (MoonMath's daily
     // allowance held about 2M tokens); GLM 5.3 Flash 97% on NVIDIA (250K three times, 36 tok/s); Step 5 90%; Nemotron 3.5 Super VL
     // 88% / 87% / 79% on NVIDIA / OpenRouter / Kilo; Ling 3.1 Flash 88% on Kilo, 78% on Vercel; MiMo V2.6 Flash 82%.
     // Not here: Nemotron 3 Ultra (69% on Kilo; about 85% on NVIDIA, run unfinished), Requesty's routes (shared free budget that
     // stayed refused for over an hour; Ling 74.5% there), Dots 3 Note (garbled <dots_function_call> tool calls), stealth models
     // (withdrawn without notice), Ornith 1.5 (HTTP 503 at the last probe).
+    'vercel|reflection/beam',                          // 501B MoE, 1M ctx; $0 under its plain ID (93%, 152 tok/s); may share beam-free's quota
     'vercel|reflection/beam-free',                     // 501B MoE, 1M ctx; $0, but Vercel needs a credit balance on the account
     'kilo|reflection/beam-free',                       // same Beam, Kilo's free quota
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
