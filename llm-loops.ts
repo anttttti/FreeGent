@@ -2576,7 +2576,6 @@ async function callLLMUngated(
     } finally {
         _conn.clear(); // release timer — cannot abort the body reader after headers received
     }
-    recordRateLimitHeaders(ep, resp.headers);
     if (!resp.ok) throw await _httpErrorFromResponse(resp, `[${provider}|${model}]`);
     return decodeOAIResponse(resp, onChunk);
 }

@@ -7,7 +7,7 @@ import(new URL('../headless-runner.ts', import.meta.url).href).then(mod => {
                   'convoLogTurn', 'runTurn', 'agentSend', 'loadSkills', 'validateOutput',
                   'setBrowserBridge', 'browserBridgeAvailable', 'executeBrowserTool', 'browserPromptGuidance',
                   'saveMcpServers', 'addMcpServer', 'mcpToolSpecs',
-                  'getMoonmathKey', 'getApinexKey', 'getRequestyKey', 'recordRateLimitHeaders'];
+                  'getMoonmathKey', 'getRequestyKey'];
     const missing = need.filter(n => typeof globalThis[n] !== 'function' && typeof globalThis.window?.[n] !== 'function');
     console.log('run() exported:', typeof mod.run === 'function');
     console.log('globalThis visibility:', missing.length === 0 ? 'ALL PRESENT' : 'MISSING: ' + missing.join(', '));

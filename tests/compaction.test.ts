@@ -49,15 +49,14 @@ const ok = (content: string) => ({ body: { choices: [{ message: { content } }], 
 
 describe('compactHistory request', () => {
     it.each([
-        ['apinex', 'free/glm-5.3-flash', 'low'],
-        ['moonmath', 'deepseek-v4.1-flash', 'none'],
-    ])('uses %s authentication and reasoning controls for compaction, counting shared RPM', async (provider, model, effort) => {
-        localStorage.setItem(provider === 'apinex' ? 'fg_apinex_key' : 'fg_moonmath_key', 'synthetic-compaction-key');
+        ['moonmath', 'deepseek-v4.1-flash', 'none', 'fg_moonmath_key'],
+        ['requesty', 'novita/ling-3.1-flash', 'none', 'fg_requesty_key'],
+    ])('uses %s authentication and reasoning controls for compaction', async (provider, model, effort, keyName) => {
+        localStorage.setItem(keyName, 'synthetic-compaction-key');
         const bodies = serve([ok('GOAL: fix calc.py\nNEXT: run tests')]);
         await W.compactHistory(NULL_RENDER_ADAPTER, W.specToEndpoint(`${provider}|${model}`),
             W.createSession({ workflowMode: true }), history(), PREFIX);
         expect(bodies[0]).toMatchObject({ model, reasoning_effort: effort, stream: false });
-        if (provider === 'apinex') expect(JSON.parse(localStorage.getItem('fg_rl:apinex|*account')!).ts).toHaveLength(1);
     });
     it('repeats the main prefix and appends one instruction, with a small output cap', async () => {
         const bodies = serve([ok('GOAL: fix calc.py\nNEXT: run tests')]);

@@ -25,8 +25,8 @@ describe('CF Worker', () => {
     it('exposes upstream retry and quota headers to the WebUI', async () => {
         upstream.mockResolvedValue(new Response('{"error":{"message":"Rate limit exceeded"}}', { status: 429,
             headers: { 'retry-after': '25', 'x-ratelimit-reset': '1793491225' } }));
-        const r = await worker.fetch(post({ ...LLM, url: 'https://api.apinex.bond/v1/chat/completions' }),
-            { APINEX_API_KEY: 'synthetic-apinex-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) });
+        const r = await worker.fetch(post({ ...LLM, url: 'https://router.requesty.ai/v1/chat/completions' }),
+            { REQUESTY_API_KEY: 'synthetic-requesty-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) });
         expect(r.status).toBe(429);
         expect(r.headers.get('retry-after')).toBe('25');
         const exposed = r.headers.get('Access-Control-Expose-Headers')!.toLowerCase().split(/,\s*/);
@@ -50,16 +50,6 @@ describe('CF Worker', () => {
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-requesty-key');
         upstream.mockClear();
         expect((await worker.fetch(post({ ...LLM, url: 'https://router.requesty.ai.evil.com/v1/chat/completions' }), env)).status).toBe(403);
-        expect(upstream).not.toHaveBeenCalled();
-    });
-
-    it('routes APInex with its shared credential and rejects lookalike hosts', async () => {
-        const env = { APINEX_API_KEY: 'synthetic-apinex-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
-        const url = 'https://api.apinex.bond/v1/chat/completions';
-        expect((await worker.fetch(post({ ...LLM, url }), env)).status).toBe(200);
-        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-apinex-key');
-        upstream.mockClear();
-        expect((await worker.fetch(post({ ...LLM, url: 'https://evil.api.apinex.bond/v1/chat/completions' }), env)).status).toBe(403);
         expect(upstream).not.toHaveBeenCalled();
     });
 

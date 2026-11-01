@@ -18,7 +18,7 @@ describe('adding hosted models from Settings', () => {
     });
     afterEach(() => { localStorage.clear(); document.body.innerHTML = ''; });
 
-    it.each([['moonmath-key', 'fg_moonmath_key'], ['apinex-key', 'fg_apinex_key'], ['requesty-key', 'fg_requesty_key']])('can clear a freshly entered override in %s without reopening Settings', (id, key) => {
+    it.each([['moonmath-key', 'fg_moonmath_key'], ['requesty-key', 'fg_requesty_key']])('can clear a freshly entered override in %s without reopening Settings', (id, key) => {
         document.body.insertAdjacentHTML('beforeend', `<input id="${id}" type="password">`);
         const input = document.getElementById(id) as HTMLInputElement;
         input.value = 'synthetic-override'; W.saveSettings();
@@ -29,7 +29,6 @@ describe('adding hosted models from Settings', () => {
 
     it.each([
         ['moonmath', 'glm-5.3-flash-settings-probe', 'fg_moonmath_key', 'https://zro.moonmath.ai/v1/chat/completions'],
-        ['apinex', 'free/glm-5.3-flash-settings-probe', 'fg_apinex_key', 'https://api.apinex.bond/v1/chat/completions'],
         ['requesty', 'acme/settings-probe', 'fg_requesty_key', 'https://router.requesty.ai/v1/chat/completions'],
     ])('adds a %s model through the provider selector and routes it using the saved key', (provider, model, key, url) => {
         localStorage.setItem(key, 'synthetic-settings-credential');
@@ -48,8 +47,8 @@ describe('adding hosted models from Settings', () => {
 });
 
 describe('findKeysInText', () => {
-    it('recognizes bare APInex keys without treating a generic sk- key as MoonMath', () => {
-        expect(M.findKeysInText(pad('sk-apx'))).toEqual({ APINEX_API_KEY: pad('sk-apx') });
+    it('recognizes bare Requesty keys without treating a generic sk- key as MoonMath', () => {
+        expect(M.findKeysInText(pad('rqsty-'))).toEqual({ REQUESTY_API_KEY: pad('rqsty-') });
         expect(M.findKeysInText(pad('sk-')).MOONMATH_API_KEY).toBeUndefined();
     });
     it('finds bare keys in any order, separated by anything', () => {

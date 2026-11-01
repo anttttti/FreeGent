@@ -226,7 +226,6 @@ declare global {
     var getKiloKey: any;
     var getVercelKey: any;
     var getMoonmathKey: any;
-    var getApinexKey: any;
     var getRequestyKey: any;
     var getNousKey: any;
     var getOAIContextTokens: any;
@@ -451,7 +450,6 @@ declare global {
     var oaiEndpoint: any;
     var parseContextOverflow: any;
     var recordRequest: any;
-    var recordRateLimitHeaders: any;
     var recordSuccess: any;
     var retryDelay: any;
     var sleepInterruptible: any;

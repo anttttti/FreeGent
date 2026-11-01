@@ -237,44 +237,6 @@ async function _fetchRequestyModels(): Promise<FetchResult> {
     } catch { return { live: [], rejected: [] }; }
 }
 
-// APInex separates free/ routes from paid IDs, but that prefix alone does not guarantee access.
-// Its public supportsVision flag is inaccurate for these routes: live image requests returned
-// HTTP 400 "Vision is disabled for this model" on 2026-11-01. Keep text/tool use available.
-const _APINEX_TEXT_ONLY = new Set(['free/deepseek-v4-pro-0813', 'free/glm-5.3']);
-async function _fetchApinexModels(): Promise<FetchResult> {
-    try {
-        const key = typeof getApinexKey === 'function' ? getApinexKey() : '';
-        if (!key && !specHasKey('apinex|free/glm-5.3-flash')) return { live: [], rejected: [] };
-        const [json, publicJson] = await Promise.all([
-            _proxyFetch('https://api.apinex.bond/v1/models', key || undefined),
-            _proxyGet('https://apinex.bond/api/public/models'),
-        ]);
-        const all: any[] = Array.isArray(json?.data) ? json.data : [];
-        const advertised: any[] = Array.isArray(publicJson?.models) ? publicJson.models : [];
-        // The authenticated list includes subscription-only free/ IDs. Without eligibility
-        // metadata, leave the existing catalog intact rather than guessing from that prefix.
-        if (!all.length || !advertised.length) return { live: [], rejected: [] };
-        const metadata = new Map(advertised.map(m => [m.id, m]));
-        const created = _createdReader(all);
-        const live = new Map<string, LiveModel>();
-        const rejected: FetchResult['rejected'] = [];
-        for (const m of all) {
-            if (typeof m.id !== 'string' || !m.id.startsWith('free/')) continue;
-            const meta = metadata.get(m.id);
-            if (meta?.allowFree !== true || meta.dollarsPer1M !== 0 || meta.outputDollarsPer1M !== 0) continue;
-            const model: LiveModel = { id: m.id, name: meta.name || m.name, created: created(m),
-                contextK: _contextK(meta.contextWindow), tools: meta.supportsTools,
-                media: ['text', ...(meta.supportsVision === true && !_APINEX_TEXT_ONLY.has(m.id) ? ['image'] : [])],
-                ...(/^free\/(?:glm-|deepseek-)/.test(m.id) ? { thinking: true } : {}),
-            };
-            // Decision models require /v1/decisions, not chat completions.
-            if (m.id === 'free/jev-1.13' || meta.tags?.includes('decision')) rejected.push({ model, reason: 'non-chat' });
-            else if (meta.supportsTools === false) rejected.push({ model, reason: 'no-tools' });
-            else live.set(m.id, model);
-        }
-        return { live: [...live.values()], rejected };
-    } catch { return { live: [], rejected: [] }; }
-}
 
 // MoonMath's Free plan grants a daily allowance on these IDs despite their nonzero paid-plan prices.
 // Other /models entries are paid and must not enter the free-model catalog automatically.
@@ -529,7 +491,7 @@ function _isTooOld(created: number | undefined): boolean {
 }
 
 // Providers whose fetcher keeps only the free models: a catalog entry missing from their result may still be listed, but priced.
-const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor', 'moonmath', 'apinex', 'requesty']);
+const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor', 'moonmath', 'requesty']);
 
 // Generic helper: compare a provider's live model list against the catalog.
 // Produces add proposals (for new models) and remove proposals (for missing catalog models).
@@ -606,7 +568,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     const catalogKeys = new Set(catalog.map((m: ModelEntry) => `${m.provider}|${m.model}`));
 
     // Fetch all providers in parallel
-    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult, moonmathResult, apinexResult, requestyResult] =
+    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult, moonmathResult, requestyResult] =
         await Promise.all([
             _fetchOpenRouterModels(),
             _fetchGoogleModels(),
@@ -617,7 +579,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             _fetchVercelModels(),
             _fetchNousModels(),
             _fetchMoonmathModels(),
-            _fetchApinexModels(),
             _fetchRequestyModels(),
         ]);
 
@@ -627,7 +588,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         const orCreatedAll = _createdReader(orModels);
         for (const m of orModels) { const c = orCreatedAll(m); if (c) seen[`openrouter|${m.id}`] = c; }
         for (const [prov, r] of [['google', googleResult], ['groq', groqResult], ['nvidia', nvidiaResult], ['tokenharbor', thResult],
-                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult], ['moonmath', moonmathResult], ['apinex', apinexResult],
+                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult], ['moonmath', moonmathResult],
                                  ['requesty', requestyResult]] as [string, FetchResult][]) {
             for (const m of [...r.live, ...r.rejected.map(x => x.model)]) if (m.created) seen[`${prov}|${m.id}`] = m.created;
         }
@@ -756,13 +717,6 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             'Free ($0/token) via Vercel AI Gateway; API key required',
         ));
     }
-
-    // Only free/ routes are eligible. Unverified additions start unchecked: free-labelled routes can require a paid subscription.
-    if (apinexResult.live.length) proposals.push(..._diffProvider(
-        'apinex', apinexResult, catalog, catalogKeys,
-        'APInex free/ route; account-wide rate limits and allowance; some models require a subscription', false,
-    ));
-    else if (specHasKey('apinex|free/glm-5.3-flash')) errors.push('APInex: could not read both model and free-eligibility catalogs (check key, proxy/privacy settings, or connection; the public catalog needs a proxy for browser CORS)');
 
     // Requesty: the model list is public, so free routes are proposed before a key is saved (inference needs one).
     if (requestyResult.live.length + requestyResult.rejected.length) proposals.push(..._diffProvider(

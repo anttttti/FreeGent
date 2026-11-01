@@ -61,7 +61,7 @@ Store keys as Worker secrets and set a Developer key; the Worker then uses the s
 cd cf-worker
 npx wrangler secret put GROQ_API_KEY       # also OPENROUTER_API_KEY, GEMINI_API_KEY, NOUS_API_KEY,
                                            # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY,
-                                           # MOONMATH_API_KEY, APINEX_API_KEY, REQUESTY_API_KEY
+                                           # MOONMATH_API_KEY, REQUESTY_API_KEY
 npx wrangler secret put FG_DEV_KEY         # the Developer key
 ```
 

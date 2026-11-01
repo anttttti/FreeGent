@@ -6,12 +6,12 @@ import { escapeHtml } from '../html-escape.js';
 import { parseDotenvFile, detectProviderEnv } from '../dotenv.js';
 
 describe('provider key detection', () => {
-    const env = { OPENAI_API_KEY: 'other-provider-key', MOONMATH_API_KEY: 'moonmath-primary', APINEX_API_KEY: 'apinex-key' };
-    it.each([['moonmath', 'moonmath-primary'], ['apinex', 'apinex-key']])('uses the %s key when that provider is selected explicitly', (provider, key) => {
+    const env = { OPENAI_API_KEY: 'other-provider-key', MOONMATH_API_KEY: 'moonmath-primary', REQUESTY_API_KEY: 'requesty-key' };
+    it.each([['moonmath', 'moonmath-primary'], ['requesty', 'requesty-key']])('uses the %s key when that provider is selected explicitly', (provider, key) => {
         expect(detectProviderEnv(env, provider)).toEqual({ provider, apiKey: key });
     });
     it('does not borrow another provider key for an unconfigured or local endpoint', () => {
-        expect(detectProviderEnv({ OPENAI_API_KEY: 'other' }, 'apinex')).toBeNull();
+        expect(detectProviderEnv({ OPENAI_API_KEY: 'other' }, 'requesty')).toBeNull();
         expect(detectProviderEnv(env, 'vllm')).toBeNull();
     });
 });

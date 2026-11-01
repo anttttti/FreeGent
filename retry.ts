@@ -585,7 +585,7 @@ export function _parseRetryAfter(resp) {
              || resp.headers.get('x-ratelimit-reset-requests')
              || resp.headers.get('x-ratelimit-reset-tokens');
     if (!raw) {
-        // APInex documents x-ratelimit-reset as a Unix timestamp in seconds.
+        // x-ratelimit-reset as a Unix timestamp in seconds (as some gateways send it).
         const reset = Number(resp.headers.get('x-ratelimit-reset'));
         return Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil(reset * 1000 - Date.now())) : null;
     }

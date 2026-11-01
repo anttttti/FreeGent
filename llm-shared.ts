@@ -321,7 +321,6 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
                 ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
                 : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body })
             ).catch(e => { throw asTransportError(e); });
-            recordRateLimitHeaders(ep, resp.headers);
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             // A summary the endpoint served is a success like a chat reply: without it, the next 429 there got the one-hour penalty for an
             // endpoint with "no success since its cooldown" (codex R237).

@@ -20,15 +20,6 @@ describe('substituteServerKeys', () => {
         for (const url of ['https://evil.zro.moonmath.ai/v1', 'https://zro.moonmath.ai.evil.com/v1', 'http://zro.moonmath.ai/v1'])
             expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
     });
-    it('loads a APInex key server-side and substitutes it only for the exact APInex HTTPS host', () => {
-        const keys = serverKeys({ APINEX_API_KEY: 'synthetic-apinex-key' });
-        expect(keys.fg_apinex_key).toBe('synthetic-apinex-key');
-        const headers = { Authorization: `Bearer ${placeholderFor('fg_apinex_key')}` };
-        expect(substituteServerKeys('https://api.apinex.bond/v1/chat/completions', headers, '{}', keys).headers.Authorization)
-            .toBe('Bearer synthetic-apinex-key');
-        for (const url of ['https://evil.api.apinex.bond/v1', 'https://api.apinex.bond.evil.com/v1', 'http://api.apinex.bond/v1'])
-            expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
-    });
     it('loads a Requesty key server-side and substitutes it only for the exact Requesty HTTPS host', () => {
         const keys = serverKeys({ REQUESTY_API_KEY: 'synthetic-requesty-key' });
         const headers = { Authorization: `Bearer ${placeholderFor('fg_requesty_key')}` };

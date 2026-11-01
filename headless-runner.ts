@@ -123,7 +123,6 @@ const _KEY_MAP = {
     kilo:         'fg_kilo_key',
     vercel:       'fg_vercel_key',
     moonmath:     'fg_moonmath_key',
-    apinex:       'fg_apinex_key',
     requesty:     'fg_requesty_key',
 };
 
@@ -141,7 +140,6 @@ const _ENV_KEY_MAP: Record<string, string> = {
     KILO_API_KEY:          'fg_kilo_key',
     VERCEL_API_KEY:        'fg_vercel_key',
     MOONMATH_API_KEY:      'fg_moonmath_key',
-    APINEX_API_KEY:        'fg_apinex_key',
     REQUESTY_API_KEY:      'fg_requesty_key',
     NOUSPORTAL_API_KEY:  'fg_nous_key',
     NOUS_API_KEY:        'fg_nous_key',  // alias

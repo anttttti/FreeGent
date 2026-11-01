@@ -47,7 +47,6 @@ const _PROVIDER_ENV_MAP: Array<[string, string]> = [
     ['VERCEL_API_KEY',     'vercel'],
     ['TOKENHARBOR_API_KEY','tokenharbor'],
     ['MOONMATH_API_KEY',   'moonmath'],
-    ['APINEX_API_KEY',     'apinex'],
     ['REQUESTY_API_KEY',   'requesty'],
 ];
 

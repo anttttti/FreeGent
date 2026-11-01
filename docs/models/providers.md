@@ -14,7 +14,6 @@ Free-tier limits are set by the providers and change often, so check each provid
 | TokenHarbor | `TOKENHARBOR_API_KEY` | Weekly quota |
 | Vercel AI Gateway | `VERCEL_API_KEY` | Selected models at $0 per token |
 | MoonMath | `MOONMATH_API_KEY` | [Free plan](https://zro.moonmath.ai/pricing): daily allowance on DeepSeek V4.1 Flash and GLM-5.3 Flash; key required. Paid plans meter usage. |
-| APInex | `APINEX_API_KEY` | Explicit `free/` model routes; account-wide RPM and allowance limits. Some free-labelled models require a subscription. See [models](https://apinex.bond/models). |
 | Requesty | `REQUESTY_API_KEY` | A few $0 models among 800+ priced ones; they work on a $0 balance, about 2 requests at a time. See [models](https://www.requesty.ai/models). |
 | Groq | `GROQ_API_KEY` | Rate-limited free tier |
 | OpenAI | `OPENAI_API_KEY` | Paid. Also the key slot for any other OpenAI-compatible endpoint you add |
@@ -54,61 +53,15 @@ For the paste box, use `MOONMATH_API_KEY=sk-...`; the bare `sk-` prefix is share
 The catalog includes only the two models advertised for the Free plan, whose availability was
 checked against the [pricing](https://zro.moonmath.ai/pricing) and [API docs](https://zro.moonmath.ai/docs/api)
 on 2026-11-01. Authenticated completions and streamed tool-call round trips were verified for both
-models on that date. The size of the daily free allowance has not been measured.
+models on that date. The daily Free allowance is small: one model-ladder conversation with DeepSeek V4.1 Flash used it up
+after about 2M tokens (37 requests, 81K context), and the reply named the reset ("It resets in 21h 42m").
 
 **Check for updates** queries authenticated `GET https://zro.moonmath.ai/v1/models`,
 deduplicates `zro/` aliases, and checks the two known free-plan model IDs. The API does not
 mark free-plan eligibility, so newly added free-plan models need the allowlist updated;
 the updater does not automatically assume every accessible model is free.
 
-APInex uses `https://api.apinex.bond/v1/chat/completions`. Set `APINEX_API_KEY` in the
-credentials file or paste `APINEX_API_KEY=...` in Settings. CLI example:
-`freegent --provider apinex --model free/glm-5.3-flash`. See the [key setup](https://apinex.bond/keys?tab=setup).
-Keep the `free/` prefix: IDs without it can be paid routes.
-Bare `sk-apx...` keys are also recognized by the paste/import controls.
-
-On 2026-11-01, nine routes returned valid streamed native tool calls: GLM 5.3 Flash,
-DeepSeek V4.1 Flash, DeepSeek V4 Pro 0813, GLM 5.3, GLM 5.3 FlashX, Gemini 3.8 Flash,
-GPT-6 Luna, Kimi K3, and Qwen 3.8 MAX. The first two also passed completion and tool-result
-round-trip checks and full FreeGent file-reading runs (GLM: 3 steps, 8.0 seconds;
-DeepSeek: 2 steps, 4.1 seconds). These are gateway model labels; upstream model identities were not verified.
-Ten other `free/` routes returned HTTP 402 requiring a subscription. Discovery excludes
-them using the live public catalog's `allowFree` flag. Jev needs `/v1/decisions` and
-discovery filters it out as non-chat.
-MiniMax M3.1 Flash ignored a required echo call but passed a subsequent lookup-tool check;
-it is available through discovery, unchecked, rather than enabled by default. Newly discovered APInex
-routes start unchecked so the `free/` prefix does not silently add subscription-only routes.
-
-**Check for updates** joins authenticated `GET https://api.apinex.bond/v1/models` with
-public `GET https://apinex.bond/api/public/models`. Only `free/` IDs with `allowFree: true`
-and zero input/output prices qualify. Tool support and decision-model tags come from that
-metadata too. This lets eligibility change without a hardcoded blacklist. If either
-catalog cannot be read, the updater leaves existing APInex entries intact. See the
-[model API reference](https://apinex.bond/developers/models).
-Accepted discoveries retain their advertised context size, tool support, and image support;
-documented DeepSeek/GLM reasoning capabilities are retained too. The public vision flag is
-inaccurate for `free/deepseek-v4-pro-0813` and `free/glm-5.3`: both rejected images in live
-checks and remain text-only. Five other default APInex routes passed image-reading checks
-and now appear in image-model routing. MoonMath's two Flash routes and APInex's two initial
-Flash routes passed those image checks too. Source images contained random six-digit codes.
-Audio, video, speech, and image generation are not enabled without a supported model/protocol.
-
-APInex limits model requests per account (shared across keys and models) in a fixed
-60-second window. Its [llms.txt](https://apinex.bond/llms.txt) says 5 RPM on the free tier
-(15 RPM with the $5/$10 subscriptions, 30 with $30/$100), but authenticated `GET /v1/balance`
-reports `"rpm": 15, "rpm_plan": "free"` for the tested free account, and every chat response
-carries `x-ratelimit-limit: 15` (checked 2026-11-01). A shared account counter starts at 15 RPM
-and follows `x-ratelimit-limit` when the response exposes it. Chat, background, worker, and
-compaction calls use it; it does not allocate a separate 15 RPM to each model.
-The free allowance is a daily token budget: `GET /v1/subscription` reports `token_limit: 20000000`
-and `resets_at_utc` at 00:00 UTC. Free models draw (input + output) × a per-model weight
-(2 to 4, listed in llms.txt), so the budget is about 5 to 10M real tokens a day across all
-`free/` models. APInex adds a system prompt of about 320 tokens to each request.
-Successful probes reported zero charged tokens (`cost_tokens: 0`); free use shows up only in `/v1/subscription`.
-Initial background intent checks returned HTTP 500 (temporarily unavailable); subsequent
-agent runs completed successfully. Small smoke tests do not establish sustained reliability.
-DeepSeek and GLM use the documented `low`, `medium`, and `high` reasoning levels;
-FreeGent's Off setting uses `low`, since APInex documents no disabled level.
+MoonMath's two Flash routes passed image-reading checks (random six-digit codes) and appear in image-model routing.
 
 ## Requesty
 
@@ -137,15 +90,15 @@ answered `429` "You've hit the rate limit for free models", with no `Retry-After
 models together, for 15 minutes until the recovery time is measured. Upstream rate limits (`429` "Too many requests", origin `provider`) cool
 only that model, as for any provider. Requesty allows browser calls (`Access-Control-Allow-Origin: *`).
 
-## Quota errors for MoonMath and APInex
+## Quota errors for MoonMath
 
-Both use the shared retry engine, preserving HTTP status and provider error text.
+MoonMath uses the shared retry engine, preserving HTTP status and provider error text.
 The [MoonMath API reference](https://zro.moonmath.ai/docs/api) documents `402` for exhausted
 spend quotas or plan budgets and `429` for rate limits. A quota error cools both MoonMath
 models until the reset named in the message, else until 00:00 UTC: the
 [pricing page](https://zro.moonmath.ai/pricing) says only that the Free plan's allowance
 "resets every day", and the account console showed "Today's Free usage: 89% left · resets in 1h 2m"
-at 22:58 UTC on 2026-11-01. The size of the allowance is shown only as a percentage.
+at 22:58 UTC on 2026-11-01. The console shows the allowance only as a percentage; it held about 2M tokens.
 A key can also carry its own spend limit (Key controls on the API keys page). Reaching it returns
 `402` `key_quota_exceeded` ("This API key has reached its spend limit") even while Free usage is left;
 FreeGent re-checks that hourly, since the owner can raise the limit at any time.
@@ -155,18 +108,9 @@ limited number of requests at once" with `Retry-After: 60`; a slot frees as soon
 finishes, so FreeGent retries that model after 5 seconds and does not cool the other one.
 With "one request per endpoint" on (the default), two MoonMath models at most are in flight.
 
-APInex `429` cools every APInex model because its RPM bucket is shared. FreeGent honors
-`Retry-After`, a retry delay in the body/text, or the Unix-seconds `x-ratelimit-reset`
-header; without a hint it waits 60 seconds. The Cloudflare proxy exposes those headers
-to browser clients; a direct browser call (Provider-only privacy) cannot read them, because
-APInex sends no `Access-Control-Expose-Headers`, so it falls back to the 15-RPM baseline and the 60-second wait.
+## Removed: APInex
 
-APInex `402` can mean different things. A subscription-only model refusal ("This model is
-currently available only with a subscription", observed live) skips only that model for 24 hours.
-A wallet/API-key allowance error affects all APInex routes, honoring an explicit
-temporary-reservation retry delay, else one hour. A free-allowance error cools the `free/`
-routes until the reset it names, else until the next 00:00 UTC, when the daily budget resets.
-Free use also needs a **daily check-in** on the APInex site (Airdrop → Quests): without it every `free/` route answers `402` "Daily check-in
-required to use free models" (seen 2026-11-01, just after the 00:00 UTC reset). FreeGent then tries the free routes again every 15 minutes.
-Daily exhaustion was not deliberately triggered. Regression tests cover documented error classes and reset
-formats, without claiming that synthetic reset-message fixtures are exact provider payloads.
+APInex (`api.apinex.bond`) was added and removed on 2026-11-01. Its `free/` routes need a daily check-in on its site, behind a
+CAPTCHA, before they answer, and the free allowance (20M weighted tokens a day, about 5 to 10M real tokens) ran out within one
+model-ladder conversation at 153K context (GPT-6 Luna: 12 of 21 microtasks). Saved APInex keys, models and priority-list entries are
+dropped on load.

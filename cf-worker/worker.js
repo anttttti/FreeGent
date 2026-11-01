@@ -88,7 +88,6 @@ const ALLOWED_HOSTS = new Set([
     'api.tokenharbor.ai',
     'ai-gateway.vercel.sh',
     'zro.moonmath.ai',
-    'api.apinex.bond',
     'router.requesty.ai',
     'api.openai.com',
     'api.search.brave.com',
@@ -112,7 +111,6 @@ const PROVIDER_KEY_MAP = {
     'integrate.api.nvidia.com':          'NVIDIA_API_KEY',
     'ai-gateway.vercel.sh':              'VERCEL_API_KEY',
     'zro.moonmath.ai':                   'MOONMATH_API_KEY',
-    'api.apinex.bond':                   'APINEX_API_KEY',
     'router.requesty.ai':                'REQUESTY_API_KEY',
     'api.kilo.ai':                       'KILO_API_KEY',
 };

@@ -30,7 +30,6 @@ export const KEYS = {
     OPENROUTER_KEY:     'fg_openrouter_key',
     TOKENHARBOR_KEY:    'fg_tokenharbor_key',
     MOONMATH_KEY:       'fg_moonmath_key',
-    APINEX_KEY:         'fg_apinex_key',
     REQUESTY_KEY:       'fg_requesty_key',
     BRAVE_KEY:          'fg_brave_key',
     TAVILY_KEY:         'fg_tavily_key',

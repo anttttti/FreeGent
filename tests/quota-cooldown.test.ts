@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { _endpointCooldown, _markCooldown, getCooldownRemaining, isAccountQuotaError, parseQuotaResetMs,
-    knownLimitWaitMs, recordRequest, recordRateLimitHeaders } from '../model-router.ts';
+} from '../model-router.ts';
 import { _httpErrorFromResponse } from '../retry.ts';
 
 const MSG = `HTTP 429: You've used this period's free allowance. Your next rolling 7-day period starts on 20 Oct 2026 at 04:23 UTC. Use the paid model 'deepseek-v4.1-flash' to keep going`;
@@ -8,63 +8,8 @@ const NOW = Date.UTC(2026, 9, 17, 4, 17, 36);
 
 afterEach(() => { for (const k of [..._endpointCooldown.keys()]) _endpointCooldown.delete(k); });
 
-describe('APInex and MoonMath quota policies', () => {
+describe('MoonMath quota policies', () => {
     afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
-    const apinex = { provider: 'apinex', model: 'free/glm-5.3-flash' };
-
-    it('enforces APInex account RPM before sending, even when requests alternate models', () => {
-        vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
-        const other = { provider: 'apinex', model: 'free/deepseek-v4.1-flash' };
-        for (let i = 0; i < 15; i++) { expect(knownLimitWaitMs(apinex)).toBe(0); recordRequest(i % 2 ? other : apinex); }
-        expect(knownLimitWaitMs(other)).toBe(60_250);
-        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(61);
-        expect(knownLimitWaitMs({ provider: 'moonmath', model: 'glm-5.3-flash' })).toBe(0);
-        vi.advanceTimersByTime(60_250);
-        expect(knownLimitWaitMs(other)).toBe(0);
-    });
-
-    it('learns a higher account RPM from response headers and resets counters when storage is cleared', () => {
-        recordRateLimitHeaders(apinex, new Headers({ 'x-ratelimit-limit': '30' }));
-        for (let i = 0; i < 15; i++) recordRequest(apinex);
-        expect(knownLimitWaitMs(apinex)).toBe(0);
-        for (let i = 0; i < 15; i++) recordRequest(apinex);
-        expect(knownLimitWaitMs(apinex)).toBeGreaterThan(0);
-        localStorage.clear();
-        expect(knownLimitWaitMs(apinex)).toBe(0);
-    });
-
-    it.each([25_000, null])('shares APInex RPM cooldown across models, using the advertised wait %s', (wait) => {
-        const err = new Error('HTTP 429: Rate limit exceeded for this key');
-        _markCooldown(apinex, wait, err);
-        const expected = (wait ?? 60_000) / 1000;
-        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(expected);
-        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(expected);
-        expect(getCooldownRemaining('moonmath|glm-5.3-flash')).toBe(0);
-    });
-
-    it('does not cool usable free models when an APInex route requires a subscription', () => {
-        const err = new Error('HTTP 402: This model is currently available only with a subscription. Buy a subscription at https://apinex.bond/subscriptions to use it.');
-        _markCooldown({ provider: 'apinex', model: 'free/claude-opus-4.6' }, null, err);
-        expect(getCooldownRemaining('apinex|free/claude-opus-4.6')).toBe(86_400);
-        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(0);
-        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(0);
-    });
-
-    it('uses the named reset for an exhausted MoonMath budget across its Flash models', () => {
-        _markCooldown({ provider: 'moonmath', model: 'glm-5.3-flash' }, null,
-            new Error('HTTP 402: Spend quota or plan budget exhausted; resets in 2 hours'));
-        expect(getCooldownRemaining('moonmath|glm-5.3-flash')).toBe(7_200);
-        expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(7_200);
-        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(0);
-    });
-
-    it('keeps paid APInex routes outside a free-allowance cooldown, which lasts until the 00:00 UTC reset', () => {
-        vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-01T22:00:00Z'));
-        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'glm-5.3', label: 'Paid route' }]));
-        _markCooldown(apinex, 60_000, new Error('HTTP 402: Free allowance exhausted'));
-        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(2 * 3_600 + 60);
-        expect(getCooldownRemaining('apinex|glm-5.3')).toBe(0);
-    });
 
     it('waits for 00:00 UTC on spent MoonMath Free usage, but re-checks a per-key spend limit hourly', () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-01T22:00:00Z'));
@@ -84,26 +29,7 @@ describe('APInex and MoonMath quota policies', () => {
         expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(0);
     });
 
-    it('re-tries APInex free routes 15 minutes after a daily check-in refusal, not at the next reset', () => {
-        _markCooldown(apinex, null, new Error('HTTP 402: Daily check-in required to use free models. Please visit https://apinex.bond/airdrop?tab=quests to check in.'));
-        expect(getCooldownRemaining('apinex|free/glm-5.3-flash')).toBe(900);
-        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(900);
-    });
-
-    it('shares APInex wallet/key allowance refusals with paid routes and honors a temporary reservation wait', () => {
-        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'glm-5.3', label: 'Paid route' }]));
-        _markCooldown(apinex, 30_000, new Error('HTTP 402: Insufficient spendable balance or API-key allowance'));
-        expect(getCooldownRemaining('apinex|free/deepseek-v4.1-flash')).toBe(30);
-        expect(getCooldownRemaining('apinex|glm-5.3')).toBe(30);
-    });
-
-    it('cools paid APInex routes too when the account-wide RPM window is exhausted', () => {
-        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'glm-5.3', label: 'Paid route' }]));
-        _markCooldown(apinex, 25_000, new Error('HTTP 429: rate limit exceeded'));
-        expect(getCooldownRemaining('apinex|glm-5.3')).toBe(25);
-    });
-
-    it('reads APInex reset timestamps and preserves the original error message and Retry-After precedence', async () => {
+    it('reads Unix-seconds x-ratelimit-reset headers and preserves the original error message and Retry-After precedence', async () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
         const headers = { 'x-ratelimit-reset': String(Date.now() / 1000 + 25) };
         const body = JSON.stringify({ error: { message: 'Rate limit exceeded', type: 'rate_limit_error' } });

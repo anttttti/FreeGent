@@ -256,7 +256,6 @@ const ENV_KEY_MAP: Record<string, { ls: string; input: string; label: string; pr
     KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key',          label: 'Kilo',          prefixes: ['sk-kilo-'] },
     VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key',        label: 'Vercel',        prefixes: ['aig_'] },
     MOONMATH_API_KEY:     { ls: 'fg_moonmath_key',      input: 'moonmath-key',      label: 'MoonMath',      prefixes: [] }, // sk- is not provider-specific
-    APINEX_API_KEY:       { ls: 'fg_apinex_key',        input: 'apinex-key',        label: 'APInex',        prefixes: ['sk-apx'] },
     REQUESTY_API_KEY:     { ls: 'fg_requesty_key',      input: 'requesty-key',      label: 'Requesty',      prefixes: ['rqsty-'] },
     NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['nsk-'] },
     HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key',            label: 'HuggingFace',   prefixes: ['hf_'] },
@@ -440,7 +439,6 @@ function saveSettings() {
     saveKey('fg_kilo_key',          'kilo-key');
     saveKey('fg_vercel_key',        'vercel-key');
     saveKey('fg_moonmath_key',      'moonmath-key');
-    saveKey('fg_apinex_key',        'apinex-key');
     saveKey('fg_requesty_key',      'requesty-key');
     saveKey('fg_nous_key',          'nous-key');
     saveSelect('fg_sandbox_provider', 'sandbox-provider', 'wasm');
@@ -486,7 +484,6 @@ function populateSettingsForm() {
     set('kilo-key',          getKiloKey());
     set('vercel-key',        getVercelKey());
     set('moonmath-key',      getMoonmathKey(), 'sk-...');
-    set('apinex-key',        getApinexKey(), 'sk-apx...');
     set('requesty-key',      getRequestyKey(), 'rqsty-...');
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
@@ -673,7 +670,7 @@ function updateReasoningSelect() {
 
 
 function _providerLabel(p) {
-    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', moonmath:'MoonMath', apinex:'APInex', requesty:'Requesty', custom:'Custom' }[p] || p;
+    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', moonmath:'MoonMath', requesty:'Requesty', custom:'Custom' }[p] || p;
 }
 
 let _modelSort: { col: string | null; dir: string } = { col: null, dir: 'asc' };
@@ -769,7 +766,6 @@ function renderModelCatalogTable() {
           <option value="google">Google</option>
           <option value="nvidia">NVIDIA</option>
           <option value="moonmath">MoonMath</option>
-          <option value="apinex">APInex</option>
           <option value="requesty">Requesty</option>
           <option value="custom">Custom</option>
         </select></td></tr>

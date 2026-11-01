@@ -240,6 +240,9 @@ const _lsCache = new Map();
             if (!localStorage.getItem(KEYS.MOONMATH_KEY)) localStorage.setItem(KEYS.MOONMATH_KEY, oldKey);
             localStorage.removeItem('fg_zro_key');
         }
+        localStorage.removeItem('fg_apinex_key');            // APInex was removed (see _REMOVED_PROVIDERS): its saved key is not kept
+        localStorage.removeItem('fg_apinex_observed_rpm');
+        localStorage.removeItem('fg_rl:apinex|*account');
         for (const k of [KEYS.MAIN_MODELS, KEYS.PRIMARY_MODELS, KEYS.PAUSED_MAIN, KEYS.ENABLED_MODELS, KEYS.CUSTOM_MODELS, KEYS.HIDDEN_MODELS,
                          KEYS.IMAGE_MODEL, KEYS.AUDIO_MODEL, KEYS.VIDEO_MODEL, KEYS.WORKER_MODEL, KEYS.UTILITY_MODEL]) {
             const v = localStorage.getItem(k);
@@ -292,7 +295,6 @@ function getTokenHarborKey() { return ls('fg_tokenharbor_key'); }
 function getKiloKey()        { return ls('fg_kilo_key'); }
 function getVercelKey()      { return ls('fg_vercel_key'); }
 function getMoonmathKey()         { return ls(KEYS.MOONMATH_KEY); }
-function getApinexKey()      { return ls(KEYS.APINEX_KEY); }
 function getRequestyKey()    { return ls(KEYS.REQUESTY_KEY); }
 function getNousKey()        { return ls('fg_nous_key'); }
 function getSearchProvider() { return ls('fg_search_provider', 'auto'); }
@@ -582,17 +584,6 @@ const MODEL_CATALOG = [
     { provider:'vercel', model:'reflection/beam-free',                 label:'Beam 1.0 (free)',              released:'2026-10', contextK:1048, params:501,  media:['text'],        tools:true,  thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; $0/token; needs every earlier reply\'s reasoning sent back (payload-builder modelNeedsReasoningEcho); long-chat test 2026-10-29: 93% of microtasks, 250K in all three conversations, 148 tok/s' },
     { provider:'vercel', model:'inclusionai/ling-3.1-flash-1019',      label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:1000, params:560,  media:['text'],        tools:true,  thinking:true,  note:'inclusionAI Ling 3.1 Flash, 2026-10-19 snapshot; hybrid reasoning, 560B MoE (25B active); 1M ctx; $0/token (the undated inclusionai/ling-3.1-flash is paid); tool call verified 2026-10-31; long-chat test 2026-10-31: 78% of microtasks, 250K in all three conversations, 82 tok/s' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
-    // APInex: explicit free/ routes, separate from the gateway's paid model IDs.
-    { provider:'apinex', model:'free/glm-5.3-flash', label:'GLM 5.3 Flash (APInex free)', released:'2026-10', contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context, streaming and tool calling. Account-wide RPM and free-allowance limits apply. Completion and streamed tool round trip verified 2026-11-01; allowance size not measured. Off uses the lowest supported reasoning effort (low).' },
-    { provider:'apinex', model:'free/deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash (APInex free)', released:'2026-09', contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context, streaming and tool calling. Account-wide RPM and free-allowance limits apply. Completion and streamed tool round trip verified 2026-11-01; allowance size not measured. Off uses the lowest supported reasoning effort (low).' },
-
-    { provider:'apinex', model:'free/deepseek-v4-pro-0813', label:'DeepSeek V4 Pro 0813 (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/glm-5.3', label:'GLM 5.3 (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/glm-5.3-flashx', label:'GLM 5.3 FlashX (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call and image reading verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/gemini-3.8-flash', label:'Gemini 3.8 Flash (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call and image reading verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/gpt-6-luna', label:'GPT-6 Luna (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call and image reading verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/kimi-k3', label:'Kimi K3 (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call and image reading verified 2026-11-01; allowance size not measured.' },
-    { provider:'apinex', model:'free/qwen-3.8-max', label:'Qwen 3.8 MAX (APInex free)', released:'2026-11', releasedEstimated:true, contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'Free route via APInex; API key required. Provider advertises 1M context. Account-wide RPM and allowance limits apply. Streamed native tool call and image reading verified 2026-11-01; allowance size not measured.' },
 
     // MoonMath Free plan: daily allowance on these two Flash models; API key required.
     // https://zro.moonmath.ai/pricing (2026-11-01). Paid accounts meter usage; quotas are not published.
@@ -795,7 +786,9 @@ function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST
 //              x-ratelimit-limit-req-minute: 0 on every model; removed 2026-09-27.
 //   cerebras — API returns 402 "Payment required" on every model without a payment method on
 //              the account (free trial credit now needs a card); removed 2026-09-27.
-const _REMOVED_PROVIDERS = new Set(['opencode', 'mistral', 'cerebras']);
+//   apinex   — free routes need a CAPTCHA-gated daily check-in on its site, and the 20M weighted tokens a day ran out within one
+//              150K-token conversation (GPT-6 Luna scored 57% on the model ladder); removed 2026-11-01.
+const _REMOVED_PROVIDERS = new Set(['opencode', 'mistral', 'cerebras', 'apinex']);
 
 // All models = visible built-in catalog entries + user custom rows, minus the blacklist.
 function getAllModels() {
@@ -853,15 +846,6 @@ const _DEFAULT_MAIN_MODELS = [
     'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
     'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance; not yet benchmarked
     'moonmath|glm-5.3-flash',
-    'apinex|free/glm-5.3-flash',
-    'apinex|free/deepseek-v4.1-flash',
-    'apinex|free/deepseek-v4-pro-0813',
-    'apinex|free/glm-5.3',
-    'apinex|free/glm-5.3-flashx',
-    'apinex|free/gemini-3.8-flash',
-    'apinex|free/gpt-6-luna',
-    'apinex|free/kimi-k3',
-    'apinex|free/qwen-3.8-max',
     // Last: it writes tool calls as <dots_function_call> text (repaired, but often garbled).
     'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
@@ -964,7 +948,6 @@ const _CF_PROVIDER_ENV: Record<string, string> = {
     nvidia:      'NVIDIA_API_KEY',
     vercel:      'VERCEL_API_KEY',
     moonmath:    'MOONMATH_API_KEY',
-    apinex:      'APINEX_API_KEY',
     requesty:    'REQUESTY_API_KEY',
     kilo:        'KILO_API_KEY',
     tavily:      'TAVILY_API_KEY',
@@ -1036,7 +1019,6 @@ export function specHasKey(spec: string): boolean {
     if (provider === 'kilo')        return _k(getKiloKey)      || !!_cfWorkerKeys[_CF_PROVIDER_ENV.kilo];
     if (provider === 'vercel')      return _k(getVercelKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.vercel];
     if (provider === 'moonmath')    return _k(getMoonmathKey)  || !!_cfWorkerKeys[_CF_PROVIDER_ENV.moonmath];
-    if (provider === 'apinex')      return _k(getApinexKey)    || !!_cfWorkerKeys[_CF_PROVIDER_ENV.apinex];
     if (provider === 'requesty')    return _k(getRequestyKey)  || !!_cfWorkerKeys[_CF_PROVIDER_ENV.requesty];
     if (provider === 'openai')      return _k(getOAIKey);
     return true; // unknown provider — don't filter
@@ -1164,7 +1146,7 @@ function buildModelCatalogText(enabledOnly = true) {
     const models  = enabledOnly
         ? getAllModels().filter(m => mainList.includes(`${m.provider}|${m.model}`))
         : getAllModels();
-    const ORDER = ['google', 'groq', 'nvidia', 'openrouter', 'nous', 'tokenharbor', 'kilo', 'vercel', 'moonmath', 'apinex', 'requesty', 'custom'];
+    const ORDER = ['google', 'groq', 'nvidia', 'openrouter', 'nous', 'tokenharbor', 'kilo', 'vercel', 'moonmath', 'requesty', 'custom'];
     const grouped = {};
     for (const m of models) {
         if (!grouped[m.provider]) grouped[m.provider] = [];
@@ -1463,7 +1445,7 @@ Object.assign(window, {
     getGeminiKey, getGeminiModel,
     getOAIUrl, getOAIKey, getOAIModel, getOAIContextTokens, getEndpointContextTokens,
     getGroqKey,
-    getNvidiaKey, getNvidiaModel, getOpenRouterKey, getOpenRouterModel, getTokenHarborKey, getKiloKey, getVercelKey, getMoonmathKey, getApinexKey, getRequestyKey, getNousKey,
+    getNvidiaKey, getNvidiaModel, getOpenRouterKey, getOpenRouterModel, getTokenHarborKey, getKiloKey, getVercelKey, getMoonmathKey, getRequestyKey, getNousKey,
     getSearchProvider, getThinkingLevel, thinkingLevelBudget, getTemperature,
     getTopP, getTopK, getMinP, getPresencePenalty, getRepetitionPenalty, getSamplingParams,
     getTavilyKey, getHFKey, getSearchProxy, getEffectiveProxy, getLocalApiProxy,

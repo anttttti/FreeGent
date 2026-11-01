@@ -28,8 +28,6 @@ export function modelPageUrl(provider: string, model: string): string {
             return 'https://vercel.com/ai-gateway/models';
         case 'moonmath':
             return `https://zro.moonmath.ai/docs/models/${encodeURIComponent(model.replace(/^zro\//, ''))}`;
-        case 'apinex':
-            return 'https://apinex.bond/models';
         case 'requesty':
             return `https://www.requesty.ai/models/${model.split('/').map(encodeURIComponent).join('/')}`;
         default:

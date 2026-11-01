@@ -27,3 +27,18 @@ describe('zro → moonmath settings migration', () => {
         expect(localStorage.getItem('fg_zro_key')).toBeNull();
     });
 });
+
+describe('removed APInex provider', () => {
+    beforeEach(() => { localStorage.clear(); });
+    it('drops its saved key, models and priority-list entries on load', async () => {
+        localStorage.setItem('fg_apinex_key', 'synthetic-apinex-key');
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'free/new', label: 'Old' }]));
+        localStorage.setItem('fg_main_models', JSON.stringify(['apinex|free/glm-5.3-flash', 'kilo|reflection/beam-free']));
+        vi.resetModules();
+        await import('../config.ts');
+        const C = window as any;
+        expect(localStorage.getItem('fg_apinex_key')).toBeNull();
+        expect(C.getAllModels().some((m: any) => m.provider === 'apinex')).toBe(false);
+        expect(C.getMainModelList()).toEqual(['kilo|reflection/beam-free']);
+    });
+});

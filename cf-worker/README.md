@@ -37,7 +37,7 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 ```bash
 npx wrangler secret put GROQ_API_KEY        # also OPENROUTER_API_KEY, GEMINI_API_KEY, NOUS_API_KEY,
                                             # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY,
-                                            # MOONMATH_API_KEY, APINEX_API_KEY, REQUESTY_API_KEY
+                                            # MOONMATH_API_KEY, REQUESTY_API_KEY
 npx wrangler secret put FG_DEV_KEY          # the Developer key that unlocks them
 ```
 
