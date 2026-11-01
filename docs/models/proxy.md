@@ -21,7 +21,7 @@ The sidebar's **Privacy** button and **Settings → Privacy** have two levels th
 
 ## The hosted Worker
 
-The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, MoonMath, Requesty, OpenAI, Tavily and Brave. For `GET` (page fetches and searches) it forwards to any public HTTPS address. It accepts requests only from the FreeGent sites and local dev ports, applies a per-IP rate limit and stores nothing.
+The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, MoonMath, Requesty, OpenAI, Tavily and Brave. For `GET` (page fetches and searches) it forwards to any public HTTPS address, with responses up to 48 MB. It accepts requests only from the FreeGent sites and local dev ports, applies a per-IP rate limit and stores nothing.
 
 Because any program can call the Worker, its page-fetch path first asks for a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) check. The first page fetch of a session runs it in the background, usually with nothing to see. Cloudflare shows a checkbox only when your browser or network looks unusual. The check gives the page a session token for about four hours, tied to your network. If a content blocker stops `challenges.cloudflare.com`, page fetches through the Worker fail with a message saying so. Provider-only and Local never contact the Worker, so they never run the check.
 

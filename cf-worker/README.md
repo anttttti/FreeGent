@@ -5,7 +5,7 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 ## What it does
 
 - `POST` (model calls): forwards only to an allow-list of hosts (`ALLOWED_HOSTS` in `worker.js`): Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, OpenAI, Tavily and Brave.
-- `GET ?url=` (page fetches, searches): forwards to any public HTTPS address, for clients with a session token from a Cloudflare Turnstile check (`POST /session`), the Developer key, or on a Worker with `FG_OPEN_RELAY=1`.
+- `GET ?url=` (page fetches, searches): forwards to any public HTTPS address, with responses up to 48 MB, for clients with a session token from a Cloudflare Turnstile check (`POST /session`), the Developer key, or on a Worker with `FG_OPEN_RELAY=1`.
 - `GET /keys`: tells the page which shared provider keys exist, as `true`/`false` per provider. Values are never sent.
 - Optional shared keys: stored as Worker secrets and injected only for requests that carry the Developer key (`X-FG-Dev-Key`, matched against the `FG_DEV_KEY` secret). Visitors without it always use their own keys.
 - Developer-key sessions can also upload console errors and finished Autopilot chats (`/errlog`, `/log`) to KV for the maintainer to review. Users can also send a chat log on purpose.

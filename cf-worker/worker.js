@@ -471,6 +471,13 @@ export default {
                     if (cur.startsWith('http://')) cur = 'https://' + cur.slice(7);
                     if (!_publicUrlOk(cur)) return _err(403, 'Redirect to a private address or non-HTTPS URL blocked');
                 }
+                // The page refuses relay responses over 48 MB (NET_MAX_BYTES in exec-sandbox-host.ts), so a larger one is
+                // refused here before it is downloaded, or cut off once its stream passes the cap.
+                if (Number(upstream.headers.get('Content-Length') || 0) > RELAY_MAX_BYTES) {
+                    upstream.body?.cancel().catch(() => {});
+                    return _err(413, `Response larger than ${RELAY_MAX_BYTES >> 20} MB`);
+                }
+                if (upstream.body) upstream = new Response(upstream.body.pipeThrough(_byteCap(RELAY_MAX_BYTES)), upstream);
 
             } else if (request.method === 'POST') {
                 // ── LLM API proxy ─────────────────────────────────────────────
@@ -582,6 +589,19 @@ async function _rateLimited(request, env, kind) {
         const { success } = await limiter.limit({ key: `${kind}:${ip}` });
         return !success;
     } catch { return false; }
+}
+
+const RELAY_MAX_BYTES = 48 * 1024 * 1024;
+// A pass-through stream that fails once more than `max` bytes have gone through it.
+function _byteCap(max) {
+    let n = 0;
+    return new TransformStream({
+        transform(chunk, controller) {
+            n += chunk.byteLength;
+            if (n > max) controller.error(new Error(`Response larger than ${max >> 20} MB`));
+            else controller.enqueue(chunk);
+        },
+    });
 }
 
 // For GET fetch_url requests: allow any public HTTPS URL.

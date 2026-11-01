@@ -172,6 +172,23 @@ describe('CF Worker', () => {
         expect(upstream.mock.calls[1][0]).toBe('https://example.com/events/');
     });
 
+    it('refuses a response over 48 MB by its Content-Length, and cuts off one that streams past it', async () => {
+        upstream.mockResolvedValueOnce(new Response('x', { status: 200, headers: { 'Content-Length': String(49 * 1024 * 1024) } }));
+        const r = await worker.fetch(get('https://example.com/big'), OPEN);
+        expect(r.status).toBe(413);
+        expect(r.headers.get('X-FG-Proxy-Error')).toBe('1');
+        const chunk = new Uint8Array(16 * 1024 * 1024);
+        let sent = 0;
+        upstream.mockResolvedValueOnce(new Response(new ReadableStream({
+            pull(c) { if (sent++ < 4) c.enqueue(chunk); else c.close(); },
+        }), { status: 200 }));
+        const s = await worker.fetch(get('https://example.com/stream'), OPEN);
+        expect(s.status).toBe(200);
+        await expect(s.arrayBuffer()).rejects.toThrow(/48 MB/);
+        upstream.mockResolvedValueOnce(new Response(new Uint8Array(1024), { status: 200 }));
+        expect((await (await worker.fetch(get('https://example.com/small'), OPEN)).arrayBuffer()).byteLength).toBe(1024);
+    });
+
     it('blocks private and reserved targets on the fetch path', async () => {
         for (const t of ['https://169.254.169.254/latest/meta-data/', 'https://127.0.0.2/', 'https://0.0.0.0/',
                          'https://100.64.1.1/', 'https://[::1]/', 'https://[fd00::1]/', 'https://[::ffff:127.0.0.1]/',
