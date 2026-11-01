@@ -22,13 +22,34 @@ describe('CF Worker', () => {
         vi.stubGlobal('fetch', upstream);
     });
 
-    it('routes Zro with its shared credential and rejects lookalike hosts', async () => {
-        const env = { ZRO_API_KEY: 'synthetic-zro-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+    it('exposes upstream retry and quota headers to the WebUI', async () => {
+        upstream.mockResolvedValue(new Response('{"error":{"message":"Rate limit exceeded"}}', { status: 429,
+            headers: { 'retry-after': '25', 'x-ratelimit-reset': '1793491225' } }));
+        const r = await worker.fetch(post({ ...LLM, url: 'https://api.apinex.bond/v1/chat/completions' }),
+            { APINEX_API_KEY: 'synthetic-apinex-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) });
+        expect(r.status).toBe(429);
+        expect(r.headers.get('retry-after')).toBe('25');
+        const exposed = r.headers.get('Access-Control-Expose-Headers')!.toLowerCase().split(/,\s*/);
+        expect(exposed).toContain('retry-after');
+        expect(exposed).toContain('x-ratelimit-reset');
+    });
+
+    it('routes MoonMath with its shared credential and rejects lookalike hosts', async () => {
+        const env = { MOONMATH_API_KEY: 'synthetic-moonmath-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         const url = 'https://zro.moonmath.ai/v1/chat/completions';
         expect((await worker.fetch(post({ ...LLM, url }), env)).status).toBe(200);
-        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-zro-key');
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-moonmath-key');
         upstream.mockClear();
         expect((await worker.fetch(post({ ...LLM, url: 'https://evil.zro.moonmath.ai/v1/chat/completions' }), env)).status).toBe(403);
+        expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it('routes Requesty with its shared credential and rejects lookalike hosts', async () => {
+        const env = { REQUESTY_API_KEY: 'synthetic-requesty-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
+        expect((await worker.fetch(post({ ...LLM, url: 'https://router.requesty.ai/v1/chat/completions' }), env)).status).toBe(200);
+        expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-requesty-key');
+        upstream.mockClear();
+        expect((await worker.fetch(post({ ...LLM, url: 'https://router.requesty.ai.evil.com/v1/chat/completions' }), env)).status).toBe(403);
         expect(upstream).not.toHaveBeenCalled();
     });
 

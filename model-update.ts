@@ -17,7 +17,8 @@ function _proxyBase(): string {
 
 // GET via proxy — avoids CORS and hides the key from the network tab.
 async function _proxyGet(url: string): Promise<any> {
-    const resp = await fetch(`${_proxyBase()}?url=${encodeURIComponent(url)}`, {
+    const proxy = _proxyBase();
+    const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, {
         signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) return null;
@@ -35,20 +36,20 @@ async function _proxyBearer(url: string, key: string): Promise<any> {
 async function _proxyFetch(url: string, key?: string): Promise<any> {
     const hdrs: Record<string, string> = { 'Accept': 'application/json' };
     if (key) hdrs['Authorization'] = `Bearer ${key}`;
-    const resp = await fetch(_proxyBase(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, method: 'GET', headers: hdrs }),
-        signal: AbortSignal.timeout(15_000),
-    });
+    const proxy = _proxyBase();
+    const resp = await fetch(proxy || url, proxy ? {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, method: 'GET', headers: hdrs }), signal: AbortSignal.timeout(15_000),
+    } : { method: 'GET', headers: hdrs, signal: AbortSignal.timeout(15_000) });
     if (!resp.ok) return null;
     return resp.json().catch(() => null);
 }
 
 // ── Types and filter definitions ──────────────────────────────────────────
 
-type ModelEntry = { provider: string; model: string; label: string; note?: string; contextK?: number; released?: string; releasedEstimated?: boolean };
-type LiveModel   = { id: string; name?: string; created?: number };  // created = Unix seconds
+type ModelCapabilities = { contextK?: number; media?: string[]; tools?: boolean; thinking?: boolean };
+type ModelEntry = ModelCapabilities & { provider: string; model: string; label: string; note?: string; released?: string; releasedEstimated?: boolean };
+type LiveModel   = ModelCapabilities & { id: string; name?: string; created?: number };  // created = Unix seconds
 
 // Reasons a model can be hidden by a filter. Each maps to one toggle chip in the modal.
 type FilterKey = 'non-chat' | 'low-quota' | 'too-old' | 'no-tools';
@@ -59,7 +60,7 @@ type FetchResult = {
     rejected: { model: LiveModel; reason: FilterKey }[];
 };
 
-type Proposal = {
+type Proposal = ModelCapabilities & {
     type:       'add' | 'remove';
     provider:   string;
     model:      string;
@@ -78,7 +79,23 @@ const _FILTER_META: { key: FilterKey; label: string; title: string }[] = [
     { key: 'low-quota', label: 'Low quota',   title: 'Models with near-zero free-tier quota (e.g. rpm:10, rpd:500) — usable only on paid plans' },
     { key: 'too-old',   label: '>1 yr old',   title: 'Models released more than a year ago' },
     { key: 'non-chat',  label: 'Non-chat',    title: 'Embedding, TTS, image-gen, audio, and other non-conversation models' },
+    { key: 'no-tools',  label: 'No tools',    title: 'Models that do not support tool calling' },
 ];
+
+function _modelCapabilities(m: ModelCapabilities): ModelCapabilities {
+    return {
+        ...(Number.isFinite(m.contextK) && m.contextK! > 0 ? { contextK: m.contextK } : {}),
+        ...(m.media ? { media: m.media } : {}),
+        ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}),
+        ...(typeof m.thinking === 'boolean' ? { thinking: m.thinking } : {}),
+    };
+}
+function _contextK(value: unknown): number | undefined {
+    const m = String(value ?? '').replace(/,/g, '').trim().match(/^(\d+(?:\.\d+)?)\s*([km])?$/i);
+    if (!m) return undefined;
+    const n = Number(m[1]) * (m[2]?.toLowerCase() === 'm' ? 1000 : m[2] ? 1 : 0.001);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 // ── Provider fetchers ─────────────────────────────────────────────────────
 
@@ -191,34 +208,81 @@ async function _fetchKiloModels(): Promise<FetchResult> {
     }
 }
 
+// ── Requesty ───────────────────────────────────────────────────────────────
+// https://router.requesty.ai/v1/models is public and lists 800+ models with $/token prices; $0 input and output marks the free
+// routes, which work on a $0 balance. A listed $0 route can still be gone upstream (HTTP 404/410, see FREE_MODEL_BLACKLIST).
+const _REQUESTY_EXCLUDED = new Set([
+    'nvidia/nemotron-3.5-content-safety',   // safety classifier, not a chat model
+]);
+// Listed with image support, but image requests return HTTP 400 "Request contains an invalid argument" (2026-11-01).
+const _REQUESTY_TEXT_ONLY = new Set(['google/gemma-4-31b-it']);
+async function _fetchRequestyModels(): Promise<FetchResult> {
+    try {
+        const key = typeof getRequestyKey === 'function' ? getRequestyKey() : '';
+        const json = await _proxyFetch('https://router.requesty.ai/v1/models', key || undefined);
+        const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const created = _createdReader(all);
+        const live: LiveModel[] = [];
+        const rejected: FetchResult['rejected'] = [];
+        for (const m of all) {
+            if (typeof m.id !== 'string' || Number(m.input_price) !== 0 || Number(m.output_price) !== 0) continue;
+            const model: LiveModel = { id: m.id, created: created(m), contextK: _contextK(m.context_window),
+                tools: m.supports_tool_calling === true, thinking: m.supports_reasoning === true,
+                media: ['text', ...(m.supports_vision === true && !_REQUESTY_TEXT_ONLY.has(m.id) ? ['image'] : [])] };
+            if ((m.api && m.api !== 'chat') || _REQUESTY_EXCLUDED.has(m.id)) rejected.push({ model, reason: 'non-chat' });
+            else if (m.supports_tool_calling !== true) rejected.push({ model, reason: 'no-tools' });
+            else live.push(model);
+        }
+        return { live, rejected };
+    } catch { return { live: [], rejected: [] }; }
+}
+
 // APInex separates free/ routes from paid IDs, but that prefix alone does not guarantee access.
+// Its public supportsVision flag is inaccurate for these routes: live image requests returned
+// HTTP 400 "Vision is disabled for this model" on 2026-11-01. Keep text/tool use available.
+const _APINEX_TEXT_ONLY = new Set(['free/deepseek-v4-pro-0813', 'free/glm-5.3']);
 async function _fetchApinexModels(): Promise<FetchResult> {
     try {
         const key = typeof getApinexKey === 'function' ? getApinexKey() : '';
         if (!key && !specHasKey('apinex|free/glm-5.3-flash')) return { live: [], rejected: [] };
-        const json = await _proxyFetch('https://api.apinex.bond/v1/models', key || undefined);
+        const [json, publicJson] = await Promise.all([
+            _proxyFetch('https://api.apinex.bond/v1/models', key || undefined),
+            _proxyGet('https://apinex.bond/api/public/models'),
+        ]);
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
+        const advertised: any[] = Array.isArray(publicJson?.models) ? publicJson.models : [];
+        // The authenticated list includes subscription-only free/ IDs. Without eligibility
+        // metadata, leave the existing catalog intact rather than guessing from that prefix.
+        if (!all.length || !advertised.length) return { live: [], rejected: [] };
+        const metadata = new Map(advertised.map(m => [m.id, m]));
         const created = _createdReader(all);
         const live = new Map<string, LiveModel>();
         const rejected: FetchResult['rejected'] = [];
         for (const m of all) {
             if (typeof m.id !== 'string' || !m.id.startsWith('free/')) continue;
-            const model: LiveModel = { id: m.id, name: m.name, created: created(m) };
-            // Live check 2026-11-01: Jev requires /v1/decisions, not chat completions.
-            if (m.id === 'free/jev-1.13') rejected.push({ model, reason: 'non-chat' });
+            const meta = metadata.get(m.id);
+            if (meta?.allowFree !== true || meta.dollarsPer1M !== 0 || meta.outputDollarsPer1M !== 0) continue;
+            const model: LiveModel = { id: m.id, name: meta.name || m.name, created: created(m),
+                contextK: _contextK(meta.contextWindow), tools: meta.supportsTools,
+                media: ['text', ...(meta.supportsVision === true && !_APINEX_TEXT_ONLY.has(m.id) ? ['image'] : [])],
+                ...(/^free\/(?:glm-|deepseek-)/.test(m.id) ? { thinking: true } : {}),
+            };
+            // Decision models require /v1/decisions, not chat completions.
+            if (m.id === 'free/jev-1.13' || meta.tags?.includes('decision')) rejected.push({ model, reason: 'non-chat' });
+            else if (meta.supportsTools === false) rejected.push({ model, reason: 'no-tools' });
             else live.set(m.id, model);
         }
         return { live: [...live.values()], rejected };
     } catch { return { live: [], rejected: [] }; }
 }
 
-// Zro's Free plan grants a daily allowance on these IDs despite their nonzero paid-plan prices.
+// MoonMath's Free plan grants a daily allowance on these IDs despite their nonzero paid-plan prices.
 // Other /models entries are paid and must not enter the free-model catalog automatically.
-const _ZRO_FREE_IDS = new Set(['deepseek-v4.1-flash', 'glm-5.3-flash']);
-async function _fetchZroModels(): Promise<FetchResult> {
+const _MOONMATH_FREE_IDS = new Set(['deepseek-v4.1-flash', 'glm-5.3-flash']);
+async function _fetchMoonmathModels(): Promise<FetchResult> {
     try {
-        const key = typeof getZroKey === 'function' ? getZroKey() : '';
-        if (!key && !specHasKey('zro|deepseek-v4.1-flash')) return { live: [], rejected: [] };
+        const key = typeof getMoonmathKey === 'function' ? getMoonmathKey() : '';
+        if (!key && !specHasKey('moonmath|deepseek-v4.1-flash')) return { live: [], rejected: [] };
         const json = await _proxyFetch('https://zro.moonmath.ai/v1/models', key || undefined);
         const all: any[] = Array.isArray(json?.data) ? json.data : [];
         const created = _createdReader(all);
@@ -226,7 +290,8 @@ async function _fetchZroModels(): Promise<FetchResult> {
         for (const m of all) {
             if (typeof m.id !== 'string') continue;
             const id = m.id.replace(/^zro\//, '');
-            if (_ZRO_FREE_IDS.has(id)) live.set(id, { id, name: m.name, created: created(m) });
+            if (_MOONMATH_FREE_IDS.has(id)) live.set(id, { id, name: m.name, created: created(m),
+                contextK: _contextK(m.max_input_tokens), media: ['text', 'image'], tools: true, thinking: true });
         }
         return { live: [...live.values()], rejected: [] };
     } catch { return { live: [], rejected: [] }; }
@@ -245,7 +310,6 @@ async function _fetchZroModels(): Promise<FetchResult> {
 // pricing below, because ids that were free once (perplexity/sonar, ling-3.0-flash-sante) are
 // priced now and must not be accepted just for being on this list.
 const _VERCEL_FREE_IDS = [
-    'poolside/laguna-s-2.1-free',
     'inclusionai/ling-3.1-flash-1019',
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
@@ -465,7 +529,7 @@ function _isTooOld(created: number | undefined): boolean {
 }
 
 // Providers whose fetcher keeps only the free models: a catalog entry missing from their result may still be listed, but priced.
-const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor', 'zro', 'apinex']);
+const _FREE_ONLY_FETCH = new Set(['kilo', 'vercel', 'nous', 'tokenharbor', 'moonmath', 'apinex', 'requesty']);
 
 // Generic helper: compare a provider's live model list against the catalog.
 // Produces add proposals (for new models) and remove proposals (for missing catalog models).
@@ -502,6 +566,7 @@ function _diffProvider(
             selected: tooOld ? false : addSelected,
             filteredBy: tooOld ? 'too-old' : undefined,
             created: m.created,
+            ..._modelCapabilities(m),
         });
     }
 
@@ -513,7 +578,7 @@ function _diffProvider(
             type: 'add', provider, model: m.id,
             label: m.name ?? m.id, note: addNote,
             url: _modelPageUrl(provider, m.id), spec,
-            selected: false, filteredBy: reason, created: m.created,
+            selected: false, filteredBy: reason, created: m.created, ..._modelCapabilities(m),
         });
     }
 
@@ -541,7 +606,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     const catalogKeys = new Set(catalog.map((m: ModelEntry) => `${m.provider}|${m.model}`));
 
     // Fetch all providers in parallel
-    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult, zroResult, apinexResult] =
+    const [orModels, googleResult, groqResult, nvidiaResult, thResult, kiloResult, vercelResult, nousResult, moonmathResult, apinexResult, requestyResult] =
         await Promise.all([
             _fetchOpenRouterModels(),
             _fetchGoogleModels(),
@@ -551,8 +616,9 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
             _fetchKiloModels(),
             _fetchVercelModels(),
             _fetchNousModels(),
-            _fetchZroModels(),
+            _fetchMoonmathModels(),
             _fetchApinexModels(),
+            _fetchRequestyModels(),
         ]);
 
     // Remember real provider release dates so custom models can show them in the catalog table.
@@ -561,7 +627,8 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         const orCreatedAll = _createdReader(orModels);
         for (const m of orModels) { const c = orCreatedAll(m); if (c) seen[`openrouter|${m.id}`] = c; }
         for (const [prov, r] of [['google', googleResult], ['groq', groqResult], ['nvidia', nvidiaResult], ['tokenharbor', thResult],
-                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult], ['zro', zroResult], ['apinex', apinexResult]] as [string, FetchResult][]) {
+                                 ['kilo', kiloResult], ['vercel', vercelResult], ['nous', nousResult], ['moonmath', moonmathResult], ['apinex', apinexResult],
+                                 ['requesty', requestyResult]] as [string, FetchResult][]) {
             for (const m of [...r.live, ...r.rejected.map(x => x.model)]) if (m.created) seen[`${prov}|${m.id}`] = m.created;
         }
         rememberModelCreated(seen);
@@ -695,14 +762,21 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
         'apinex', apinexResult, catalog, catalogKeys,
         'APInex free/ route; account-wide rate limits and allowance; some models require a subscription', false,
     ));
-    else if (specHasKey('apinex|free/glm-5.3-flash')) errors.push('APInex: could not fetch free models (check key or connection)');
+    else if (specHasKey('apinex|free/glm-5.3-flash')) errors.push('APInex: could not read both model and free-eligibility catalogs (check key, proxy/privacy settings, or connection; the public catalog needs a proxy for browser CORS)');
 
-    // Zro: a failed or unauthenticated discovery must not remove catalog models.
-    if (zroResult.live.length) proposals.push(..._diffProvider(
-        'zro', zroResult, catalog, catalogKeys,
-        'Zro Free plan daily allowance; API key required; paid plans meter usage',
+    // Requesty: the model list is public, so free routes are proposed before a key is saved (inference needs one).
+    if (requestyResult.live.length + requestyResult.rejected.length) proposals.push(..._diffProvider(
+        'requesty', requestyResult, catalog, catalogKeys,
+        'Free ($0/token) via Requesty; API key required; about 2 requests in flight at a $0 balance',
     ));
-    else if (specHasKey('zro|deepseek-v4.1-flash')) errors.push('Zro: could not fetch free-plan models (check key, region, or connection)');
+    else errors.push('Requesty: could not fetch model list (network error or timeout)');
+
+    // MoonMath: a failed or unauthenticated discovery must not remove catalog models.
+    if (moonmathResult.live.length) proposals.push(..._diffProvider(
+        'moonmath', moonmathResult, catalog, catalogKeys,
+        'MoonMath Free plan daily allowance; API key required; paid plans meter usage',
+    ));
+    else if (specHasKey('moonmath|deepseek-v4.1-flash')) errors.push('MoonMath: could not fetch free-plan models (check key, region, or connection)');
 
     // ── Nous Portal ────────────────────────────────────────────────────────────
     {
@@ -770,8 +844,9 @@ function _applyProposals(proposals: Proposal[]): void {
                     provider: p.provider,
                     model:    p.model,
                     label:    p.label,
-                    contextK: 128,
+                    contextK: p.contextK ?? 128,
                     note:     p.note,
+                    ..._modelCapabilities(p),
                     // Provider date when it gave a real one; otherwise the day the update first saw
                     // the model (flagged so the catalog table shows it in gray).
                     released: p.created ? new Date(p.created * 1000).toISOString().slice(0, 7) : new Date().toISOString().slice(0, 7),
@@ -866,7 +941,7 @@ export function showModelUpdateModal(): void {
         if (!body) return;
 
         // All filters start active (all filtering is on by default)
-        const activeFilters = new Set<FilterKey>(['non-chat', 'low-quota', 'too-old']);
+        const activeFilters = new Set<FilterKey>(_FILTER_META.map(f => f.key));
 
         const adds    = proposals.filter(p => p.type === 'add');
         const removes = proposals.filter(p => p.type === 'remove');

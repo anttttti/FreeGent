@@ -11,13 +11,12 @@ import { scrubEnv } from '../secret-env.ts';
 const KEYS = { fg_gemini_key: 'AIzaREALKEYVALUE123456', fg_brave_key: 'brave-real-value-789' };
 
 describe('substituteServerKeys', () => {
-    it('loads a Zro key server-side and substitutes it only for the exact Zro HTTPS host', () => {
-        const keys = serverKeys({ ZRO_API_KEY: 'synthetic-zro-key' });
-        expect(keys.fg_zro_key).toBe('synthetic-zro-key');
-        expect(serverKeys({ MOONMATH_API_KEY: 'synthetic-moonmath-key' }).fg_zro_key).toBe('synthetic-moonmath-key');
-        const headers = { Authorization: `Bearer ${placeholderFor('fg_zro_key')}` };
+    it('loads a MoonMath key server-side and substitutes it only for the exact MoonMath HTTPS host', () => {
+        const keys = serverKeys({ MOONMATH_API_KEY: 'synthetic-moonmath-key' });
+        expect(keys.fg_moonmath_key).toBe('synthetic-moonmath-key');
+        const headers = { Authorization: `Bearer ${placeholderFor('fg_moonmath_key')}` };
         expect(substituteServerKeys('https://zro.moonmath.ai/v1/chat/completions', headers, '{}', keys).headers.Authorization)
-            .toBe('Bearer synthetic-zro-key');
+            .toBe('Bearer synthetic-moonmath-key');
         for (const url of ['https://evil.zro.moonmath.ai/v1', 'https://zro.moonmath.ai.evil.com/v1', 'http://zro.moonmath.ai/v1'])
             expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
     });
@@ -28,6 +27,14 @@ describe('substituteServerKeys', () => {
         expect(substituteServerKeys('https://api.apinex.bond/v1/chat/completions', headers, '{}', keys).headers.Authorization)
             .toBe('Bearer synthetic-apinex-key');
         for (const url of ['https://evil.api.apinex.bond/v1', 'https://api.apinex.bond.evil.com/v1', 'http://api.apinex.bond/v1'])
+            expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
+    });
+    it('loads a Requesty key server-side and substitutes it only for the exact Requesty HTTPS host', () => {
+        const keys = serverKeys({ REQUESTY_API_KEY: 'synthetic-requesty-key' });
+        const headers = { Authorization: `Bearer ${placeholderFor('fg_requesty_key')}` };
+        expect(substituteServerKeys('https://router.requesty.ai/v1/chat/completions', headers, '{}', keys).headers.Authorization)
+            .toBe('Bearer synthetic-requesty-key');
+        for (const url of ['https://evil.router.requesty.ai/v1', 'http://router.requesty.ai/v1'])
             expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
     });
     it('fills a placeholder for the key\'s own host', () => {

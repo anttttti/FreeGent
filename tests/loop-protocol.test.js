@@ -166,9 +166,9 @@ describe('parseFnTagCalls — non-native tool-call formats', () => {
         it('unknown NVIDIA models start as fn-tag, other providers as openai; the table wins', () => {
             expect(window.getModelToolFormat('nvidia', 'z-ai/glm5.3-flash')).toBe('fn-tag');
             expect(window.getModelToolFormat('groq', 'some/new-model')).toBe('openai');
-            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b')).toBe('none');
-            window.recordToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b', 'openai');
-            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-super-120b-a12b')).toBe('none');
+            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning')).toBe('none');
+            window.recordToolFormat('nvidia', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'openai');
+            expect(window.getModelToolFormat('nvidia', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning')).toBe('none');
         });
         it('a learned format overrides the default', () => {
             window.recordToolFormat('nvidia', 'x/native', 'openai');

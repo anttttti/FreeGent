@@ -16,12 +16,12 @@ On freegent.ai you never set up a proxy for the [default providers](providers.md
 
 The sidebar's **Privacy** button and **Settings → Privacy** have two levels that use no Worker; Provider-only is the default:
 
-- **Provider-only**: the browser calls providers directly. This works for Gemini, Groq, OpenRouter, Nous, Vercel, TokenHarbor, OpenAI and Tavily, which allow browser calls. NVIDIA, Kilo and Brave search do not, so they stop working on a hosted page, and web fetches only reach sites that send CORS headers.
+- **Provider-only**: the browser calls providers directly. This works for Gemini, Groq, OpenRouter, Nous, Vercel, TokenHarbor, MoonMath, APInex, Requesty, OpenAI and Tavily, which allow browser calls. NVIDIA, Kilo and Brave search do not, so they stop working on a hosted page, and web fetches only reach sites that send CORS headers.
 - **Local**: only `localhost` and local-network addresses; see [Settings → Privacy](../webui/settings.md#privacy).
 
 ## The hosted Worker
 
-The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, OpenAI, Tavily and Brave. For `GET` (page fetches and searches) it forwards to any public HTTPS address. It accepts requests only from the FreeGent sites and local dev ports, applies a per-IP rate limit and stores nothing.
+The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, OpenRouter, Nous, Kilo, NVIDIA NIM, TokenHarbor, Vercel AI Gateway, MoonMath, APInex, Requesty, OpenAI, Tavily and Brave. For `GET` (page fetches and searches) it forwards to any public HTTPS address. It accepts requests only from the FreeGent sites and local dev ports, applies a per-IP rate limit and stores nothing.
 
 The Worker can also hold shared provider keys, but it uses them only for sessions that present the maintainer's Developer key (Settings → Models → API Credentials → Developer key). Ordinary visitors always use their own keys.
 

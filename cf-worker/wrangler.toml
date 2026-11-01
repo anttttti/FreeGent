@@ -20,8 +20,9 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 #   npx wrangler secret put TOKENHARBOR_API_KEY
 #   npx wrangler secret put NVIDIA_API_KEY
 #   npx wrangler secret put VERCEL_API_KEY
-#   npx wrangler secret put ZRO_API_KEY
+#   npx wrangler secret put MOONMATH_API_KEY
 #   npx wrangler secret put APINEX_API_KEY
+#   npx wrangler secret put REQUESTY_API_KEY
 #
 # Keys are injected server-side and never visible to browser clients.
 

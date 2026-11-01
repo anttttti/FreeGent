@@ -89,6 +89,7 @@ const ALLOWED_HOSTS = new Set([
     'ai-gateway.vercel.sh',
     'zro.moonmath.ai',
     'api.apinex.bond',
+    'router.requesty.ai',
     'api.openai.com',
     'api.search.brave.com',
     'api.tavily.com',
@@ -110,8 +111,9 @@ const PROVIDER_KEY_MAP = {
     'api.tavily.com':                    'TAVILY_API_KEY',
     'integrate.api.nvidia.com':          'NVIDIA_API_KEY',
     'ai-gateway.vercel.sh':              'VERCEL_API_KEY',
-    'zro.moonmath.ai':                   'ZRO_API_KEY',
+    'zro.moonmath.ai':                   'MOONMATH_API_KEY',
     'api.apinex.bond':                   'APINEX_API_KEY',
+    'router.requesty.ai':                'REQUESTY_API_KEY',
     'api.kilo.ai':                       'KILO_API_KEY',
 };
 
@@ -126,7 +128,7 @@ const CORS = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass, X-FG-Sync-Token, X-FG-Sync-Base',
     'Access-Control-Max-Age':       '86400',
-    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error',
+    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens',
 };
 
 // ── POST /log: a user-sent chat log, stored for debugging ─────────────────────

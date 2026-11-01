@@ -67,26 +67,96 @@ it.each([
     expect(p.chat_template_kwargs).toBeUndefined();
 });
 
-it('keeps subscription-only routes out of the free catalog and saved rankings', () => {
-    const gated = 'apinex|free/claude-opus-4.6';
-    W.saveCustomModels([{ provider: 'apinex', model: 'free/claude-opus-4.6', label: 'Gated' }]);
-    W.saveMainModelList([gated, GLM]);
-    expect(W.getAllModels().some((m: any) => `${m.provider}|${m.model}` === gated)).toBe(false);
+function mockDiscovery(ids: string[], metadata: any[] | null) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: any) => {
+        const target = opts?.body ? JSON.parse(opts.body).url : new URL(url, 'https://test.invalid').searchParams.get('url');
+        return { ok: true, json: async () => target === 'https://api.apinex.bond/v1/models'
+            ? { data: ids.map(id => ({ id })) }
+            : target === 'https://apinex.bond/api/public/models' && metadata ? { models: metadata } : null };
+    }));
+}
+const freeMetadata = (id: string, allowFree = true) => ({ id, allowFree, dollarsPer1M: 0, outputDollarsPer1M: 0, supportsTools: true });
+async function openDiscovery() {
+    showModelUpdateModal();
+    await vi.waitFor(() => expect(document.getElementById('fg-mu-loading')).toBeNull());
+}
+
+function acceptAddition(spec: string) {
+    const box = [...document.querySelectorAll<HTMLInputElement>('#fg-mu-section-adds input[data-spec]')]
+        .find(b => b.dataset.spec === spec)!;
+    expect(box).toBeTruthy();
+    box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('fg-mu-apply')!.click();
+}
+
+it('preserves discovered context, vision, tools and thinking when saving a new model', async () => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    const id = 'free/deepseek-discovery-probe';
+    mockDiscovery([id], [{ ...freeMetadata(id), contextWindow: '1M', supportsVision: true }]);
+    await openDiscovery(); acceptAddition('apinex|' + id);
+    expect(W.getCustomModels()).toContainEqual(expect.objectContaining({ provider: 'apinex', model: id,
+        contextK: 1000, media: ['text', 'image'], tools: true, thinking: true }));
+    expect(W.modelSupportsThinking('apinex', id)).toBe(true);
+});
+
+it('keeps the two routes that rejected image input text-only despite advertised vision', async () => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    W.hideBuiltinModel('apinex|free/glm-5.3');
+    mockDiscovery(['free/glm-5.3'], [{ ...freeMetadata('free/glm-5.3'), contextWindow: '1M', supportsVision: true }]);
+    await openDiscovery(); acceptAddition('apinex|free/glm-5.3');
+    expect(W.getAllModels().find((m: any) => m.provider === 'apinex' && m.model === 'free/glm-5.3').media).toEqual(['text']);
+});
+
+it('filters no-tools models by default and preserves the restriction if explicitly selected', async () => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    const id = 'free/chat-without-tools';
+    mockDiscovery(['free/glm-5.3-flash', id], [freeMetadata('free/glm-5.3-flash'), { ...freeMetadata(id), supportsTools: false, contextWindow: '64K' }]);
+    await openDiscovery();
+    expect(document.querySelector(`[data-spec="apinex|${id}"]`)).toBeNull();
+    (document.querySelector('[data-filter="no-tools"]') as HTMLButtonElement).click();
+    acceptAddition('apinex|' + id);
+    expect(W.getCustomModels()).toContainEqual(expect.objectContaining({ model: id, contextK: 64, tools: false }));
+    expect(W.getModelToolFormat('apinex', id)).toBe('none');
+});
+
+it.each([false, true])('uses current allowFree=%s metadata for a previously subscription-only model', async (allowFree) => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    const id = 'free/claude-opus-4.6';
+    mockDiscovery(['free/glm-5.3-flash', id], [freeMetadata('free/glm-5.3-flash'), freeMetadata(id, allowFree)]);
+    await openDiscovery();
+    const adds = [...document.querySelectorAll<HTMLInputElement>('#fg-mu-section-adds input[data-spec]')];
+    expect(adds.some(b => b.dataset.spec === 'apinex|' + id)).toBe(allowFree);
+});
+
+it('proposes removing a saved model when live eligibility becomes subscription-only', async () => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    const id = 'free/claude-opus-4.6';
+    W.saveCustomModels([{ provider: 'apinex', model: id, label: 'Gated' }]);
+    W.saveMainModelList(['apinex|' + id, GLM]);
+    mockDiscovery(['free/glm-5.3-flash', id], [freeMetadata('free/glm-5.3-flash'), freeMetadata(id, false)]);
+    await openDiscovery();
+    const removes = [...document.querySelectorAll<HTMLInputElement>('#fg-mu-section-removes input[data-spec]')];
+    expect(removes.find(b => b.dataset.spec === 'apinex|' + id)?.checked).toBe(true);
+    document.getElementById('fg-mu-apply')!.click();
     expect(W.getMainModelList()).toEqual([GLM]);
+});
+
+it('leaves the saved catalog intact when public eligibility metadata is unavailable', async () => {
+    localStorage.setItem('fg_apinex_key', KEY);
+    mockDiscovery(['free/new-model'], null);
+    await openDiscovery();
+    const boxes = [...document.querySelectorAll<HTMLInputElement>('input[data-spec]')];
+    expect(boxes.some(b => b.dataset.spec?.startsWith('apinex|'))).toBe(false);
+    expect(W.getAllModels().some((m: any) => m.provider === 'apinex' && m.model === 'free/glm-5.3-flash')).toBe(true);
 });
 
 it('discovers only free/ IDs, hides non-chat routes, and leaves additions unchecked', async () => {
     localStorage.setItem('fg_apinex_key', KEY);
     W.hideBuiltinModel(GLM);
-    const request = vi.fn(async (_url: string, opts?: any) => {
-        const target = opts?.body ? JSON.parse(opts.body).url : '';
-        return { ok: true, json: async () => target === 'https://api.apinex.bond/v1/models' ? { data: [
-            { id: 'free/glm-5.3-flash' }, { id: 'free/glm-5.3-flash' },
-            { id: 'free/new-model' }, { id: 'glm-5.3-flash' }, { id: 'paid/new-model' },
-            { id: 'free/claude-opus-4.6' }, { id: 'free/jev-1.13' }, { id: 'free/minimax-m3.1-flash' },
-        ] } : null };
-    });
-    vi.stubGlobal('fetch', request);
+    const ids = ['free/glm-5.3-flash', 'free/glm-5.3-flash', 'free/new-model', 'glm-5.3-flash',
+        'paid/new-model', 'free/claude-opus-4.6', 'free/jev-1.13', 'free/minimax-m3.1-flash'];
+    mockDiscovery(ids, ids.map(id => ({ ...freeMetadata(id, id !== 'free/claude-opus-4.6'),
+        ...(id === 'free/jev-1.13' ? { tags: ['decision'], supportsTools: false } : {}) })));
     showModelUpdateModal();
     await vi.waitFor(() => expect(document.getElementById('fg-mu-apply')).not.toBeNull());
     const boxes = [...document.querySelectorAll<HTMLInputElement>('#fg-mu-section-adds input[type=checkbox][data-spec]')]

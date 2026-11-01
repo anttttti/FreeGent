@@ -11,7 +11,47 @@ beforeAll(async () => {
 
 const pad = (p: string) => p + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4';
 
+describe('adding hosted models from Settings', () => {
+    beforeEach(() => {
+        localStorage.clear();
+        document.body.innerHTML = '<div id="model-catalog-table"></div><div id="main-model-list"></div>';
+    });
+    afterEach(() => { localStorage.clear(); document.body.innerHTML = ''; });
+
+    it.each([['moonmath-key', 'fg_moonmath_key'], ['apinex-key', 'fg_apinex_key'], ['requesty-key', 'fg_requesty_key']])('can clear a freshly entered override in %s without reopening Settings', (id, key) => {
+        document.body.insertAdjacentHTML('beforeend', `<input id="${id}" type="password">`);
+        const input = document.getElementById(id) as HTMLInputElement;
+        input.value = 'synthetic-override'; W.saveSettings();
+        expect(localStorage.getItem(key)).toBe('synthetic-override');
+        input.value = ''; W.saveSettings();
+        expect(localStorage.getItem(key)).toBe('');
+    });
+
+    it.each([
+        ['moonmath', 'glm-5.3-flash-settings-probe', 'fg_moonmath_key', 'https://zro.moonmath.ai/v1/chat/completions'],
+        ['apinex', 'free/glm-5.3-flash-settings-probe', 'fg_apinex_key', 'https://api.apinex.bond/v1/chat/completions'],
+        ['requesty', 'acme/settings-probe', 'fg_requesty_key', 'https://router.requesty.ai/v1/chat/completions'],
+    ])('adds a %s model through the provider selector and routes it using the saved key', (provider, model, key, url) => {
+        localStorage.setItem(key, 'synthetic-settings-credential');
+        W.renderModelCatalogTable();
+        W.showAddCustomModelForm();
+        const select = document.getElementById('new-model-provider') as HTMLSelectElement;
+        select.value = provider;
+        expect(select.value).toBe(provider);
+        W._onNewModelProviderChange();
+        expect(document.getElementById('new-model-url-row')!.style.display).toBe('none');
+        (document.getElementById('new-model-id') as HTMLInputElement).value = model;
+        W.addCustomModel();
+        expect(W.getCustomModels()).toEqual(expect.arrayContaining([expect.objectContaining({ provider, model })]));
+        expect(W.specToEndpoint(`${provider}|${model}`)).toMatchObject({ provider, model, url, key: 'synthetic-settings-credential' });
+    });
+});
+
 describe('findKeysInText', () => {
+    it('recognizes bare APInex keys without treating a generic sk- key as MoonMath', () => {
+        expect(M.findKeysInText(pad('sk-apx'))).toEqual({ APINEX_API_KEY: pad('sk-apx') });
+        expect(M.findKeysInText(pad('sk-')).MOONMATH_API_KEY).toBeUndefined();
+    });
     it('finds bare keys in any order, separated by anything', () => {
         const text = `${pad('gsk_')}, ${pad('AIza')}\n"${pad('tvly-')}"  here's github: ${pad('github_pat_')}.`;
         expect(M.findKeysInText(text)).toEqual({

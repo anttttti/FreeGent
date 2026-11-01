@@ -39,7 +39,8 @@ export function isCustomEndpoint(ep: any): boolean {
 // - provider 'openai': cloud OpenAI or any endpoint explicitly declared as 'openai'.
 //   These are assumed NOT to use a Qwen3 chat template — chat_template_kwargs is not sent.
 // - APInex maps DeepSeek/GLM budgets to documented low/medium/high effort.
-// - Zro maps the shared budget to its documented reasoning_effort levels.
+// - MoonMath maps the shared budget to its documented reasoning_effort levels.
+// - Requesty takes reasoning_effort on every model; its 'none' disables or minimises reasoning (docs.requesty.ai/features/reasoning).
 // - All other hosted providers → emit nothing (unknown fields risk strict-API 400s).
 function _thinkingFields(provider: string, isCustom: boolean, budget: number, preserveThinking: boolean, model: string): object {
     // Sentinel -1 = 'default' thinking level: no thinking field sent at all so the endpoint
@@ -49,10 +50,12 @@ function _thinkingFields(provider: string, isCustom: boolean, budget: number, pr
     // APInex documents low/medium/high for its DeepSeek and GLM routes; no disabled level is advertised.
     if (provider === 'apinex' && /^(?:free\/)?(?:glm-|deepseek-)/.test(model))
         return { reasoning_effort: budget >= 24576 ? 'high' : budget >= 8192 ? 'medium' : 'low' };
-    // Zro supports low/high/max, not medium. GLM Flash cannot disable reasoning; none maps to low there.
-    if (provider === 'zro') return { reasoning_effort: budget === 0
+    // MoonMath supports low/high/max, not medium. GLM Flash cannot disable reasoning; none maps to low there.
+    if (provider === 'moonmath') return { reasoning_effort: budget === 0
         ? (model.replace(/^zro\//, '').startsWith('glm-') ? 'low' : 'none')
         : budget >= 24576 ? 'max' : budget >= 8192 ? 'high' : 'low' };
+    if (provider === 'requesty')
+        return { reasoning_effort: budget === 0 ? 'none' : budget >= 24576 ? 'high' : budget >= 8192 ? 'medium' : 'low' };
     if (provider === 'google' && budget > 0)
         return { thinking: { type: 'enabled', budget_tokens: budget } };
     if (provider === 'nvidia' && budget > 0)

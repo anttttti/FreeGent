@@ -33,8 +33,8 @@ Exactly one of `--task` (alias `--workflow`), `--task-file` or `--prompt` is nee
 ## Keys
 
 `fg-run.ts` loads `.env` and `~/.config/freegent/credentials`. Supported provider keys and aliases
-are listed in [Default providers](../models/providers.md), including `APINEX_API_KEY` and
-`ZRO_API_KEY` / `MOONMATH_API_KEY`. `--api-key` (or `FREEGENT_API_KEY`) overrides the key for
+are listed in [Default providers](../models/providers.md), including `APINEX_API_KEY`,
+`MOONMATH_API_KEY` and `REQUESTY_API_KEY`. `--api-key` (or `FREEGENT_API_KEY`) overrides the key for
 the selected provider. For another OpenAI-compatible endpoint, use `--provider custom`
 with `--api-url` and `--api-key`.
 

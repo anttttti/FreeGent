@@ -36,9 +36,14 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 
 ```bash
 npx wrangler secret put GROQ_API_KEY        # also OPENROUTER_API_KEY, GEMINI_API_KEY, NOUS_API_KEY,
-                                            # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY
+                                            # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY,
+                                            # MOONMATH_API_KEY, APINEX_API_KEY, REQUESTY_API_KEY
 npx wrangler secret put FG_DEV_KEY          # the Developer key that unlocks them
 ```
+
+The WebUI is deployed separately by the GitHub Pages workflow after a push to `main`
+(`./deploy.sh --git-only` runs the checks, builds, and pushes it). Deploying this Worker
+or uploading secrets does not update the WebUI's Settings fields or model catalog.
 
 Whether it is acceptable to share a key depends on the provider's terms. Free models on OpenRouter, Groq's free tier, Gemini and Nous are usually fine for server-side use; check yours.
 

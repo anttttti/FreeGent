@@ -569,6 +569,9 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
         const plain = text.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
         if (plain) msg += ': ' + plain.slice(0, 120);
     }
+    // MoonMath's concurrent-request refusal says Retry-After: 60, but a slot frees when one of the key's other requests finishes.
+    // Requesty's in-flight limit ("reached its limit of concurrent requests") frees the same way and sends no Retry-After.
+    if (resp.status === 429 && /runs a limited number of requests at once|limit of concurrent requests/i.test(msg)) retryAfterMs = 5_000;
     const e: any = new Error(prefix ? `${prefix} ${msg}` : msg);
     if (retryAfterMs !== null) e.retryAfterMs = retryAfterMs;
     e.status = resp.status;
@@ -581,7 +584,11 @@ export function _parseRetryAfter(resp) {
     const raw = resp.headers.get('retry-after')
              || resp.headers.get('x-ratelimit-reset-requests')
              || resp.headers.get('x-ratelimit-reset-tokens');
-    if (!raw) return null;
+    if (!raw) {
+        // APInex documents x-ratelimit-reset as a Unix timestamp in seconds.
+        const reset = Number(resp.headers.get('x-ratelimit-reset'));
+        return Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil(reset * 1000 - Date.now())) : null;
+    }
     // Guard: only match purely numeric strings. Without ^…$, parseFloat('1m30s')→1
     // would return 1 s instead of 90 s, making the duration branch below unreachable.
     if (/^\d+(?:\.\d+)?$/.test(raw.trim())) return Math.ceil(parseFloat(raw)) * 1000;

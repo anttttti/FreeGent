@@ -49,9 +49,9 @@ const KEY_MAP: Array<[string, string]> = [
     ['TOKENHARBOR_API_KEY',   'fg_tokenharbor_key'],
     ['KILO_API_KEY',          'fg_kilo_key'],
     ['VERCEL_API_KEY',        'fg_vercel_key'],
-    ['ZRO_API_KEY',           'fg_zro_key'],
-    ['MOONMATH_API_KEY',      'fg_zro_key'],
+    ['MOONMATH_API_KEY',      'fg_moonmath_key'],
     ['APINEX_API_KEY',        'fg_apinex_key'],
+    ['REQUESTY_API_KEY',      'fg_requesty_key'],
     ['NOUSPORTAL_API_KEY',    'fg_nous_key'],
     ['NOUS_API_KEY',          'fg_nous_key'],
     ['OPENAI_API_KEY',        'fg_openai_key'],
@@ -74,8 +74,9 @@ export const KEY_HOSTS: Record<string, string[]> = {
     fg_tokenharbor_key:   ['tokenharbor.ai'],
     fg_kilo_key:          ['api.kilo.ai'],
     fg_vercel_key:        ['ai-gateway.vercel.sh'],
-    fg_zro_key:           ['zro.moonmath.ai'],
+    fg_moonmath_key:      ['zro.moonmath.ai'],
     fg_apinex_key:        ['api.apinex.bond'],
+    fg_requesty_key:      ['router.requesty.ai'],
     fg_nous_key:          ['inference-api.nousresearch.com'],
     fg_openai_key:        ['api.openai.com'],
     fg_tavily_key:        ['api.tavily.com'],
@@ -985,7 +986,7 @@ export function createDevApi(opts: DevApiOptions) {
         if (allowedOrigins.has(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-FG-Token');
-        res.setHeader('Access-Control-Expose-Headers', 'X-FG-Proxy-Error');
+        res.setHeader('Access-Control-Expose-Headers', 'X-FG-Proxy-Error, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens');
         if (method === 'OPTIONS') {
             res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
             res.end(); return;

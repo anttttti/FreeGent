@@ -60,10 +60,16 @@ Store keys as Worker secrets and set a Developer key; the Worker then uses the s
 ```bash
 cd cf-worker
 npx wrangler secret put GROQ_API_KEY       # also OPENROUTER_API_KEY, GEMINI_API_KEY, NOUS_API_KEY,
-                                           # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY
+                                           # TOKENHARBOR_API_KEY, NVIDIA_API_KEY, VERCEL_API_KEY,
+                                           # MOONMATH_API_KEY, APINEX_API_KEY, REQUESTY_API_KEY
 npx wrangler secret put FG_DEV_KEY         # the Developer key
 ```
 
 Then paste the Developer key into Settings → Models → API Credentials → Developer key. Without a Developer key the Worker never injects its keys. Use is limited by a per-IP rate limit (`ratelimits` in `wrangler.toml`), and the Worker returns only `true`/`false` per provider from `/keys`, never the key values.
+
+After adding provider support, deploy both the Worker and the WebUI (`./deploy.sh`
+from the repository root). A Worker-only deployment or a secret upload does not
+publish the WebUI's Settings fields or model catalog. Use `./deploy.sh --git-only`
+if the Worker is already up to date and only the frontend needs publishing.
 
 Cloudflare's free plan allows 100,000 requests per day and 30 seconds of wall time per request, enough for most model calls.

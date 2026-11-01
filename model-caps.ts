@@ -9,7 +9,6 @@ import { KEYS } from './storage-keys.js';
 
 const _TOOL_FORMATS = {
     // NVIDIA NIM — Nemotron models: thinking-focused, no function calling
-    'nvidia/nvidia/nemotron-3-super-120b-a12b':             'none',
     'nvidia/nvidia/nemotron-3-ultra-550b-a55b':             'fn-tag',
     'nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': 'none',
     // NVIDIA NIM — third-party models with non-standard or no tool calling
@@ -73,6 +72,8 @@ export function isToolsRejectedError(e: any): boolean {
 export function getModelToolFormat(provider: any, model: any): any {
     const key = `${provider}/${model}`;
     if (key in _TOOL_FORMATS) return _TOOL_FORMATS[key];
+    const entry = typeof getAllModels === 'function' ? getAllModels().find(m => m.provider === provider && m.model === model) : null;
+    if (entry?.tools === false) return 'none';
     const l = _readLearned()[key];
     if (l && !(l.fmt === 'none' && Date.now() - l.at > _NONE_TTL_MS)) return l.fmt;
     return provider === 'nvidia' ? 'fn-tag' : 'openai';

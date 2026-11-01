@@ -119,23 +119,30 @@ const _KEY_MAP = {
     nvidia:       'fg_nvidia_key',
     openrouter:   'fg_openrouter_key',
     tokenharbor:  'fg_tokenharbor_key',
-    zro:          'fg_zro_key',
+    nous:         'fg_nous_key',
+    kilo:         'fg_kilo_key',
+    vercel:       'fg_vercel_key',
+    moonmath:     'fg_moonmath_key',
     apinex:       'fg_apinex_key',
+    requesty:     'fg_requesty_key',
 };
 
 // All known env-var → localStorage-key mappings, applied at startup so
 // multi-provider model lists work without specifying a single --provider.
 const _ENV_KEY_MAP: Record<string, string> = {
     GEMINI_API_KEY:        'fg_gemini_key',
+    GOOGLE_API_KEY:        'fg_gemini_key',
     OPENAI_API_KEY:        'fg_openai_key',
     ANTHROPIC_API_KEY:     'fg_openai_key',  // Anthropic uses openai-compat endpoint
     GROQ_API_KEY:          'fg_groq_key',
     NVIDIA_API_KEY:        'fg_nvidia_key',
     OPENROUTER_API_KEY:    'fg_openrouter_key',
     TOKENHARBOR_API_KEY:   'fg_tokenharbor_key',
-    ZRO_API_KEY:           'fg_zro_key',
-    MOONMATH_API_KEY:      'fg_zro_key',  // alias
+    KILO_API_KEY:          'fg_kilo_key',
+    VERCEL_API_KEY:        'fg_vercel_key',
+    MOONMATH_API_KEY:      'fg_moonmath_key',
     APINEX_API_KEY:        'fg_apinex_key',
+    REQUESTY_API_KEY:      'fg_requesty_key',
     NOUSPORTAL_API_KEY:  'fg_nous_key',
     NOUS_API_KEY:        'fg_nous_key',  // alias
     TAVILY_API_KEY:        'fg_tavily_key',

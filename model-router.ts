@@ -74,8 +74,27 @@ function _rlLoad(key: string): _RlRec {
     try {
         const raw = localStorage.getItem('fg_rl:' + key);
         if (raw) { const r = JSON.parse(raw); if (Array.isArray(r?.ts)) return { ts: r.ts.filter((t: any) => typeof t === 'number'), day: String(r.day ?? ''), count: Number(r.count) || 0 }; }
+        return { ts: [], day: '', count: 0 };
     } catch {}
     return _rlMem.get(key) ?? { ts: [], day: '', count: 0 };
+}
+
+// APInex's documented free baseline is shared across models, unlike per-model catalog RPM.
+// Response headers can raise/lower it for this account; stale observations expire after five minutes.
+const _APINEX_ACCOUNT_KEY = 'apinex|*account';
+function _apinexRpm(): number {
+    try {
+        const r = JSON.parse(localStorage.getItem('fg_apinex_observed_rpm') || 'null');
+        if (r?.rpm >= 1 && Number.isFinite(r.rpm) && Date.now() - r.at < 300_000) return r.rpm;
+    } catch {}
+    return 15;
+}
+export function recordRateLimitHeaders(endpoint: any, headers: Headers): void {
+    if (endpoint?.provider !== 'apinex') return;
+    const rpm = Number(headers.get('x-ratelimit-limit'));
+    if (Number.isFinite(rpm) && rpm >= 1) {
+        try { localStorage.setItem('fg_apinex_observed_rpm', JSON.stringify({ rpm, at: Date.now() })); } catch {}
+    }
 }
 function _rlSave(key: string, rec: _RlRec): void {
     _rlMem.set(key, rec);
@@ -114,6 +133,14 @@ export function knownLimitWaitMs(endpoint: any): number {
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
+    if (endpoint.provider === 'apinex') {
+        const ts = _rlLoad(_APINEX_ACCOUNT_KEY).ts.filter(t => now - t < 60_000);
+        if (ts.length >= _apinexRpm()) {
+            const wait = 60_000 - (now - ts[0]) + 250;
+            _markCooldown(endpoint, wait, new Error('HTTP 429: known APInex account RPM limit'));
+            return wait;
+        }
+    }
     if (rpm == null && rpd == null) return 0;
     if (rpm != null) {
         const ts = _rlLoad(key).ts.filter(t => now - t < 60_000);
@@ -138,6 +165,10 @@ export function recordRequest(endpoint: any): void {
     const key = `${endpoint.provider ?? ''}|${endpoint.model}`;
     const { rpm, rpd } = _getKnownLimits(key);
     const now = Date.now();
+    if (endpoint.provider === 'apinex') {
+        const rec = _rlLoad(_APINEX_ACCOUNT_KEY);
+        rec.ts = rec.ts.filter(t => now - t < 60_000); rec.ts.push(now); _rlSave(_APINEX_ACCOUNT_KEY, rec);
+    }
     if (rpm != null) { const rec = _rlLoad(key); rec.ts = rec.ts.filter(t => now - t < 60_000); rec.ts.push(now); _rlSave(key, rec); }
     if (rpd != null) {
         const today = new Date().toISOString().slice(0, 10);
@@ -196,7 +227,7 @@ export function _isRateLimit(msg: string, ep?: any): boolean {
     // but from the user's own server (custom/vLLM) a 503 is "busy / still loading", a server error to
     // retry in seconds, not a quota to wait out for minutes.
     if (ep && isCustomEndpoint(ep) && /HTTP 503\b/.test(msg || '') && !/rate.?limit|too many requests/i.test(msg || '')) return false;
-    return /HTTP 429|HTTP 402|HTTP 503|rate.?limit|too many requests|quota exceeded|insufficient balance|high demand|spikes in demand/i.test(msg || '');
+    return /HTTP 429|HTTP 402|HTTP 503|rate.?limit|too many requests|quota exceeded|insufficient balance|high demand|spikes in demand|monthly spend limit/i.test(msg || '');
 }
 export function _isServerError(msg: string): boolean {
     return /HTTP [45]\d\d|idle timeout|signal timed out|read operation timed out|stream error|failed to fetch|networkerror|load failed|connection reset|connection refused|econnreset|socket hang up|bodystreambuffer|stream.*aborted/i.test(msg || '');
@@ -266,15 +297,15 @@ export function parseRetryHintMs(msg: string): number | null {
     const ms = parseFloat(m[1]) * (u.startsWith('ms') || u.startsWith('milli') ? 1 : u[0] === 'h' ? 3_600_000 : u[0] === 'm' ? 60_000 : 1_000);
     return ms > 0 && ms <= 86_400_000 ? Math.ceil(ms) : null;
 }
-// Cool down every other free model of the endpoint's provider (same flat cooldown). Free = id ends in
-// ":free" / "-free", or, for a provider whose failing model carries no such suffix, any catalog model of it.
-function _cooldownFreeSiblings(endpoint: any, ms: number): void {
+// Share account cooldowns with sibling models. Free IDs include free/ prefixes and :free/-free
+// suffixes; a provider with bare free IDs shares with all its catalog models. RPM can cover paid IDs too.
+function _cooldownSiblings(endpoint: any, ms: number, freeOnly = true): void {
     const mods = typeof getAllModels === 'function' ? getAllModels() : [];
-    const isFree = (id: string) => /(:|-)free$/i.test(id);
+    const isFree = (id: string) => /^free\/|(:|-)free$/i.test(id);
     const failingFree = isFree(endpoint.model);
     for (const m of mods) {
         if (m.provider !== endpoint.provider || m.model === endpoint.model) continue;
-        if (failingFree && !isFree(m.model)) continue;
+        if (freeOnly && failingFree && !isFree(m.model)) continue;
         const k = `${m.provider}|${m.model}`;
         const until = Date.now() + ms;
         if ((_endpointCooldown.get(k) ?? 0) < until) _endpointCooldown.set(k, until);
@@ -286,11 +317,61 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
     // A per-account quota error: the model and its free siblings wait until the reset the message names
     // (a Retry-After header can be much shorter than that), else the catalog's cooldown, else an hour.
     const _msg = String(err?.message ?? '');
+    // APInex uses 402 both for depleted balances and for a model requiring a subscription.
+    // A model access refusal must not block the account's usable free models.
+    if (endpoint.provider === 'apinex' && /HTTP 402\b/.test(_msg)
+        && /available only with a subscription|requires? (?:an? )?(?:active )?subscription|subscription (?:is )?required/i.test(_msg)) {
+        _endpointCooldown.set(key, Date.now() + 24 * 60 * 60_000);
+        return;
+    }
+    // MoonMath's Free plan runs two requests at once per key (x-ratelimit-api_key-limit-max_parallel_requests: 2) and refuses a third
+    // with 429 + Retry-After: 60, although a slot frees as soon as one finishes (checked 2026-11-01). Retry this model shortly; no quota is spent.
+    if (endpoint.provider === 'moonmath' && /HTTP 429\b/.test(_msg) && /requests at once|parallel/i.test(_msg)) {
+        _endpointCooldown.set(key, Date.now() + 5_000);
+        return;
+    }
+    // Requesty (docs.requesty.ai/features/error-codes, checked 2026-11-01): no per-minute limit, but an organization can have only
+    // (balance rounded up) x tier multiplier requests in flight (about 2 at a $0 balance) and a third gets 429 "reached its limit of
+    // concurrent requests" with no Retry-After; a slot frees as soon as one finishes, for every Requesty model at once.
+    if (endpoint.provider === 'requesty') {
+        if (/HTTP 429\b/.test(_msg) && /limit of concurrent requests/i.test(_msg)) {
+            _endpointCooldown.set(key, Date.now() + 5_000);
+            _cooldownSiblings(endpoint, 5_000, false);
+            return;
+        }
+        // 402 "balance is too low to run this request": a priced model on an empty balance; the $0 routes keep working.
+        if (/HTTP 402\b/.test(_msg)) { _endpointCooldown.set(key, Date.now() + 60 * 60_000); return; }
+        // 412 "Reached monthly spend limit for API key": every model of the key waits; the cycle's end is not reported, so re-check hourly.
+        if (/HTTP 412\b|monthly spend limit/i.test(_msg)) {
+            _endpointCooldown.set(key, Date.now() + 60 * 60_000);
+            _cooldownSiblings(endpoint, 60 * 60_000, false);
+            return;
+        }
+    }
     if (err && isAccountQuotaError(_msg)) {
         const _cat = (typeof getAllModels === 'function' ? getAllModels() : []).find((m: any) => m.provider === endpoint.provider && m.model === endpoint.model);
-        const ms = parseQuotaResetMs(_msg) ?? _cat?.cooldownMs ?? Math.max(exactMs ?? 0, 60 * 60_000);
+        // APInex's wallet/key allowance covers paid routes too; 402 can also reflect temporary
+        // reservations, so honor an explicit short retry delay when no quota reset is named.
+        const wallet = endpoint.provider === 'apinex' && /insufficient (?:spendable )?balance|api[- ]key allowance/i.test(_msg);
+        // APInex's free allowance (20M weighted tokens a day; GET /v1/subscription: resets_at_utc) and MoonMath's Free usage (its console:
+        // "resets in 1h 2m" at 22:58 UTC) both reset at 00:00 UTC (checked 2026-11-01): wait for that rather than retrying every hour.
+        // A MoonMath per-key spend limit (key_quota_exceeded) is the account owner's own control and can be raised any time: hourly re-check.
+        const untilUtcMidnight = () => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - d.getTime() + 60_000; };
+        const dailyUtc = endpoint.provider === 'apinex' || endpoint.provider === 'moonmath' && !/key_quota_exceeded|API key has reached its spend limit/i.test(_msg);
+        const ms = parseQuotaResetMs(_msg) ?? _cat?.cooldownMs
+            ?? (wallet ? Math.max(1_000, exactMs ?? parseRetryHintMs(_msg) ?? 60 * 60_000)
+                : dailyUtc ? untilUtcMidnight() : Math.max(exactMs ?? 0, 60 * 60_000));
         _endpointCooldown.set(key, Date.now() + ms);
-        _cooldownFreeSiblings(endpoint, ms);
+        _cooldownSiblings(endpoint, ms, !wallet);
+        return;
+    }
+    // APInex counts inference RPM per account across every model and key in a fixed 60s window.
+    // Rotating to another APInex model cannot bypass it. Honor the reset header/text; without
+    // one, wait a full window rather than applying the generic first-refusal one-hour penalty.
+    if (endpoint.provider === 'apinex' && /HTTP 429\b/.test(_msg)) {
+        const ms = Math.max(1_000, exactMs ?? parseRetryHintMs(_msg) ?? 60_000);
+        _endpointCooldown.set(key, Date.now() + ms);
+        _cooldownSiblings(endpoint, ms, false);
         return;
     }
     // Per-model catalog override: if the catalog entry has a cooldownMs field, use it as a
@@ -417,8 +498,9 @@ function _hostedEndpoint(provider: string, model: string): any {
         case 'tokenharbor': return { provider, url: 'https://tokenharbor.ai/v1/chat/completions',          key: getTokenHarborKey(), model, proxy: viaProxy };
         case 'kilo':        return { provider, url: 'https://api.kilo.ai/api/gateway/chat/completions',    key: getKiloKey() || '', model, proxy: viaProxy };
         case 'vercel':      return { provider, url: 'https://ai-gateway.vercel.sh/v1/chat/completions',    key: getVercelKey(), model, proxy: viaProxy };
-        case 'zro':         return { provider, url: 'https://zro.moonmath.ai/v1/chat/completions',          key: getZroKey(), model, proxy: sp };
+        case 'moonmath':    return { provider, url: 'https://zro.moonmath.ai/v1/chat/completions',          key: getMoonmathKey(), model, proxy: sp };
         case 'apinex':      return { provider, url: 'https://api.apinex.bond/v1/chat/completions',          key: getApinexKey(), model, proxy: sp };
+        case 'requesty':    return { provider, url: 'https://router.requesty.ai/v1/chat/completions',      key: getRequestyKey(), model, proxy: sp };
         case 'nous':        return { provider, url: 'https://inference-api.nousresearch.com/v1/chat/completions', key: getNousKey(), model, proxy: sp };
         case 'nvidia':      return { provider, url: 'https://integrate.api.nvidia.com/v1/chat/completions', key: getNvidiaKey(), model, proxy: viaProxy };
         default:            return null;
@@ -623,7 +705,7 @@ Object.assign(window, {
     _endpointCooldown, _endpointHits, _endpointNeedsProbe, _endpointSuccessSinceCooldown,
     RATE_LIMIT_COOLDOWN_MS, RATE_LIMIT_MAX_MS, RATE_LIMIT_PENALTY_MS,
     noteRefusal, REFUSAL_LIMIT, REFUSAL_COOLDOWN_MS,
-    knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, isCacheCapable,
+    knownLimitWaitMs, recordRequest, recordRateLimitHeaders, recordSuccess, recordCacheCapable, isCacheCapable,
     _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining,
     oaiEndpoint, specToEndpoint, _defaultEndpoint, firstFreeEndpoint, utilityEndpoint,
     _anyFreeSpec, getRateLimitFallbackEndpoint, _switchToFreeModel, _nextRotationSpec,

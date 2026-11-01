@@ -7,6 +7,7 @@
 // bootstrap-jsdom MUST be the first import: it sets globalThis.window = dom.window
 // before any other module body runs. headless-runner re-exports dom for us.
 import './tui-env.js';
+import { detectProviderEnv } from './dotenv.js';
 import { setup, dom, saveProfile, listWorkspaceSessions, resumeSession } from './headless-runner.js';
 import { isCacheCapable, oaiEndpoint, _markFlatCooldown } from './model-router.js';
 export { listWorkspaceSessions, resumeSession };
@@ -79,30 +80,7 @@ const _flag = (name: string, fallback = '') => {
 // Auto-detect provider and API key from standard env var names when
 // FREEWORKER_PROVIDER / FREEWORKER_API_KEY are not explicitly set.
 // Priority: CLI flag > FREEWORKER_* env > standard key names in .env.
-const PROVIDER_ENV_MAP: Array<[string, string]> = [
-    ['OPENAI_API_KEY',     'openai'],
-    ['GEMINI_API_KEY',     'google'],
-    ['ANTHROPIC_API_KEY',  'anthropic'],
-    ['GROQ_API_KEY',       'groq'],
-    ['OPENROUTER_API_KEY', 'openrouter'],
-    ['NVIDIA_API_KEY',     'nvidia'],
-    ['NOUSPORTAL_API_KEY', 'nous'],
-    ['NOUS_API_KEY',       'nous'],   // alias
-    ['ZRO_API_KEY',        'zro'],
-    ['MOONMATH_API_KEY',   'zro'],
-    ['APINEX_API_KEY',     'apinex'],
-];
-
-function _detectProvider(): { provider: string; apiKey: string } | null {
-    if (process.env.FREEWORKER_PROVIDER) return null; // explicit config wins
-    for (const [envVar, provider] of PROVIDER_ENV_MAP) {
-        const key = process.env[envVar];
-        if (key) return { provider, apiKey: key };
-    }
-    return null;
-}
-
-const _detected = _detectProvider();
+const _detected = detectProviderEnv(process.env, _flag('--provider'));
 
 // --resume detection: flag may be bare (no value → resume most recent) or carry an ID.
 const _resumeIdx = args.indexOf('--resume');

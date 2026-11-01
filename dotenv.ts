@@ -30,3 +30,31 @@ export function loadDotenv(): void {
     parseDotenvFile(join(process.cwd(), '.env'));
     parseDotenvFile(join(configDir(), 'credentials'));
 }
+
+// Provider/key detection is shared with the TUI so an explicit provider cannot inherit
+// another provider's first available key. The caller resolves CLI/env precedence.
+const _PROVIDER_ENV_MAP: Array<[string, string]> = [
+    ['OPENAI_API_KEY',     'openai'],
+    ['GEMINI_API_KEY',     'google'],
+    ['GOOGLE_API_KEY',     'google'],
+    ['ANTHROPIC_API_KEY',  'anthropic'],
+    ['GROQ_API_KEY',       'groq'],
+    ['OPENROUTER_API_KEY', 'openrouter'],
+    ['NVIDIA_API_KEY',     'nvidia'],
+    ['NOUSPORTAL_API_KEY', 'nous'],
+    ['NOUS_API_KEY',       'nous'],   // alias
+    ['KILO_API_KEY',       'kilo'],
+    ['VERCEL_API_KEY',     'vercel'],
+    ['TOKENHARBOR_API_KEY','tokenharbor'],
+    ['MOONMATH_API_KEY',   'moonmath'],
+    ['APINEX_API_KEY',     'apinex'],
+    ['REQUESTY_API_KEY',   'requesty'],
+];
+
+export function detectProviderEnv(env: Record<string, string | undefined>, requestedProvider = ''): { provider: string; apiKey: string } | null {
+    for (const [name, provider] of _PROVIDER_ENV_MAP) {
+        if (requestedProvider && provider !== requestedProvider) continue;
+        if (env[name]) return { provider, apiKey: env[name]! };
+    }
+    return null;
+}

@@ -255,9 +255,9 @@ const ENV_KEY_MAP: Record<string, { ls: string; input: string; label: string; pr
     TOKENHARBOR_API_KEY:  { ls: 'fg_tokenharbor_key',   input: 'tokenharbor-key',   label: 'TokenHarbor',   prefixes: ['thk_'] },
     KILO_API_KEY:         { ls: 'fg_kilo_key',          input: 'kilo-key',          label: 'Kilo',          prefixes: ['sk-kilo-'] },
     VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key',        label: 'Vercel',        prefixes: ['aig_'] },
-    ZRO_API_KEY:          { ls: 'fg_zro_key',           input: 'zro-key',           label: 'Zro',           prefixes: [] }, // sk- is not provider-specific
-    MOONMATH_API_KEY:     { ls: 'fg_zro_key',           input: 'zro-key',           label: 'Zro',           prefixes: [] }, // alias
-    APINEX_API_KEY:       { ls: 'fg_apinex_key',        input: 'apinex-key',        label: 'APInex',        prefixes: [] },
+    MOONMATH_API_KEY:     { ls: 'fg_moonmath_key',      input: 'moonmath-key',      label: 'MoonMath',      prefixes: [] }, // sk- is not provider-specific
+    APINEX_API_KEY:       { ls: 'fg_apinex_key',        input: 'apinex-key',        label: 'APInex',        prefixes: ['sk-apx'] },
+    REQUESTY_API_KEY:     { ls: 'fg_requesty_key',      input: 'requesty-key',      label: 'Requesty',      prefixes: ['rqsty-'] },
     NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['nsk-'] },
     HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key',            label: 'HuggingFace',   prefixes: ['hf_'] },
     TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key',        label: 'Tavily',        prefixes: ['tvly-'] },
@@ -415,7 +415,7 @@ function saveSettings() {
         if (el && el.dataset.fgBase !== undefined && val === el.dataset.fgBase) return;
         if (val) {
             setPref(lsKey, val);
-            if (el) el.dataset.fgBase = val;
+            if (el) { el.dataset.fgBase = val; el.dataset.fgLoaded = '1'; }
         } else if (el?.dataset.fgLoaded) {
             // Field was shown with a value and user deliberately cleared it — honour that.
             setPref(lsKey, '');
@@ -439,8 +439,9 @@ function saveSettings() {
     saveKey('fg_tokenharbor_key',   'tokenharbor-key');
     saveKey('fg_kilo_key',          'kilo-key');
     saveKey('fg_vercel_key',        'vercel-key');
-    saveKey('fg_zro_key',           'zro-key');
+    saveKey('fg_moonmath_key',      'moonmath-key');
     saveKey('fg_apinex_key',        'apinex-key');
+    saveKey('fg_requesty_key',      'requesty-key');
     saveKey('fg_nous_key',          'nous-key');
     saveSelect('fg_sandbox_provider', 'sandbox-provider', 'wasm');
     saveSelect('fg_search_provider', 'search-provider', 'auto');
@@ -462,14 +463,14 @@ function populateSettingsForm() {
     window._settingsPopulating = true;
     // Mark each input as populated so saveKey() can distinguish a deliberately-cleared
     // field from one that was never shown a value (race with the keys endpoint).
-    const set = (id, val) => {
+    const set = (id, val, keyPrefix = '') => {
         const el = document.getElementById(id) as HTMLInputElement | null;
         if (!el) return;
-        // Keys held by the dev server reach the page only as placeholders: leave the field empty
-        // and say where the key comes from. Typing a key here overrides the server's.
+        // Keys held by the dev server reach the page only as placeholders: leave the field empty.
+        // Keep a supplied prefix hint; typing a key here overrides the server's.
         if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) {
             el.value = '';
-            el.placeholder = 'Set in ~/.config/freegent/credentials (kept on the server)';
+            el.placeholder = keyPrefix || 'Set in ~/.config/freegent/credentials (kept on the server)';
             return;
         }
         el.value = val;
@@ -484,8 +485,9 @@ function populateSettingsForm() {
     set('tokenharbor-key',   getTokenHarborKey());
     set('kilo-key',          getKiloKey());
     set('vercel-key',        getVercelKey());
-    set('zro-key',           getZroKey());
-    set('apinex-key',        getApinexKey());
+    set('moonmath-key',      getMoonmathKey(), 'sk-...');
+    set('apinex-key',        getApinexKey(), 'sk-apx...');
+    set('requesty-key',      getRequestyKey(), 'rqsty-...');
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
     if (pyAuto) pyAuto.checked = localStorage.getItem('fg_pyodide_autoload') !== '0';
@@ -671,7 +673,7 @@ function updateReasoningSelect() {
 
 
 function _providerLabel(p) {
-    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', zro:'Zro', apinex:'APInex', custom:'Custom' }[p] || p;
+    return { google:'Google', groq:'Groq', nvidia:'NVIDIA', openrouter:'OpenRouter', nous:'Nous Portal', tokenharbor:'TokenHarbor', kilo:'Kilo', vercel:'Vercel AI Gateway', moonmath:'MoonMath', apinex:'APInex', requesty:'Requesty', custom:'Custom' }[p] || p;
 }
 
 let _modelSort: { col: string | null; dir: string } = { col: null, dir: 'asc' };
@@ -766,6 +768,9 @@ function renderModelCatalogTable() {
           <option value="nous">Nous Portal</option>
           <option value="google">Google</option>
           <option value="nvidia">NVIDIA</option>
+          <option value="moonmath">MoonMath</option>
+          <option value="apinex">APInex</option>
+          <option value="requesty">Requesty</option>
           <option value="custom">Custom</option>
         </select></td></tr>
     <tr><td class="settings-table-label">Model ID</td>

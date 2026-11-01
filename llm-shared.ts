@@ -299,6 +299,12 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
         const _compactIsTransient = (e: any) => isCustomEndpoint(ep) ||
             /HTTP 4\d\d.*(?:not found|no endpoint|no model|invalid model|model.*not.*exist|does not exist)/i.test(e.message);
         const data = await withRetry(() => withEndpointSlot(ep, null, async () => {
+            const wait = knownLimitWaitMs(ep);
+            if (wait > 0) {
+                const err: any = new Error(`HTTP 429 known rate limit (${ep.model}: ${Math.ceil(wait / 1000)}s)`);
+                err.retryAfterMs = wait; err.preFlight = true;
+                throw err;
+            }
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
             if (ep.key) headers['Authorization'] = `Bearer ${ep.key}`;
             // thinkingBudget 0: the summary must land in the content field, not in reasoning.
@@ -310,10 +316,12 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             if ('tool_choice' in payload) payload.tool_choice = 'none';
             const body = JSON.stringify(payload);
             const proxyUrl = ep.proxy ? getLocalApiProxy() : '';
+            recordRequest(ep);
             const resp = await (proxyUrl
                 ? fetch(proxyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body: JSON.stringify({ url: ep.url, method: 'POST', headers, body }) })
                 : fetch(ep.url!, { method: 'POST', headers, signal: _compactFetchSignal(ep, estimateTokens(msgs)), body })
             ).catch(e => { throw asTransportError(e); });
+            recordRateLimitHeaders(ep, resp.headers);
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             // A summary the endpoint served is a success like a chat reply: without it, the next 429 there got the one-hour penalty for an
             // endpoint with "no success since its cooldown" (codex R237).
