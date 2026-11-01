@@ -820,36 +820,29 @@ function getAllModels() {
 // Space Bunny Alpha (stealth) was withdrawn on 2026-10-05 and is gone from every provider.
 // Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
-    // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-10-29): share of microtasks solved,
-    // context held before a quota stopped it, speed. Beam on Vercel 93% (250K in all three conversations, 148 tok/s; Kilo's and Nous's
-    // free quotas stopped it at 210K and 95K), DeepSeek 92%, Step 5 90%, MiMo V2.6 Flash 82% (250K in all three conversations),
-    // Step 3.7 87% of 15 (Nous's hourly token cap at 107K), Nemotron Super VL 79%, Nemotron Ultra 69%.
-    // Added on 2026-10-31: Ling 3.1 Flash, 88% on Kilo and 78% on Vercel, 250K in all three conversations on both (no free-tier limit hit).
-    // Withdrawn on 2026-10-29: MiniMax M3.1 Flash (Vercel now charges $0.15 / $0.60 per M tokens; its free variants ended 2026-10-22), GLM 5.3 (no longer
-    // listed by NVIDIA), LongCat 2.5 Preview (Nous: 404 "no longer free"), Nemotron 3 Super 120B (no longer listed by Kilo or OpenRouter).
-    // Tool calls of every entry checked 2026-10-29, except NVIDIA's (the test key got 403 on every model).
+    // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-11-01): share of microtasks solved,
+    // context held before a quota stopped it, speed; one model's providers sit together, so a quota stop moves to the same model
+    // elsewhere. Beam 93% on Vercel (148 tok/s), 88% on Kilo; DeepSeek V4.1 Flash 92% on TokenHarbor and MoonMath (MoonMath's daily
+    // allowance held about 2M tokens); GLM 5.3 Flash 97% on NVIDIA (250K three times, 36 tok/s); Step 5 90%; Nemotron 3.5 Super VL
+    // 88% / 87% / 79% on NVIDIA / OpenRouter / Kilo; Ling 3.1 Flash 88% on Kilo, 78% on Vercel; MiMo V2.6 Flash 82%.
+    // Not here: Nemotron 3 Ultra (69% on Kilo; about 85% on NVIDIA, run unfinished), Requesty's routes (shared free budget that
+    // stayed refused for over an hour; Ling 74.5% there), Dots 3 Note (garbled <dots_function_call> tool calls), stealth models
+    // (withdrawn without notice), Ornith 1.5 (HTTP 503 at the last probe).
     'vercel|reflection/beam-free',                     // 501B MoE, 1M ctx; $0, but Vercel needs a credit balance on the account
-    'tokenharbor|deepseek-v4.1-flash:free',            // S tier (KiloBench 75.3%); weekly quota
-    'nvidia|stepfun-ai/step-5-preview',                // NIM free credits
     'kilo|reflection/beam-free',                       // same Beam, Kilo's free quota
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
-    'kilo|inclusionai/ling-3.1-flash-1019-free',       // 560B MoE (25B active), 1M ctx; held 250K three times on Kilo's free quota
+    'tokenharbor|deepseek-v4.1-flash:free',            // weekly quota
+    'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance (about 2M tokens)
+    'nvidia|z-ai/glm-5.3-flash',                       // NIM free credits; slow (36 tok/s)
+    'moonmath|glm-5.3-flash',                          // same GLM, MoonMath's shared daily allowance
+    'nvidia|stepfun-ai/step-5-preview',                // NIM free credits; slow (22 tok/s)
+    'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning; Nous's hourly token cap
+    'nvidia|nvidia/nemotron-3.5-super-vl-120b-a12b',   // 120B MoE, 1M ctx, images
+    'openrouter|nvidia/nemotron-3.5-super-vl:free',    // same model; OpenRouter free: about 50 requests a day
+    'kilo|nvidia/nemotron-3.5-super-vl:free',
+    'kilo|inclusionai/ling-3.1-flash-1019-free',       // 560B MoE (25B active), 1M ctx
     'vercel|inclusionai/ling-3.1-flash-1019',          // same Ling, Vercel's $0 route
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
-    'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning
-    'kilo|nvidia/nemotron-3.5-super-vl:free',          // 120B MoE, 1M ctx
-    'kilo|nvidia/nemotron-3-ultra-550b-a55b:free',     // 550B MoE, 1M ctx
-    'nvidia|nvidia/nemotron-3-ultra-550b-a55b',
-    'openrouter|nvidia/nemotron-3-ultra-550b-a55b:free',
-    'tokenharbor|mimo-v2.5:free',                      // previous MiMo; same weekly quota
-    'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance; not yet benchmarked
-    'moonmath|glm-5.3-flash',
-    // Requesty last but one: its $0 routes share a budget that ran out after about 15M tokens and stayed refused for over an hour,
-    // and Ling scored 74.5% there (88% on Kilo, 78% on Vercel); the same models are on other providers above.
-    'requesty|novita/ling-3.1-flash',                  // same Ling, Requesty's $0 route (256K ctx)
-    'requesty|nvidia/nemotron-3-ultra-550b-a55b',      // Requesty's $0 route
-    // Last: it writes tool calls as <dots_function_call> text (repaired, but often garbled).
-    'kilo|dots-studio/dots-3-note-preview:free',       // 280B MoE, 512K ctx
 ];
 
 /** True when the saved priority list is empty by the person's choice or by the retirement of everything in it (an empty array, or only withdrawn models): then there is
