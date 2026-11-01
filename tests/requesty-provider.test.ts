@@ -98,6 +98,13 @@ describe('Requesty cooldowns', () => {
         expect(getCooldownRemaining(LING)).toBe(3_600);
     });
 
+    it('cools every Requesty model together on the shared free-model rate limit', () => {
+        _markCooldown(W.specToEndpoint(LING), null, new Error("HTTP 429: You've hit the rate limit for free models. Retry later or switch to a paid model, which requires a positive account balance"));
+        expect(getCooldownRemaining(LING)).toBe(900);
+        expect(getCooldownRemaining(ULTRA)).toBe(900);
+        expect(getCooldownRemaining('kilo|reflection/beam-free')).toBe(0);
+    });
+
     it('leaves an upstream provider 429 to the generic per-model handling', () => {
         _markCooldown(W.specToEndpoint(LING), 30_000, new Error('HTTP 429: Too many requests'));
         expect(getCooldownRemaining(LING)).toBeGreaterThan(0);

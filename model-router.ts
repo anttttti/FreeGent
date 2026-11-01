@@ -346,6 +346,15 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
             _cooldownSiblings(endpoint, 5_000, false);
             return;
         }
+        // 429 "You've hit the rate limit for free models": an undocumented budget shared by every $0 route (hit after about 15M tokens in
+        // 2 h of the model ladder, 2026-11-01), with no Retry-After or reset named. All free Requesty models wait together; 15 minutes
+        // until the recovery time is measured.
+        if (/HTTP 429\b/.test(_msg) && /rate limit for free models/i.test(_msg)) {
+            const ms = exactMs ?? 15 * 60_000;
+            _endpointCooldown.set(key, Date.now() + ms);
+            _cooldownSiblings(endpoint, ms, false);
+            return;
+        }
         // 402 "balance is too low to run this request": a priced model on an empty balance; the $0 routes keep working.
         if (/HTTP 402\b/.test(_msg)) { _endpointCooldown.set(key, Date.now() + 60 * 60_000); return; }
         // 412 "Reached monthly spend limit for API key": every model of the key waits; the cycle's end is not reported, so re-check hourly.

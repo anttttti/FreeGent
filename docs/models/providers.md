@@ -132,7 +132,9 @@ eight parallel requests went through on 2026-11-01. The others got `429` "Your o
 with no `Retry-After`. FreeGent retries after 5 seconds and holds every Requesty model for those seconds, since the limit is shared.
 With "one request per endpoint" on (the default), each model sends one request at a time.
 A key's monthly spend limit answers `412` "Reached monthly spend limit for API key"; every Requesty model then waits an hour and is
-checked again, because the end of the cycle is not reported. Upstream rate limits (`429` "Too many requests", origin `provider`) cool
+checked again, because the end of the cycle is not reported. Free models also share an undocumented budget: after about 15M tokens in two hours (model ladder, 2026-11-01) every $0 route
+answered `429` "You've hit the rate limit for free models", with no `Retry-After` or reset time. FreeGent then cools all Requesty
+models together, for 15 minutes until the recovery time is measured. Upstream rate limits (`429` "Too many requests", origin `provider`) cool
 only that model, as for any provider. Requesty allows browser calls (`Access-Control-Allow-Origin: *`).
 
 ## Quota errors for MoonMath and APInex
