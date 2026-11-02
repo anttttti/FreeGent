@@ -61,6 +61,12 @@ describe('findKeysInText', () => {
         });
     });
 
+    it('recognises Nous Portal keys (sk-nous-…, and the older nsk-…) without taking other sk- keys', () => {
+        const r = M.findKeysInText(`${pad('sk-nous-')} ${pad('sk-or-v1-')} ${pad('sk-kilo-')}`);
+        expect(r).toEqual({ NOUSPORTAL_API_KEY: pad('sk-nous-'), OPENROUTER_API_KEY: pad('sk-or-v1-'), KILO_API_KEY: pad('sk-kilo-') });
+        expect(M.findKeysInText(pad('nsk-')).NOUSPORTAL_API_KEY).toBe(pad('nsk-'));
+    });
+
     it('distinguishes providers sharing a prefix stem', () => {
         const r = M.findKeysInText(`${pad('sk-kilo-')} ${pad('sk-or-v1-')}`);
         expect(r.KILO_API_KEY).toBe(pad('sk-kilo-'));

@@ -849,7 +849,7 @@ const _busyEndpointSpecs = new Set();
 // (unless the person pinned the worker model, which then applies to every worker).
 function _assignsDistinctEndpoints(): boolean {
     if (getEndpointRotation()) return true;
-    return singleRequestPerEndpoint() && !(typeof getWorkerModel === 'function' && getWorkerModel());
+    return singleRequestPerEndpoint() && !(typeof getEffectiveWorkerModel === 'function' && getEffectiveWorkerModel());
 }
 
 function _pickFreeRotationSpec(alreadyPicked: Set<string> | null): string | null {

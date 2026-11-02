@@ -11,7 +11,7 @@
 //    quota is off. A refusal for the day's limit pauses the guest models until 00:00 UTC.
 import { isStaticHost } from './static-hosts.js';
 import { getPrivacyLevel } from './privacy.js';
-import { guestQuotaOn, loadCfWorkerKeys, chooseGuestQuota, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
+import { guestQuotaOn, loadCfWorkerKeys, chooseGuestQuota, unchooseGuestQuota, guestQuotaChosen, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
 
 const DIALOG_ID = 'fg-guest-quota-dialog';
 const PROVIDERS_URL = 'https://freegent.ai/docs/models/providers';
@@ -106,3 +106,35 @@ export function installGuestQuotaWatch(): void {
     window.addEventListener('focus', () => _refresh());
     setInterval(() => { if (document.visibilityState === 'visible') _refresh(); }, REFRESH_EVERY_MS);
 }
+
+// ── "Guest access" in Settings → Models, beside Populate and Defaults ────────
+// Shown only while the Worker has its guest quota on (its /keys reply, so only at Routed and never for a Developer-key
+// session, which uses all Worker keys anyway). Enabled = this browser chose the guest quota; a click switches it.
+export function renderGuestAccess(): void {
+    const btn = document.getElementById('guest-access-btn') as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.hidden = !guestQuotaOn();
+    if (btn.hidden) return;
+    const on = guestQuotaChosen();
+    const paused = guestQuotaPausedUntil();
+    const daily = guestQuotaDaily();
+    btn.textContent = `Guest access: ${on ? 'Enabled' : 'Disabled'}`;
+    btn.classList.toggle('guest-access-on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = 'FreeGent\'s Worker offers guest access: when you have no key of your own for Groq, Kilo, OpenRouter or '
+        + `TokenHarbor, it runs those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}. `
+        + 'Everyone shares it, your own keys are always used first, the providers\' terms apply, and free models may use '
+        + 'your prompts for training: don\'t send anything private. '
+        + (on ? (paused ? `This network has used today's guest quota; it is back after 00:00 UTC. ` : 'Its models count as available in the lists below. ')
+              + 'Click to stop using it.'
+              : 'Its models are not offered until you enable it. Click to use it.');
+}
+
+export async function toggleGuestAccess(): Promise<void> {
+    if (guestQuotaChosen()) unchooseGuestQuota(); else chooseGuestQuota();
+    renderGuestAccess();
+    try { await loadCfWorkerKeys(); } catch {}   // re-renders the model lists and this button
+    (window as any).updateActiveModelDisplay?.();
+}
+
+Object.assign(window, { renderGuestAccess, toggleGuestAccess });

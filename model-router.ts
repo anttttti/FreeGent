@@ -607,8 +607,8 @@ export function resolveWorkerModelSpec(workerModelSpec: string | null, role: any
     // An explicit per-call spec always wins (e.g. role-level overrides).
     if (workerModelSpec) return workerModelSpec;
 
-    // Consult the global Worker Model setting.
-    const setting = typeof getWorkerModel === 'function' ? getWorkerModel() : '';
+    // Consult the global Worker Model setting (a selected model without a key gives way to the next usable one).
+    const setting = typeof getEffectiveWorkerModel === 'function' ? getEffectiveWorkerModel() : '';
     if (setting === 'priority') {
         // Always use the #1 model in the priority list, regardless of cooldown.
         return getMainModelList()[0] || null;
@@ -649,7 +649,7 @@ export function firstFreeEndpoint(): any {
 // generateAndShowSuggestion so that title generation, prompt suggestions, and
 // tool classification all route through one dedicated lighter model when configured.
 export function utilityEndpoint(): any {
-    const spec = typeof getUtilityModel === 'function' ? getUtilityModel() : '';
+    const spec = typeof getEffectiveUtilityModel === 'function' ? getEffectiveUtilityModel() : '';
     if (!spec || spec === 'none') return null; // 'none' = disabled; callers fall back to firstFreeEndpoint
     if (getCooldownRemaining(spec) > 0) return null; // cooling — callers fall back
     // Skip if the model's provider key isn't available (e.g. CF Worker keys not yet loaded)

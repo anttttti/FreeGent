@@ -215,6 +215,9 @@ function onPrivacyLevelChange(level: string) {
     (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     renderMainModelList?.();
     renderModelCatalogTable?.();
+    renderWorkerModelSelector?.();
+    renderUtilityModelSelector?.();
+    renderMediaModelSelectors?.();
     updateActiveModelDisplay?.();
     // The code sandbox's network rules are set when its frame loads: restart it now (with Python, if that was loaded), so the new level
     // applies at once (codex R304). Its next call would also notice the change.
@@ -258,7 +261,7 @@ const ENV_KEY_MAP: Record<string, { ls: string; input: string; label: string; pr
     VERCEL_API_KEY:       { ls: 'fg_vercel_key',        input: 'vercel-key',        label: 'Vercel',        prefixes: ['aig_'] },
     MOONMATH_API_KEY:     { ls: 'fg_moonmath_key',      input: 'moonmath-key',      label: 'MoonMath',      prefixes: [] }, // sk- is not provider-specific
     REQUESTY_API_KEY:     { ls: 'fg_requesty_key',      input: 'requesty-key',      label: 'Requesty',      prefixes: ['rqsty-'] },
-    NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['nsk-'] },
+    NOUSPORTAL_API_KEY:   { ls: 'fg_nous_key',          input: 'nous-key',          label: 'Nous Portal',   prefixes: ['sk-nous-', 'nsk-'] },
     HF_API_KEY:           { ls: 'fg_hf_key',            input: 'hf-key',            label: 'HuggingFace',   prefixes: ['hf_'] },
     TAVILY_API_KEY:       { ls: 'fg_tavily_key',        input: 'tavily-key',        label: 'Tavily',        prefixes: ['tvly-'] },
     BRAVE_API_KEY:        { ls: 'fg_brave_key',         input: 'brave-key',         label: 'Brave',         prefixes: ['BSA'] },
@@ -460,20 +463,25 @@ function saveSettings() {
 
 function populateSettingsForm() {
     window._settingsPopulating = true;
+    (window as any).renderGuestAccess?.();
     const ver = document.getElementById('settings-version') as HTMLAnchorElement | null;
     if (ver) { ver.textContent = FG_VERSION; ver.href = FG_VERSION_URL; }
     // Mark each input as populated so saveKey() can distinguish a deliberately-cleared
     // field from one that was never shown a value (race with the keys endpoint).
-    const set = (id, val, keyPrefix = '') => {
+    const set = (id, val) => {
         const el = document.getElementById(id) as HTMLInputElement | null;
         if (!el) return;
-        // Keys held by the dev server reach the page only as placeholders: leave the field empty.
-        // Keep a supplied prefix hint; typing a key here overrides the server's.
+        // Keys held by the dev server reach the page only as placeholders: leave the field empty and say where the key is,
+        // the same for every field; the key's format hint moves to the tooltip. Typing a key here overrides the server's.
+        const hint = el.dataset.fgPlaceholder ??= el.placeholder;
         if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) {
             el.value = '';
-            el.placeholder = keyPrefix || 'Set in ~/.config/freegent/credentials (kept on the server)';
+            el.placeholder = 'Set in ~/.config/freegent/credentials (kept on the server)';
+            el.title = `This key is set in ~/.config/freegent/credentials and stays on the dev server; the page never receives it. Type a key here (${hint || 'the provider\'s key'}) to use that one instead.`;
+            el.dataset.fgServerKey = '1';
             return;
         }
+        if (el.dataset.fgServerKey) { el.placeholder = hint; el.removeAttribute('title'); delete el.dataset.fgServerKey; }
         el.value = val;
         el.dataset.fgBase = String(val ?? '');   // what this form showed: saveSettings() writes a control only when it differs
         if (val) el.dataset.fgLoaded = '1';
@@ -486,8 +494,8 @@ function populateSettingsForm() {
     set('tokenharbor-key',   getTokenHarborKey());
     set('kilo-key',          getKiloKey());
     set('vercel-key',        getVercelKey());
-    set('moonmath-key',      getMoonmathKey(), 'sk-...');
-    set('requesty-key',      getRequestyKey(), 'rqsty-...');
+    set('moonmath-key',      getMoonmathKey());
+    set('requesty-key',      getRequestyKey());
     set('nous-key',          getNousKey());
     const pyAuto = (document.getElementById('pyodide-autoload') as HTMLInputElement);
     if (pyAuto) pyAuto.checked = localStorage.getItem('fg_pyodide_autoload') !== '0';
@@ -1221,6 +1229,11 @@ function _handleDrop(event, containerId, targetIdx) {
 // custom/vllm entries are always included — the user added them and may have a per-entry key.
 // Thin wrapper so callers that have a model entry object can use specHasKey
 // (defined in config.ts, which is the single source of truth for key checks).
+/** A model the selection dropdowns may list: usable now (modelChoiceUsable in config.ts). */
+function _choiceUsable(spec: string): boolean {
+    return typeof modelChoiceUsable === 'function' ? modelChoiceUsable(spec) : true;
+}
+
 function _modelHasKey(m: any): boolean {
     return typeof specHasKey === 'function'
         ? specHasKey(`${m.provider}|${m.model}`)
@@ -1310,8 +1323,10 @@ function _renderPriorityList(containerId, list) {
 </div>`;
         }
     }
+    // Only models that can be called now: a key of the user's own, a Worker key (Developer key or guest quota) or none
+    // needed, and allowed by Settings → Privacy. Worker keys arrive after startup and re-render this list.
     const _addModels = getAllModels()
-        .filter(m => !list.includes(`${m.provider}|${m.model}`) && (!!getDevKey() || _modelHasKey(m)))
+        .filter(m => !list.includes(`${m.provider}|${m.model}`) && _choiceUsable(`${m.provider}|${m.model}`))
         .sort((a, b) => `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`))
         .map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
     html += `</div>
@@ -1597,10 +1612,14 @@ export function formatModelRankLine(n: number, g: ModelRankGroup): string {
 }
 
 function resetModelPriorityDefaults() {
-    if (!confirm('Replace the Model Priority list with the default list? Paused models are resumed.')) return;
+    if (!confirm('Restore the default model selections? The Model Priority list is replaced by the default list, paused models are resumed, and Worker Model and Utility Model go back to Default.')) return;
     resetMainModelList();
+    saveWorkerModel('');
+    saveUtilityModel('');
     _prioritySelected.clear();
     renderMainModelList();
+    renderWorkerModelSelector();
+    renderUtilityModelSelector();
     updateActiveModelDisplay();
 }
 
@@ -1813,13 +1832,15 @@ function renderMediaModelSelectors() {
         { type: 'video', label: '🎬 Video', get: getVideoModel },
     ];
     container.innerHTML = rows.map(({ type, label, get }) => {
-        const models = getAllModelsForMedia(type);
         const current = get();
+        // Usable models only; a saved choice that has lost its key stays listed, marked, so the selection shows what is saved.
+        const models = getAllModelsForMedia(type).filter(m => { const spec = `${m.provider}|${m.model}`; return spec === current || _choiceUsable(spec); });
         const opts = [`<option value="">Auto</option>`]
             .concat(models.map(m => {
                 const spec = `${m.provider}|${m.model}`;
                 const sel  = current === spec ? ' selected' : '';
-                return `<option value="${escapeHtml(spec)}"${sel}>${escapeHtml(`${m.provider}/${m.model}`)}</option>`;
+                const mark = _choiceUsable(spec) ? '' : ' (no key)';
+                return `<option value="${escapeHtml(spec)}"${sel}>${escapeHtml(`${m.provider}/${m.model}${mark}`)}</option>`;
             })).join('');
         return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             <span style="width:56px;font-size:12px;color:var(--muted);flex-shrink:0">${label}</span>
@@ -1828,67 +1849,54 @@ function renderMediaModelSelectors() {
     }).join('');
 }
 
-function renderWorkerModelSelector() {
-    const container = (document.getElementById('worker-model-selector') as HTMLElement);
+// The Worker and Utility Model selections: text models by provider|model that can be called now. A selected model
+// without a key gives way to the next usable one in this list (usableModelChoice in config.ts): that one is shown as
+// selected, with a note, and the saved choice comes back when its key is there.
+function _renderModelChoice(containerId: string, comboId: string, onselect: string, saved: string, effective: string, fixedOpts: ComboOption[]) {
+    const container = document.getElementById(containerId) as HTMLElement | null;
     if (!container) return;
-    const all  = typeof getAllModels === 'function' ? getAllModels() : [];
-    const models = all.filter(m => !m.media || m.media.includes('text'));
-    const current = typeof getWorkerModel === 'function' ? getWorkerModel() : '';
-    const fixedOpts = [
-        { value: '', label: 'Default (next in model priority)', fixed: true },
-        { value: 'priority', label: 'Priority model', fixed: true },
-    ];
-    const modelOpts = models.slice().sort((a, b) =>
-        `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`)
-    ).map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
-    const allOpts = (fixedOpts as ComboOption[]).concat(modelOpts);
-    const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
-    container.innerHTML = `<div class="model-combo" id="worker-model-combo"
+    const modelOpts: ComboOption[] = (typeof textModelChoices === 'function' ? textModelChoices() : [])
+        .filter(_choiceUsable).map((spec: string) => ({ value: spec, label: modelFriendlyName(spec) }));
+    const allOpts = fixedOpts.concat(modelOpts);
+    const labelOf = (v: string) => allOpts.find(o => o.value === v)?.label ?? (v.includes('|') ? modelFriendlyName(v) : v);
+    const note = effective !== saved
+        ? `<p class="settings-hint" style="margin:6px 0 0">${escapeHtml(labelOf(saved))} has no API key: ${effective ? escapeHtml(labelOf(effective)) : 'Default'} is used instead, until a key for it is set.</p>`
+        : '';
+    container.innerHTML = `<div class="model-combo" id="${comboId}"
      style="flex:1"
      data-options="${escapeHtml(JSON.stringify(allOpts))}"
-     data-onselect="saveWorkerModel">
+     data-onselect="${onselect}">
   <input type="text" class="settings-input model-combo-input" autocomplete="off"
-    value="${currentLabel.replace(/"/g, '&quot;')}"
-    oninput="_comboFilter('worker-model-combo')"
-    onfocus="_comboOpen('worker-model-combo')"
-    onblur="_comboBlur('worker-model-combo')"
-    onkeydown="_comboKey(event,'worker-model-combo')">
-  <input type="hidden" class="model-combo-value" value="${current.replace(/"/g, '&quot;')}">
+    value="${escapeHtml(labelOf(effective))}"
+    oninput="_comboFilter('${comboId}')"
+    onfocus="_comboOpen('${comboId}')"
+    onblur="_comboBlur('${comboId}')"
+    onkeydown="_comboKey(event,'${comboId}')">
+  <input type="hidden" class="model-combo-value" value="${escapeHtml(effective)}">
   <div class="model-combo-dropdown" hidden></div>
-</div>`;
+</div>${note}`;
+}
+
+// Picked in the selection: saved, then drawn again so a model without a key shows which one is used instead.
+function _selectWorkerModel(v: string) { saveWorkerModel(v); renderWorkerModelSelector(); }
+function _selectUtilityModel(v: string) { saveUtilityModel(v); renderUtilityModelSelector(); }
+
+function renderWorkerModelSelector() {
+    const saved = typeof getWorkerModel === 'function' ? getWorkerModel() : '';
+    const effective = typeof getEffectiveWorkerModel === 'function' ? getEffectiveWorkerModel() : saved;
+    _renderModelChoice('worker-model-selector', 'worker-model-combo', '_selectWorkerModel', saved, effective, [
+        { value: '', label: 'Default (next in model priority)', fixed: true },
+        { value: 'priority', label: 'Priority model', fixed: true },
+    ]);
 }
 
 function renderUtilityModelSelector() {
-    const container = (document.getElementById('utility-model-selector') as HTMLElement);
-    if (!container) return;
-    // List text-capable models only (all models support text — filter those whose media
-    // array is absent or includes 'text').
-    const all  = typeof getAllModels === 'function' ? getAllModels() : [];
-    const models = all.filter(m => !m.media || m.media.includes('text'));
-    const current = typeof getUtilityModel === 'function' ? getUtilityModel() : '';
-    // Fixed options always visible regardless of filter query.
-    const fixedOpts = [
+    const saved = typeof getUtilityModel === 'function' ? getUtilityModel() : '';
+    const effective = typeof getEffectiveUtilityModel === 'function' ? getEffectiveUtilityModel() : saved;
+    _renderModelChoice('utility-model-selector', 'utility-model-combo', '_selectUtilityModel', saved, effective, [
         { value: '', label: 'Default (use priority list)', fixed: true },
         { value: 'none', label: 'None (no utility LLM calls)', fixed: true },
-    ];
-    const modelOpts = models.slice().sort((a, b) =>
-        `${a.provider}|${a.model}`.localeCompare(`${b.provider}|${b.model}`)
-    ).map(m => ({ value: `${m.provider}|${m.model}`, label: modelFriendlyName(`${m.provider}|${m.model}`) }));
-    const allOpts = (fixedOpts as ComboOption[]).concat(modelOpts);
-    const currentLabel = allOpts.find(o => o.value === current)?.label ?? current;
-    container.innerHTML = `<div class="model-combo" id="utility-model-combo"
-     style="flex:1"
-     data-options="${escapeHtml(JSON.stringify(allOpts))}"
-     data-onselect="saveUtilityModel">
-  <input type="text" class="settings-input model-combo-input" autocomplete="off"
-    value="${currentLabel.replace(/"/g, '&quot;')}"
-    oninput="_comboFilter('utility-model-combo')"
-    onfocus="_comboOpen('utility-model-combo')"
-    onblur="_comboBlur('utility-model-combo')"
-    onkeydown="_comboKey(event,'utility-model-combo')">
-  <input type="hidden" class="model-combo-value" value="${current.replace(/"/g, '&quot;')}">
-  <div class="model-combo-dropdown" hidden></div>
-</div>`;
+    ]);
 }
 
 /** ↑ (dir -1) moves the row to the top of the ranking, ↓ (dir 1) to the bottom. With several rows selected, all of them move, keeping their order. */
@@ -2623,4 +2631,4 @@ async function submitAddMcpServer() {
     onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
-Object.assign(window, { clearModelCooldowns, switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { clearModelCooldowns, switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, _selectWorkerModel, _selectUtilityModel, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

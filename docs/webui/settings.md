@@ -10,10 +10,13 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 
 ## Models
 
-- **Model Priority**: the ordered list FreeGent tries. **✦ Populate** asks a model to rank the available ones and keeps the top ten, **Defaults** restores the shipped list and resumes paused models. See [Priority, fallbacks and retries](../models/rotation.md).
+- **Model Selections**: the heading over the three lists below. **✦ Populate** asks a model to rank the available ones and keeps the top ten in Model Priority. **Defaults** restores the shipped priority list, resumes paused models, and sets Worker Model and Utility Model back to Default. See [Priority, fallbacks and retries](../models/rotation.md).
+- **Guest access: Enabled / Disabled** appears next to Populate and Defaults while FreeGent's Worker offers its [guest quota](../models/proxy.md#guest-quota) (at the Routed level, without a Developer key). Click it to start or stop using the guest quota; point at it for what that means.
+- **Model Priority**: the ordered list FreeGent tries.
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
-- **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. They apply to custom endpoints only; other providers use their own defaults. A field you have never touched uses FreeGent's default (shown as its placeholder); clear a field and that parameter is left out of the request, so the server uses its own. [Profiles](#profiles) carry these values.
+- The model dropdowns (Search to add models, Worker Model, Utility Model, and the image, audio and video models) list only models you can use now: with your own key, a Worker key from a Developer key or the guest quota, or no key needed. If a Worker or Utility Model you picked has lost its key, the next one with a key is used, and a note says which, until its key is back.
+- **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. All are empty by default, and an empty field is left out of the request, so each provider or server uses its own default. A value you set is sent to custom endpoints; Temperature is sent to every provider. [Profiles](#profiles) carry these values.
 - **API Credentials**: one field per provider, a paste box, **Extract from file**, and the Developer key. See [Default providers](../models/providers.md). Custom endpoints are added here too.
 - **Media Model Routing**: which models receive messages that contain images or audio.
 - **Model Catalog**: all known models, with **Check for updates**. Use ✕ to remove one.

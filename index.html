@@ -386,68 +386,71 @@
                 </div>
 
                 <div class="settings-tab-panel" data-tab="model">
-                    <!-- Model priority list -->
+                    <!-- Model selections: priority list, worker model, utility model -->
+                    <div class="settings-group-header">
+                        <h3 class="settings-label" style="margin-bottom:0">Model Selections</h3>
+                        <span style="display:flex;gap:6px">
+                        <button class="ws-action-btn" id="auto-rank-btn" onclick="autoPopulateModelPriority()"
+                            title="Ask the AI to rank all available (non-cooling) models by capability and replace the priority list with the top 10 results"
+                            style="font-size:11px;padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
+                        <button class="ws-action-btn" id="priority-defaults-btn" onclick="resetModelPriorityDefaults()"
+                            title="Restore the default priority list, resume paused models, and set Worker Model and Utility Model back to Default"
+                            style="font-size:11px;padding:3px 10px">Defaults</button>
+                        <button class="ws-action-btn guest-access-btn" id="guest-access-btn" onclick="toggleGuestAccess()" aria-pressed="false" hidden
+                            style="font-size:11px;padding:3px 10px">Guest access: Disabled</button>
+                        </span>
+                    </div>
                     <div class="settings-section">
-                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
-                            <span class="settings-label" style="margin-bottom:0">Model Priority</span>
-                            <span style="display:flex;gap:6px">
-                            <button class="ws-action-btn" id="auto-rank-btn" onclick="autoPopulateModelPriority()"
-                                title="Ask the AI to rank all available (non-cooling) models by capability and replace the priority list with the top 10 results"
-                                style="font-size:11px;padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
-                            <button class="ws-action-btn" id="priority-defaults-btn" onclick="resetModelPriorityDefaults()"
-                                title="Replace the priority list with the default list and resume paused models"
-                                style="font-size:11px;padding:3px 10px">Defaults</button>
-                            </span>
-                        </div>
+                        <span class="settings-input-label">Model Priority</span>
                         <p class="settings-hint" style="margin-bottom:8px">Models tried in order. First non-rate-limited model is used. If all are cooling down, waits for the shortest cooldown.</p>
                         <div id="main-model-list"></div>
                     </div>
 
                     <!-- Worker model selector -->
                     <div class="settings-section">
-                        <span class="settings-label">Worker Model</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Model used for worker subagent calls. "Default" follows the priority list rotation. "Priority model" always forces the #1 model in the list.</p>
+                        <span class="settings-input-label">Worker Model</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Model used for worker subagent calls. "Default" follows the priority list rotation. "Priority model" always forces the #1 model in the list. A model without a key gives way to the next one that has one.</p>
                         <div id="worker-model-selector"></div>
                     </div>
 
                     <!-- Utility model selector -->
                     <div class="settings-section">
-                        <span class="settings-label">Utility Model</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Model used for background tasks: chat title generation, prompt suggestions, etc. "Default" uses the first available model from the priority list. "None" disables all utility LLM calls.</p>
+                        <span class="settings-input-label">Utility Model</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Model used for background tasks: chat title generation, prompt suggestions, etc. "Default" uses the first available model from the priority list. "None" disables all utility LLM calls. A model without a key gives way to the next one that has one.</p>
                         <div id="utility-model-selector"></div>
                     </div>
 
                     <!-- Sampling parameters -->
                     <div class="settings-section">
                         <span class="settings-label">Sampling</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Override LLM sampling parameters. Empty = provider default.</p>
+                        <p class="settings-hint" style="margin-bottom:8px">Override LLM sampling parameters. Empty = not sent: the provider's or server's own default applies.</p>
                         <table style="border-collapse:collapse">
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Temperature</span></td>
-                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="0.6" onchange="saveSamplingSetting('fg_temperature',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_temperature',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top P</span></td>
-                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="0.95" onchange="saveSamplingSetting('fg_top_p',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top K</span></td>
-                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="20" onchange="saveSamplingSetting('fg_top_k',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_k',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Min P</span></td>
-                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_min_p',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_min_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Presence penalty</span></td>
-                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="0" onchange="saveSamplingSetting('fg_presence_penalty',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_presence_penalty',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Repetition penalty</span></td>
-                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="1.0" onchange="saveSamplingSetting('fg_repetition_penalty',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_repetition_penalty',this.value,this)"></td>
                             </tr>
                         </table>
-                        <p class="settings-hint" style="margin-top:6px;margin-bottom:0">Applied as defaults to <b>custom endpoints</b> (vLLM / Ollama / LM Studio). Other providers use their own defaults. Set a value to override; leave blank for provider default.</p>
+                        <p class="settings-hint" style="margin-top:6px;margin-bottom:0">A value you set is sent to <b>custom endpoints</b> (vLLM / Ollama / LM Studio); Temperature is sent to every provider. Fields are empty by default, so each model runs with its own provider's defaults.</p>
                     </div>
 
                     <!-- API credentials -->
@@ -480,7 +483,7 @@
                             <tr><td class="settings-table-label">Requesty Key</td>
                                 <td><input class="settings-input" id="requesty-key" type="password" placeholder="rqsty-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://app.requesty.ai/api-keys" target="_blank" rel="noopener" title="Get a Requesty key — $0 models work on a $0 balance">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Nous Portal Key</td>
-                                <td><input class="settings-input" id="nous-key" type="password" placeholder="nsk-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://portal.nousresearch.com/" target="_blank" rel="noopener" title="Get a Nous Portal key">Get key &#8599;</a></td></tr>
+                                <td><input class="settings-input" id="nous-key" type="password" placeholder="sk-nous-..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://portal.nousresearch.com/" target="_blank" rel="noopener" title="Get a Nous Portal key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">HuggingFace Key</td>
                                 <td><input class="settings-input" id="hf-key" type="password" placeholder="hf_..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener" title="Get a HuggingFace key">Get key &#8599;</a></td></tr>
                             <tr><td class="settings-table-label">Developer key</td>

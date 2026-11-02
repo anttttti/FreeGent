@@ -7,7 +7,9 @@ Free tiers have per-minute and per-day limits, and any provider can fail at any 
 **Settings → Models → Model Priority** is the list FreeGent works through, top first.
 
 - **✦ Populate** asks a model (the utility model) to rank all text-capable models, including ones on a cooldown, and replaces the list with the ten best. Each ranked model is added with every provider that offers it, kept together, so the list can hold more than ten entries and rotation tries the same model elsewhere before moving to the next one.
-- **Defaults** restores the shipped list and resumes paused models.
+- **Defaults** restores the shipped list, resumes paused models, and sets Worker Model and Utility Model back to Default.
+
+Populate and Defaults sit next to the **Model Selections** heading, above the priority list, Worker Model and Utility Model.
 - The shipped list and the model catalog are refreshed from the providers from time to time (**Check for updates** in the Model Catalog). The ranking prompt and the update dialog include results from FreeGent's own long-conversation tests when a model has been tested: tasks solved per area and the largest context it held.
 
 ## Cooldowns
@@ -27,6 +29,8 @@ By default a turn stays on the first available model. **Rotate endpoints every N
 ## Worker and utility models
 
 - **Worker Model**: "Default" lets workers follow the priority rotation, "Priority model" always uses model #1.
+
+Both selections, like **Search to add models** and the media model selections, list only models that can be called now: with a key of your own, a Worker key from a Developer key or the guest quota, or no key needed, and allowed by Settings → Privacy. If the model you picked earlier has lost its key, the next one in the list that has a key is used instead, and a note under the selection says which. Your choice is kept and applies again once its key is there.
 - **Role model routing** (Settings → Agent): planning workers use your first model, execution workers use later ones.
 - **Utility Model**: a separate, lighter model for short side calls: chat titles, prompt suggestions, tool classification, Populate's ranking and the judge calls of the output checks. Left unset it is a Google Gemma model, unless your first model is a custom endpoint or Settings → Privacy is stricter than Routed (Provider-only, the default, counts), in which case it follows your first model. Set it to "None" to switch titles and suggestions off; the other calls then use a model from your list.
 

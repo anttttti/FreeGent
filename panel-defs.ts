@@ -97,9 +97,9 @@ export const SETTINGS_DEF: PanelDef = {
             title: 'Sampling',
             hint:  'Override LLM sampling parameters. Leave empty to use the provider default.',
             fields: [
-                { kind: 'number', key: 'fg_temperature', label: 'Temperature', placeholder: '0.6',  min: 0, max: 2,   step: 0.05 },
-                { kind: 'number', key: 'fg_top_p',       label: 'Top P',       placeholder: '0.95', min: 0, max: 1,   step: 0.05 },
-                { kind: 'number', key: 'fg_top_k',       label: 'Top K',       placeholder: '20',   min: 0, max: 200, step: 1    },
+                { kind: 'number', key: 'fg_temperature', label: 'Temperature', placeholder: 'default', min: 0, max: 2,   step: 0.05 },
+                { kind: 'number', key: 'fg_top_p',       label: 'Top P',       placeholder: 'default', min: 0, max: 1,   step: 0.05 },
+                { kind: 'number', key: 'fg_top_k',       label: 'Top K',       placeholder: 'default', min: 0, max: 200, step: 1    },
             ],
         },
         {

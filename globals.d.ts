@@ -417,8 +417,13 @@ declare global {
     var firstFreeEndpoint: any;
     var utilityEndpoint: any;
     var getWorkerModel: any;
+    var getEffectiveWorkerModel: any;
     var saveWorkerModel: any;
     var getUtilityModel: any;
+    var getEffectiveUtilityModel: any;
+    var usableModelChoice: any;
+    var modelChoiceUsable: any;
+    var textModelChoices: any;
     var saveUtilityModel: any;
     var isUtilityDisabled: any;
     var _endpointCooldown: any;

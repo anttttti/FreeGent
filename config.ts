@@ -302,24 +302,21 @@ function getSearchProvider() { return ls('fg_search_provider', 'auto'); }
 // 'default' = no thinking argument sent to the endpoint (endpoint uses its own default behaviour).
 // Legacy fg_reasoning_budget / fg_custom_thinking are superseded by this.
 export function getThinkingLevel() { return ls('fg_thinking_level', 'default'); }
-// A sampling field's value. Never saved: FreeGent's default. Saved empty (the user cleared the field): null, so the parameter
-// is left out of the request and the server uses its own default, as Settings → Models → Sampling says. ls() cannot tell
-// those two apart (it reads an empty string as "never saved"), hence the direct read.
-function _sampling(key: string, def: string): string | null {
-    let v: string | null = null;
-    try { v = localStorage.getItem(key); } catch {}
-    return v === null ? ls(key, def) : v;
+// A sampling field's value as saved, or null when never saved or cleared: the parameter is then left out of the request
+// and the server uses its own default, as Settings → Models → Sampling says. FreeGent sets no defaults of its own.
+function _sampling(key: string): string | null {
+    try { return localStorage.getItem(key); } catch { return null; }
 }
 // The accepted range of each sampling field. The Settings inputs declare it, but they save on change, outside a form, so the browser never
 // enforced it, and a profile or import can set any value: a temperature of 3 or a top_p of 2 was saved and sent, and a strict server refused
 // every request (codex R255). A stored value outside its range is left out of the request (the server's default applies), as an empty one is.
-const SAMPLING_RANGES: Record<string, { def: string; min: number; max: number; int?: boolean }> = {
-    fg_temperature:        { def: '0.6',  min: 0,  max: 2 },
-    fg_top_p:              { def: '0.95', min: 0,  max: 1 },
-    fg_top_k:              { def: '20',   min: -1, max: 1_000_000, int: true },   // -1: off (vLLM)
-    fg_min_p:              { def: '0.0',  min: 0,  max: 1 },
-    fg_presence_penalty:   { def: '0.0',  min: -2, max: 2 },
-    fg_repetition_penalty: { def: '1.0',  min: 0,  max: 2 },
+const SAMPLING_RANGES: Record<string, { min: number; max: number; int?: boolean }> = {
+    fg_temperature:        { min: 0,  max: 2 },
+    fg_top_p:              { min: 0,  max: 1 },
+    fg_top_k:              { min: -1, max: 1_000_000, int: true },   // -1: off (vLLM)
+    fg_min_p:              { min: 0,  max: 1 },
+    fg_presence_penalty:   { min: -2, max: 2 },
+    fg_repetition_penalty: { min: 0,  max: 2 },
 };
 /** Why `value` is not a valid setting for sampling field `key`, or null when it is (an empty value is valid: it means "not sent"). */
 export function samplingRangeError(key: string, value: string): string | null {
@@ -332,7 +329,7 @@ export function samplingRangeError(key: string, value: string): string | null {
     return null;
 }
 function _samplingNumber(key: string): number | null {
-    const v = _sampling(key, SAMPLING_RANGES[key].def);
+    const v = _sampling(key);
     if (v === '' || v === null || samplingRangeError(key, v)) return null;
     return Number(v);
 }
@@ -934,7 +931,7 @@ function savePausedMainModels(arr) {
 // Maps env var name → true if the CF Worker will use its key (a "Worker key") for this client: all configured ones
 // for a session with the Developer key, the guest providers' while its guest quota is on. `guestQuota` says the latter.
 // Populated by loadCfWorkerKeys() on startup. Empty until then (safe default).
-let _cfWorkerKeys: Record<string, boolean> = {};
+let _cfWorkerKeys: Record<string, boolean | number> = {};
 
 // Maps provider → CF Worker env var name (matching PROVIDER_KEY_MAP / SEARCH_HEADER_MAP in worker.js)
 const _CF_PROVIDER_ENV: Record<string, string> = {
@@ -963,6 +960,7 @@ export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKey
 // network has used up the day's guest quota.
 export function guestQuotaChosen(): boolean { try { return localStorage.getItem(KEYS.GUEST_QUOTA_OK) === '1'; } catch { return false; } }
 export function chooseGuestQuota(): void { try { localStorage.setItem(KEYS.GUEST_QUOTA_OK, '1'); } catch {} }
+export function unchooseGuestQuota(): void { try { localStorage.removeItem(KEYS.GUEST_QUOTA_OK); } catch {} }
 export function guestQuotaPausedUntil(): number {
     try { const t = Number(localStorage.getItem(KEYS.GUEST_PAUSED_UNTIL) || 0); return t > Date.now() ? t : 0; } catch { return 0; }
 }
@@ -976,7 +974,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
     let passSet = false;
     try { passSet = !!getDevKey(); } catch {}
     _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
-    if (!proxy) { _cfWorkerKeys = {}; return; }   // no Worker at this privacy level: its keys are not usable
+    if (!proxy) { _cfWorkerKeys = {}; (window as any).renderGuestAccess?.(); return; }   // no Worker at this privacy level: its keys are not usable
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
     try { if (new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; return; } } catch { return; }
     try {
@@ -997,6 +995,10 @@ export async function loadCfWorkerKeys(): Promise<void> {
                     (window as any).renderMainModelList();
                 if (typeof (window as any).renderModelCatalogTable === 'function')
                     (window as any).renderModelCatalogTable();
+                (window as any).renderWorkerModelSelector?.();
+                (window as any).renderUtilityModelSelector?.();
+                (window as any).renderMediaModelSelectors?.();
+                (window as any).renderGuestAccess?.();
             }
         }
     } catch (e: any) { _cfKeysDiag.error = String(e?.message || e); }
@@ -1005,6 +1007,8 @@ export async function loadCfWorkerKeys(): Promise<void> {
 // True while the Worker's guest quota is on for this visitor (cf-worker/worker.js "Guest quota"); the guest-provider
 // models then count as having a key.
 export function guestQuotaOn(): boolean { return !!_cfWorkerKeys['guestQuota']; }
+/** Guest model calls a network may make per UTC day, as the Worker reported it (0 when unknown). */
+export function guestQuotaDaily(): number { return Number((_cfWorkerKeys as any)['guestDaily']) || 0; }
 
 // Returns true if the CF Worker has a Tavily API key this session may use.
 export function hasCfTavilyKey(): boolean { return !!_cfWorkerKeys['TAVILY_API_KEY']; }
@@ -1155,6 +1159,38 @@ function getUtilityModel() {
 }
 function saveUtilityModel(v) { localStorage.setItem(KEYS.UTILITY_MODEL, v ?? ''); }
 function isUtilityDisabled() { return getUtilityModel() === 'none'; }
+
+/** The text models the Worker and Utility Model selections list, in their order (by provider|model). */
+export function textModelChoices(): string[] {
+    return getAllModels().filter(m => !m.media || m.media.includes('text'))
+        .map(m => `${m.provider}|${m.model}`).sort((a, b) => a.localeCompare(b));
+}
+/** True when a selected model can be called now: a key of the user's own, a Worker key (Developer key or guest quota)
+ *  or none needed, and not ruled out by Settings → Privacy. */
+export function modelChoiceUsable(spec: string): boolean {
+    return specHasKey(spec) && !specBlockedByPrivacy(spec);
+}
+/** A Worker or Utility Model choice as it applies now: a selected model that cannot be called (no key) gives way to the
+ *  next one in the selection's list that can, wrapping around, or to "Default" when none can. The saved choice is kept,
+ *  so it comes back once its key is there (Worker keys arrive after startup). Fixed choices ('', 'priority', 'none')
+ *  pass through. */
+export function usableModelChoice(saved: string): string {
+    if (!saved || !saved.includes('|') || modelChoiceUsable(saved)) return saved;
+    const list = textModelChoices();
+    const from = list.indexOf(saved);
+    for (let i = 1; i <= list.length; i++) {
+        const spec = list[(Math.max(from, -1) + i) % list.length];
+        if (spec !== saved && modelChoiceUsable(spec) && !isBlacklistedModel(spec)) return spec;
+    }
+    return '';
+}
+function getEffectiveWorkerModel() { return usableModelChoice(getWorkerModel()); }
+// Only a model the user picked gives way here; the built-in default (Gemma at Routed) without a key already falls back to
+// the priority list in utilityEndpoint.
+function getEffectiveUtilityModel() {
+    const chosen = getUtilityModel();
+    return chosen === ls(KEYS.UTILITY_MODEL, '') ? usableModelChoice(chosen) : chosen;
+}
 
 // Returns all catalog models supporting a given media type
 function getAllModelsForMedia(mediaType) {
@@ -1490,8 +1526,8 @@ Object.assign(window, {
     getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
-    getWorkerModel, saveWorkerModel,
-    getUtilityModel, saveUtilityModel, isUtilityDisabled,
+    getWorkerModel, saveWorkerModel, getEffectiveWorkerModel,
+    getUtilityModel, saveUtilityModel, isUtilityDisabled, getEffectiveUtilityModel, usableModelChoice, modelChoiceUsable, textModelChoices,
     buildModelCatalogText, getActiveModel, estimateTokens,
     getContextThreshold, isContextSizeKnown, getContextUsage, updateModelLabel, updateTokenLabel,
     updatePyodideStatusEl, startPyodide, autoloadPyodideIfEnabled, parseFrontmatter,

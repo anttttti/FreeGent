@@ -1,13 +1,15 @@
-// Sampling fields: never saved = FreeGent's default; saved empty = left out of the request (codex campaign 7, case 029).
+// Sampling fields: never saved or saved empty = left out of the request, so the provider's or server's own default applies
+// (FreeGent sets none of its own); a saved value is sent (codex campaign 7, case 029).
 const W = globalThis as any;
 beforeAll(async () => { await import('../config.ts'); });
 beforeEach(() => localStorage.clear());
 
 describe('sampling parameters', () => {
-    it('are FreeGent\'s defaults until the user changes them', () => {
-        expect(W.getSamplingParams()).toEqual({ temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0, presence_penalty: 0, repetition_penalty: 1 });
+    it('are empty until the user sets them, so nothing is sent', () => {
+        expect(W.getSamplingParams()).toEqual({});
+        expect(W.getTemperature()).toBeNull();
     });
-    it('a cleared field is left out of the request, not replaced by the default', () => {
+    it('a cleared field is left out of the request, and only set fields are sent', () => {
         localStorage.setItem('fg_temperature', '');   // what saveSamplingSetting stores for an emptied field
         localStorage.setItem('fg_top_k', '');
         localStorage.setItem('fg_top_p', '0.7');
@@ -15,7 +17,7 @@ describe('sampling parameters', () => {
         expect(p).not.toHaveProperty('temperature');
         expect(p).not.toHaveProperty('top_k');
         expect(p.top_p).toBe(0.7);
-        expect(p.min_p).toBe(0);   // untouched fields keep their defaults
+        expect(p).toEqual({ top_p: 0.7 });   // untouched fields are not sent either
     });
     // codex R255: the inputs' min/max were hints; any number was saved and sent.
     it('a value outside its range is not saved by Settings, and a stored one is left out of the request', async () => {
