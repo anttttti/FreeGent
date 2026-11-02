@@ -11,7 +11,7 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 ## Models
 
 - **Model Selections**: the heading over the three lists below. **✦ Populate** asks a model to rank the available ones and keeps the top ten in Model Priority. **Defaults** restores the shipped priority list, resumes paused models, and sets Worker Model and Utility Model back to Default. See [Priority, fallbacks and retries](../models/rotation.md).
-- **Guest access: Enabled / Disabled** appears next to Populate and Defaults while FreeGent's Worker offers its [guest quota](../models/proxy.md#guest-quota) (at the Routed level, without a Developer key). Click it to start or stop using the guest quota; point at it for what that means.
+- **Guest access: Enabled / Disabled**, after Populate and Defaults, shows whether FreeGent's Worker has its [guest quota](../models/proxy.md#guest-quota) switched on. FreeGent's operator sets it on the Worker; it is not a setting of yours. The page asks the Worker only at the Routed level, so at Provider-only and Local, and on a local server, it shows Disabled. Point at it for what it means.
 - **Model Priority**: the ordered list FreeGent tries.
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.

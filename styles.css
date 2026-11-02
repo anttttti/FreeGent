@@ -1023,13 +1023,20 @@ html, body {
 .settings-section:last-of-type { border-bottom: none; margin-bottom: 0; }
 .settings-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 .settings-group-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.guest-access-btn[hidden] { display: none; }
-.guest-access-btn.guest-access-on { color: #2e9e5b; border-color: currentColor; }
+.guest-access-status { position: relative; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 10px; padding: 3px 8px; white-space: nowrap; cursor: help; }
+/* Its explanation: shown at once on hover or keyboard focus (a title tooltip appears late and is easy to miss). */
+.guest-access-status::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: max-content; max-width: min(340px, 80vw);
+    white-space: normal; text-align: left; font-size: 11px; line-height: 1.45; color: var(--text); background: var(--model-bg, #fff); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.15); opacity: 0; visibility: hidden; transition: opacity 0.1s; pointer-events: none; }
+.guest-access-status:hover::after, .guest-access-status:focus-visible::after { opacity: 1; visibility: visible; }
+.guest-access-status.guest-access-on { color: #2e9e5b; border-color: currentColor; }
 .provider-radios { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .provider-radio-label { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
 .settings-input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; color: var(--text); background: var(--input-bg); outline: none; font-family: inherit; transition: border-color 0.15s; margin-bottom: 8px; }
 .settings-input:focus { border-color: var(--accent); }
 .settings-input-label { font-size: 12px; color: var(--muted); margin-bottom: 3px; display: block; }
+/* Field labels in Settings tables (API Credentials, Voice, model forms): the same size as .settings-input-label. */
+.settings-table-label { font-size: 12px; color: var(--muted); padding-right: 10px; white-space: nowrap; }
 .settings-hint { font-size: 11px; color: var(--muted); margin-top: -5px; margin-bottom: 8px; }
 .settings-version { margin-top: 24px; }
 /* Cloudflare Turnstile for the Worker's page fetches (relay-session.ts): invisible unless Cloudflare wants a click. */
@@ -1093,7 +1100,7 @@ html, body {
 .skill-trigger-reset-btn:hover { border-color: #d32f2f; color: #d32f2f; }
 
 /* ── Skills / Rules table ── */
-.sr-section-hdr  { font-size: 13px; font-weight: 700; color: var(--text); margin: 14px 0 4px; }
+.sr-section-hdr  { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 4px; }   /* as .settings-label */
 .sr-hint         { margin: 0 0 8px; }
 .sr-sep          { border-top: 2px solid var(--border); margin: 18px 0 14px; }
 .sr-subsep       { margin: 8px 0; }

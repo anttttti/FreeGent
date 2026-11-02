@@ -11,7 +11,7 @@
 //    quota is off. A refusal for the day's limit pauses the guest models until 00:00 UTC.
 import { isStaticHost } from './static-hosts.js';
 import { getPrivacyLevel } from './privacy.js';
-import { guestQuotaOn, loadCfWorkerKeys, chooseGuestQuota, unchooseGuestQuota, guestQuotaChosen, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
+import { guestQuotaOn, guestModeOn, loadCfWorkerKeys, chooseGuestQuota, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
 
 const DIALOG_ID = 'fg-guest-quota-dialog';
 const PROVIDERS_URL = 'https://freegent.ai/docs/models/providers';
@@ -107,34 +107,25 @@ export function installGuestQuotaWatch(): void {
     setInterval(() => { if (document.visibilityState === 'visible') _refresh(); }, REFRESH_EVERY_MS);
 }
 
-// ── "Guest access" in Settings → Models, beside Populate and Defaults ────────
-// Shown only while the Worker has its guest quota on (its /keys reply, so only at Routed and never for a Developer-key
-// session, which uses all Worker keys anyway). Enabled = this browser chose the guest quota; a click switches it.
+// ── "Guest access" in Settings → Models, after Populate and Defaults ──────────
+// A status, not a switch: whether FreeGent's Worker has its guest quota on (FG_GUEST_QUOTA, set by the operator), as its
+// last /keys reply said. The page asks the Worker only at the Routed level, so below it the status is Disabled.
 export function renderGuestAccess(): void {
-    const btn = document.getElementById('guest-access-btn') as HTMLButtonElement | null;
-    if (!btn) return;
-    btn.hidden = !guestQuotaOn();
-    if (btn.hidden) return;
-    const on = guestQuotaChosen();
-    const paused = guestQuotaPausedUntil();
+    const el = document.getElementById('guest-access-status');
+    if (!el) return;
+    const on = guestModeOn();
     const daily = guestQuotaDaily();
-    btn.textContent = `Guest access: ${on ? 'Enabled' : 'Disabled'}`;
-    btn.classList.toggle('guest-access-on', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    btn.title = 'FreeGent\'s Worker offers guest access: when you have no key of your own for Groq, Kilo, OpenRouter or '
-        + `TokenHarbor, it runs those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}. `
-        + 'Everyone shares it, your own keys are always used first, the providers\' terms apply, and free models may use '
-        + 'your prompts for training: don\'t send anything private. '
-        + (on ? (paused ? `This network has used today's guest quota; it is back after 00:00 UTC. ` : 'Its models count as available in the lists below. ')
-              + 'Click to stop using it.'
-              : 'Its models are not offered until you enable it. Click to use it.');
+    el.textContent = `Guest access: ${on ? 'Enabled' : 'Disabled'}`;
+    el.classList.toggle('guest-access-on', on);
+    const tip = on
+        ? 'FreeGent\'s Worker has guest access on: visitors without a key of their own for Groq, Kilo, OpenRouter or TokenHarbor can '
+          + `run those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}, after choosing it when `
+          + 'they first send a message. Their own keys are always used first. FreeGent\'s operator switches it on the Worker.'
+          + (guestQuotaPausedUntil() ? ' This network has used today\'s guest quota; it is back after 00:00 UTC.' : '')
+        : 'Guest access is off: every model needs a key of your own (or the Developer key). Either FreeGent\'s operator has it switched '
+          + 'off on the Worker, or this page does not ask the Worker (Privacy: Provider-only or Local, or a local server with its own keys).';
+    el.dataset.tip = tip;   // the hover/focus explanation (styles.css .guest-access-status::after)
+    el.setAttribute('aria-label', `${el.textContent}. ${tip}`);
 }
 
-export async function toggleGuestAccess(): Promise<void> {
-    if (guestQuotaChosen()) unchooseGuestQuota(); else chooseGuestQuota();
-    renderGuestAccess();
-    try { await loadCfWorkerKeys(); } catch {}   // re-renders the model lists and this button
-    (window as any).updateActiveModelDisplay?.();
-}
-
-Object.assign(window, { renderGuestAccess, toggleGuestAccess });
+Object.assign(window, { renderGuestAccess });

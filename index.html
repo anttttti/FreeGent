@@ -392,12 +392,11 @@
                         <span style="display:flex;gap:6px">
                         <button class="ws-action-btn" id="auto-rank-btn" onclick="autoPopulateModelPriority()"
                             title="Ask the AI to rank all available (non-cooling) models by capability and replace the priority list with the top 10 results"
-                            style="font-size:11px;padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
+                            style="padding:3px 10px"><span style="color:#a855f7">✦</span> Populate</button>
                         <button class="ws-action-btn" id="priority-defaults-btn" onclick="resetModelPriorityDefaults()"
                             title="Restore the default priority list, resume paused models, and set Worker Model and Utility Model back to Default"
-                            style="font-size:11px;padding:3px 10px">Defaults</button>
-                        <button class="ws-action-btn guest-access-btn" id="guest-access-btn" onclick="toggleGuestAccess()" aria-pressed="false" hidden
-                            style="font-size:11px;padding:3px 10px">Guest access: Disabled</button>
+                            style="padding:3px 10px">Defaults</button>
+                        <span class="guest-access-status" id="guest-access-status" tabindex="0">Guest access: Disabled</span>
                         </span>
                     </div>
                     <div class="settings-section">
@@ -504,7 +503,7 @@
                     <div class="settings-section" style="border-bottom:none">
                         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
                             <span class="settings-label" style="margin-bottom:0">Model Catalog</span>
-                            <button class="ws-action-btn" onclick="showModelUpdateModal?.()" title="Check provider APIs for new or removed free models" style="font-size:11px;padding:3px 10px">⟳ Check for updates</button>
+                            <button class="ws-action-btn" onclick="showModelUpdateModal?.()" title="Check provider APIs for new or removed free models" style="padding:3px 10px">⟳ Check for updates</button>
                         </div>
                         <p class="settings-hint" style="margin-bottom:8px">All available models. Use ✕ to remove a model from the catalog.</p>
                         <div id="model-catalog-table" style="overflow-x:auto"></div>

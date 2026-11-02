@@ -1,19 +1,18 @@
 // tests/guest-quota.test.ts — the guest quota on the page (guest-quota.ts): the offer a keyless send gets on a hosted
 // page, and the watch that keeps the Worker's /keys answer fresh when the quota is switched or used up.
-const state = vi.hoisted(() => ({ guest: false, level: 'provider', chosen: false, pausedUntil: 0, loads: 0, daily: 150 }));
+const state = vi.hoisted(() => ({ guest: false, mode: false, level: 'provider', chosen: false, pausedUntil: 0, loads: 0, daily: 150 }));
 vi.mock('../config.js', () => ({
     guestQuotaOn: () => state.guest,
     loadCfWorkerKeys: vi.fn(async () => { state.loads++; }),
     chooseGuestQuota: () => { state.chosen = true; },
-    unchooseGuestQuota: () => { state.chosen = false; },
-    guestQuotaChosen: () => state.chosen,
+    guestModeOn: () => state.mode,
     guestQuotaDaily: () => state.daily,
     guestQuotaPausedUntil: () => state.pausedUntil,
     pauseGuestQuota: (t: number) => { state.pausedUntil = t; },
     cfWorkerKeysLoadedAt: () => 0,
 }));
 vi.mock('../privacy.js', () => ({ getPrivacyLevel: () => state.level }));
-import { offerGuestQuota, canOfferGuestQuota, installGuestQuotaWatch, renderGuestAccess, toggleGuestAccess } from '../guest-quota.js';
+import { offerGuestQuota, canOfferGuestQuota, installGuestQuotaWatch, renderGuestAccess } from '../guest-quota.js';
 
 const click = (act: string) => (document.querySelector(`#fg-guest-quota-dialog [data-act="${act}"]`) as HTMLElement).click();
 const statusText = () => document.querySelector('#fg-guest-quota-dialog [data-role="status"]')!.textContent;
@@ -109,46 +108,33 @@ describe('guest quota watch', () => {
     });
 });
 
-describe('Guest access button (Settings → Models)', () => {
-    let btn: HTMLButtonElement;
+describe('Guest access status (Settings → Models)', () => {
+    let el: HTMLElement;
     beforeEach(() => {
-        Object.assign(state, { guest: true, chosen: false, pausedUntil: 0, loads: 0 });
-        document.getElementById('guest-access-btn')?.remove();
-        document.body.insertAdjacentHTML('beforeend', '<button id="guest-access-btn" hidden></button>');
-        btn = document.getElementById('guest-access-btn') as HTMLButtonElement;
+        Object.assign(state, { mode: false, pausedUntil: 0 });
+        document.getElementById('guest-access-status')?.remove();
+        document.body.insertAdjacentHTML('beforeend', '<span id="guest-access-status"></span>');
+        el = document.getElementById('guest-access-status')!;
     });
 
-    it('is hidden unless the Worker has its guest quota on', () => {
-        state.guest = false;
+    it("is always shown, as the Worker's setting: Disabled, or Enabled with what that means on hover", () => {
         renderGuestAccess();
-        expect(btn.hidden).toBe(true);
-        state.guest = true;
+        expect(el.textContent).toBe('Guest access: Disabled');
+        expect(el.dataset.tip).toMatch(/switched off on the Worker, or this page does not ask the Worker/);
+        state.mode = true;
         renderGuestAccess();
-        expect(btn.hidden).toBe(false);
+        expect(el.textContent).toBe('Guest access: Enabled');
+        expect(el.classList.contains('guest-access-on')).toBe(true);
+        expect(el.dataset.tip).toMatch(/Groq, Kilo, OpenRouter or TokenHarbor.*150 requests a day per network.*operator switches it on the Worker/);
+        expect(el.getAttribute('aria-label')).toMatch(/^Guest access: Enabled\. FreeGent's Worker has guest access on/);   // read out on focus
     });
 
-    it('shows Disabled or Enabled, with an explanation on hover', () => {
+    it('is a status only: nothing on the page switches it', () => {
+        state.mode = true;
         renderGuestAccess();
-        expect(btn.textContent).toBe('Guest access: Disabled');
-        expect(btn.getAttribute('aria-pressed')).toBe('false');
-        expect(btn.title).toMatch(/Groq, Kilo, OpenRouter or TokenHarbor.*150 requests a day per network.*own keys are always used first.*Click to use it/);
-        state.chosen = true;
-        renderGuestAccess();
-        expect(btn.textContent).toBe('Guest access: Enabled');
-        expect(btn.classList.contains('guest-access-on')).toBe(true);
-        expect(btn.title).toMatch(/Click to stop using it/);
-        state.pausedUntil = Date.now() + 3600_000;
-        renderGuestAccess();
-        expect(btn.title).toMatch(/used today's guest quota.*00:00 UTC/);
-    });
-
-    it('a click switches it and looks /keys up again, so the model lists follow', async () => {
-        await toggleGuestAccess();
-        expect(state.chosen).toBe(true);
-        expect(btn.textContent).toBe('Guest access: Enabled');
-        expect(state.loads).toBe(1);
-        await toggleGuestAccess();
-        expect(state.chosen).toBe(false);
-        expect(btn.textContent).toBe('Guest access: Disabled');
+        el.click();
+        expect(el.textContent).toBe('Guest access: Enabled');
+        expect(state.loads).toBe(0);
+        expect(el.tagName).not.toBe('BUTTON');
     });
 });

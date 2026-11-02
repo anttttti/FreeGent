@@ -411,6 +411,10 @@ describe('CF Worker guest quota', () => {
         expect(on.guestDaily).toBe(150);
         const dev = await (await worker.fetch(keys(true), ON)).json();
         expect(dev).toMatchObject({ guestQuota: false, MOONMATH_API_KEY: true });
+        // The setting itself is reported to everyone, the Developer key included, for Settings → Models to show.
+        expect(on.guestMode).toBe(true);
+        expect(dev.guestMode).toBe(true);
+        expect(off.guestMode).toBe(false);
     });
 
     it('a guest call with a Turnstile session runs on the Worker key', async () => {

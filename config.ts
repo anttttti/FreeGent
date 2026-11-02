@@ -960,7 +960,6 @@ export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKey
 // network has used up the day's guest quota.
 export function guestQuotaChosen(): boolean { try { return localStorage.getItem(KEYS.GUEST_QUOTA_OK) === '1'; } catch { return false; } }
 export function chooseGuestQuota(): void { try { localStorage.setItem(KEYS.GUEST_QUOTA_OK, '1'); } catch {} }
-export function unchooseGuestQuota(): void { try { localStorage.removeItem(KEYS.GUEST_QUOTA_OK); } catch {} }
 export function guestQuotaPausedUntil(): number {
     try { const t = Number(localStorage.getItem(KEYS.GUEST_PAUSED_UNTIL) || 0); return t > Date.now() ? t : 0; } catch { return 0; }
 }
@@ -985,7 +984,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
             if (data && typeof data === 'object') {
                 // Guest-quota keys (the reply has guestQuota: true, so every true key in it is one) wait for the visitor's choice.
                 if (data.guestQuota && (!guestQuotaChosen() || guestQuotaPausedUntil()))
-                    for (const k of Object.keys(data)) if (k !== 'guestQuota' && typeof data[k] === 'boolean') data[k] = false;
+                    for (const k of Object.keys(data)) if (k !== 'guestQuota' && k !== 'guestMode' && typeof data[k] === 'boolean') data[k] = false;
                 _cfWorkerKeys = data;
                 _cfKeysLoadedAt = Date.now();
                 _cfKeysDiag.loaded = true;
@@ -1007,6 +1006,8 @@ export async function loadCfWorkerKeys(): Promise<void> {
 // True while the Worker's guest quota is on for this visitor (cf-worker/worker.js "Guest quota"); the guest-provider
 // models then count as having a key.
 export function guestQuotaOn(): boolean { return !!_cfWorkerKeys['guestQuota']; }
+/** The Worker's guest-quota setting (FG_GUEST_QUOTA), as its last /keys reply said; false when no Worker was asked. */
+export function guestModeOn(): boolean { return !!_cfWorkerKeys['guestMode']; }
 /** Guest model calls a network may make per UTC day, as the Worker reported it (0 when unknown). */
 export function guestQuotaDaily(): number { return Number((_cfWorkerKeys as any)['guestDaily']) || 0; }
 

@@ -460,7 +460,10 @@ export default {
                 available[envKey] = (unlocked || (guest && guestKeys.has(envKey))) && !!(env && env[envKey]);
             }
             available.guestQuota = guest;
-            if (guest) available.guestDaily = _guestDaily(env);
+            // The operator's setting itself, for every client (Settings → Models shows it): on even for a Developer-key
+            // session, which uses all Worker keys and so is never offered the guest quota.
+            available.guestMode = _guestQuotaOn(env);
+            if (available.guestMode) available.guestDaily = _guestDaily(env);
             return new Response(JSON.stringify(available), {
                 headers: { ...CORS, 'Content-Type': 'application/json' },
             });
