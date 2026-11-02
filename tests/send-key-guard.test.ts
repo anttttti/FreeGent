@@ -40,7 +40,32 @@ describe('send key guard', () => {
         localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(W.specHasKey('kilo|acme/old-free:free')).toBe(true);
     });
-    it("counts the Worker's shared Kilo key once the Developer key unlocks it", async () => {
+    it("counts the guest quota's keys only after the visitor chose it, and not while it is paused for the day", async () => {
+        localStorage.setItem('fg_privacy_level', 'routed');
+        localStorage.setItem('fg_search_proxy', 'https://worker.example.dev');
+        const orig = W.fetch;
+        W.fetch = async () => new Response(JSON.stringify({ guestQuota: true, KILO_API_KEY: true }), { status: 200 });
+        const kilo = 'kilo|dots-studio/dots-3-note-preview:free';
+        try {
+            await W.loadCfWorkerKeys();
+            expect(W.specHasKey(kilo)).toBe(false);          // on at the Worker, but not chosen here
+            expect(W.guestQuotaOn()).toBe(true);
+            localStorage.setItem('fg_guest_quota_ok', '1');
+            await W.loadCfWorkerKeys();
+            expect(W.specHasKey(kilo)).toBe(true);
+            localStorage.setItem('fg_kilo_key', 'sk-mine');     // the visitor's own key counts, guest quota or not
+            localStorage.setItem('fg_guest_paused_until', String(Date.now() + 3600_000));
+            await W.loadCfWorkerKeys();
+            expect(W.specHasKey(kilo)).toBe(true);
+            localStorage.removeItem('fg_kilo_key');
+            expect(W.specHasKey(kilo)).toBe(false);           // paused: today's guest quota is used up on this network
+        } finally {
+            W.fetch = orig;
+            for (const k of ['fg_privacy_level', 'fg_search_proxy', 'fg_guest_quota_ok', 'fg_guest_paused_until']) localStorage.removeItem(k);
+            await W.loadCfWorkerKeys();
+        }
+    });
+    it("counts the Worker's Kilo key once the Developer key unlocks it", async () => {
         localStorage.setItem('fg_dev_key', 'dev-test');
         localStorage.setItem('fg_privacy_level', 'routed');
         localStorage.setItem('fg_search_proxy', 'https://worker.example.dev');   // a Worker on another host, as on the deployed site
@@ -53,7 +78,7 @@ describe('send key guard', () => {
         } finally {
             W.fetch = orig;
             localStorage.removeItem('fg_dev_key'); localStorage.removeItem('fg_privacy_level'); localStorage.removeItem('fg_search_proxy');
-            await W.loadCfWorkerKeys();   // no Worker at the default level: clears the cached shared keys
+            await W.loadCfWorkerKeys();   // no Worker at the default level: clears the cached Worker keys
         }
     });
     it('showSettings opens the Models tab, not Profiles', () => {

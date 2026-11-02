@@ -27,7 +27,7 @@ async function _proxyGet(url: string): Promise<any> {
 
 // GET-via-POST-proxy — for providers that require Bearer auth (blocked by CORS in browser).
 async function _proxyBearer(url: string, key: string): Promise<any> {
-    // With no key the Worker injects its shared key where it has one; the public lists need none.
+    // With no key the Worker injects its Worker key where this session may use one; the public lists need none.
     return _proxyFetch(url, key || undefined);
 }
 

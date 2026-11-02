@@ -1,6 +1,6 @@
-// tests/cf-worker.test.ts — the CF Worker proxy (cf-worker/worker.js): origin check, shared-key
+// tests/cf-worker.test.ts — the CF Worker proxy (cf-worker/worker.js): origin check, Worker-key
 // rate limit, and the public-URL check on the open fetch path.
-import worker from '../cf-worker/worker.js';
+import worker, { GuestCounter } from '../cf-worker/worker.js';
 
 const ORIGIN = 'https://freegent.ai';
 const limiter = (success: boolean) => ({ limit: vi.fn().mockResolvedValue({ success }) });
@@ -37,7 +37,7 @@ describe('CF Worker', () => {
         expect(exposed).toContain('x-ratelimit-reset');
     });
 
-    it('routes MoonMath with its shared credential and rejects lookalike hosts', async () => {
+    it('routes MoonMath with its Worker key and rejects lookalike hosts', async () => {
         const env = { MOONMATH_API_KEY: 'synthetic-moonmath-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         const url = 'https://zro.moonmath.ai/v1/chat/completions';
         expect((await worker.fetch(post({ ...LLM, url }), env)).status).toBe(200);
@@ -47,7 +47,7 @@ describe('CF Worker', () => {
         expect(upstream).not.toHaveBeenCalled();
     });
 
-    it('routes Requesty with its shared credential and rejects lookalike hosts', async () => {
+    it('routes Requesty with its Worker key and rejects lookalike hosts', async () => {
         const env = { REQUESTY_API_KEY: 'synthetic-requesty-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         expect((await worker.fetch(post({ ...LLM, url: 'https://router.requesty.ai/v1/chat/completions' }), env)).status).toBe(200);
         expect(upstream.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-requesty-key');
@@ -56,7 +56,7 @@ describe('CF Worker', () => {
         expect(upstream).not.toHaveBeenCalled();
     });
 
-    it('hermes C7: only the listed hosts, not their subdomains, are proxied (the shared key is injected before the request leaves)', async () => {
+    it('hermes C7: only the listed hosts, not their subdomains, are proxied (the Worker key is injected before the request leaves)', async () => {
         const env = { OPENROUTER_API_KEY: 'shared', OPENAI_API_KEY: 'shared2', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const url of ['https://evil.openrouter.ai/api/v1/x', 'https://x.api.openai.com/v1/x', 'https://a.ai-gateway.vercel.sh/v1/x', 'https://openrouter.ai.evil.com/x']) {
             const r = await worker.fetch(post({ ...LLM, url }), env);
@@ -73,7 +73,7 @@ describe('CF Worker', () => {
         expect(upstream).not.toHaveBeenCalled();
     });
 
-    it('injects the shared key while under the rate limit', async () => {
+    it('injects the Worker key while under the rate limit', async () => {
         const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         const r = await worker.fetch(post(LLM), env);
         expect(r.status).toBe(200);
@@ -81,13 +81,15 @@ describe('CF Worker', () => {
         expect(env.FG_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: 'key:203.0.113.9' });
     });
 
-    it('uses no shared key without the matching passphrase', async () => {
+    it('uses no Worker key without the matching passphrase', async () => {
+        // OpenRouter is a guest provider: with the guest quota off, the keyless call stops at the Worker.
         const env = { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'other', FG_RATE_LIMITER: limiter(true) };
-        await worker.fetch(post(LLM), env);
-        expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
+        const r = await worker.fetch(post(LLM), env);
+        expect(r.status).toBe(403);
+        expect(upstream).not.toHaveBeenCalled();
     });
 
-    it('never forwards a shared key over http:// or to a URL with credentials', async () => {
+    it('never forwards a Worker key over http:// or to a URL with credentials', async () => {
         const env = { GROQ_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         for (const url of ['http://api.groq.com/openai/v1/chat/completions', 'https://u:p@api.groq.com/openai/v1/chat/completions']) {
             const r = await worker.fetch(post({ url, headers: {}, body: '{}' }), env);
@@ -108,14 +110,14 @@ describe('CF Worker', () => {
         expect(upstream.mock.calls[0][1].method).toBe('GET');
     });
 
-    it('does not follow redirects for a request that carries the shared key', async () => {
+    it('does not follow redirects for a request that carries the Worker key', async () => {
         await worker.fetch(post({ url: 'https://api.groq.com/openai/v1/chat/completions', headers: {}, body: '{}' }),
             { GROQ_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) });
         expect(upstream.mock.calls[0][1].redirect).toBe('manual');
     });
 
-    it('refuses shared-key use over the rate limit', async () => {
-        // Only the shared-key budget is spent; the key-guess budget still has room.
+    it('refuses Worker-key use over the rate limit', async () => {
+        // Only the Worker-key budget is spent; the key-guess budget still has room.
         const lim = { limit: vi.fn(async ({ key }: any) => ({ success: !key.startsWith('key:') })) };
         const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: lim });
         expect(r.status).toBe(429);
@@ -123,10 +125,10 @@ describe('CF Worker', () => {
         expect(upstream).not.toHaveBeenCalled();
     });
 
-    it('with the key-guess budget spent, even the right key gets no shared key', async () => {
+    it('with the key-guess budget spent, even the right key gets no Worker key', async () => {
         const r = await worker.fetch(post(LLM), { OPENROUTER_API_KEY: 'shared', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(false) });
-        expect(r.status).toBe(200);
-        expect(upstream.mock.calls[0][1].headers.Authorization).toBeUndefined();
+        expect(r.status).toBe(403);   // treated as a guest, and the guest quota is off
+        expect(upstream).not.toHaveBeenCalled();
     });
 
     it('never rate-limits a request that brings its own key', async () => {
@@ -355,5 +357,127 @@ describe('CF Worker relay sessions (Turnstile)', () => {
         expect((await worker.fetch(getFrom('203.0.113.9', undefined, { 'X-FG-Dev-Key': 'pw' }), env)).status).toBe(200);
         expect((await worker.fetch(getFrom('203.0.113.9', undefined, { 'X-FG-Dev-Key': 'wrong' }), env)).status).toBe(401);
         expect((await worker.fetch(getFrom('203.0.113.9'), { ...TS, FG_OPEN_RELAY: '1' })).status).toBe(200);
+    });
+});
+
+// The Durable Object namespace, backed by real GuestCounter objects with in-memory storage.
+function counterNamespace() {
+    const objects = new Map<string, any>();
+    return {
+        idFromName: (name: string) => name,
+        get: (id: string) => {
+            if (!objects.has(id)) { const store = new Map(); objects.set(id, new GuestCounter({ storage: { get: async (k: string) => store.get(k), put: async (k: string, v: any) => { store.set(k, v); } } })); }
+            const obj = objects.get(id);
+            return { fetch: (url: string, init: any) => obj.fetch(new Request(url, init)) };
+        },
+    };
+}
+
+describe('CF Worker guest quota', () => {
+    const TS = { TURNSTILE_SITE_KEY: '0xSITE', TURNSTILE_SECRET: 'secret', FG_SESSION_KEY: 'k'.repeat(32) };
+    const KEYS = { GROQ_API_KEY: 'groq-op', OPENROUTER_API_KEY: 'or-op', MOONMATH_API_KEY: 'mm-op', FG_DEV_KEY: 'pw' };
+    let ON: any;
+    beforeEach(() => { ON = { ...TS, ...KEYS, FG_GUEST_QUOTA: '1', FG_RATE_LIMITER: limiter(true), FG_GUEST_COUNTER: counterNamespace() }; });
+    const IP = '203.0.113.9';
+    const call = (url: string, opts: { session?: string; auth?: string; dev?: boolean } = {}) => new Request('https://fg-proxy.example.workers.dev/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'CF-Connecting-IP': IP,
+            ...(opts.session ? { 'X-FG-Session': opts.session } : {}), ...(opts.dev ? { 'X-FG-Dev-Key': 'pw' } : {}) },
+        body: JSON.stringify({ url, headers: opts.auth ? { Authorization: opts.auth } : {}, body: JSON.stringify({ model: 'm', messages: [] }) }),
+    });
+    const keys = (dev = false) => new Request('https://fg-proxy.example.workers.dev/keys', { headers: { Origin: ORIGIN, 'CF-Connecting-IP': IP, ...(dev ? { 'X-FG-Dev-Key': 'pw' } : {}) } });
+    const GROQ = 'https://api.groq.com/openai/v1/chat/completions';
+    const OR = 'https://openrouter.ai/api/v1/chat/completions';
+    let upstream: any;
+    beforeEach(() => {
+        upstream = vi.fn(async (url: string) => String(url).includes('siteverify')
+            ? new Response(JSON.stringify({ success: true })) : new Response('{}'));
+        vi.stubGlobal('fetch', upstream);
+    });
+    afterEach(() => vi.unstubAllGlobals());
+    const session = async () => (await (await worker.fetch(new Request('https://fg-proxy.example.workers.dev/session', {
+        method: 'POST', headers: { Origin: ORIGIN, 'CF-Connecting-IP': IP }, body: JSON.stringify({ token: 't' }) }), ON)).json()).session as string;
+    const sent = () => upstream.mock.calls.filter((c: any[]) => !String(c[0]).includes('siteverify')).at(-1);
+
+    it('/keys offers visitors only the guest providers, and only while the quota is on', async () => {
+        const on = await (await worker.fetch(keys(), ON)).json();
+        expect(on).toMatchObject({ guestQuota: true, GROQ_API_KEY: true, OPENROUTER_API_KEY: true, MOONMATH_API_KEY: false, KILO_API_KEY: false });
+        const off = await (await worker.fetch(keys(), { ...ON, FG_GUEST_QUOTA: '0' })).json();
+        expect(off).toMatchObject({ guestQuota: false, GROQ_API_KEY: false });
+        const noTurnstile = await (await worker.fetch(keys(), { ...KEYS, FG_GUEST_QUOTA: '1', FG_GUEST_COUNTER: counterNamespace() })).json();
+        expect(noTurnstile.guestQuota).toBe(false);
+        const noCounter = await (await worker.fetch(keys(), { ...ON, FG_GUEST_COUNTER: undefined })).json();
+        expect(noCounter.guestQuota).toBe(false);
+        expect(on.guestDaily).toBe(150);
+        const dev = await (await worker.fetch(keys(true), ON)).json();
+        expect(dev).toMatchObject({ guestQuota: false, MOONMATH_API_KEY: true });
+    });
+
+    it('a guest call with a Turnstile session runs on the Worker key', async () => {
+        const s = await session();
+        expect((await worker.fetch(call(GROQ, { session: s }), ON)).status).toBe(200);
+        expect(sent()[1].headers.Authorization).toBe('Bearer groq-op');
+    });
+
+    it('a guest call without a session is asked for one, and never reaches the provider', async () => {
+        const r = await worker.fetch(call(GROQ), ON);
+        expect(r.status).toBe(401);
+        expect(r.headers.get('X-FG-Session-Required')).toBe('1');
+        expect(sent()).toBeUndefined();
+    });
+
+    it('with the quota off, a keyless guest call is refused with a clear message', async () => {
+        const s = await session();
+        const r = await worker.fetch(call(GROQ, { session: s }), { ...ON, FG_GUEST_QUOTA: '0' });
+        expect(r.status).toBe(403);
+        expect(r.headers.get('X-FG-Guest')).toBe('off');
+        expect(r.headers.get('Access-Control-Expose-Headers')).toMatch(/X-FG-Guest/);
+        expect((await r.json()).error).toMatch(/guest quota is off.*API Credentials/);
+        expect(sent()).toBeUndefined();
+    });
+
+    it('caps guest calls per network per UTC day (FG_GUEST_DAILY), and starts again the next day', async () => {
+        const env = { ...ON, FG_GUEST_DAILY: '3' };
+        const s = await session();
+        for (let i = 0; i < 3; i++) expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);
+        const over = await worker.fetch(call(GROQ, { session: s }), env);
+        expect(over.status).toBe(403);
+        expect(over.headers.get('X-FG-Guest')).toBe('limit');
+        expect((await over.json()).error).toMatch(/used its guest quota for today \(3 requests\).*00:00 UTC/);
+        // Calls with the visitor's own key are not counted or capped.
+        expect((await worker.fetch(call(GROQ, { auth: 'Bearer mine' }), env)).status).toBe(200);
+        vi.useFakeTimers({ now: Date.now() + 24 * 3600 * 1000, toFake: ['Date'] });
+        try {
+            const s2 = await session();
+            expect((await worker.fetch(call(GROQ, { session: s2 }), env)).status).toBe(200);
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('the Developer key is never counted against the guest cap, and an own key always wins over Worker keys', async () => {
+        const env = { ...ON, FG_GUEST_DAILY: '1' };
+        for (let i = 0; i < 3; i++) expect((await worker.fetch(call(GROQ, { dev: true }), env)).status).toBe(200);
+        await worker.fetch(call(GROQ, { dev: true, auth: 'Bearer mine' }), env);
+        expect(sent()[1].headers.Authorization).toBe('Bearer mine');
+    });
+
+    it('providers outside the guest list never get a Worker key for guests', async () => {
+        const s = await session();
+        await worker.fetch(call('https://zro.moonmath.ai/v1/chat/completions', { session: s }), ON);
+        expect(sent()[1].headers.Authorization).toBeUndefined();
+    });
+
+    it("the visitor's own key is used as it is, with no session needed", async () => {
+        expect((await worker.fetch(call(GROQ, { auth: 'Bearer mine' }), ON)).status).toBe(200);
+        expect(sent()[1].headers.Authorization).toBe('Bearer mine');
+    });
+
+    it('tags guest OpenRouter calls with a per-session user id, and not Developer-key calls', async () => {
+        const s = await session();
+        await worker.fetch(call(OR, { session: s }), ON);
+        const guestBody = JSON.parse(sent()[1].body);
+        expect(guestBody.user).toBe('fg-guest-' + s.split('.')[1].slice(0, 16));
+        await worker.fetch(call(OR, { dev: true }), ON);
+        expect(JSON.parse(sent()[1].body).user).toBeUndefined();
+        expect(sent()[1].headers.Authorization).toBe('Bearer or-op');
     });
 });

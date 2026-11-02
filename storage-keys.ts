@@ -121,6 +121,8 @@ export const KEYS = {
     SEARCH_PROVIDER:    'fg_search_provider',
     SEARCH_PROXY:       'fg_search_proxy',   // custom CF Worker URL (Settings → Privacy)
     PRIVACY_LEVEL:      'fg_privacy_level',  // 'routed' | 'provider' | 'local'; unset = provider, or routed with a Developer key (privacy.ts)
+    GUEST_QUOTA_OK:     'fg_guest_quota_ok',      // '1' once the visitor chose "Use the guest quota" (guest-quota.ts); until then its models are not offered
+    GUEST_PAUSED_UNTIL: 'fg_guest_paused_until',  // ms: this network used its guest quota for the day (Worker X-FG-Guest: limit); not offered until then
     SANDBOX_PROVIDER:   'fg_sandbox_provider',
     ENDPOINT_COOLDOWNS: 'fg_endpoint_cooldowns', // { 'provider|model': expiry ms } of models cooling down after 429/402 (model-router.ts)
 

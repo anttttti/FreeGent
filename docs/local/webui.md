@@ -28,9 +28,9 @@ Serve `dist/` from any static host. A static host has no `/api/proxy`, no Local 
 
 FreeGent uses a proxy Worker to enable request types that a browser cannot make on its own:
 
-- **Model calls** to providers that do not allow requests from web pages (NVIDIA, Kilo). On a static host at the Routed privacy level every provider call goes through it, which is also how shared keys are added.
+- **Model calls** to providers that do not allow requests from web pages (NVIDIA, Kilo). On a static host at the Routed privacy level every provider call goes through it, which is also how Worker keys are added.
 - **Web search** through Brave, and **`fetch_url`** and other plain page requests to sites that do not send CORS headers. The Worker fetches the page and returns it, for public HTTPS addresses only.
-- **Optional extras**: shared provider keys for sessions with a Developer key, and chat logs a user chooses to send.
+- **Optional extras**: your own provider keys held by the Worker (Worker keys) for sessions with a Developer key, a guest quota for visitors without a key, and chat logs a user chooses to send.
 
 A static site without a Worker still loads, but these requests fail. Providers that do allow browser requests (Gemini, Groq, OpenRouter and others) work directly at the Provider-only level, which is the default.
 
@@ -60,9 +60,9 @@ If you publish through GitHub Pages under `yourname.github.io`, the app treats t
 
 To allow another provider through the Worker, add its host to `ALLOWED_HOSTS`.
 
-### Optional: shared provider keys
+### Optional: Worker keys and a guest quota
 
-Store keys as Worker secrets and set a Developer key; the Worker then uses the shared keys for sessions that present it.
+Store provider keys as Worker secrets and set a Developer key; the Worker then makes requests with them for sessions that present it. The keys never leave the Worker. To let visitors without a key of their own try FreeGent on your Groq, Kilo, OpenRouter and TokenHarbor quota, also set `FG_GUEST_QUOTA` to `1` (it needs the Turnstile setup above). See the [Worker README](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md#worker-keys-and-the-guest-quota-optional) for which providers' terms allow that, and for switching it off without a code change.
 
 ```bash
 cd cf-worker

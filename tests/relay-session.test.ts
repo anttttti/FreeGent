@@ -24,9 +24,11 @@ describe('relay-session', () => {
     });
     afterEach(() => { delete (window as any).turnstile; });
 
-    it('recognises only GET ?url= requests to another origin', () => {
+    it('recognises GET ?url= requests and string-body POSTs to another origin', () => {
         expect(relayOrigin(PAGE)).toBe(WORKER);
-        expect(relayOrigin(PAGE, { method: 'POST' })).toBeNull();
+        expect(relayOrigin(`${WORKER}/`, { method: 'POST', body: '{}' })).toBe(WORKER);
+        expect(relayOrigin(`${WORKER}/`, { method: 'POST', body: new Blob(['x']) })).toBeNull();
+        expect(relayOrigin(PAGE, { method: 'PUT', body: '{}' })).toBeNull();
         expect(relayOrigin(`${WORKER}/keys`)).toBeNull();
         expect(relayOrigin(`${window.location.origin}/api/proxy?url=x`)).toBeNull();
     });
@@ -53,6 +55,17 @@ describe('relay-session', () => {
         await window.fetch(`${WORKER}/`, { method: 'POST', body: '{}' });
         for (const [, init] of inner.mock.calls) expect(new Headers(init?.headers).has('X-FG-Session')).toBe(false);
         expect(render).not.toHaveBeenCalled();
+    });
+
+    it('a guest model call (POST) asked for a session is resent with it and its body', async () => {
+        inner.mockImplementation(async (url: string, init?: any) => {
+            if (url === `${WORKER}/session`) return json({ session: 'S1', expires: Date.now() + 1e6 });
+            return new Headers(init?.headers).get('X-FG-Session') === 'S1' ? new Response(`ran ${init.body}`) : askForSession();
+        });
+        const r = await window.fetch(`${WORKER}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"url":"x"}' });
+        expect(await r.text()).toBe('ran {"url":"x"}');
+        const last = inner.mock.calls.at(-1);
+        expect(new Headers(last[1].headers).get('Content-Type')).toBe('application/json');
     });
 
     it('a failed challenge comes back as a clear error, not a hang', async () => {

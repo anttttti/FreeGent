@@ -930,8 +930,9 @@ function savePausedMainModels(arr) {
     try { setPref(KEYS.PAUSED_MAIN, JSON.stringify(arr || [])); } catch {}
 }
 
-// ── CF Worker shared-key cache ────────────────────────────────────────────────
-// Maps env var name → true if the deployed CF Worker has that secret configured.
+// ── CF Worker key cache ───────────────────────────────────────────────────────
+// Maps env var name → true if the CF Worker will use its key (a "Worker key") for this client: all configured ones
+// for a session with the Developer key, the guest providers' while its guest quota is on. `guestQuota` says the latter.
 // Populated by loadCfWorkerKeys() on startup. Empty until then (safe default).
 let _cfWorkerKeys: Record<string, boolean> = {};
 
@@ -957,12 +958,25 @@ let _cfKeysDiag: Record<string, any> = { loaded: false };
 // What the last /keys lookup saw, for exported chat logs (never includes the Developer key itself).
 export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKeysDiag }; }
 
+// The guest quota's models count as having a key only after the visitor chose it in the offer (guest-quota.ts), so a
+// Routed visitor without keys is asked first instead of quietly running on FreeGent's accounts, and not while this
+// network has used up the day's guest quota.
+export function guestQuotaChosen(): boolean { try { return localStorage.getItem(KEYS.GUEST_QUOTA_OK) === '1'; } catch { return false; } }
+export function chooseGuestQuota(): void { try { localStorage.setItem(KEYS.GUEST_QUOTA_OK, '1'); } catch {} }
+export function guestQuotaPausedUntil(): number {
+    try { const t = Number(localStorage.getItem(KEYS.GUEST_PAUSED_UNTIL) || 0); return t > Date.now() ? t : 0; } catch { return 0; }
+}
+export function pauseGuestQuota(until: number): void { try { localStorage.setItem(KEYS.GUEST_PAUSED_UNTIL, String(until)); } catch {} }
+let _cfKeysLoadedAt = 0;
+/** When the last /keys lookup finished (ms), for refreshing it now and then: the guest quota can be switched at any time. */
+export function cfWorkerKeysLoadedAt(): number { return _cfKeysLoadedAt; }
+
 export async function loadCfWorkerKeys(): Promise<void> {
     const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
     let passSet = false;
     try { passSet = !!getDevKey(); } catch {}
     _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
-    if (!proxy) { _cfWorkerKeys = {}; return; }   // no Worker at this privacy level: its shared keys are not usable
+    if (!proxy) { _cfWorkerKeys = {}; return; }   // no Worker at this privacy level: its keys are not usable
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
     try { if (new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; return; } } catch { return; }
     try {
@@ -971,7 +985,11 @@ export async function loadCfWorkerKeys(): Promise<void> {
         if (resp.ok) {
             const data = await resp.json();
             if (data && typeof data === 'object') {
+                // Guest-quota keys (the reply has guestQuota: true, so every true key in it is one) wait for the visitor's choice.
+                if (data.guestQuota && (!guestQuotaChosen() || guestQuotaPausedUntil()))
+                    for (const k of Object.keys(data)) if (k !== 'guestQuota' && typeof data[k] === 'boolean') data[k] = false;
                 _cfWorkerKeys = data;
+                _cfKeysLoadedAt = Date.now();
                 _cfKeysDiag.loaded = true;
                 _cfKeysDiag.keys = Object.keys(data).filter(k => data[k]);
                 // Re-render model lists so newly-available providers appear
@@ -984,9 +1002,13 @@ export async function loadCfWorkerKeys(): Promise<void> {
     } catch (e: any) { _cfKeysDiag.error = String(e?.message || e); }
 }
 
-// Returns true if the CF Worker has a shared Tavily API key configured.
+// True while the Worker's guest quota is on for this visitor (cf-worker/worker.js "Guest quota"); the guest-provider
+// models then count as having a key.
+export function guestQuotaOn(): boolean { return !!_cfWorkerKeys['guestQuota']; }
+
+// Returns true if the CF Worker has a Tavily API key this session may use.
 export function hasCfTavilyKey(): boolean { return !!_cfWorkerKeys['TAVILY_API_KEY']; }
-// Returns true if the CF Worker has a shared Brave Search API key configured.
+// Returns true if the CF Worker has a Brave Search API key this session may use.
 export function hasCfBraveKey():  boolean { return !!_cfWorkerKeys['BRAVE_API_KEY'];  }
 
 // True for a catalog or custom entry that works without any key. Kilo entries are never such: Kilo stopped serving
@@ -1465,7 +1487,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey,
+    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel,

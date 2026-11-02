@@ -182,7 +182,7 @@ function _applySandboxProviderUI(val) {
 // Settings → Privacy and the sidebar's Privacy button: one of 'routed' | 'provider' | 'local' (privacy.ts). Takes effect at once.
 const _PRIVACY_NOTES: Record<string, string> = {
     routed:   '',
-    provider: 'Models that browsers cannot call directly (NVIDIA, Kilo) are left out of the rotation on a hosted page. Shared keys held by the Worker are not available.',
+    provider: 'Models that browsers cannot call directly (NVIDIA, Kilo) are left out of the rotation on a hosted page. The Worker\'s keys and its guest quota are not available.',
     local:    'Only local models are usable. Add one under Models → Add custom model (for example http://localhost:11434/v1).',
 };
 function _applyPrivacyLevelUI(level: string) {
@@ -211,7 +211,7 @@ function onPrivacyLevelChange(level: string) {
     setPrivacyLevel(parsePrivacyLevel(level) ?? 'provider');
     const now = getPrivacyLevel();
     _applyPrivacyLevelUI(now);
-    // Shared Worker keys come and go with the level, and so do the models that can be reached.
+    // Worker keys and the guest quota come and go with the level, and so do the models that can be reached.
     (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     renderMainModelList?.();
     renderModelCatalogTable?.();
@@ -371,7 +371,7 @@ let _keyPasteLen = 0;
     if (box.value.trim()) return fillKeysFromText(box.value);
     _keyPasteLen = 0;
 };
-// The Developer key field (end of API Credentials): unlocks the Worker's shared keys and turns on
+// The Developer key field (end of API Credentials): unlocks the Worker's keys and turns on
 // developer logging. Empty removes it.
 (window as any).saveDevKey = function(input: HTMLInputElement) {
     const v = input.value.trim();

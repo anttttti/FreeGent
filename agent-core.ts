@@ -19,6 +19,7 @@ import { runtime } from './runtime.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider, getContextThreshold } from './config.js';
 import { getPrivacyLevel } from './privacy.js';
+import { canOfferGuestQuota, offerGuestQuota } from './guest-quota.js';
 import { acquireChatLease, releaseChatLease, chatLeaseHolderAlive } from './chat-lease.js';
 import { getMessagesEl, appendMessage, renderMarkdown } from './chat-render.js';
 import { generateAndShowSuggestion } from './prompt-suggest.js';
@@ -1375,12 +1376,15 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
             : 'Settings → Privacy is set to Provider-only, and the models in your priority list (NVIDIA, Kilo) cannot be called from a browser without the Cloudflare Worker. Add another provider, or set Privacy to Routed.');
     }
 
-    // Key guard: check local key AND CF Worker shared key via specHasKey.
+    // Key guard: check local key AND CF Worker key via specHasKey. With neither, a hosted page offers the guest quota.
     // When media routing kept the priority list's provider, check its first active spec: a
     // provider-only spec ('kilo|') missed per-model noKey, so keyless models opened Settings.
     const _activeSpec = getActiveMainModelList()[0];
     const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
-    if (!specHasKey(_keySpec)) { showSettings(); return; }
+    if (!specHasKey(_keySpec)) {
+        if (canOfferGuestQuota()) offerGuestQuota(() => { void agentSend(container); }); else showSettings();
+        return;
+    }
 
     const input = document.getElementById('agent-input') as HTMLTextAreaElement | null;
     const rawText = _readInputText(input);

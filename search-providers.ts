@@ -20,13 +20,13 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
     const localKey  = getTavilyKey();
     const cfProxy   = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
 
-    // Use CF Worker POST proxy when the Worker has a shared key or when the user's
+    // Use CF Worker POST proxy when the Worker has a key for this session or when the user's
     // own key needs a proxy to cross origins.  Fall back to a direct browser fetch
     // only when no proxy is available and the user has a local key.
     let resp: Response;
     try {
         if (cfProxy) {
-            // Route through CF Worker POST proxy so it can inject the shared key
+            // Route through CF Worker POST proxy so it can inject its Worker key
             // (when localKey is absent) or just handle CORS (when localKey is present).
             const authHeaders: Record<string, string> = localKey
                 ? { 'Authorization': `Bearer ${localKey}` }

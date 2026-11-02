@@ -1,9 +1,10 @@
-// relay-session.ts — the Worker's page-fetch path (GET <worker>?url=…) needs a session token from a Cloudflare
-// Turnstile check (cf-worker/worker.js, "Relay sessions"). This wraps window.fetch: a ?url= request that comes back
-// 401 with X-FG-Session-Required runs the challenge with the site key the Worker sent, trades the Turnstile token for
-// a session token (POST <worker>/session), and is sent again once with X-FG-Session. Only the Routed privacy level
-// reaches a Worker, so the Turnstile script loads only there, and only when a fetch first needs it. The header is
-// added only for a Worker that asked for it, so an older Worker without it in its CORS list keeps working.
+// relay-session.ts — the Worker's page-fetch path (GET <worker>?url=…) and its guest quota (a keyless model call
+// POSTed to the Worker) need a session token from a Cloudflare Turnstile check (cf-worker/worker.js, "Relay
+// sessions"). This wraps window.fetch: such a request that comes back 401 with X-FG-Session-Required runs the
+// challenge with the site key the Worker sent, trades the Turnstile token for a session token (POST
+// <worker>/session), and is sent again once with X-FG-Session. Only the Routed privacy level reaches a Worker, so the
+// Turnstile script loads only there, and only when a request first needs it. The header is added only for a Worker
+// that asked for it, so an older Worker without it in its CORS list keeps working.
 
 const TURNSTILE_JS = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const CHALLENGE_TIMEOUT_MS = 120_000;   // long enough for the visitor to click the checkbox when one is shown
@@ -12,14 +13,17 @@ const _sessions = new Map<string, string>();            // Worker origin -> sess
 const _pending = new Map<string, Promise<string>>();    // Worker origin -> challenge in progress (shared by parallel fetches)
 let _script: Promise<any> | null = null;
 
-/** The Worker origin of a page-fetch request (`GET <origin>/?url=…` on another origin), or null for anything else. */
+/** The origin of a request that a Worker may answer with "session required": a page fetch (`GET <origin>/?url=…`)
+ *  or a POST with a string body (a model call), on another origin; null for anything else, which passes untouched.
+ *  Other hosts never send X-FG-Session-Required, and the header goes only to an origin that asked for it. */
 export function relayOrigin(input: any, init?: any): string | null {
     if (typeof input !== 'string' && !(input instanceof URL)) return null;
-    if (init?.method && String(init.method).toUpperCase() !== 'GET') return null;
+    const method = String(init?.method || 'GET').toUpperCase();
     try {
         const u = new URL(String(input), window.location.href);
-        if (u.origin === window.location.origin || !u.searchParams.has('url')) return null;
-        return u.origin;
+        if (u.origin === window.location.origin) return null;
+        if (method === 'GET' ? u.searchParams.has('url') : method === 'POST' && typeof init?.body === 'string') return u.origin;
+        return null;
     } catch { return null; }
 }
 
@@ -82,7 +86,7 @@ function _session(origin: string, siteKey: string, send: typeof fetch): Promise<
 }
 
 function _refusal(why: string): Response {
-    const error = `Cloudflare's check for page fetches through the Worker could not run (${why}). `
+    const error = `Cloudflare's check for requests through FreeGent's Worker could not run (${why}). `
         + 'Allow challenges.cloudflare.com in your content blocker, or switch Settings → Privacy to Provider-only.';
     return new Response(JSON.stringify({ error }), {
         status: 401, statusText: 'Session check failed', headers: { 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1' },

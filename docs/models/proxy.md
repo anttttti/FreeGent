@@ -25,13 +25,17 @@ The Worker forwards `POST` requests only to a fixed allow-list: Gemini, Groq, Op
 
 Because any program can call the Worker, its page-fetch path first asks for a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) check. The first page fetch of a session runs it in the background, usually with nothing to see. Cloudflare shows a checkbox only when your browser or network looks unusual. The check gives the page a session token for about four hours, tied to your network. If a content blocker stops `challenges.cloudflare.com`, page fetches through the Worker fail with a message saying so. Provider-only and Local never contact the Worker, so they never run the check.
 
-The Worker can also hold shared provider keys, but it uses them only for sessions that present the maintainer's Developer key (Settings → Models → API Credentials → Developer key). Ordinary visitors always use their own keys.
+The Worker can also hold provider keys of its own (Worker keys). They never leave it: the Worker makes requests with them. Sessions that present the maintainer's Developer key (Settings → Models → API Credentials → Developer key) can use all of them.
+
+## Guest quota
+
+While the maintainer has it switched on, visitors without a key can run models from Groq, Kilo, OpenRouter and TokenHarbor on FreeGent's own free-tier accounts. When you send a message with no usable key on freegent.ai, FreeGent offers it next to adding your own key. Choosing it switches Privacy to Routed, because the requests go through the Worker, and runs Cloudflare's bot check once. Those providers' terms apply. Everyone shares the quota, and each network gets a limited number of requests a day (150 by default), counted until 00:00 UTC. When it runs out or is switched off, a request says so and the guest models drop out of the list. FreeGent checks again when you come back to the tab and every few minutes. A key of your own is always used before the guest quota. Until you choose the guest quota, nothing is sent to the Worker, and even at Routed the guest models are only offered after you have chosen them once.
 
 ## When you do need your own proxy or Worker
 
 - **You host FreeGent yourself on a static site.** The hosted Worker only accepts its own origins. A fork on `yourname.github.io` or `*.pages.dev` is treated as a static host and sent to `proxy.freegent.ai`, which answers `403 Origin not allowed`. On any other domain the page assumes a local server and calls `/api/proxy` on its own host, which a static site does not have. Either way, deploy [the Worker](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md) to your Cloudflare account, add your origin to `ALLOWED_ORIGINS`, and paste its URL into **Settings → Privacy → CORS Proxy / CF Worker URL**. See [Local or self-hosted](../local/webui.md#hosting-your-own-site-and-worker).
 - **You want a provider that is not on the allow-list** from the hosted site. Add its host to `ALLOWED_HOSTS` in your own Worker.
-- **You want shared keys for your own users.** Store them as Worker secrets and set a Developer key; see the Worker README.
+- **You want your own keys used through your Worker, or a guest quota for your visitors.** Store the keys as Worker secrets, set a Developer key, and optionally `FG_GUEST_QUOTA`; see the Worker README.
 
 Your own Worker needs a Turnstile widget for your domain before page fetches work, or `FG_OPEN_RELAY = "1"` if nobody else can reach it; see the Worker README.
 

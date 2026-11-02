@@ -437,7 +437,7 @@ function _customEndpoint(model: string, hintProvider: string): any {
 
 // On static hosts (freegent.ai, GitHub Pages, *.pages.dev) there is no local server, so route
 // CORS-capable providers through the CF Worker too — this lets the worker inject
-// shared API keys from its environment when the user hasn't set a local key.
+// its own API keys (Worker keys) from its environment when the user hasn't set a local key.
 function _staticProxy(): boolean {
     if (window._fgHeadless) return false;
     try {

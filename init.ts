@@ -3,6 +3,7 @@
 import { sanitizePastedHtml } from './paste-sanitize.js';
 import { installPassHeader, installPrivacyGuard } from './proxy.js';
 import { installRelaySession } from './relay-session.js';
+import { installGuestQuotaWatch } from './guest-quota.js';
 import { getPrivacyLevel } from './privacy.js';
 import { installDevLog } from './dev-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
@@ -152,9 +153,10 @@ installDevLog();   // capture errors/warnings from the start; sends only while a
 document.addEventListener('DOMContentLoaded', async () => {
     installPassHeader();
     installPrivacyGuard();
-    installRelaySession();   // outermost: its own /session call still passes the privacy guard
+    installRelaySession();   // its own /session call still passes the privacy guard
+    installGuestQuotaWatch();   // outermost: sees the final reply, after a session retry
     await loadServerKeys(); // load env-var keys from Python server before anything else
-    // Query the CF Worker for shared provider keys (non-blocking — re-renders model lists when done)
+    // Query the CF Worker for the keys it will use for this session (Developer key or guest quota) (non-blocking — re-renders model lists when done)
     loadCfWorkerKeys?.().catch(() => {});
 
     // Init IndexedDB session adapter — no COOP/COEP headers required.

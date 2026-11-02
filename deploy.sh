@@ -155,7 +155,7 @@ if [ -f "$WORKER" ]; then
     grep -q 'ALLOWED_ORIGINS' "$WORKER" \
         || fail "$WORKER: ALLOWED_ORIGINS not found — worker would be open to any origin"
 
-    # The rate limiter caps Developer-key guessing, shared-key use and the open fetch path; it must be both used and bound
+    # The rate limiter caps Developer-key guessing, Worker-key use (Developer key and guest quota) and the open fetch path; it must be both used and bound
     grep -q 'FG_RATE_LIMITER' "$WORKER" \
         || fail "$WORKER: FG_RATE_LIMITER not referenced — key guessing and open fetches would be unmetered"
     grep -qE '^name *= *"FG_RATE_LIMITER"' "$WRANGLER" \

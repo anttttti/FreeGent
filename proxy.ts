@@ -36,7 +36,7 @@ export function isDefaultWorkerUrl(url: string): boolean {
 }
 
 /** The Developer key (localStorage fg_dev_key; was fg_pass, moved on first read). Unlocks the Worker's
- *  shared provider keys and turns on developer logging (dev-log.ts). Empty string when unset. */
+ *  keys (Worker keys) and turns on developer logging (dev-log.ts). Empty string when unset. */
 export const DEV_KEY_LS = 'fg_dev_key';
 export function getDevKey(): string {
     try {

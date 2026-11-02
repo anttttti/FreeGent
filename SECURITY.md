@@ -39,10 +39,14 @@ FreeGent has four parts, and they have different exposure:
     or credential helper don't work from the agent — push from your own shell.
 - **The CF Worker** (`cf-worker/`) is the CORS proxy for freegent.ai. It forwards model calls only
   to a fixed list of provider hosts and stores nothing, except a chat log a user chooses to send
-  (kept 14 days). Optional shared provider keys, stored as Worker secrets, are injected only into
-  requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every
+  (kept 14 days). Optional provider keys stored as Worker secrets (Worker keys) never leave the
+  Worker; all of them are injected only into requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every
   attempt spends from a per-IP rate limit (`FG_RATE_LIMITER` in `wrangler.toml`), so the key cannot
-  be guessed online. Other clients never receive a shared key. An `Origin` check keeps other
+  be guessed online. Other clients never receive a key. While the `FG_GUEST_QUOTA` secret is `1`,
+  keyless calls to Groq, Kilo, OpenRouter and TokenHarbor from clients with a Turnstile session run on
+  those providers' Worker keys (the guest quota), within the per-IP rate limit and a daily cap per
+  client network counted in a Durable Object; OpenRouter calls carry a
+  per-session `user` ID so a policy block isolates one guest. An `Origin` check keeps other
   websites out, but any non-browser client can send any `Origin`. The `?url=` fetch path therefore
   also needs a session token from a Cloudflare Turnstile check (`POST /session`): an HMAC over the
   expiry and the client's network (IPv4 address or IPv6 /64), valid for four hours, signed with the

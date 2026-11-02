@@ -7,8 +7,9 @@ compatibility_date = "2024-09-23"
 workers_dev = false
 routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 
-# Optional: add shared API keys so GitHub Pages users can access those
-# providers without configuring their own keys in the browser.
+# Optional: provider API keys held by the Worker ("Worker keys"). Sessions with the Developer key use all of
+# them; while FG_GUEST_QUOTA is "1", visitors without a key of their own use the Groq, Kilo, OpenRouter and
+# TokenHarbor ones (the guest quota, see worker.js). Keys never leave the Worker.
 # Store them as encrypted Cloudflare secrets — never put values here.
 #
 # Run once per key you want to share:
@@ -24,6 +25,10 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 #   npx wrangler secret put REQUESTY_API_KEY
 #
 # Keys are injected server-side and never visible to browser clients.
+#
+# Guest quota switch, flipped without a code change (a secret, so deploys keep it):
+#   npx wrangler secret put FG_GUEST_QUOTA      # "1" on, "0" off; or the dashboard: Settings → Variables and Secrets
+#   npx wrangler secret put FG_GUEST_DAILY      # optional: guest model calls per network per UTC day (default 150)
 
 # Cloudflare Turnstile for the page-fetch path (GET ?url=), which would otherwise be an open web relay: the page
 # passes an invisible check once per session (see "Relay sessions" in worker.js). The site key is public; the widget
@@ -34,8 +39,8 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 [vars]
 TURNSTILE_SITE_KEY = "0x4AAAAAAFvcqAzSWCvGLnTU"
 
-# Per-client-IP rate limit for requests that use a shared key above (only sent with the Developer
-# key), for guesses at the Developer key, and for the open ?url= fetch path. Anyone can call this
+# Per-client-IP rate limit for requests that use a Worker key above (with the Developer key or as the
+# guest quota), for guesses at the Developer key, and for the open ?url= fetch path. Anyone can call this
 # Worker (an Origin header is easy to fake). worker.js keys the limit as "key:<ip>" / "get:<ip>" /
 # "devkey:<ip>".
 # period must be 10 or 60 seconds; namespace_id is any number unique within the account.
@@ -65,3 +70,13 @@ id = "5cf3c4410d8c42e88c416fd7ff5e04b3"
 [[r2_buckets]]
 binding = "FG_SYNC"
 bucket_name = "freegent-sync"
+
+# Guest-quota daily counter, one per client network (GuestCounter in worker.js). Without it the guest quota stays off.
+# SQLite-backed Durable Objects are on the free Workers plan.
+[[durable_objects.bindings]]
+name = "FG_GUEST_COUNTER"
+class_name = "GuestCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GuestCounter"]

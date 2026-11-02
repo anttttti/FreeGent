@@ -9,8 +9,9 @@
  * Then paste the resulting URL (e.g. https://freegent-proxy.you.workers.dev)
  * into FreeGent Settings → CORS Proxy / CF Worker URL.
  *
- * Optional: add shared API keys as Cloudflare secrets so GitHub Pages
- * users can access those providers without configuring their own keys:
+ * Optional: add provider API keys as Cloudflare secrets ("Worker keys"). They are used for
+ * sessions with the Developer key, and, while FG_GUEST_QUOTA=1, as the guest quota for visitors
+ * without a key of their own (Groq, Kilo, OpenRouter, TokenHarbor only; see GUEST_HOSTS):
  *
  *   npx wrangler secret put OPENROUTER_API_KEY
  *   npx wrangler secret put GROQ_API_KEY
@@ -22,6 +23,7 @@
  * Secrets are stored encrypted in Cloudflare — never in the repo code.
  * They are injected into requests as Authorization headers when the
  * client hasn't supplied its own key.  The user's own key always wins.
+ * Keys never leave the Worker: guests get requests made with them, never the keys.
  *
  * What this does
  * ──────────────
@@ -31,7 +33,7 @@
  *
  * Three request shapes are supported:
  *
- *   GET  /keys                   – returns which provider keys are configured
+ *   GET  /keys                   – which Worker keys this client may use, and whether the guest quota is on
  *   GET  ?url=<encoded>          – used by fetch_url and web-search tools (X-FG-Session from POST /session)
  *   POST /session {token}        – a passed Turnstile challenge for a session token
  *   POST {url, headers?, body?}  – used by all LLM provider calls
@@ -43,6 +45,7 @@
  * - GET  (fetch_url): any public HTTPS URL; private/reserved IPs are blocked (SSRF guard). Needs a session
  *   token from a Cloudflare Turnstile check (POST /session), the Developer key, or FG_OPEN_RELAY=1.
  * - Secrets never leave the worker; /keys only returns true/false per provider.
+ * - Guest quota (FG_GUEST_QUOTA=1): only GUEST_HOSTS, only with a Turnstile session, per-IP rate limit.
  *
  * Privacy
  * ──────────────────
@@ -97,7 +100,7 @@ const ALLOWED_HOSTS = new Set([
 ]);
 
 // ── Provider → env var name ───────────────────────────────────────────────────
-// Used to inject shared keys when the client sends no Authorization header.
+// Used to inject Worker keys when the client sends no Authorization header.
 // Must match _CF_PROVIDER_ENV in config.ts.
 // Note: Brave (api.search.brave.com) uses X-Subscription-Token, not Authorization —
 // its key is injected separately below after this map is applied.
@@ -123,12 +126,57 @@ const SEARCH_HEADER_MAP = {
     'api.search.brave.com': { envKey: 'BRAVE_API_KEY', header: 'X-Subscription-Token' },
 };
 
+// ── Guest quota ───────────────────────────────────────────────────────────────
+// While the FG_GUEST_QUOTA secret is "1", a visitor without a key of their own runs models on the operator's
+// Worker keys for these providers only: their terms allow serving end users from your own application
+// (checked 2026-11-02). The others (Gemini's free tier for EU users, NVIDIA's trial, Vercel, Nous, MoonMath's
+// free plan, ...) do not, and stay Developer-key only. A guest call needs a Turnstile session (see "Relay
+// sessions"), so the switch also needs the Turnstile settings. Flip it in the Cloudflare dashboard (Settings →
+// Variables and Secrets) or with `npx wrangler secret put FG_GUEST_QUOTA`: no code change, no commit.
+const GUEST_HOSTS = new Set(['api.groq.com', 'api.kilo.ai', 'openrouter.ai', 'api.openrouter.ai', 'tokenharbor.ai', 'api.tokenharbor.ai']);
+const GUEST_OFF = 'The guest quota is off right now: add your own key in Settings → Models → API Credentials';
+// Guest model calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter):
+// one heavy guest cannot spend the whole quota. FG_GUEST_DAILY overrides it, like FG_GUEST_QUOTA without a commit.
+const GUEST_DAILY_DEFAULT = 150;
+const _guestDaily = (env) => Math.max(1, Number(env && env.FG_GUEST_DAILY) || GUEST_DAILY_DEFAULT);
+// A guest refusal: 403 so the page does not retry it, with X-FG-Guest saying why ("off" or "limit") so it can
+// update which models it offers.
+function _guestRefusal(kind, message) {
+    return new Response(JSON.stringify({ error: message }), {
+        status: 403, headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', 'X-FG-Guest': kind },
+    });
+}
+// Counts one guest call for this network today and returns the count, or Infinity when the counter cannot be reached
+// (no counting, no guest quota).
+async function _guestCount(request, env) {
+    try {
+        const day = new Date().toISOString().slice(0, 10);
+        const stub = env.FG_GUEST_COUNTER.get(env.FG_GUEST_COUNTER.idFromName(_clientNet(request)));
+        const r = await stub.fetch('https://guest-counter/hit', { method: 'POST', body: JSON.stringify({ day }) });
+        const { count } = await r.json();
+        return Number.isFinite(count) ? count : Infinity;
+    } catch { return Infinity; }
+}
+
+// One counter per client network: {day, count}, reset when the UTC day changes. A Durable Object handles its requests
+// one at a time, so two parallel calls cannot both read the same count.
+export class GuestCounter {
+    constructor(ctx) { this.ctx = ctx; }
+    async fetch(request) {
+        const { day } = await request.json();
+        const cur = (await this.ctx.storage.get('c')) || {};
+        const count = cur.day === day ? cur.count + 1 : 1;
+        await this.ctx.storage.put('c', { day, count });
+        return new Response(JSON.stringify({ count }), { headers: { 'Content-Type': 'application/json' } });
+    }
+}
+
 const CORS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, HTTP-Referer, X-Title, Accept, X-FG-Dev-Key, X-FG-Pass, X-FG-Sync-Token, X-FG-Sync-Base, X-FG-Session',
     'Access-Control-Max-Age':       '86400',
-    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error, X-FG-Session-Required, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens',
+    'Access-Control-Expose-Headers': 'X-FG-Proxy-Error, X-FG-Session-Required, X-FG-Guest, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Reset-Requests, X-RateLimit-Reset-Tokens',
 };
 
 // ── POST /log: a user-sent chat log, stored for debugging ─────────────────────
@@ -259,10 +307,15 @@ async function _relayGate(request, env) {
     if (!_turnstileReady(env))
         return _err(503, 'Page fetches are off on this Worker: set TURNSTILE_SITE_KEY, TURNSTILE_SECRET and FG_SESSION_KEY (Cloudflare Turnstile), or FG_OPEN_RELAY=1 for a Worker nobody else can reach');
     if (await _relaySessionOk(request, env)) return null;
+    return _sessionRequired(env);
+}
+function _sessionRequired(env) {
     return new Response(JSON.stringify({ error: 'Session check required', turnstileSiteKey: env.TURNSTILE_SITE_KEY }), {
         status: 401, headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', 'X-FG-Session-Required': '1' },
     });
 }
+// On only with the switch, the Turnstile settings (guest calls need a session) and the daily counter.
+const _guestQuotaOn = (env) => !!(env && env.FG_GUEST_QUOTA === '1' && _turnstileReady(env) && env.FG_GUEST_COUNTER);
 // POST /session {token}: a passed Turnstile challenge for a session token. The widget's hostname list (Cloudflare
 // dashboard) decides which sites can produce a token for this site key.
 async function _relaySession(request, env) {
@@ -396,13 +449,18 @@ export default {
 
         if (workerUrl.pathname === '/session') return _relaySession(request, env);
 
-        // ── GET /keys — which provider secrets are configured ─────────────────
+        // ── GET /keys — which Worker keys this client may use ─────────────────
+        // All configured ones with the Developer key; with the guest quota on, the guest providers' for anyone.
         if (request.method === 'GET' && workerUrl.pathname === '/keys') {
             const available = {};
             const unlocked = await _unlocked(request, env);
+            const guest = !unlocked && _guestQuotaOn(env);
+            const guestKeys = new Set([...GUEST_HOSTS].map(h => PROVIDER_KEY_MAP[h]));
             for (const envKey of [...Object.values(PROVIDER_KEY_MAP), ...Object.values(SEARCH_HEADER_MAP).map(v => v.envKey)]) {
-                available[envKey] = unlocked && !!(env && env[envKey]);
+                available[envKey] = (unlocked || (guest && guestKeys.has(envKey))) && !!(env && env[envKey]);
             }
+            available.guestQuota = guest;
+            if (guest) available.guestDaily = _guestDaily(env);
             return new Response(JSON.stringify(available), {
                 headers: { ...CORS, 'Content-Type': 'application/json' },
             });
@@ -488,34 +546,57 @@ export default {
                 const { url: target, method: rawMethod = 'POST', headers = {}, body: reqBody } = body;
                 if (!target) return _err(400, 'Missing url field in body');
                 // Provider APIs are called with POST (completions) and GET (model lists). Another method with
-                // the shared key injected would be a way to delete or modify the operator's provider resources.
+                // a Worker key injected would be a way to delete or modify the operator's provider resources.
                 const method = String(rawMethod).toUpperCase();
                 if (method !== 'POST' && method !== 'GET') return _err(405, 'Only GET and POST are proxied');
                 if (!_hostOk(target)) return _err(403, 'Host not in allowlist');
-                // Shared keys must never travel in clear text or to a URL that carries credentials.
+                // Worker keys must never travel in clear text or to a URL that carries credentials.
                 if (!_httpsNoCreds(target)) return _err(403, 'Only https:// URLs without embedded credentials are allowed');
 
-                // Inject a shared key when the client sends no / empty Authorization, and only for a
-                // request that carries the Developer key (_unlocked): without it no secret is ever used.
-                // The per-IP rate limit (FG_RATE_LIMITER in wrangler.toml) also caps use of an unlocked key.
+                // Inject a Worker key when the client sends no / empty Authorization, for a request that carries
+                // the Developer key (_unlocked), or as the guest quota (a guest provider, FG_GUEST_QUOTA on, and a
+                // Turnstile session); otherwise no secret is ever used. The per-IP rate limit (FG_RATE_LIMITER in
+                // wrangler.toml) caps both.
                 const auth = headers['Authorization'] || headers['authorization'] || '';
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 const { hostname } = new URL(target);
                 const unlocked = await _unlocked(request, env);
-                const envKey = isEmpty && unlocked ? PROVIDER_KEY_MAP[hostname] : null;
+                let guest = false;
+                if (isEmpty && !unlocked && GUEST_HOSTS.has(hostname) && env && env[PROVIDER_KEY_MAP[hostname]]) {
+                    if (!_guestQuotaOn(env)) return _guestRefusal('off', GUEST_OFF);
+                    if (!(await _relaySessionOk(request, env))) return _sessionRequired(env);
+                    const limit = _guestDaily(env);
+                    if (await _guestCount(request, env) > limit)
+                        return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Models → API Credentials, or try again after 00:00 UTC`);
+                    guest = true;
+                }
+                const envKey = isEmpty && (unlocked || guest) ? PROVIDER_KEY_MAP[hostname] : null;
                 const search = unlocked ? SEARCH_HEADER_MAP[hostname] : null;
                 const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
                 const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
                 if (injecting && await _rateLimited(request, env, 'key'))
-                    return _err(429, 'Shared-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
+                    return _err(429, 'Worker-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
                 if (envKey && env[envKey]) headers['Authorization'] = `Bearer ${env[envKey]}`;
                 // Search providers that use non-standard auth headers.
                 if (searchMissing && env[search.envKey]) headers[search.header] = env[search.envKey];
 
+                let outBody = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
+                // OpenRouter isolates a policy block to one end user when told who it is: a stable ID per guest session
+                // (from its signature, not the visitor's address), so one guest cannot get the operator's account blocked.
+                if (guest && hostname.endsWith('openrouter.ai') && method === 'POST') {
+                    try {
+                        const j = JSON.parse(outBody);
+                        if (j && typeof j === 'object' && !Array.isArray(j)) {
+                            j.user = 'fg-guest-' + (request.headers.get('X-FG-Session') || '').split('.')[1].slice(0, 16);
+                            outBody = JSON.stringify(j);
+                        }
+                    } catch {}
+                }
+
                 upstream = await fetch(target, {
                     method,
                     headers,
-                    body: typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody),
+                    body: outBody,
                     // A redirect could carry the injected key to another host (or to http://):
                     // hand the 3xx back to the client instead of following it.
                     redirect: injecting ? 'manual' : 'follow',
@@ -557,7 +638,7 @@ function _httpsNoCreds(target) {
 function _hostOk(target) {
     try {
         const { hostname } = new URL(target);
-        // Exactly the listed hosts. A suffix match let evil.api.openai.com through, and the operator's shared key is injected into the request
+        // Exactly the listed hosts. A suffix match let evil.api.openai.com through, and the operator's Worker key is injected into the request
         // before it is sent (hermes C7); the dev server matches exactly too.
         return ALLOWED_HOSTS.has(hostname.toLowerCase().replace(/\.$/, ''));
     } catch { return false; }

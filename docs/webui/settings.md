@@ -26,7 +26,7 @@ The search provider for `web_search`: **Auto** (Tavily, then Brave, then Wikiped
 
 Controls where FreeGent may send requests. Change it with **Settings → Privacy** or the **Privacy** button in the sidebar above Dark mode, which shows the current level and explains each option when you point at it. The level is saved in this browser only and is not part of [profiles](#profiles).
 
-Until you choose, the level is **Provider-only**. Saving a Developer key switches it to **Routed**, because the key's shared provider keys only work through the Worker; you can switch back afterwards.
+Until you choose, the level is **Provider-only**. Saving a Developer key switches it to **Routed**, because the Worker's keys only work through the Worker; you can switch back afterwards.
 
 | Level | What it does |
 |---|---|
