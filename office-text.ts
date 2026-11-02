@@ -7,27 +7,29 @@ import { inflateRaw } from './inflate.js';
 const u16 = (b: Uint8Array, o: number) => b[o] | (b[o + 1] << 8);
 const u32 = (b: Uint8Array, o: number) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 
-/** Entries of a ZIP archive by name; each value inflates on demand. Throws on a non-ZIP input. */
-export function readZip(bytes: Uint8Array): Map<string, () => Uint8Array> {
+/** An entry's inflater, with the uncompressed size the central directory declares for it (ZIP64's 0xFFFFFFFF: unknown). */
+export type ZipEntry = (() => Uint8Array) & { size: number };
+/** Entries of a ZIP archive by name; each value inflates on demand, to no more than its declared size. Throws on a non-ZIP input. */
+export function readZip(bytes: Uint8Array): Map<string, ZipEntry> {
     let eocd = -1;
     for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--)
         if (u32(bytes, i) === 0x06054b50) { eocd = i; break; }
     if (eocd < 0) throw new Error('Not a ZIP-based document');
     const count = u16(bytes, eocd + 10);
     let p = u32(bytes, eocd + 16);
-    const out = new Map<string, () => Uint8Array>();
+    const out = new Map<string, ZipEntry>();
     for (let n = 0; n < count && u32(bytes, p) === 0x02014b50; n++) {
-        const method = u16(bytes, p + 10), csize = u32(bytes, p + 20);
+        const method = u16(bytes, p + 10), csize = u32(bytes, p + 20), usize = u32(bytes, p + 24);
         const nameLen = u16(bytes, p + 28), extraLen = u16(bytes, p + 30), commentLen = u16(bytes, p + 32);
         const local = u32(bytes, p + 42);
         const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
-        out.set(name, () => {
+        out.set(name, Object.assign(() => {
             const start = local + 30 + u16(bytes, local + 26) + u16(bytes, local + 28);
             const data = bytes.subarray(start, start + csize);
             if (method === 0) return data;
-            if (method === 8) return inflateRaw(data);
+            if (method === 8) return inflateRaw(data, 0, usize === 0xffffffff ? Infinity : usize);
             throw new Error(`Unsupported ZIP compression (${method}) for ${name}`);
-        });
+        }, { size: usize }));
         p += 46 + nameLen + extraLen + commentLen;
     }
     return out;
@@ -125,31 +127,30 @@ export function odfText(bytes: Uint8Array): string {
 /** A workbook whose XML writes characters above U+FFFF as numeric references (&#128578;, what openpyxl does) with those
  *  references written out as the characters themselves. SheetJS 0.18 turns &#128578; into U+F642, the low 16 bits.
  *  Returns the same bytes when there is nothing to change or the file cannot be rewritten. */
+// Only the string and sheet parts are read; the other members are inflated only when the workbook is rewritten, and not at all when
+// the archive declares more than this in total (codex R306: every member was inflated and held, a small file could expand without bound).
+// Past the budget the workbook goes to SheetJS as it is, with those characters as SheetJS reads them.
+const XLSX_REWRITE_MAX_BYTES = 256 * 1024 * 1024;
 export async function fixXlsxCharRefs(bytes: Uint8Array): Promise<Uint8Array> {
     try {
         const zip = readZip(bytes);
+        let total = 0;
+        for (const get of zip.values()) total += get.size;
+        if (total > XLSX_REWRITE_MAX_BYTES) return bytes;
         const astral = /&#(?:x([0-9a-fA-F]{5,6})|(\d{5,7}));/g;
-        const changed: { name: string; data: Uint8Array }[] = [];
-        const all: { name: string; data: Uint8Array }[] = [];
+        const fixed = new Map<string, Uint8Array>();
         for (const [name, get] of zip) {
-            const data = get();
-            if (/^xl\/(?:sharedStrings|worksheets\/[^/]+)\.xml$/.test(name) && !/\/$/.test(name)) {
-                const xml = utf8(data);
-                if (astral.test(xml)) {
-                    astral.lastIndex = 0;
-                    const fixed = xml.replace(astral, (m, hex, dec) => {
-                        const cp = hex ? parseInt(hex, 16) : parseInt(dec, 10);
-                        return cp > 0xffff && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
-                    });
-                    const out = { name, data: new TextEncoder().encode(fixed) };
-                    changed.push(out); all.push(out); continue;
-                }
-                astral.lastIndex = 0;
-            }
-            all.push({ name, data });
+            if (!/^xl\/(?:sharedStrings|worksheets\/[^/]+)\.xml$/.test(name)) continue;
+            const xml = utf8(get());
+            if (!astral.test(xml)) continue;
+            astral.lastIndex = 0;
+            fixed.set(name, new TextEncoder().encode(xml.replace(astral, (m, hex, dec) => {
+                const cp = hex ? parseInt(hex, 16) : parseInt(dec, 10);
+                return cp > 0xffff && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+            })));
         }
-        if (!changed.length) return bytes;
+        if (!fixed.size) return bytes;
         const { zipFiles } = await import('./workspace-zip.js');
-        return await zipFiles(all);
+        return await zipFiles([...zip].map(([name, get]) => ({ name, data: fixed.get(name) ?? get() })));
     } catch { return bytes; }
 }

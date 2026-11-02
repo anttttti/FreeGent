@@ -24,6 +24,13 @@ describe('graded-test gate: what counts as a failed graded test', () => {
     it('failures only in other tests are not', () => {
         expect(_gradedTestFailed(tool('FAILED sympy/solvers/tests/test_diophantine.py::test_fail_holzer - sympy.util...\nFAILED sympy/solvers/tests/test_diophantine.py::test_not_implemented - sympy....\n=== 2 failed, 44 passed, 1 warning in 18.34s ==='), ids)).toBe(false);
     });
+    // codex R327: a failure in another module whose path ends in the graded one is not the graded test.
+    it('a failure in a nested module with the same tail is not', () => {
+        expect(_gradedTestFailed(tool('FAILED vendor/sympy/solvers/tests/test_diophantine.py::test_diophantine - AssertionError\n=== 1 failed in 1.0s ==='), ids)).toBe(false);
+        // The graded id written as an absolute path is still the module pytest prints relative to its rootdir.
+        expect(_gradedTestFailed(tool('FAILED sympy/solvers/tests/test_diophantine.py::test_diophantine - AssertionError\n=== 1 failed in 1.0s ==='),
+            ['/testbed/sympy/solvers/tests/test_diophantine.py::test_diophantine'])).toBe(true);
+    });
     // v0.66: 28 of 32 "still failed" bounces were for output like this.
     it('collection errors, missing tests and listings are not', () => {
         expect(_gradedTestFailed(tool('ERROR tests/test_cli.py\n!!!!! Interrupted: 1 error during collection !!!!!\n=== 1 error in 0.11s ===', 2), ids)).toBe(false);

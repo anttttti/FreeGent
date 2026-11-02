@@ -5,7 +5,7 @@ import { _searchSignal } from './search-providers.js';
 import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
-import { FILE_WRITE_TOOLS, MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
+import { MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { checkWriteAllowed, isWriteAllowActive } from './write-allow.js';
@@ -549,19 +549,32 @@ let _currentApprovalResolve: ((v: boolean) => void) | null = null;
 let _approvalsGated = false;
 export function reopenApprovals(): void { _approvalsGated = false; }
 
-export function requestToolApproval(toolName, args) {
-    if (!document.getElementById('tool-approval-toast')) return Promise.resolve(true);
-    if (_approvalsGated) return Promise.resolve(false);
+/** What an approval toast says about a call: the tool and what it will act on. The approval is only as good as what the user sees. */
+export function approvalSummary(toolName: string, args: any): string {
+    args = args ?? {};
+    const clip = (v: unknown, n: number) => { const t = String(v); return t.length > n ? t.slice(0, n) + '…' : t; };
     let summary = toolName;
     if (args.path)     summary += `: ${args.path}`;
     if (args.language) summary += ` (${args.language})`;
     // run_workers: who is being started, so the approval is not for an unnamed delegation.
     if (toolName === 'run_workers' && Array.isArray(args.agents))
         summary += `: ${args.agents.slice(0, 8).map((a: any) => `${a?.id ?? '?'} (${a?.role ?? 'director'})`).join(', ')}`;
-    // Show what will run, not just which tool: the approval is only as good as what the user sees.
+    // Browser actions: the page, the element and what goes into it; the bare tool name said nothing about any of them (codex R314).
+    if (toolName === 'browser_navigate' && args.url) summary += `: ${clip(args.url, 300)}`;
+    if (/^browser_(?:click|type|select)$/.test(toolName) && args.ref) summary += ` element ${clip(args.ref, 60)}`;
+    if (toolName === 'browser_type' && typeof args.text === 'string') summary += `: types "${clip(args.text, 120)}"${args.submit ? ' and presses Enter' : ''}`;
+    if (toolName === 'browser_select' && Array.isArray(args.values)) summary += `: chooses ${clip(args.values.map((v: any) => `"${v}"`).join(', '), 200)}`;
+    // Show what will run, not just which tool.
     const cmd = toolName === 'run_git' ? ['git', ...runGitArgv(args)].join(' ')
         : (typeof args.code === 'string' ? args.code : '');
-    if (cmd) summary += `: ${cmd.length > 300 ? cmd.slice(0, 300) + '…' : cmd}`;
+    if (cmd) summary += `: ${clip(cmd, 300)}`;
+    return summary;
+}
+
+export function requestToolApproval(toolName, args) {
+    if (!document.getElementById('tool-approval-toast')) return Promise.resolve(true);
+    if (_approvalsGated) return Promise.resolve(false);
+    const summary = approvalSummary(toolName, args);
     return new Promise<boolean>(resolve => {
         _approvalQueue.push({ toolName, summary, resolve });
         if (!_approvalActive) _drainApprovalQueue();
@@ -614,8 +627,10 @@ function _runsOnHost(name: string, args: any): boolean {
 // Every tool that changes workspace files belongs here ("All writes"): append_file and undo_write were
 // missing and wrote without a prompt. run_workers is decided by _workersMayWrite.
 // Worker file tools are not gated one by one (their edits are staged and applied when the run ends), so
-// under "All writes" the delegation itself is approved — but only when a requested worker's role can
-// edit files. A read-only researcher run needs no prompt.
+// under "All writes" the delegation itself is approved — but only when a requested worker's role has a tool that
+// can write: the same set the per-tool gate uses. Checking only the file tools let the built-in researcher through
+// unprompted, and its deep_research saves a report and its JavaScript execute_code commits workspace writes (codex R315, R316).
+// A role whose ceiling holds none of them (a pure search role) needs no prompt.
 export function _workersMayWrite(args: any): boolean {
     let agents = args?.agents;
     if (typeof agents === 'string') { try { agents = JSON.parse(agents); } catch { return true; } }
@@ -624,7 +639,7 @@ export function _workersMayWrite(args: any): boolean {
         const role = typeof a?.role === 'string' ? a.role.replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase() : '';
         const ceiling = role && typeof rolesRegistry !== 'undefined' ? rolesRegistry.get(role)?.tools : null;
         if (!ceiling || typeof ceiling.has !== 'function') return true;   // unknown role or no tool ceiling
-        return FILE_WRITE_TOOLS.some(t => ceiling.has(t));
+        return [..._APPROVAL_ALL_WRITE].some(t => ceiling.has(t));
     });
 }
 const _APPROVAL_ALL_WRITE = new Set<string>([...MAY_WRITE_TOOLS, 'browser_navigate', 'browser_click', 'browser_type', 'browser_select']);
@@ -3007,11 +3022,14 @@ export function isToolOffByUser(name: string): boolean {
 // nemotron-3-ultra via kilo): read_file {} x8 and check_page {} x6 in one run, each answered with the same "missing required argument" text and
 // each followed by the same call. The refusal says what to send; it cannot say that the arguments are being lost on the way, which is what the
 // third identical case in a row means. From the third, the refusal says so and names a way around (execute_code reads and lists files).
+// The loop (llm-loops.ts) also counts these per model, to bench a model that keeps sending them.
+export function isEmptyArgRefusal(args: any, result: any): boolean {
+    const empty = args == null || (typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0);
+    return empty && !!result?.error && /missing required argument|is required|pass the \.html file|No code provided/i.test(String(result.error));
+}
 const _emptyArgStreak = new Map<string, number>();
 export function noteEmptyArgs(name: string, args: any, result: any): any {
-    const empty = args == null || (typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0);
-    const refused = !!result?.error && /missing required argument|is required|pass the \.html file/i.test(String(result.error));
-    if (!(empty && refused)) { _emptyArgStreak.delete(name); return result; }
+    if (!isEmptyArgRefusal(args, result)) { _emptyArgStreak.delete(name); return result; }
     const n = (_emptyArgStreak.get(name) ?? 0) + 1;
     _emptyArgStreak.set(name, n);
     if (n < 3) return result;

@@ -227,7 +227,8 @@ export function _degenerateTail(s: string, minChars = DEGENERATE_MIN_CHARS): str
 const _RUNAWAY_URL_RE = /"url"\s*:\s*"[^"]{2000}/;
 
 export async function streamOAICompat(resp: any, onChunk: any) {
-    const tcMap: Record<string, any> = {};
+    // Null prototype, and an index that is a non-negative integer: a chunk with index "__proto__" reached Object.prototype (codex R334).
+    const tcMap: Record<string, any> = Object.create(null);
     let degenerate: string | null = null;
     let _checkedAt = 0;   // output length (text + tool arguments) at the last degenerate check
     const _grown = () => content.length + Object.values(tcMap).reduce((n: number, tc: any) => n + tc.function.arguments.length, 0);
@@ -329,7 +330,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
         }
         if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
-                const idx = tc.index ?? 0;
+                const _n = Number(tc.index ?? 0), idx = Number.isSafeInteger(_n) && _n >= 0 ? _n : 0;
                 if (!tcMap[idx]) tcMap[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
                 if (tc.id)                  tcMap[idx].id                    = tc.id;
                 if (tc.function?.name)      tcMap[idx].function.name      += tc.function.name;

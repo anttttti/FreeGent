@@ -80,3 +80,14 @@ describe('hermes C11: SSEPayloads stays linear and bounded', () => {
         expect(ev.line('data: [DONE]')).toEqual(['[DONE]']);
     });
 });
+
+// codex R334: a tool-call index is a non-negative integer, never a property name of Object.prototype.
+describe('streamed tool-call index', () => {
+    it('"__proto__" does not reach Object.prototype, and the call still decodes', async () => {
+        const { streamOAICompat } = await import('../stream-decode.ts');
+        const chunk = { choices: [{ delta: { tool_calls: [{ index: '__proto__', id: 'c1', function: { name: 'list_files', arguments: '{}' } }] } }] };
+        const msg: any = await streamOAICompat(resp([`data: ${ev(chunk)}\n\n`, 'data: [DONE]\n\n']), () => {});
+        expect(({} as any).id).toBeUndefined();
+        expect(msg.tool_calls.map((t: any) => [t.id, t.function.name])).toEqual([['c1', 'list_files']]);
+    });
+});

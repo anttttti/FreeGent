@@ -374,3 +374,16 @@ describe('IDBSessionAdapter — writes resolve on commit', () => {
         expect(await adapter.loadHistory('c1')).toBeNull();
     });
 });
+
+// ── Dead connection ───────────────────────────────────────────────────────────
+
+describe('IDBSessionAdapter — a connection the browser broke', () => {
+    it('WebKit\'s "internal error in the Indexed Database server" is retried once on a reopened connection', async () => {
+        const adapter = await makeAdapter();
+        await adapter.replaceMessages('c1', [{ role: 'user', content: 'hi' }]);
+        const db: any = (adapter as any)._db;
+        db.transaction = () => { throw new DOMException('An internal error was encountered in the Indexed Database server', 'UnknownError'); };
+        expect(await adapter.loadHistory('c1')).toEqual([{ role: 'user', content: 'hi' }]);
+        expect((adapter as any)._db).not.toBe(db);
+    });
+});

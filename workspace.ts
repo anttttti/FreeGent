@@ -365,9 +365,16 @@ async function _getCkptsForChat(chatId) {
 // Snapshots of one chat are taken one at a time, and each sorts after the one before it. Two could overlap (the post-turn snapshot
 // of one message, the opening one of the next, an Autopilot snapshot of the same chat), and each computed its delta against whatever
 // was stored when it started; one whose timestamp sorted earlier but was written later replayed on a wrong base.
+// The queue serializes one page; another tab of the same chat (the chat lease is not an atomic lock, codex R152) read the same stored base
+// and wrote its delta against it (R309). A Web Lock per chat, shared by every tab of the origin, serializes those too, as the task-status
+// move does (tools.ts, R236). Without Web Locks it works as before.
 const _ckptQueue = new Map<string, Promise<unknown>>();
+function _ckptLocked(chatId, ckptId): Promise<void> {
+    const locks = typeof navigator !== 'undefined' ? (navigator as any).locks : null;
+    return locks?.request ? locks.request(`fg-ckpt:${chatId}`, () => _saveCheckpointSnapshot(chatId, ckptId)) : _saveCheckpointSnapshot(chatId, ckptId);
+}
 function saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
-    const run = (_ckptQueue.get(chatId) ?? Promise.resolve()).catch(() => {}).then(() => _saveCheckpointSnapshot(chatId, ckptId));
+    const run = (_ckptQueue.get(chatId) ?? Promise.resolve()).catch(() => {}).then(() => _ckptLocked(chatId, ckptId));
     _ckptQueue.set(chatId, run);
     const clear = () => { if (_ckptQueue.get(chatId) === run) _ckptQueue.delete(chatId); };
     run.then(clear, clear);
@@ -399,20 +406,23 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
         if (!idbHashes[name]) idbDelta.push({ name, content: null, op: 'delete' });
     }
 
-    // Local (FSA) delta
+    // Local (FSA) delta. A binary file is kept as base64 with its encoding, as the IDB delta does: read as text it came back as text over
+    // the image (codex R317). The record names its folder, so a restore never writes into another one (R318), and lists the files it could
+    // not read, so a restore does not take them for files made after the snapshot (R308).
     const localHashes = Object.create(null);
     const localDelta  = [];
+    const localUnread: string[] = [];
     if (fsaHandle) {
         try {
             const names = (await listFsaFiles()).filter(n => !n.endsWith('/'));
             await Promise.all(names.map(async name => {
                 try {
-                    const content = await readFsaFile(name);
+                    const { content, encoding } = await _readFsaRecord(name);
                     const h = _ckptHash(content);
                     localHashes[name] = h;
                     const op = prevLocalH[name] === undefined ? 'add' : prevLocalH[name] !== h ? 'modify' : null;
-                    if (op) localDelta.push({ name, content, op });
-                } catch {}
+                    if (op) localDelta.push({ name, content, op, ...(encoding ? { encoding } : {}) });
+                } catch { localUnread.push(name); if (prevLocalH[name] !== undefined) localHashes[name] = prevLocalH[name]; }
             }));
             for (const name of Object.keys(prevLocalH)) {
                 if (!localHashes[name]) localDelta.push({ name, content: null, op: 'delete' });
@@ -420,7 +430,8 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
         } catch {}
     }
 
-    const record = { id: `${chatId}/${ckptId}`, chatId, ckptId, ts, idbDelta, localDelta, idbHashes, localHashes };
+    const record: any = { id: `${chatId}/${ckptId}`, chatId, ckptId, ts, idbDelta, localDelta, idbHashes, localHashes,
+        ...(fsaHandle ? { localRoot: fsaHandle, localFolder: fsaHandle.name, localUnread } : {}) };
     return new Promise<void>((resolve, reject) => {
         const req = db.transaction(CKPT_STORE, 'readwrite').objectStore(CKPT_STORE).put(record);
         req.onsuccess = () => resolve();
@@ -428,24 +439,25 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
     });
 }
 
-// Returns { localFiles: [{name, content, op}] } — IDB is restored in place; local files returned for caller to handle.
+// Returns { localFiles: [{name, content, encoding}] (content null: delete), localFolder, localFolderMismatch, found } — IDB is restored in place; local files returned for caller to handle.
 async function restoreCheckpointWorkspace(chatId, ckptId) {
     const ckpts = await _getCkptsForChat(chatId);
     const targetIdx = ckpts.findIndex(c => c.ckptId === ckptId);
-    if (targetIdx < 0) return { localFiles: [], found: false };   // no snapshot of this point: the caller says so, it did not restore anything
+    if (targetIdx < 0) return { localFiles: [], localFolder: null, localFolderMismatch: false, found: false };   // no snapshot of this point: the caller says so, it did not restore anything
 
     // Replay deltas from first checkpoint up to target to reconstruct state
     const idbState   = Object.create(null);
     const idbEnc     = Object.create(null);
     const localState = Object.create(null);
+    const localEnc   = Object.create(null);
     for (let i = 0; i <= targetIdx; i++) {
         for (const f of ckpts[i].idbDelta) {
             if (f.content === null) { delete idbState[f.name]; delete idbEnc[f.name]; }
             else { idbState[f.name] = f.content; if (f.encoding) idbEnc[f.name] = f.encoding; else delete idbEnc[f.name]; }
         }
         for (const f of ckpts[i].localDelta) {
-            if (f.content === null) delete localState[f.name];
-            else localState[f.name] = f.content;
+            if (f.content === null) { delete localState[f.name]; delete localEnc[f.name]; }
+            else { localState[f.name] = f.content; if (f.encoding) localEnc[f.name] = f.encoding; else delete localEnc[f.name]; }
         }
     }
 
@@ -457,7 +469,29 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
         current.filter(name => !(name in idbState)),
     );
 
-    return { localFiles: Object.entries(localState).map(([name, content]) => ({ name, content })), found: true };
+    // The local part applies only to the folder the snapshot was taken from (R318). There, the files the folder has now and the snapshot
+    // did not are deleted too (R308): as for the workspace above, except files the snapshot could not read. A snapshot from before these
+    // fields names no folder: its files are written as before, and nothing is deleted.
+    const target = ckpts[targetIdx];
+    const localFolder: string | null = target.localFolder ?? fsaHandle?.name ?? null;
+    let localFolderMismatch = false;
+    const localDeletes: string[] = [];
+    if (fsaHandle && target.localFolder) {
+        const same = typeof target.localRoot?.isSameEntry === 'function'
+            ? await target.localRoot.isSameEntry(fsaHandle).catch(() => false)
+            : target.localFolder === fsaHandle.name;
+        if (!same) localFolderMismatch = true;
+        else {
+            const unread = new Set<string>(target.localUnread ?? []);
+            for (const n of await listFsaFiles().catch(() => [] as string[]))
+                if (!n.endsWith('/') && !(n in localState) && !unread.has(n)) localDeletes.push(n);
+        }
+    }
+    const localFiles = localFolderMismatch ? [] : [
+        ...Object.entries(localState).map(([name, content]) => ({ name, content: content as string | null, encoding: (localEnc[name] ?? null) as string | null })),
+        ...localDeletes.map(name => ({ name, content: null as string | null, encoding: null as string | null })),
+    ];
+    return { localFiles, localFolder, localFolderMismatch, found: true };
 }
 
 // Workspace state after replaying a chat's snapshot deltas up to index `upto` (inclusive).
@@ -533,7 +567,7 @@ async function cleanupDanglingCheckpoints(validChatIds) {
     if (!valid.size) return;
     const dangling = all.filter(r => !valid.has(r.chatId));
     if (!dangling.length) return;
-    console.error(`[checkpoints] Removing ${dangling.length} dangling snapshot record(s) from deleted chats`);
+    console.warn(`[checkpoints] Removing ${dangling.length} dangling snapshot record(s) from deleted chats`);   // housekeeping, not a failure
     const tx    = db.transaction(CKPT_STORE, 'readwrite');
     const store = tx.objectStore(CKPT_STORE);
     for (const r of dangling) store.delete(r.id);
@@ -767,6 +801,14 @@ async function _readBase64Record(path: string, b64: string): Promise<string> {
         if (text !== null) return text;
     }
     return await _extractDocText(path, b64);
+}
+
+/** A local-folder file as a workspace record: text when it decodes as text, otherwise base64 with its encoding. */
+async function _readFsaRecord(name: string): Promise<{ content: string; encoding: string | null }> {
+    const { dir, filename } = await fsaNavigate(name);
+    const bytes = new Uint8Array(await (await (await dir.getFileHandle(filename)).getFile()).arrayBuffer());
+    const text = decodeTextBytes(bytes);
+    return text !== null ? { content: text, encoding: null } : { content: _uint8ToBase64(bytes), encoding: 'base64' };
 }
 
 async function readFsaFile(name, asBase64 = false) {
@@ -1144,7 +1186,17 @@ export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = 
     });
 }
 
-/** Project import as a merge: the project's files are compared with the Workspace; files edited on both sides merge when the project's last export or import is known. Chats stay as they are. */
+/** The stored project base text of a path is the common ancestor of an incoming project file only when it is the base that copy started
+ *  from: the content it was exported with (`exported`, for a copy of this device's export edited elsewhere), the base its exporting device had
+ *  (`base`, for a copy imported on another device, edited there and exported again), or its content now (an unchanged copy). One base per path is kept,
+ *  and every export and import replaces it: merging an older copy after a newer export took the newer content as the ancestor, and a clean
+ *  merge then gave the older copy over the edits made since (codex R307). Without a matching base there is no automatic merge. */
+export async function projectBaseFits(baseText: string, incoming: { content?: string; base?: string; exported?: string }): Promise<boolean> {
+    const h = await sha256Hex(_enc.encode(baseText));
+    return h === incoming.base || h === incoming.exported || h === await sha256Hex(_enc.encode(incoming.content ?? ''));
+}
+
+/** Project import as a merge: the project's files are compared with the Workspace; files edited on both sides merge when the base that copy started from is known. Chats stay as they are. */
 async function _mergeProjectFiles(data: any): Promise<void> {
     const incoming: Record<string, any> = {}, incomingHash: Record<string, string> = {};
     for (const f of data.workspace || []) {
@@ -1155,7 +1207,8 @@ async function _mergeProjectFiles(data: any): Promise<void> {
     const { workspace } = await _hashBothSides();
     let items = planSync(workspace, incomingHash, {}).filter(i => i.kind === 'new-in-local' || i.kind === 'conflict');
     const merges = await _computeMerges(items.filter(i => i.kind === 'conflict').map(i => i.path),
-        p => _loadBaseText('project', p), p => readWorkspaceFile(p), async p => incoming[p]);
+        async p => { const t = await _loadBaseText('project', p); return t !== null && await projectBaseFits(t, incoming[p]) ? t : null; },
+        p => readWorkspaceFile(p), async p => incoming[p]);
     items = items.map(i => i.kind === 'new-in-local'
         ? { ...i, choices: ['to-workspace', 'skip'] as SyncAction[] }
         : (() => { const m = merges[i.path];
@@ -3379,6 +3432,14 @@ function _chatKeys() {
     return keys;
 }
 
+// A backup taken while a turn runs read the files first and the chats after, so a file the turn wrote in between was missing from the files
+// while the chat in the same backup described it (codex R319). Save and Export wait for an idle moment instead.
+function _busyRefusesBackup(what: string): boolean {
+    if (typeof aiBusy !== 'function' || !aiBusy()) return false;
+    alert(`An AI task is running. Stop it, or let it finish, before you ${what}: the files and the chats of a backup must be from the same moment.`);
+    return true;
+}
+
 async function _collectProjectData(name) {
     const wsFiles = await listWorkspaceFiles();
     const chatData = {};
@@ -3818,6 +3879,7 @@ async function saveProject() {
     const name = (nameInput?.value || '').trim() || localStorage.getItem('fg_project_name') || 'Project';
     if (nameInput && !nameInput.value.trim()) nameInput.value = name;
     localStorage.setItem('fg_project_name', name);
+    if (_busyRefusesBackup('save the project')) return;
     try {
         const data = await _collectProjectData(name);
         if (!_confirmCompleteBackup(data)) return;
@@ -3890,9 +3952,18 @@ async function loadProjectUI() {
 async function exportProject() {
     const nameInput = document.getElementById('project-name-input') as HTMLInputElement | null;
     const name = (nameInput?.value || '').trim() || localStorage.getItem('fg_project_name') || 'Project';
+    if (_busyRefusesBackup('export the project')) return;
     try {
         const data = await _collectProjectData(name);
         if (!_confirmCompleteBackup(data)) return;
+        // Each file names the base it started from (projectBaseFits), so a copy of this export imported elsewhere, edited and exported again
+        // can be merged back here against the right ancestor.
+        for (const f of data.workspace) {
+            if (f.encoding || typeof f.content !== 'string') continue;
+            f.exported = await sha256Hex(_enc.encode(f.content));
+            const t = await _loadBaseText('project', f.name).catch(() => null);
+            if (t !== null) f.base = await sha256Hex(_enc.encode(t));
+        }
         // What this export holds is the common starting point of a later merge of an edited copy.
         await _saveBaseTexts('project', data.workspace.map((f: any) => ({ path: f.name, content: f.content, encoding: f.encoding }))).catch(() => {});
         const buf  = await _gzipJson(data);

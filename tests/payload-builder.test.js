@@ -104,6 +104,13 @@ describe('buildChatPayload — reasoning_content stripping (strict-provider 422 
         const asst = p.messages.find(m => m.role === 'assistant');
         expect('reasoning_content' in asst).toBe(false);
     });
+    it('the harness\'s own "_" fields on a message are not sent (Groq: HTTP 400 "property \'_maxTokens\' is unsupported")', () => {
+        const hist = [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'ok', _maxTokens: 4096 }];
+        for (const prov of ['vllm', 'groq']) {
+            const p = window.buildChatPayload({ provider: prov, model: 'm', url: 'http://x' }, { messages: hist, temperature: 0.2, maxTokens: 1000 });
+            expect(p.messages[1]).toEqual({ role: 'assistant', content: 'ok' });
+        }
+    });
     it('messages without reasoning_content pass through unchanged for all providers', () => {
         const plain = [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }];
         for (const prov of ['vllm', 'groq', 'openrouter', 'custom']) {

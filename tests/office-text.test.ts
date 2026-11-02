@@ -82,4 +82,26 @@ describe('office-text', () => {
         const junk = enc('not a zip file at all, really not an archive');
         expect(await fixXlsxCharRefs(junk)).toBe(junk);
     });
+    // codex R306: a member's declared size bounds its inflation, and the workbook rewrite has a total budget.
+    const setDeclaredSize = (zip: Uint8Array, name: string, size: number) => {
+        const v = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+        for (let p = 0; p + 46 < zip.length; p++) {
+            if (v.getUint32(p, true) !== 0x02014b50) continue;
+            if (new TextDecoder().decode(zip.subarray(p + 46, p + 46 + v.getUint16(p + 28, true))) === name) { v.setUint32(p + 24, size, true); return; }
+        }
+        throw new Error('no such entry');
+    };
+    it('an entry that expands past its declared size is refused', async () => {
+        const zip = await zipFiles([{ name: 'big.txt', data: enc('x'.repeat(50_000)) }]);
+        setDeclaredSize(zip, 'big.txt', 1000);
+        expect(() => readZip(zip).get('big.txt')!()).toThrow(/declared size/);
+    });
+    it('a workbook declaring more than the rewrite budget goes to SheetJS unchanged', async () => {
+        const zip = await zipFiles([
+            { name: 'xl/sharedStrings.xml', data: enc('<sst><si><t>&#128578;</t></si></sst>') },
+            { name: 'xl/media/image1.png', data: enc('p'.repeat(5000)) },
+        ]);
+        setDeclaredSize(zip, 'xl/media/image1.png', 300 * 1024 * 1024);
+        expect(await fixXlsxCharRefs(zip)).toBe(zip);
+    });
 });

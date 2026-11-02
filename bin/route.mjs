@@ -12,7 +12,13 @@ export function route(args, { stdinTTY, stdoutTTY }) {
     if (args.includes('--version') || args.includes('-v')) return { program: 'version', args };
     if (args.some(a => CLI_FLAGS.has(a))) return { program: 'cli', args };
     // The terminal UI needs a terminal on both sides; without one, the pipeline form is the only thing that can work.
-    if (!stdinTTY || !stdoutTTY) return { program: 'cli', args: args.includes('-p') || args.includes('--print') ? args : ['-p', ...args] };
+    // The UI's `--prompt "message"` is then the request: as `-p --prompt …` the pipeline program refused it (an empty request, or two inputs
+    // with text piped in; codex R312).
+    if (!stdinTTY || !stdoutTTY) {
+        const i = args.indexOf('--prompt');
+        if (i >= 0 && i + 1 < args.length) return { program: 'cli', args: ['-p', args[i + 1], ...args.slice(0, i), ...args.slice(i + 2)] };
+        return { program: 'cli', args: ['-p', ...args] };
+    }
     return { program: 'tui', args };
 }
 

@@ -170,10 +170,12 @@ Write only the updated report followed by the GAPS line — no preamble.`;
 
 // Fires when research must continue (open questions remain). Pass band = explicit
 // coverage-sufficient phrasing; fail band = a question list; middle → LLM.
-const _DR_GAPS_CHECKS = [{
+// The pass band is the whole line being such a declaration: "None of the results are official; find an official source" matched a bare
+// \bnone\b and ended the research with a gap it had just named (codex R323). Anything descriptive goes to the judge.
+export const _DR_GAPS_CHECKS = [{
     name: 'coverage_insufficient',
     re_fail: (t: string) => /\?/.test(t) || t.split(',').length >= 2,
-    re_pass: (t: string) => /\b(none|no (?:significant |major |open |remaining )?(?:gaps?|questions?)|sufficient|fully covered)\b/i.test(t),
+    re_pass: (t: string) => /^\s*(?:none|no (?:significant |major |open |remaining |further )?(?:gaps?|questions?)(?: remain(?:ing)?)?|(?:coverage (?:is )?)?(?:sufficient|fully covered))\s*[.!]?\s*$/i.test(t),
     llmPrompt: 'A research loop must decide whether to run another iteration. The text below is the GAPS declaration from the latest report synthesis. Does it indicate that open questions remain and research must continue?',
 }];
 

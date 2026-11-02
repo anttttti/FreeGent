@@ -10,7 +10,7 @@ import { MIN_USEFUL_OUTPUT, IMAGE_REFUSAL_RE, isThinkingFieldRefusal, isReasonin
 import { _endpointNeedsProbe, knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining, oaiEndpoint, _defaultEndpoint, specToEndpoint, _anyFreeSpec, getRateLimitFallbackEndpoint, _nextRotationSpec, modelFriendlyName, withEndpointSlot } from './model-router.js';
 import { _normPath, _invalidateReadDedup, resetSeenReadFiles, _historyResult, pruneSessionHistory, repairOAIHistory } from './history.js';
 import { stripInjected, parseArgs } from './history-util.js';
-import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls } from './tool-call-repair.js';
+import { _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs, _repairXmlPseudoCalls, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairArgEnvelope, repairAllToolCalls, repairToolCallIds } from './tool-call-repair.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { reactiveSkillGuidance, completionGateGuidance } from './skill-guidance.js';
 import { getModelToolFormat, parseFnTagCalls, userForbidsExecution, recordToolFormat, isToolFormatListed, isToolsRejectedError } from './model-caps.js';
@@ -21,7 +21,7 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, openSyntaxErrors } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, openSyntaxErrors, isEmptyArgRefusal } from './tools.js';
 import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
@@ -2262,6 +2262,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             ...(Array.isArray(r.result?.files_written) ? r.result.files_written : []),
         ]));
         consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
+        _noteEmptyArgSteps(ep, _refused ? [] : _exec, (fb) => { activeEndpoint = fb; _sessionFallback = fb; });   // a repeat refusal is neutral
         const _failedThisStep = consecutiveToolFails > _prevToolFails;
         if (consecutiveToolFails === 0) _failSigs.length = 0;
         for (const r of _exec) if (failStreakKind(r.name, r.result, _READ_ONLY_TOOLS, r.args) === 'fail') _failSigs.push(failureSignature(r.result));
@@ -2584,6 +2585,25 @@ async function callLLMUngated(
 const _fnTagStrips = new Map<string, number>();
 const FN_TAG_STRIP_BENCH_AT = 6;
 const FN_TAG_STRIP_BENCH_MS = 15 * 60_000;
+// Steps in a row, per model, in which every tool call arrived with no arguments and was refused for a missing one. Chat logs 401e1d79,
+// b969d7cc, 306f35dd (v0.96.53-55): nemotron-3-ultra on nvidia sent {} in 44 of 49 calls of one run and 16 of 18 of another, with the
+// same model on openrouter in the same chats sending full arguments; the "arguments are being lost" refusal (tools.ts noteEmptyArgs)
+// did not stop it, and the run ended BLOCKED or on the step limit. Like the text tool-call repairs above, a model that keeps doing
+// this is benched, and the turn goes on with the next model in the list.
+const EMPTY_ARG_BENCH_AT = 4;
+const _emptyArgSteps = new Map<string, number>();
+function _noteEmptyArgSteps(ep: any, exec: Array<{ args: any; result: any }>, switchTo: (fb: any) => void): void {
+    if (!exec.length || isCustomEndpoint(ep)) return;
+    const key = `${ep.provider ?? getProvider()}|${ep.model}`;
+    if (!exec.every(r => isEmptyArgRefusal(r.args, r.result))) { _emptyArgSteps.delete(key); return; }
+    const n = (_emptyArgSteps.get(key) ?? 0) + 1;
+    if (n < EMPTY_ARG_BENCH_AT) { _emptyArgSteps.set(key, n); return; }
+    _emptyArgSteps.delete(key);
+    _markExactCooldown(ep, FN_TAG_STRIP_BENCH_MS);
+    const fb = getRateLimitFallbackEndpoint();
+    console.warn(`[tool-format] ${key}: ${n} steps of tool calls with empty arguments — benched for 15 min${fb ? `, switching to ${fb.provider}|${fb.model}` : ''}`);
+    if (fb) switchTo(fb);
+}
 
 const FN_TAG_NOTE_MARKER = '\n\n## Tool-call format (this endpoint)\n';
 const FN_TAG_NOTE = FN_TAG_NOTE_MARKER + 'This endpoint does not execute the tool schema natively — to call a tool, output exactly this tag as literal text: `<function=NAME>{"arg":"value"}</function>` (NAME is the tool name, the body is valid JSON arguments). Output ONLY the tag, nothing else on that line — no narration before it, no fabricated result after it. The real result arrives in the next turn.';
@@ -2801,6 +2821,7 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
     // The max_tokens actually sent: truncation checks compare completion_tokens against it,
     // because streamed vLLM responses report finish_reason "tool_calls" even when cut off.
     result._maxTokens = effectiveMaxTokens;
+    repairToolCallIds(result.tool_calls);   // one id per call (codex R335)
     return result;
 }
 

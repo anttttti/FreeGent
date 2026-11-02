@@ -21,6 +21,8 @@ describe('freegent command routing', () => {
     it('without a terminal on either side the UI cannot run: the piped form is used', () => {
         expect(route([], { stdinTTY: false, stdoutTTY: true })).toEqual({ program: 'cli', args: ['-p'] });
         expect(route(['--model', 'm'], { stdinTTY: true, stdoutTTY: false })).toEqual({ program: 'cli', args: ['-p', '--model', 'm'] });
+        // The UI's message-at-start becomes the request (codex R312).
+        expect(route(['--model', 'm', '--prompt', 'hi there'], { stdinTTY: false, stdoutTTY: true })).toEqual({ program: 'cli', args: ['-p', 'hi there', '--model', 'm'] });
     });
     it('--help and --version are answered by the launcher', () => {
         expect(route(['--help'], tty).program).toBe('help');

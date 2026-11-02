@@ -4,10 +4,6 @@ import { readFileSync } from 'fs';
 const src = (f: string) => readFileSync(`${process.cwd()}/${f}`, 'utf8');
 
 describe('browser-tour fixes', () => {
-    it('CodeMirror basic-setup is pinned to a published version', () => {
-        expect(src('editor.ts')).toContain('basic-setup@0.20.0');
-        expect(src('editor.ts')).not.toContain('basic-setup@0.7');
-    });
     it('tab selectors escape quotes and backslashes in file names', () => {
         const s = src('tabs.ts');
         expect(s).toContain('_attrEsc(key)');

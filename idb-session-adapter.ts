@@ -47,8 +47,11 @@ function _latestGeneration(store: IDBObjectStore, chatId: string, then: (gen: nu
 }
 
 // A handle the browser has closed (iOS Safari does this to backgrounded or memory-pressured tabs)
-// throws InvalidStateError on every transaction until reopened.
-const _isClosedDbError = (e: any) => e?.name === 'InvalidStateError' || /connection is closing|database.*closed/i.test(String(e?.message ?? ''));
+// throws InvalidStateError on every transaction until reopened. WebKit's "UnknownError: An internal error was encountered in the
+// Indexed Database server" is the same kind of dead connection (console uploads, sessions 19438115, a60117bc, d8eb3808: every store
+// call of the next minute failed with it), so it is retried once on a new connection too.
+const _isClosedDbError = (e: any) => e?.name === 'InvalidStateError' || /connection is closing|database.*closed/i.test(String(e?.message ?? ''))
+    || (e?.name === 'UnknownError' && /internal error/i.test(String(e?.message ?? '')));
 
 export class IDBSessionAdapter {
     private _reopening: Promise<void> | null = null;

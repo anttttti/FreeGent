@@ -131,8 +131,12 @@ describe('R1. append_file is a write for approval and for the repeat cache', () 
             expect(requests).toBe(before);
         } finally { W.fetch = origFetch; }
     });
-    it('"All writes" asks for a delegation only when a worker can edit files', () => {
-        expect(_workersMayWrite({ agents: [{ id: 'r', role: 'researcher', task: 't' }] })).toBe(false);
+    it('"All writes" asks for a delegation only when a worker has a tool that can write', () => {
+        // The researcher's deep_research saves a report, and its JavaScript execute_code commits workspace writes (codex R315, R316).
+        expect(_workersMayWrite({ agents: [{ id: 'r', role: 'researcher', task: 't' }] })).toBe(true);
+        window.rolesRegistry.set('lookup', { name: 'lookup', tools: new Set(['web_search', 'fetch_url', 'read_file']) });
+        try { expect(_workersMayWrite({ agents: [{ id: 'l', role: 'lookup', task: 't' }] })).toBe(false); }
+        finally { window.rolesRegistry.delete('lookup'); }
         expect(_workersMayWrite({ agents: [{ id: 'r', role: 'researcher', task: 't' }, { id: 'c', role: 'coder', task: 't' }] })).toBe(true);
         expect(_workersMayWrite({ agents: [{ id: 'd', task: 't' }] })).toBe(true);            // no role: runs as director
         expect(_workersMayWrite({ agents: [{ id: 'x', role: 'made-up', task: 't' }] })).toBe(true);

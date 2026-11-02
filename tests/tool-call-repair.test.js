@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     _repairJsonArgs, _repairToolCallArgs, _repairToolNames, _repairExecCodeArgs,
-    _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls,
+    _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, repairToolCallIds,
 } from '../tool-call-repair.ts';
 
 describe('_repairJsonArgs — fence strip only', () => {
@@ -337,5 +337,18 @@ describe('_repairGluedArgs — file-edit arguments split at a backtick or <|"|>'
         expect(rebuild('replace_in_file', ok).norm[0].args).toEqual(ok);
         const other = { code: 'echo `,path', language: 'bash' };
         expect(rebuild('execute_code', other).norm[0].args).toEqual(other);
+    });
+});
+
+// codex R335: each call of a response has its own id before anything runs.
+describe('repairToolCallIds', () => {
+    it('gives a missing or repeated id a new one, and keeps the others', () => {
+        const calls = [{ id: 'a' }, { id: 'a' }, { id: '' }, {}, { id: 'b' }];
+        repairToolCallIds(calls);
+        const ids = calls.map(c => c.id);
+        expect(ids[0]).toBe('a');
+        expect(ids[4]).toBe('b');
+        expect(new Set(ids).size).toBe(5);
+        expect(ids.every(i => typeof i === 'string' && i.length > 0)).toBe(true);
     });
 });

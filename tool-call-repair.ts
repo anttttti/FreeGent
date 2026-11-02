@@ -523,6 +523,19 @@ export function _repairFetchBody(normCalls: any[]): void {
  *
  * Workers can ignore bad; the main loop uses it to emit a targeted bad-args nudge.
  */
+// Every call of a response gets an id of its own before anything runs. A missing id, or one that two calls of the batch share, would pair
+// several results with one call in the next request, which a provider rejects or misreads after the tools have already acted (codex R335).
+// callOAI applies it to every response it returns, before the message reaches any history or log, so the call and its result keep one id.
+export function repairToolCallIds(raw: any[] | null | undefined): void {
+    if (!Array.isArray(raw)) return;
+    const seen = new Set<string>();
+    raw.forEach((tc, i) => {
+        if (!tc || typeof tc !== 'object') return;
+        if (typeof tc.id !== 'string' || !tc.id || seen.has(tc.id)) tc.id = `call_${i}_${Math.random().toString(36).slice(2, 10)}`;
+        seen.add(tc.id);
+    });
+}
+
 export function repairAllToolCalls(raw: any[]): { bad: string[]; norm: { name: string; args: any }[]; hasEmptyCode: boolean } {
     const bad = _repairToolCallArgs(raw);                    // step 1: repair raw strings
     const norm = raw.map(tc => {                             // step 2: normalize (post-repair)

@@ -287,25 +287,9 @@ function _pruneLogsFrom(sinceMs: number): void {
 async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<'ok' | 'missing' | 'failed'> {
     if (activeChatId && typeof restoreCheckpointWorkspace === 'function') {
         try {
-            const { localFiles, found } = await restoreCheckpointWorkspace(activeChatId, ckptId);
-            // Only offer local-file restore when a folder is actually synced via FSA.
-            // Without an active FSA handle, writeFsaFile throws immediately and the
-            // dialog's "Restore all" button appears to do nothing — the retry also
-            // stalls if createWritable() hangs waiting for a browser permission prompt.
-            const _canWriteLocal = typeof writeFsaFile === 'function'
-                                && typeof hasFsaFolder === 'function' && hasFsaFolder();
-            if (localFiles.length > 0 && _canWriteLocal) {
-                const ok = await _confirmLocalRestore(localFiles.length);
-                if (ok) {
-                    // Parallel writes: don't let one stalled FSA handle block the rest.
-                    await Promise.all(localFiles.map(async f => {
-                        try {
-                            if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
-                            else await writeFsaFile(f.name, f.content);
-                        } catch {}
-                    }));
-                }
-            }
+            const res = await restoreCheckpointWorkspace(activeChatId, ckptId);
+            const { found } = res;
+            await _restoreLocalFiles(res, note => appendMessage?.('model', `<em style="color:var(--muted)">${escapeHtml(note)}</em>`));
             renderFileList?.();
             return found === false ? 'missing' : 'ok';
         } catch (e) { console.warn('[checkpoint] workspace restore failed:', e); return 'failed'; }
@@ -353,16 +337,7 @@ async function restoreChatWorkspace(chatId: string, ckptId: string): Promise<boo
     if (aiBusy()) { alert('An AI task is running — stop it before restoring the workspace.'); return false; }
     if (typeof restoreCheckpointWorkspace !== 'function') return false;
     try {
-        const { localFiles } = await restoreCheckpointWorkspace(chatId, ckptId);
-        const _canWriteLocal = typeof writeFsaFile === 'function' && typeof hasFsaFolder === 'function' && hasFsaFolder();
-        if (localFiles.length > 0 && _canWriteLocal && await _confirmLocalRestore(localFiles.length)) {
-            await Promise.all(localFiles.map(async f => {
-                try {
-                    if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
-                    else await writeFsaFile(f.name, f.content);
-                } catch {}
-            }));
-        }
+        await _restoreLocalFiles(await restoreCheckpointWorkspace(chatId, ckptId), note => alert(note));
         renderFileList?.();
         return true;
     } catch (e) {
@@ -371,14 +346,38 @@ async function restoreChatWorkspace(chatId: string, ckptId: string): Promise<boo
     }
 }
 
-function _confirmLocalRestore(count: number): Promise<boolean> {
-    if (localStorage.getItem(KEYS.CKPT_LOCAL_WARN_OK) === '1') return Promise.resolve(true);
+// The local-folder part of a checkpoint restore (restoreCheckpointWorkspace returns it), after the user agrees. Only offered when a folder is
+// actually synced via FSA: without an active handle writeFsaFile throws at once, and "Restore all" appeared to do nothing.
+async function _restoreLocalFiles(res: { localFiles: Array<{ name: string; content: string | null; encoding?: string | null }>; localFolder?: string | null; localFolderMismatch?: boolean },
+                                  notify: (note: string) => void): Promise<void> {
+    const canWrite = typeof writeFsaFile === 'function' && typeof hasFsaFolder === 'function' && hasFsaFolder();
+    if (!canWrite) return;
+    if (res.localFolderMismatch) {
+        notify(`The local files of this snapshot belong to the folder “${res.localFolder}”, not the one open now, so the open folder was left as it is. Only the workspace was restored.`);
+        return;
+    }
+    const files = res.localFiles;
+    if (!files.length) return;
+    const deletes = files.filter(f => f.content === null).length;
+    if (!(await _confirmLocalRestore(files.length - deletes, deletes, res.localFolder ?? null))) return;
+    // Parallel writes: don't let one stalled FSA handle block the rest.
+    await Promise.all(files.map(async f => {
+        try {
+            if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
+            else await writeFsaFile(f.name, f.content, f.encoding ?? null);
+        } catch {}
+    }));
+}
+
+function _confirmLocalRestore(writes: number, deletes = 0, folder: string | null = null): Promise<boolean> {
+    // "Don't show this again" was given for overwrites; a restore that deletes files still asks.
+    if (!deletes && localStorage.getItem(KEYS.CKPT_LOCAL_WARN_OK) === '1') return Promise.resolve(true);
     return new Promise(resolve => {
         const ov = document.createElement('div');
         ov.className = 'fg-modal-overlay';
         ov.innerHTML = `<div class="fg-modal fg-modal-sm">
             <div class="fg-modal-header"><span class="fg-modal-title">Restore local files?</span></div>
-            <div class="fg-modal-body"><p>${count} local file(s) will be overwritten on your filesystem to match this checkpoint.</p>
+            <div class="fg-modal-body"><p>To match this checkpoint, ${writes} file(s) will be overwritten${deletes ? ` and ${deletes} file(s) made since will be deleted` : ''} in the local folder${folder ? ` “${escapeHtml(folder)}”` : ''} on your filesystem.</p>
             <label class="fg-modal-check-label"><input type="checkbox" id="fg-local-cb"> Don't show this again</label></div>
             <div class="fg-modal-btns">
                 <button class="fg-modal-btn fg-modal-btn-cancel">Skip local files</button>

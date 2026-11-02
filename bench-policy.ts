@@ -57,8 +57,9 @@ function _nodeSplit(id: string): { path: string; comps: string[] } {
 }
 export function _sameTestNode(failedId: string, gradedId: string): boolean {
     const F = _nodeSplit(failedId), G = _nodeSplit(gradedId);
-    // pytest prints ids relative to its rootdir; the task may name the file by a longer or absolute path: one path ending in the other is the same module.
-    const samePath = (a: string, b: string) => a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+    // pytest prints ids relative to its rootdir; the task may name the file by a longer or absolute path: the graded path ending in the printed one
+    // is the same module. Not the other way round: a printed `vendor/tests/test_api.py` is another module than a graded `tests/test_api.py` (codex R327).
+    const samePath = (failed: string, graded: string) => failed === graded || graded.endsWith('/' + failed);
     // A graded directory (or file) selects what is under it; the directory may be named by a longer path than pytest prints.
     const under = (dir: string, file: string) => dir.split('/').some((_, i, a) => file.startsWith(a.slice(i).join('/') + '/'));
     if (!G.comps.length) return samePath(F.path, G.path) || under(G.path, F.path);

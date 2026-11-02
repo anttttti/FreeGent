@@ -186,6 +186,11 @@ export function buildRequestMessages(hist: any[], provider: string): any[] {
 // .function.arguments must be a JSON object encoded as a string", Ornith 1.5), and the history keeps a call as the model sent it ("" for no arguments,
 // or text that is not JSON). Messages whose calls are all objects are passed through unchanged.
 const _isObjectJson = (s: unknown) => { if (typeof s !== 'string') return false; try { const v = JSON.parse(s); return !!v && typeof v === 'object' && !Array.isArray(v); } catch { return false; } };
+// Fields starting with "_" are the harness's own bookkeeping on a history message (callOAI's _maxTokens): never sent. Groq refuses the
+// whole request for an unknown field (HTTP 400 "'messages.3' : property '_maxTokens' is unsupported", worker console uploads v0.96.53).
+const _withoutInternalFields = (m: any) => m && typeof m === 'object' && Object.keys(m).some(k => k.startsWith('_'))
+    ? Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith('_'))) : m;
+
 export function withObjectArgs(messages: any[]): any[] {
     return messages.map(m => m.role !== 'assistant' || !Array.isArray(m.tool_calls) || m.tool_calls.every((tc: any) => _isObjectJson(tc?.function?.arguments)) ? m
         : { ...m, tool_calls: m.tool_calls.map((tc: any) => _isObjectJson(tc?.function?.arguments) ? tc : { ...tc, function: { ...tc?.function, arguments: '{}' } }) });
@@ -227,7 +232,7 @@ export function buildChatPayload(ep: any, {
         : modelNeedsReasoningEcho(`${provider}|${ep?.model ?? ''}`) ? withReasoningEcho(messages)
         : messages.map(m => (m.role === 'assistant' && m.reasoning_content != null)
             ? (({ reasoning_content: _rc, ...rest }) => rest)(m)
-            : m));
+            : m)).map(_withoutInternalFields);
 
     const payload: any = {
         model: ep?.model ?? '',

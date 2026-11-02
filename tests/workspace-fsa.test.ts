@@ -127,3 +127,35 @@ describe('folder authority and project changes during a folder operation', () =>
         expect(await W.readWorkspaceFile('shared.txt')).toBeTruthy();
     });
 });
+
+// codex R308 / R317 / R318: the local-folder part of a checkpoint restore.
+describe('checkpoint restore of the local folder', () => {
+    it('a binary file comes back as its bytes (base64 with its encoding), not as decoded text', async () => {
+        const dir = await connect();
+        const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0xff, 0x10]);
+        dir.disk.set('img.png', png);
+        await W.saveCheckpointSnapshot('chat-bin', '1000');
+        dir.disk.set('img.png', new TextEncoder().encode('changed'));
+        await W.saveCheckpointSnapshot('chat-bin', '2000');
+        const { localFiles } = await W.restoreCheckpointWorkspace('chat-bin', '1000');
+        expect(localFiles).toContainEqual({ name: 'img.png', content: Buffer.from(png).toString('base64'), encoding: 'base64' });
+    });
+    it('a file made in the folder after the snapshot is returned as a delete', async () => {
+        const dir = await connect({ 'keep.txt': 'K' });
+        await W.saveCheckpointSnapshot('chat-del', '1000');
+        dir.disk.set('later.txt', new TextEncoder().encode('L'));
+        const { localFiles } = await W.restoreCheckpointWorkspace('chat-del', '1000');
+        expect(localFiles).toContainEqual({ name: 'later.txt', content: null, encoding: null });
+        expect(localFiles).toContainEqual({ name: 'keep.txt', content: 'K', encoding: null });
+    });
+    it('a snapshot of another folder writes nothing into the open one', async () => {
+        await connect({ 'a.txt': 'A' });
+        await W.saveCheckpointSnapshot('chat-move', '1000');
+        W.closeFsaFolder();
+        const other = await connect({ 'a.txt': 'OTHER' });
+        other.name = 'Another folder';
+        const res = await W.restoreCheckpointWorkspace('chat-move', '1000');
+        expect(res.localFolderMismatch).toBe(true);
+        expect(res.localFiles).toEqual([]);
+    });
+});

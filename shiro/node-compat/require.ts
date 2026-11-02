@@ -362,7 +362,15 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
       const hint = nearby.length ? `\nSimilar files in cache: ${nearby.join(', ')}` : '';
       const isNpmPkg = !modPath.startsWith('.') && !modPath.startsWith('/');
       const npmHint = isNpmPkg ? `\nTry: npm install ${modPath.split('/')[0]}` : '';
-      throw new Error(`Cannot find module '${modPath}' (resolved: ${resolved})${hint}${npmHint}`);
+      // A script written to /tmp (cat > /tmp/x.mjs) that imports './src/a.js' from the project: Node resolves a relative import from the
+      // importing file's directory, not from the working directory. Chat logs 76c6bde0, d1b1564a, 273991b8: each cost a step to work out.
+      let dirHint = '';
+      if (modPath.startsWith('.') && fromDir !== ctx.cwd) {
+        const fromCwd = ctx.fs.resolvePath(modPath, ctx.cwd);
+        const atCwd = fileCache.has(fromCwd) ? fromCwd : tryResolveExtensions(fromCwd);
+        if (atCwd) dirHint = `\nA relative import resolves from the importing file's directory (${fromDir}), not from the working directory (${ctx.cwd}). The file is at ${atCwd}: import it by that absolute path, or put the script in ${ctx.cwd}.`;
+      }
+      throw new Error(`Cannot find module '${modPath}' (resolved: ${resolved})${dirHint || hint}${npmHint}`);
     }
 
     if (resolved.endsWith('.json')) {

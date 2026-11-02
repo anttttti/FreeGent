@@ -18,9 +18,10 @@ function build(lengths: ArrayLike<number>, n: number): Huff {
 
 let fixedL: Huff | null = null, fixedD: Huff | null = null;
 
-export function inflateRaw(src: Uint8Array, start = 0): Uint8Array {
+/** `maxOut`: the most bytes the data may expand to (a ZIP entry's declared size); more throws instead of growing the buffer. */
+export function inflateRaw(src: Uint8Array, start = 0, maxOut = Infinity): Uint8Array {
     let pos = start, bitBuf = 0, bitCnt = 0;
-    let out = new Uint8Array(Math.max(1024, src.length * 4)), op = 0;
+    let out = new Uint8Array(Math.min(maxOut, Math.max(1024, src.length * 4))), op = 0;
     const bits = (n: number): number => {
         while (bitCnt < n) {
             if (pos >= src.length) throw new Error('Unexpected end of compressed data');
@@ -42,7 +43,8 @@ export function inflateRaw(src: Uint8Array, start = 0): Uint8Array {
     };
     const ensure = (n: number) => {
         if (op + n <= out.length) return;
-        const bigger = new Uint8Array(Math.max(out.length * 2, op + n));
+        if (op + n > maxOut) throw new Error(`Compressed data expands past its declared size (${maxOut} bytes)`);
+        const bigger = new Uint8Array(Math.min(maxOut, Math.max(out.length * 2, op + n)));
         bigger.set(out.subarray(0, op));
         out = bigger;
     };

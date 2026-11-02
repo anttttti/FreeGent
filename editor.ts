@@ -10,13 +10,15 @@ let _cmPromise: Promise<{ basicSetup: any; EditorView: any; EditorState: any; la
 function _loadCM() {
     if (_cmPromise) return _cmPromise;
     _cmPromise = (async () => {
-        // ?deps= pins all lang packs to the same @codemirror/* versions as basic-setup,
+        // ?deps= pins all lang packs to the same @codemirror/* versions as the setup package,
         // ensuring one module instance per package (avoids duplicate-extension errors).
         const BASE = 'https://esm.sh';
-        // basic-setup is versioned as 0.x, not @6; pin @lezer/highlight@1 to avoid mismatches.
         const DEPS = '?deps=@codemirror/state@6,@codemirror/view@6,@codemirror/language@6,@lezer/highlight@1';
+        // `codemirror` is what @codemirror/basic-setup was renamed to at 6.0. basic-setup@0.20.0 also pulled autocomplete, commands,
+        // lint and search at ^0.20 (pre-6 builds beside state/view 6), and esm.sh printed a deprecation warning for it in every
+        // session that opened a file (console uploads: 67 sessions, v0.71-v1.0.79).
         const [setup, js, py, htm, cssMod, md, json] = await Promise.all([
-            import(/* @vite-ignore */ `${BASE}/@codemirror/basic-setup@0.20.0${DEPS}`),
+            import(/* @vite-ignore */ `${BASE}/codemirror@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-javascript@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-python@6${DEPS}`),
             import(/* @vite-ignore */ `${BASE}/@codemirror/lang-html@6${DEPS}`),
@@ -27,10 +29,14 @@ function _loadCM() {
         // EditorView and EditorState must come from the same module instances as basicSetup's keymaps: esm.sh builds a
         // package again for each ?deps= combination, so `@codemirror/view@6` imported on its own is a second copy, and a
         // keymap made by the first copy is silently ignored by a view of the second (undo, indent, search: none worked).
+        // `codemirror` exports EditorView but not EditorState, so the class is taken from a view's own state.
+        const _probe = new setup.EditorView();
+        const EditorState = _probe.state.constructor;
+        _probe.destroy();
         return {
             basicSetup: setup.basicSetup,
             EditorView:  setup.EditorView,
-            EditorState: setup.EditorState,
+            EditorState,
             langJS:   js.javascript,
             langPY:   py.python,
             langHTML: htm.html,

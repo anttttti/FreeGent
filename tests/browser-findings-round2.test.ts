@@ -78,3 +78,13 @@ describe('own-endpoint 503', () => {
         expect(_isRateLimit('HTTP 429: x', { provider: 'custom', model: 'm' })).toBe(true);
     });
 });
+
+// codex R314: a browser action's approval names the page, the element and what goes into it.
+describe('browser action approvals', () => {
+    it('say where and what', async () => {
+        const { approvalSummary } = await import('../tools.ts');
+        expect(approvalSummary('browser_navigate', { url: 'http://localhost:3000/checkout' })).toBe('browser_navigate: http://localhost:3000/checkout');
+        expect(approvalSummary('browser_type', { ref: 'e12', text: 'ada@example.com', submit: true })).toBe('browser_type element e12: types "ada@example.com" and presses Enter');
+        expect(approvalSummary('browser_select', { ref: 'e3', values: ['NZ'] })).toBe('browser_select element e3: chooses "NZ"');
+    });
+});

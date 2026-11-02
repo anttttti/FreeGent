@@ -1065,7 +1065,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
 
-            const { usage, ...msg } = message;
+            const { usage, _maxTokens, ...msg } = message as any;   // _maxTokens: callOAI's note for truncation checks, not part of the message
             // stream-decode stopped a repeating output early: its tool arguments are cut off, so
             // nothing of it runs or enters history.
             if ((message as any).degenerate) {

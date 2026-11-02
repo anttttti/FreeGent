@@ -3,14 +3,14 @@
 import { describe, it, expect } from 'vitest';
 import { createRequireFunction } from '../shiro/node-compat/require.ts';
 
-function load(src: string) {
+function load(src: string, fromDir = '/workspace') {
     const fileCache = new Map([['/workspace/src/render.js', src]]);
     const req = createRequireFunction({
         ctx: { cwd: '/workspace', env: {}, fs: { resolvePath: (p: string, from: string) => (p.startsWith('/') ? p : `${from}/${p.replace(/^\.\//, '')}`) } } as any, fileCache, fileMtimes: new Map(), moduleCache: new Map(), pendingPromises: [],
         processEvents: {}, getBuiltinModule: () => null, fakeConsole: console, fakeProcess: { env: {}, cwd: () => '/workspace' },
         FakeBuffer: Buffer, createExpressShim: () => ({}), createSqliteShim: () => ({}), createAutoStub: (_p: string, t: any) => t,
     });
-    try { req('./src/render.js', '/workspace'); return null; } catch (e: any) { return e; }
+    try { req('./src/render.js', fromDir); return null; } catch (e: any) { return e; }
 }
 
 describe('a module that fails to load', () => {
@@ -23,5 +23,13 @@ describe('a module that fails to load', () => {
         const e = load('}');
         expect(e.stack.split('\n')[1]).toMatch(/^SyntaxError: /);
         expect(e.stack.match(/SyntaxError: /g)).toHaveLength(1);
+    });
+});
+
+describe('a relative import from a script outside the working directory', () => {
+    it('says it resolves from the script\'s directory and where the file is (chat logs 76c6bde0, d1b1564a)', () => {
+        const e = load('module.exports = 1;', '/tmp');
+        expect(e.message).toMatch(/^Cannot find module '\.\/src\/render\.js' \(resolved: \/tmp\/src\/render\.js\)/);
+        expect(e.message).toContain("resolves from the importing file's directory (/tmp), not from the working directory (/workspace). The file is at /workspace/src/render.js");
     });
 });
