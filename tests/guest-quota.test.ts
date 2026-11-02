@@ -4,7 +4,6 @@ const state = vi.hoisted(() => ({ guest: false, mode: false, level: 'provider', 
 vi.mock('../config.js', () => ({
     guestQuotaOn: () => state.guest,
     loadCfWorkerKeys: vi.fn(async () => { state.loads++; }),
-    chooseGuestQuota: () => { state.chosen = true; },
     guestModeOn: () => state.mode,
     guestQuotaDaily: () => state.daily,
     guestQuotaPausedUntil: () => state.pausedUntil,
@@ -38,12 +37,11 @@ describe('guest quota offer', () => {
         expect(links).toEqual(expect.arrayContaining(['https://kilo.ai/terms', 'https://openrouter.ai/terms', 'https://tokenharbor.ai/terms']));
     });
 
-    it('uses the guest quota when the Worker has it on: chosen, Routed, dialog closed, send re-run', async () => {
+    it('uses the guest quota when the Worker has it on: Routed, dialog closed, send re-run', async () => {
         state.guest = true;
         const retry = vi.fn();
         offerGuestQuota(retry);
         click('guest'); await flush();
-        expect(state.chosen).toBe(true);
         expect((window as any).onPrivacyLevelChange).toHaveBeenCalledWith('routed');
         expect(retry).toHaveBeenCalledTimes(1);
         expect(document.getElementById('fg-guest-quota-dialog')).toBeNull();
@@ -125,7 +123,7 @@ describe('Guest access status (Settings → Models)', () => {
         renderGuestAccess();
         expect(el.textContent).toBe('Guest access: Enabled');
         expect(el.classList.contains('guest-access-on')).toBe(true);
-        expect(el.dataset.tip).toMatch(/Groq, Kilo, OpenRouter or TokenHarbor.*150 requests a day per network.*operator switches it on the Worker/);
+        expect(el.dataset.tip).toMatch(/Groq, Kilo, OpenRouter or TokenHarbor.*150 requests a day per network\.$/);   // nothing after it
         expect(el.getAttribute('aria-label')).toMatch(/^Guest access: Enabled\. FreeGent's Worker has guest access on/);   // read out on focus
     });
 

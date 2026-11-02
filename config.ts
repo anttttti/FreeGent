@@ -955,11 +955,8 @@ let _cfKeysDiag: Record<string, any> = { loaded: false };
 // What the last /keys lookup saw, for exported chat logs (never includes the Developer key itself).
 export function getCfKeysDiagnostics(): Record<string, any> { return { ..._cfKeysDiag }; }
 
-// The guest quota's models count as having a key only after the visitor chose it in the offer (guest-quota.ts), so a
-// Routed visitor without keys is asked first instead of quietly running on FreeGent's accounts, and not while this
-// network has used up the day's guest quota.
-export function guestQuotaChosen(): boolean { try { return localStorage.getItem(KEYS.GUEST_QUOTA_OK) === '1'; } catch { return false; } }
-export function chooseGuestQuota(): void { try { localStorage.setItem(KEYS.GUEST_QUOTA_OK, '1'); } catch {} }
+// The guest quota's models count as having a key whenever the Worker offers it (at Routed), except while this network
+// has used up the day's guest quota.
 export function guestQuotaPausedUntil(): number {
     try { const t = Number(localStorage.getItem(KEYS.GUEST_PAUSED_UNTIL) || 0); return t > Date.now() ? t : 0; } catch { return 0; }
 }
@@ -982,8 +979,8 @@ export async function loadCfWorkerKeys(): Promise<void> {
         if (resp.ok) {
             const data = await resp.json();
             if (data && typeof data === 'object') {
-                // Guest-quota keys (the reply has guestQuota: true, so every true key in it is one) wait for the visitor's choice.
-                if (data.guestQuota && (!guestQuotaChosen() || guestQuotaPausedUntil()))
+                // Guest-quota keys (the reply has guestQuota: true, so every true key in it is one) are withheld while paused for the day.
+                if (data.guestQuota && guestQuotaPausedUntil())
                     for (const k of Object.keys(data)) if (k !== 'guestQuota' && k !== 'guestMode' && typeof data[k] === 'boolean') data[k] = false;
                 _cfWorkerKeys = data;
                 _cfKeysLoadedAt = Date.now();
@@ -1524,7 +1521,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn,
+    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn, guestModeOn,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel, getEffectiveWorkerModel,

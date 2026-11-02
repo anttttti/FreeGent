@@ -2,16 +2,17 @@
 // runs a visitor's requests on the operator's free-tier accounts at Groq, Kilo, OpenRouter and TokenHarbor, through
 // the Worker (Routed level) after a Turnstile check, while the operator has it switched on, up to a daily number of
 // requests per network.
-//  - The offer: a send with no usable key on a hosted page shows "Use the guest quota" or "Add my own key". The
-//    page asks the Worker nothing until the visitor picks the guest quota, so Provider-only still never contacts a
-//    Worker; picking it switches Privacy to Routed (and back if it is off), and records the choice: until then the
-//    guest models are not offered even at Routed (config.ts loadCfWorkerKeys).
+//  - At Routed the page asks the Worker anyway (/keys), so while it offers the guest quota, the guest providers' models
+//    count as having a key (config.ts loadCfWorkerKeys) and show up in the lists like any other.
+//  - The offer: a send with no usable key on a hosted page below Routed shows "Use the guest quota" or "Add my own
+//    key". The page asks the Worker nothing until the visitor picks the guest quota, so Provider-only still never
+//    contacts a Worker; picking it switches Privacy to Routed, and back if the quota is off.
 //  - Keeping up: the operator can switch the quota on or off at any time, so /keys is looked up again when the tab
 //    comes back into view and every few minutes while it is visible, and at once when a call is refused because the
 //    quota is off. A refusal for the day's limit pauses the guest models until 00:00 UTC.
 import { isStaticHost } from './static-hosts.js';
 import { getPrivacyLevel } from './privacy.js';
-import { guestQuotaOn, guestModeOn, loadCfWorkerKeys, chooseGuestQuota, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
+import { guestQuotaOn, guestModeOn, loadCfWorkerKeys, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
 
 const DIALOG_ID = 'fg-guest-quota-dialog';
 const PROVIDERS_URL = 'https://freegent.ai/docs/models/providers';
@@ -71,7 +72,6 @@ export function offerGuestQuota(retry: () => void): void {
         const before = getPrivacyLevel();
         const setLevel = (level: string) => (window as any).onPrivacyLevelChange?.(level);
         if (before !== 'routed') setLevel('routed');
-        chooseGuestQuota();
         try { await loadCfWorkerKeys(); } catch {}
         if (guestQuotaOn()) { overlay.remove(); retry(); return; }
         if (before !== 'routed') setLevel(before);
@@ -119,9 +119,7 @@ export function renderGuestAccess(): void {
     el.classList.toggle('guest-access-on', on);
     const tip = on
         ? 'FreeGent\'s Worker has guest access on: visitors without a key of their own for Groq, Kilo, OpenRouter or TokenHarbor can '
-          + `run those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}, after choosing it when `
-          + 'they first send a message. Their own keys are always used first. FreeGent\'s operator switches it on the Worker.'
-          + (guestQuotaPausedUntil() ? ' This network has used today\'s guest quota; it is back after 00:00 UTC.' : '')
+          + `run those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}.`
         : 'Guest access is off: every model needs a key of your own (or the Developer key). Either FreeGent\'s operator has it switched '
           + 'off on the Worker, or this page does not ask the Worker (Privacy: Provider-only or Local, or a local server with its own keys).';
     el.dataset.tip = tip;   // the hover/focus explanation (styles.css .guest-access-status::after)

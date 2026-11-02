@@ -40,28 +40,25 @@ describe('send key guard', () => {
         localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(W.specHasKey('kilo|acme/old-free:free')).toBe(true);
     });
-    it("counts the guest quota's keys only after the visitor chose it, and not while it is paused for the day", async () => {
+    it("counts the guest quota's keys whenever the Worker offers it, but not while it is paused for the day", async () => {
         localStorage.setItem('fg_privacy_level', 'routed');
         localStorage.setItem('fg_search_proxy', 'https://worker.example.dev');
         const orig = W.fetch;
-        W.fetch = async () => new Response(JSON.stringify({ guestQuota: true, KILO_API_KEY: true }), { status: 200 });
+        W.fetch = async () => new Response(JSON.stringify({ guestQuota: true, guestMode: true, KILO_API_KEY: true }), { status: 200 });
         const kilo = 'kilo|dots-studio/dots-3-note-preview:free';
         try {
             await W.loadCfWorkerKeys();
-            expect(W.specHasKey(kilo)).toBe(false);          // on at the Worker, but not chosen here
-            expect(W.guestQuotaOn()).toBe(true);
-            localStorage.setItem('fg_guest_quota_ok', '1');
-            await W.loadCfWorkerKeys();
-            expect(W.specHasKey(kilo)).toBe(true);
+            expect(W.specHasKey(kilo)).toBe(true);           // offered at Routed: usable at once, no extra step
             localStorage.setItem('fg_kilo_key', 'sk-mine');     // the visitor's own key counts, guest quota or not
             localStorage.setItem('fg_guest_paused_until', String(Date.now() + 3600_000));
             await W.loadCfWorkerKeys();
             expect(W.specHasKey(kilo)).toBe(true);
             localStorage.removeItem('fg_kilo_key');
             expect(W.specHasKey(kilo)).toBe(false);           // paused: today's guest quota is used up on this network
+            expect(W.guestModeOn()).toBe(true);
         } finally {
             W.fetch = orig;
-            for (const k of ['fg_privacy_level', 'fg_search_proxy', 'fg_guest_quota_ok', 'fg_guest_paused_until']) localStorage.removeItem(k);
+            for (const k of ['fg_privacy_level', 'fg_search_proxy', 'fg_guest_paused_until']) localStorage.removeItem(k);
             await W.loadCfWorkerKeys();
         }
     });
