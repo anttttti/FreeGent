@@ -11,13 +11,13 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 ## Models
 
 - **Model Selections**: the heading over the three lists below. **✦ Populate** asks a model to rank the available ones and keeps the top ten in Model Priority. **Defaults** restores the shipped priority list, resumes paused models, and sets Worker Model and Utility Model back to Default. See [Priority, fallbacks and retries](../models/rotation.md).
-- **Guest access: Enabled / Disabled**, after Populate and Defaults, shows whether FreeGent's Worker has its [guest quota](../models/proxy.md#guest-quota) switched on. FreeGent's operator sets it on the Worker; it is not a setting of yours. The page asks the Worker only at the Routed level, so at Provider-only and Local, and on a local server, it shows Disabled. Point at it for what it means.
+- **Guest access: Enabled / Disabled**, after Populate and Defaults, shows whether FreeGent's Worker has [guest access](../models/access.md#guest-access) switched on. FreeGent's operator sets it on the Worker; it is not a setting of yours. The page asks the Worker only at the Routed level, so at Provider-only and Local, and on a local server, it shows Disabled. Point at it for what it means.
 - **Model Priority**: the ordered list FreeGent tries.
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
 - The model dropdowns (Search to add models, Worker Model, Utility Model, and the image, audio and video models) list only models you can use now: with your own key, a Worker key from a Developer key or the guest quota, or no key needed. If a Worker or Utility Model you picked has lost its key, the next one with a key is used, and a note says which, until its key is back.
 - **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. All are empty by default, and an empty field is left out of the request, so each provider or server uses its own default. A value you set is sent to custom endpoints; Temperature is sent to every provider. [Profiles](#profiles) carry these values.
-- **API Credentials**: one field per provider, a paste box, **Extract from file**, and the Developer key. See [Default providers](../models/providers.md). Custom endpoints are added here too.
+- **API Credentials**: one field per provider, a paste box, **Extract from file**, and the [Developer key](../models/access.md#developer-key) (only for whoever runs the Worker). See [Default providers](../models/providers.md). Custom endpoints are added here too.
 - **Media Model Routing**: which models receive messages that contain images or audio.
 - **Model Catalog**: all known models, with **Check for updates**. Use ✕ to remove one.
 

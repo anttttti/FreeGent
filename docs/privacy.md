@@ -18,14 +18,14 @@ Clearing the site's data in your browser removes all of it. If you run FreeGent 
 | The same requests | Through FreeGent's Cloudflare Worker (`proxy.freegent.ai`) first | Only at the **Routed** level. The Worker forwards the request and stores nothing. Cloudflare, which runs it, handles the traffic like any host. |
 | Search queries and fetched URLs | Tavily, Brave, Wikipedia, GitHub or Stack Exchange; or the site being fetched | When the agent uses `web_search` or `fetch_url`. Never at the **Local** level. |
 | Browser signals for a bot check (Cloudflare Turnstile) | Cloudflare (`challenges.cloudflare.com`) | Only at the **Routed** level, once a session, before the first page fetch through the Worker. Turnstile sets no tracking cookies and Cloudflare does not use the data for ads. |
-| Model requests on the guest quota | FreeGent's Worker, then Groq, Kilo, OpenRouter or TokenHarbor under FreeGent's account | Only if you choose **Use the guest quota** (which switches to Routed). The provider sees FreeGent's account, not yours; OpenRouter also gets a random ID per session, never your address. |
+| Model requests on the [guest quota](models/access.md#guest-access) | FreeGent's Worker, then Groq, Kilo, OpenRouter or TokenHarbor under FreeGent's account | Only if you choose **Use the guest quota** (which switches to Routed). The provider sees FreeGent's account, not yours; OpenRouter also gets a random ID per session, never your address. |
 | Requests to MCP servers you added | Those servers | When the agent uses their tools |
 | Library and runtime downloads | jsDelivr and esm.sh (libraries, Pyodide); `cdn.wasmer.io` and `uutils.org` (WebAssembly packages, fetched on first use and checked against pinned hashes) | When the page or a command first needs them |
 | A page-view count | GoatCounter, a cookie-free counter | On by default at Provider-only and Routed. Off when your browser sends Do Not Track, at the Local level, or when you clear the checkbox in **Settings → Privacy**. |
 | Your IP address | ipinfo.io. The city, region and ISP it returns are added to prompts, so the model provider also sees them. | Only at the Routed level, and only if the location lookup in **Settings → Privacy** is on (it is by default). |
 | A chat log | FreeGent's Worker, kept for 14 days and read by the maintainer for debugging | Only when you press **Send log to developer**. Saved keys and any key-like values in the chat are removed first. Not available at Provider-only or Local. |
 
-Two more things apply only to the maintainer's own sessions: a Developer key enables uploads of console errors and finished Autopilot chats, and project sync to a Cloudflare bucket. Ordinary visitors never send either.
+Two more things apply only to the maintainer's own sessions: a [Developer key](models/access.md#developer-key) enables uploads of console errors and finished Autopilot chats, and project sync to a Cloudflare bucket. Ordinary visitors never send either.
 
 ## The three privacy levels
 

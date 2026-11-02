@@ -1,6 +1,6 @@
 # Default providers
 
-FreeGent ships with the providers below. One key is enough to start; each extra key adds models to fall back on when a free tier runs out. Any other OpenAI-compatible endpoint can be added as a custom model (see [Local models](local-models.md)).
+FreeGent ships with the providers below. One key is enough to start; each extra key adds models to fall back on when a free tier runs out. Without a key, [guest access](access.md#guest-access) may cover Groq, Kilo, OpenRouter and TokenHarbor for a limited number of requests a day. Any other OpenAI-compatible endpoint can be added as a custom model (see [Local models](local-models.md)).
 
 Free-tier limits are set by the providers and change often, so check each provider's page for current numbers. When a model answers `429`, FreeGent puts it on a cooldown and moves to the next one in your [priority list](rotation.md).
 

@@ -40,6 +40,7 @@ export default defineConfig({
         link: '/models/',
         items: [
           { text: 'Default providers', link: '/models/providers' },
+          { text: 'Access without your own key', link: '/models/access' },
           { text: 'Fallbacks and retries', link: '/models/rotation' },
           { text: 'How requests reach providers', link: '/models/proxy' },
           { text: 'Local models', link: '/models/local-models' },
