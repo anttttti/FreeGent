@@ -6,6 +6,7 @@ import { DEFAULT_CF_WORKER, getDevKey } from './proxy.js';
 import { getPrivacyLevel } from './privacy.js';
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
+import { credentialsVersion } from './key-vault.js';
 import { FG_VERSION } from './build-info.js';
 
 function _randomId(): string {
@@ -30,11 +31,12 @@ let _installed = false;
 let _sending = false;
 const _origFetch = () => window.fetch.bind(window);
 
-// Every saved credential value (stored-credentials.ts's one list). Cached briefly.
-let _secrets: string[] = []; let _secretsAt = 0;
+// Every saved credential value (stored-credentials.ts's one list), cached until a credential or the key
+// lock changes (credentialsVersion), and for 30 s at most.
+let _secrets: string[] = []; let _secretsAt = 0; let _secretsVer = -1;
 function _storedSecrets(): string[] {
-    if (Date.now() - _secretsAt < 30_000) return _secrets;
-    _secrets = storedCredentialValues(); _secretsAt = Date.now();
+    if (_secretsVer === credentialsVersion() && Date.now() - _secretsAt < 30_000) return _secrets;
+    _secrets = storedCredentialValues(); _secretsAt = Date.now(); _secretsVer = credentialsVersion();
     return _secrets;
 }
 

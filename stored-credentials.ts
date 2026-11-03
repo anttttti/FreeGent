@@ -5,10 +5,12 @@
 //   - localStorage entries whose name is a credential (profile-keys.ts's rule, so a "…_tokens" budget
 //     is not one);
 //   - values inside structured settings: MCP server headers, keys saved on custom models, and the
-//     password in a proxy or endpoint URL.
+//     password in a proxy or endpoint URL;
+//   - the key lock's values (key-vault.ts), which localStorage cannot enumerate while it is on.
 // The redaction itself (known values plus well-known key shapes) is secrets.ts.
 
 import { isCredentialKey } from './profile-keys.js';
+import { keyVaultValues, KEY_VAULT_LS } from './key-vault.js';
 
 const STRUCTURED = ['fg_mcp_servers', 'fg_custom_models', 'fg_search_proxy', 'fg_openai_url'];
 
@@ -42,9 +44,11 @@ export function storedCredentialValues(): string[] {
     try {
         for (let i = 0; i < s.length; i++) {
             const k = s.key(i) || '';
-            if (!STRUCTURED.includes(k) && isCredentialKey(k)) add(s.getItem(k));
+            if (k !== KEY_VAULT_LS && !STRUCTURED.includes(k) && isCredentialKey(k)) add(s.getItem(k));   // not the encrypted blob
         }
         for (const n of STRUCTURED) for (const v of _structuredValues(n, s.getItem(n))) add(v);
     } catch {}
+    // With the key lock on, its names are not enumerable in localStorage: add what it holds (while unlocked).
+    for (const v of keyVaultValues()) if (!v.trimStart().startsWith('[')) add(v);
     return [...vals];
 }

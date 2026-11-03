@@ -486,6 +486,7 @@ function populateSettingsForm() {
         el.dataset.fgBase = String(val ?? '');   // what this form showed: saveSettings() writes a control only when it differs
         if (val) el.dataset.fgLoaded = '1';
     };
+    globalThis.renderKeyLock?.();
     set('dev-key',        getDevKey());
     set('gemini-key',     getGeminiKey());
     set('groq-key',       getGroqKey());

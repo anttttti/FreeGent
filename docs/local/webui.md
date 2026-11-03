@@ -12,6 +12,7 @@ On startup the server prints one URL per network address, each carrying an acces
 
 - The token is stored in `~/.config/freegent/server-token`. Delete the file to issue a new one.
 - Set `FG_ALLOWED_ORIGINS=http://192.168.1.50:5000,…` to allow additional origins.
+- The [passkey key lock](../models/key-safety.md#key-lock-with-a-passkey) does not work on the IP-address URLs: passkeys need a host name, and Chrome also refuses them with the self-signed certificate. To use it from another device, give the machine a name that device resolves, make a certificate for that name with mkcert (`mkcert mybox.lan`, trusted on the device), start with `FG_CERT=… FG_KEY=… npm run dev:lan` and allow the origin with `FG_ALLOWED_ORIGINS=https://mybox.lan:<port>`.
 - Do not expose the dev server to the internet. The token is a shared secret, not a user account, and the server can run commands on the machine. See [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md).
 
 ## Hosting your own site and Worker

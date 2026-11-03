@@ -5,8 +5,9 @@
 FreeGent has four parts, and they have different exposure:
 
 - **The browser app** keeps chat history and settings in `localStorage` / IndexedDB on your
-  device. API keys you type into Settings are stored in `localStorage` in plain text, so any script
-  running in the page can read them (see *Known limitations*).
+  device. API keys you type into Settings are stored in `localStorage` in plain text unless the
+  optional passkey key lock is on (Settings → Credentials; `key-vault.ts`), so any script running
+  in the page can read them (see *Known limitations*).
 - **The dev server** (`npm run dev`, `vite.config.ts` + `dev-api.ts`) runs on your machine and
   serves the app plus an API: `/api/execute` (runs bash/python on your machine, as you),
   `/api/git`, and `/api/proxy` (fetches URLs for the page, to get around CORS).
@@ -75,9 +76,13 @@ FreeGent has four parts, and they have different exposure:
 - API keys typed into Settings live in `localStorage` in plain text. Agent code can't reach them
   (it runs in the exec sandbox), but a script injected into the page itself could, and so can
   anyone using the browser profile (developer tools; the masked fields only stop someone reading
-  over your shoulder). Encrypting them with a key the page also holds would not change that, and
-  a passphrase asked on every page load was tried and dropped as impractical. Saved keys are
-  redacted from provider/MCP errors and logs (`stored-credentials.ts`, `secrets.ts`).
+  over your shoulder). The optional key lock (`key-vault.ts`) encrypts them at rest with AES-GCM
+  under a key derived (HKDF-SHA-256) from a passkey's WebAuthn PRF output, which the authenticator
+  gives only after user verification; nothing on disk can open it. It protects them while the page
+  is closed or locked, not in an unlocked page (injected script or developer tools), and keys saved
+  on individual custom models are not encrypted. (A typed passphrase was tried first and dropped:
+  asking for it on every page load was impractical.) Saved keys are redacted from provider/MCP
+  errors and logs (`stored-credentials.ts`, `secrets.ts`).
   Keys in the credentials file never reach the page.
 - The Content-Security-Policy only disables plugin content and `<base>`. Scripts and connections
   are not allowlisted: preview iframes (`srcdoc`) inherit the page's policy, and the pages the

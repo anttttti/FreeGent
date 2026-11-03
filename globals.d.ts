@@ -17,6 +17,9 @@ declare global {
     var DOMPurify: any;
     var katex: any;
     var hljs: any;
+    // ── bridged by key-vault-ui.ts ── (key-vault.ts has no bridge: it patches Storage.prototype and is imported)
+    var unlockKeysAtStartup: () => Promise<void>;
+    var renderKeyLock: () => void;
     // ── bridged by chat-attachments.ts ──
     var addImageAttachment: any;
     var clearImageAttachments: any;

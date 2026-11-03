@@ -372,7 +372,7 @@
         <div class="settings-panel-scroll">
             <div class="settings-panel-inner">
                 <div class="settings-tabs">
-                    <button class="settings-tab-btn active" data-tab="credentials" title="API keys for model providers, search and tools, and the Developer key" onclick="switchSettingsTab('credentials')">Credentials</button>
+                    <button class="settings-tab-btn active" data-tab="credentials" title="API keys for model providers, search and tools, the Developer key, and the passkey key lock" onclick="switchSettingsTab('credentials')">Credentials</button>
                     <button class="settings-tab-btn"        data-tab="profiles" title="Saved presets that bundle a model, tools and settings; switch or save one in a click" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
                     <button class="settings-tab-btn"        data-tab="model" title="Add and order model providers and endpoints, and set the utility and fallback models"    onclick="switchSettingsTab('model')">Models</button>
                     <button class="settings-tab-btn"        data-tab="privacy" title="Where FreeGent's requests may go: through the Cloudflare Worker, straight to providers, or local network only" onclick="switchSettingsTab('privacy')">Privacy</button>
@@ -396,6 +396,7 @@
                             <input id="env-file-input" type="file" style="display:none" onchange="importEnvFile(this)">
                             <span id="key-paste-status" class="settings-hint" style="margin:0"></span>
                         </div>
+                        <div id="key-lock" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
                         <table class="settings-table" style="width:100%;margin-top:6px"><tbody>
                             <tr><td class="settings-table-label">Gemini Key</td>
                                 <td><input class="settings-input" id="gemini-key" type="password" placeholder="AIza..." style="width:100%" onchange="saveSettings()"></td><td><a class="key-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" title="Get a Gemini key">Get key &#8599;</a></td></tr>
@@ -890,6 +891,7 @@
 <div id="skill-autocomplete" class="skill-autocomplete"></div>
 
 <script type="module" src="polyfills.ts"></script>
+<script type="module" src="key-vault.ts"></script>
 <script type="module" src="state.ts"></script>
 <script type="module" src="workspace.ts"></script>
 <script type="module" src="profiles.ts"></script>
@@ -940,6 +942,7 @@
 <script type="module" src="preview-pane.ts"></script>
 <script type="module" src="voice.ts"></script>
 <script type="module" src="runner.ts"></script>
+<script type="module" src="key-vault-ui.ts"></script>
 <script type="module" src="init.ts"></script>
 <!-- Document extraction: loaded async — only needed when user attaches a file.
      async prevents blocking the main thread on low-end hardware (iPad Air 1 A5 chip).

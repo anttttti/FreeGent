@@ -1,5 +1,6 @@
 // config.js — FreeGent: global state, settings helpers, model catalog, pyodide, utilities
 // Loaded first; all other modules depend on this.
+import './key-vault.js';   // first: with the key lock on, it serves the saved keys (see key-vault.ts)
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
@@ -229,11 +230,24 @@ const _lsCache = new Map();
                 if (e.storageArea && e.storageArea !== localStorage) return;
                 if (e.key == null) _lsCache.clear(); else _lsCache.delete(e.key);
             });
+            // The key lock unlocked, locked or changed: its names read differently now. After an unlock, the
+            // credential migrations and the server-key check see the saved keys for the first time (a later unlock
+            // from Settings would otherwise leave a stale copy shadowing a key the dev server holds).
+            window.addEventListener('fg-vault-change', (e: any) => {
+                const names = e?.detail?.names;
+                if (!Array.isArray(names) || !names.length) _lsCache.clear(); else for (const n of names) _lsCache.delete(n);
+                if (e?.detail?.reason === 'unlock') {
+                    try { migrateStoredKeys(); } catch {}
+                    loadServerKeys().catch(() => {});
+                }
+            });
         }
     }
 }
 // The MoonMath provider was briefly deployed as 'zro' (2026-11-01): carry its key and saved model specs over once.
-(function _migrateZroProvider() {
+// Credential migrations read vaulted names, which are unreadable while the key lock is locked: they run at load
+// and again after every unlock (above), so a locked page at load does not skip them.
+function migrateStoredKeys() {
     try {
         const oldKey = localStorage.getItem('fg_zro_key');
         if (oldKey != null) {
@@ -250,7 +264,8 @@ const _lsCache = new Map();
             localStorage.setItem(k, v.replace(/(^|")zro\|/g, '$1moonmath|').replace(/"provider":"zro"/g, '"provider":"moonmath"'));
         }
     } catch {}
-})();
+}
+migrateStoredKeys();
 export const ls = (k, def = '') => {
     let v;
     if (_lsCache.has(k)) v = _lsCache.get(k);

@@ -151,6 +151,8 @@ async function _doModelWarmup(): Promise<void> {
 installDevLog();   // capture errors/warnings from the start; sends only while a Developer key is saved
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Key lock on: offer the passkey before anything below sends a request with a key.
+    await globalThis.unlockKeysAtStartup?.().catch((e: Error) => console.warn('[key-vault]', e.message));
     installPassHeader();
     installPrivacyGuard();
     installRelaySession();   // its own /session call still passes the privacy guard
