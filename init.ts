@@ -158,6 +158,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     installRelaySession();   // its own /session call still passes the privacy guard
     installGuestQuotaWatch();   // outermost: sees the final reply, after a session retry
     await loadServerKeys(); // load env-var keys from Python server before anything else
+    // Back from Connect OpenRouter (?code=…&state=…): exchange the code for a key, then show the result in Settings → Credentials.
+    globalThis.handleOpenRouterCallback?.().then((r: boolean | null) => { if (r !== null) showSettings?.('credentials'); }).catch(() => {});
     // Query the CF Worker for the keys it will use for this session (Developer key or guest quota) (non-blocking — re-renders model lists when done)
     loadCfWorkerKeys?.().catch(() => {});
 

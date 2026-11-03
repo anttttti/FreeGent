@@ -20,6 +20,9 @@ declare global {
     // ── bridged by key-vault-ui.ts ── (key-vault.ts has no bridge: it patches Storage.prototype and is imported)
     var unlockKeysAtStartup: () => Promise<void>;
     var renderKeyLock: () => void;
+    // ── bridged by openrouter-oauth.ts ──
+    var connectOpenRouter: () => Promise<void>;
+    var handleOpenRouterCallback: () => Promise<boolean | null>;
     // ── bridged by chat-attachments.ts ──
     var addImageAttachment: any;
     var clearImageAttachments: any;

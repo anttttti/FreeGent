@@ -42,6 +42,8 @@ Where a key goes depends on how you run FreeGent:
 | TUI | credentials file, shell variables, or `--api-key` | See [TUI](../local/tui.md) |
 | CLI | credentials file, shell variables, or `--api-key` | See [CLI](../local/cli.md) |
 
+For OpenRouter, **Connect** in Settings → Credentials gets a key without copying one: you approve it at openrouter.ai and return with it saved.
+
 API Credentials also has a paste box and an **Extract from file** button. Paste a block of keys (or pick a `.env`-style file) and FreeGent fills each provider's field by recognising the key's prefix. It asks before replacing a key you already saved.
 
 Keys are never included in [profiles](../webui/settings.md#profiles) or in chat logs you send. [Keep your keys safe](key-safety.md) covers who can read a saved key, spending limits, and the optional passkey key lock.

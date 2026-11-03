@@ -32,6 +32,7 @@ Whatever the storage, a key that cannot spend much cannot cost much:
 
 - **Prefer free-tier keys.** Most [default providers](providers.md) have free tiers; a key without billing cannot run up a bill.
 - **Set a spending limit on keys that can spend.** OpenRouter, for example, lets you give each key its own credit limit. Check your provider's key settings.
+- **Connect OpenRouter instead of pasting a key.** **Connect** next to the OpenRouter field sends you to openrouter.ai to approve a key for FreeGent and brings you back with it saved; nothing is copied by hand. The key is labelled "FreeGent" in your OpenRouter account, where you can give it a credit limit or revoke it. Do the same on each device and each gets its own key.
 - **Use a separate key per device or browser**, named so you can tell them apart. If one leaks, revoke only that one.
 - **Revoke a key you think leaked** in your provider's console, and paste a new one. Changing it in FreeGent alone is not enough.
 
