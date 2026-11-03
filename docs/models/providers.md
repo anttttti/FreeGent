@@ -44,7 +44,7 @@ Where a key goes depends on how you run FreeGent:
 
 API Credentials also has a paste box and an **Extract from file** button. Paste a block of keys (or pick a `.env`-style file) and FreeGent fills each provider's field by recognising the key's prefix. It asks before replacing a key you already saved.
 
-Keys are never included in [profiles](../webui/settings.md#profiles) or in chat logs you send.
+Keys are never included in [profiles](../webui/settings.md#profiles) or in chat logs you send. [Keep your keys safe](key-safety.md) covers who can read a saved key and how to limit what a leaked one can do.
 
 MoonMath (its Zro API) uses `https://zro.moonmath.ai/v1/chat/completions`. Its free daily allowance resets at 00:00 UTC;
 the provider does not publish a token or request limit. Add a key in Settings or set

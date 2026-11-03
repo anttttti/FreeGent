@@ -41,6 +41,7 @@ export default defineConfig({
         items: [
           { text: 'Default providers', link: '/models/providers' },
           { text: 'Access without your own key', link: '/models/access' },
+          { text: 'Keep your keys safe', link: '/models/key-safety' },
           { text: 'Fallbacks and retries', link: '/models/rotation' },
           { text: 'How requests reach providers', link: '/models/proxy' },
           { text: 'Local models', link: '/models/local-models' },
