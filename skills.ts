@@ -1654,7 +1654,11 @@ function renderToolsChecklist() {
         + '<div class="tools-checklist-col-hdr">Cowork</div>';
     el.appendChild(hdr);
 
+    // The browser_* tools work only with a Playwright browser bridge, which only headless runs configure
+    // (headless-runner.ts → setBrowserBridge). In the WebUI they do nothing, so they are not listed here.
+    const bridge = typeof browserBridgeAvailable === 'function' && browserBridgeAvailable();
     for (const name of ALL_TOOL_NAMES) {
+        if (!bridge && BROWSER_TOOL_NAMES.includes(name)) continue;
         const row = document.createElement('div');
         row.className = 'tools-checklist-row';
 
