@@ -51,10 +51,6 @@ Also on this tab:
 - **CORS Proxy / CF Worker URL**: your own Worker, for FreeGent hosted on your own domain (Routed level only). See [Hosting your own site and Worker](../local/webui.md#hosting-your-own-site-and-worker).
 - **Other requests**: location lookup through ipinfo.io (on by default; it sends your IP address to ipinfo.io) and the anonymous GoatCounter page-view counter (on by default, skipped when your browser sends Do Not Track; no cookies). The location lookup is off at Provider-only and Local; the counter is off at Local only.
 
-## Code Execution
-
-JavaScript in the browser (always on), Python in the browser with Pyodide (with an auto-load option), the bash sandbox (**WASM**, **Local** or **None**), **Git Integration** and **Code Structure Queries (AST)**. See [Code execution](../code-execution/index.md).
-
 ## Agent
 
 | Group | Options |
@@ -72,7 +68,7 @@ JavaScript in the browser (always on), Python in the browser with Pyodide (with 
 | Tab | What it controls |
 |---|---|
 | **Skills** | Switch built-in and custom skills and rules on or off, edit triggers, create one in a form, or **Import from file**. See [Skills and rules](../harness/skills.md). |
-| **Tools** | The **Web Search** provider for `web_search`: **Auto** (Tavily, then Brave, then Wikipedia), Tavily, Brave, or Wikipedia only (their keys are under [Credentials](#credentials); the Worker URL override is under [Privacy](#privacy)). Below it, enable tools separately for [Chat and Cowork](chats/modes.md). |
+| **Tools** | Code execution first: JavaScript in the browser (always on), Python in the browser with Pyodide (with an auto-load option), the bash sandbox (**WASM**, **Local** or **None**), **Git Integration** and **Code Structure Queries (AST)**; see [Code execution](../code-execution/index.md). Then the **Web Search** provider for `web_search`: **Auto** (Tavily, then Brave, then Wikipedia), Tavily, Brave, or Wikipedia only (their keys are under [Credentials](#credentials); the Worker URL override is under [Privacy](#privacy)). Below it, enable tools separately for [Chat and Cowork](chats/modes.md). |
 | **MCP** | Connect Model Context Protocol servers and choose which of their tools the agent sees. See [MCP servers](../harness/mcp.md). |
 | **Roles** | View and edit each role's system prompt and tool ceiling; uncheck a role to stop workers using it. **Reset** restores the built-in prompt. |
 

@@ -376,10 +376,9 @@
                     <button class="settings-tab-btn"        data-tab="profiles" title="Saved presets that bundle a model, tools and settings; switch or save one in a click" onclick="switchSettingsTab('profiles');renderProfilesTab()">Profiles</button>
                     <button class="settings-tab-btn"        data-tab="model" title="Add and order model providers and endpoints, and set the utility and fallback models"    onclick="switchSettingsTab('model')">Models</button>
                     <button class="settings-tab-btn"        data-tab="privacy" title="Where FreeGent's requests may go: through the Cloudflare Worker, straight to providers, or local network only" onclick="switchSettingsTab('privacy')">Privacy</button>
-                    <button class="settings-tab-btn"        data-tab="code" title="Choose where code the agent runs executes (in-browser sandbox, local shell) and its limits"     onclick="switchSettingsTab('code')">Code Execution</button>
                     <button class="settings-tab-btn"        data-tab="agent" title="Agent behavior: step limits, retries, context and compaction, QA gates and the task runner"    onclick="switchSettingsTab('agent')">Agent</button>
                     <button class="settings-tab-btn"        data-tab="skills" title="Turn built-in and custom skills (extra instructions the agent loads on demand) on or off"   onclick="switchSettingsTab('skills')">Skills</button>
-                    <button class="settings-tab-btn"        data-tab="tools" title="Enable or disable individual tools the agent may call, separately for Chat and Cowork modes"    onclick="switchSettingsTab('tools')">Tools</button>
+                    <button class="settings-tab-btn"        data-tab="tools" title="Where code the agent runs executes (browser sandboxes, local shell), web search, and which tools the agent may call in Chat and Cowork modes"    onclick="switchSettingsTab('tools')">Tools</button>
                     <button class="settings-tab-btn"        data-tab="mcp" title="Connect MCP servers and pick which of their tools the agent can use"      onclick="switchSettingsTab('mcp');renderMcpTab()">MCP</button>
                     <button class="settings-tab-btn"        data-tab="roles" title="View and edit agent roles (Director, coder, etc.): their prompts and allowed tools"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
                     <button class="settings-tab-btn"        data-tab="voice" title="Speech input and spoken replies: voice, language and speed"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
@@ -569,56 +568,6 @@
                     </div>
                 </div>
 
-                <div class="settings-tab-panel" data-tab="code">
-                    <div class="settings-section">
-                        <span class="settings-label">JavaScript in Browser</span>
-                        <p class="settings-hint">Always active — no configuration needed. <code>execute_code(language="javascript")</code> runs in a browser sandbox with a virtual filesystem shim (<code>fs</code>, <code>path</code> modules). Files written via <code>fs.writeFileSync</code> sync back to the workspace automatically. Limitations: no npm packages, no DOM or canvas. <code>fetch()</code> reaches public URLs (directly when the site allows cross-origin requests, otherwise as a plain GET through the same proxy as fetch_url). For canvas/DOM work the AI can generate a self-contained HTML file instead.</p>
-                    </div>
-                    <div class="settings-section">
-                        <span class="settings-label">Python in Browser (Pyodide)</span>
-                        <p class="settings-hint" style="margin-bottom:10px">Runs Python in the browser via Pyodide. Workspace files are pre-loaded at their normal paths; writes sync back automatically. Use <code>micropip.install</code> for pure-Python packages.</p>
-                        <div style="display:flex;align-items:center;gap:10px">
-                            <label class="settings-check-row" style="margin:0"><input type="checkbox" id="pyodide-autoload" onchange="onPyodideAutoloadChange(this.checked)" checked> Auto-load on startup</label>
-                            <button class="btn-save" style="padding:5px 14px;font-size:12px" onclick="startPyodide()">Load now</button>
-                            <span id="pyodide-status" style="font-size:12px;color:var(--muted)">Not loaded</span>
-                        </div>
-                    </div>
-                    <div class="settings-section">
-                        <span class="settings-label">Bash Sandbox</span>
-                        <p class="settings-hint" style="margin-bottom:8px">Controls bash execution only. JavaScript uses the browser sandbox above; Python uses Pyodide.</p>
-                        <label class="settings-input-label">Provider</label>
-                        <select class="settings-input" id="sandbox-provider" onchange="onSandboxProviderChange()">
-                            <option value="wasm">WASM — bash shell in the browser (default)</option>
-                            <option value="none">None (bash disabled)</option>
-                            <option value="local">Local — via the dev server (not on freegent.ai)</option>
-                        </select>
-
-                        <p class="settings-hint" id="sandbox-wasm-hint" style="display:none">
-                            Runs bash entirely in your browser, in a bash-compatible shell with 248 common commands, builtins and keywords
-                            (<code>grep</code>, <code>sed</code>, <code>awk</code>, <code>find</code>, <code>sort</code>, <code>tr</code>, …).
-                            Workspace files are available at <code>/workspace</code>; writes sync back automatically.
-                            A few commands (jq, lua and others) are WebAssembly packages, fetched on first use and cached in the browser (IndexedDB).
-                            <code>curl</code> / <code>wget</code> reach sites that allow browser requests directly; other sites are
-                            fetched through FreeGent's proxy (plain GET only).
-                        </p>
-                        <p class="settings-hint" id="sandbox-local-hint" style="display:none">
-                            Runs bash on your machine through the dev server (<code>npm run dev</code>), so it works only when FreeGent is run locally, not on freegent.ai. Optionally isolated.
-                            Full coreutils, npm, and pip available. Files written by scripts sync back to the workspace automatically.
-                            Python runs on your machine too unless Pyodide is loaded; JavaScript always runs in the browser sandbox.
-                        </p>
-                    </div>
-                    <div class="settings-section">
-                        <span class="settings-label">Git Integration</span>
-                        <label class="settings-check-row"><input type="checkbox" id="git-enabled" onchange="saveAgentSetting('fg_git_enabled', this.checked)"> Enable git access</label>
-                        <p class="settings-hint">Exposes the <code>run_git</code> tool and injects git instructions when messages mention git, commit, push, or pull. Requires the Local code execution sandbox (dev server). Disabled by default.</p>
-                    </div>
-                    <div class="settings-section" style="border-bottom:none;margin-bottom:0">
-                        <span class="settings-label">Code Structure Queries (AST)</span>
-                        <label class="settings-check-row"><input type="checkbox" id="ast-enabled" onchange="saveAgentSetting('fg_ast_enabled', this.checked)"> Enable ast_query tool</label>
-                        <p class="settings-hint">Exposes <code>ast_query(path, query)</code> for precise symbol navigation with exact line numbers — find definitions, call sites, imports, exports, and references without grep. Supports: "functions", "classes", "imports", "exports", "symbols", "calls:NAME", "references:NAME", "symbol_at:LINE". Works in all environments; available to all agent roles when enabled. Disabled by default.</p>
-                    </div>
-                </div>
-
                 <div class="settings-tab-panel" data-tab="agent">
                     <div class="settings-section">
                         <span class="settings-label">Context Management</span>
@@ -761,6 +710,53 @@
                 </div>
 
                 <div class="settings-tab-panel" data-tab="tools">
+                    <div class="settings-section">
+                        <span class="settings-label">JavaScript in Browser</span>
+                        <p class="settings-hint">Always active — no configuration needed. <code>execute_code(language="javascript")</code> runs in a browser sandbox with a virtual filesystem shim (<code>fs</code>, <code>path</code> modules). Files written via <code>fs.writeFileSync</code> sync back to the workspace automatically. Limitations: no npm packages, no DOM or canvas. <code>fetch()</code> reaches public URLs (directly when the site allows cross-origin requests, otherwise as a plain GET through the same proxy as fetch_url). For canvas/DOM work the AI can generate a self-contained HTML file instead.</p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Python in Browser (Pyodide)</span>
+                        <p class="settings-hint" style="margin-bottom:10px">Runs Python in the browser via Pyodide. Workspace files are pre-loaded at their normal paths; writes sync back automatically. Use <code>micropip.install</code> for pure-Python packages.</p>
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <label class="settings-check-row" style="margin:0"><input type="checkbox" id="pyodide-autoload" onchange="onPyodideAutoloadChange(this.checked)" checked> Auto-load on startup</label>
+                            <button class="btn-save" style="padding:5px 14px;font-size:12px" onclick="startPyodide()">Load now</button>
+                            <span id="pyodide-status" style="font-size:12px;color:var(--muted)">Not loaded</span>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Bash Sandbox</span>
+                        <p class="settings-hint" style="margin-bottom:8px">Controls bash execution only. JavaScript uses the browser sandbox above; Python uses Pyodide.</p>
+                        <label class="settings-input-label">Provider</label>
+                        <select class="settings-input" id="sandbox-provider" onchange="onSandboxProviderChange()">
+                            <option value="wasm">WASM — bash shell in the browser (default)</option>
+                            <option value="none">None (bash disabled)</option>
+                            <option value="local">Local — via the dev server (not on freegent.ai)</option>
+                        </select>
+
+                        <p class="settings-hint" id="sandbox-wasm-hint" style="display:none">
+                            Runs bash entirely in your browser, in a bash-compatible shell with 248 common commands, builtins and keywords
+                            (<code>grep</code>, <code>sed</code>, <code>awk</code>, <code>find</code>, <code>sort</code>, <code>tr</code>, …).
+                            Workspace files are available at <code>/workspace</code>; writes sync back automatically.
+                            A few commands (jq, lua and others) are WebAssembly packages, fetched on first use and cached in the browser (IndexedDB).
+                            <code>curl</code> / <code>wget</code> reach sites that allow browser requests directly; other sites are
+                            fetched through FreeGent's proxy (plain GET only).
+                        </p>
+                        <p class="settings-hint" id="sandbox-local-hint" style="display:none">
+                            Runs bash on your machine through the dev server (<code>npm run dev</code>), so it works only when FreeGent is run locally, not on freegent.ai. Optionally isolated.
+                            Full coreutils, npm, and pip available. Files written by scripts sync back to the workspace automatically.
+                            Python runs on your machine too unless Pyodide is loaded; JavaScript always runs in the browser sandbox.
+                        </p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Git Integration</span>
+                        <label class="settings-check-row"><input type="checkbox" id="git-enabled" onchange="saveAgentSetting('fg_git_enabled', this.checked)"> Enable git access</label>
+                        <p class="settings-hint">Exposes the <code>run_git</code> tool and injects git instructions when messages mention git, commit, push, or pull. Requires the Local code execution sandbox (dev server). Disabled by default.</p>
+                    </div>
+                    <div class="settings-section">
+                        <span class="settings-label">Code Structure Queries (AST)</span>
+                        <label class="settings-check-row"><input type="checkbox" id="ast-enabled" onchange="saveAgentSetting('fg_ast_enabled', this.checked)"> Enable ast_query tool</label>
+                        <p class="settings-hint">Exposes <code>ast_query(path, query)</code> for precise symbol navigation with exact line numbers — find definitions, call sites, imports, exports, and references without grep. Supports: "functions", "classes", "imports", "exports", "symbols", "calls:NAME", "references:NAME", "symbol_at:LINE". Works in all environments; available to all agent roles when enabled. Disabled by default.</p>
+                    </div>
                     <div class="settings-section">
                         <span class="settings-label">Web Search</span>
                         <label class="settings-input-label">Search provider</label>

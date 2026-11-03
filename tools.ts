@@ -792,7 +792,7 @@ function _bestRegion(lines: string[], oldText: string): { start: number; end: nu
 // apply_patch, execute_code, web_search, fetch_url, generate_image) remain inline.
 
 async function _handleAstQuery(args: any) {
-    if (!getAstEnabled()) return { error: 'ast_query is disabled. Enable it in Settings → Code Execution.' };
+    if (!getAstEnabled()) return { error: 'ast_query is disabled. Enable it in Settings → Tools (Code Structure Queries).' };
     try {
         const content = await agentReadFile(args.path).catch(() => null);
         if (content === null) return { error: `ast_query: file not found: ${args.path}` };
@@ -817,7 +817,7 @@ export function runGitArgv(args: any): string[] {
 
 async function _handleRunGit(args: any) {
     if (!getGitEnabled() || getSandboxProvider() !== 'local')
-        return { error: 'run_git requires Local Sandbox and Git access enabled in Settings → Code Execution.' };
+        return { error: 'run_git requires the Local bash sandbox and Git access, both in Settings → Tools.' };
     const gitArgs = runGitArgv(args);
     try {
         const resp = await fetch('/api/git', {
@@ -2912,11 +2912,11 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             try { execResult = await runWithWasm(args.code, onProgress); }
             catch (e) { return { error: `WASM: ${e.message}` }; }
         } else {
-            if (args.language === 'bash') return { error: 'Bash requires a sandbox — enable WASM or Local in Settings → Code Execution.' };
+            if (args.language === 'bash') return { error: 'Bash requires a sandbox — choose WASM or Local under Bash Sandbox in Settings → Tools.' };
             // The browser shell has python3 (pip install works), so the model can carry on without Pyodide.
             const viaBash = provider === 'wasm' && typeof runWithWasm === 'function'
                 ? ' Run it with language "bash" instead: python3 script.py or python3 -c "…" (pip install <pkg> works; files are under /workspace).' : '';
-            return { error: `Pyodide is ${pyodideStatus === 'error' ? 'unavailable (it failed to load)' : `not loaded (${pyodideStatus})`}, so language "python" cannot run.${viaBash} The user can load Pyodide in Settings → Code Execution.` };
+            return { error: `Pyodide is ${pyodideStatus === 'error' ? 'unavailable (it failed to load)' : `not loaded (${pyodideStatus})`}, so language "python" cannot run.${viaBash} The user can load Pyodide in Settings → Tools.` };
         }
     }
     // Shell sent as Python (`python3 -c "…"`, `curl … | python3`, `cat << EOF > x.py`) fails to

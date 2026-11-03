@@ -1,6 +1,6 @@
 ---
 name: git
-description: Use git in the project directory via run_git. Covers status, diff, log, branch, commit, push, pull, and stash. Requires Local Sandbox and Git access enabled in Settings → Code Execution.
+description: Use git in the project directory via run_git. Covers status, diff, log, branch, commit, push, pull, and stash. Requires Local Sandbox and Git access enabled in Settings → Tools (Bash Sandbox: Local; Git Integration).
 trigger: git, commit, push, pull, merge, branch, stash, checkout
 trigger_on_filetype: .gitignore, .gitmodules, .gitattributes
 requires: fg_git_enabled

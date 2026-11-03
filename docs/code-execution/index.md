@@ -1,6 +1,6 @@
 # Code execution
 
-The agent runs code through the `execute_code` tool. Where that code runs depends on the language and on **Settings → Code Execution**.
+The agent runs code through the `execute_code` tool. Where that code runs depends on the language and on the code execution settings at the top of **Settings → Tools**.
 
 | Language | Where it runs | Needs |
 |---|---|---|
