@@ -73,8 +73,12 @@ FreeGent has four parts, and they have different exposure:
 ## Known limitations
 
 - API keys typed into Settings live in `localStorage` in plain text. Agent code can't reach them
-  (it runs in the exec sandbox), but a script injected into the page itself could. Keys in the
-  credentials file never reach the page.
+  (it runs in the exec sandbox), but a script injected into the page itself could, and so can
+  anyone using the browser profile (developer tools; the masked fields only stop someone reading
+  over your shoulder). Encrypting them with a key the page also holds would not change that, and
+  a passphrase asked on every page load was tried and dropped as impractical. Saved keys are
+  redacted from provider/MCP errors and logs (`stored-credentials.ts`, `secrets.ts`).
+  Keys in the credentials file never reach the page.
 - The Content-Security-Policy only disables plugin content and `<base>`. Scripts and connections
   are not allowlisted: preview iframes (`srcdoc`) inherit the page's policy, and the pages the
   agent builds load libraries from any CDN.

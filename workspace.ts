@@ -1309,7 +1309,7 @@ async function _cloudHashWorkspace(slug: string): Promise<{ files: Record<string
 /** Compare the Workspace with the project stored on the Worker and let the user choose, per file or group, what travels which way. */
 export async function openCloudSyncDialog(): Promise<void> {
     const key = getDevKey(), url = _cloudWorkerUrl();
-    if (!key) { alert('Cloud sync needs the Developer key (Settings → API Credentials).'); return; }
+    if (!key) { alert('Cloud sync needs the Developer key (Settings → Credentials).'); return; }
     if (!url) { alert('Cloud sync is off while the privacy level is below Default.'); return; }
     const slug = _cloudProjectSlug();
     const client = new CloudSyncClient(url, key);

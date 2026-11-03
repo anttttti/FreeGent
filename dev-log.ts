@@ -1,10 +1,11 @@
 // dev-log.ts — FreeGent: developer logging to the Cloudflare Worker, on only while a Developer key
-// is saved (Settings → API Credentials). Two streams, joined by SESSION_ID:
+// is saved (Settings → Credentials). Two streams, joined by SESSION_ID:
 //   • console errors / warnings / uncaught errors → POST /errlog (batched, key required)
 //   • a finished or failed Task's chat log        → POST /log     (sendTaskLog, called by runner.ts)
 import { DEFAULT_CF_WORKER, getDevKey } from './proxy.js';
 import { getPrivacyLevel } from './privacy.js';
 import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 import { FG_VERSION } from './build-info.js';
 
 function _randomId(): string {
@@ -29,20 +30,12 @@ let _installed = false;
 let _sending = false;
 const _origFetch = () => window.fetch.bind(window);
 
-// Every saved credential-looking localStorage value (same name rule as convo-log's
-// storedSecretValues, without its MCP headers: importing convo-log here would be a cycle). Cached briefly.
+// Every saved credential value (stored-credentials.ts's one list). Cached briefly.
 let _secrets: string[] = []; let _secretsAt = 0;
 function _storedSecrets(): string[] {
     if (Date.now() - _secretsAt < 30_000) return _secrets;
-    const vals: string[] = [];
-    try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i) || '';
-            if (/key|token|secret|password/i.test(k)) { const v = (localStorage.getItem(k) || '').replace(/^"|"$/g, ''); if (v) vals.push(v); }
-        }
-    } catch {}
-    _secrets = vals; _secretsAt = Date.now();
-    return vals;
+    _secrets = storedCredentialValues(); _secretsAt = Date.now();
+    return _secrets;
 }
 
 function _stringify(a: unknown): string {

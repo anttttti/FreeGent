@@ -16,6 +16,7 @@
 
 import { resolveProxy } from './proxy.js';
 import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 import { readTextCapped } from './read-capped.js';
 import { combineSignals } from './abort.js';
 import { activeAbortController } from './state.js';
@@ -737,7 +738,7 @@ function mcpToolRisk(name: string): 'read' | 'write' | 'destructive' {
 // model, logs or the UI — a server that echoes the request (e.g. in an error message) must not
 // hand the key to the LLM. Rules live in secrets.ts.
 function redactMcpSecrets(text: string, headers?: Record<string, string>): string {
-    return redactText(text, Object.values(headers ?? {}));
+    return redactText(text, [...Object.values(headers ?? {}), ...storedCredentialValues()]);
 }
 
 async function executeMcpTool(name: string, args: any): Promise<any> {

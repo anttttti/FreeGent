@@ -2,7 +2,7 @@
 
 Every model call needs an API key for its provider. FreeGent uses one of three, in this order:
 
-1. **Your own key**, from Settings → Models → API Credentials (or the credentials file when you run FreeGent yourself). It always comes first.
+1. **Your own key**, from Settings → Credentials (or the credentials file when you run FreeGent yourself). It always comes first.
 2. **Guest access**, while FreeGent offers it: a limited quota on FreeGent's own free-tier accounts for a few providers, for visitors who have not added a key yet.
 3. **The Developer key**, for the person who runs the Worker: it unlocks all of the Worker's own keys for their own sessions.
 
@@ -21,7 +21,7 @@ The keys behind 2 and 3 are the Worker's keys ("Worker keys"). They are stored a
 Guest access lets you try FreeGent before getting a key. At the Routed privacy level, while FreeGent offers it, the models of the providers below are simply available: they show up in Settings → Models and in the model picker like models you have a key for. At Provider-only (the default), when you send a message with no usable key on freegent.ai, FreeGent shows **No API key yet** with two choices:
 
 - **Use the guest quota**: Privacy switches to Routed, Cloudflare's bot check runs once (usually invisibly), and your message runs on a guest model.
-- **Add my own key**: opens Settings → Models → API Credentials. [Default providers](providers.md) lists where to get free keys.
+- **Add my own key**: opens Settings → Credentials. [Default providers](providers.md) lists where to get free keys.
 
 At Provider-only nothing is sent to the Worker until you choose the guest quota.
 
@@ -50,7 +50,7 @@ What guest access sends where is listed under [Privacy](../privacy.md#what-leave
 
 ## Developer key
 
-The Developer key is a secret that the operator of a Worker sets on it (`FG_DEV_KEY`) and pastes into Settings → Models → API Credentials → **Developer key**. With it, that browser's requests through the Worker can use every Worker key, without the guest limits and without the bot check. It also turns on uploads of console errors and finished Autopilot chats to the operator's logs, and project sync. Saving it switches Privacy to Routed.
+The Developer key is a secret that the operator of a Worker sets on it (`FG_DEV_KEY`) and pastes into Settings → Credentials → **Developer key**. With it, that browser's requests through the Worker can use every Worker key, without the guest limits and without the bot check. It also turns on uploads of console errors and finished Autopilot chats to the operator's logs, and project sync. Saving it switches Privacy to Routed.
 
 It is meant for one person: the Worker's operator. It is never needed to use FreeGent, and it must not be shared, because it unlocks every key on the Worker, including providers whose terms forbid serving other people. To let others use your keys within those terms, use guest access instead.
 

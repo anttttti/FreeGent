@@ -279,7 +279,7 @@ Tries **stabilityai/stable-diffusion-xl-base-1.0** first, falls back to **black-
 ### Workflow
 1. **Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply
 2. **Photo/realistic image request:** call \`generate_image\`, then write \`[IMAGE:key]\` in your reply
-3. If the HuggingFace token is missing, tell the user to add it in **Settings → HuggingFace Token**
+3. If the HuggingFace token is missing, tell the user to add it in **Settings → Credentials → HuggingFace Key**
 4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`;
 const _IMAGE_BODY_NO_GEN = `## Image Generation & Visual Output
 

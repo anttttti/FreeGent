@@ -54,7 +54,7 @@ See [Code execution](../code-execution/index.md) for the sandboxes and approval 
 
 ## API keys
 
-The variable names for each provider are in [Default providers](../models/providers.md). On the local server you can also type keys into **Settings → Models → API Credentials** as on freegent.ai.
+The variable names for each provider are in [Default providers](../models/providers.md). On the local server you can also type keys into **Settings → Credentials** as on freegent.ai.
 
 Where the local tools look for keys, highest priority first:
 

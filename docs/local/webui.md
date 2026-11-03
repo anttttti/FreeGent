@@ -72,7 +72,7 @@ npx wrangler secret put GROQ_API_KEY       # also OPENROUTER_API_KEY, GEMINI_API
 npx wrangler secret put FG_DEV_KEY         # the Developer key
 ```
 
-Then paste the Developer key into Settings → Models → API Credentials → Developer key. Without a Developer key the Worker never injects its keys. Use is limited by a per-IP rate limit (`ratelimits` in `wrangler.toml`), and the Worker returns only `true`/`false` per provider from `/keys`, never the key values.
+Then paste the Developer key into Settings → Credentials → Developer key. Without a Developer key the Worker never injects its keys. Use is limited by a per-IP rate limit (`ratelimits` in `wrangler.toml`), and the Worker returns only `true`/`false` per provider from `/keys`, never the key values.
 
 After adding provider support, deploy both the Worker and the WebUI (`./deploy.sh`
 from the repository root). A Worker-only deployment or a secret upload does not

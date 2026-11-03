@@ -165,11 +165,11 @@ function populateVoiceTab() {
     if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = fillVoices;
 }
 
-// Opens Settings on the Models tab: its callers send the person there to choose a model or add a key
-// (activateTab alone lands on Profiles).
-function showSettings() {
+// Opens Settings on a tab: Models by default, for callers that send the person to choose a model;
+// 'credentials' for callers that send them to add a key (activateTab alone lands on Credentials, the first tab).
+function showSettings(tab: 'model' | 'credentials' = 'model') {
     activateTab('settings');
-    switchSettingsTab('model');
+    switchSettingsTab(tab);
 }
 
 function _applySandboxProviderUI(val) {
@@ -758,7 +758,7 @@ function renderModelCatalogTable() {
   <td${m.releasedEstimated ? ' style="color:var(--muted)" title="Estimated: the provider gave no release date, so this is when the model was first found"' : ''}>${escapeHtml(m.released || '')}</td>
   <td>${m.tools ? '✓' : ''}</td>
   <td>${m.thinking ? '✓' : ''}</td>
-  <td>${entryNeedsNoKey(m) ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → API Credentials or add to CF Worker">✗</span>'}</td>
+  <td>${entryNeedsNoKey(m) ? '<span title="No API key needed (free tier / open access)">—</span>' : _modelHasKey(m) ? '<span style="color:var(--ok,#4a4)" title="Key configured (local or CF Worker)">✓</span>' : '<span style="color:var(--err,#c44)" title="Key required — configure in Settings → Credentials or add to CF Worker">✗</span>'}</td>
   <td class="model-table-note">${escapeHtml(m.note || '')}</td>
   <td style="white-space:nowrap">${editBtn}${delBtn}</td>
 </tr>`;
@@ -1275,7 +1275,7 @@ function _renderPriorityList(containerId, list) {
         const rem = typeof getCooldownRemaining === 'function' ? getCooldownRemaining(key) : 0;
         const coolTag = rem > 0 ? `<span class="model-priority-cool">⏳${rem}s</span>` : '';
         const keyTag  = blocked ? `<span class="model-priority-cool" title="Settings → Privacy (${escapeHtml(PRIVACY_LABELS[getPrivacyLevel()])}) does not allow this provider. Set Privacy to Routed to use it.">blocked by Privacy</span>`
-                      : noKey ? `<span class="model-priority-cool" title="No API key for this provider — add one in Settings → Models">no key</span>` : '';
+                      : noKey ? `<span class="model-priority-cool" title="No API key for this provider — add one in Settings → Credentials">no key</span>` : '';
         const rankCls     = (i === 0 && !_inactive(key)) ? ' model-priority-rank-1' : '';
         const pausedCls   = (paused || noKey || blocked) ? ' model-priority-paused'   : '';
         const selectedCls = selected  ? ' model-priority-selected' : '';
@@ -1394,7 +1394,7 @@ function _noModelReason(): string {
     if (!list.length) return 'The priority list is empty: add a model in Settings → Models.';
     if (list.some(k => specBlockedByPrivacy(k)))
         return `Settings → Privacy is ${PRIVACY_LABELS[getPrivacyLevel()]}, which rules out ${getPrivacyLevel() === 'local' ? 'every cloud model' : 'Kilo and NVIDIA (they cannot be called from a browser without the Worker)'}. Set Privacy to Routed, or add a model from another provider.`;
-    return 'Every model in the priority list is paused or has no API key: resume one or add a key in Settings → Models.';
+    return 'Every model in the priority list is paused or has no API key: resume one or add a key in Settings → Credentials.';
 }
 
 function toggleInputModelPicker(): void {

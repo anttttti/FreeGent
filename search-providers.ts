@@ -57,7 +57,7 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
             if (resp.status === 401 || resp.status === 403) {
                 let detail = '';
                 try { detail = (await resp.json())?.detail?.error ?? ''; } catch {}
-                const hint = detail || 'invalid or expired API key — check Settings → Search';
+                const hint = detail || 'invalid or expired API key — check Settings → Credentials';
                 return { error: `Tavily ${resp.status}: ${hint}`, authFailed: true };
             }
             return { error: `Tavily HTTP ${resp.status}` };
@@ -99,7 +99,7 @@ export async function braveSearch(query: any): Promise<any> {
             const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10`;
             // No proxy (headless): no CORS either, so call Brave directly with the user's key.
             if (!cfProxy && localKey) resp = await fetch(braveUrl, { headers: braveHeaders, signal: _searchSignal() });
-            else if (!cfProxy) return { error: 'Brave search requires a proxy URL. Set it in Settings → Search.' };
+            else if (!cfProxy) return { error: 'Brave search requires a proxy URL. Set it in Settings → Privacy (CORS Proxy / CF Worker URL).' };
             else resp = await fetch(cfProxy, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -107,7 +107,7 @@ export async function braveSearch(query: any): Promise<any> {
                 signal: _searchSignal(),
             });
         } else {
-            return { error: 'Brave search requires a Brave API key or a proxy URL. Set it in Settings → Search.' };
+            return { error: 'Brave search requires a Brave API key (Settings → Credentials) or a proxy URL (Settings → Privacy).' };
         }
 
         if (!resp.ok) return { error: `Brave HTTP ${resp.status}` };

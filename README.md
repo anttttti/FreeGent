@@ -4,7 +4,7 @@
 
 ![An Autopilot run in FreeGent: each step of the task as a card in the flow view, with the model, timing and a Rerun button on every step](docs/assets/autopilot-flow.png)
 
-**[Open freegent.ai](https://freegent.ai)**: no install, no account. Open **Settings → Models → API Credentials**, paste a key from one provider and start chatting. [Default providers](https://freegent.ai/docs/models/providers) lists where to get free keys. While [guest access](https://freegent.ai/docs/models/access) is on, you can also start without a key.
+**[Open freegent.ai](https://freegent.ai)**: no install, no account. Open **Settings → Credentials**, paste a key from one provider and start chatting. [Default providers](https://freegent.ai/docs/models/providers) lists where to get free keys. While [guest access](https://freegent.ai/docs/models/access) is on, you can also start without a key.
 
 ## Why FreeGent
 

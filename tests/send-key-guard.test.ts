@@ -84,4 +84,10 @@ describe('send key guard', () => {
         try { W.showSettings(); } finally { W.activateTab = orig; }
         expect(document.querySelector('.settings-tab-btn.active')?.getAttribute('data-tab')).toBe('model');
     });
+    it("showSettings('credentials') opens the Credentials tab (the no-key paths send people there)", () => {
+        document.body.insertAdjacentHTML('beforeend', '<button class="settings-tab-btn" data-tab="credentials"></button>');
+        const orig = W.activateTab; W.activateTab = () => {};
+        try { W.showSettings('credentials'); } finally { W.activateTab = orig; }
+        expect(document.querySelector('.settings-tab-btn.active')?.getAttribute('data-tab')).toBe('credentials');
+    });
 });

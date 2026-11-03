@@ -43,7 +43,7 @@ scripts/fetch-logs.sh            # download logs not yet fetched/reviewed, print
 scripts/fetch-logs.sh pending    # downloaded but not yet reviewed
 scripts/fetch-logs.sh mark <id>… # or `mark --all`, once reviewed (so they're skipped next time)
 ```
-Sessions that have a Developer key saved (Settings → API Credentials) also upload: console errors/warnings
+Sessions that have a Developer key saved (Settings → Credentials) also upload: console errors/warnings
 (`POST /errlog`, KV keys `err:<sessionId>:…`) and the chat of each finished/failed/blocked Autopilot task
 (`POST /log`, field `devSession`). The `sessionId` / `devSession` value joins the two streams. Turn a
 reproducible failure into a unit test or a simulation scenario (see the benchmark repository's "What tests what").

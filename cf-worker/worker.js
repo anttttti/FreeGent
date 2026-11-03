@@ -134,7 +134,7 @@ const SEARCH_HEADER_MAP = {
 // sessions"), so the switch also needs the Turnstile settings. Flip it in the Cloudflare dashboard (Settings →
 // Variables and Secrets) or with `npx wrangler secret put FG_GUEST_QUOTA`: no code change, no commit.
 const GUEST_HOSTS = new Set(['api.groq.com', 'api.kilo.ai', 'openrouter.ai', 'api.openrouter.ai', 'tokenharbor.ai', 'api.tokenharbor.ai']);
-const GUEST_OFF = 'The guest quota is off right now: add your own key in Settings → Models → API Credentials';
+const GUEST_OFF = 'The guest quota is off right now: add your own key in Settings → Credentials';
 // Guest model calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter):
 // one heavy guest cannot spend the whole quota. FG_GUEST_DAILY overrides it, like FG_GUEST_QUOTA without a commit.
 const GUEST_DAILY_DEFAULT = 150;
@@ -570,7 +570,7 @@ export default {
                     if (!(await _relaySessionOk(request, env))) return _sessionRequired(env);
                     const limit = _guestDaily(env);
                     if (await _guestCount(request, env) > limit)
-                        return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Models → API Credentials, or try again after 00:00 UTC`);
+                        return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
                     guest = true;
                 }
                 const envKey = isEmpty && (unlocked || guest) ? PROVIDER_KEY_MAP[hostname] : null;

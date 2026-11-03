@@ -85,7 +85,7 @@ async function toggleVoiceInput() {
         const key = _providerKey(provider);
         if (key) { await _startMediaRecorder(key, provider, model); return; }
     }
-    _micNotice('No speech-to-text provider available. Add a Groq or OpenRouter key in Settings → Models, or add Web Speech to the STT list.');
+    _micNotice('No speech-to-text provider available. Add a Groq or OpenRouter key in Settings → Credentials, or add Web Speech to the STT list.');
 }
 
 async function _startMediaRecorder(key, provider, model) {
@@ -117,7 +117,7 @@ async function _startMediaRecorder(key, provider, model) {
 function _startWebSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-        _micNotice('Web Speech needs Chrome or Edge. Add a Groq or OpenRouter key in Settings → Models for speech-to-text in this browser.');
+        _micNotice('Web Speech needs Chrome or Edge. Add a Groq or OpenRouter key in Settings → Credentials for speech-to-text in this browser.');
         return;
     }
     const rec = new SR();

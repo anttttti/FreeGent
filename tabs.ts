@@ -48,7 +48,7 @@ function activateTab(key) {
     // On a phone the expanded rail is an overlay: choosing a destination leaves it, otherwise it stayed over the new panel
     // (opencode report 51; closeMobileRail() had no caller).
     if (window.innerWidth <= 700) document.getElementById('left-rail')?.classList.remove('expanded');
-    if (key === 'settings') { populateSettingsForm(); switchSettingsTab('profiles'); renderProfilesTab(); }
+    if (key === 'settings') { populateSettingsForm(); switchSettingsTab('credentials'); renderProfilesTab(); }   // Credentials is the first tab
     if (key === 'tasks')    { refreshTasks(); initRunner?.(); }
     if (key === 'chats')    renderChatsDropdown?.();
     if (key === 'skills')   loadSkills();

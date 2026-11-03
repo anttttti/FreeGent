@@ -64,7 +64,7 @@ export function offerGuestQuota(retry: () => void): void {
     const status = overlay.querySelector('[data-role="status"]') as HTMLElement;
     const guestBtn = overlay.querySelector('[data-act="guest"]') as HTMLButtonElement;
     overlay.querySelector('[data-act="close"]')!.addEventListener('click', () => overlay.remove());
-    overlay.querySelector('[data-act="key"]')!.addEventListener('click', () => { overlay.remove(); (window as any).showSettings?.(); });
+    overlay.querySelector('[data-act="key"]')!.addEventListener('click', () => { overlay.remove(); (window as any).showSettings?.('credentials'); });
     guestBtn.addEventListener('click', async () => {
         if (guestQuotaPausedUntil()) { status.textContent = _pausedText(); return; }
         guestBtn.disabled = true;

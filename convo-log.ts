@@ -6,6 +6,7 @@ import { FG_VERSION } from './build-info.js';
 import { SESSION_ID } from './dev-log.js';
 import { escapeHtml } from './html-escape.js';
 import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 import { getPrivacyLevel } from './privacy.js';
 import { getMcpServers } from './mcp.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
@@ -300,12 +301,8 @@ export function redactSecrets(text: string, extra: string[] = []): string {
     return redactText(text, extra);
 }
 export function storedSecretValues(): string[] {
-    const vals: string[] = [];
+    const vals: string[] = storedCredentialValues();
     try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i) || '';
-            if (/key|token|secret|password/i.test(k)) { const v = localStorage.getItem(k) || ''; if (v) vals.push(v.replace(/^"|"$/g, '')); }
-        }
         // MCP server headers hold credentials under a key name that does not match the pattern above.
         for (const srv of getMcpServers()) vals.push(...Object.values(srv.headers || {}).map(String));
     } catch {}

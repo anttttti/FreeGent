@@ -1381,7 +1381,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _activeSpec = getActiveMainModelList()[0];
     const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
     if (!specHasKey(_keySpec)) {
-        if (canOfferGuestQuota()) offerGuestQuota(() => { void agentSend(container); }); else showSettings();
+        if (canOfferGuestQuota()) offerGuestQuota(() => { void agentSend(container); }); else showSettings('credentials');
         return;
     }
 

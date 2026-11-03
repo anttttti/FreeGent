@@ -17,6 +17,8 @@
 //
 // Follows the step-validator/…/model-router pattern: ES module, exports, window bridge.
 
+import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 import { softStopPending, activeAbortController } from './state.js';
 import { asTransportError } from './retry.js';
 
@@ -256,7 +258,8 @@ export async function streamOAICompat(resp: any, onChunk: any) {
     let hasReasoningField: boolean = false;
     let reasoningEnded: boolean    = false;
     try { for await (const chunk of readSSE(resp)) {
-        if (chunk.error) throw new Error(`HTTP 500: ${chunk.error.message || 'Stream error'}`);
+        // Redacted like _httpErrorFromResponse: an error event in a 200 stream reaches the chat too (codex review of 8182828).
+        if (chunk.error) throw new Error(`HTTP 500: ${redactText(String(chunk.error.message || 'Stream error'), storedCredentialValues())}`);
         if (chunk.usage) usage = chunk.usage;
         // Track finish_reason before the delta guard — some providers send it on a chunk
         // with no delta (or null delta), which the guard below would skip.
@@ -436,7 +439,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
 
 export async function nonStreamOAICompat(resp: any, onChunk: any) {
     const j = await resp.json();
-    if (j.error) throw new Error(j.error.message || 'Provider error');
+    if (j.error) throw new Error(redactText(String(j.error.message || 'Provider error'), storedCredentialValues()));   // a 200 JSON error envelope
     const msg = j.choices?.[0]?.message || {};
     let reasoning_content = msg.reasoning_content || msg.reasoning || '';
     let content           = msg.content || '';

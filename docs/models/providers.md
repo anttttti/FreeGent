@@ -37,7 +37,7 @@ Where a key goes depends on how you run FreeGent:
 
 | You run | Put the key | Notes |
 |---|---|---|
-| freegent.ai | Settings → Models → API Credentials | Stored in your browser |
+| freegent.ai | Settings → Credentials | Stored in your browser |
 | Local dev server | `~/.config/freegent/credentials`, or Settings | File keys stay on the server |
 | TUI | credentials file, shell variables, or `--api-key` | See [TUI](../local/tui.md) |
 | CLI | credentials file, shell variables, or `--api-key` | See [CLI](../local/cli.md) |

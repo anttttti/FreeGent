@@ -11,7 +11,7 @@ The WebUI is the browser app, the same on [freegent.ai](https://freegent.ai) and
 
 ## First chat
 
-1. Open **Settings → Models → API Credentials** and paste a key for one provider (see [Default providers](../models/providers.md)).
+1. Open **Settings → Credentials** and paste a key for one provider (see [Default providers](../models/providers.md)).
 2. Type a request and press **Enter**. **Shift+Enter** adds a newline and **Esc** stops generation.
 3. The agent may call tools: read and write project files, run code, search the web. Each call appears as a step in the chat. Files it creates land in [Project](project/index.md).
 

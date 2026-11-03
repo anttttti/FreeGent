@@ -2,6 +2,8 @@
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
 import { _searchSignal } from './search-providers.js';
+import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
@@ -2459,7 +2461,7 @@ async function _handleGenerateImage(args) {
         lastError = `pollinations: ${e.message}`;
     }
 
-    // ── 2. HuggingFace Inference — requires token in Settings → API Credentials ─
+    // ── 2. HuggingFace Inference — requires token in Settings → Credentials ─
     const hfKey = getHFKey();
     if (hfKey) {
         const hfModels = [
@@ -2477,7 +2479,8 @@ async function _handleGenerateImage(args) {
                 });
                 const result = await _saveImageResp(resp, model);
                 if (result) return result;
-                const errText = await resp.text().catch(() => '');
+                // Redacted: the error reaches the chat and the model, and a provider may echo the HF key back.
+                const errText = redactText(await resp.text().catch(() => ''), storedCredentialValues());
                 lastError = `${model}: HTTP ${resp.status} — ${errText.slice(0, 200)}`;
             } catch (e: any) {
                 if (e?.name === 'AbortError') throw e;
@@ -2486,7 +2489,7 @@ async function _handleGenerateImage(args) {
         }
     }
 
-    return { error: `Image generation failed. ${lastError || 'Unknown error'}${!getHFKey() ? ' (Tip: add a HuggingFace API key in Settings → Models → API Credentials for an additional provider.)' : ''}` };
+    return { error: `Image generation failed. ${lastError || 'Unknown error'}${!getHFKey() ? ' (Tip: add a HuggingFace API key in Settings → Credentials for an additional provider.)' : ''}` };
 }
 
 // Error signatures in stderr worth flagging when the exit code is 0 (see _handleExecuteCode).

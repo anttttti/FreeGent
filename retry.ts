@@ -10,6 +10,8 @@
 // (same stranded-sibling pattern as nonStreamOAICompat before stream-decode.ts).
 //
 // Follows the step-validator/…/stream-decode pattern: ES module, exports, window bridge.
+import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 
 export function _isTimeoutError(e) {
     return e.name === 'TimeoutError' || /signal timed out/i.test(e.message || '');
@@ -572,6 +574,8 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
     // MoonMath's concurrent-request refusal says Retry-After: 60, but a slot frees when one of the key's other requests finishes.
     // Requesty's in-flight limit ("reached its limit of concurrent requests") frees the same way and sends no Retry-After.
     if (resp.status === 429 && /runs a limited number of requests at once|limit of concurrent requests/i.test(msg)) retryAfterMs = 5_000;
+    // Shown in the chat: a provider that echoes the request's key back ("Invalid API key: gsk_…") must not put it on screen.
+    msg = redactText(msg, storedCredentialValues());
     const e: any = new Error(prefix ? `${prefix} ${msg}` : msg);
     if (retryAfterMs !== null) e.retryAfterMs = retryAfterMs;
     e.status = resp.status;

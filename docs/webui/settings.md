@@ -4,6 +4,15 @@ Settings are stored in your browser. Tabs below follow the order in the app. The
 
 The bottom of the Settings panel shows the version you are running, linked to its code on GitHub. A copy you run yourself shows `git describe` (for example `v1.0.77-3-gabc1234-dirty`).
 
+## Credentials
+
+The first tab, and the one Settings opens on. Everything here is a secret and never goes into a [profile](#profiles).
+
+- **API Credentials**: one field per model provider, a paste box, **Paste from clipboard** and **Extract from file** (each key is matched to its provider by prefix), and the [Developer key](../models/access.md#developer-key) (only for whoever runs the Worker). See [Default providers](../models/providers.md). The HuggingFace key also enables FLUX / SDXL as a fallback for `generate_image`.
+- **Search and Tool Keys**: Tavily and Brave for `web_search`, and the optional GitHub (60 to 5,000 requests per hour) and Stack Exchange (300 to 10,000 per day) keys.
+
+Keys for one MCP server or one custom model stay with that server or model, in the MCP and Models tabs.
+
 ## Profiles
 
 A profile is a named snapshot of your model list, tools, skills and agent settings. **Save Current** creates one, you can load, export and import them as `.json`, and sharing one never shares API keys.
@@ -17,13 +26,8 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
 - The model dropdowns (Search to add models, Worker Model, Utility Model, and the image, audio and video models) list only models you can use now: with your own key, a Worker key from a Developer key or the guest quota, or no key needed. If a Worker or Utility Model you picked has lost its key, the next one with a key is used, and a note says which, until its key is back.
 - **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. All are empty by default, and an empty field is left out of the request, so each provider or server uses its own default. A value you set is sent to custom endpoints; Temperature is sent to every provider. [Profiles](#profiles) carry these values.
-- **API Credentials**: one field per provider, a paste box, **Extract from file**, and the [Developer key](../models/access.md#developer-key) (only for whoever runs the Worker). See [Default providers](../models/providers.md). Custom endpoints are added here too.
 - **Media Model Routing**: which models receive messages that contain images or audio.
 - **Model Catalog**: all known models, with **Check for updates**. Use ✕ to remove one.
-
-## Search
-
-The search provider for `web_search`: **Auto** (Tavily, then Brave, then Wikipedia), Tavily, Brave, or Wikipedia only. Also the optional Brave, GitHub (60 to 5,000 requests per hour) and Stack Exchange (300 to 10,000 per day) keys, and nothing else: the Worker URL override is under [Privacy](#privacy).
 
 ## Privacy
 
@@ -67,7 +71,7 @@ JavaScript in the browser (always on), Python in the browser with Pyodide (with 
 | Tab | What it controls |
 |---|---|
 | **Skills** | Switch built-in and custom skills and rules on or off, edit triggers, create one in a form, or **Import from file**. See [Skills and rules](../harness/skills.md). |
-| **Tools** | Enable tools separately for [Chat and Cowork](chats/modes.md) |
+| **Tools** | The **Web Search** provider for `web_search`: **Auto** (Tavily, then Brave, then Wikipedia), Tavily, Brave, or Wikipedia only (their keys are under [Credentials](#credentials); the Worker URL override is under [Privacy](#privacy)). Below it, enable tools separately for [Chat and Cowork](chats/modes.md). |
 | **MCP** | Connect Model Context Protocol servers and choose which of their tools the agent sees. See [MCP servers](../harness/mcp.md). |
 | **Roles** | View and edit each role's system prompt and tool ceiling; uncheck a role to stop workers using it. **Reset** restores the built-in prompt. |
 

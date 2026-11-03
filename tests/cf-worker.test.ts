@@ -436,7 +436,7 @@ describe('CF Worker guest quota', () => {
         expect(r.status).toBe(403);
         expect(r.headers.get('X-FG-Guest')).toBe('off');
         expect(r.headers.get('Access-Control-Expose-Headers')).toMatch(/X-FG-Guest/);
-        expect((await r.json()).error).toMatch(/guest quota is off.*API Credentials/);
+        expect((await r.json()).error).toMatch(/guest quota is off.*Settings → Credentials/);
         expect(sent()).toBeUndefined();
     });
 

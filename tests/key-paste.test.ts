@@ -1,4 +1,4 @@
-// Settings → API Credentials paste box: keys are recognised by prefix anywhere in pasted text
+// Settings → Credentials paste box: keys are recognised by prefix anywhere in pasted text
 // (settings-ui.ts findKeysInText).
 import { describe, it, expect, beforeAll } from 'vitest';
 
