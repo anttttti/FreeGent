@@ -272,7 +272,8 @@ async function _fetchMoonmathModels(): Promise<FetchResult> {
 // pricing below, because ids that were free once (perplexity/sonar, ling-3.0-flash-sante) are
 // priced now and must not be accepted just for being on this list.
 const _VERCEL_FREE_IDS = [
-    'inclusionai/ling-3.1-flash-1019',
+    'reflection/beam-free',
+    'reflection/beam',
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
 const _VERCEL_DOMAIN_SPECIFIC = new Set([

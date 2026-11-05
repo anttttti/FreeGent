@@ -557,13 +557,15 @@ const MODEL_CATALOG = [
     { provider:'openrouter', model:'cohere/north-mini-code:free',                         label:'North Mini Code (free)',       released:'2026-06', contextK:256,  params:30,   media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Cohere North Mini Code; 30B MoE (3B active); code specialist; 256K context; free via OpenRouter' },
     { provider:'openrouter', model:'dots-studio/dots-3-note-preview:free',              label:'Dots3-Note Preview (free)',     released:'2026-08', contextK:512,  params:280,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'280B MoE (16B active); 512K context; free via OpenRouter' },
     { provider:'openrouter', model:'liquid/lfm-2.5-2.6b:free',                         label:'LFM2.5-2.6B (free)',           released:'2026-08', contextK:66,   params:2.6,  media:['text'],                        tools:true,  thinking:true, rpm:20,  rpd:50,   note:'LiquidAI compact reasoning model; 2.6B; agent/RAG-focused; free via OpenRouter' },
+    { provider:'openrouter', model:'stealth/crouton-alpha',                             label:'Crouton Alpha (stealth, free)', released:'2026-11', contextK:1048, params:null, media:['text','image'],                tools:true,  thinking:true, rpm:20,  rpd:50,   note:'Anonymous (stealth) model listed 2026-11-04: lightweight, for agentic sub-tasks, tool use and document analysis; 1M ctx; text/image/file/audio/video input; may be withdrawn without notice and the provider may retain prompts and outputs; free via OpenRouter' },
     { provider:'openrouter', model:'recursive/flint-v1.0:free',                         label:'Flint v1.0 (free)',             released:'2026-10', contextK:262,  params:40,   media:['text'],                        tools:true,  thinking:false, rpm:20,  rpd:50,   note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23 (via Kilo); free via OpenRouter' },
     // ── Nous Portal ───────────────────────────────────────────────────────────
     // https://portal.nousresearch.com/models — 300+ models; rotating free tier (50 RPM / 500K TPM).
     // Free-model catalog rotates monthly; check portal for current availability.
     { provider:'nous', model:'stepfun/step-3.7-flash:free',          label:'Step 3.7 Flash (free)',        released:'2026-05', contextK:262, params:196, media:['text','image','video'], tools:true, thinking:true,  note:'196B MoE; 262K ctx; multimodal text/image/video; agent efficiency, coding, search; mandatory thinking; free via Nous Portal' },
     { provider:'nous', model:'reflection/beam-1.0-501b-a23b:free', label:'Beam 1.0 501B (free)',      released:'2026-10', contextK:262, params:501, media:['text'],                 tools:true, thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 262K ctx on Nous; reasoning always on; tool call verified 2026-10-29; free via Nous Portal' },
-    { provider:'nous', model:'ornith/ornith-1.5-122b:free',          label:'Ornith 1.5 122B (free)',       released:'2026-10', contextK:262, params:122, media:['text','image'],         tools:true, thinking:true,  note:'122B reasoning model; 262K ctx; image input; tool call verified 2026-10-29; free via Nous Portal' },
+    { provider:'nous', model:'stealth/crouton-alpha',          label:'Crouton Alpha (stealth, free)', released:'2026-11', contextK:1048, params:null, media:['text','image'], tools:true, thinking:true,  note:'Anonymous (stealth) model listed 2026-11-04: lightweight, for agentic sub-tasks, tool use and document analysis; 1M ctx; text/image/file/audio/video input; may be withdrawn without notice and the provider may retain prompts and outputs; free via Nous Portal' },
+    { provider:'nous', model:'meituan/longcat-2.5:free',         label:'LongCat 2.5 (free)',           released:'2026-11', contextK:1048, params:null, media:['text','image'],         tools:true, thinking:true,  note:'Meituan LongCat 2.5; 1M ctx; image input; reasoning on by default; tool call verified 2026-11-05; the preview scored 87.5% on the long-chat test (2026-10-29) before its free tier ended; free via Nous Portal' },
     { provider:'nous', model:'upstage/solar-mini4:free',      label:'Solar Mini 4 (free)',          released:'2026-09', contextK:524, params:35,  media:['text'],                 tools:true, thinking:true,  note:'35B MoE (3B active); 524K ctx; built for agentic use; free via Nous Portal' },
     // ── TokenHarbor ───────────────────────────────────────────────────────────
     // https://tokenharbor.ai/models — unified multi-provider gateway; API key prefix: thk_live_
@@ -576,12 +578,10 @@ const MODEL_CATALOG = [
     // https://kilo.ai — OpenAI-compatible inference gateway; :free models need a Kilo key (keyless requests stopped working in 2026-10)
     // (anonymous, 200 req/hour/IP). API key unlocks higher-tier models and rate limits.
     { provider:'kilo', model:'nvidia/nemotron-3-ultra-550b-a55b:free',        label:'Nemotron 3 Ultra 550B (free)',     released:'2026-06', contextK:1000, params:550, media:['text'],        tools:true, thinking:true,  note:'550B MoE (45B active); 1M ctx; deep reasoning; free via Kilo' },
-    { provider:'kilo', model:'recursive/flint-v1.0:free',                       label:'Flint v1.0 (free)',                released:'2026-10', contextK:262,  params:40,   media:['text'],        tools:true, thinking:false, note:'40B MoE (2.5B active); 262K ctx; built for coding agents; tool call verified 2026-10-23; free via Kilo' },
-    { provider:'kilo', model:'xingchen-agi/xing4.0-29b-a4b:free',               label:'Xing4.0 29B (free)',               released:'2026-10', contextK:262,  params:29,   media:['text'],        tools:true, thinking:true,  note:'China Telecom TeleAI; 29B MoE (4B active); 262K ctx; tool call verified 2026-10-23; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-lightning:free',              label:'Nemotron 3.5 Lightning (free)',    released:'2026-08', contextK:1000, params:30,  media:['text'],        tools:true, thinking:true, note:'30B MoE (3B active); 1M ctx; fast; free via Kilo' },
     { provider:'kilo', model:'nvidia/nemotron-3.5-super-vl:free',               label:'Nemotron 3.5 Super VL (free)',     released:'2026-10', contextK:1000, params:120, media:['text','image'], tools:true, thinking:true, note:'120B MoE; 1M ctx; tool call verified 2026-10-17; free via Kilo' },
     { provider:'kilo', model:'reflection/beam-free',                            label:'Beam 1.0 (free)',                  released:'2026-10', contextK:1048, params:501, media:['text'],        tools:true, thinking:true, note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; tool call verified 2026-10-29; long-chat test: 88% of microtasks, 150 tok/s, Kilo\'s free limit stopped the second conversation at 210K; the provider may retain prompts and outputs; free via Kilo' },
-    { provider:'kilo', model:'inclusionai/ling-3.1-flash-1019-free',            label:'Ling 3.1 Flash (free)',            released:'2026-10', contextK:1000, params:560, media:['text'],        tools:true, thinking:true, note:'inclusionAI Ling 3.1 Flash, 2026-10-19 snapshot; hybrid reasoning, 560B MoE (25B active); 1M ctx; tool call verified 2026-10-31; long-chat test 2026-10-31: 88% of microtasks, 250K in all three conversations, 80 tok/s; free via Kilo' },
+    { provider:'kilo', model:'stealth/crouton-alpha',                           label:'Crouton Alpha (stealth, free)',    released:'2026-11', contextK:1048, params:null, media:['text','image'], tools:true, thinking:true, note:'Anonymous (stealth) model listed 2026-11-04: lightweight, for agentic sub-tasks, tool use and document analysis; 1M ctx; text/image/file/audio/video input; may be withdrawn without notice and the provider may retain prompts and outputs; free via Kilo' },
     { provider:'kilo', model:'stealth/glyph-cluster',                           label:'Glyph Cluster (stealth, free)',    released:'2026-10', contextK:256,  params:null, media:['text'],        tools:true, thinking:true, note:'Anonymous early-access model; tool call verified 2026-10-17; the provider may retain prompts and outputs' },
     { provider:'kilo', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label:'Nemotron 3 Nano Omni 30B (free)', released:'2026-04', contextK:256, params:30, media:['text','image'], tools:true, thinking:true,  note:'30B MoE (3B active); 256K ctx; omni reasoning; free via Kilo' },
     { provider:'kilo', model:'dots-studio/dots-3-note-preview:free',            label:'Dots 3 Note (free)',               released:'2026-08', contextK:512,  params:280, media:['text'],        tools:true, thinking:true, note:'280B MoE (16B active); 512K ctx; long-context; free via Kilo' },
@@ -595,7 +595,6 @@ const MODEL_CATALOG = [
     // Model IDs use provider/model format (e.g. reflection/beam-free).
     { provider:'vercel', model:'reflection/beam-free',                 label:'Beam 1.0 (free)',              released:'2026-10', contextK:1048, params:501,  media:['text'],        tools:true,  thinking:true,  note:'Reflection Beam 1.0; 501B MoE (23B active); 1M ctx; $0/token; needs every earlier reply\'s reasoning sent back (payload-builder modelNeedsReasoningEcho); long-chat test 2026-10-29: 93% of microtasks, 250K in all three conversations, 148 tok/s' },
     { provider:'vercel', model:'reflection/beam',                      label:'Beam 1.0 ($0)',                released:'2026-10', contextK:1048, params:501,  media:['text'],        tools:true,  thinking:true,  note:'Reflection Beam 1.0 under its plain ID, also $0/token on Vercel (listed next to beam-free, 2026-11-01); 501B MoE (23B active); 1M ctx; needs every earlier reply\'s reasoning sent back (payload-builder modelNeedsReasoningEcho); long-chat test 2026-11-01: 93% of microtasks, 250K in all three conversations, 152 tok/s' },
-    { provider:'vercel', model:'inclusionai/ling-3.1-flash-1019',      label:'Ling 3.1 Flash (free)',        released:'2026-10', contextK:1000, params:560,  media:['text'],        tools:true,  thinking:true,  note:'inclusionAI Ling 3.1 Flash, 2026-10-19 snapshot; hybrid reasoning, 560B MoE (25B active); 1M ctx; $0/token (the undated inclusionai/ling-3.1-flash is paid); tool call verified 2026-10-31; long-chat test 2026-10-31: 78% of microtasks, 250K in all three conversations, 82 tok/s' },
     { provider:'vercel', model:'nvidia/nemotron-3.5-lightning-free',   label:'Nemotron 3.5 Lightning (free)', released:'2026-08', contextK:1000, params:30,   media:['text'],        tools:true,  thinking:true,  note:'30B MoE (3B active); $0/token; tool call verified 2026-10-17' },
 
     // MoonMath Free plan: daily allowance on these two Flash models; API key required.
@@ -830,23 +829,28 @@ function getAllModels() {
 // OpenRouter appears only a few times: its free tier is ~50 requests/day per account.
 // Inkling is not here: inkling:free is 404 on Kilo and 403 "agentic harnesses only" on
 // OpenRouter (rechecked 2026-10-06); inkling-small:free is 403 "agentic harnesses only" too (2026-11-01).
-// Space Bunny Alpha (stealth) was withdrawn on 2026-10-05 and is gone from every provider.
+// Space Bunny Alpha (stealth) was withdrawn on 2026-10-05 and is gone from every provider. Crouton Alpha (stealth) is the one
+// stealth model here (added 2026-11-05 on its test result): when it is withdrawn, its entries fail and the list moves on.
 // Gemma 4 is not here: it is the utility model, and would share its quota.
 const _DEFAULT_MAIN_MODELS = [
     // Ordered by the long-chat test (model ladder, bench/results/modelladder/convo-latest.md, 2026-11-01): share of microtasks solved,
     // context held before a quota stopped it, speed; one model's providers sit together, so a quota stop moves to the same model
     // elsewhere. Beam 95% / 93% on Vercel (beam-free / beam, 152-192 tok/s; 119M tokens in 70 min with no limit), 88% on Kilo; DeepSeek V4.1 Flash 92% on TokenHarbor and MoonMath (MoonMath's daily
     // allowance held about 2M tokens); GLM 5.3 Flash 97% on NVIDIA (250K three times, 36 tok/s); Step 5 90%; Nemotron 3.5 Super VL
-    // 88% / 87% / 79% on NVIDIA / OpenRouter / Kilo; Ling 3.1 Flash 88% on Kilo, 78% on Vercel; MiMo V2.6 Flash 82%.
+    // 88% / 87% / 79% on NVIDIA / OpenRouter / Kilo; MiMo V2.6 Flash 82%. Crouton Alpha (2026-11-05) 92% on Kilo (perfect coding and knowledge; Kilo's
+    // free limit after 37.8M tokens), 90% on Nous (its hourly 6M-token cap); its routes share one anonymous backend (all three were down together on 2026-11-05). Ling 3.1 Flash (88% on Kilo, 78% on Vercel) left the list on 2026-11-05:
+    // Kilo no longer lists its free snapshot and Vercel prices it ($0.30/$0.90 per M tokens).
     // Not here: Nemotron 3 Ultra (69% on Kilo, 81% on NVIDIA at 28 tok/s), Requesty's routes (shared free budget that
     // stayed refused for over an hour; Ling 74.5% there), Dots 3 Note (garbled <dots_function_call> tool calls), stealth models
-    // (withdrawn without notice), Ornith 1.5 (HTTP 503 at the last probe).
+    // other than Crouton (withdrawn without notice), Ornith 1.5 (no longer free on Nous, 2026-11-05).
     'vercel|reflection/beam-free',                     // 501B MoE, 1M ctx; $0, but Vercel needs a credit balance on the account (95%, 192 tok/s)
     'vercel|reflection/beam',                          // same Beam under its plain ID, also $0 (93%, 152 tok/s); no shared limit seen after 119M tokens
     'kilo|reflection/beam-free',                       // same Beam, Kilo's free quota
     'nous|reflection/beam-1.0-501b-a23b:free',         // same model, separate quota (262K ctx on Nous)
     'tokenharbor|deepseek-v4.1-flash:free',            // weekly quota
     'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance (about 2M tokens)
+    'kilo|stealth/crouton-alpha',                      // anonymous (stealth), 1M ctx, images; may be withdrawn and the provider may keep prompts (92%, 38 tok/s)
+    'nous|stealth/crouton-alpha',                      // same Crouton, Nous's hourly token cap (90%, 57 tok/s)
     'nvidia|z-ai/glm-5.3-flash',                       // NIM free credits; slow (36 tok/s)
     'moonmath|glm-5.3-flash',                          // same GLM, MoonMath's shared daily allowance
     'nvidia|stepfun-ai/step-5-preview',                // NIM free credits; slow (22 tok/s)
@@ -854,8 +858,6 @@ const _DEFAULT_MAIN_MODELS = [
     'nvidia|nvidia/nemotron-3.5-super-vl-120b-a12b',   // 120B MoE, 1M ctx, images
     'openrouter|nvidia/nemotron-3.5-super-vl:free',    // same model; OpenRouter free: about 50 requests a day
     'kilo|nvidia/nemotron-3.5-super-vl:free',
-    'kilo|inclusionai/ling-3.1-flash-1019-free',       // 560B MoE (25B active), 1M ctx
-    'vercel|inclusionai/ling-3.1-flash-1019',          // same Ling, Vercel's $0 route
     'tokenharbor|mimo-v2.6-flash:free',                // 1M ctx; same weekly quota as DeepSeek
 ];
 

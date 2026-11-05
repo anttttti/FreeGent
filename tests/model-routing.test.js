@@ -23,9 +23,9 @@ describe('resolveWorkerModelSpec — tier routing', () => {
     });
 
     it('defaults to the next model in the priority list after the main one, and to the main one when there is no other', () => {
-        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|recursive/flint-v1.0:free']));
-        expect(W.resolveWorkerModelSpec(null, null)).toBe('kilo|recursive/flint-v1.0:free');
-        expect(W.resolveWorkerModelSpec(null, { tier: 'execution' })).toBe('kilo|recursive/flint-v1.0:free');
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|cohere/north-mini-code:free']));
+        expect(W.resolveWorkerModelSpec(null, null)).toBe('kilo|cohere/north-mini-code:free');
+        expect(W.resolveWorkerModelSpec(null, { tier: 'execution' })).toBe('kilo|cohere/north-mini-code:free');
     });
 
     it('returns first active model for execution tier (no special routing)', () => {
