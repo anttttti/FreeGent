@@ -11,6 +11,8 @@
 // The key is saved like a pasted one (fg_openrouter_key), so the key lock covers it when it is on.
 
 import { keyVaultEnabled, keyVaultUnlocked } from './key-vault.js';
+import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 
 const AUTH_URL = 'https://openrouter.ai/auth';
 const KEYS_URL = 'https://openrouter.ai/api/v1/auth/keys';
@@ -67,13 +69,15 @@ export async function handleOpenRouterCallback(): Promise<boolean | null> {
     const code = params.get('code'), state = params.get('state');
     let pending: any = null;
     try { pending = JSON.parse(sessionStorage.getItem(PENDING) || 'null'); } catch {}
-    if (!code || !pending) return null;
-    // Strip the code from the address bar (and history) before anything else: it is single-use, but must not linger.
+    if (!code) return null;
+    // Strip the code from the address bar (and history) before anything else, also when this tab has no pending
+    // request (a link opened in another tab): it is single-use, but must not linger.
     try {
         params.delete('code'); params.delete('state');
         const q = params.toString();
         history.replaceState(history.state, '', location.pathname + (q ? `?${q}` : '') + location.hash);
     } catch {}
+    if (!pending) return null;
     try { sessionStorage.removeItem(PENDING); } catch {}
     if (state !== pending.state || !pending.verifier || Date.now() - (pending.at || 0) > MAX_AGE_MS) {
         _status('OpenRouter: the sign-in did not match this tab or took too long. Try Connect again.');
@@ -98,7 +102,8 @@ export async function handleOpenRouterCallback(): Promise<boolean | null> {
         try { w.populateSettingsForm?.(); w.renderModelCatalogTable?.(); w.renderMainModelList?.(); w.updateModelLabel?.(); w.updateActiveModelDisplay?.(); } catch {}
         return true;
     } catch (e: any) {
-        _status(`OpenRouter: could not get a key: ${e?.name === 'PrivacyBlockedError' ? 'blocked by Settings → Privacy' : (e?.message ?? e)}. Try Connect again, or paste a key.`);
+        const why = e?.name === 'PrivacyBlockedError' ? 'blocked by Settings → Privacy' : redactText(String(e?.message ?? e), storedCredentialValues());
+        _status(`OpenRouter: could not get a key: ${why}. Try Connect again, or paste a key.`);
         return false;
     }
 }

@@ -196,7 +196,8 @@ async function loadServerKeys() {
             if (!stored || isServerKeyPlaceholder(stored)) continue;
             const digest = await subtle.digest('SHA-256', new TextEncoder().encode(stored));
             const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-            if (hex.slice(0, 16) === hash) localStorage.removeItem(name);
+            // Re-read: a key typed or pasted while the digest ran must not be removed with the old one.
+            if (hex.slice(0, 16) === hash && localStorage.getItem(name) === stored) localStorage.removeItem(name);
         } catch {}
     }
 }

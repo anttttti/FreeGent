@@ -984,12 +984,8 @@ export function showModelUpdateModal(): void {
 
         // ── Re-render adds section ──────────────────────────────────────
         function _rerenderAdds() {
-            // Persist current checkbox states before re-rendering
-            body.querySelectorAll<HTMLInputElement>('#fg-mu-section-adds input[type=checkbox]').forEach(cb => {
-                const spec = cb.dataset.spec;
-                if (spec) selectionState.set(spec, cb.checked);
-            });
-            // Apply persisted state to proposals
+            // selectionState is kept current by the change, chip and All/None handlers; re-reading the rendered
+            // checkboxes here would undo the deselection of models a filter has just hidden.
             adds.forEach(p => { p.selected = selectionState.get(p.spec) ?? p.selected; });
             const container = document.getElementById('fg-mu-section-adds');
             if (container) container.innerHTML = _renderSectionRows(adds, 'adds', activeFilters);
