@@ -165,8 +165,8 @@ describe('file tools', () => {
         expect(await W.agentReadFile('p.txt')).toBe('A\nb\nc\nD\ne\n');
     });
 
-    it('undo_write: "Revert the most recent write_file or replace_in_file on a path"', async () => {
-        claims(described('undo_write'), 'Revert the most recent write_file or replace_in_file on a path');
+    it('undo_write: "Revert the most recent file edit (write_file, replace_in_file, apply_patch, append_file) on a path"', async () => {
+        claims(described('undo_write'), 'Revert the most recent file edit (write_file, replace_in_file, apply_patch, append_file) on a path');
         await tool('write_file', { path: 'u.txt', content: 'one' });
         await tool('replace_in_file', { path: 'u.txt', old_string: 'one', new_string: 'two' });
         await tool('undo_write', { path: 'u.txt' });
@@ -216,5 +216,16 @@ describe('run_workers', () => {
         expect((await tool('read_file', { path: 'edit.txt' }, b)).error).toBeTruthy();
         await tool('execute_code', { language: 'bash', code: 'echo made > made.txt' }, a);
         expect((await tool('execute_code', { language: 'bash', code: 'cat made.txt' }, b)).stdout).toBe('made\n');
+    });
+
+    // undo_write ignored the worker's context: it undid the main agent's last write in the real workspace, mid-run.
+    it('a worker\'s undo_write undoes its own staged edit and leaves the workspace alone', async () => {
+        await tool('write_file', { path: 'u.txt', content: 'v1' });
+        await tool('write_file', { path: 'u.txt', content: 'v2' });
+        const a = { snapshot: new LazySnapshot(await W.agentListFiles()), staging: new Map(), depth: 0, allowedTools: new Set(['write_file', 'undo_write', 'read_file']) };
+        await tool('write_file', { path: 'u.txt', content: 'worker' }, a);
+        expect(await tool('undo_write', { path: 'u.txt' }, a)).toMatchObject({ success: true });
+        expect(await W.agentReadFile('u.txt')).toBe('v2');
+        expect((await tool('read_file', { path: 'u.txt' }, a)).content).toBe('v2');
     });
 });

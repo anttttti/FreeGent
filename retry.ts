@@ -589,9 +589,10 @@ export function _parseRetryAfter(resp) {
              || resp.headers.get('x-ratelimit-reset-requests')
              || resp.headers.get('x-ratelimit-reset-tokens');
     if (!raw) {
-        // x-ratelimit-reset as a Unix timestamp in seconds (as some gateways send it).
+        // x-ratelimit-reset as a Unix timestamp: in seconds (some gateways), or in milliseconds (OpenRouter's free-models-per-day 429:
+        // 1766620800000, which read as seconds put the model on a 50,000-year cooldown). 1e11 s is the year 5138.
         const reset = Number(resp.headers.get('x-ratelimit-reset'));
-        return Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil(reset * 1000 - Date.now())) : null;
+        return Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil((reset > 1e11 ? reset : reset * 1000) - Date.now())) : null;
     }
     // Guard: only match purely numeric strings. Without ^…$, parseFloat('1m30s')→1
     // would return 1 s instead of 90 s, making the duration branch below unreachable.

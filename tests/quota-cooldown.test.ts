@@ -39,6 +39,10 @@ describe('MoonMath quota policies', () => {
         const precedence = await _httpErrorFromResponse(new Response(body, { status: 429,
             headers: { ...headers, 'retry-after': '5' } }));
         expect(precedence.retryAfterMs).toBe(5_000);
+        // OpenRouter's free-models-per-day 429 sends the reset in epoch milliseconds (1766620800000): read as seconds it was a wait of 50,000 years.
+        const ms = await _httpErrorFromResponse(new Response(body, { status: 429, headers: { 'x-ratelimit-reset': String(Date.now() + 3_600_000) } }));
+        expect(ms.retryAfterMs).toBe(3_600_000);
+        vi.useRealTimers();
     });
 
     it('shortens the Retry-After of a MoonMath parallel-request refusal', async () => {

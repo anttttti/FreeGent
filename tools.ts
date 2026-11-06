@@ -319,12 +319,13 @@ const _SEARCH_FILE_SIZE_CAP = 300_000;
 // src/atlas_data.js). Their contents are not searched (a name match still counts), and a hit lying inside a base64 run is dropped.
 const _SEARCH_BINARY_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|ico|avif|tiff?|psd|mp3|wav|ogg|oga|flac|m4a|aac|opus|mp4|m4v|webm|mov|avi|mkv|woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|tar|pdf|wasm|bin|exe|dll|so|dylib|class|jar|pyc|sqlite3?|db)$/i;
 const _SEARCH_DATA_RUN = 200;
-function _inDataRun(line: string, at: number, len: number): boolean {
+// End of the base64-like run around a match, or -1 when that run is too short to be data.
+function _dataRunEnd(line: string, at: number, len: number): number {
     const isData = (ch: string) => /[A-Za-z0-9+/=_-]/.test(ch);
     let a = at, b = at + len;
     while (a > 0 && isData(line[a - 1])) a--;
     while (b < line.length && isData(line[b])) b++;
-    return b - a >= _SEARCH_DATA_RUN;
+    return b - a >= _SEARCH_DATA_RUN ? b : -1;
 }
 // Whether a line holds a hit outside base64 data. Lines shorter than a data run cannot hold one, so they skip the scan.
 function _realHit(re: RegExp, line: string): boolean {
@@ -334,7 +335,11 @@ function _realHit(re: RegExp, line: string): boolean {
     re.lastIndex = 0;
     for (let m: RegExpExecArray | null; (m = re.exec(line)); ) {
         if (!m[0].length) { re.lastIndex++; return true; }
-        if (!_inDataRun(line, m.index, m[0].length)) return true;
+        const end = _dataRunEnd(line, m.index, m[0].length);
+        if (end < 0) return true;
+        // Every later match that starts in this run is in it too: skip the run, or a one-letter pattern rescans
+        // a 290 KB data: URL once per hit (62 s for "Q", measured 2026-11-06).
+        re.lastIndex = Math.max(re.lastIndex, end);
     }
     return false;
 }
@@ -851,8 +856,15 @@ async function _handleRunGit(args: any) {
     } catch (e) { return { error: `run_git: ${e.message}` }; }
 }
 
-async function _handleUndoWrite(args: any) {
+async function _handleUndoWrite(args: any, context: any = null) {
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
+    // A worker's edits are staged and have no checkpoints: its undo drops its own change to the path. The checkpoints are the
+    // main agent's, and restoring one here changed the real workspace in the middle of the worker's run.
+    if (context) {
+        if (!context.staging.has(args.path) && !context.binary?.has(args.path)) return { error: `undo_write: this worker has not changed "${args.path}".` };
+        context.staging.delete(args.path); context.binary?.delete(args.path);
+        return { success: true, path: args.path, note: 'Restored the file as it was before this worker changed it.' };
+    }
     const stack = _fileCheckpoints.get(args.path);
     // Checkpoints from another project (Clear, Load, import) are not this project's history.
     if (stack) { const keep = stack.filter(c => c.epoch === workspaceEpoch()); stack.length = 0; stack.push(...keep); }
@@ -925,9 +937,10 @@ async function _handleAppendFile(args: any, context: any) {
     }
     try {
         const _ep = workspaceEpoch();
-        return doAppend(
-            () => agentReadFile(args.path),
-            c  => agentWriteFile(args.path, c, null, { epoch: _ep })
+        let before: string | null = null;
+        return await doAppend(
+            async () => (before = await agentReadFile(args.path)),
+            async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before ?? '', before != null, c, _ep); }
         );
     } catch (e) { return { error: e.message }; }
 }
@@ -1289,6 +1302,8 @@ async function _handleUpdateTaskStatus(args: any) {
 const _shSingleQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 const _SYNTAX_HINT = 'The file no longer parses. If the fix is not obvious, call undo_write on this path to restore the previous version instead of patching braces repeatedly.';
+// Without undo_write (off by default in the WebUI's Chat and Cowork) the hint named a tool the model could not call.
+const _SYNTAX_HINT_NO_UNDO = 'The file no longer parses. Fix the line in syntax_error before going on.';
 
 // Returns an error string on failure, null if the file is clean or the check is unavailable. `text` is the file as written: given
 // for a worker's staged edit (nothing on disk yet) and for write_file; otherwise it is read back. JS and Python go to the native
@@ -1396,12 +1411,12 @@ async function _escapedLineBreakFix(args: { path: string; content: string }): Pr
 }
 
 // An edit result with the parse error attached: "No need to re-read the file to verify" is dropped, since the file now needs exactly that.
-function _withSyntaxError(result: any, synErr: string | null) {
+function _withSyntaxError(result: any, synErr: string | null, context: any = null) {
     _noteSyntax(result?.path, synErr);
     if (!synErr) return result;
     const { note, ...rest } = result;
     const kept = typeof note === 'string' ? note.replace(/\s*No need to re-read the file to verify\./, '').trim() : '';
-    return { ...rest, ...(kept ? { note: kept } : {}), syntax_error: synErr, syntax_hint: _SYNTAX_HINT };
+    return { ...rest, ...(kept ? { note: kept } : {}), syntax_error: synErr, syntax_hint: _callerHasTool(context)('undo_write') ? _SYNTAX_HINT : _SYNTAX_HINT_NO_UNDO };
 }
 
 // Image / SVG inline-display helper for write_file.
@@ -1726,7 +1741,7 @@ async function _handleWriteFile(args, context) {
         context.binary?.delete(args.path);   // the latest staged operation on a path is the only one (text supersedes an earlier binary write)
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
-        return _withSyntaxError({ success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay, ...lineBreakNote }, await _syntaxCheck(args.path, args.content, { staged: true }));
+        return _withSyntaxError({ success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay, ...lineBreakNote }, await _syntaxCheck(args.path, args.content, { staged: true }), context);
     }
     try {
         let previous = '';
@@ -1753,7 +1768,7 @@ async function _handleWriteFile(args, context) {
         if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
         Object.assign(wfResult, lineBreakNote);
-        return _withSyntaxError(wfResult, synErr);
+        return _withSyntaxError(wfResult, synErr, context);
     } catch (e) { return { error: e.message }; }
 }
 
@@ -1865,6 +1880,15 @@ async function _handleReplaceInFile(args, context) {
         }
         let idx = searchText.indexOf(args.old_string);
         let matchLen = args.old_string.length;
+        // Several copies: the first is changed, as always, but the result says so. "Change applied. No need to re-read" over the
+        // wrong copy left the model sure of an edit it had not made.
+        let dupNote = '';
+        if (idx !== -1) {
+            const at: number[] = [];
+            for (let i = idx; i !== -1 && at.length < 6; i = searchText.indexOf(args.old_string, i + matchLen)) at.push(i);
+            const ln = (i: number) => original.slice(0, searchOffset + i).split('\n').length;
+            if (at.length > 1) dupNote = `old_string occurs ${at.length > 5 ? 'more than 5' : at.length} times; the first, at line ${ln(at[0])}, was changed (also at line ${at.slice(1, 5).map(ln).join(', ')}). If you meant another, ${_callerHasTool(context)('undo_write') ? 'undo_write' : 'put that line back'} and send it again with more surrounding lines or start_line/end_line. `;
+        }
         if (idx === -1) {
             // Fallback: allow trailing-whitespace differences per line (editor stripping vs LLM output)
             try {
@@ -1981,7 +2005,7 @@ async function _handleReplaceInFile(args, context) {
             // Whole lines matched: replaced as lines (a repeated boundary line dropped); otherwise as text. Either way parse-guarded.
             const end = absIdx + matchLen, matched = original.slice(absIdx, end);
             const s = original.slice(0, absIdx).split('\n').length;
-            const pre = outsideRange ? `old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}, but occurs exactly once in the file. ` : '';
+            const pre = outsideRange ? `old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}, but occurs exactly once in the file. ` : dupNote;
             const aligned = (absIdx === 0 || original[absIdx - 1] === '\n') && (end === original.length || original[end] === '\n' || matched.endsWith('\n'));
             const nl = matched.endsWith('\n');
             if (aligned && (!nl || newText === '' || newText.endsWith('\n'))) {
@@ -2004,7 +2028,7 @@ async function _handleReplaceInFile(args, context) {
         return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(updated),
             note: (outsideRange
                 ? `Change applied at line ${_line}: old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}; but occurs exactly once in the file. No need to re-read the file to verify.`
-                : 'Change applied. No need to re-read the file to verify.') + decodedNote };
+                : dupNote || 'Change applied. No need to re-read the file to verify.') + decodedNote };
     };
     if (context) {
         const rif = await doReplace(
@@ -2014,7 +2038,7 @@ async function _handleReplaceInFile(args, context) {
             },
             async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
-        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true })) : rif;
+        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true }), context) : rif;
     }
     try {
         let existed = true;
@@ -2024,7 +2048,7 @@ async function _handleReplaceInFile(args, context) {
             () => Promise.resolve(before),
             async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, existed, c, _ep); }
         );
-        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path)) : rif;
+        return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path), context) : rif;
     } catch (e) { return { error: e.message }; }
 }
 
@@ -2100,15 +2124,16 @@ async function _handleApplyPatch(args, context) {
             },
             async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
-        return ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true })) : ap;
+        return ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true }), context) : ap;
     }
     try {
         const _ep = workspaceEpoch();
+        let before = '';
         const ap = await doApply(
-            () => agentReadFile(args.path),
-            c  => agentWriteFile(args.path, c, null, { epoch: _ep })
+            async () => (before = await agentReadFile(args.path)),
+            async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, true, c, _ep); }
         );
-        return 'success' in ap && ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path)) : ap;
+        return 'success' in ap && ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path), context) : ap;
     } catch (e) { return { error: e.message }; }
 }
 
@@ -3206,7 +3231,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     if (name === 'write_file')         return _handleWriteFile(args, context);
     if (name === 'ast_query')          return _handleAstQuery(args);
     if (name === 'run_git')            return _handleRunGit(args);
-    if (name === 'undo_write')         return _handleUndoWrite(args);
+    if (name === 'undo_write')         return _handleUndoWrite(args, context);
     if (name === 'replace_in_file')    return _handleReplaceInFile(args, context);
     if (name === 'apply_patch')        return _handleApplyPatch(args, context);
     if (name === 'delete_file')        return _handleDeleteFile(args, context);

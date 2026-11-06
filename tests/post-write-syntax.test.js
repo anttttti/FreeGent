@@ -42,8 +42,15 @@ describe('an edit that leaves a file unparseable (WebUI: no native toolchain)', 
         }, null);
         expect(res.success).toBe(true);
         expect(res.syntax_error).toMatch(/^src\/render\.js:\d+:\d+: SyntaxError: /);
-        expect(res.syntax_hint).toMatch(/undo_write/);
+        expect(res.syntax_hint).toBe('The file no longer parses. Fix the line in syntax_error before going on.');   // undo_write is off by default
         expect(JSON.stringify(res)).not.toMatch(/No need to re-read/);
+    });
+
+    it('names undo_write in the hint only to a caller that has it', async () => {
+        const ctx = tools => ({ snapshot: new Map(), staging: new Map(), depth: 0, allowedTools: new Set(tools) });
+        const bad = { path: 'b.js', content: 'const a = ;\n' };
+        expect((await W.executeToolAsync('write_file', bad, ctx(['write_file']))).syntax_hint).not.toMatch(/undo_write/);
+        expect((await W.executeToolAsync('write_file', { path: 'c.js', content: 'let b = ;\n' }, ctx(['write_file', 'undo_write']))).syntax_hint).toMatch(/undo_write/);
     });
 
     it('a clean edit keeps its note and gets no syntax_error', async () => {
@@ -105,6 +112,15 @@ describe('search_workspace and base64 data', () => {
         const text = res.matches.join('\n');
         expect(text).not.toMatch(/atlas_data\.js/);
         expect(text).toMatch(/atlas2\.js:1/);
+    });
+    it('scans a long data: URL once, not once per hit inside it', async () => {
+        let data = '';
+        for (let i = 0; i < 290_000; i++) data += 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[(i * 7919) % 64];
+        files.set('index.html', `<img src="data:image/png;base64,${data}"> Quit`);
+        const t = Date.now();
+        const res = await W.executeToolAsync('search_workspace', { pattern: 'Q', path_filter: 'index.html' }, null);
+        expect(res.matches.join('\n')).toMatch(/index\.html:1/);   // the "Quit" after the data
+        expect(Date.now() - t).toBeLessThan(2000);
     });
 });
 

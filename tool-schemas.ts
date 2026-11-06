@@ -100,7 +100,7 @@ const TOOLS_SPEC = [
     },
     {
         name: 'undo_write',
-        description: 'Revert the most recent write_file or replace_in_file on a path, restoring previous content.',
+        description: 'Revert the most recent file edit (write_file, replace_in_file, apply_patch, append_file) on a path, restoring previous content.',
         parameters: {
             type: 'object',
             properties: {

@@ -23,6 +23,12 @@ const SRC = ['def f(x):', '    if x is None:', '        return 0', '    y = x * 
 const run = (name: string, args: any) => W.executeToolAsync(name, args, null);
 
 describe('edit_assist', () => {
+    it('says which of several copies it changed', async () => {
+        files.set('b.py', 'def g():\n    return 0\n\ndef h():\n    return 0\n');
+        const r = await run('replace_in_file', { path: 'b.py', old_string: '    return 0\n', new_string: '    return 1\n' });
+        expect(r.note).toMatch(/^old_string occurs 2 times; the first, at line 2, was changed \(also at line 5\)/);
+        expect(files.get('b.py')).toBe('def g():\n    return 1\n\ndef h():\n    return 0\n');
+    });
     it('makes a misremembered edit where the model read the text, keeping the file\'s own lines it did not change', async () => {
         files.set('a.py', SRC);
         await run('read_file', { path: 'a.py' });

@@ -111,7 +111,7 @@ const BUILTIN_ROLES = [
             if (_has('delete_file'))
                 toolLines.push(`**delete_file** — permanently remove a file from the workspace\n- "path" (required): file to delete.`);
             if (_has('undo_write'))
-                toolLines.push(`**undo_write** — undo the last write_file / replace_in_file / apply_patch operation.`);
+                toolLines.push(`**undo_write** — drop your changes to a file (it reads as it did when you started).`);
             if (_has('execute_code'))
                 toolLines.push(
 `**execute_code** — run shell commands or scripts

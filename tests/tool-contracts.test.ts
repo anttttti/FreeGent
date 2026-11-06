@@ -197,6 +197,14 @@ describe('replace_in_file', () => {
         expect(await stored('r.txt')).toBe('dup\ndup\nthree\nfour\n');
     });
 
+    it('changes the first of several copies and says where the others are', async () => {
+        await W.agentWriteFile('r.txt', 'a\nreturn x\nb\nreturn x\n');
+        const r = await tool('replace_in_file', { path: 'r.txt', old_string: 'return x', new_string: 'return y' });
+        expect(r.note).toMatch(/occurs 2 times; the first, at line 2, was changed \(also at line 4\)/);
+        expect(r.note).not.toMatch(/No need to re-read/);
+        expect(await stored('r.txt')).toBe('a\nreturn y\nb\nreturn x\n');
+    });
+
     // Self-analysis P2 2026-10-29: "// ... (rest of imports)" went into tools.ts through replace_in_file.
     it('refuses a placeholder that stands for omitted lines, and keeps an ordinary comment', async () => {
         await W.agentWriteFile('m.ts', "import { a } from './a.js';\nimport { b } from './b.js';\n");
@@ -248,6 +256,18 @@ describe('delete_file and undo_write', () => {
         await tool('write_file', { path: `${be.root()}/u.txt`, content: 'v2 ä' });
         expect(await tool('undo_write', { path: `${be.root()}/./u.txt` })).toMatchObject({ success: true, path: 'u.txt', bytes: 2 });
         expect(await stored('u.txt')).toBe('v1');
+    });
+
+    // A patch or append that breaks the file gets _SYNTAX_HINT ("call undo_write on this path"): that undo must work.
+    it('undo_write reverts apply_patch and append_file too', async () => {
+        await tool('write_file', { path: 'p.js', content: 'const a = 1;\n' });
+        const r = await tool('apply_patch', { path: 'p.js', patch: '@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = ;\n' });
+        expect(r.success).toBe(true);
+        expect(await tool('undo_write', { path: 'p.js' })).toMatchObject({ success: true });
+        expect(await stored('p.js')).toBe('const a = 1;\n');
+        await tool('append_file', { path: 'n.txt', content: 'x' });
+        expect(await tool('undo_write', { path: 'n.txt' })).toMatchObject({ success: true });
+        expect(await names()).not.toContain('n.txt');
     });
 
     // codex report 8, cases 425-434
