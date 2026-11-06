@@ -1889,6 +1889,9 @@ async function _handleReplaceInFile(args, context) {
             const at: number[] = [];
             for (let i = idx; i !== -1 && at.length < 6; i = searchText.indexOf(args.old_string, i + matchLen)) at.push(i);
             const ln = (i: number) => original.slice(0, searchOffset + i).split('\n').length;
+            // Experiment edit_unique: refuse instead, as the other match paths do (CCR-03; measure on SWE Lite/Verified before turning it on).
+            if (at.length > 1 && runtime.experiment('edit_unique'))
+                return { error: `replace_in_file: old_string occurs ${at.length > 5 ? 'more than 5' : at.length} times in "${args.path}" (lines ${at.slice(0, 5).map(ln).join(', ')}), so nothing was changed. Add surrounding lines to old_string so it matches one place, or give start_line/end_line.` };
             if (at.length > 1) dupNote = `old_string occurs ${at.length > 5 ? 'more than 5' : at.length} times; the first, at line ${ln(at[0])}, was changed (also at line ${at.slice(1, 5).map(ln).join(', ')}). If you meant another, ${_callerHasTool(context)('undo_write') ? 'undo_write' : 'put that line back'} and send it again with more surrounding lines or start_line/end_line. `;
         }
         if (idx === -1) {

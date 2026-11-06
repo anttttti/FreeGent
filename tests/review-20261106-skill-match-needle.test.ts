@@ -55,4 +55,17 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
             }]);
         }).not.toThrow();
     });
+
+    it('`field==` with nothing after it is "empty" only under the empty_compare experiment', () => {
+        const prev = process.env.FG_EXPERIMENTS;
+        W.skillsRegistry.set('test-empty-compare', { name: 'test-empty-compare', trigger_on_tool: 'execute_code=>exit_code!=0&&stdout==', body: 'debug it' });
+        const call = () => W.reactiveSkillGuidance([{ name: 'execute_code', args: { code: 'false' }, result: { stdout: '', exit_code: 1 } }]);
+        try {
+            delete process.env.FG_EXPERIMENTS;
+            expect(call() || '').not.toContain('test-empty-compare');   // as shipped: the trigger never fires
+            W._reactiveFired.clear();
+            process.env.FG_EXPERIMENTS = 'empty_compare';
+            expect(call()).toContain('test-empty-compare');
+        } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
+    });
 });

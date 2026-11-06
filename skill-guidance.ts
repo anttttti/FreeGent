@@ -218,7 +218,9 @@ function _matchNeedle(needle, result) {
     const n = needle.trim();
     // Support &&-compound conditions: all parts must match
     if (n.includes('&&')) return n.split('&&').every(part => _matchNeedle(part.trim(), result));
-    const cmp = n.match(/^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    // `field==` (nothing after it) never parsed as a comparison, so the built-in debug skill's `stdout==` never fired. Experiment
+    // empty_compare reads it as "empty"; it adds that skill's guidance after a failed command, so it is measured before it is on.
+    const cmp = n.match(runtime.experiment('empty_compare') ? /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.*)$/ : /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
     if (cmp) {
         const [, field, op] = cmp;
         const rawVal = cmp[3].trim().replace(/^(['"])(.*)\1$/, '$2');   // `status=="failed"` and `stdout==""` as written in YAML (antigravity AG-07)

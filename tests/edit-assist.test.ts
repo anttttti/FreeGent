@@ -22,6 +22,16 @@ afterEach(() => {
 const SRC = ['def f(x):', '    if x is None:', '        return 0', '    y = x * 2', '    return y + 1', ''].join('\n');
 const run = (name: string, args: any) => W.executeToolAsync(name, args, null);
 
+describe('edit_unique (experiment)', () => {
+    it('refuses an old_string that occurs more than once, and says where', async () => {
+        process.env.FG_EXPERIMENTS = 'edit_unique';
+        files.set('u.py', 'def g():\n    return 0\n\ndef h():\n    return 0\n');
+        const r = await run('replace_in_file', { path: 'u.py', old_string: '    return 0\n', new_string: '    return 1\n' });
+        expect(r.error).toMatch(/occurs 2 times in "u\.py" \(lines 2, 5\), so nothing was changed/);
+        expect(files.get('u.py')).toBe('def g():\n    return 0\n\ndef h():\n    return 0\n');
+    });
+});
+
 describe('edit_assist', () => {
     it('says which of several copies it changed', async () => {
         files.set('b.py', 'def g():\n    return 0\n\ndef h():\n    return 0\n');
