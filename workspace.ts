@@ -1260,10 +1260,10 @@ function _cloudWorkerUrl(): string {
     if (getPrivacyLevel() !== 'routed') return '';
     return (localStorage.getItem(KEYS.SEARCH_PROXY) || '').trim() || DEFAULT_CF_WORKER;
 }
-function _cloudProjectSlug(): string {
-    const name = (document.getElementById('project-name-input') as HTMLInputElement | null)?.value?.trim() || localStorage.getItem('fg_project_name') || 'Project';
-    return cloudSlug(name);
+function _cloudProjectName(): string {
+    return (document.getElementById('project-name-input') as HTMLInputElement | null)?.value?.trim() || localStorage.getItem('fg_project_name') || 'Project';
 }
+function _cloudProjectSlug(): string { return cloudSlug(_cloudProjectName()); }
 function _cloudStatus(msg: string | null): void {
     let el = document.getElementById('fg-cloudsync-status');
     if (msg === null) { el?.remove(); return; }
@@ -1311,7 +1311,11 @@ export async function openCloudSyncDialog(): Promise<void> {
     const key = getDevKey(), url = _cloudWorkerUrl();
     if (!key) { alert('Cloud sync needs the Developer key (Settings → Credentials).'); return; }
     if (!url) { alert('Cloud sync is off while the privacy level is below Default.'); return; }
-    const slug = _cloudProjectSlug();
+    const slug = _cloudProjectSlug(), name = _cloudProjectName();
+    const baseRec = (() => { try { return JSON.parse(localStorage.getItem(_CLOUD_BASE(slug)) || 'null'); } catch { return null; } })();
+    // The cloud project is named by the slug, so two local projects whose names reduce to it ("Release 1.0", "Release 1-0") share it and its
+    // base: syncing the second read the first one's files as deleted here (codex R324). The base says which project last synced.
+    if (baseRec?.name && baseRec.name !== name && !confirm(`The cloud project “${slug}” was last synced from the project “${baseRec.name}”, not “${name}”. Syncing now would mix the two projects' files. Rename this project to give it a cloud project of its own, or press OK to sync it with “${slug}” anyway.`)) return;
     const client = new CloudSyncClient(url, key);
     try {
         _cloudStatus('Connecting…');
@@ -1319,7 +1323,6 @@ export async function openCloudSyncDialog(): Promise<void> {
         const ws = await _cloudHashWorkspace(slug);
         const remoteHashes: Record<string, string> = {};
         for (const [p, f] of Object.entries(remote.manifest.files)) remoteHashes[p] = f.h;
-        const baseRec = (() => { try { return JSON.parse(localStorage.getItem(_CLOUD_BASE(slug)) || 'null'); } catch { return null; } })();
         const base: Record<string, string> = baseRec?.files || {};
         let items = planSync(ws.hashes, remoteHashes, base);
         const ns = `cloud/${slug}`;
@@ -1335,7 +1338,7 @@ export async function openCloudSyncDialog(): Promise<void> {
         if (Object.keys(merges).length) items = planSync(ws.hashes, remoteHashes, base, merges);
         _cloudStatus(null);
         if (!items.length) {
-            localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag: remote.etag, files: nextBase(ws.hashes, remoteHashes, base) }));
+            localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag: remote.etag, files: nextBase(ws.hashes, remoteHashes, base), name }));
             alert(`“${slug}” is in sync with the cloud.`); return;
         }
         await _showSyncDialog({
@@ -1454,7 +1457,7 @@ async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remot
     const remoteAfter: Record<string, string> = {};
     for (const [p, f] of Object.entries(files)) remoteAfter[p] = f.h;
     const next = nextBase(wsAfter, remoteAfter, base);
-    localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag, files: next }));
+    localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag, files: next, name: _cloudProjectName() }));
     const recs: Array<{ path: string; content: string; encoding?: string | null }> = [];
     for (const p of Object.keys(next).filter(p => next[p] !== base[p])) { const r = await readWorkspaceFile(p); if (r && !r.encoding) recs.push({ path: p, content: r.content }); }
     await _saveBaseTexts(`cloud/${slug}`, recs);

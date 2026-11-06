@@ -260,6 +260,16 @@ describe('CF Worker /errlog and legacy names', () => {
         expect((await worker.fetch(errReq('{"sessionId":"a"}', 'no'), { FG_LOGS, FG_DEV_KEY: 'pw' })).status).toBe(401);
         expect(FG_LOGS.put).not.toHaveBeenCalled();
     });
+    it('cuts a streamed batch without Content-Length at the 256 KB cap instead of buffering it whole (codex R326)', async () => {
+        const FG_LOGS = kv();
+        let sent = 0;
+        const body = new ReadableStream({ pull(c) { if (sent >= 4 << 20) { c.close(); return; } sent += 64 * 1024; c.enqueue(new Uint8Array(64 * 1024).fill(97)); } });
+        const req = new Request('https://proxy.example/errlog', { method: 'POST', body, duplex: 'half',
+            headers: { Origin: ORIGIN, 'CF-Connecting-IP': '203.0.113.9', 'X-FG-Dev-Key': 'pw' } } as any);
+        expect((await worker.fetch(req, { FG_LOGS, FG_DEV_KEY: 'pw' })).status).toBe(413);
+        expect(sent).toBeLessThan(1 << 20);   // the rest of the 4 MB was never pulled
+        expect(FG_LOGS.put).not.toHaveBeenCalled();
+    });
     it('still honours the old FG_PASS secret and X-FG-Pass header', async () => {
         const FG_LOGS = kv();
         const req = new Request('https://proxy.example/errlog', { method: 'POST', body: '{"sessionId":"a"}',

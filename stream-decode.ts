@@ -100,8 +100,20 @@ export async function* readSSE(resp: any) {
     // The Streams API was wired up to fetch only in Safari 14.1 (March 2021).
     // Fall back to a single resp.text() read, then parse SSE lines from the
     // accumulated text. No incremental chunks, but correct on Safari 12 / iOS 12.
+    // The whole body is one read here, so its bound is the mid-stream idle limit as a total, and Stop ends the wait: a reply that kept the
+    // connection open, or stalled without closing, left the turn pending for good (codex R332).
     if (!resp.body) {
-        const text = await resp.text();
+        const signal: AbortSignal | undefined = activeAbortController?.signal;
+        let timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
+        const text: string = await Promise.race([
+            resp.text().catch((e: any) => { throw asTransportError(e); }),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Stream idle timeout')), SSE_MIDSTREAM_IDLE_TIMEOUT_MS);
+                if (!signal) return;
+                onAbort = () => reject(new DOMException('The operation was aborted.', 'AbortError'));
+                if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+            }),
+        ]).finally(() => { clearTimeout(timer); if (onAbort) signal?.removeEventListener('abort', onAbort); });
         const ev = new SSEPayloads();
         for (const line of [...text.split(/\r\n|\r|\n/), '']) for (const v of ev.line(line)) { if (v === '[DONE]') return; yield v; }
         return;

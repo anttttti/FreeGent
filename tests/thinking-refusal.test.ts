@@ -32,4 +32,9 @@ describe('thinking-field refusal', () => {
         expect(p).toEqual({ model: 'm', temperature: 1, chat_template_kwargs: { other: 1 } });
         expect(stripThinkingFields({ model: 'm', chat_template_kwargs: { enable_thinking: false } })).toEqual({ model: 'm' });
     });
+    it('is forgotten when the model list is saved (a custom model whose URL changed keeps its provider|model key)', () => {
+        markModelRejectsThinkingFields('custom|m');
+        (globalThis as any).saveCustomModels([{ provider: 'custom', model: 'm', name: 'M', url: 'http://new-server:8000/v1' }]);
+        expect(modelRejectsThinkingFields('custom|m')).toBe(false);
+    });
 });

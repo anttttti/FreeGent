@@ -1,5 +1,5 @@
 // codex report 8, cases 400, 402, 415: SSE framing and Content-Type handling.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readSSE, SSEPayloads, decodeOAIResponse } from '../stream-decode.ts';
 
 const resp = (chunks: string[], contentType = 'text/event-stream') => {
@@ -10,6 +10,22 @@ const resp = (chunks: string[], contentType = 'text/event-stream') => {
 };
 const collect = async (chunks: string[]) => { const out: any[] = []; for await (const v of readSSE(resp(chunks))) out.push(v); return out; };
 const ev = (o: any) => JSON.stringify(o);
+
+describe('readSSE without a body stream (Safari < 14.1)', () => {
+    it('parses the whole text, and a reply that never ends gives up at the idle limit instead of waiting for good (codex R332)', async () => {
+        const text = (t: () => Promise<string>) => ({ headers: { get: () => 'text/event-stream' }, body: null, text: t });
+        const out: any[] = [];
+        for await (const v of readSSE(text(async () => `data: ${JSON.stringify({ a: 1 })}\n\ndata: [DONE]\n\n`))) out.push(v);
+        expect(out).toEqual([{ a: 1 }]);
+        vi.useFakeTimers();
+        try {
+            const gen = readSSE(text(() => new Promise<string>(() => {})));
+            const first = gen.next().then(() => 'done', (e: any) => e.message);
+            await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+            expect(await first).toBe('Stream idle timeout');
+        } finally { vi.useRealTimers(); }
+    });
+});
 
 describe('readSSE framing', () => {
     it('LF, CRLF and CR-only streams give the same events (415)', async () => {

@@ -1100,10 +1100,21 @@ interface _TouchDragState {
 }
 let _touchDrag: _TouchDragState | null = null;
 
+// Ends a drag without moving anything: a touchcancel (the browser or OS took the gesture) left the old drag live, and the next
+// one-finger gesture's touchend reordered from the old row (codex R330).
+function _priorityTouchCancel(): _TouchDragState | null {
+    const d = _touchDrag;
+    _touchDrag = null;
+    d?.srcEl.classList.remove('model-priority-dragging');
+    document.querySelectorAll('.model-priority-drag-over').forEach(el => el.classList.remove('model-priority-drag-over'));
+    return d;
+}
+
 function _priorityTouchStart(event: TouchEvent, containerId: string, idx: number): void {
     if (event.touches.length !== 1) return;
     const row = (event.currentTarget as Element).closest('.model-priority-row');
     if (!row) return;
+    _priorityTouchCancel();
     _touchDrag = { containerId, srcIdx: idx, srcEl: row };
     row.classList.add('model-priority-dragging');
 }
@@ -1120,14 +1131,10 @@ function _priorityTouchMove(event: TouchEvent): void {
 }
 
 function _priorityTouchEnd(event: TouchEvent): void {
-    if (!_touchDrag) return;
-    const { srcIdx, srcEl } = _touchDrag;
-    _touchDrag = null;
-    srcEl.classList.remove('model-priority-dragging');
-    document.querySelectorAll('.model-priority-drag-over')
-        .forEach(el => el.classList.remove('model-priority-drag-over'));
-
+    const d = _priorityTouchCancel();
     const touch = event.changedTouches[0];
+    if (!d || !touch) return;
+    const { srcIdx } = d;
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
     const targetRow = el?.closest('.model-priority-row') as HTMLElement | null;
     const targetIdx = targetRow ? parseInt(targetRow.dataset.idx ?? '-1', 10) : -1;
@@ -1290,11 +1297,11 @@ function _renderPriorityList(containerId, list) {
             html += `<div class="model-priority-row${rankCls}${pausedCls}${selectedCls}" data-idx="${i}"
             onclick="_priorityRowClick(event,${jsArg(key)})"
             ontouchmove="_priorityTouchMove(event)"
-            ontouchend="_priorityTouchEnd(event)">
+            ontouchend="_priorityTouchEnd(event)" ontouchcancel="_priorityTouchCancel()">
   <span class="model-priority-drag-handle" title="Drag to reorder"
         ontouchstart="_priorityTouchStart(event,'${containerId}',${i})"
         ontouchmove="_priorityTouchMove(event)"
-        ontouchend="_priorityTouchEnd(event)">⠿</span>
+        ontouchend="_priorityTouchEnd(event)" ontouchcancel="_priorityTouchCancel()">⠿</span>
   <span class="model-priority-rank">${_inactive(key) ? '–' : i + 1 - [...list.slice(0, i)].filter(_inactive).length}</span>
   <span class="model-priority-label">${escapeHtml(lbl)}${coolTag}${keyTag}</span>
   <span class="model-priority-actions">
@@ -2632,4 +2639,4 @@ async function submitAddMcpServer() {
     onPrefChange(/^fg_(main_models|paused_main|custom_models)$/, () => { try { updateInputModelBtn(); } catch {} });
 }
 
-Object.assign(window, { clearModelCooldowns, switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, _selectWorkerModel, _selectUtilityModel, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });
+Object.assign(window, { clearModelCooldowns, switchSettingsTab, _comboFilter, _comboOpen, _comboBlur, _comboKey, _comboSelect, _comboAddItem, _addVoiceItem, _removeVoiceItem, _moveVoiceItem, saveVoiceSettings, populateVoiceTab, showSettings, onPyodideAutoloadChange, onPrivacyChange, onPrivacyLevelChange, _applyPrivacyLevelUI, onSandboxProviderChange, saveSettings, populateSettingsForm, updateActiveModelDisplay, initHdrPicker, showModelCooldownPopup, hideModelCooldownPopup, applyHdrCompactTokens, applyHdrReasoning, saveSamplingSetting, populateSamplingSettings, renderModelCatalogTable, _sortModelCatalog, showAddCustomModelForm, detectNewModel, _onNewModelIdChange, redetectEditModel, addCustomModel, deleteModel, deleteCustomModel, openEditModelDialog, saveEditModel, _onNewModelProviderChange, renderMainModelList, saveMediaModel, renderMediaModelSelectors, renderWorkerModelSelector, renderUtilityModelSelector, _selectWorkerModel, _selectUtilityModel, autoPopulateModelPriority, resetModelPriorityDefaults,_priorityRowClick, _movePriorityItem, _removePriorityItem, _addPriorityItem, saveAgentSetting, renderRolesTab, _handleDragStart, _handleDragEnd, _handleDragOver, _handleDragLeave, _handleDrop, _togglePauseItem, _priorityTouchStart, _priorityTouchMove, _priorityTouchEnd, _priorityTouchCancel, updateInputModelBtn, toggleInputModelPicker, _selectInputModel, _modelPageUrl, renderMcpTab, showAddMcpForm, _onNewMcpAuthChange, submitAddMcpServer });

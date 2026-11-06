@@ -17,7 +17,7 @@ describe('a model that refuses images', () => {
         expect(modelRefusesImages('custom|m')).toBe(true);
         vi.setSystemTime(new Date('2026-10-17T00:11:00Z'));
         expect(modelRefusesImages('custom|m')).toBe(false);
-        markModelRefusesImages('custom|m'); (globalThis as any).clearImageRefusals();
+        markModelRefusesImages('custom|m'); (globalThis as any).clearLearnedRefusals();
         expect(modelRefusesImages('custom|m')).toBe(false);
     });
     it('sends the image as a text note', () => {

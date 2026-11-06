@@ -186,6 +186,13 @@ const CORS = {
 // 25 MiB is the largest value Workers KV stores (the request body limit of the Worker itself is 100 MB).
 const LOG_MAX_BYTES = 25 * 1024 * 1024;
 const LOG_TTL_SECONDS = 14 * 24 * 3600;
+// The request body as bytes, or null when it is over `max`. Read through _byteCap, so a body without a (true) Content-Length stops at the
+// first byte over the cap instead of being buffered whole and measured afterwards (codex R326).
+async function _bodyCapped(request, max) {
+    if (!request.body) return new ArrayBuffer(0);
+    try { return await new Response(request.body.pipeThrough(_byteCap(max))).arrayBuffer(); }
+    catch (e) { if (/larger than/.test(String(e?.message))) return null; throw e; }
+}
 async function _storeLog(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (request.method !== 'POST') return _err(405, 'POST only');
@@ -194,8 +201,8 @@ async function _storeLog(request, env) {
     const declared = Number(request.headers.get('Content-Length') || 0);
     if (declared > LOG_MAX_BYTES) return _err(413, 'Log too large (max 25 MB)');
     // Bytes, not text: a 25 MB string plus its encoded copy would come close to the Worker's 128 MB memory limit.
-    const body = await request.arrayBuffer();
-    if (body.byteLength > LOG_MAX_BYTES) return _err(413, 'Log too large (max 25 MB)');
+    const body = await _bodyCapped(request, LOG_MAX_BYTES);
+    if (!body) return _err(413, 'Log too large (max 25 MB)');
     if (!new TextDecoder().decode(body.slice(0, 4096)).trim()) return _err(400, 'Empty log');
     const bytes = crypto.getRandomValues(new Uint8Array(8));
     const id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
@@ -220,8 +227,9 @@ async function _storeErrLog(request, env) {
     if (!env || !env.FG_LOGS) return _err(503, 'Log upload is not configured on this Worker');
     if (await _rateLimited(request, env, 'errlog')) return _err(429, 'Rate limit exceeded — try again in a minute');
     if (!(await _unlocked(request, env))) return _err(401, 'Developer key required');
-    const body = await request.text();
-    if (new TextEncoder().encode(body).length > ERRLOG_MAX_BYTES) return _err(413, 'Error log batch too large (max 256 KB)');
+    const buf = await _bodyCapped(request, ERRLOG_MAX_BYTES);
+    if (!buf) return _err(413, 'Error log batch too large (max 256 KB)');
+    const body = new TextDecoder().decode(buf);
     let sessionId = '';
     try { sessionId = String(JSON.parse(body).sessionId || ''); } catch { return _err(400, 'Body must be JSON'); }
     sessionId = sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'unknown';

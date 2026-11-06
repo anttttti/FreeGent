@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { sha256Js, sha256Hex, cloudSlug, CloudSyncClient, CloudError, pool, isSafeSyncPath } from '../cloud-sync';
 import worker from '../cf-worker/worker.js';
@@ -117,5 +117,30 @@ describe('pool', () => {
         await pool([1, 2, 3, 4, 5, 6], 2, async () => { live++; max = Math.max(max, live); await new Promise(r => setTimeout(r, 5)); live--; });
         expect(max).toBe(2);
         await expect(pool([1, 2, 3], 1, async (x) => { if (x === 2) throw new Error('boom'); })).rejects.toThrow('boom');
+    });
+});
+
+// codex R324: the cloud project is named by the slug of the project name; a second local project whose name reduces to the same slug must
+// not sync into the first one's cloud project (and read its base) without being asked.
+describe('cloud sync dialog', () => {
+    it('asks before syncing a project into a cloud project last synced from another project with the same slug', async () => {
+        const W = window as any, { client } = setup(), f = (client as any).doFetch;
+        await client.putManifest('release-1-0', { files: {} }, null).catch(() => {});
+        const saved = { fetch: W.fetch, confirm: W.confirm, alert: W.alert };
+        try {
+            W.fetch = f;
+            localStorage.setItem('fg_privacy_level', 'routed'); localStorage.setItem('fg_search_proxy', 'https://w.test'); localStorage.setItem('fg_dev_key', 'pw');
+            localStorage.setItem('fg_cloudsync_base:release-1-0', JSON.stringify({ etag: null, files: { 'a.txt': 'h' }, name: 'Release 1.0' }));
+            W.alert = vi.fn();
+            W.confirm = vi.fn(() => false);
+            localStorage.setItem('fg_project_name', 'Release 1-0');
+            await W.openCloudSyncDialog();
+            expect(W.confirm).toHaveBeenCalledWith(expect.stringMatching(/last synced from the project “Release 1\.0”, not “Release 1-0”/));
+            expect(JSON.parse(localStorage.getItem('fg_cloudsync_base:release-1-0')!).name).toBe('Release 1.0');   // declined: nothing changed
+            W.confirm = vi.fn(() => false);
+            localStorage.setItem('fg_project_name', 'Release 1.0');
+            await W.openCloudSyncDialog();
+            expect(W.confirm).not.toHaveBeenCalledWith(expect.stringMatching(/last synced from/));
+        } finally { W.fetch = saved.fetch; W.confirm = saved.confirm; W.alert = saved.alert; for (const k of ['fg_privacy_level', 'fg_search_proxy', 'fg_dev_key', 'fg_project_name', 'fg_cloudsync_base:release-1-0']) localStorage.removeItem(k); }
     });
 });

@@ -120,7 +120,6 @@ export const modelRefusesImages = (key: string) => {
     if (Date.now() - at > IMAGE_REFUSAL_TTL_MS) { _noImageModels.delete(key); return false; }
     return true;
 };
-if (typeof window !== 'undefined') (window as any).clearImageRefusals = clearImageRefusals;   // settings code resets it when the model list changes
 // Models whose endpoint answered 400 to the thinking controls we sent (a hosted model that takes no `reasoning_budget`, a template without
 // `enable_thinking`). Their requests go without the controls from then on; the answer is remembered for the session, and expires so that an
 // endpoint upgraded in the meantime gets them again.
@@ -142,6 +141,10 @@ const _learnedReasoningEcho = new Set<string>();
 export const markModelNeedsReasoningEcho = (key: string) => { _learnedReasoningEcho.add(key); };
 export const clearReasoningEchoModels = () => { _learnedReasoningEcho.clear(); };
 export const modelNeedsReasoningEcho = (key: string) => _REASONING_ECHO_MODELS.has(key) || _learnedReasoningEcho.has(key);
+// What was learned about a model's endpoint (no images, no thinking controls, wants reasoning back) is keyed by provider|model, which a
+// custom model keeps when its URL is changed: saving the model list forgets all of it, so a new server is asked again (codex R328).
+export const clearLearnedRefusals = () => { _noImageModels.clear(); _noThinkingFieldModels.clear(); _learnedReasoningEcho.clear(); };
+if (typeof window !== 'undefined') (window as any).clearLearnedRefusals = clearLearnedRefusals;   // config.ts saveCustomModels
 // The stand-in for a reply whose reasoning was not kept (said before the model was known, or replaced by a repair or truncation):
 // the endpoint refuses an empty reasoning_content but takes any text.
 export const REASONING_NOT_KEPT = '(earlier reasoning not kept)';
