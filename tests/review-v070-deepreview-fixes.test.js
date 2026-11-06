@@ -341,6 +341,14 @@ describe('F3. the event log survives write failures and torn lines', () => {
         await f; await p.flush();
         expect((await p.load('s')).map(e => e.seq)).toEqual([0, 1]);
     });
+    it('events whose timer fires during a running drain are written without a flush', async () => {
+        const p = new SessionPersistence(dir, 1);
+        let release; p.active = new Promise(r => { release = r; });   // a drain still writing when the timer fires
+        p.enqueue('s', ev(0));
+        await new Promise(r => setTimeout(r, 20));
+        release(); p.active = undefined;
+        await vi.waitFor(async () => expect((await p.load('s')).map(e => e.seq)).toEqual([0]));
+    });
 });
 
 describe('R9. calls in one response run in order when one of them changes state', () => {

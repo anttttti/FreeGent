@@ -193,7 +193,9 @@ export class SessionPersistence {
     }
 
     private async _drain(): Promise<void> {
-        if (this.active) { await this.active.catch(() => {}); return; }
+        // A drain is running: wait for it, then write what was queued meanwhile. Returning left those events with no timer until the next
+        // enqueue or flush (opencode ODR-02). A drain that failed has put its batch back, so this is its one retry.
+        if (this.active) { await this.active.catch(() => {}); if (this.pending.size && !this.active) await this._drain(); return; }
         // Take the batch before any async work; events enqueued meanwhile go to the next drain.
         const batch = new Map(this.pending);
         this.pending.clear();

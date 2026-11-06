@@ -337,11 +337,14 @@ function _resultText(result: any): string {
 
 // Call a tool on a server by URL; returns the result text, throws on error.
 // Kept for built-in adapters (context7_docs) that call a fixed server.
+// Redacted like executeMcpTool's results: a server that echoes its auth header or a saved key must not hand it to the model (antigravity AG-04).
 async function callMCPTool(serverUrl: string, toolName: string, args: any, headers?: Record<string, string>): Promise<string> {
-    const result = await _request({ url: serverUrl, headers }, 'tools/call', { name: toolName, arguments: args ?? {} });
-    const text = _resultText(result);
+    let result: any;
+    try { result = await _request({ url: serverUrl, headers }, 'tools/call', { name: toolName, arguments: args ?? {} }); }
+    catch (e: any) { throw new Error(redactMcpSecrets(String(e?.message ?? e), headers)); }
+    const text = redactMcpSecrets(_resultText(result), headers);
     if (result?.isError) throw new Error(text || 'MCP tool error');
-    return text || JSON.stringify(result);
+    return text || redactMcpSecrets(JSON.stringify(result), headers);
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────

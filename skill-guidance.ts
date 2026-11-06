@@ -220,7 +220,8 @@ function _matchNeedle(needle, result) {
     if (n.includes('&&')) return n.split('&&').every(part => _matchNeedle(part.trim(), result));
     const cmp = n.match(/^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
     if (cmp) {
-        const [, field, op, rawVal] = cmp;
+        const [, field, op] = cmp;
+        const rawVal = cmp[3].trim().replace(/^(['"])(.*)\1$/, '$2');   // `status=="failed"` and `stdout==""` as written in YAML (antigravity AG-07)
         const actual = result?.[field];
         // Treat absent/null as empty string for == '' comparison (e.g. stdout== guards)
         if ((actual === undefined || actual === null) && op === '==' && rawVal.trim() === '') return true;
@@ -236,7 +237,7 @@ function _matchNeedle(needle, result) {
         if (op === '>=') return a >= v;
         if (op === '<=') return a <= v;
     }
-    return JSON.stringify(result ?? '').includes(n);
+    try { return JSON.stringify(result ?? '').includes(n); } catch { return String(result ?? '').includes(n); }   // a BigInt or a cycle must not end the turn
 }
 
 // File paths of recent calls, keyed by the _toolCallHistory array (replacing that array resets them).

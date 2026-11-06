@@ -1838,6 +1838,8 @@ async function _handleReplaceInFile(args, context) {
         new_string: args.new_string ?? args.new_content ?? args.new_str ?? args.new_text ?? args.replacement_text ?? args.replace ?? args.replacement ?? args.new ?? args.content ?? args.text ?? '',
     };
     args.path = await _rootRelativeToolPath(args.path);
+    // Without one, the reply was `old_string not found in ""` (antigravity AG-02). Other names for it are mapped by _repairPathArg.
+    if (!args.path) return { error: 'replace_in_file: "path" is required — the file to edit, e.g. {"path": "src/app.py", "old_string": "…", "new_string": "…"}.' };
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `replace_in_file: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
     }
@@ -2076,6 +2078,7 @@ async function _handleApplyPatch(args, context) {
     }
     // Normalize /workspace/ prefix (WASM bash mount point) to a plain relative path.
     args = { ...args, path: await _rootRelativeToolPath(_normToolPath(args.path ?? '')) };
+    if (!args.path) return { error: 'apply_patch: "path" is required — the patch has no "--- a/<file>" header, so name the file: {"path": "src/app.py", "patch": "…"}.' };
     if (isTestEditProtected(args.path)) return _testEditRefusal(args.path);
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `apply_patch: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };

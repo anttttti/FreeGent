@@ -2037,7 +2037,9 @@ function _setGoalStatus(rec: GoalRecord | null): void {
 }
 async function _goalIdle(): Promise<boolean> {
     const t0 = Date.now();
-    while (agentStreaming || preparing() || MsgQueue.size() > 0) {
+    // Not the message queue: while the goal holds the chat (aiJob) _processQueue leaves it alone, so a message parked there (one for another
+    // chat, or queued before the goal) only made this wait the full five minutes. It runs when the goal lets go (opencode ODR-04).
+    while (agentStreaming || preparing()) {
         if (Date.now() - t0 > GOAL_WAIT_MS) return false;
         await new Promise(r => setTimeout(r, 200));
     }

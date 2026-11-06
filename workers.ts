@@ -1391,7 +1391,8 @@ export async function resolveFileConflicts(conflicts: Record<string, Record<stri
             if (written.length === 1) { autoMerged[path] = written[0][1]; picked[path] = written[0][0]; continue; }
         }
         const versions: Record<string, string> = Object.fromEntries(written);
-        const sides = Object.values(versions);
+        // Distinct texts only: workers that wrote the same text agree (three identical versions went to the LLM merge: antigravity AG-05).
+        const sides = [...new Set(Object.values(versions))];
         if (sides.length < 2) { autoMerged[path] = sides[0] ?? ''; continue; }
         if (sides.length === 2) {
             const base = (await snapshot.get(path)) ?? '';
@@ -1874,7 +1875,7 @@ async function executeWorkers(args: any): Promise<any> {
 
     const clean = {}, conflicts = {};
     for (const [path, authors] of fileAuthors) {
-        if (authors.length === 1) clean[path] = authors[0].content;
+        if (authors.length === 1 || authors.every(a => a.content === authors[0].content)) clean[path] = authors[0].content;   // same text: no conflict
         else conflicts[path] = Object.fromEntries(authors.map(a => [a.id, a.content]));
     }
 

@@ -29,6 +29,8 @@ function _structuredValues(name: string, raw: string | null): string[] {
                 out.push(decodeURIComponent(u.password));
                 if (u.username) out.push(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password));
             }
+            // A key in the query (?key=…, ?api_key=…, ?access_token=…), named by the same rule as saved settings (opencode ODR-05).
+            for (const [k, v] of u.searchParams) if (v && isCredentialKey(k)) out.push(v);
         }
     } catch {}
     return out;

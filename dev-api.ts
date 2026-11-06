@@ -608,8 +608,9 @@ const _GIT_SUB_EXEC: Record<string, RegExp> = {
     grep:        /^(-O|--open-files-in-pager)/,
     rebase:      /^(-x|--exec)(=|$)/,
 };
-//   Anywhere: writing output to a path, or reading paths outside the repository.
-const _GIT_ANY_REFUSED = /^(--output|--no-index)(=|$)/;
+//   Anywhere: writing output to a path, reading paths outside the repository, or turning back on the programs hardenGitArgs turns off (an
+//   --ext-diff or --textconv after its --no-… wins, and grep --textconv runs the filters too: antigravity AG-01).
+const _GIT_ANY_REFUSED = /^(--output|--no-index|--ext-diff|--textconv)(=|$)/;
 
 /** The subcommand and what follows it, found the way gitArgsRefusal finds it: after the leading options. (The network-bound gate read raw positions, so
  *  `git --no-pager status` was refused as if it were a mutation: hermes C5.) */

@@ -43,7 +43,9 @@ export interface Lease<M = Record<string, never>> {
     revoke(): void;
     /** Runs `cb` once when the lease is found invalid (immediately if it already is). Not run when it finishes valid. */
     onInvalid(cb: () => void): void;
-    /** The work is over: returns whether the lease was still valid, runs cleanups if not, and takes the lease out of the registry. */
+    /** The work is over: returns whether the lease was still valid, runs cleanups if not, and takes the lease out of the registry.
+     *  Unlike revoke(), later valid() calls still report the conditions (without running cleanups): agent-core finishes a dequeued
+     *  turn's lease and then asks it whether the turn may still start. */
     finish(): boolean;
 }
 

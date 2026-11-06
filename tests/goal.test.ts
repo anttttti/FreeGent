@@ -249,4 +249,13 @@ describe('codex review of the goal loop (R1-001..004) and opencode G3/G8/G10', (
         const rec = await startGoal('g', h as GoalHost)!;
         expect(rec.status).toBe('paused');
     });
+    it('Stop ends a goal that is waiting for the chat to become free, without waiting it out', async () => {
+        const h = host([complete(), complete()]);
+        h.waitQuiet = () => new Promise<boolean>(() => {});   // the chat never looks free
+        const done = startGoal('g', h as GoalHost)!;
+        await new Promise(r => setTimeout(r, 0));
+        expect(stopGoal('stopped by you')).toBe(true);
+        const rec = await Promise.race([done, new Promise<null>(r => setTimeout(() => r(null), 500))]);
+        expect(rec).toMatchObject({ status: 'paused', note: 'stopped by you' });
+    });
 });

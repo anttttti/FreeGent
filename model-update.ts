@@ -892,7 +892,10 @@ export function showModelUpdateModal(): void {
     document.body.appendChild(overlay);
 
     _computeProposals().then(({ proposals, errors }) => {
-        const body = document.getElementById('fg-mu-body');
+        // This dialog's own elements only: a reply that comes after it was closed (or replaced by a newer one) is dropped. Looked up in
+        // the document, it rendered into the newer dialog and bound its Apply to these stale proposals (codex DR-11).
+        if (!overlay.isConnected) return;
+        const body = overlay.querySelector<HTMLElement>('#fg-mu-body');
         if (!body) return;
 
         // All filters start active (all filtering is on by default)
@@ -987,7 +990,7 @@ export function showModelUpdateModal(): void {
             // selectionState is kept current by the change, chip and All/None handlers; re-reading the rendered
             // checkboxes here would undo the deselection of models a filter has just hidden.
             adds.forEach(p => { p.selected = selectionState.get(p.spec) ?? p.selected; });
-            const container = document.getElementById('fg-mu-section-adds');
+            const container = overlay.querySelector('#fg-mu-section-adds');
             if (container) container.innerHTML = _renderSectionRows(adds, 'adds', activeFilters);
             _bindCheckboxes();
         }
@@ -1054,12 +1057,12 @@ export function showModelUpdateModal(): void {
             });
         });
 
-        (document.getElementById('fg-mu-cancel') as HTMLButtonElement).onclick = () => overlay.remove();
-        (document.getElementById('fg-mu-apply') as HTMLButtonElement).onclick  = () => {
+        (overlay.querySelector('#fg-mu-cancel') as HTMLButtonElement).onclick = () => overlay.remove();
+        (overlay.querySelector('#fg-mu-apply') as HTMLButtonElement).onclick  = () => {
             try {
                 _applyProposals(proposals);
             } catch (e: any) {
-                const status = document.getElementById('fg-mu-status');
+                const status = overlay.querySelector<HTMLElement>('#fg-mu-status');
                 if (status) { status.textContent = e?.message || String(e); status.style.color = '#e57373'; }
                 return;
             }

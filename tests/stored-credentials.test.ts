@@ -17,10 +17,12 @@ describe('credential list', () => {
         localStorage.setItem('fg_mcp_servers', JSON.stringify([{ id: 'a', headers: { 'X-Api-Key': 'opaque-mcp-credential' } }]));
         localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'custom', model: 'm', key: 'opaque-custom-credential' }]));
         localStorage.setItem('fg_search_proxy', 'https://user:opaque-proxy-pass@proxy.example/');
+        localStorage.setItem('fg_openai_url', 'https://gateway.example/v1?api_key=opaque-query-credential&region=eu');
         localStorage.setItem('fg_agent_compact_tokens', '10000000');
         localStorage.setItem('fg_groq_model', 'llama-3.3-70b-versatile');
         const vals = storedCredentialValues();
-        for (const v of [ODD, 'opaque-github-credential', 'opaque-mcp-credential', 'opaque-custom-credential', 'opaque-proxy-pass']) expect(vals).toContain(v);
+        for (const v of [ODD, 'opaque-github-credential', 'opaque-mcp-credential', 'opaque-custom-credential', 'opaque-proxy-pass', 'opaque-query-credential']) expect(vals).toContain(v);
+        expect(vals).not.toContain('eu');
         expect(vals).not.toContain('10000000');
         expect(vals).not.toContain('llama-3.3-70b-versatile');
     });

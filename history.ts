@@ -357,12 +357,17 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
     }
 
     if (name === 'web_search' && Array.isArray(result.results)) {
+        let out = result;
         if (JSON.stringify(result).length > limit) {
-            return { ...result, results: result.results.map(r => ({
-                title: r.title, url: r.url,
-                snippet: (r.snippet || r.summary || '').slice(0, 250),
-            })) };
+            // Shorter snippets, then whole results as long as they fit (at least one): a cut JSON excerpt is no list of links. What is kept
+            // is charged like every other result; returning early left web_search free and over the limit (antigravity AG-03).
+            const short = result.results.map((r: any) => ({ title: r.title, url: r.url, snippet: (r.snippet || r.summary || '').slice(0, 250) }));
+            const kept: any[] = [];
+            for (const r of short) { kept.push(r); if (kept.length > 1 && JSON.stringify({ ...result, results: kept }).length > limit) { kept.pop(); break; } }
+            out = { ...result, results: kept, ...(kept.length < short.length ? { note: `${short.length - kept.length} more results not shown.` } : {}) };
         }
+        charge(JSON.stringify(out).length);
+        return out;
     }
 
     if (name === 'run_workers') {

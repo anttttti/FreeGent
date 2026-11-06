@@ -316,7 +316,8 @@ function goalHost(): GoalHost {
         notify: (m) => Store.addNotice(m.includes('\n') ? m : `_${m}_`),
         async waitQuiet() {
             const t0 = Date.now();
-            while (((globalThis as any).turnsInFlight?.() ?? 0) > 0 || ((dom.window as any).msgQueue?.size?.() ?? 0) > 0) {
+            // Not the message queue: it does not drain while the goal holds the chat (see agent-core _goalIdle, opencode ODR-04).
+            while (((globalThis as any).turnsInFlight?.() ?? 0) > 0) {
                 if (Date.now() - t0 > 300_000) return false;
                 await new Promise(r => setTimeout(r, 200));
             }

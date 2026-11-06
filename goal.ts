@@ -121,7 +121,7 @@ export function isGoalPrompt(text: string): boolean {
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
-interface Run { rec: GoalRecord; host: GoalHost; stop: boolean; stopNote: string; steer: string[]; done: Promise<GoalRecord> }
+interface Run { rec: GoalRecord; host: GoalHost; stop: boolean; stopNote: string; steer: string[]; done: Promise<GoalRecord>; wake?: () => void }
 let _run: Run | null = null;
 
 export const goalRunning = (): boolean => _run !== null;
@@ -151,9 +151,12 @@ async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
             // finished on its last allowed turn was reported as out of turns: codex R1-003).
             if (!verifying && rec.turns >= rec.maxTurns) { await _save(r, { status: 'cap', note: `${rec.maxTurns} turns used without the goal being met` }); break; }
             let quiet = false;
-            try { quiet = !host.waitQuiet || await host.waitQuiet(); } catch { /* a host that fails to say is not quiet */ }
-            if (!quiet) { await _save(r, { status: 'paused', note: 'the chat did not become free' }); break; }
+            // Stop wakes the wait: it used to be noticed only when the host's wait ended, up to five minutes later (opencode ODR-06).
+            const stopped = new Promise<boolean>(res => { r.wake = () => res(false); });
+            try { quiet = !host.waitQuiet || await Promise.race([host.waitQuiet(), stopped]); } catch { /* a host that fails to say is not quiet */ }
+            r.wake = undefined;
             if (r.stop) break;
+            if (!quiet) { await _save(r, { status: 'paused', note: 'the chat did not become free' }); break; }
 
             // Messages the user sent while it worked are part of the next prompt: a steer, not a separate conversation.
             const notes = r.steer.splice(0);
@@ -241,7 +244,7 @@ export async function resumeGoal(host: GoalHost, opts: StartOptions = {}): Promi
 /** Stops after the turn in progress (stopNow, if the front end calls it, ends that turn too). */
 export function stopGoal(note = 'stopped'): boolean {
     if (!_run) return false;
-    _run.stop = true; _run.stopNote = note;
+    _run.stop = true; _run.stopNote = note; _run.wake?.();
     return true;
 }
 /** A message from the user while the goal runs: part of the next turn's prompt. */

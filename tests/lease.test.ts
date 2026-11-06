@@ -51,8 +51,9 @@ describe('finishing', () => {
         const t = lease('t', { epoch: 'now' }); let n = 0;
         t.onInvalid(() => n++);
         expect(t.finish()).toBe(true);
+        expect(t.valid()).toBe(true);   // still reports its conditions: agent-core asks a dequeued turn's finished lease whether to start
         bumpWorkspaceEpoch();
-        t.valid();
+        expect(t.valid()).toBe(false);
         expect(n).toBe(0);
     });
     it('onInvalid on a lease that is already invalid runs at once', () => {

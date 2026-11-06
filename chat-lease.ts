@@ -91,13 +91,15 @@ bus();   // listen from page load: a page that holds a lease must be able to ans
 /**
  * The lease on this chat is held by another tab's record: is that tab still there? Asks over BroadcastChannel and waits `LEASE_PING_WAIT_MS`.
  * Resolves true when a holder answered (or when the question cannot be asked: assume it is there), false when nobody did; in that case the
- * stale record has been removed and `acquireChatLease` will succeed.
+ * stale record has been removed and `acquireChatLease` will succeed, unless the holder refreshed it during the wait.
  */
 export async function chatLeaseHolderAlive(chatId: string | null): Promise<boolean> {
     if (!chatId || !chatBusyInAnotherTab(chatId)) return false;
     const ch = bus();
     if (!ch) return true;
     const nonce = `${TAB_ID}:${Math.random().toString(36).slice(2)}`;
+    const raw = () => { try { return localStorage.getItem(KEY(chatId)); } catch { return null; } };
+    const asked = raw();
     const answered = await new Promise<boolean>(resolve => {
         const probe = new BroadcastChannel(CHANNEL);   // a channel does not receive its own messages: ask on one, listen on another
         const done = (v: boolean) => { clearTimeout(timer); try { probe.close(); } catch {} resolve(v); };
@@ -106,9 +108,9 @@ export async function chatLeaseHolderAlive(chatId: string | null): Promise<boole
         try { probe.postMessage({ type: 'ping', chatId, nonce }); } catch { done(true); }
     });
     if (answered) return true;
-    // Nobody holds it: remove the record, unless it was refreshed or replaced while we waited.
-    const cur = read(chatId);
-    if (cur && cur.tab !== TAB_ID && Date.now() - cur.at >= 0) { try { localStorage.removeItem(KEY(chatId)); } catch {} }
+    // Nobody answered: remove the record, unless it was refreshed or replaced while we waited (a holder too busy to answer still
+    // heartbeats; `Date.now() - cur.at >= 0` held for every record, so a live lease was deleted, opencode ODR-03).
+    if (asked !== null && raw() === asked && read(chatId)?.tab !== TAB_ID) { try { localStorage.removeItem(KEY(chatId)); } catch {} }
     return false;
 }
 

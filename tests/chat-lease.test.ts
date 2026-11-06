@@ -89,6 +89,16 @@ describe('a lease left behind by a page that is gone (reload, crash) is not "ano
             expect(localStorage.getItem('fg_lease_live')).toBeTruthy();
             expect(acquireChatLease('live')).toBe(false);
         } finally { other.close(); reply.close(); }
+
+        // a holder too busy to answer in time, but which refreshed its record during the wait, keeps it (opencode ODR-03)
+        localStorage.setItem('fg_lease_busy', JSON.stringify({ tab: 'busy-tab', token: 't', at: Date.now() - 2000 }));
+        const busy = new BroadcastChannel('fg-chat-lease');
+        busy.onmessage = (ev: MessageEvent) => { if (ev.data?.type === 'ping' && ev.data.chatId === 'busy') localStorage.setItem('fg_lease_busy', JSON.stringify({ tab: 'busy-tab', token: 't', at: Date.now() })); };
+        try {
+            expect(await chatLeaseHolderAlive('busy')).toBe(false);
+            expect(localStorage.getItem('fg_lease_busy')).toBeTruthy();
+            expect(acquireChatLease('busy')).toBe(false);
+        } finally { busy.close(); localStorage.removeItem('fg_lease_busy'); }
     });
     it('nothing to ask when the chat is free or the record is our own', async () => {
         const { chatLeaseHolderAlive } = await import('../chat-lease.js');

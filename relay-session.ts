@@ -7,7 +7,9 @@
 // that asked for it, so an older Worker without it in its CORS list keeps working.
 
 const TURNSTILE_JS = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-const CHALLENGE_TIMEOUT_MS = 120_000;   // long enough for the visitor to click the checkbox when one is shown
+// The whole session setup (script load, challenge, /session exchange): long enough for the visitor to click the checkbox when one is
+// shown. It bounded only the widget, so a script that never loaded or a /session reply that never came hung every fetch to that Worker (codex DR-08).
+const CHALLENGE_TIMEOUT_MS = 120_000;
 
 const _sessions = new Map<string, string>();            // Worker origin -> session token
 const _pending = new Map<string, Promise<string>>();    // Worker origin -> challenge in progress (shared by parallel fetches)
@@ -41,21 +43,34 @@ function _loadTurnstile(): Promise<any> {
     return _script;
 }
 
+/** `p`, or a rejection with the signal's reason as soon as it aborts (no signal: `p`). */
+function _until<T>(p: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+    if (!signal) return p;
+    return new Promise<T>((resolve, reject) => {
+        if (signal.aborted) return reject(signal.reason);
+        const stop = () => reject(signal.reason);
+        signal.addEventListener('abort', stop, { once: true });
+        p.then(v => { signal.removeEventListener('abort', stop); resolve(v); }, e => { signal.removeEventListener('abort', stop); reject(e); });
+    });
+}
+
 // Runs the challenge. "interaction-only" keeps the widget invisible unless Cloudflare wants a click.
-async function _solve(siteKey: string): Promise<string> {
-    const turnstile = await _loadTurnstile();
+async function _solve(siteKey: string, deadline: AbortSignal): Promise<string> {
+    let turnstile: any;
+    try { turnstile = await _until(_loadTurnstile(), deadline); }
+    catch (e) { if (deadline.aborted) _script = null; throw e; }   // a load that never finished is tried afresh next time
     const box = document.createElement('div');
     box.className = 'relay-check';
     document.body.appendChild(box);
     let id: string | undefined;
     try {
         return await new Promise<string>((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('timed out')), CHALLENGE_TIMEOUT_MS);
-            const fail = (why: string) => { clearTimeout(timer); reject(new Error(why)); };
+            const fail = (why: string) => reject(new Error(why));
+            deadline.addEventListener('abort', () => fail('timed out'), { once: true });
             id = turnstile.render(box, {
                 sitekey: siteKey,
                 appearance: 'interaction-only',
-                callback: (token: string) => { clearTimeout(timer); resolve(token); },
+                callback: (token: string) => resolve(token),
                 'error-callback': (code: string) => { fail(`error ${code}`); return true; },
                 'timeout-callback': () => fail('the check expired'),
                 'unsupported-callback': () => fail('this browser is not supported'),
@@ -70,16 +85,18 @@ async function _solve(siteKey: string): Promise<string> {
 function _session(origin: string, siteKey: string, send: typeof fetch): Promise<string> {
     let p = _pending.get(origin);
     if (!p) {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(new Error('timed out')), CHALLENGE_TIMEOUT_MS);
         p = (async () => {
-            const token = await _solve(siteKey);
-            const resp = await send.call(window, `${origin}/session`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
-            });
-            const data = await resp.json().catch(() => ({}));
+            const token = await _solve(siteKey, ctl.signal);
+            const resp: Response = await _until(send.call(window, `${origin}/session`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }), signal: ctl.signal,
+            }), ctl.signal);
+            const data: any = await _until(resp.json().catch(() => ({})), ctl.signal);
             if (!resp.ok || typeof data.session !== 'string') throw new Error(data.error || `HTTP ${resp.status}`);
             _sessions.set(origin, data.session);
             return data.session as string;
-        })().finally(() => _pending.delete(origin));
+        })().finally(() => { clearTimeout(timer); _pending.delete(origin); });
         _pending.set(origin, p);
     }
     return p;
@@ -113,8 +130,9 @@ export function installRelaySession(): void {
         const siteKey = await resp.clone().json().then((d: any) => String(d?.turnstileSiteKey || ''), () => '');
         if (!siteKey) return resp;
         _sessions.delete(origin);
-        try { await _session(origin, siteKey, inner); }
-        catch (e: any) { return _refusal(String(e?.message || e)); }
+        // The caller's own cancellation ends its wait at once; the shared setup goes on for the other fetches waiting on it (codex DR-07).
+        try { await _until(_session(origin, siteKey, inner), init?.signal); }
+        catch (e: any) { if (init?.signal?.aborted) throw e; return _refusal(String(e?.message || e)); }
         return send();
     } as typeof fetch;
 }

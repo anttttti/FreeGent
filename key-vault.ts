@@ -385,6 +385,7 @@ export function keyVaultValues(): string[] { return [..._mem.values()].filter(Bo
         };
         // clear() wipes the encrypted copy with everything else: the lock is off afterwards.
         proto.clear = function () {
+            if (this === _ls()) _credVersion++;
             if (this === _ls() && (_enabled || _rawGet(KEY_VAULT_LS) !== null)) {
                 _drop(true); _enabled = false; _damaged = false; _salt = null;
                 const r = origClear.call(this);
@@ -401,6 +402,9 @@ export function keyVaultValues(): string[] { return [..._mem.values()].filter(Bo
         if (typeof window !== 'undefined' && window.addEventListener) {
             window.addEventListener('storage', (e: StorageEvent) => {
                 if (e.storageArea && e.storageArea !== s) return;
+                // A credential saved, removed or cleared in another tab bypasses this tab's setItem: the caches keyed on the version
+                // (dev-log's redaction list) must see it too (codex DR-09).
+                if (e.key === null || touches(e.key)) _credVersion++;
                 if (e.key !== null && e.key !== KEY_VAULT_LS) return;
                 const { blob, present } = _readVault();
                 if (!present) {

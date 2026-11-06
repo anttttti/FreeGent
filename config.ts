@@ -980,6 +980,14 @@ export function guestQuotaPausedUntil(): number {
 }
 export function pauseGuestQuota(until: number): void { try { localStorage.setItem(KEYS.GUEST_PAUSED_UNTIL, String(until)); } catch {} }
 let _cfKeysLoadedAt = 0;
+// Whose answer _cfWorkerKeys holds (the Worker and the Developer key it was asked with), and the newest lookup: a reply is installed only
+// while it is still the current question, and another Worker's or a local proxy's settings never keep one's access (codex DR-12).
+let _cfKeysFor = '', _cfKeysGen = 0;
+function _cfKeysRerender(): void {
+    const w = window as any;
+    w.renderMainModelList?.(); w.renderModelCatalogTable?.(); w.renderWorkerModelSelector?.(); w.renderUtilityModelSelector?.();
+    w.renderMediaModelSelectors?.(); w.renderGuestAccess?.();
+}
 /** When the last /keys lookup finished (ms), for refreshing it now and then: the guest quota can be switched at any time. */
 export function cfWorkerKeysLoadedAt(): number { return _cfKeysLoadedAt; }
 
@@ -988,14 +996,26 @@ export async function loadCfWorkerKeys(): Promise<void> {
     let passSet = false;
     try { passSet = !!getDevKey(); } catch {}
     _cfKeysDiag = { loaded: false, proxy, passSet, at: new Date().toISOString() };
-    if (!proxy) { _cfWorkerKeys = {}; (window as any).renderGuestAccess?.(); return; }   // no Worker at this privacy level: its keys are not usable
+    const gen = ++_cfKeysGen;
+    let worker = !!proxy;
     // Skip for same-origin proxy (local dev server — keys come from .env, not CF Worker)
-    try { if (new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; return; } } catch { return; }
+    try { if (proxy && new URL(proxy).hostname === window.location.hostname) { _cfKeysDiag.skipped = 'same-origin proxy'; worker = false; } } catch { worker = false; }
+    let who = '';
+    try { who = `${proxy}\u0000${getDevKey() || ''}`; } catch { who = proxy; }
+    // No Worker at this privacy level, or another one: the keys held are not usable. The same Worker keeps its last answer through a failed lookup.
+    if (!worker || who !== _cfKeysFor) {
+        const had = Object.keys(_cfWorkerKeys).length > 0;
+        _cfWorkerKeys = {}; _cfKeysFor = worker ? who : '';
+        if (had || !proxy) _cfKeysRerender();
+    }
+    if (!worker) return;
     try {
         const resp = await fetch(`${proxy}/keys`, { signal: AbortSignal.timeout(5_000) });
+        if (gen !== _cfKeysGen) return;   // a newer lookup has been started: this answer is not the current one
         _cfKeysDiag.status = resp.status;
         if (resp.ok) {
             const data = await resp.json();
+            if (gen !== _cfKeysGen) return;
             if (data && typeof data === 'object') {
                 // Guest-quota keys (the reply has guestQuota: true, so every true key in it is one) are withheld while paused for the day.
                 if (data.guestQuota && guestQuotaPausedUntil())
@@ -1004,15 +1024,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
                 _cfKeysLoadedAt = Date.now();
                 _cfKeysDiag.loaded = true;
                 _cfKeysDiag.keys = Object.keys(data).filter(k => data[k]);
-                // Re-render model lists so newly-available providers appear
-                if (typeof (window as any).renderMainModelList === 'function')
-                    (window as any).renderMainModelList();
-                if (typeof (window as any).renderModelCatalogTable === 'function')
-                    (window as any).renderModelCatalogTable();
-                (window as any).renderWorkerModelSelector?.();
-                (window as any).renderUtilityModelSelector?.();
-                (window as any).renderMediaModelSelectors?.();
-                (window as any).renderGuestAccess?.();
+                _cfKeysRerender();   // newly-available providers appear
             }
         }
     } catch (e: any) { _cfKeysDiag.error = String(e?.message || e); }
