@@ -28,7 +28,10 @@ export function isWriteAllowActive(): boolean { return _allowed !== null; }
 export function checkWriteAllowed(toolName: string, path: unknown): string | null {
     if (!_allowed) return null;
     const p = _norm(String(path ?? ''));
-    if (!p || p.split('/').includes('..')) return `${toolName}: ${String(path)} is outside the paths this run may write. Allowed: ${_allowed.join(', ')}. Nothing was written.`;
+    // No usable path at all (the model sent only `content`, or the key was garbled): say so, rather than
+    // "undefined is outside…", which gave the model nothing to correct (T15: four identical retries).
+    if (!p) return `${toolName}: the call has no "path" argument. Send it again with "path" set to a file inside the allowed paths (${_allowed.join(', ')}). Nothing was written.`;
+    if (p.split('/').includes('..')) return `${toolName}: ${String(path)} is outside the paths this run may write. Allowed: ${_allowed.join(', ')}. Nothing was written.`;
     if (_allowed.some(a => p === a || p.startsWith(a + '/'))) return null;
     return `${toolName}: ${p} is outside the paths this run may write. Allowed: ${_allowed.join(', ')}. Nothing was written; send the call again with a path inside them.`;
 }

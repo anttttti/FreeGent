@@ -54,3 +54,8 @@ Logs and the reviewed list live outside the repo (`~/.local/share/freegent/logs/
 
 Unit tests: `npx vitest run`. Smoke tests, simulations, browser-level checks of the WebUI and benchmarks live in a
 separate benchmark repository, whose `CLAUDE.md` and `BENCHMARKS.md` ("What tests what") say which to use when.
+
+## Improving FreeGent (reviews, chores, fixes from logs or reports)
+
+Follow `bench/rsi_guidelines.md`: evidence recomputed with commands, fix the cause, reuse existing code paths, prefer fewer tokens and fewer lines,
+no weakened guards or leaked credentials, tests only where they earn their place, outcome lines in the notes. The chore skills in `bench/skills/chores/` refer to it.

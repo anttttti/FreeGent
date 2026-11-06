@@ -11,9 +11,14 @@ describe('parseWriteAllow / checkWriteAllowed', () => {
         setWriteAllow(parseWriteAllow('out/, ./notes/report.md,/workspace/tmp'));
         expect(isWriteAllowActive()).toBe(true);
         for (const ok of ['out/a.ts', 'out/deep/b.txt', 'notes/report.md', 'tmp/x', './out/c']) expect(checkWriteAllowed('write_file', ok), ok).toBeNull();
-        for (const bad of ['storage-usage.ts', 'outside/a.ts', 'notes/report.md.bak', 'out/../storage-usage.ts', '', undefined]) {
+        for (const bad of ['storage-usage.ts', 'outside/a.ts', 'notes/report.md.bak', 'out/../storage-usage.ts']) {
             expect(checkWriteAllowed('write_file', bad), String(bad)).toMatch(/outside the paths this run may write\. Allowed: out, notes\/report\.md, tmp/);
         }
+    });
+    it('says the path is missing, not that "undefined" is outside', () => {
+        setWriteAllow(parseWriteAllow('out/'));
+        for (const none of ['', undefined, null]) expect(checkWriteAllowed('write_file', none), String(none)).toMatch(/no "path" argument.*\(out\)/);
+        setWriteAllow(null);
     });
     it('refuses a list that is empty or tries to climb out', () => {
         expect(() => parseWriteAllow(' , ')).toThrow(/no paths/);

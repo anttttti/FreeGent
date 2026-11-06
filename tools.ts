@@ -218,7 +218,7 @@ function _decodeEscapedArg(text: string, mode: 'full' | 'backslash' | 'quote'): 
 // Abbreviated-history write_file refusals per path in this chat (see _historyLookalike); reset with the
 // replace-failure state on a new chat.
 const _lookalikeRefusals = new Map<string, number>();
-export function resetLookalikeRefusals(): void { _lookalikeRefusals.clear(); }
+export function resetLookalikeRefusals(): void { _lookalikeRefusals.clear(); _shrinkRefused.clear(); }   // called at the start of every turn
 
 const _isScratchTask = (path: string) => /^(?:\.\/)?fg-tasks\/current\.md$/.test(String(path ?? ''));
 
@@ -279,6 +279,22 @@ function _historyLookalike(args): string | null {
     return null;
 }
 
+/** The shrink guard asks once: a write refused for shrinking goes through when the model sends the identical content for the
+ *  same path again. It has read the message (which says what to do instead) and insists, so the shrink is intended; the self-analysis
+ *  runs showed a model resending a deliberate 7,264 to 1,458 character rewrite of its own test file ten times (W9r2). */
+/** The refusal is the caller's own (a worker's lives on its context: another worker's refusal confirmed nothing, codex DR-10) and is for this
+ *  version of the file: one that changed since is refused again. */
+const _shrinkRefused = new Map<string, string>();
+const _djb2 = (t: string) => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return `${t.length}:${h}`; };
+function _shrinkNeedsConfirm(path: string, old: string, content: string, context: any): boolean {
+    const refused: Map<string, string> = context ? (context.shrinkRefused ??= new Map()) : _shrinkRefused;
+    const sig = `${_djb2(old)}>${_djb2(content)}`, key = String(path);
+    if (refused.get(key) === sig) { refused.delete(key); return false; }
+    refused.set(key, sig);
+    if (refused.size > 200) refused.delete(refused.keys().next().value as string);
+    return true;
+}
+
 function _shrinkError(path, oldLen, newLen, has: (tool: string) => boolean = () => true) {
     const surgical = ['replace_in_file', 'apply_patch'].filter(has);
     const advice = surgical.length
@@ -288,7 +304,7 @@ function _shrinkError(path, oldLen, newLen, has: (tool: string) => boolean = () 
               + `(a short script that replaces the exact text) instead of rewriting the whole file.`
             : `Read the file first and include ALL existing sections in your write.`;
     return `write_file: Content shrank from ${oldLen} to ${newLen} chars (${Math.round(newLen / oldLen * 100)}% of original) for "${path}". `
-        + `This usually means content was dropped. ${advice}`;
+        + `This usually means content was dropped. ${advice} If the smaller file is what you intend, send the identical write_file call again and it will be saved.`;
 }
 
 
@@ -1697,7 +1713,8 @@ async function _handleWriteFile(args, context) {
         const old = context.staging.has(args.path)
             ? (context.staging.get(args.path) ?? '')
             : ((await context.snapshot.get(args.path)) ?? '');
-        if (!_isScratchTask(args.path) && old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD) {
+        if (!_isScratchTask(args.path) && old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD
+                && _shrinkNeedsConfirm(args.path, old, args.content, context)) {
             return { error: _shrinkError(args.path, old.length, args.content.length, _callerHasTool(context)) };
         }
         if (!_isScratchTask(args.path) && old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
@@ -1715,7 +1732,8 @@ async function _handleWriteFile(args, context) {
         let previous = '';
         let existed = true;
         try { previous = await agentReadFile(args.path); } catch { existed = false; }
-        if (!_isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD) {
+        if (!_isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD
+                && _shrinkNeedsConfirm(args.path, previous, args.content, null)) {
             return { error: _shrinkError(args.path, previous.length, args.content.length, _callerHasTool(context)) };
         }
         if (!_isScratchTask(args.path) && previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
@@ -3108,11 +3126,22 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     }
 
     // fg-run --write-allow: the file-writing tools may only touch the listed paths (request policy; execute_code is not covered).
+    // apply_patch writes args.path (or --- a/ when path is absent); +++ headers alone must not authorize that write
+    // (a decoy +++ under an allowed path used to pass while the real path was outside the list).
     if (isWriteAllowActive() && (isFileWriteTool(name) || name === 'undo_write')) {
-        const patchText = String(args?.patch ?? args?.diff ?? '');
-        const targets = name === 'apply_patch'
-            ? [...patchText.matchAll(/^\+\+\+ (?:b\/)?(\S+)/gm)].map(m => m[1]).filter(p => p !== '/dev/null')
-            : [args?.path];
+        const patchText = String(args?.patch ?? args?.diff ?? args?.content ?? '');
+        let targets: unknown[];
+        if (name === 'apply_patch') {
+            const plus = [...patchText.matchAll(/^\+\+\+ (?:b\/)?(\S+)/gm)].map(m => m[1]).filter(p => p !== '/dev/null');
+            let writePath = args?.path;
+            if (!writePath) {
+                const m = patchText.trimStart().match(/^--- a\/([^\n]+)/);
+                if (m) writePath = m[1];
+            }
+            targets = [...new Set([writePath, ...plus].filter(p => p != null && p !== ''))];
+        } else {
+            targets = [args?.path];
+        }
         for (const t of targets.length ? targets : [args?.path]) {
             const why = checkWriteAllowed(name, t);
             if (why) return { error: why };

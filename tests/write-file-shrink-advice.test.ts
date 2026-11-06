@@ -15,7 +15,8 @@ let files: Map<string, string>;
 let orig: Record<string, any>;
 let toolsBefore: string[];
 
-beforeEach(() => {
+beforeEach(async () => {
+    (await import('../tools.ts')).resetLookalikeRefusals();
     files = new Map([['big.py', BIG]]);
     // The advice follows the tools the schema offers, so the editing tools are enabled here (as --enable-tools does headless).
     toolsBefore = [...enabledTools];
@@ -149,6 +150,31 @@ describe('fg-tasks/current.md is the scratch task and may be replaced by a short
         files.set('fg-tasks/036-t.md', old);
         const r2 = await W.executeToolAsync('write_file', { path: 'fg-tasks/036-t.md', content: '# short\n' }, null);
         expect(r2.error).toMatch(/Content shrank/);
+    });
+});
+
+describe('the shrink guard asks once', () => {
+    it('refuses a shrinking write, then saves the identical write sent again (a deliberate rewrite)', async () => {
+        W.mainAgentRole = role('read_file', 'write_file', 'execute_code');
+        const first = await shrink();
+        expect(first.error).toMatch(/Content shrank/);
+        expect(first.error).toMatch(/send the identical write_file call again/);
+        expect(files.get('big.py')).toBe(BIG);
+        const again = await shrink();
+        expect(again.error).toBeUndefined();
+        expect(files.get('big.py')).toBe('def f0():\n    return 0\n');
+    });
+    it('does not confirm a different shrinking write: the model has to repeat the same one', async () => {
+        W.mainAgentRole = role('read_file', 'write_file', 'execute_code');
+        expect((await W.executeToolAsync('write_file', { path: 'big.py', content: 'def a():\n    pass\n' }, null)).error).toMatch(/Content shrank/);
+        expect((await W.executeToolAsync('write_file', { path: 'big.py', content: 'def b():\n    pass\n' }, null)).error).toMatch(/Content shrank/);
+        expect(files.get('big.py')).toBe(BIG);
+    });
+    it('asks again when the file changed after the refusal', async () => {
+        W.mainAgentRole = role('read_file', 'write_file', 'execute_code');
+        expect((await shrink()).error).toMatch(/Content shrank/);
+        files.set('big.py', BIG + '# edited elsewhere\n');
+        expect((await shrink()).error).toMatch(/Content shrank/);
     });
 });
 
