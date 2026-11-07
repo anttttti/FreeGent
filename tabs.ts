@@ -1032,7 +1032,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
     const crash = crashedBefore(path, html);
-    if (crash) return { error: `check_page: ${describePageCheckCrash(crash)}` };
+    if (crash) return { error: `check_page: ${describePageCheckCrash(crash)}`, crashed: true };
     let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
     if (_MUTES_INLINE_ERRORS) content = _unmuteInlineScripts(content);
     // The capture script must run before every other script, so it goes first in <head>.

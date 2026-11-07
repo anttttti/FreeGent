@@ -213,7 +213,8 @@ function _crashLabel(name: string, args: any): string {
     return `${toolLabel(name, args)}${code ? `: ${code}` : ''}`;
 }
 
-let _lastStepSave = 0;   // when a step last saved the chat (see the tool results below)
+let _lastStepSave = 0;
+const _LONG_TOOLS = new Set(['execute_code', 'run_workers', 'deep_research']);   // check_page saves for itself   // when a step last saved the chat (see the tool results below)
 
 // clearReplaceState: clear replace-failure tracking on the given session (or defaultSession).
 // Called from agent-core via window.clearReplaceState() on new chat / rewind.
@@ -664,6 +665,8 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         } else {
             // Browser: marked while it runs, so a call that freezes or crashes the tab is reported at the next start (page-check-guard.ts).
             const _mark = runtime.hasNativeExec ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null);
+            // A call that can run for minutes: the chat is saved first, so a crash in it loses only this step (the step save is at most every 5 s).
+            if (_mark && !forWorker && _LONG_TOOLS.has(name)) { _lastStepSave = Date.now(); try { (globalThis as any).saveHistory?.(); } catch {} }
             try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
             catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
             finally { if (_mark) endToolCall(_mark); }

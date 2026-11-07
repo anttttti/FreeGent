@@ -25,9 +25,11 @@ export interface PageCheckCrash {
     beat: number;       // the app's last heartbeat during the check
     stage: string;      // what the check was doing then
     lines: string[];    // the page's last console lines / errors
+    runner?: boolean;   // an Autopilot / task run was going (its next task turn is told, whatever chat it is in)
     told?: boolean;     // the agent has been told
 }
 
+const _isRunner = (): boolean => { try { return !!(globalThis as any).isRunnerRunning?.(); } catch { return false; } };
 let _cur: PageCheckCrash | null = null;
 let _beat: ReturnType<typeof setInterval> | null = null;
 function _write(): void { try { if (_cur) sessionStorage.setItem(RUNNING, JSON.stringify(_cur)); } catch {} }
@@ -43,7 +45,7 @@ function _startBeat(): void { if (!_beat) _beat = setInterval(_tick, 500); }
 export function beginPageCheck(path: string, html: string, chatId: string | null): void {
     const now = Date.now();
     _cur = { path, hash: hashContent(html), chatId, session: SESSION_ID, version: FG_VERSION, t: now, beat: now,
-             stage: 'while the page loaded (its start-up scripts were running)', lines: [] };
+             stage: 'while the page loaded (its start-up scripts were running)', lines: [], runner: _isRunner() };
     _write();
     _startBeat();
 }
@@ -102,15 +104,16 @@ const TOOLS_RUNNING = 'fg_tools_running';
 const TOOL_CRASHES = 'fg_tool_crashes';
 
 export interface ToolCallMark { name: string; label: string; t: number; }
-export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; told?: boolean; }
+export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; }
 
 const _calls = new Map<number, ToolCallMark>();
 let _seq = 0;
 let _callsChat: string | null = null;
+let _callsRunner = false;
 function _writeCalls(beat = Date.now()): void {
     try {
         if (!_calls.size) { sessionStorage.removeItem(TOOLS_RUNNING); return; }
-        const m: ToolCrash = { calls: [..._calls.values()], chatId: _callsChat, session: SESSION_ID, version: FG_VERSION, beat };
+        const m: ToolCrash = { calls: [..._calls.values()], chatId: _callsChat, session: SESSION_ID, version: FG_VERSION, beat, runner: _callsRunner };
         sessionStorage.setItem(TOOLS_RUNNING, JSON.stringify(m));
     } catch {}
 }
@@ -120,6 +123,7 @@ export function beginToolCall(name: string, label: string, chatId: string | null
     const id = ++_seq;
     _calls.set(id, { name, label: String(label).slice(0, 200), t: Date.now() });
     _callsChat = chatId;
+    _callsRunner = _isRunner();
     _writeCalls();
     _startBeat();
     return id;
@@ -152,15 +156,17 @@ export function describeToolCrash(c: ToolCrash): string {
         + 'or work on the data in smaller pieces.';
 }
 
-/** Crashes the agent has not been told about, as one note (marked told), or ''. */
-export function takeCrashNote(): string {
+/** Crashes the agent of this turn has not been told about, as one note (marked told), or ''. A crash belongs to the chat it happened in;
+ *  one during an Autopilot / task run also to the run's next task turn, which is in a new chat. Another chat's turn is not told. */
+export function takeCrashNote({ chatId = null as string | null, runner = false } = {}): string {
+    const mine = (c: { chatId: string | null; runner?: boolean; told?: boolean }) => !c.told && (!c.chatId || c.chatId === chatId || (!!c.runner && runner));
     const list = _crashed();
-    const fresh = list.filter(c => !c.told);
-    if (fresh.length) _save(list.map(c => ({ ...c, told: true })));
+    const fresh = list.filter(mine);
+    if (fresh.length) _save(list.map(c => mine(c) ? { ...c, told: true } : c));
     let tools: ToolCrash[] = [];
     try { const v = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]'); if (Array.isArray(v)) tools = v; } catch {}
-    const freshTools = tools.filter(c => !c.told);
-    if (freshTools.length) { try { localStorage.setItem(TOOL_CRASHES, JSON.stringify(tools.map(c => ({ ...c, told: true })))); } catch {} }
+    const freshTools = tools.filter(mine);
+    if (freshTools.length) { try { localStorage.setItem(TOOL_CRASHES, JSON.stringify(tools.map(c => mine(c) ? { ...c, told: true } : c))); } catch {} }
     return [...fresh.map(describePageCheckCrash), ...freshTools.map(describeToolCrash)].join('\n\n');
 }
 

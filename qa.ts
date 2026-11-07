@@ -563,6 +563,15 @@ async function gate_page_check(taskPath) {
     let r: any;
     try { r = await runPageCheck(page, { waitMs: 1500 }); }
     catch (e) { return { blocks: false, outcome: 'unknown', detail: `Page check error: ${(e as any)?.message ?? e}` }; }
+    // The page crashed the tab when it was last loaded and has not changed: not loaded again, and not passed either (a refusal read as
+    // "could not check" let a task finish on a page that takes the app down). Accepted the second time, as page errors are.
+    if (r?.crashed) {
+        if (_bouncedBefore(taskPath, 'page-crash', page))
+            return { blocks: false, outcome: 'unknown', detail: `${page} crashed the browser tab and is unchanged (accepted on the second attempt)` };
+        const ts = new Date().toISOString().slice(0, 16) + 'Z';
+        await appendGateNote(taskPath, `## QA: Page Crashed the Tab (${ts})\n${page}: ${String(r.error).replace(/^check_page: /, '').split('\n')[0].slice(0, 400)}`);
+        return { blocks: true, reason: `${page}: ${String(r.error).replace(/^check_page: /, '')} Then set the status again.` };
+    }
     if (r?.error) return { blocks: false, outcome: 'unknown', detail: `Page check: ${String(r.error).slice(0, 160)}` };
     const errors: string[] = (r?.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
     // No error but nothing on the page either (no text, no media, canvases transparent): its start-up code did not run.

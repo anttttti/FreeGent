@@ -126,6 +126,17 @@ describe('page-check gate', () => {
         expect(second.transitioned).toBe(true);
         expect(second.unverified.join(' ')).toMatch(/still reports errors/);
     });
+    it('blocks done on a page that crashed the tab and is unchanged (it is refused, not passed), once', async () => {
+        files['index.html'] = '<script>for(;;){}</script>';
+        W.runPageCheck = async () => ({ error: 'check_page: The browser tab crashed or was killed while check_page ran "index.html" (…). Fix it before running check_page on this page again.', crashed: true });
+        const first = await W.transitionTask(TASK, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/index\.html: The browser tab crashed or was killed[\s\S]*Then set the status again/);
+        expect(files[TASK]).toMatch(/## QA: Page Crashed the Tab/);
+        const second = await W.transitionTask(TASK, 'done');
+        expect(second.transitioned).toBe(true);
+        expect(second.unverified.join(' ')).toMatch(/crashed the browser tab and is unchanged/);
+    });
     it('blocks a page that loads without an error but shows nothing (AE-18), once', async () => {
         files['index.html'] = '<canvas id="c"></canvas><script type="module" src="src/main.js"></script>';
         W.runPageCheck = async (p) => ({ path: p, loaded: true, blank: true, summary: 'Loaded fine; no errors.', errors: [] });

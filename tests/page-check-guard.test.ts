@@ -28,11 +28,12 @@ describe('check_page crash guard', () => {
         const marker = JSON.parse(sessionStorage.getItem('fg_check_page_running')!);
         sessionStorage.setItem('fg_check_page_running', JSON.stringify({ ...marker, t: t0, beat: t0 + 2300 }));
         takePageCheckCrash();
-        const note = takeCrashNote();
+        expect(takeCrashNote({ chatId: 'other-chat' })).toBe('');   // another chat's turn is not told
+        const note = takeCrashNote({ chatId: 'chat-1' });
         expect(note).toContain('2.3 s after the page started loading, during the action {"click":"#start"}');
         expect(note).toContain('log: level 1 built');
         expect(note).toContain('Maximum call stack size exceeded');
-        expect(takeCrashNote()).toBe('');
+        expect(takeCrashNote({ chatId: 'chat-1' })).toBe('');
     });
 
     it('any tool call the tab died in is reported once, with what ran and for how long; a finished call is not', () => {
@@ -46,9 +47,20 @@ describe('check_page crash guard', () => {
         expect(c!.calls.map(x => x.name)).toEqual(['execute_code']);
         expect(c!.chatId).toBe('chat-2');
         expect(takeToolCrash()).toBeNull();
-        const note = takeCrashNote();
+        const note = takeCrashNote({ chatId: 'chat-2' });
         expect(note).toContain('exec(python): while True: pass — running for 12.3 s when the app last responded');
-        expect(takeCrashNote()).toBe('');
+        expect(takeCrashNote({ chatId: 'chat-2' })).toBe('');
+    });
+
+    it('a crash during an Autopilot run is told to its next task turn, which is in a new chat', () => {
+        const prev = (globalThis as any).isRunnerRunning;
+        try {
+            (globalThis as any).isRunnerRunning = () => true;
+            beginToolCall('execute_code', 'exec(python): big()', 'task-chat-1');
+            takeToolCrash();
+            expect(takeCrashNote({ chatId: 'my-chat', runner: false })).toBe('');
+            expect(takeCrashNote({ chatId: 'task-chat-2', runner: true })).toContain('exec(python): big()');
+        } finally { (globalThis as any).isRunnerRunning = prev; }
     });
 
     it('a check_page crash is reported by its own record, not again as a tool call', () => {
