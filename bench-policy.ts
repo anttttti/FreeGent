@@ -117,7 +117,9 @@ export function retryDirective(hist: any[], task: string): string | null {
         if (m.role !== 'tool' || !ranPytest(m.tool_call_id)) continue;
         const c = typeof m.content === 'string' ? m.content
             : Array.isArray(m.content) ? (m.content as any[]).map((x: any) => x.text ?? '').join('') : '';
-        if (/passed|failed|PASSED|FAILED|ERROR|pytest/.test(c)) { testOutput = c; break; }
+        // A collection or import failure is a run too (only stderr, e.g. "ImportError while loading conftest"): reading it as
+        // "never ran" bounced v0.97 flask-5014 and pylint-7277 twice for a test the image cannot collect; both resolved.
+        if (/passed|failed|PASSED|FAILED|ERROR|pytest|Error\b|no tests ran/.test(c)) { testOutput = c; break; }
     }
     // Pass: at least one "N passed" with no "N failed" / "N error"
     const testPassed = !!testOutput && /\d+ passed/.test(testOutput) && !/\d+ (failed|error)/.test(testOutput);

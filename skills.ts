@@ -443,7 +443,9 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
         type: 'rule',
         description: 'Stack trace and error debugging — how to trace to root cause efficiently.',
         trigger: 'error, exception, traceback, TypeError, AttributeError, NameError, SyntaxError, undefined is not, is not defined, failed, bug, broken, crash, wrong output, unexpected result',
-        trigger_on_message_pattern: 'Traceback|TypeError|AttributeError|NameError|SyntaxError|ReferenceError|at line \\d|\\bError:|Exception:|FAILED\\b|stack trace|\\bat \\w',
+        // A stack frame is `at fn (file:line…)` or `at file:line:col`: a bare `\bat \w` matched "at the top level" in AgentBench's
+        // wrapper, and all 60 OS questions got stack-trace advice (v0.97).
+        trigger_on_message_pattern: 'Traceback|TypeError|AttributeError|NameError|SyntaxError|ReferenceError|at line \\d|\\bError:|Exception:|FAILED\\b|stack trace|\\bat [\\w$.<>]+ \\([^)\\s]+:\\d+|\\bat [^\\s()]+:\\d+:\\d+',
         // No trigger_on_failure 'tool_error': tool-level errors (file not found, refused read, HTTP
         // error from fetch_url) carry no stack trace to search for. All 101 v0.57 injections came
         // from it, 82 in AutomationBench.

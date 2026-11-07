@@ -155,6 +155,15 @@ describe('failure-recovery / debug-strategy triggers', () => {
     it('ten successful execute_code calls inject nothing', () => {
         expect(W.reactiveSkillGuidance(execs(12))).toBe('');
     });
+    it('debug-strategy\'s message pattern matches stack frames, not the word "at" in prose', () => {
+        // v0.97: `\bat \w` matched AgentBench's wrapper ("at the top level"), so all 60 OS questions got stack-trace advice.
+        const re = new RegExp(W.skillsRegistry.get('debug-strategy').trigger_on_message_pattern, 'i');
+        expect(re.test('Count the files, unless the task says "directly in" or "at the top level".')).toBe(false);
+        expect(re.test('Look at what the log says.')).toBe(false);
+        expect(re.test('TypeError: x is undefined\n    at render (src/app.js:12:5)')).toBe(true);
+        expect(re.test('Uncaught x is not a function\n    at src/app.js:12:5')).toBe(true);
+        expect(re.test('    at Object.<anonymous> (/srv/index.js:3:1)')).toBe(true);
+    });
     it('two tool errors inject failure-recovery but not debug-strategy', () => {
         const out = W.reactiveSkillGuidance(toolErrs(2));
         expect(out).toContain('### failure-recovery');

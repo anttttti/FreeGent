@@ -35,6 +35,7 @@ LM Studio: load a model and start the server from the Developer tab. The endpoin
 - **Give the model enough context.** The agent's system prompt and tool definitions alone take several thousand tokens. Ollama's default context is small and silently cuts the start of the prompt, so raise it as above.
 - **Set Context (K) to what the server really allows** (vLLM's `--max-model-len`, Ollama's context length). FreeGent caps `max_tokens` to the room left in that window and compacts the history before it fills. A value larger than the server's limit leads to overflow errors.
 - **Sampling.** The overrides under Settings → Models (temperature, top-p, top-k, min-p, penalties) are empty by default, so the server's own defaults apply. Set the values the model's authors recommend if the server does not apply them itself.
+- **Report cached tokens (vLLM).** With `--enable-prefix-caching`, add `--enable-prompt-tokens-details`; without it vLLM sends no `prompt_tokens_details`, so the logs and benchmark rows show 0 cached tokens even when nearly all of the prompt was a cache hit (v0.97: 0 recorded against a 94% server hit rate).
 - **Compaction is slow on a local model.** Summarising a long history can take a few minutes on consumer hardware; see [Context and compaction](../harness/context.md).
 
 ## Troubleshooting

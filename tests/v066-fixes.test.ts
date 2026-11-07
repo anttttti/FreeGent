@@ -2,7 +2,7 @@
 // for a test that ran and failed, a run_workers result is bounded in history, and one tool result
 // cannot fill the compaction tail.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { _gradedTestIds, _gradedTestFailed } from '../bench-policy.ts';
+import { _gradedTestIds, _gradedTestFailed, retryDirective } from '../bench-policy.ts';
 import { truncateResultForHistory } from '../history.ts';
 import { _capTailToolResults } from '../llm-shared.ts';
 
@@ -150,5 +150,27 @@ describe('autonomous run: BLOCKED: <question> is the way to ask the user', () =>
         const r = await _handleTurnState('Please provide your zip code? COMPLETED', 3, ps(), adapter());
         expect(r.kind).toBe('continue');
         expect(pushed.join(' ')).toMatch(/BLOCKED: <the exact question/);
+    });
+});
+
+describe('graded-test gate: a run that could not collect the tests still ran them', () => {
+    // v0.97 Verified flask-5014 / pylint-7277: the exact graded command exited 4 with only a conftest ImportError in
+    // stderr, and the gate answered "you declared COMPLETED without running the graded test", twice. Both patches resolved.
+    const TASK = 'Fix it.\n\nGraded tests (run these to verify your fix before declaring done):\npytest tests/test_blueprints.py::test_empty_name\n\nDone.';
+    const hist = (result: object) => [
+        { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'execute_code',
+            arguments: JSON.stringify({ language: 'bash', code: 'python -m pytest tests/test_blueprints.py::test_empty_name' }) } }] },
+        { role: 'tool', tool_call_id: 'c1', content: JSON.stringify(result) },
+    ];
+    it('a conftest ImportError in stderr is not "never ran"', () => {
+        const r = retryDirective(hist({ stdout: '', stderr: "ImportError while loading conftest '/workspace/tests/conftest.py'.\ntests/conftest.py:6: in <module>\n    import flask\nE   ModuleNotFoundError: No module named 'flask'", exit_code: 4 }), TASK);
+        expect(r).toBeNull();
+    });
+    it('a graded test that ran and failed still bounces', () => {
+        const r = retryDirective(hist({ stdout: 'FAILED tests/test_blueprints.py::test_empty_name - AssertionError\n=== 1 failed in 0.2s ===', stderr: '', exit_code: 1 }), TASK);
+        expect(r).toMatch(/still failed/);
+    });
+    it('no test command at all still bounces', () => {
+        expect(retryDirective([], TASK)).toMatch(/without running the graded test/);
     });
 });
