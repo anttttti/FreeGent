@@ -11,7 +11,7 @@
 import { _BLOCKED_DECLARATION_RE, _TERMINAL_RE, _isComplete } from './turn-protocol.js';
 import { runtime } from './runtime.js';
 import type { Verification } from './verification.js';
-import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths, taskChangesData } from './detectors.js';
+import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths, taskChangesData, copiedNotMoved, testFixtures } from './detectors.js';
 import { isTaskPath } from './task-status.js';
 
 export interface GateContext {
@@ -36,6 +36,8 @@ export interface GateContext {
     isScratchPath: (p: string) => boolean;
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
     brokenFiles: (paths: Iterable<string>) => Promise<string[]>;   // parse errors of these files (tools.ts brokenFileReport)
+    shellCommands?: string[];         // the bash commands that ran successfully this turn, in order
+    autoCheck?: (paths: string[], opts?: { stillExist?: string[] }) => Promise<{ ran: boolean; failure?: string }>;   // qa.ts autoCheckEdited: the harness's own check of the changed files
 }
 export interface GateHit { name: string; text: string; force: boolean }
 export interface CompletionGate { name: string; run(c: GateContext): GateHit | null | Promise<GateHit | null> }
@@ -91,26 +93,42 @@ const failedCheck: CompletionGate = {
     },
 };
 
-// Experiment verify_reminder (FG_EXPERIMENTS): the run changed something and no check ran after the last change. A change that was never
-// checked passed silently: the completion checklist is picked by the task's triggers and the agent grades itself, and `unverified` has no
-// gate. v0.97: 111 of 584 tasks. AgentBench OS 30, 33 and 55 finished with the request unmet (copied, not moved; no `calc` command) after
-// checking only their own reading of it. Only a test, build, syntax check or check_page counts as a check (verification.ts); a read-back
-// does not. Shares the one verification bounce with failed_check_complete, so a turn gets at most one of them; the second COMPLETED
-// passes and the verdict stays `unverified`.
+// On by default; FG_EXPERIMENTS=no_verify_reminder turns it off (the A/B control). The run changed something and no check ran after the last
+// change (v0.97: 111 of 584 tasks; AgentBench OS 30, 33 and 55 finished with the request unmet). The harness runs the check itself (qa.ts
+// autoCheckEdited: the tests beside the changed files, the page's load) and speaks only when it fails. Where no check applies it says nothing:
+// v0.99 first asked the agent to check, and on 16 of 60 OS tasks (half with nothing checkable) it invented checks, re-ran its own command,
+// or created test users and edited sudoers, for +33% input tokens and no task gained. Not for question-only tasks, whose files are the
+// agent's own scratch work. Shares the one verification bounce with failed_check_complete; the second COMPLETED passes.
 const missingCheck: CompletionGate = {
     name: 'missing_check_complete',
-    run(c) {
-        if (!runtime.experiment('verify_reminder') || !completionDeclared(c) || c.ps.verifCheck) return null;
+    async run(c) {
+        if (runtime.experiment('no_verify_reminder') || !completionDeclared(c) || c.ps.verifCheck || !c.autoCheck) return null;
         // The graded-test directive owns tasks that list their tests.
         if (c.reactiveFired.has('graded_test') || c.gradedTestIds().length) return null;
-        // `unverified` is a change (scratch files and task cards do not count, verification.ts) with no check after it; `no_change` with a
-        // state change is a benchmark that grades the system's state, where a command changed it without writing a reported file.
-        if (!(c.verdict === 'unverified' || (c.verdict === 'no_change' && c.stateChanged))) return null;
+        const copied = copiedNotMoved(c.task, c.shellCommands ?? []);   // a postcondition of the request itself, whatever the verdict
+        if (!copied.length && !(c.verdict === 'unverified' || (c.verdict === 'no_change' && c.stateChanged))) return null;
+        if (isQuestionOnlyTask(c.task)) return null;
         const files = [...new Set([...c.editedPaths, ...c.shellWrites])].filter(p => !c.isScratchPath(p) && !isTaskPath(p));
+        if (!files.length && !copied.length) return null;
+        const r = await c.autoCheck(files, { stillExist: copied });
+        if (!r.failure) return null;
         c.ps.verifCheck = 1;
-        const what = files.length ? `${files.slice(0, 3).join(', ')}${files.length > 3 ? ` and ${files.length - 3} more` : ''}` : 'the system';
         return { name: 'missing_check_complete', force: true,
-            text: `You declared COMPLETED, but you changed ${what} and no check ran after the last change. Check the requested result itself — run it as the user would, test it, load the page with check_page — not only a command that shows what you did. If it cannot be checked here, say why. Then reply COMPLETED.` };
+            text: `You declared COMPLETED, but a check of what you changed fails:\n${r.failure.slice(0, 1500)}\nIf your change causes it, fix it and re-run the check; if it failed before your change, say so. Then reply COMPLETED.` };
+    },
+};
+
+// Users, groups and sudoers.d files the agent created to try its fix, which the task never asked for: they stay in the system the task is
+// judged on (AgentBench OS 40 and 41, v0.99). Once; the second COMPLETED passes.
+const testFixturesLeft: CompletionGate = {
+    name: 'test_fixtures_left',
+    run(c) {
+        if (!completionDeclared(c) || c.ps.fixtureCheck) return null;
+        const left = testFixtures(c.task, c.shellCommands ?? []);
+        if (!left.length) return null;
+        c.ps.fixtureCheck = 1;
+        return { name: 'test_fixtures_left', force: true,
+            text: `You declared COMPLETED, but this run created ${left.slice(0, 4).join(', ')} to test with, and the task did not ask for it. Remove ${left.length > 1 ? 'them' : 'it'} (userdel -r, groupdel, rm), check that the fix itself still works, then reply COMPLETED.` };
     },
 };
 
@@ -155,7 +173,7 @@ const envConfig: CompletionGate = {
 };
 
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, missingCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, missingCheck, testFixturesLeft, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {

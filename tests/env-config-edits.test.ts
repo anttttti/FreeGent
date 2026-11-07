@@ -14,6 +14,7 @@ beforeAll(async () => {
     await import('../step-validator.ts');
 });
 beforeEach(() => {
+    process.env.FG_EXPERIMENTS = 'no_verify_reminder';   // these tests are about the other gates, which the verify reminder would pre-empt
     localStorage.clear();
     W.mainAgentRole = null;
     localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
@@ -22,7 +23,7 @@ beforeEach(() => {
     origNative = W.nativeExec;
     (globalThis as any).nativeExec = W.nativeExec = async () => ({ stdout: '', stderr: '', exit_code: 0, files_written: ['xarray/core/groupby.py', 'conftest.py'] });
 });
-afterEach(() => { (globalThis as any).nativeExec = W.nativeExec = origNative; delete (globalThis as any).fgChangedFiles; });
+afterEach(() => { delete process.env.FG_EXPERIMENTS; (globalThis as any).nativeExec = W.nativeExec = origNative; delete (globalThis as any).fgChangedFiles; });
 
 async function run(task: string) {
     const s = W.createSession({ workflowMode: true });

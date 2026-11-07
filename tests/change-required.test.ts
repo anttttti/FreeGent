@@ -10,13 +10,14 @@ import { pushHistory, historyOf } from './history-helpers.ts';
 const W = window as any;
 beforeAll(async () => { await import('../llm-loops.ts'); await import('../step-validator.ts'); });
 beforeEach(() => {
+    process.env.FG_EXPERIMENTS = 'no_verify_reminder';   // these tests are about the other gates, which the verify reminder would pre-empt
     localStorage.clear();
     W.mainAgentRole = null;
     localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
     localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
     W._sessionToolFilter = new Set(['execute_code']);
 });
-afterEach(() => { delete process.env.FG_CHANGE_REQUIRED; delete process.env.FG_EDIT_REQUIRED; });
+afterEach(() => { delete process.env.FG_EXPERIMENTS; delete process.env.FG_CHANGE_REQUIRED; delete process.env.FG_EDIT_REQUIRED; });
 
 const sh = (id: string, code: string) => ({ tool_calls: [{ id, type: 'function', function: { name: 'execute_code', arguments: JSON.stringify({ language: 'bash', code }) } }] });
 async function run(task: string, replies: any[], exec: (code: string) => any) {

@@ -489,6 +489,56 @@ function _testCommand(files: string[]): string {
     return lines.join('\n');
 }
 
+// The check the harness runs itself when a run declares COMPLETED after changes nothing checked (completion-gates.ts, missing_check_complete):
+// the tests that sit beside the changed files, and for a changed web file the root page's load. `ran: false` means no check applies here, and
+// the gate then says nothing (v0.99 AgentBench OS: asked to check with no check available, the agent invented one, in some cases by creating
+// test users and editing sudoers). Only a failure goes back to the agent, with its output.
+const _TEST_SIBLINGS = (p: string): string[] => {
+    const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
+    const name = p.split('/').pop()!.replace(/\.[^.]+$/, '');
+    const base = p.replace(/\.[^.]+$/, '');
+    return [`${base}.test.js`, `${base}.spec.js`, `tests/${name}.test.js`, `__tests__/${name}.js`, `${dir}test_${name}.py`, `${dir}tests/test_${name}.py`, `tests/test_${name}.py`, `${base}_test.py`, `${dir}test_${name}.mjs`, `test_${name}.mjs`];
+};
+export async function autoCheckEdited(edited: string[], { stillExist = [] as string[] } = {}): Promise<{ ran: boolean; failure?: string }> {
+    const code = edited.filter(p => _QA_SOURCE_RE.test(p) && !_QA_NOT_SOURCE_RE.test(p) && !_QA_TEST_FILE_RE.test(p));
+    const found = new Set<string>();
+    for (const p of code) for (const c of _TEST_SIBLINGS(p)) { if (/['"$`\\]/.test(c)) continue; try { await agentReadFile(c); found.add(c); break; } catch {} }
+    for (const p of edited) if (_QA_TEST_FILE_RE.test(p) && !/['"$`\\]/.test(p)) found.add(p);   // a test the run edited is a check of its own
+    const failures: string[] = [];
+    let ran = false;
+    // Sources a `cp` left behind when the task said to move (detectors.ts copiedNotMoved).
+    for (const p of stillExist.slice(0, 5)) {
+        if (/['"$`\\\n]/.test(p) || !_hasBashOrCode()) continue;
+        const res: any = await executeToolAsync('execute_code', { language: 'bash', code: `test -e ${_shq(p)} && echo present`, timeout_s: 10 }, null).catch(() => null);
+        if (res && res.exit_code === 0 && /present/.test(res.stdout || '')) { ran = true; failures.push(`${p} is still there: the task says to move it, and cp leaves the original. Remove it (mv would have done both).`); }
+    }
+    if (found.size && _hasBashOrCode()) {
+        const files = [...found].slice(0, _QA_PY_TEST_FILES_MAX);
+        try {
+            const res: any = await executeToolAsync('execute_code', { language: 'bash', code: _testCommand(files), timeout_s: _QA_TEST_TIMEOUT_MS / 1000 }, null);
+            const out = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
+            const missingTool = res.exit_code === 127 || _QA_RUNNER_MISSING_RE.test(out);
+            if (res.exit_code != null && !missingTool) {
+                ran = true;
+                if (res.exit_code !== 0) failures.push(`${files.join(', ')} failed:\n${out.split('\n').slice(-12).join('\n')}`);
+            }
+        } catch {}
+    }
+    if (code.some(p => /\.(?:html?|m?js|css)$/i.test(p)) && typeof runPageCheck === 'function' && !runtime.hasNativeExec) {
+        const names: string[] = ((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter(Boolean);
+        const page = names.includes('index.html') ? 'index.html' : (names.filter(n => /^[^/]+\.html?$/i.test(n)).length === 1 ? names.find(n => /^[^/]+\.html?$/i.test(n))! : null);
+        if (page) {
+            const r: any = await runPageCheck(page, { waitMs: 1500 }).catch(() => null);
+            if (r && !r.error && r.loaded !== false) {
+                ran = true;
+                const errs = (r.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
+                if (errs.length) failures.push(`${page} reports ${errs.length > 1 ? `${errs.length} errors` : 'an error'} when it loads: ${errs.map((e: string) => e.slice(0, 200)).join(' | ')}`);
+            }
+        }
+    }
+    return { ran, ...(failures.length ? { failure: failures.join('\n') } : {}) };
+}
+
 // A failure the agent was already shown for this task, met again unchanged at its next "done", is accepted as unverified:
 // it may predate the task, and the completion gates follow the same rule (one bounce, then the agent's reason stands).
 const _qaBounced = new Map<string, string>();

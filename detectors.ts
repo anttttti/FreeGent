@@ -360,6 +360,37 @@ export function isQuestionOnlyTask(task: string): boolean {
     if (!t || t.length > 1500) return false;
     return !_ACTION_RE.test(t);
 }
+// What a task that says "move" needs and a copy does not give: the source gone. AgentBench OS 30 (v0.99): `cp` of the file, the original left
+// where it was, graded failed. Returns the sources of `cp` commands that nothing later moved or removed; the caller checks they still exist.
+const _MOVE_RE = /\bmov(?:e|ed|ing)\b/i, _COPY_RE = /\bcop(?:y|ied|ies|ying)\b/i;
+const _unq = (w: string) => w.replace(/^(['"])(.*)\1$/, '$2');
+export function copiedNotMoved(task: string, commands: string[]): string[] {
+    if (!_MOVE_RE.test(task) || _COPY_RE.test(task)) return [];
+    const sources = new Set<string>();
+    for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
+        const cp = /^\s*(?:sudo\s+)?cp\s+((?:-\S+\s+)*)(\S+)\s+(\S+)\s*$/.exec(line);
+        if (cp && !/-\w*[rR]/.test(cp[1]) && !/[*?$`]/.test(cp[2])) sources.add(_unq(cp[2]));
+        const gone = /^\s*(?:sudo\s+)?(?:mv|rm|unlink)\s+(?:-\S+\s+)*(.+)$/.exec(line);
+        if (gone) for (const w of gone[1].split(/\s+/)) sources.delete(_unq(w));
+    }
+    return [...sources];
+}
+
+// Users and groups a command line created, and sudoers.d files it wrote, when the task did not ask for any: the agent's test fixtures.
+// AgentBench OS 40 and 41 (v0.99) created a `testuser` and a sudoers.d file to try a sudo fix, and left them in the system the grader reads.
+const _USER_TASK_RE = /\b(?:users?|accounts?|groups?|useradd|adduser|sudoers?\.d)\b/i;
+export function testFixtures(task: string, commands: string[]): string[] {
+    if (_USER_TASK_RE.test(task)) return [];
+    const out = new Set<string>();
+    for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
+        const u = /\b(useradd|adduser|groupadd)\s+(?:-\S+\s+(?:\S+\s+)?)*([A-Za-z_][\w.-]*)\s*$/.exec(line);
+        if (u) out.add(`${u[1] === 'groupadd' ? 'group' : 'user'} ${u[2]}`);
+        const f = />>?\s*(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line) || /\btee\s+(?:-a\s+)?(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line);
+        if (f) out.add(f[1]);
+    }
+    return [...out];
+}
+
 // A task that asks for the supplied data itself to be changed ("fix the bad value in data.csv", "clean up the
 // log", "convert the CSV"). Overwriting a supplied data file is then the work, not a way of inventing data, so the
 // invented_data gate leaves it alone (s6-misleading-error: the nudge made the model restore a correct fix).

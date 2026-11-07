@@ -19,7 +19,8 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | `env_failure` | nudge | `llm-loops.ts` | execute_code failing repeatedly with the same error (3) or in total (8); also two inline python3 -c syntax failures in a row |
 | `failed_check_complete` | gate | `completion-gates.ts` | gate: COMPLETED while the last test/compile check after the last change failed |
 | `invented_data` | gate | `completion-gates.ts` | gate: the work created stand-in data or files nobody supplied |
-| `missing_check_complete` | gate | `completion-gates.ts` | gate (experiment verify_reminder): COMPLETED after a change that no test, build or page check followed |
+| `missing_check_complete` | gate | `completion-gates.ts` | gate: COMPLETED after a change whose own tests or page load (run by the harness) fail |
+| `test_fixtures_left` | gate | `completion-gates.ts` | gate: users, groups or sudoers.d files the run created to test with, which the task did not ask for |
 | `no_change_fix` | gate | `bench-policy.ts` | benchmark policy: a "fix" that changed nothing |
 | `no_edit_complete` | gate | `bench-policy.ts` | benchmark policy: COMPLETED on a task that needs an edit, with no edit made |
 | `output_cut_off` | nudge | `llm-loops.ts` | the response was cut off by the output cap or ended in a degenerate repeated tail |

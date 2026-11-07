@@ -25,6 +25,7 @@ import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, 
 import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
+import { autoCheckEdited } from './qa.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
@@ -1300,6 +1301,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     const _verif = newVerification();         // state of the change, for the failed-check bounce at COMPLETED
     // Experiment syntax_watch: when each file that does not parse was first seen broken, and how often the model was reminded.
     const _syntaxSeen = new Map<string, { since: number; reminded: number }>();
+    const _shellCmds: string[] = [];          // bash commands that ran successfully, for the completion gates (copied-not-moved, test fixtures)
     const _shellWrites = new Set<string>();   // paths a shell command redirected into (container runs report no files_written)
     let _stateChanged = false;                // a successful command changed the system without a reported file (install, chmod, ...)
     let _editEvents = 0;            // steps that edited files or ran workers — re-arms the env-config check
@@ -1573,7 +1575,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
-                isScratchPath, envConfigEdits, brokenFiles: brokenFileReport,
+                isScratchPath, envConfigEdits, brokenFiles: brokenFileReport, autoCheck: autoCheckEdited, shellCommands: _shellCmds,
             });
             if (_gate) {
                 if (!_BLOCKED_DECLARATION_RE.test(textContent)) _saveAnswer(ps, textContent);   // a bounced BLOCKED is not an answer
@@ -2429,7 +2431,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             && Array.isArray(r.result?.files_written) && r.result.files_written.length > 0))
             _editsThisRun = true;
         for (const r of results) if (r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0)
-            for (const p of shellWritePaths(String(r.args?.code ?? ''))) _shellWrites.add(p);
+            { for (const p of shellWritePaths(String(r.args?.code ?? ''))) _shellWrites.add(p); if (String(r.args?.language ?? 'bash') === 'bash') _shellCmds.push(String(r.args?.code ?? '')); }
         if (!_stateChanged) _stateChanged = results.some(r => r.name === 'execute_code' && !r.result?.error && (r.result?.exit_code ?? 0) === 0
             && String(r.args?.language ?? 'bash') === 'bash' && taskPolicy.changesState(String(r.args?.code ?? '')));
         noteVerification(_verif, { toolCalls: results.map(r => ({ name: r.name, args: r.args, result: r.result })) });

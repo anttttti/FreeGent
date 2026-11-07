@@ -9,13 +9,14 @@ import { pushHistory, historyOf } from './history-helpers.ts';
 const W = window as any;
 beforeAll(async () => { await import('../llm-loops.ts'); await import('../step-validator.ts'); });
 beforeEach(() => {
+    process.env.FG_EXPERIMENTS = 'no_verify_reminder';   // these tests are about the other gates, which the verify reminder would pre-empt
     localStorage.clear();
     W.mainAgentRole = null;
     localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(['openrouter|qwen/qwen3-30b-a3b']));
     localStorage.setItem(KEYS.OPENROUTER_KEY, 'test-key');
     W._sessionToolFilter = new Set(['execute_code']);
 });
-afterEach(() => { delete process.env.FG_EDIT_REQUIRED; });
+afterEach(() => { delete process.env.FG_EXPERIMENTS; delete process.env.FG_EDIT_REQUIRED; });
 
 const SWE_TASK = 'The following is a GitHub issue filed against the `x/y` repository. Your job is to locate the responsible code and fix it by editing the source files in your workspace.\n\nset_visible(False) leaves children visible.';
 
