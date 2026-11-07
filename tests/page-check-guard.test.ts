@@ -1,13 +1,13 @@
 // A page that crashed the tab under check_page (page-check-guard.ts): recorded at the next start-up, and that same content is refused
 // instead of crashing the tab again; a normal unload is not a crash.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { beginPageCheck, endPageCheck, notePageCheck, takePageCheckCrash, crashedBefore, takePageCheckCrashNote } from '../page-check-guard.ts';
+import { beginPageCheck, endPageCheck, notePageCheck, takePageCheckCrash, crashedBefore, takeCrashNote, beginToolCall, endToolCall, takeToolCrash } from '../page-check-guard.ts';
 import '../tabs.ts';
 
 const W = window as any;
 
 describe('check_page crash guard', () => {
-    beforeEach(() => { sessionStorage.clear(); localStorage.clear(); });
+    beforeEach(() => { window.dispatchEvent(new Event('pagehide')); sessionStorage.clear(); localStorage.clear(); });   // pagehide: a fresh page holds no calls
 
     it('a check the tab died in is recorded once, for that content only', () => {
         beginPageCheck('game/index.html', '<p>v1</p>', 'chat-1');
@@ -28,11 +28,34 @@ describe('check_page crash guard', () => {
         const marker = JSON.parse(sessionStorage.getItem('fg_check_page_running')!);
         sessionStorage.setItem('fg_check_page_running', JSON.stringify({ ...marker, t: t0, beat: t0 + 2300 }));
         takePageCheckCrash();
-        const note = takePageCheckCrashNote();
+        const note = takeCrashNote();
         expect(note).toContain('2.3 s after the page started loading, during the action {"click":"#start"}');
         expect(note).toContain('log: level 1 built');
         expect(note).toContain('Maximum call stack size exceeded');
-        expect(takePageCheckCrashNote()).toBe('');
+        expect(takeCrashNote()).toBe('');
+    });
+
+    it('any tool call the tab died in is reported once, with what ran and for how long; a finished call is not', () => {
+        const t0 = Date.now();
+        const done = beginToolCall('read_file', 'read:a.txt', 'chat-2');
+        beginToolCall('execute_code', 'exec(python): while True: pass', 'chat-2');
+        endToolCall(done);
+        const m = JSON.parse(sessionStorage.getItem('fg_tools_running')!);
+        sessionStorage.setItem('fg_tools_running', JSON.stringify({ ...m, calls: m.calls.map((c: any) => ({ ...c, t: t0 })), beat: t0 + 12300 }));
+        const c = takeToolCrash();
+        expect(c!.calls.map(x => x.name)).toEqual(['execute_code']);
+        expect(c!.chatId).toBe('chat-2');
+        expect(takeToolCrash()).toBeNull();
+        const note = takeCrashNote();
+        expect(note).toContain('exec(python): while True: pass — running for 12.3 s when the app last responded');
+        expect(takeCrashNote()).toBe('');
+    });
+
+    it('a check_page crash is reported by its own record, not again as a tool call', () => {
+        beginToolCall('check_page', 'check:index.html', null);
+        beginPageCheck('index.html', 'x', null);
+        const page = takePageCheckCrash();
+        expect(takeToolCrash(page)).toBeNull();
     });
 
     it('a finished check or a normal unload leaves nothing', () => {
@@ -40,8 +63,10 @@ describe('check_page crash guard', () => {
         endPageCheck();
         expect(takePageCheckCrash()).toBeNull();
         beginPageCheck('index.html', 'x', null);
+        beginToolCall('execute_code', 'exec(python)', null);
         window.dispatchEvent(new Event('pagehide'));
         expect(takePageCheckCrash()).toBeNull();
+        expect(takeToolCrash()).toBeNull();
     });
 
     it('runPageCheck refuses the content that crashed before saving or loading anything', async () => {

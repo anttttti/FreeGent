@@ -1,4 +1,4 @@
-// page-check-guard.ts — FreeGent: a page that takes the browser tab down under check_page.
+// page-check-guard.ts — FreeGent: a tool call that takes the browser tab down, check_page above all.
 //
 // check_page runs the page in an iframe of the app's own tab, and WebKit runs that frame in the app's process: a page that hangs or
 // runs out of memory crashes the tab with it. The tab came back with the task's chat empty and nothing logged (the chat was saved only
@@ -7,6 +7,9 @@
 // it got, the page's last console lines and a heartbeat, which stops when a hung page freezes the tab. A normal unload clears it.
 // Found at start-up, it means the tab died during that check: the crash is recorded, the agent is told on its next turn, and
 // check_page refuses that same content.
+// Every other tool call is marked the same way (what ran, since when): Python or `node -e` in the browser shell runs on the sandbox
+// frame's own thread, which WebKit shares with the app, so an endless loop there freezes the tab as a page does, and a run that uses
+// ever more memory can take it down anywhere. Such a crash is logged and the agent told what was running and for how long.
 import { hashContent } from './local-sync.js';
 import { SESSION_ID } from './dev-log.js';
 import { FG_VERSION } from './build-info.js';
@@ -28,14 +31,21 @@ export interface PageCheckCrash {
 let _cur: PageCheckCrash | null = null;
 let _beat: ReturnType<typeof setInterval> | null = null;
 function _write(): void { try { if (_cur) sessionStorage.setItem(RUNNING, JSON.stringify(_cur)); } catch {} }
+// One heartbeat while anything is marked: it stops when a hung call freezes the app.
+function _tick(): void {
+    const now = Date.now();
+    if (_cur) { _cur.beat = now; _write(); }
+    if (_calls.size) _writeCalls(now);
+    if (!_cur && !_calls.size && _beat) { clearInterval(_beat); _beat = null; }
+}
+function _startBeat(): void { if (!_beat) _beat = setInterval(_tick, 500); }
 
 export function beginPageCheck(path: string, html: string, chatId: string | null): void {
     const now = Date.now();
     _cur = { path, hash: hashContent(html), chatId, session: SESSION_ID, version: FG_VERSION, t: now, beat: now,
              stage: 'while the page loaded (its start-up scripts were running)', lines: [] };
     _write();
-    if (_beat) clearInterval(_beat);
-    _beat = setInterval(() => { if (_cur) { _cur.beat = Date.now(); _write(); } }, 500);
+    _startBeat();
 }
 
 /** What the check is doing now, and/or one console line from the page. */
@@ -48,7 +58,6 @@ export function notePageCheck({ stage, line }: { stage?: string; line?: string }
 }
 
 export function endPageCheck(): void {
-    if (_beat) { clearInterval(_beat); _beat = null; }
     _cur = null;
     try { sessionStorage.removeItem(RUNNING); } catch {}
 }
@@ -88,14 +97,76 @@ export function describePageCheckCrash(c: PageCheckCrash): string {
         + 'strings or DOM that keep growing. Fix it before running check_page on this page again: the unchanged page is not loaded again.';
 }
 
+// ── Every tool call ────────────────────────────────────────────────────────
+const TOOLS_RUNNING = 'fg_tools_running';
+const TOOL_CRASHES = 'fg_tool_crashes';
+
+export interface ToolCallMark { name: string; label: string; t: number; }
+export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; told?: boolean; }
+
+const _calls = new Map<number, ToolCallMark>();
+let _seq = 0;
+let _callsChat: string | null = null;
+function _writeCalls(beat = Date.now()): void {
+    try {
+        if (!_calls.size) { sessionStorage.removeItem(TOOLS_RUNNING); return; }
+        const m: ToolCrash = { calls: [..._calls.values()], chatId: _callsChat, session: SESSION_ID, version: FG_VERSION, beat };
+        sessionStorage.setItem(TOOLS_RUNNING, JSON.stringify(m));
+    } catch {}
+}
+
+/** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
+export function beginToolCall(name: string, label: string, chatId: string | null): number {
+    const id = ++_seq;
+    _calls.set(id, { name, label: String(label).slice(0, 200), t: Date.now() });
+    _callsChat = chatId;
+    _writeCalls();
+    _startBeat();
+    return id;
+}
+export function endToolCall(id: number): void { if (_calls.delete(id)) _writeCalls(); }
+
+/** At start-up: the tool calls this tab was running when it died, recorded for the agent (marker cleared); null when none.
+ *  A check_page call reported by takePageCheckCrash (which says more) is left out. */
+export function takeToolCrash(pageCheck: PageCheckCrash | null = null): ToolCrash | null {
+    let m: ToolCrash | null = null;
+    try { m = JSON.parse(sessionStorage.getItem(TOOLS_RUNNING) || 'null'); } catch {}
+    try { sessionStorage.removeItem(TOOLS_RUNNING); } catch {}
+    if (!m || !Array.isArray(m.calls)) return null;
+    const calls = m.calls.filter(c => c && typeof c.name === 'string' && !(pageCheck && c.name === 'check_page'));
+    if (!calls.length) return null;
+    const crash: ToolCrash = { ...m, calls, beat: Number(m.beat) || Math.max(...calls.map(c => c.t)), told: false };
+    try {
+        const list: ToolCrash[] = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]');
+        localStorage.setItem(TOOL_CRASHES, JSON.stringify([...(Array.isArray(list) ? list : []), crash].slice(-KEEP)));
+    } catch {}
+    return crash;
+}
+
+export function describeToolCrash(c: ToolCrash): string {
+    const at = Math.min(...c.calls.map(x => x.t));
+    const calls = c.calls.map(x => `  ${x.label} — running for ${Math.max(0, Math.round((c.beat - x.t) / 100) / 10)} s when the app last responded`).join('\n');
+    return `The browser tab crashed or was killed while ${c.calls.length === 1 ? 'this tool call was' : 'these tool calls were'} running (${new Date(at).toISOString().slice(0, 16)}Z):\n${calls}\n`
+        + `${c.calls.length === 1 ? 'Its result' : 'Their results'} never came back, and the step is not in the chat. A run that never ends (an endless loop, `
+        + 'a wait for input that never comes) or uses ever more memory is the usual cause. Do not run it again unchanged: bound the loop, '
+        + 'or work on the data in smaller pieces.';
+}
+
 /** Crashes the agent has not been told about, as one note (marked told), or ''. */
-export function takePageCheckCrashNote(): string {
+export function takeCrashNote(): string {
     const list = _crashed();
     const fresh = list.filter(c => !c.told);
-    if (!fresh.length) return '';
-    _save(list.map(c => ({ ...c, told: true })));
-    return fresh.map(describePageCheckCrash).join('\n\n');
+    if (fresh.length) _save(list.map(c => ({ ...c, told: true })));
+    let tools: ToolCrash[] = [];
+    try { const v = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]'); if (Array.isArray(v)) tools = v; } catch {}
+    const freshTools = tools.filter(c => !c.told);
+    if (freshTools.length) { try { localStorage.setItem(TOOL_CRASHES, JSON.stringify(tools.map(c => ({ ...c, told: true })))); } catch {} }
+    return [...fresh.map(describePageCheckCrash), ...freshTools.map(describeToolCrash)].join('\n\n');
 }
 
 // A reload, navigation or closed tab is not a crash.
-if (typeof window !== 'undefined') window.addEventListener('pagehide', endPageCheck);
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
+    endPageCheck();
+    _calls.clear();
+    try { sessionStorage.removeItem(TOOLS_RUNNING); } catch {}
+});

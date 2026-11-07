@@ -13,7 +13,7 @@ export function msgText(m: any): any {
 
 // Strip injected framework blocks (guidance / handover / relevant-memory / project
 // instructions from AGENTS.md) from a user message.
-const _HU_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory|project_instructions|workspace_files|page_check_crash)>[\s\S]*?<\/\1>\n*/g;
+const _HU_INJECTED_RE = /~~~guidance\n[\s\S]*?\n~~~\n*|<(active_guidance|handover_context|relevant_memory|project_instructions|workspace_files|tool_crash)>[\s\S]*?<\/\1>\n*/g;
 export function stripInjected(s: any): any { return (s || '').replace(_HU_INJECTED_RE, '').trim(); }
 
 // A user turn's stored attachment notes ("[Attached file: name, 8 B; original available at path]", the <file name="..."> text

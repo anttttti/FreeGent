@@ -1391,7 +1391,7 @@ function autoloadPyodideIfEnabled() {
     if (localStorage.getItem(KEYS.PYODIDE_AUTOLOAD) === '0') return;
     try { startPyodide(); } catch (e) { console.warn('[pyodide] failed to start:', e); }
 }
-async function runWithPyodide(code, { filepath, signal }: { filepath?: string; signal?: AbortSignal } = {}) {
+async function runWithPyodide(code, { filepath, signal, timeoutMs = PYODIDE_RUN_TIMEOUT_MS }: { filepath?: string; signal?: AbortSignal; timeoutMs?: number } = {}) {
     if (pyodideStatus === 'loading') await pyodideReadyPromise.catch(() => {});
     if (pyodideStatus !== 'ready') throw new Error('Pyodide not loaded');
     const wsFiles = await listWorkspaceFiles();
@@ -1464,21 +1464,23 @@ async function runWithPyodide(code, { filepath, signal }: { filepath?: string; s
                 ...(imageNames.length ? { image_note: 'Copy the [IMAGE:…] lines from stdout into your reply to display each image inline.' } : {}),
             });
         };
-        // Stop Now: Python cannot be interrupted inside the worker, so the worker ends (with every run on it) and a fresh one starts. Its
-        // callback is gone first, so the stopped code's file changes are never applied when it finishes late (codex R194).
-        if (signal) {
-            const onAbort = () => {
-                if (!pyodideCallbacks[id]) return;
-                delete pyodideCallbacks[id];
-                _endPyodideWorker('idle', 'Restarting…', 'The Python worker was restarted because another run was stopped');
-                resolve({ stdout: '', stderr: 'Stopped: the Python run was ended and its file changes were not applied', exit_code: 130 });
-                try { startPyodide(); } catch {}
-            };
-            if (signal.aborted) { delete pyodideCallbacks[id]; resolve({ stdout: '', stderr: 'Stopped before the Python run started', exit_code: 130 }); return; }
-            signal.addEventListener('abort', onAbort, { once: true });
-            const settle = pyodideCallbacks[id];
-            pyodideCallbacks[id] = data => { signal.removeEventListener('abort', onAbort); return settle(data); };
-        }
+        // Stop Now, or the run's time limit: Python cannot be interrupted inside the worker, so the worker ends (with every run on it) and
+        // a fresh one starts. Its callback is gone first, so the ended code's file changes are never applied when it finishes late
+        // (codex R194). Without the limit, an endless loop waited until someone pressed Stop: an unattended Autopilot run, forever.
+        if (signal?.aborted) { delete pyodideCallbacks[id]; resolve({ stdout: '', stderr: 'Stopped before the Python run started', exit_code: 130 }); return; }
+        const end = (why: string, stderr: string, exit_code: number) => {
+            if (!pyodideCallbacks[id]) return;
+            delete pyodideCallbacks[id];
+            _endPyodideWorker('idle', 'Restarting…', `The Python worker was restarted because ${why}`);
+            resolve({ stdout: '', stderr, exit_code });
+            try { startPyodide(); } catch {}
+        };
+        const onAbort = () => end('another run was stopped', 'Stopped: the Python run was ended and its file changes were not applied', 130);
+        const timer = setTimeout(() => end('another run reached its time limit',
+            `Timed out: the Python run was still going after ${Math.round(timeoutMs / 1000)} s, so it was ended and its file changes were not applied. Look for a loop that never ends or a step that waits forever; split long work into shorter runs.`, 124), timeoutMs);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        const settle = pyodideCallbacks[id];
+        pyodideCallbacks[id] = data => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); return settle(data); };
         pyodideWorker.postMessage({ type: 'run', id, code, files, filepath });
     });
 }
@@ -1487,6 +1489,7 @@ async function runWithPyodide(code, { filepath, signal }: { filepath?: string; s
 // commands execute agent code, which must not run with the page's privileges. /workspace writes
 // reach the FreeGent workspace as they happen, through the frame's workspace channel.
 const WASM_TIMEOUT_MS = 10 * 60_000;
+const PYODIDE_RUN_TIMEOUT_MS = WASM_TIMEOUT_MS;   // the browser's Python runs are limited like its shell
 async function runWithWasm(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     if (!browserBashAvailable()) throw new Error('Browser bash is unavailable: use JavaScript or configure a local execution server');
     try {

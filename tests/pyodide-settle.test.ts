@@ -73,6 +73,34 @@ describe('Pyodide runs settle', () => {
         expect(config.pyodideStatus).toBe('ready');
     });
 
+    it('a run past its time limit ends like Stop: exit 124, worker restarted, a late result writes nothing', async () => {
+        await W.startPyodide();
+        runs = []; calls.length = 0;
+        const p = W.runWithPyodide("open('late2.txt','w').write('x')", { timeoutMs: 50 });
+        await until(() => runs.length);
+        const id = runs[0].id;
+        const r = await p;
+        expect(r.exit_code).toBe(124);
+        expect(r.stderr).toMatch(/Timed out: the Python run was still going after 0 s/);
+        expect(calls).toContain('py-stop');
+        result(id, { changedFiles: { 'late2.txt': 'x' } });
+        await new Promise(r => setTimeout(r, 30));
+        await expect(W.agentReadFile('late2.txt')).rejects.toThrow();
+        await until(() => config.pyodideStatus === 'ready');
+    });
+
+    it('a run that finishes in time clears its limit', async () => {
+        await W.startPyodide();
+        runs = [];
+        const p = W.runWithPyodide('print(1)', { timeoutMs: 80 });
+        await until(() => runs.length);
+        result(runs[0].id);
+        expect((await p).exit_code).toBe(0);
+        calls.length = 0;
+        await new Promise(r => setTimeout(r, 120));
+        expect(calls).not.toContain('py-stop');
+    });
+
     it('a start that never says "ready" fails after its deadline, and so does a run waiting on it (R196)', async () => {
         crash();   // end the current worker
         readyOnStart = false;

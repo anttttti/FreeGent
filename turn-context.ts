@@ -14,7 +14,7 @@
 // Follows the payload-builder/step-validator pattern: ES module, exports, window bridge.
 
 import { runtime } from './runtime.js';
-import { takePageCheckCrashNote } from './page-check-guard.js';
+import { takeCrashNote } from './page-check-guard.js';
 import { _skillUnavailable } from './skill-guidance.js';
 import {
     setCurrentTurnSkills,
@@ -197,9 +197,10 @@ export async function buildTurnPrelude({
         } catch {}
     }
 
-    // A page under check_page crashed the tab before this turn: the agent has to find the cause, and the turn that ran it is gone.
-    const crash = runtime.hasNativeExec ? '' : takePageCheckCrashNote();
-    const crashBlock = crash ? `<page_check_crash>\n${crash}\n</page_check_crash>` : '';
+    // A tool call (a page under check_page, a Python run) crashed the tab before this turn: the agent has to find the cause, and the
+    // step that ran it is gone.
+    const crash = runtime.hasNativeExec ? '' : takeCrashNote();
+    const crashBlock = crash ? `<tool_crash>\n${crash}\n</tool_crash>` : '';
 
     return [wsFilesBlock, agentsCtxBlock, crashBlock, guidance].filter(Boolean).join('\n\n');
 }

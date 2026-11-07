@@ -29,6 +29,7 @@ import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
 import { registry } from './session-registry.js';
+import { beginToolCall, endToolCall } from './page-check-guard.js';
 import { compactSurface, type Session } from './session.js';
 import { type SurfaceIntent } from './session-event.js';
 import { connectSignal } from './abort.js';
@@ -206,6 +207,12 @@ const _rotState = { step: 0 };
 // getCooldownRemaining, _anyFreeSpec, getRateLimitFallbackEndpoint — defined in llm-shared.js
 
 export function clearSessionFallback(): void { _sessionFallback = null; }
+// What a crash note says ran: the tool's label, and for code its first line.
+function _crashLabel(name: string, args: any): string {
+    const code = name === 'execute_code' && typeof args?.code === 'string' ? args.code.split('\n').find((l: string) => l.trim())?.trim().slice(0, 100) : '';
+    return `${toolLabel(name, args)}${code ? `: ${code}` : ''}`;
+}
+
 let _lastStepSave = 0;   // when a step last saved the chat (see the tool results below)
 
 // clearReplaceState: clear replace-failure tracking on the given session (or defaultSession).
@@ -654,9 +661,13 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         // A tool the user turned off in Settings → Tools is not executed even if the model emits the call.
         if (!context && typeof isToolOffByUser === 'function' && isToolOffByUser(name)) {
             result = { error: `Tool '${name}' is turned off in Settings → Tools. Use another approach or declare BLOCKED.` };
-        } else
-        try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
-        catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
+        } else {
+            // Browser: marked while it runs, so a call that freezes or crashes the tab is reported at the next start (page-check-guard.ts).
+            const _mark = runtime.hasNativeExec ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null);
+            try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
+            catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
+            finally { if (_mark) endToolCall(_mark); }
+        }
         if (_rereadNote && result && !result.error) {
             result = { ...result, note: _rereadNote };
             // Let the history dedup gate pass this copy. It keys on the range read_file returned,

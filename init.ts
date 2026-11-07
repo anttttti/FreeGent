@@ -6,7 +6,7 @@ import { installRelaySession } from './relay-session.js';
 import { installGuestQuotaWatch } from './guest-quota.js';
 import { getPrivacyLevel } from './privacy.js';
 import { installDevLog, sendTaskLog } from './dev-log.js';
-import { takePageCheckCrash, describePageCheckCrash } from './page-check-guard.js';
+import { takePageCheckCrash, describePageCheckCrash, takeToolCrash, describeToolCrash } from './page-check-guard.js';
 import { buildRedactedChatJson } from './convo-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
@@ -560,12 +560,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore draft for the current chat on page load
     _restoreDraft(activeChatId);
     (window as any).checkInterruptedRun?.();   // Autopilot was running when this tab reloaded
-    // The tab died while check_page ran a page: logged (Developer key), with the chat it happened in.
+    // The tab died while a tool call ran (check_page says the most): logged (Developer key), with the chat it happened in.
     const _crash = takePageCheckCrash();
     if (_crash) {
         const why = `session ${_crash.session}, ${_crash.version}: ${describePageCheckCrash(_crash)}`;
         console.error(`[check_page] ${why}`);
         if (_crash.chatId) void sendTaskLog({ id: '', title: `check_page crash: ${_crash.path}`, path: _crash.path }, 'crashed', why, _crash.chatId, buildRedactedChatJson);
+    }
+    const _toolCrash = takeToolCrash(_crash);
+    if (_toolCrash) {
+        const why = `session ${_toolCrash.session}, ${_toolCrash.version}: ${describeToolCrash(_toolCrash)}`;
+        console.error(`[tool crash] ${why}`);
+        if (_toolCrash.chatId) void sendTaskLog({ id: '', title: `tool crash: ${_toolCrash.calls[0].label.slice(0, 60)}`, path: '' }, 'crashed', why, _toolCrash.chatId, buildRedactedChatJson);
     }
     window.refreshStorageUsage?.();
 

@@ -2886,7 +2886,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             'Write the game to a .py file using write_file, then tell the user to open it from the file panel — ' +
             'the browser pygame runner provides a full canvas and synthesised audio.' };
     } else if (args.language !== 'bash' && args.language !== 'javascript' && (pyodideStatus === 'ready' || pyodideStatus === 'loading')) {
-        try { execResult = await runWithPyodide(args.code, { signal: activeAbortController?.signal }); }
+        try { execResult = await runWithPyodide(args.code, { signal: activeAbortController?.signal, ...(args.timeout_s != null ? { timeoutMs: execTimeoutMs(args.timeout_s) } : {}) }); }
         catch (e) { return { error: `Pyodide: ${e.message}` }; }
     } else {
         const provider = getSandboxProvider();
