@@ -2958,7 +2958,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             } catch (e) { return { error: `Local sandbox: ${e.message} — is the dev server (npm run dev) running?` }; }
         } else if (args.language === 'bash' && provider === 'wasm' && typeof runWithWasm === 'function') {
             // Browser shell and lazy upstream runtimes, inside the opaque-origin frame.
-            try { execResult = await runWithWasm(args.code, onProgress); }
+            try { execResult = await runWithWasm(args.code, onProgress, args.timeout_s != null ? execTimeoutMs(args.timeout_s) : undefined); }
             catch (e) { return { error: `WASM: ${e.message}` }; }
         } else {
             if (args.language === 'bash') return { error: 'Bash requires a sandbox — choose WASM or Local under Bash Sandbox in Settings → Tools.' };

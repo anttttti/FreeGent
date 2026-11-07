@@ -12,6 +12,7 @@ import { _BLOCKED_DECLARATION_RE, _TERMINAL_RE, _isComplete } from './turn-proto
 import { runtime } from './runtime.js';
 import type { Verification } from './verification.js';
 import { suppliedFiles, overwrittenSupplied, isQuestionOnlyTask, inventedDataPaths, taskChangesData } from './detectors.js';
+import { isTaskPath } from './task-status.js';
 
 export interface GateContext {
     text: string;                     // the reply that declared COMPLETED
@@ -90,6 +91,29 @@ const failedCheck: CompletionGate = {
     },
 };
 
+// Experiment verify_reminder (FG_EXPERIMENTS): the run changed something and no check ran after the last change. A change that was never
+// checked passed silently: the completion checklist is picked by the task's triggers and the agent grades itself, and `unverified` has no
+// gate. v0.97: 111 of 584 tasks. AgentBench OS 30, 33 and 55 finished with the request unmet (copied, not moved; no `calc` command) after
+// checking only their own reading of it. Only a test, build, syntax check or check_page counts as a check (verification.ts); a read-back
+// does not. Shares the one verification bounce with failed_check_complete, so a turn gets at most one of them; the second COMPLETED
+// passes and the verdict stays `unverified`.
+const missingCheck: CompletionGate = {
+    name: 'missing_check_complete',
+    run(c) {
+        if (!runtime.experiment('verify_reminder') || !completionDeclared(c) || c.ps.verifCheck) return null;
+        // The graded-test directive owns tasks that list their tests.
+        if (c.reactiveFired.has('graded_test') || c.gradedTestIds().length) return null;
+        // `unverified` is a change (scratch files and task cards do not count, verification.ts) with no check after it; `no_change` with a
+        // state change is a benchmark that grades the system's state, where a command changed it without writing a reported file.
+        if (!(c.verdict === 'unverified' || (c.verdict === 'no_change' && c.stateChanged))) return null;
+        const files = [...new Set([...c.editedPaths, ...c.shellWrites])].filter(p => !c.isScratchPath(p) && !isTaskPath(p));
+        c.ps.verifCheck = 1;
+        const what = files.length ? `${files.slice(0, 3).join(', ')}${files.length > 3 ? ` and ${files.length - 3} more` : ''}` : 'the system';
+        return { name: 'missing_check_complete', force: true,
+            text: `You declared COMPLETED, but you changed ${what} and no check ran after the last change. Check the requested result itself — run it as the user would, test it, load the page with check_page — not only a command that shows what you did. If it cannot be checked here, say why. Then reply COMPLETED.` };
+    },
+};
+
 // Answering from data the agent wrote itself. AgentBench OS tasks 43, 47 and 52 (v0.70) were failed after
 // the agent overwrote the supplied file1.log / file1.txt / logfile.txt with its own text; no other OS task
 // wrote to a supplied file (3 of 60, replayed). Also a pure question with new data files.
@@ -131,7 +155,7 @@ const envConfig: CompletionGate = {
 };
 
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, missingCheck, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {

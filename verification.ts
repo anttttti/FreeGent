@@ -15,6 +15,7 @@
 export type Verification = 'no_change' | 'unverified' | 'verified' | 'failed_verification';
 
 import { shellWrites } from './shell-writes.js';
+import { isTaskPath } from './task-status.js';
 
 const WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'undo_write', 'delete_file']);
 // Test runners, compilers and syntax checks. A script that merely ran is not a check.
@@ -36,7 +37,9 @@ function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?:
     if (WRITE_TOOLS.has(call.name)) {
         const path = String(call.args?.path ?? call.result?.path ?? '');
         const deleted = call.name === 'delete_file' || (call.name === 'undo_write' && /\bdeleted\b/i.test(String(r.note ?? '')));
-        return SCRATCH_RE.test(path) ? none : { changed: true, files: path ? [path] : [], deleted };
+        // A task file (fg-tasks/: the board's cards, ticked and logged as work goes) is the framework's bookkeeping: writing it after a
+        // check did not change what was checked. Other files that look like bookkeeping (memory/, logs/) can be what the user asked for.
+        return SCRATCH_RE.test(path) || isTaskPath(path) ? none : { changed: true, files: path ? [path] : [], deleted };
     }
     // Workers' edits reach the workspace when run_workers applies them: they are the run's edits as much as the Director's (codex Review939).
     if (call.name === 'run_workers') {
@@ -99,7 +102,19 @@ export function checkDidNotRun(call: any): boolean {
     if ((r.exit_code === 4 || r.exit_code === 5) && /\b(?:pytest|py\.test)\b/.test(String(call.args?.code ?? ''))) return true;
     return NO_TESTS_RE.test(out) && !/\b[1-9]\d* (?:passed|failed|errors?)\b/.test(out);
 }
+/** A check_page result as a check. Pass: the page loaded, reported no errors, drew something, met every expectation. Fail: errors, a blank
+ *  page, an unmet expectation, or the refusal of a page that crashed the tab. Neither: the page did not run, or the call itself failed
+ *  (not an HTML file, not in the workspace): nothing was checked. A page that loads cleanly is a smoke check, not proof of every criterion. */
+function _pageCheck(call: any): 'pass' | 'fail' | null {
+    const r = call.result;
+    if (!r || typeof r !== 'object') return null;
+    if (r.crashed === true) return 'fail';
+    if (r.error) return null;
+    if ((Array.isArray(r.errors) && r.errors.length) || r.blank === true || r.expectations_met === false) return 'fail';
+    return r.loaded === true ? 'pass' : null;
+}
 function _check(call: any): 'pass' | 'fail' | null {
+    if (call?.name === 'check_page') return _pageCheck(call);
     if (!_isCheckCall(call)) return null;
     const r = call.result;
     if (!r || typeof r !== 'object' || r.exit_code == null) return null;

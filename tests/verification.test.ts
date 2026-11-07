@@ -39,6 +39,33 @@ describe('verification states', () => {
     });
 });
 
+describe('check_page as a check', () => {
+    const page = (result: any) => ({ name: 'check_page', args: { path: 'index.html' }, result });
+    const clean = { path: 'index.html', loaded: true, summary: 'Loaded fine; no errors.', errors: [], console: [] };
+    it('a page that loaded with no errors is a pass', () => expect(run([[edit], [page(clean)]])).toBe('verified'));
+    it('page errors are a failed check', () => expect(run([[edit], [page({ ...clean, errors: [{ text: 'ReferenceError: x is not defined', count: 1 }] })]])).toBe('failed_verification'));
+    it('a blank page is a failed check', () => expect(run([[edit], [page({ ...clean, blank: true })]])).toBe('failed_verification'));
+    it('an unmet expectation is a failed check', () => expect(run([[edit], [page({ ...clean, expectations: [{ ok: false }], expectations_met: false })]])).toBe('failed_verification'));
+    it('the refusal of a page that crashed the tab is a failed check', () =>
+        expect(run([[edit], [page({ error: 'check_page: the tab crashed', crashed: true })]])).toBe('failed_verification'));
+    it('a page that did not run, or a call that failed, checked nothing', () => {
+        expect(run([[edit], [page({ ...clean, loaded: false })]])).toBe('unverified');
+        expect(run([[edit], [page({ error: 'check_page: "x.html" is not in the workspace' })]])).toBe('unverified');
+    });
+    it('an edit after a page check makes the run unverified again', () =>
+        expect(run([[edit], [page(clean)], [edit]])).toBe('unverified'));
+});
+
+describe('task cards are not the change', () => {
+    const card = { name: 'replace_in_file', args: { path: 'fg-tasks/001-x.md' }, result: { success: true } };
+    it('ticking a task card after a passing check leaves the run verified', () => expect(run([[edit], [pass], [card]])).toBe('verified'));
+    it('a task card alone is no change', () => expect(run([[card]])).toBe('no_change'));
+    it('other bookkeeping-looking files still count: they can be what the user asked for', () => {
+        const mem = { name: 'write_file', args: { path: 'memory/notes.md' }, result: { success: true } };
+        expect(run([[edit], [pass], [mem]])).toBe('unverified');
+    });
+});
+
 describe('a check that ran no test', () => {
     const mk = (code: string, exit_code: number, stdout = '') => ({ name: 'execute_code', args: { code }, result: { exit_code, stdout } });
     it('pytest exit 4 / "collected 0 items" (an id absent from the checkout) is unverified, not failed', () => {

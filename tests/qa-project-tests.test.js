@@ -102,9 +102,11 @@ describe('test-runner gate timeout', () => {
         vi.useFakeTimers();
         try {
             files['test_a.mjs'] = 'x';
-            W.executeToolAsync = () => new Promise(() => {});
+            const seen = [];
+            W.executeToolAsync = (_name, args) => { seen.push(args); return new Promise(() => {}); };
             const p = W.transitionTask(TASK, 'done');
-            await vi.advanceTimersByTimeAsync(91_000);
+            await vi.advanceTimersByTimeAsync(96_000);
+            expect(seen[0].timeout_s).toBe(90);   // the run has its own limit; the race above is only a backstop
             const r = await p;
             expect(r.transitioned).toBe(true);
             expect(files['memory/log.md']).toMatch(/test-runner \?/);

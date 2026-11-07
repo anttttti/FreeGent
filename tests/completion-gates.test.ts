@@ -10,10 +10,58 @@ const ctx = (over: Partial<GateContext> = {}): GateContext => ({
     gradedTestIds: () => [], isScratchPath: p => /(^|\/)(tmp|repro)/.test(p), envConfigEdits: async () => [], brokenFiles: async () => [], ...over,
 });
 
+describe('experiment verify_reminder: a change nothing checked', () => {
+    const on = (name = 'verify_reminder') => { process.env.FG_EXPERIMENTS = name; };
+    afterEach(() => { delete process.env.FG_EXPERIMENTS; });
+    const unchecked = (over: Partial<GateContext> = {}) =>
+        ctx({ editsThisRun: true, verdict: 'unverified', editedPaths: new Set(['src/a.py', 'src/b.py']), ...over });
+
+    it('is off unless the experiment is set', async () => {
+        expect(await runCompletionGates(unchecked())).toBeNull();
+        on('syntax_watch');
+        expect(await runCompletionGates(unchecked())).toBeNull();
+    });
+    it('names the unchecked files once and forces a tool call; the second COMPLETED passes', async () => {
+        on();
+        const c = unchecked();
+        const hit = await runCompletionGates(c);
+        expect(hit?.name).toBe('missing_check_complete');
+        expect(hit?.force).toBe(true);
+        expect(hit?.text).toMatch(/changed src\/a\.py, src\/b\.py and no check ran/);
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('never fires without a change: no change, or only scratch files and task cards', async () => {
+        on();
+        expect(await runCompletionGates(ctx({ verdict: 'no_change' }))).toBeNull();
+        expect(await runCompletionGates(ctx({ verdict: 'verified', editsThisRun: true }))).toBeNull();
+        expect(await runCompletionGates(ctx({ verdict: 'no_change', task: 'Implement the search box.', editedPaths: new Set(['fg-tasks/001-x.md']), editsThisRun: true }))).toBeNull();
+    });
+    it('a benchmark that grades the system state: a state change with no reported file is a change', async () => {
+        on();
+        const hit = await runCompletionGates(ctx({ verdict: 'no_change', stateChanged: true }));
+        expect(hit?.name).toBe('missing_check_complete');
+        expect(hit?.text).toMatch(/changed the system and no check ran/);
+    });
+    it('shares the one verification bounce with failed_check_complete, in either order', async () => {
+        on();
+        const failed = unchecked({ verdict: 'failed_verification' });
+        expect((await runCompletionGates(failed))?.name).toBe('failed_check_complete');
+        expect(await runCompletionGates({ ...failed, verdict: 'unverified' })).toBeNull();   // edited after the failure: no second bounce
+        const missing = unchecked();
+        expect((await runCompletionGates(missing))?.name).toBe('missing_check_complete');
+        expect(await runCompletionGates({ ...missing, verdict: 'failed_verification' })).toBeNull();
+    });
+    it('leaves tasks that list their graded tests to the graded-test directive', async () => {
+        on();
+        expect(await runCompletionGates(unchecked({ gradedTestIds: () => ['tests/test_a.py::test_x'] }))).toBeNull();
+        expect(await runCompletionGates(unchecked({ reactiveFired: new Set(['graded_test']) }))).toBeNull();
+    });
+});
+
 describe('completion gates', () => {
     it('are tried in a fixed order', () => {
         expect(COMPLETION_GATES.map(g => g.name)).toEqual(
-            ['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete',
+            ['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'missing_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete',
              'no_change_fix', 'blocked_untried_fix']);
     });
     it('never fire for BLOCKED, on the last step, or in soft stop', async () => {

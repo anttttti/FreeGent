@@ -1490,10 +1490,10 @@ async function runWithPyodide(code, { filepath, signal, timeoutMs = PYODIDE_RUN_
 // reach the FreeGent workspace as they happen, through the frame's workspace channel.
 const WASM_TIMEOUT_MS = 10 * 60_000;
 const PYODIDE_RUN_TIMEOUT_MS = WASM_TIMEOUT_MS;   // the browser's Python runs are limited like its shell
-async function runWithWasm(code: string, onProgress?: (message: string) => void): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+async function runWithWasm(code: string, onProgress?: (message: string) => void, timeoutMs: number = WASM_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     if (!browserBashAvailable()) throw new Error('Browser bash is unavailable: use JavaScript or configure a local execution server');
     try {
-        const r = await sandboxCall('bash', { code }, WASM_TIMEOUT_MS, onProgress, typeof activeAbortController !== 'undefined' ? activeAbortController?.signal : undefined);
+        const r = await sandboxCall('bash', { code }, timeoutMs, onProgress, typeof activeAbortController !== 'undefined' ? activeAbortController?.signal : undefined);
         _bashEverRan = true;
         return r;
     } catch (e: any) {

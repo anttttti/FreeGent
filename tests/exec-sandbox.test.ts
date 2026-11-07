@@ -178,6 +178,16 @@ describe('exec sandbox host', () => {
         });
     });
 
+    // The QA test gate gives its run 90 s (timeout_s): the browser shell must end the run and restart its sandbox then, not keep it for 10 minutes.
+    it('runWithWasm ends a run at the limit it is given and restarts the sandbox',async()=>{
+        const had=Object.getOwnPropertyDescriptor(globalThis,'Worker');
+        if(typeof Worker!=='function')(globalThis as any).Worker=class{};
+        try{
+            const slow=(globalThis as any).runWithWasm('sleep 600',undefined,30);
+            await expect(slow).rejects.toThrow(/timed out/);
+            expect(document.querySelector('iframe[sandbox]')).toBeNull();
+        }finally{ if(had)Object.defineProperty(globalThis,'Worker',had); else delete (globalThis as any).Worker; }
+    });
     it('cancels a pending execution promptly and reloads the sandbox next time',async()=>{
         const controller=new AbortController();
         const call=sandboxCall('bash',{code:'sleep 600'},60_000,undefined,controller.signal);

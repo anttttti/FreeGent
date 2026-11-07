@@ -29,6 +29,7 @@ export const WHEN = {
     env_config_edits: 'gate: test or packaging configuration edited, or a new top-level package added, instead of fixing the code',
     env_failure: 'execute_code failing repeatedly with the same error (3) or in total (8); also two inline python3 -c syntax failures in a row',
     failed_check_complete: 'gate: COMPLETED while the last test/compile check after the last change failed',
+    missing_check_complete: 'gate (experiment verify_reminder): COMPLETED after a change that no test, build or page check followed',
     invented_data: 'gate: the work created stand-in data or files nobody supplied',
     no_change_fix: 'benchmark policy: a "fix" that changed nothing',
     no_edit_complete: 'benchmark policy: COMPLETED on a task that needs an edit, with no edit made',

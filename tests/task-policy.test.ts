@@ -27,7 +27,7 @@ describe('task policy', () => {
         expect(taskPolicy.changesState('chmod 600 /etc/sudoers')).toBe(false);
         expect(isTestEditProtected('tests/test_a.py')).toBe(false);
         expect(taskPolicy.completionDirective('`pytest tests/test_a.py::test_x`', new Set())).toBeNull();
-        expect(names()).toEqual(['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'invented_data', 'env_config_edits']);
+        expect(names()).toEqual(['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'missing_check_complete', 'invented_data', 'env_config_edits']);
         // a COMPLETED with no edit on an "edit required" task passes the gates
         expect(await runCompletionGates(ctx())).toBeNull();
     });
@@ -36,7 +36,7 @@ describe('task policy', () => {
         uninstallBenchPolicy();
         installBenchPolicy();
         installBenchPolicy();   // idempotent
-        expect(names()).toEqual(['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete', 'no_change_fix', 'blocked_untried_fix']);
+        expect(names()).toEqual(['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'missing_check_complete', 'invented_data', 'env_config_edits', 'no_edit_complete', 'no_change_fix', 'blocked_untried_fix']);
         process.env.FG_EDIT_REQUIRED = '1';
         expect(taskPolicy.editRequired()).toBe(true);
         const hit = await runCompletionGates(ctx({ editRequired: true }));
@@ -48,7 +48,7 @@ describe('task policy', () => {
     it('uninstalling restores the product state', () => {
         installBenchPolicy();
         uninstallBenchPolicy();
-        expect(names()).toHaveLength(5);
+        expect(names()).toHaveLength(6);
         expect(taskPolicy.gradedTestIds('`pytest tests/test_a.py::test_x`')).toEqual([]);
     });
 });
