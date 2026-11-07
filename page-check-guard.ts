@@ -130,6 +130,12 @@ export function beginToolCall(name: string, label: string, chatId: string | null
     _startBeat();
     return id;
 }
+/** Say which step a running call is in (a task's completion gates take a minute or more); a crash report then names it. */
+export function noteToolStage(name: string, stage: string): void {
+    let changed = false;
+    for (const c of _calls.values()) if (c.name === name) { c.label = `${c.label.replace(/ \[[^\]]*\]$/, '')} [${stage}]`; changed = true; }
+    if (changed) _writeCalls();
+}
 export function endToolCall(id: number): void { if (_calls.delete(id)) _writeCalls(); }
 
 /** At start-up: the tool calls this tab was running when it died, recorded for the agent (marker cleared); null when none.

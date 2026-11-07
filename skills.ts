@@ -162,6 +162,7 @@ After the worker returns, use its findings to proceed with the task. Do not foll
 1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section. Overwrite it without reading it first: an existing current.md is left over from an earlier chat. Never touch the status of a task that is not yours.
 2. Work: read, edit, verify
 3. After each edit attempt, append_file under ## Attempts: what changed (file:line), whether resolved
+current.md is only your scratch note: never set its status with update_task_status; finish by telling the user what you did.
 
 **Autonomous path** (first message points at ledger): read fg-tasks/ledger.md. Pick highest-priority open task (High > Medium > Low; lowest ID first).
 

@@ -6,6 +6,7 @@ import { canonTaskStatus, TASK_DIRS } from './task-status.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
+import { noteToolStage } from './page-check-guard.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -391,7 +392,9 @@ async function gate_acceptance_review(taskPath, content) {
     // Record what the reviewer said (or that it could not answer) for the task file and the reason.
     let reply = '', unavailable = false;
     const llm = async (p: string, o: any) => {
-        try { reply = await callLLMComplete(p, { ...o, allowPartial: true }); return reply; }   // a judge's first line is the answer; it is cut on purpose
+        // maxAttempts 3, not the default 12: a slow or rate-limited model kept the whole `done` call silent for minutes (a 281 s call, then the tab died);
+        // a reviewer that does not answer is "unverified" and the task may still move.
+        try { reply = await callLLMComplete(p, { ...o, allowPartial: true, maxAttempts: 3 }); return reply; }   // a judge's first line is the answer; it is cut on purpose
         catch (e) { unavailable = true; throw e; }
     };
     const hit = await validateOutput(fileContents || '(no files available)', _ACCEPTANCE_CHECKS, {
@@ -518,10 +521,13 @@ async function gate_test_runner(taskPath, content) {
     try {
         // A test run that never returns (the in-browser node hung on the second start after a test that replaced
         // globalThis.location, AE-11) would hold the task for the tool's 10 minutes; the gate gives up after a minute and a half.
+        // The limit is the run's own (timeout_s: the native executor kills the command, the browser shell restarts its sandbox), so a
+        // timed-out run is ended, not left running to write files after the gate has moved on. The race is only a backstop for a backend
+        // with no limit of its own (the local sandbox server), and waits a little longer so the backend's own message wins.
         let timer: any;
         const res    = await Promise.race([
-            executeToolAsync('execute_code', { language: 'bash', code: cmd }, null),
-            new Promise<any>(r => { timer = setTimeout(() => r({ exit_code: null, error: `the tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s` }), _QA_TEST_TIMEOUT_MS); }),
+            executeToolAsync('execute_code', { language: 'bash', code: cmd, timeout_s: _QA_TEST_TIMEOUT_MS / 1000 }, null),
+            new Promise<any>(r => { timer = setTimeout(() => r({ exit_code: null, error: `the tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s` }), _QA_TEST_TIMEOUT_MS + 5_000); }),
         ]).finally(() => clearTimeout(timer));
         const output = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
         if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
@@ -720,7 +726,9 @@ async function transitionTask(taskPath, toStatus) {
 }
 
 async function _transitionTask(taskPath, toStatus) {
-    if (!getQaEnabled()) {
+    // fg-tasks/current.md is a chat's scratch note, not a board task: the review, test and page gates are for tasks someone plans and
+    // follows (logs of 2026-11-07: a plain chat's `done` on current.md ran 281 s and took the tab down).
+    if (!getQaEnabled() || /^(?:\.\/)?fg-tasks\/current\.md$/.test(taskPath)) {
         await setTaskStatus(taskPath, toStatus);
         return { transitioned: true };
     }
@@ -762,6 +770,7 @@ async function _transitionTask(taskPath, toStatus) {
         if (!gateFn) continue;
 
         let result: { blocks: boolean; reason?: string; detail?: string; outcome?: 'unknown' | 'skipped' | 'stale' };
+        noteToolStage('update_task_status', `gate ${gateName}`);   // a crash report then names the gate that was running
         try   { result = await gateFn(taskPath, content); }
         catch (e) { result = { blocks: false, outcome: 'unknown', detail: `Gate error: ${e.message}` }; }
 
