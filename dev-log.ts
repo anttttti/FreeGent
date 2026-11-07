@@ -46,10 +46,13 @@ function _stringify(a: unknown): string {
     try { return JSON.stringify(a); } catch { return String(a); }
 }
 
+/** `text` with the Developer key and every saved credential replaced, as everything sent to the Worker must be. */
+export function redactForLog(text: string): string { return redactText(String(text ?? ''), [getDevKey(), ..._storedSecrets()]); }
+
 /** Queue one entry (no-op without a Developer key). Same message twice in a row is counted, not repeated. */
 export function devLogEntry(level: 'error' | 'warn', source: string, text: string): void {
     if (!devLoggingOn()) return;
-    const clean = redactText(String(text), [getDevKey(), ..._storedSecrets()]).slice(0, MAX_TEXT);
+    const clean = redactForLog(text).slice(0, MAX_TEXT);
     const last = _queue[_queue.length - 1];
     if (last && last.level === level && last.source === source && last.text === clean) { last.count = (last.count || 1) + 1; return; }
     if (_queue.length >= MAX_QUEUE) _queue.shift();
@@ -104,7 +107,9 @@ export async function sendTaskLog(task: { id: string; title: string; path: strin
     if (!devLoggingOn() || !chatId) return;
     try {
         const chat = JSON.parse(await build(chatId));
-        const body = JSON.stringify({ devSession: SESSION_ID, task: { ...task, outcome, reason: String(reason || '').slice(0, 500) }, ...chat });
+        // `build` redacts the chat only: the task's own fields are text from the run too (a crash's reason quotes the code that ran).
+        const body = JSON.stringify({ devSession: SESSION_ID, task: { id: redactForLog(task.id), title: redactForLog(task.title), path: redactForLog(task.path),
+            outcome, reason: redactForLog(String(reason || '')).slice(0, 500) }, ...chat });
         await _origFetch()(`${DEFAULT_CF_WORKER}/log`, { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-FG-Dev-Key': getDevKey() }, body });
     } catch (e) {
         devLogEntry('warn', 'dev-log', `task log not sent: ${(e as any)?.message ?? e}`);

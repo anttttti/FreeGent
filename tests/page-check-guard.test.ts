@@ -81,17 +81,35 @@ describe('check_page crash guard', () => {
         expect(takeToolCrash()).toBeNull();
     });
 
-    it('runPageCheck refuses the content that crashed before saving or loading anything', async () => {
+    it('runPageCheck refuses the check that crashed, before saving or loading anything; a fixed script or other steps are checked again (CR-02)', async () => {
+        const { pageCheckContent } = await import('../tabs.ts');
+        const files: Record<string, string> = { 'index.html': '<html><body><script src="app.js"></script></body></html>', 'app.js': 'for(;;){}' };
         const prev = { read: W.agentReadFile, save: W.saveHistory };
         let saved = 0;
         try {
-            W.agentReadFile = async () => '<html><body><script>for(;;){}</script></body></html>';
+            W.agentReadFile = async (p: string) => { if (!(p in files)) throw new Error(`not found: ${p}`); return files[p]; };
             W.saveHistory = () => { saved++; };
-            beginPageCheck('index.html', await W.agentReadFile(), null);
+            beginPageCheck('index.html', (await pageCheckContent('index.html', files['index.html'])).fingerprint, null);
             takePageCheckCrash();
             const r = await W.runPageCheck('index.html');
+            expect(r.crashed).toBe(true);
             expect(r.error).toMatch(/crashed or was killed while check_page ran "index.html"[\s\S]*not loaded again/);
             expect(saved).toBe(0);
+            const again = async (opts = {}) => crashedBefore('index.html', (await pageCheckContent('index.html', files['index.html'], opts)).fingerprint);
+            expect(await again({ actions: [{ click: '#start' }] })).toBeNull();   // a different check of the same page
+            files['app.js'] = 'window.ok = 1;';                                    // only the script was fixed
+            expect(await again()).toBeNull();
         } finally { W.agentReadFile = prev.read; W.saveHistory = prev.save; }
+    });
+
+    it('what a crash records is redacted while the saved credentials are known (CR-01: after a reload a locked vault cannot redact it)', () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        localStorage.setItem('some_api_key', 'plainsecretvalue123');
+        beginToolCall('execute_code', 'exec(python): key = "plainsecretvalue123"', 'c');
+        beginPageCheck('p.html', 'x', 'c');
+        notePageCheck({ line: 'log: token plainsecretvalue123' });
+        const stored = JSON.stringify([sessionStorage.getItem('fg_tools_running'), sessionStorage.getItem('fg_check_page_running')]);
+        expect(stored).toContain('exec(python): key = ');
+        expect(stored).not.toContain('plainsecretvalue123');
     });
 });

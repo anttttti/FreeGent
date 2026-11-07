@@ -57,4 +57,15 @@ describe('dev-log', () => {
         expect(body.task).toMatchObject({ id: '7', outcome: 'failed', reason: 'why' });
         expect(body.id).toBe('c1');
     });
+
+    it("redacts saved credentials from the task's own fields, not only the chat (codex CR-01: a crash reason quotes the code that ran)", async () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        localStorage.setItem('some_api_key', 'plainsecretvalue123');
+        const build = async () => JSON.stringify({ id: 'c1', messages: [] });
+        await sendTaskLog({ id: '', title: 'tool crash: exec(python): k = "plainsecretvalue123"', path: '' }, 'crashed',
+            'session s: exec(python): k = "plainsecretvalue123" — running for 3 s', 'c1', build);
+        const sent = String(f.mock.calls[0][1].body);
+        expect(sent).not.toContain('plainsecretvalue123');
+        expect(JSON.parse(sent).task.title).toMatch(/^tool crash: exec\(python\): k = /);   // the rest is kept
+    });
 });

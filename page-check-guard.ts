@@ -11,7 +11,7 @@
 // frame's own thread, which WebKit shares with the app, so an endless loop there freezes the tab as a page does, and a run that uses
 // ever more memory can take it down anywhere. Such a crash is logged and the agent told what was running and for how long.
 import { hashContent } from './local-sync.js';
-import { SESSION_ID } from './dev-log.js';
+import { SESSION_ID, redactForLog } from './dev-log.js';
 import { FG_VERSION } from './build-info.js';
 
 const RUNNING = 'fg_check_page_running';
@@ -42,9 +42,10 @@ function _tick(): void {
 }
 function _startBeat(): void { if (!_beat) _beat = setInterval(_tick, 500); }
 
-export function beginPageCheck(path: string, html: string, chatId: string | null): void {
+/** `content` is what the check runs: the page with its workspace files inlined and the check's own steps (tabs.ts pageCheckContent). */
+export function beginPageCheck(path: string, content: string, chatId: string | null): void {
     const now = Date.now();
-    _cur = { path, hash: hashContent(html), chatId, session: SESSION_ID, version: FG_VERSION, t: now, beat: now,
+    _cur = { path, hash: hashContent(content), chatId, session: SESSION_ID, version: FG_VERSION, t: now, beat: now,
              stage: 'while the page loaded (its start-up scripts were running)', lines: [], runner: _isRunner() };
     _write();
     _startBeat();
@@ -54,7 +55,8 @@ export function beginPageCheck(path: string, html: string, chatId: string | null
 export function notePageCheck({ stage, line }: { stage?: string; line?: string }): void {
     if (!_cur) return;
     if (stage) _cur.stage = stage;
-    if (line) _cur.lines = [..._cur.lines, String(line).slice(0, 200)].slice(-LINES);
+    // Redacted now: after a reload a locked key vault no longer gives the values to redact them with.
+    if (line) _cur.lines = [..._cur.lines, redactForLog(String(line).slice(0, 400)).slice(0, 200)].slice(-LINES);
     _cur.beat = Date.now();
     _write();
 }
@@ -69,9 +71,9 @@ function _crashed(): PageCheckCrash[] {
 }
 function _save(list: PageCheckCrash[]): void { try { localStorage.setItem(CRASHED, JSON.stringify(list.slice(-KEEP))); } catch {} }
 
-/** The recorded crash of this very content of `path`, if there is one. */
-export function crashedBefore(path: string, html: string): PageCheckCrash | null {
-    const h = hashContent(html);
+/** The recorded crash of this very check of `path` (same content, as beginPageCheck takes it), if there is one. */
+export function crashedBefore(path: string, content: string): PageCheckCrash | null {
+    const h = hashContent(content);
     return _crashed().find(c => c.path === path && c.hash === h) ?? null;
 }
 
@@ -96,7 +98,7 @@ export function describePageCheckCrash(c: PageCheckCrash): string {
         + `The app's last sign of life was ${secs} s after the page started loading, ${c.stage}: a page that hangs freezes the app at that moment, `
         + `one that runs out of memory takes it down later.${lines}\n`
         + 'Look in the code that runs at that point for an endless loop or recursion, a loop whose exit never comes true, or arrays, '
-        + 'strings or DOM that keep growing. Fix it before running check_page on this page again: the unchanged page is not loaded again.';
+        + 'strings or DOM that keep growing. Fix it before running check_page on this page again: the unchanged page (with the same scripts, styles and check steps) is not loaded again.';
 }
 
 // ── Every tool call ────────────────────────────────────────────────────────
@@ -121,7 +123,7 @@ function _writeCalls(beat = Date.now()): void {
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
 export function beginToolCall(name: string, label: string, chatId: string | null): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: String(label).slice(0, 200), t: Date.now() });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now() });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();

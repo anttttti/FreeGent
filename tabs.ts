@@ -1028,12 +1028,19 @@ const _BLANK_PAGE_EXPR = `(function(){var b=document.body;if(!b)return 'blank';i
     `try{var g=c.getContext('2d');if(!g)return 'content';var d=g.getImageData(0,0,Math.min(c.width,1024),Math.min(c.height,1024)).data;` +
     `for(var j=3;j<d.length;j+=4)if(d[j])return 'content'}catch(e){return 'content'}}return 'blank'})()`;
 
+// What a crash record is keyed by: the page as it runs (its workspace scripts, styles and images inlined), and the check's own steps.
+// The entry HTML alone kept refusing a page whose crashing app.js had been fixed (codex CR-02), and refused a different set of actions.
+export async function pageCheckContent(path: string, html: string, { actions = [] as any[], probes = [] as string[], expect = [] as any[] } = {}) {
+    const content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
+    return { content, fingerprint: `${content}\u0000${JSON.stringify({ actions, probes, expect })}` };
+}
+
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
-    const crash = crashedBefore(path, html);
+    let { content, fingerprint } = await pageCheckContent(path, html, { actions, probes, expect });
+    const crash = crashedBefore(path, fingerprint);
     if (crash) return { error: `check_page: ${describePageCheckCrash(crash)}`, crashed: true };
-    let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
     if (_MUTES_INLINE_ERRORS) content = _unmuteInlineScripts(content);
     // The capture script must run before every other script, so it goes first in <head>.
     content = injectIntoHead(content, _CHECK_CAPTURE);
@@ -1105,7 +1112,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     window.addEventListener('message', onMsg);
     // A page that crashes the tab takes the unsaved turn with it: save the chat first, and leave a marker the next start-up reads.
     try { (globalThis as any).saveHistory?.(); } catch {}
-    beginPageCheck(path, html, typeof activeChatId !== 'undefined' ? activeChatId : null);
+    beginPageCheck(path, fingerprint, typeof activeChatId !== 'undefined' ? activeChatId : null);
     try {
         iframe.srcdoc = content;
         document.body.appendChild(wrap);
