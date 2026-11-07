@@ -8,6 +8,7 @@ import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 import { previewKindOfName, mimeOfName } from './mime.js';
 import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
 import { sandboxCspMeta } from './privacy.js';
+import { beginPageCheck, endPageCheck, notePageCheck, crashedBefore, describePageCheckCrash } from './page-check-guard.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 // The editor holds a file's text with "\n" line breaks, whatever the file has. Whether it is "changed" is judged on the text, not on
@@ -1030,6 +1031,8 @@ const _BLANK_PAGE_EXPR = `(function(){var b=document.body;if(!b)return 'blank';i
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
+    const crash = crashedBefore(path, html);
+    if (crash) return { error: `check_page: ${describePageCheckCrash(crash)}` };
     let content = _wrapArtifact(await _inlineWorkspaceRefs(html, path));
     if (_MUTES_INLINE_ERRORS) content = _unmuteInlineScripts(content);
     // The capture script must run before every other script, so it goes first in <head>.
@@ -1066,7 +1069,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         if (e.source !== iframe.contentWindow) return;
         const d = e.data;
         if (!d || typeof d !== 'object') return;
-        if (d.type === 'fg-check-log' && logs.length < 500) logs.push({ level: d.level, text: d.text, t: d.t });
+        if (d.type === 'fg-check-log' && logs.length < 500) { logs.push({ level: d.level, text: d.text, t: d.t }); notePageCheck({ line: `${d.level}: ${d.text}` }); }
         else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
@@ -1100,23 +1103,28 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const expectResults: ExpectResult[] = [];
     let loaded = false, blank = false, fps: number | null = null;
     window.addEventListener('message', onMsg);
+    // A page that crashes the tab takes the unsaved turn with it: save the chat first, and leave a marker the next start-up reads.
+    try { (globalThis as any).saveHistory?.(); } catch {}
+    beginPageCheck(path, html, typeof activeChatId !== 'undefined' ? activeChatId : null);
     try {
         iframe.srcdoc = content;
         document.body.appendChild(wrap);
         loaded = await Promise.race([ready, sleep(8000).then(() => false)]);
         // Slow device: scripts that start are given longer before the page is called not-loaded.
         if (!loaded && alive) loaded = await Promise.race([ready, sleep(12000).then(() => false)]);
+        notePageCheck({ stage: loaded ? 'after the page had loaded' : 'while the page was still loading' });
         await sleep(300);
         const probeAll = async (when: string) => {
             if (!probes.length) return;
             const values: Record<string, string> = {};
-            for (const expr of probes) { const r = await cmd({ cmd: 'eval', expr }); values[expr] = r.error ? `error: ${r.error}` : r.value; }
+            for (const expr of probes) { notePageCheck({ stage: `evaluating the probe ${expr.slice(0, 100)}` }); const r = await cmd({ cmd: 'eval', expr }); values[expr] = r.error ? `error: ${r.error}` : r.value; }
             steps.push({ probes: when, values });
         };
         await probeAll('after load');
         for (const a of actions.slice(0, 20)) {
             if (aborted) break;
             if (!a || typeof a !== 'object') continue;
+            notePageCheck({ stage: `during the action ${JSON.stringify(a).slice(0, 120)}` });
             if (typeof a.click === 'string') {
                 steps.push({ click: a.click, ...(await cmd({ cmd: 'click', selector: a.click })) });
             } else if (typeof a.type === 'string') {
@@ -1136,10 +1144,12 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
             }
             await sleep(100);   // let handlers and a frame or two run
         }
+        notePageCheck({ stage: actions.length ? 'while waiting after the actions' : 'while waiting after the page loaded' });
         await sleep(_clampMs(waitMs, 1500, 10000));
         await probeAll('at end');
         // Expectations are judged on the state after the actions and the wait, from fresh evaluations.
         for (const ex of expect) {
+            notePageCheck({ stage: `evaluating the expectation ${String(ex.expr).slice(0, 100)}` });
             const r = await cmd({ cmd: 'eval', expr: ex.expr });
             expectResults.push(judgeExpectation(ex, r.value, r.error));
         }
@@ -1150,6 +1160,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         window.removeEventListener('message', onMsg);
         signal?.removeEventListener('abort', stopCheck);
         wrap.remove();
+        endPageCheck();
     }
     if (aborted) return { error: 'check_page stopped' };
 

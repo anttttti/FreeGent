@@ -5,7 +5,9 @@ import { installPassHeader, installPrivacyGuard } from './proxy.js';
 import { installRelaySession } from './relay-session.js';
 import { installGuestQuotaWatch } from './guest-quota.js';
 import { getPrivacyLevel } from './privacy.js';
-import { installDevLog } from './dev-log.js';
+import { installDevLog, sendTaskLog } from './dev-log.js';
+import { takePageCheckCrash, describePageCheckCrash } from './page-check-guard.js';
+import { buildRedactedChatJson } from './convo-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
 import { lease, revokeLeases } from './lease.js';
@@ -558,6 +560,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore draft for the current chat on page load
     _restoreDraft(activeChatId);
     (window as any).checkInterruptedRun?.();   // Autopilot was running when this tab reloaded
+    // The tab died while check_page ran a page: logged (Developer key), with the chat it happened in.
+    const _crash = takePageCheckCrash();
+    if (_crash) {
+        const why = `session ${_crash.session}, ${_crash.version}: ${describePageCheckCrash(_crash)}`;
+        console.error(`[check_page] ${why}`);
+        if (_crash.chatId) void sendTaskLog({ id: '', title: `check_page crash: ${_crash.path}`, path: _crash.path }, 'crashed', why, _crash.chatId, buildRedactedChatJson);
+    }
     window.refreshStorageUsage?.();
 
     // ── Message content search ─────────────────────────────────────────────

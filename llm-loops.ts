@@ -206,6 +206,8 @@ const _rotState = { step: 0 };
 // getCooldownRemaining, _anyFreeSpec, getRateLimitFallbackEndpoint — defined in llm-shared.js
 
 export function clearSessionFallback(): void { _sessionFallback = null; }
+let _lastStepSave = 0;   // when a step last saved the chat (see the tool results below)
+
 // clearReplaceState: clear replace-failure tracking on the given session (or defaultSession).
 // Called from agent-core via window.clearReplaceState() on new chat / rewind.
 export function clearReplaceState(session?: import('./state.ts').AgentSession): void {
@@ -2376,6 +2378,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 content: _histContent,
                 ...(result?.error || (result?.exit_code != null && result.exit_code !== 0) ? { isError: true } : {}),
             }, { surfaceOp: 'append' });
+        }
+
+        // Browser chat: saved after each step, at most every 5 s. It was saved only when the turn ended, so a tab that crashed or was
+        // killed mid-turn (a page under check_page that hung or ran out of memory) came back with the turn's work gone and an Autopilot
+        // task's chat empty. Headless runs keep their own per-event persistence.
+        if (_s === defaultSession && !runtime.hasNativeExec && Date.now() - _lastStepSave >= 5000) {
+            _lastStepSave = Date.now();
+            try { (globalThis as any).saveHistory?.(); } catch {}
         }
 
         const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, args: r.args, result: r.result })));
