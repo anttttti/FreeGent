@@ -365,7 +365,8 @@ export function isQuestionOnlyTask(task: string): boolean {
 const _MOVE_RE = /\bmov(?:e|ed|ing)\b/i, _COPY_RE = /\bcop(?:y|ied|ies|ying)\b/i;
 const _unq = (w: string) => w.replace(/^(['"])(.*)\1$/, '$2');
 export function copiedNotMoved(task: string, commands: string[]): string[] {
-    if (!_MOVE_RE.test(task) || _COPY_RE.test(task)) return [];
+    // "before copying" describes the move's own steps; only a request to copy ("copy X to Y") makes a cp the answer.
+    if (!_MOVE_RE.test(task) || _COPY_RE.test(task.replace(/\b(?:before|after|while|without|instead of)\s+cop\w+/gi, ''))) return [];
     const sources = new Set<string>();
     for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
         const cp = /^\s*(?:sudo\s+)?cp\s+((?:-\S+\s+)*)(\S+)\s+(\S+)\s*$/.exec(line);
@@ -376,19 +377,23 @@ export function copiedNotMoved(task: string, commands: string[]): string[] {
     return [...sources];
 }
 
-// Users and groups a command line created, and sudoers.d files it wrote, when the task did not ask for any: the agent's test fixtures.
-// AgentBench OS 40 and 41 (v0.99) created a `testuser` and a sudoers.d file to try a sudo fix, and left them in the system the grader reads.
+// Users and groups a command line created when the task did not ask for any, and the sudoers.d files written for them: the agent's test
+// fixtures. AgentBench OS 40 and 41 (v0.99) created a `testuser` and a sudoers.d file to try a sudo fix, and left them in the system the
+// grader reads. A sudoers.d file of its own, for no created user, is a fix and not reported (v0.99 run 4, task 40).
 const _USER_TASK_RE = /\b(?:users?|accounts?|groups?|useradd|adduser|sudoers?\.d)\b/i;
 export function testFixtures(task: string, commands: string[]): string[] {
     if (_USER_TASK_RE.test(task)) return [];
-    const out = new Set<string>();
+    const made = new Set<string>(), files: Array<{ path: string; line: string }> = [];
     for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
         const u = /\b(useradd|adduser|groupadd)\s+(?:-\S+\s+(?:\S+\s+)?)*([A-Za-z_][\w.-]*)\s*$/.exec(line);
-        if (u) out.add(`${u[1] === 'groupadd' ? 'group' : 'user'} ${u[2]}`);
+        if (u) made.add(u[2]);
         const f = />>?\s*(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line) || /\btee\s+(?:-a\s+)?(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line);
-        if (f) out.add(f[1]);
+        if (f) files.push({ path: f[1], line });
     }
-    return [...out];
+    if (!made.size) return [];
+    const out = [...made].map(n => `user ${n}`);
+    for (const f of files) if ([...made].some(n => f.line.includes(n))) out.push(f.path);
+    return out;
 }
 
 // A task that asks for the supplied data itself to be changed ("fix the bad value in data.csv", "clean up the

@@ -184,6 +184,14 @@ describe('test fixtures left in the system', () => {
         expect(hit?.text).toMatch(/user testuser, \/etc\/sudoers\.d\/testuser/);
         expect(await runCompletionGates(c)).toBeNull();
     });
+    it('a sudoers.d file for no created user is the fix, not a fixture (OS 40)', async () => {
+        expect(await runCompletionGates(ctx({ task: "Why can't I use sudo?? fix it.", shellCommands: ['echo "root ALL=(ALL:ALL) ALL" > /etc/sudoers.d/90-root-access'] }))).toBeNull();
+    });
+    it('"before copying" in a move request does not make a cp the answer (OS 30)', async () => {
+        const still = { autoCheck: async (_p: string[], o?: any) => ({ ran: true, failure: o?.stillExist?.length ? `${o.stillExist[0]} is still there` : undefined }) };
+        const hit = await runCompletionGates(ctx({ task: 'Move the file a.config to the current directory. And tell me the path of the file before copying.', verdict: 'no_change', shellCommands: ['cp /x/a.config .'], ...still }));
+        expect(hit?.name).toBe('missing_check_complete');
+    });
     it('is silent when the task is about users', async () => {
         expect(await runCompletionGates(ctx({ task: 'Create a user alice and let her use sudo.', shellCommands: ['useradd alice'] }))).toBeNull();
     });
