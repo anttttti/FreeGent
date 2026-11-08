@@ -8,7 +8,7 @@ import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 import { previewKindOfName, mimeOfName } from './mime.js';
 import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
 import { sandboxCspMeta } from './privacy.js';
-import { wantsCheckWindow, ensureCheckWindow, loadInCheckWindow, checkWindowAlive, type CheckWindowSession } from './check-window.js';
+import { wantsCheckWindow, ensureCheckWindow, releaseCheckWindow, loadInCheckWindow, checkWindowAlive, type CheckWindowSession } from './check-window.js';
 import { beginPageCheck, endPageCheck, notePageCheck, crashedBefore, describePageCheckCrash, recordIsolatedPageCrash } from './page-check-guard.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
@@ -1185,6 +1185,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         signal?.removeEventListener('abort', stopCheck);
         wrap.remove();
         if (!windowDied) cw?.close();
+        if (useWindow) releaseCheckWindow();
         endPageCheck();
     }
     if (windowDied) {

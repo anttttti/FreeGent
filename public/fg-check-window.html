@@ -20,6 +20,7 @@
       fr.setAttribute('sandbox', 'allow-scripts allow-forms');
       fr.srcdoc = d.content; wrap.appendChild(fr);
     } else if (d.kind === 'to-frame' && fr && d.id === id) { try { fr.contentWindow.postMessage(d.data, '*'); } catch (_) {} }
+    else if (d.kind === 'close') { try { window.close(); } catch (_) {} }
     else if (d.kind === 'unload') { if (fr) { fr.remove(); fr = null; } st.textContent = 'Waiting for a page…'; }
   };
   addEventListener('message', function (e) { if (fr && e.source === fr.contentWindow) ch.postMessage({ kind: 'from-frame', id: id, data: e.data }); });

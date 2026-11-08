@@ -5,7 +5,8 @@
 // so its own process in current browsers: public/fg-check-window.html, same origin, builds the same sandboxed frame there and relays messages over a BroadcastChannel.
 //
 // The in-tab frame stays the default. The window is used when a check of this page crashed before ("auto", the setting fg_check_isolation), always ("always") or never
-// ("off"); a browser lets a script open a window only from a click, so FreeGent shows a small bar with one button, and the window then stays open for the next checks.
+// ("off"). FreeGent opens the window itself and closes it after the check; a browser allows that only after a click or where pop-ups are allowed for the site,
+// otherwise a small bar with one button asks, and the window then stays open for the next checks.
 // Without the window (declined, blocked, a phone), the check runs in the tab as before, and a page whose check crashed is not loaded again (page-check-guard).
 
 import { pathCrashedBefore } from './page-check-guard.js';
@@ -53,6 +54,12 @@ async function _ping(ms: number): Promise<boolean> {
 }
 
 let _declinedAt = 0;
+let _openedSilently = false;   // FreeGent opened the window itself (no click): it closes it again when the check is done
+const SILENT_BLOCKED = 'fg_check_silent_blocked';   // the browser refused a window opened without a click: the bar asks from now on (this tab session)
+
+const _openWindow = (): void => {
+    try { window.open(new URL('fg-check-window.html', document.baseURI).href, '_blank', 'noopener,popup,width=520,height=420'); } catch {}
+};
 
 // One bar, one button: the click is the user activation the browser asks for before it lets a page open a window.
 function _askToOpen(): Promise<boolean> {
@@ -71,10 +78,8 @@ function _askToOpen(): Promise<boolean> {
         let done = false;
         const finish = (v: boolean) => { if (done) return; done = true; clearTimeout(timer); bar.remove(); resolve(v); };
         yes.onclick = () => {
-            let w: Window | null = null;
-            try { w = window.open(new URL('fg-check-window.html', document.baseURI).href, '_blank', 'noopener,popup,width=520,height=420'); } catch {}
+            _openWindow();   // noopener: no handle comes back; the window says hello over the channel
             finish(true);
-            void w;   // noopener: the handle is always null; the window says hello over the channel
         };
         no.onclick = () => finish(false);
         const timer = setTimeout(() => finish(false), 25000);   // nobody there (an unattended run): the check goes on in the tab
@@ -86,6 +91,14 @@ function _askToOpen(): Promise<boolean> {
 export async function ensureCheckWindow(): Promise<boolean> {
     if (!_channel()) return false;
     if (await _ping(1000)) return true;
+    // First just open it: with a recent click, or where the browser lets this site open windows, nobody is asked anything, and the window is closed after the check.
+    // A browser that refuses (no click, pop-ups blocked) is remembered for the tab session, and the bar asks instead.
+    let blocked = false; try { blocked = sessionStorage.getItem(SILENT_BLOCKED) === '1'; } catch {}
+    if (!blocked) {
+        _openWindow();
+        if (await _ping(2500)) { _openedSilently = true; return true; }
+        try { sessionStorage.setItem(SILENT_BLOCKED, '1'); } catch {}
+    }
     if (Date.now() - _declinedAt < 10 * 60_000) return false;   // asked recently and refused or ignored
     const asked = await _askToOpen();
     if (!asked) { _declinedAt = Date.now(); return false; }
@@ -109,4 +122,12 @@ export function loadInCheckWindow(path: string, content: string, onFrame: (d: an
         send: data => ch.postMessage({ kind: 'to-frame', id, data }),
         close: () => { _onFrame = null; ch.postMessage({ kind: 'unload', id }); },
     };
+}
+
+/** After a check: a window FreeGent opened by itself is closed again; one the user opened with the button stays for the next checks. */
+export function releaseCheckWindow(): void {
+    if (!_openedSilently) return;
+    _openedSilently = false;
+    _ch?.postMessage({ kind: 'close' });
+    _lastBeat = 0;
 }
