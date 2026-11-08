@@ -7,7 +7,7 @@ import { isScratchPath, rootPageOf } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
-import { noteToolStage } from './page-check-guard.js';
+import { noteToolStage, toolCrashCount } from './page-check-guard.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -469,6 +469,10 @@ async function gate_acceptance_review(taskPath, content) {
 // 2026-10-27 it was skipped in 144 of 144 done transitions, and tasks that broke a test written by an earlier task were done.
 const _QA_TEST_FILE_RE = /(?:^|\/)(?:test_[^/]+\.(?:mjs|cjs|js|py)|[^/]+[._](?:test|spec)\.(?:mjs|cjs|js)|[^/]+_test\.py)$/;
 const _QA_TEST_FILES_MAX = 12;
+// The gate used to run up to 12 test files in one shell call. In a project of a game with 16 heavy test files that took 60-85 s and the tab died: 3 of 3
+// uploaded sessions (v1.0.92, v1.0.95), "task → done [gate test-runner] — running for 76.7 s when the app last responded", and the run behind it was gone.
+// Now: the tests that mention what the task changed first, at most 6, three to a shell call, and no new call after 60 s.
+const _QA_TEST_RUN_MAX = 6, _QA_TEST_CHUNK = 3, _QA_TEST_BUDGET_MS = 60_000;
 const _QA_TEST_TIMEOUT_MS = 90_000;
 const _QA_PY_TEST_FILES_MAX = 6;   // each python3 start costs seconds in the browser
 // Runs a test module the way pytest would without needing pytest: its test_* functions that take no arguments, then any
@@ -581,6 +585,20 @@ const _bouncedBefore = (taskPath: string, gate: string, sig: string): boolean =>
     return false;
 };
 
+// Which of the project's tests to run for this task: those whose text names a file the task changed (by its name without extension), then the rest in their order.
+async function _pickTests(taskPath: string, tests: string[]): Promise<string[]> {
+    if (tests.length <= _QA_TEST_RUN_MAX) return tests;
+    const before = _taskStartFiles.get(taskPath);
+    let changed: string[] = [];
+    if (before) { try { const now = await _projectStamps(); changed = [...now].filter(([n, t]) => before.get(n) !== t && !_QA_TEST_FILE_RE.test(n)).map(([n]) => n.split('/').pop()!.replace(/\.[^.]+$/, '')).filter(b => b.length >= 3); } catch {} }
+    const related: string[] = [], rest: string[] = [];
+    for (const t of tests) {
+        let text = ''; try { text = String(await agentReadFile(t)); } catch {}
+        (changed.some(b => text.includes(b)) ? related : rest).push(t);
+    }
+    return [...related, ...rest].slice(0, _QA_TEST_RUN_MAX);
+}
+
 async function gate_test_runner(taskPath, content) {
     if (!getQaTestRunner()) return { blocks: false, outcome: 'skipped', detail: 'Test runner is turned off' };
     if (!_hasBashOrCode())  return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping tests' };
@@ -596,9 +614,11 @@ async function gate_test_runner(taskPath, content) {
         // `npm init` writes a test script that always fails ("Error: no test specified").
         if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus('npm test', 40);
     } catch {}
-    const testFiles = cmd ? [] : await findProjectTests(filePaths);
+    if (toolCrashCount(`${taskPath.split('/').pop()} → done [gate test-runner]`) >= 2)
+        return { blocks: false, outcome: 'unknown', detail: 'The test run took the browser tab down twice for this task: not run again' };
+    const allTests = cmd ? [] : await findProjectTests(filePaths);
+    const testFiles = cmd ? [] : await _pickTests(taskPath, allTests);
     if (!cmd && !testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found in the project' };
-    if (!cmd) cmd = _testCommand(testFiles);
 
     try {
         // A test run that never returns (the in-browser node hung on the second start after a test that replaced
@@ -606,15 +626,29 @@ async function gate_test_runner(taskPath, content) {
         // The limit is the run's own (timeout_s: the native executor kills the command, the browser shell restarts its sandbox), so a
         // timed-out run is ended, not left running to write files after the gate has moved on. The race is only a backstop for a backend
         // with no limit of its own (the local sandbox server), and waits a little longer so the backend's own message wins.
-        let timer: any;
-        const res    = await Promise.race([
-            executeToolAsync('execute_code', { language: 'bash', code: cmd, timeout_s: _QA_TEST_TIMEOUT_MS / 1000 }, null),
-            new Promise<any>(r => { timer = setTimeout(() => r({ exit_code: null, error: `the tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s` }), _QA_TEST_TIMEOUT_MS + 5_000); }),
-        ]).finally(() => clearTimeout(timer));
+        const one = async (code: string): Promise<any> => {
+            let timer: any;
+            return Promise.race([
+                executeToolAsync('execute_code', { language: 'bash', code, timeout_s: _QA_TEST_TIMEOUT_MS / 1000 }, null),
+                new Promise<any>(r => { timer = setTimeout(() => r({ exit_code: null, error: `the tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s` }), _QA_TEST_TIMEOUT_MS + 5_000); }),
+            ]).finally(() => clearTimeout(timer));
+        };
+        let res: any, notRun = allTests.length - testFiles.length;
+        if (cmd) res = await one(cmd);
+        else {   // a few files to a shell call, and no new call once the budget is spent
+            const parts: any[] = [], t0 = Date.now();
+            for (let i = 0; i < testFiles.length; i += _QA_TEST_CHUNK) {
+                if (parts.length && Date.now() - t0 > _QA_TEST_BUDGET_MS) { notRun += testFiles.length - i; break; }
+                parts.push(await one(_testCommand(testFiles.slice(i, i + _QA_TEST_CHUNK))));
+            }
+            const bad = parts.find(r => r.exit_code !== 0);
+            res = { stdout: parts.map(r => r.stdout || '').join(''), stderr: parts.map(r => r.stderr || '').join(''), error: parts.map(r => r.error).filter(Boolean).join('\n') || undefined,
+                exit_code: bad ? bad.exit_code : 0 };
+        }
         const output = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
         if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
         if (res.exit_code !== 0) {
-            const failed = /FAILED:(.*)$/m.exec(output)?.[1].trim().split(/\s+/) ?? [];
+            const failed = [...output.matchAll(/FAILED:(.*)$/gm)].flatMap(m => m[1].trim().split(/\s+/)).filter(Boolean);
             if (res.exit_code === 127 || _sandboxLacks(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
             const which = failed.length ? failed.join(', ') : 'the test command';
             // What the first failing file printed (its header is "== <file> (exit N)"): the first line, or for a Python traceback the
@@ -889,6 +923,17 @@ async function transitionTask(taskPath, toStatus) {
     return r;
 }
 
+const _SOFT_GATES = new Set(['test-runner', 'page-check', 'acceptance-review', 'kept-features', 'kept-data', 'regression-guard', 'self-review']);
+
+// The user moves a card over the gates that refused it (the board asks first): the status is written, a `done` is marked unverified, and the file says who did it.
+export async function forceTaskStatus(taskPath: string, toStatus: string, because: string): Promise<void> {
+    const to = canonTaskStatus(toStatus);
+    await appendGateNote(taskPath, `## Moved by the user over the gates (${new Date().toISOString().slice(0, 16)}Z)\n${because.slice(0, 500)}`);
+    if (to === 'done') { try { await agentWriteFile(taskPath, _setFrontmatterField(await agentReadFile(taskPath), 'qa', 'unverified')); } catch {} }
+    await setTaskStatus(taskPath, to);
+    try { await refreshTasks(); } catch {}
+}
+
 async function _transitionTask(taskPath, toStatus) {
     // fg-tasks/current.md is a chat's scratch note, not a board task: the review, test and page gates are for tasks someone plans and
     // follows (logs of 2026-11-07: a plain chat's `done` on current.md ran 281 s and took the tab down).
@@ -954,6 +999,14 @@ async function _transitionTask(taskPath, toStatus) {
 
     if (stale) return { transitioned: false, reason: stale };
 
+    // A `done` refused for the same kind of reason again and again strands the task and its chat: uploaded logs have a chat that tried 5 times to get past a test that
+    // could not load `main.js` in node (a failure older than the task), reading other tasks' files for a way round. The checks that depend on the sandbox or on a
+    // reviewer's reading are accepted as unverified once the rework limit is reached; completeness (the boxes) and dependencies are the agent's to satisfy.
+    if (failures.length && toStatus === 'done' && reworkCount >= getQaReworkLimit() && failures.every(f => _SOFT_GATES.has(f.gate))) {
+        await appendGateNote(taskPath, `## QA: accepted unverified after ${reworkCount} refusals (${new Date().toISOString().slice(0, 16)}Z)\n${failures.map(f => `- ${f.gate}: ${String(f.reason).slice(0, 300)}`).join('\n')}`);
+        for (const f of failures.splice(0)) unknown.push({ gate: f.gate, detail: `refused ${reworkCount} times, accepted` });
+    }
+
     if (failures.length) {
         if (toStatus === 'done' || fromStatus === 'in-review') {
             // Re-read: the gates appended their findings to the file after `content` was read, and
@@ -986,4 +1039,4 @@ async function _transitionTask(taskPath, toStatus) {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { setTaskStatus, _updateLedgerRow, transitionTask, forgetGatePass, gatesPassedDone });
+Object.assign(window, { setTaskStatus, _updateLedgerRow, transitionTask, forceTaskStatus, forgetGatePass, gatesPassedDone });

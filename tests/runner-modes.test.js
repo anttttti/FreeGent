@@ -384,6 +384,39 @@ describe('what the run says when it ends or is interrupted', () => {
         expect(seen).toMatchObject({ all: true, task: '#001 First', paused: '' });
         expect(sessionStorage.getItem('fg_runner_active')).toBeNull();
     });
+    // kanbanflow set 3 / uploaded sessions: the tab died inside a gate's test run three times in three sessions and the board stood still with tasks open.
+    it('starts Autopilot again when the tab died inside a tool call, at most 3 times an hour, and not after a plain reload', async () => {
+        const run = async () => {
+            localStorage.removeItem('x');
+            sessionStorage.setItem('fg_runner_active', JSON.stringify({ all: true, task: '#001 First', paused: '', t: Date.now() }));
+            sessionStorage.setItem('fg_tools_running', JSON.stringify({ calls: [{ name: 'exec', label: 'exec(bash): node test_x.mjs', t: Date.now() }], chatId: null, runner: true, beat: Date.now() }));
+            W.checkInterruptedRun();
+            await new Promise(r => setTimeout(r, 1700));
+            const started = turns.length > 0;
+            if (W.isRunnerRunning()) W.runnerStop();
+            await idle();
+            return started;
+        };
+        localStorage.removeItem('fg_runner_autoresume');
+        const prevTab = W.activateTab; W.activateTab = () => W.initRunner();   // the Tasks tab opening runs initRunner
+        document.body.insertAdjacentHTML('beforeend', '<div id="runner-session-log"></div>');
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: todo', 'status: in-progress');
+        expect(await run()).toBe(true);
+        expect(log()).toMatch(/the browser tab crashed in a tool call/);
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: done', 'status: in-progress'); files['fg-tasks/002-b.md'] = files['fg-tasks/002-b.md'].replace('status: done', 'status: todo');
+        turns.length = 0; expect(await run()).toBe(true);
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: done', 'status: in-progress'); files['fg-tasks/002-b.md'] = files['fg-tasks/002-b.md'].replace('status: done', 'status: todo');
+        turns.length = 0; expect(await run()).toBe(true);
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: done', 'status: in-progress');
+        turns.length = 0; expect(await run()).toBe(false);          // the fourth within the hour waits for the button
+        // a user's reload: no tool call was running
+        localStorage.removeItem('fg_runner_autoresume'); sessionStorage.removeItem('fg_tools_running'); turns.length = 0;
+        sessionStorage.setItem('fg_runner_active', JSON.stringify({ all: true, task: '#001 First', paused: '', t: Date.now() }));
+        W.checkInterruptedRun();
+        await new Promise(r => setTimeout(r, 1700));
+        expect(turns).toEqual([]);
+        W.activateTab = prevTab;
+    }, 20000);
     it('after a reload, the Tasks tab says the run was interrupted and how many tasks are open, and starts nothing', async () => {
         files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: todo', 'status: in-progress');
         sessionStorage.setItem('fg_runner_active', JSON.stringify({ all: true, task: '#001 First', paused: '', t: Date.now() }));

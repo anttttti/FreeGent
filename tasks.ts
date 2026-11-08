@@ -508,10 +508,17 @@ async function moveTaskToColumn(path: string, colStatus: string) {
     if (!task) return;
     const cur = (task.fm.status || 'todo').toLowerCase();
     const curCol = columnOfStatus(cur);
-    if (curCol === colStatus) return;
+    // Failed, blocked and impossible tasks are drawn under To Do: a drop there used to do nothing, and the card could not be put back in play.
+    const reopen = colStatus === 'todo' && !['todo', 'open'].includes(canonTaskStatus(cur));
+    if (curCol === colStatus && !reopen) return;
     try {
         const r = await transitionTask(path, newStatus);
-        if (!r.transitioned) { alert('Move blocked: ' + (r.reason || 'QA gate blocked transition')); return; }
+        if (!r.transitioned) {
+            // The gates said no. The board asks, because a card that no gate and no agent can move (a test the sandbox cannot run, a criterion that cannot be shown) is stuck for good.
+            const why = r.reason || 'QA gate blocked transition';
+            if (!confirm(`Move blocked:\n${why}\n\nMove it to ${colStatus === 'todo' ? 'To Do' : colStatus} anyway? A Done task is marked unverified.`)) return;
+            await forceTaskStatus(path, newStatus, why);
+        }
     } catch (e: any) {
         alert('Failed to move task: ' + (e?.message || e));
     }

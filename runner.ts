@@ -3,6 +3,7 @@
 import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus, taskIdOf } from './task-status.js';
+import { tabDiedInToolCall, spendAutoRecovery } from './page-check-guard.js';
 import * as MsgQueue from './msg-queue.js';
 import { isStepLimitStop } from './loop-director.js';
 import { sendTaskLog } from './dev-log.js';
@@ -762,6 +763,7 @@ async function runnerInterrupt() {
 // not restart by itself: a run that crashed the tab would crash it again.
 const _RUN_STATE_KEY = 'fg_runner_active';
 let _runnerTaskLabel = '';
+let _autoResuming = false;   // the interrupted run is started again by checkInterruptedRun (the tab died in a tool call)
 let _interruptedNote = '';   // shown as the idle status until a run starts
 function _persistRunState(): void {
     try {
@@ -778,6 +780,10 @@ async function _reportInterruptedRun(st: any): Promise<void> {
     const what = st.all ? 'Autopilot' : 'The task run';
     const on = st.task ? ` while on ${st.task}` : '';
     const asked = st.paused ? ` It was paused: ${String(st.paused).slice(0, 200)}` : '';
+    if (_autoResuming) {
+        _appendRunnerLog(null, `${what} was interrupted when the browser tab crashed in a tool call${on}.${asked}`, 'info', open ? `${open} task${open > 1 ? 's' : ''} open: starting again` : '');
+        return;
+    }
     const msg = `${what} was interrupted by a page reload${on}.${asked}`;
     _appendRunnerLog(null, msg, 'info', open ? `${open} task${open > 1 ? 's' : ''} open: press ${st.all ? 'Autopilot' : 'Run'} to continue` : '');
     _interruptedNote = open ? `Interrupted by a reload: ${open} task${open > 1 ? 's' : ''} open. Press ${st.all ? 'Autopilot' : 'Run'} to continue` : 'Interrupted by a reload';
@@ -786,12 +792,23 @@ async function _reportInterruptedRun(st: any): Promise<void> {
 }
 
 // At page load: a run this tab had going when it reloaded is reported on the Tasks tab, which is opened for it.
+// An Autopilot run whose tab died inside a tool call (a test run, a worker, a completion gate; 3 of 3 uploaded sessions) is started again, up to 3 times an hour:
+// the user was away and the board stood still with tasks open. The agent of the first turn is told what crashed (turn-context takeCrashNote) and not to repeat it.
+// A reload the user made, or a tab that died with nothing running, still waits for the Autopilot button.
+function _mayAutoResume(): boolean { return spendAutoRecovery('fg_runner_autoresume'); }
 function checkInterruptedRun(): void {
-    let pending = false;
-    try { pending = !!sessionStorage.getItem(_RUN_STATE_KEY); } catch {}
-    if (!pending) return;
+    let state: any = null;
+    try { state = JSON.parse(sessionStorage.getItem(_RUN_STATE_KEY) || 'null'); } catch {}
+    if (!state) return;
+    const crashed = state.all && !state.paused && tabDiedInToolCall();
+    _autoResuming = !!crashed && _mayAutoResume();
     if (typeof activateTab === 'function') activateTab('tasks');   // runs initRunner
     else initRunner();
+    if (_autoResuming) setTimeout(() => {
+        if (_runnerRunning) return;
+        runnerAutopilot();   // a new run starts a new log
+        _appendRunnerLog(null, `Autopilot was interrupted when the browser tab crashed in a tool call${state.task ? ` while on ${state.task}` : ''}: started again`, 'info', '');
+    }, 1500);
 }
 
 // "Running…" while the model answers; after three failed requests in a row, that it does not, for how long and why (AE-13).

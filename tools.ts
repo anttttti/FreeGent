@@ -1266,6 +1266,16 @@ async function _handleUpdateTaskStatus(args: any) {
                     t.path !== path && t.path.startsWith(dir)
                     && t.path.lastIndexOf('/') === dir.length - 1
                     && (t.fm.status || '').toLowerCase() === 'in-progress');
+                // An in-progress task nothing is working on (its chat died with the tab, the run was stopped) must not hold the board: untouched for 15 minutes and not the
+                // runner's own, it is put back to open. Uploaded logs: a chat could not start the next task while an abandoned one sat In Progress.
+                const running = (window as any).isRunnerRunning?.() ?? false;
+                for (let i = others.length - 1; i >= 0; i--) {
+                    const t = others[i];
+                    const mt = await (window as any).agentFileMtime(t.path).catch(() => null);
+                    if (mt != null && Date.now() - mt > 15 * 60_000 && !(running && (window as any).runnerStartedTask?.(t.path))) {
+                        try { await setTaskStatus(t.path, 'open'); others.splice(i, 1); } catch {}
+                    }
+                }
                 if (others.length) {
                     const list = others.map((t: any) => t.path).join(', ');
                     return { blocked: { ok: false, path, status, blocked: true,

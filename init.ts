@@ -6,7 +6,7 @@ import { installRelaySession } from './relay-session.js';
 import { installGuestQuotaWatch } from './guest-quota.js';
 import { getPrivacyLevel } from './privacy.js';
 import { installDevLog, sendTaskLog } from './dev-log.js';
-import { takePageCheckCrash, describePageCheckCrash, takeToolCrash, describeToolCrash } from './page-check-guard.js';
+import { takePageCheckCrash, describePageCheckCrash, takeToolCrash, describeToolCrash, spendAutoRecovery } from './page-check-guard.js';
 import { buildRedactedChatJson } from './convo-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
@@ -572,6 +572,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         const why = `session ${_toolCrash.session}, ${_toolCrash.version}: ${describeToolCrash(_toolCrash)}`;
         console.error(`[tool crash] ${why}`);
         if (_toolCrash.chatId) void sendTaskLog({ id: '', title: `tool crash: ${_toolCrash.calls[0].label.slice(0, 60)}`, path: '' }, 'crashed', why, _toolCrash.chatId, buildRedactedChatJson);
+    }
+    // A chat turn (not a run: the runner starts itself again) that died with the tab leaves its last step red and the conversation standing. The chat is told what crashed
+    // with its next message (turn-context takeCrashNote), so "Continue" is sent for the user, at most 3 times an hour in total.
+    const _crashedChat = _toolCrash && !_toolCrash.runner ? _toolCrash.chatId : (_crash && !_crash.runner ? _crash.chatId : null);
+    if (_crashedChat && _crashedChat === activeChatId && !(window as any).isRunnerRunning?.() && spendAutoRecovery('fg_chat_autocontinue')) {
+        setTimeout(() => {
+            const inp = document.getElementById('agent-input') as HTMLElement | null;
+            if (!inp || (window as any).turnsInFlight?.() > 0 || ((window as any)._readInputText?.(inp) || '').trim()) return;   // the user is already typing or a turn is running
+            (window as any)._setInputText?.(inp, 'Continue');
+            (window as any).userSend?.();
+        }, 2500);
     }
     window.refreshStorageUsage?.();
 

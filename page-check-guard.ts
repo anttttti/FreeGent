@@ -105,7 +105,7 @@ export function describePageCheckCrash(c: PageCheckCrash): string {
 const TOOLS_RUNNING = 'fg_tools_running';
 const TOOL_CRASHES = 'fg_tool_crashes';
 
-export interface ToolCallMark { name: string; label: string; t: number; }
+export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; }
 export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; }
 
 const _calls = new Map<number, ToolCallMark>();
@@ -121,9 +121,9 @@ function _writeCalls(beat = Date.now()): void {
 }
 
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
-export function beginToolCall(name: string, label: string, chatId: string | null): number {
+export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number }): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now() });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws } : {}) });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();
@@ -153,6 +153,42 @@ export function takeToolCrash(pageCheck: PageCheckCrash | null = null): ToolCras
         localStorage.setItem(TOOL_CRASHES, JSON.stringify([...(Array.isArray(list) ? list : []), crash].slice(-KEEP)));
     } catch {}
     return crash;
+}
+
+/** A budget for recoveries the app starts by itself after a crash: true (and counted) while fewer than `max` were made in the last hour under this key. */
+export function spendAutoRecovery(key: string, max = 3, windowMs = 3_600_000): boolean {
+    try {
+        const now = Date.now();
+        const list = (JSON.parse(localStorage.getItem(key) || '[]') as number[]).filter(t => now - t < windowMs);
+        if (list.length >= max) return false;
+        localStorage.setItem(key, JSON.stringify([...list, now]));
+        return true;
+    } catch { return false; }
+}
+
+/** True at start-up when the tab that died had a tool call or a page check running (the markers are cleared by a reload or navigation, so they mean a crash or a kill). Read before
+ *  takePageCheckCrash / takeToolCrash, which consume them. */
+export function tabDiedInToolCall(): boolean {
+    try { return !!(sessionStorage.getItem(TOOLS_RUNNING) || sessionStorage.getItem(RUNNING)); } catch { return false; }
+}
+
+/** The signature of a call: its tool and arguments. Two calls with the same one are the same command. */
+export const toolSig = (name: string, args: unknown): string => hashContent(`${name}\u0000${JSON.stringify(args ?? null)}`);
+
+/** A recorded tab crash in a call with this signature, made when the workspace was in the same state (`ws`: its newest file time), or null.
+ *  The same command on files that have changed since is a new attempt; on files that have not, it is the crash again (kanbanflow logs: the same
+ *  `node test_imports.mjs && …` took the tab down four times in four minutes after the note said not to run it unchanged). */
+export function sameCallCrashed(sig: string, ws: number): { at: number; seconds: number } | null {
+    try {
+        const list = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[];
+        for (const c of [...list].reverse()) for (const x of c.calls || []) if (x.sig === sig && x.ws === ws) return { at: x.t, seconds: Math.round(((c.beat || x.t) - x.t) / 1000) };
+    } catch {}
+    return null;
+}
+
+/** How many recorded tab crashes were in a tool call whose label contains `part` (e.g. "task:138-x.md → done [gate test-runner]"). */
+export function toolCrashCount(part: string): number {
+    try { return (JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[]).filter(c => c.calls?.some(x => String(x.label).includes(part))).length; } catch { return 0; }
 }
 
 export function describeToolCrash(c: ToolCrash): string {

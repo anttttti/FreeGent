@@ -589,7 +589,7 @@ async function restoreChatMessages(id) {
         msgs.querySelectorAll('.seq-selected-detail').forEach(el => { el.innerHTML = ''; });
         msgs.querySelectorAll('.seq-live-detail').forEach(el => { el.innerHTML = ''; });
         msgs.querySelectorAll('.seq-task.seq-selected').forEach(el => el.classList.remove('seq-selected'));
-        msgs.querySelectorAll('.seq-task.seq-running').forEach(el => { el.classList.remove('seq-running'); el.classList.add('seq-stopped'); });
+        msgs.querySelectorAll('.seq-task.seq-running').forEach(el => { el.classList.remove('seq-running'); el.classList.add('seq-stopped'); (el as HTMLElement).title = 'Interrupted: the page closed, reloaded or crashed while this step ran'; });
         // Re-attach onclick handlers to checkpoint buttons — not preserved in serialized HTML.
         // Buttons may live in .agent-ckpt-row (workflowMode) or .agent-ckpt-group (normal flow,
         // where createResponsePlaceholder moves them into the model response div).

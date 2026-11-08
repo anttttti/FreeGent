@@ -545,6 +545,7 @@ declare global {
     var _updateLedgerRow: any;
     var setTaskStatus: any;
     var transitionTask: any;
+    var forceTaskStatus: any;
     var forgetGatePass: any;
     var gatesPassedDone: any;
     // ── bridged by fetch-blacklist.ts ──

@@ -89,6 +89,27 @@ describe('ledger follows the Tasks tab', () => {
         expect(ledgerRows()).toEqual([['001', 'done', 'High', 'First']]);
     });
 
+    // Uploaded logs: cards that no gate and no agent could move. A failed task is drawn under To Do, so dropping it there did nothing; a refused move had no way through.
+    it('a failed card dropped on To Do is opened again', async () => {
+        files['fg-tasks/001-first.md'] = files['fg-tasks/001-first.md'].replace('status: open', 'status: failed');
+        await W.refreshTasks();
+        await W.moveTaskToColumn('fg-tasks/001-first.md', 'todo');
+        expect(files['fg-tasks/001-first.md']).toMatch(/^status: open$/m);
+    });
+    it('a move the gates refuse is made when the user confirms it, a done task marked unverified, and not when the user declines', async () => {
+        W.transitionTask = async () => ({ transitioned: false, reason: '[test-runner] Tests failed: test_a.mjs' });
+        W.forceTaskStatus = (await import('../qa.ts')).forceTaskStatus;
+        await W.refreshTasks();
+        W.confirm = () => false;
+        await W.moveTaskToColumn('fg-tasks/001-first.md', 'done');
+        expect(files['fg-tasks/001-first.md']).toMatch(/^status: open$/m);
+        W.confirm = (m) => { expect(m).toMatch(/test_a\.mjs/); return true; };
+        await W.moveTaskToColumn('fg-tasks/001-first.md', 'done');
+        expect(files['fg-tasks/001-first.md']).toMatch(/^status: done$/m);
+        expect(files['fg-tasks/001-first.md']).toMatch(/^qa: unverified$/m);
+        expect(files['fg-tasks/001-first.md']).toMatch(/Moved by the user over the gates/);
+    });
+
     it('deleting a task removes its row, including the last one', async () => {
         await W.refreshTasks();
         document.querySelector('.kanban-card-trash').click();

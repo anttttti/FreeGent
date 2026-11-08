@@ -31,7 +31,7 @@ import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
 import { registry } from './session-registry.js';
-import { beginToolCall, endToolCall } from './page-check-guard.js';
+import { beginToolCall, endToolCall, toolSig, sameCallCrashed } from './page-check-guard.js';
 import { compactSurface, type Session } from './session.js';
 import { type SurfaceIntent } from './session-event.js';
 import { connectSignal } from './abort.js';
@@ -666,10 +666,17 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             result = { error: `Tool '${name}' is turned off in Settings → Tools. Use another approach or declare BLOCKED.` };
         } else {
             // Browser: marked while it runs, so a call that freezes or crashes the tab is reported at the next start (page-check-guard.ts).
-            const _mark = runtime.hasNativeExec ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null);
+            // The same command on the same files that already took the tab down once is not run again (it would cost another reload and the task's place in the chat).
+            let _same: { sig: string; ws: number } | undefined;
+            if (!runtime.hasNativeExec && (name === 'execute_code' || name === 'run_workers')) {
+                try { _same = { sig: toolSig(name, args), ws: Math.max(0, ...((await agentListFiles()) || []).filter((f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name)).map((f: any) => Number(f.lastModified) || 0)) }; } catch {}
+            }
+            const _crashedAlready = _same && sameCallCrashed(_same.sig, _same.ws);
+            const _mark = runtime.hasNativeExec || _crashedAlready ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null, _same);
             // A call that can run for minutes: the chat is saved first, so a crash in it loses only this step (the step save is at most every 5 s).
             if (_mark && !forWorker && _LONG_TOOLS.has(name)) { _lastStepSave = Date.now(); try { (globalThis as any).saveHistory?.(); } catch {} }
-            try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
+            if (_crashedAlready) result = { error: `This exact call took the browser tab down at ${new Date(_crashedAlready.at).toISOString().slice(11, 16)}Z (it had run ${_crashedAlready.seconds} s) and no file has changed since, so it was not run again. Change it: run one test file per call with \`timeout 20 node file.mjs\`, cut the loop or the data, or fix the code first.` };
+            else try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
             catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
             finally { if (_mark) endToolCall(_mark); }
         }
@@ -1364,6 +1371,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     let _forceCompact     = false;
     let _promptRejected   = false;   // the server said the prompt itself leaves no room for an answer (not just a too-large max_tokens)
     let _lastInputTokens  = 0;
+    let _lastInputHistLen = 0;    // history length when _lastInputTokens was reported: what came after it (tool results, nudges) is not in that count
     let _lastHistoryLen   = 0;    // last history.length seen by the estimator (for cache hit check)
     let _lastEstTokens    = 0;    // cached result of estimateTokens for that length
     let _lastMaxTokensSent = 0;   // max_tokens of the last request (callOAI's clamp), for truncation checks
@@ -1429,6 +1437,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         oaiMaxTokens = null;
         _lastInputTokens = 0;
+        _lastInputHistLen = 0;
         _lastHistoryLen  = 0;
         _lastEstTokens   = 0;
         // After compaction the model has lost context — re-reading files it previously
@@ -1680,8 +1689,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (_pruSess) pruneSessionHistory(_pruSess);
 
         // ── Token estimation and compaction ─────────────────────────────────────────────
+        // The server's count is the prompt of the LAST call. What the model's step added since (a 1000-line read_file, a listing, a search, nudges) is not in it, and that
+        // is often 5-20k tokens: counting only the old figure sent a request that overflowed the window ("calls failing near the compaction limit", then a clamp of
+        // max_tokens, a "write it shorter" nudge and the compaction a step too late). The messages after that call are estimated and added.
         const _tokEst = _lastInputTokens > 0
-            ? _lastInputTokens  // real server-reported count; delta since last call is small vs. threshold
+            ? _lastInputTokens + (_lastInputHistLen > 0 ? Math.ceil(estimateTokens(_histR(_s).slice(_lastInputHistLen)) * 1.1) : 0)
             : (() => {          // fallback: estimate from history (step 0 only, before first server response)
                 const h = _histR(_s);
                 if (h.length !== _lastHistoryLen || _lastEstTokens === 0) {
@@ -1715,7 +1727,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // no compaction, then a 400 and a stalled 28k-token prefill). Use the estimate, which runs about a fifth under real
         // tokens for numbers and code, with a margin.
         const _openingStepOverThreshold = step === 0 && _lastInputTokens === 0 && _histR(_s).length > 3 && _tokEst * 1.2 > _compactThreshold();
-        if (_forceCompact || _openingStepOverThreshold || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.5)) {
+        if (_forceCompact || _openingStepOverThreshold || (_tokEst > _compactThreshold() && _lastInputTokens > _compactThreshold() * 0.3)) {
             // Compaction after compaction with no response in between: the context is not getting
             // smaller, and each round spends a step (v0.66 sanitize-git-repo: 119 rounds, then the
             // step limit). Stop with what there is.
@@ -2053,7 +2065,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                        ...(typeof msg.reasoning_content === 'string' && msg.reasoning_content && modelNeedsReasoningEcho(_epKey) ? { reasoning_content: msg.reasoning_content } : {}) },
             ...(usage?.prompt_tokens ? { usage: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens ?? 0 } } : {}),
         }, { surfaceOp: 'append' });
-        if (usage?.prompt_tokens) _lastInputTokens = usage.prompt_tokens;
+        if (usage?.prompt_tokens) { _lastInputTokens = usage.prompt_tokens; _lastInputHistLen = _histR(_s).length; }
         // Observe prefix-cache capability: if the response carries cached_tokens > 0,
         // this endpoint actively caches the KV prefix — persist the fact so init.ts
         // can gate warmup calls to only these providers (no point priming a cache that

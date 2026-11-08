@@ -288,6 +288,52 @@ describe('kept-features gate', () => {
 
 
 // kanbanflow set 3 (datapipe, 2 of 2 runs): a task tested its code by writing sample rows to data/app.log, the input the tool is meant to process.
+// 3 of 3 uploaded sessions: "task → done [gate test-runner] — running for 76.7 s when the app last responded": 12 heavy test files in one shell call took the tab down.
+describe('test-runner gate scope', () => {
+    const T = 'fg-tasks/007-physics.md';
+    it('runs at most 6 tests, the ones that mention the changed file first, three to a shell call', async () => {
+        let clock = 1;
+        const stamp = {};
+        W.agentListFiles = async () => Object.keys(files).map(name => ({ name, lastModified: stamp[name] ?? 0 }));
+        files[T] = `---\nid: 007\ntitle: Physics\nstatus: todo\n---\n# Physics\n## Acceptance Criteria\n- [x] ok\n`;
+        files['physics.js'] = 'export const g = 1;';
+        for (const c of 'abcdefghij') files[`test_${c}.mjs`] = 'console.log(1)';
+        files['test_z_physics.mjs'] = "import { g } from './physics.js'; console.log(g)";
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        files['physics.js'] = 'export const g = 2;'; stamp['physics.js'] = ++clock;
+        runs.length = 0;
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(true);
+        const cmds = runs.filter(c => /node '/.test(c));
+        expect(cmds).toHaveLength(2);                                   // 6 files, three to a call
+        expect(cmds[0]).toContain("node 'test_z_physics.mjs'");         // the related test first
+        expect(cmds.join('\n').match(/node '/g)).toHaveLength(6);
+    });
+});
+
+describe('a done refused again and again', () => {
+    const T = 'fg-tasks/120-ramp.md';
+    const task = (n) => `---\nid: 120\ntitle: Ramp\nstatus: todo\nrework_count: ${n}\n---\n# Ramp\n## Acceptance Criteria\n- [x] ok\n`;
+    it('is accepted as unverified for the sandbox-dependent checks once the rework limit is reached, never for the boxes', async () => {
+        files['test_imports.mjs'] = 'x'; delete files[TASK];
+        W.executeToolAsync = async () => ({ stdout: "== test_imports.mjs (exit 1)\nIMPORT FAILED: Error loading module '/workspace/src/main.js'\nFAILED: test_imports.mjs", stderr: '', exit_code: 1 });
+        files[T] = task(0);
+        await W.transitionTask(T, 'in-progress');
+        files[T] = files[T].replace('status: in-progress', 'status: in-progress').replace(/rework_count: \d+/, 'rework_count: 3');
+        files['src.js'] = 'changed';   // the project moved on since the first refusal, so the usual second-attempt acceptance does not apply
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified.join(' ')).toMatch(/test-runner/);
+        expect(files[T]).toMatch(/qa: unverified/);
+        // an unticked box is still refused at the limit
+        files[T] = task(3).replace('- [x] ok', '- [ ] ok').replace('status: todo', 'status: in-progress');
+        const r2 = await W.transitionTask(T, 'done');
+        expect(r2.transitioned).toBe(false);
+        expect(r2.reason).toMatch(/completeness-check/);
+    });
+});
+
 describe('completeness gate', () => {
     // kanbanflow set 3: one chat sent `done` 21 times with a box unticked; the message named the box but never the call that ticks it.
     it('names the call that ticks the first unticked box', async () => {
