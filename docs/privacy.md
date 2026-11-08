@@ -30,7 +30,7 @@ Two more things apply only to the maintainer's own sessions: a [Developer key](m
 
 ## The three privacy levels
 
-Change the level with the **Privacy** button in the sidebar or under **Settings → Privacy**. Until you choose, FreeGent uses Provider-only.
+Change the level with the **Privacy** button in the sidebar or under **Settings → Privacy**. Until you choose, FreeGent uses Routed.
 
 | Level | Model calls | Everything else |
 |---|---|---|

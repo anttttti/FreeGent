@@ -13,7 +13,7 @@
 - **Runs in your browser.** Project files and code execution (JavaScript, Python, Bash) run fully inside your browser, using an in-browser file system and WASM terminal.
 - **Autonomous cowork.** Drives projects from idea to completion using an integrated Kanban board to track and execute tasks.
 - **Flexible.** Access freegent.ai from any browser, run locally through the CLI/TUI, or self-host the WebUI. All run the same agent harness.
-- **Your data stays with you.** Keys, chats and files stay in your browser. Your chosen privacy level controls where data is sent, and by default, requests go straight from your browser to model endpoints.
+- **Your data stays with you.** Keys, chats and files stay in your browser. Your chosen privacy level controls where data is sent, and by default (Routed) requests go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. Provider-only sends them straight from your browser to the model endpoints, and Local keeps them on your own network.
 
 ## Three interfaces, one agent
 
