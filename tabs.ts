@@ -1028,7 +1028,7 @@ export async function pageCheckContent(path: string, html: string, { actions = [
     return { content, fingerprint: `${content}\u0000${JSON.stringify({ actions, probes, expect })}` };
 }
 
-async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[] } = {}) {
+async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[], askToOpenWindow = true } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
     let { content, fingerprint } = await pageCheckContent(path, html, { actions, probes, expect });
@@ -1039,7 +1039,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     content = injectIntoHead(content, _CHECK_CAPTURE);
 
     // A page whose check took the tab down before is checked in a separate window when there is one (check-window.ts); otherwise in the tab, as always.
-    const useWindow = wantsCheckWindow(path) && await ensureCheckWindow();
+    const useWindow = wantsCheckWindow(path) && await ensureCheckWindow(askToOpenWindow);
     let cw: CheckWindowSession | null = null;
     let windowDied = false;
     const startedAt = Date.now();

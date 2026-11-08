@@ -472,6 +472,8 @@ const _QA_TEST_FILES_MAX = 12;
 // The gate used to run up to 12 test files in one shell call. In a project of a game with 16 heavy test files that took 60-85 s and the tab died: 3 of 3
 // uploaded sessions (v1.0.92, v1.0.95), "task → done [gate test-runner] — running for 76.7 s when the app last responded", and the run behind it was gone.
 // Now: the tests that mention what the task changed first, at most 6, three to a shell call, and no new call after 60 s.
+// One test file gets 20 s: a longer one is a hang or a render loop the in-browser node cannot finish, and says nothing about the task.
+const _QA_FILE_TIMEOUT_S = 20;
 const _QA_TEST_RUN_MAX = 6, _QA_TEST_CHUNK = 3, _QA_TEST_BUDGET_MS = 60_000;
 const _QA_TEST_TIMEOUT_MS = 90_000;
 const _QA_PY_TEST_FILES_MAX = 6;   // each python3 start costs seconds in the browser
@@ -518,7 +520,7 @@ export async function findProjectTests(named: string[] = []): Promise<string[]> 
 function _testCommand(files: string[]): string {
     const lines = ['fg_qa_failed=""'];
     for (const f of files) {
-        const run = f.endsWith('.py') ? `python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `node ${_shq(f)}`;
+        const run = f.endsWith('.py') ? `timeout ${_QA_FILE_TIMEOUT_S} python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `timeout ${_QA_FILE_TIMEOUT_S} node ${_shq(f)}`;
         lines.push(`fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed ${f}"; printf '%s\\n' "== ${f} (exit $fg_qa_rc)" "$fg_qa_out" | tail -n 15; fi`);
     }
     lines.push(`if [ -n "$fg_qa_failed" ]; then echo "FAILED:$fg_qa_failed"; exit 1; fi; echo "${files.length} test file(s) passed"`);
@@ -564,7 +566,7 @@ export async function autoCheckEdited(edited: string[], { stillExist = [] as str
         const names: string[] = ((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter(Boolean);
         const page = names.includes('index.html') ? 'index.html' : (names.filter(n => /^[^/]+\.html?$/i.test(n)).length === 1 ? names.find(n => /^[^/]+\.html?$/i.test(n))! : null);
         if (page) {
-            const r: any = await runPageCheck(page, { waitMs: 1500 }).catch(() => null);
+            const r: any = await runPageCheck(page, { waitMs: 1500, askToOpenWindow: false }).catch(() => null);
             if (r && !r.error && r.loaded !== false) {
                 ran = true;
                 const errs = (r.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
@@ -614,8 +616,10 @@ async function gate_test_runner(taskPath, content) {
         // `npm init` writes a test script that always fails ("Error: no test specified").
         if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus('npm test', 40);
     } catch {}
-    if (toolCrashCount(`${taskPath.split('/').pop()} → done [gate test-runner]`) >= 2)
-        return { blocks: false, outcome: 'unknown', detail: 'The test run took the browser tab down twice for this task: not run again' };
+    // The gate's test run took the tab down in the last day (any task of this project): a `done` that waits on it only repeats that, and the chat stops with the tab. It is not run
+    // again; the task is accepted unverified (the other gates still run). Uploaded logs: 26 such crashes in 9 sessions, every one at the task's `done`.
+    if (toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000) >= 1)
+        return { blocks: false, outcome: 'unknown', detail: 'The test run took the browser tab down earlier: not run again here' };
     const allTests = cmd ? [] : await findProjectTests(filePaths);
     const testFiles = cmd ? [] : await _pickTests(taskPath, allTests);
     if (!cmd && !testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found in the project' };
@@ -649,6 +653,9 @@ async function gate_test_runner(taskPath, content) {
         if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
         if (res.exit_code !== 0) {
             const failed = [...output.matchAll(/FAILED:(.*)$/gm)].flatMap(m => m[1].trim().split(/\s+/)).filter(Boolean);
+            const headers = [...output.matchAll(/^== .+ \(exit (\d+)\)$/gm)].map(m => m[1]);
+            if (failed.length && headers.length >= failed.length && headers.every(h => h === '124' || h === '137'))
+                return { blocks: false, outcome: 'unknown', detail: `${failed.join(', ')} did not finish in ${_QA_FILE_TIMEOUT_S} s` };
             if (res.exit_code === 127 || _sandboxLacks(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
             const which = failed.length ? failed.join(', ') : 'the test command';
             // What the first failing file printed (its header is "== <file> (exit N)"): the first line, or for a Python traceback the
@@ -682,7 +689,7 @@ async function gate_page_check(taskPath) {
     const page = rootPageOf(names);
     if (!page) return { blocks: false, outcome: 'skipped', detail: 'No page at the project root' };
     let r: any;
-    try { r = await runPageCheck(page, { waitMs: 1500 }); }
+    try { r = await runPageCheck(page, { waitMs: 1500, askToOpenWindow: false }); }
     catch (e) { return { blocks: false, outcome: 'unknown', detail: `Page check error: ${(e as any)?.message ?? e}` }; }
     // The page crashed the tab when it was last loaded and has not changed: not loaded again, and not passed either (a refusal read as
     // "could not check" let a task finish on a page that takes the app down). Accepted the second time, as page errors are.
@@ -789,7 +796,7 @@ async function _rootPageErrors(): Promise<{ page: string; errors: string[] } | n
     const names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean) as string[];
     const page = rootPageOf(names);
     if (!page) return null;
-    const r: any = await runPageCheck(page, { waitMs: 1500 });
+    const r: any = await runPageCheck(page, { waitMs: 1500, askToOpenWindow: false });
     if (r?.crashed || r?.error) return null;
     return { page, errors: (r?.errors ?? []).map((e: any) => _errKey(String(e.text ?? e))) };
 }

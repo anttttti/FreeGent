@@ -198,8 +198,9 @@ export function sameCallCrashed(sig: string, ws: number): { at: number; seconds:
 }
 
 /** How many recorded tab crashes were in a tool call whose label contains `part` (e.g. "task:138-x.md → done [gate test-runner]"). */
-export function toolCrashCount(part: string): number {
-    try { return (JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[]).filter(c => c.calls?.some(x => String(x.label).includes(part))).length; } catch { return 0; }
+export function toolCrashCount(part: string, withinMs = Infinity): number {
+    const since = Date.now() - withinMs;
+    try { return (JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[]).filter(c => c.calls?.some(x => String(x.label).includes(part) && (x.t ?? 0) >= since)).length; } catch { return 0; }
 }
 
 export function describeToolCrash(c: ToolCrash): string {

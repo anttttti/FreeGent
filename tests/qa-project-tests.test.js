@@ -312,6 +312,33 @@ describe('test-runner gate scope', () => {
     });
 });
 
+describe('the done gate after a gate crash', () => {
+    const T = 'fg-tasks/150-x.md';
+    it('does not run the tests again once the gate took the tab down in the last day; the task is accepted unverified', async () => {
+        const now = Date.now();
+        localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:149-y.md → done [gate test-runner]', t: now - 5000 }], beat: now }]));
+        files['test_a.mjs'] = 'x'; delete files[TASK];
+        files[T] = `---\nid: 150\ntitle: X\nstatus: todo\n---\n# X\n## Acceptance Criteria\n- [x] ok\n`;
+        await W.transitionTask(T, 'in-progress');
+        runs.length = 0;
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(runs.filter(c => /node '/.test(c))).toHaveLength(0);
+        expect(r.unverified.join(' ')).toMatch(/test-runner/);
+    });
+    it('gives each test file 20 s, and a file that only timed out says nothing against the task', async () => {
+        files['test_a.mjs'] = 'x'; delete files[TASK];
+        files[T] = `---\nid: 150\ntitle: X\nstatus: todo\n---\n# X\n## Acceptance Criteria\n- [x] ok\n`;
+        await W.transitionTask(T, 'in-progress');
+        W.executeToolAsync = async (_n, a) => { runs.push(a.code); return { stdout: "== test_a.mjs (exit 124)\n\nFAILED: test_a.mjs", stderr: '', exit_code: 1 }; };
+        runs.length = 0;
+        const r = await W.transitionTask(T, 'done');
+        expect(runs.join('\n')).toMatch(/timeout 20 node 'test_a\.mjs'/);
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified.join(' ')).toMatch(/did not finish in 20 s/);
+    });
+});
+
 describe('a done refused again and again', () => {
     const T = 'fg-tasks/120-ramp.md';
     const task = (n) => `---\nid: 120\ntitle: Ramp\nstatus: todo\nrework_count: ${n}\n---\n# Ramp\n## Acceptance Criteria\n- [x] ok\n`;

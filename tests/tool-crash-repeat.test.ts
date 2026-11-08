@@ -16,5 +16,9 @@ describe('a call that took the tab down is recognised by its tool, arguments and
         localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:007-x.md → done [gate test-runner]', t: 1 }], beat: 2 }, { calls: [{ name: 'task', label: 'task:007-x.md → done [gate test-runner]', t: 3 }], beat: 4 }]));
         expect(toolCrashCount('007-x.md → done [gate test-runner]')).toBe(2);
         expect(toolCrashCount('008-y.md → done [gate test-runner]')).toBe(0);
+        expect(toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000)).toBe(0);   // both are from 1970: not within the last day
+        const now = Date.now();
+        localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:009-z.md → done [gate test-runner]', t: now - 1000 }], beat: now }]));
+        expect(toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000)).toBe(1);
     });
 });

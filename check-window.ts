@@ -88,7 +88,7 @@ function _askToOpen(): Promise<boolean> {
 }
 
 /** The separate window, opened if need be (asking once); null when it is not available and the check must run in the tab. */
-export async function ensureCheckWindow(): Promise<boolean> {
+export async function ensureCheckWindow(askUser = true): Promise<boolean> {
     if (!_channel()) return false;
     if (await _ping(1000)) return true;
     // First just open it: with a recent click, or where the browser lets this site open windows, nobody is asked anything, and the window is closed after the check.
@@ -99,7 +99,7 @@ export async function ensureCheckWindow(): Promise<boolean> {
         if (await _ping(2500)) { _openedSilently = true; return true; }
         try { sessionStorage.setItem(SILENT_BLOCKED, '1'); } catch {}
     }
-    if (Date.now() - _declinedAt < 10 * 60_000) return false;   // asked recently and refused or ignored
+    if (!askUser || Date.now() - _declinedAt < 10 * 60_000) return false;   // a gate must not wait for a click; asked recently and refused or ignored
     const asked = await _askToOpen();
     if (!asked) { _declinedAt = Date.now(); return false; }
     if (await _ping(4000)) return true;
