@@ -117,7 +117,7 @@ export function describePageCheckCrash(c: PageCheckCrash): string {
 const TOOLS_RUNNING = 'fg_tools_running';
 const TOOL_CRASHES = 'fg_tool_crashes';
 
-export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; }
+export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; scripts?: string[]; }
 export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; }
 
 const _calls = new Map<number, ToolCallMark>();
@@ -133,9 +133,9 @@ function _writeCalls(beat = Date.now()): void {
 }
 
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
-export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number }): number {
+export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number; scripts?: string[] }): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws } : {}) });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts } : {}) } : {}) });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();
@@ -190,12 +190,25 @@ export const toolSig = (name: string, args: unknown): string => hashContent(`${n
 /** A recorded tab crash in a call with this signature, made when the workspace was in the same state (`ws`: its newest file time), or null.
  *  The same command on files that have changed since is a new attempt; on files that have not, it is the crash again (kanbanflow logs: the same
  *  `node test_imports.mjs && …` took the tab down four times in four minutes after the note said not to run it unchanged). */
-export function sameCallCrashed(sig: string, ws: number): { at: number; seconds: number } | null {
+export function sameCallCrashed(sig: string, ws: number, scripts: string[] = []): { at: number; seconds: number; script?: string } | null {
     try {
         const list = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[];
-        for (const c of [...list].reverse()) for (const x of c.calls || []) if (x.sig === sig && x.ws === ws) return { at: x.t, seconds: Math.round(((c.beat || x.t) - x.t) / 1000) };
+        for (const c of [...list].reverse()) for (const x of c.calls || []) {
+            if (x.ws !== ws) continue;
+            const seconds = Math.round(((c.beat || x.t) - x.t) / 1000);
+            if (x.sig === sig) return { at: x.t, seconds };
+            // A chain or pipe that runs every script of an earlier crashed command is that crash again (`node a.mjs && node b.mjs` after `node a.mjs && node c.mjs` is not: the culprit may be c).
+            if (x.scripts?.length && x.scripts.every(f => scripts.includes(f))) return { at: x.t, seconds, script: x.scripts.join(', ') };
+        }
     } catch {}
     return null;
+}
+
+/** The script files a shell command runs (`node a.mjs`, `python3 -u b.py`, `bash c.sh`), in order, without repeats. */
+export function commandScripts(code: unknown): string[] {
+    const out = new Set<string>();
+    for (const m of String(code ?? '').matchAll(/\b(?:node|deno|bun|tsx|python3?|bash|sh)\s+(?:-[\w-]+\s+)*['"]?([^\s;&|<>'"]+\.(?:mjs|cjs|js|ts|py|sh))\b/g)) out.add(m[1].replace(/^\.\//, ''));
+    return [...out];
 }
 
 /** How many recorded tab crashes were in a tool call whose label contains `part` (e.g. "task:138-x.md → done [gate test-runner]"). */

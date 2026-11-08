@@ -127,6 +127,7 @@ export function isReasoningEchoDemand(message: unknown): boolean {
     return /\bHTTP 400\b/.test(m) && /reasoning_content/.test(m) && /missing|required|send back/i.test(m);
 }
 
+const _OVERFLOW_PROSE_RE = /context[_ ]length[_ ]exceeded|prompt is too long|input (?:is )?too long|input token count.*exceeds the maximum|too large for model with \d+ maximum context length|exceeds? (?:the )?(?:model'?s? )?(?:maximum )?context (?:window|length|limit)|context window (?:is )?(?:exceeded|full)/i;
 export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
     const msg = e.message || '';
     // vLLM (current): "you requested M output tokens and your prompt contains at least N input
@@ -155,7 +156,11 @@ export function parseContextOverflow(e, min = MIN_USEFUL_OUTPUT) {
         // M = prompt token count; K = requested completion tokens.
         m = msg.match(/maximum context length is (\d+).*?\((\d+) in the messages/is);
     }
-    if (!m) return null;
+    // OpenRouter: "maximum context length is N tokens. However, you requested about T tokens (X of text input, Y in the output)"
+    if (!m) m = msg.match(/maximum context length is (\d+).*?\((\d+) of (?:text )?input/is);
+    if (!m) m = msg.match(/configured limit of (\d+) tokens.*?resulted in (\d+) tokens/is);
+    // Wordings with no usable numbers (Anthropic, Gemini, Mistral, generic): the prompt is too big, so compact (negative = no headroom).
+    if (!m) return _OVERFLOW_PROSE_RE.test(msg) ? -1 : null;
     const contextLimit = parseInt(m[1], 10);
     const promptTokens = parseInt(m[2], 10);
     // Raw headroom — may be negative when the prompt alone exceeds the context limit.

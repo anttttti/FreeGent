@@ -13,7 +13,7 @@ import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR } from './retry.js';
+import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, parseContextOverflow, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec, singleRequestPerEndpoint } from './model-router.js';
 import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
@@ -981,7 +981,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 ...extra,
             }), msg => { console.warn(`[${waitTag}] ${msg}`); taskHandle.append(`\n${msg}\n`, 'thinking'); }),
             100,
-            e => isCustomEndpoint(endpoint ?? oaiEndpoint()) || (!explicitModel && isModelGone(e, endpoint ?? oaiEndpoint())));
+            e => parseContextOverflow(e) !== null || isCustomEndpoint(endpoint ?? oaiEndpoint()) || (!explicitModel && isModelGone(e, endpoint ?? oaiEndpoint())));
 
     const maxSteps = _WORKER_MAX_STEPS;
     // Match the main loop: keep a per-worker rotation counter and advance through the

@@ -31,7 +31,7 @@ import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
 import { registry } from './session-registry.js';
-import { beginToolCall, endToolCall, toolSig, sameCallCrashed } from './page-check-guard.js';
+import { beginToolCall, endToolCall, toolSig, sameCallCrashed, commandScripts } from './page-check-guard.js';
 import { compactSurface, type Session } from './session.js';
 import { type SurfaceIntent } from './session-event.js';
 import { connectSignal } from './abort.js';
@@ -667,15 +667,15 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         } else {
             // Browser: marked while it runs, so a call that freezes or crashes the tab is reported at the next start (page-check-guard.ts).
             // The same command on the same files that already took the tab down once is not run again (it would cost another reload and the task's place in the chat).
-            let _same: { sig: string; ws: number } | undefined;
+            let _same: { sig: string; ws: number; scripts: string[] } | undefined;
             if (!runtime.hasNativeExec && (name === 'execute_code' || name === 'run_workers')) {
-                try { _same = { sig: toolSig(name, args), ws: Math.max(0, ...((await agentListFiles()) || []).filter((f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name)).map((f: any) => Number(f.lastModified) || 0)) }; } catch {}
+                try { _same = { sig: toolSig(name, args), scripts: name === 'execute_code' && String(args?.language ?? 'bash') === 'bash' ? commandScripts(args?.code) : [], ws: Math.max(0, ...((await agentListFiles()) || []).filter((f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name)).map((f: any) => Number(f.lastModified) || 0)) }; } catch {}
             }
-            const _crashedAlready = _same && sameCallCrashed(_same.sig, _same.ws);
+            const _crashedAlready = _same && sameCallCrashed(_same.sig, _same.ws, _same.scripts);
             const _mark = runtime.hasNativeExec || _crashedAlready ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null, _same);
             // A call that can run for minutes: the chat is saved first, so a crash in it loses only this step (the step save is at most every 5 s).
             if (_mark && !forWorker && _LONG_TOOLS.has(name)) { _lastStepSave = Date.now(); try { (globalThis as any).saveHistory?.(); } catch {} }
-            if (_crashedAlready) result = { error: `This exact call took the browser tab down at ${new Date(_crashedAlready.at).toISOString().slice(11, 16)}Z (it had run ${_crashedAlready.seconds} s) and no file has changed since, so it was not run again. Change it: run one test file per call with \`timeout 20 node file.mjs\`, cut the loop or the data, or fix the code first.` };
+            if (_crashedAlready) result = { error: `${_crashedAlready.script ? `This call runs ${_crashedAlready.script}, which took` : 'This exact call took'} the browser tab down at ${new Date(_crashedAlready.at).toISOString().slice(11, 16)}Z (it had run ${_crashedAlready.seconds} s) and no file has changed since, so it was not run again. Change it: run one test file per call with \`timeout 20 node file.mjs\`, cut the loop or the data, or fix the code first.` };
             else try { result = await executeToolAsync(name, args, context, task ? (message: string) => task.append(message + '\n', 'thinking') : undefined); }
             catch (e) { result = { error: e.message, hint: _toolErrorHint(name) }; }
             finally { if (_mark) endToolCall(_mark); }
@@ -1886,7 +1886,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     }
                 }),
                 Infinity,
-                e => e.isTruncated || isCustomEndpoint(activeEndpoint ?? oaiEndpoint()) || isModelGone(e, activeEndpoint ?? oaiEndpoint()),
+                e => e.isTruncated || parseContextOverflow(e) !== null || isCustomEndpoint(activeEndpoint ?? oaiEndpoint()) || isModelGone(e, activeEndpoint ?? oaiEndpoint()),
                 e => {
                     const ep = activeEndpoint ?? oaiEndpoint();
                     sessionSaveRawMessage?.(activeChatId, {
