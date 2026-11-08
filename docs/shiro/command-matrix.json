@@ -10223,7 +10223,7 @@
     "shiro/node-compat/modules/stream.ts": "e0b4f3635bf57a0dcfc03e68813c04cabe5f7282d75cf37c06186ada3db31ee5",
     "shiro/node-compat/modules/url.ts": "e670bc2c756660806368be9f9d8b6b207588e40c00e6396978cf9685b370c938",
     "shiro/node-compat/modules/util.ts": "28a99cd24caab60934fb47eeddaa1195348fae4e41ecfd071dfb60dc37f0c157",
-    "shiro/node-compat/preload.ts": "2bc6a4d5444524f4713bd5e4a2c3c5143709fe0d8c74e87ea3578e65a280f171",
+    "shiro/node-compat/preload.ts": "bf4e93dcd88960fa4f6f141728e56f2af45ff846dd350eadbfeb09b454ed1611",
     "shiro/node-compat/process.ts": "00847d3e3c4983ac2983107792fd76a2861daa528256eaa0a684457efc00fedc",
     "shiro/node-compat/require.ts": "ab96d2e0b000e3162136c340d8953cbbae42c6663cbd3d4467565c22bbfb5a8e",
     "shiro/node-compat/shims/app-shims.ts": "fec171a296a069e7ba5a43575af9bb92b798ba9f9f1c4e92501ff8b53708295d",

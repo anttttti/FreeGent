@@ -37,6 +37,10 @@ export interface GateContext {
     envConfigEdits: (task: string, edited: Iterable<string>) => Promise<string[]>;
     brokenFiles: (paths: Iterable<string>) => Promise<string[]>;   // parse errors of these files (tools.ts brokenFileReport)
     shellCommands?: string[];         // the bash commands that ran successfully this turn, in order
+    taskIds?: () => Promise<Set<string> | null>;   // ids (as numbers) of the task files on the board: what the reply may name; null: this run has no board
+    planning?: boolean;   // Cowork, and this chat wrote numbered task files: it planned the board (fg-tasks writes are not in editedPaths)
+    noCriteria?: () => Promise<string[]>;   // task files on the board that have no ## Acceptance Criteria list
+    taskText?: () => Promise<string>;   // the text of every task file on the board, lower case
     autoCheck?: (paths: string[], opts?: { stillExist?: string[] }) => Promise<{ ran: boolean; failure?: string }>;   // qa.ts autoCheckEdited: the harness's own check of the changed files
 }
 export interface GateHit { name: string; text: string; force: boolean }
@@ -172,8 +176,49 @@ const envConfig: CompletionGate = {
     },
 };
 
+// A reply that lists tasks the board does not have: the chat planned "Task 002: ... Task 005" in prose, wrote only 001, and Autopilot then finished the
+// trivial 001 and said "All tasks complete" with the project unbuilt (kanbanflow 2026-11-08, 3 of 8 planning turns). Once; the second COMPLETED passes.
+// The files the request names (calc.js, test_calc.mjs, index.html) that no task file mentions: a plan that leaves one out ends "All tasks complete"
+// with that file never written (kanbanflow 2026-11-08, WebKit: 4 of 12 runs). Only in the planning turn.
+async function planCoverage(c: GateContext): Promise<GateHit | null> {
+    if (c.ps.planCover || !c.taskText || !c.planning) return null;
+    const asked = [...new Set([...c.task.matchAll(/\b([\w./-]+\.(?:js|mjs|ts|py|html|css|json))\b/g)].map(m => m[1].toLowerCase()))].filter(f => !f.startsWith('fg-tasks/'));
+    const text = await c.taskText();
+    if (!text) return null;
+    const left = asked.filter(f => !text.includes(f) && !text.includes(f.split('/').pop()!));
+    // A task without criteria makes the completeness and review gates vacuous (kanbanflow 2026-11-08: criteria-less plans in 7 of 52 runs).
+    const bare = c.noCriteria ? await c.noCriteria() : [];
+    if (!left.length && !bare.length) return null;
+    c.ps.planCover = 1;
+    const parts = [
+        left.length ? `no task covers ${left.slice(0, 5).join(', ')}, which the request asks for. Add the missing task(s) as fg-tasks/NNN-slug.md, or put the file in an existing task's description` : '',
+        bare.length ? `${bare.slice(0, 5).join(', ')} ha${bare.length > 1 ? 've' : 's'} no "## Acceptance Criteria" list, so nothing can check ${bare.length > 1 ? 'they are' : 'it is'} done. Add "- [ ]" items to ${bare.length > 1 ? 'each' : 'it'}` : '',
+    ].filter(Boolean);
+    return { name: 'planned_tasks_missing', force: true,
+        text: `You declared COMPLETED, but ${parts.join('; and ')}. Then reply COMPLETED.` };
+}
+
+const plannedTasksMissing: CompletionGate = {
+    name: 'planned_tasks_missing',
+    async run(c) {
+        if (!completionDeclared(c) || (c.ps.planCheck ?? 0) >= 2 || !c.taskIds) return null;
+        const coverage = await planCoverage(c);
+        if (coverage) return coverage;
+        const named = [...c.text.matchAll(/\bTask\s+#?0*(\d{1,3})\s*[:\-–—]|fg-tasks\/0*(\d{1,3})-[\w.-]+\.md|`0*(\d{3})`\s*[:\-–—]/gi)].map(m => String(+(m[1] ?? m[2] ?? m[3])));
+        if (!named.length) return null;
+        const have = await c.taskIds();
+        if (!have) return null;
+        if (have.size && c.ps.planCheck) return null;   // a board with tasks is asked once; an empty one twice (the plan was pasted into the reply as text)
+        const missing = [...new Set(named)].filter(id => !have.has(id));
+        if (!missing.length) return null;
+        c.ps.planCheck = (c.ps.planCheck ?? 0) + 1;
+        return { name: 'planned_tasks_missing', force: true,
+            text: `You declared COMPLETED, but your reply names task${missing.length > 1 ? 's' : ''} ${missing.map(id => '#' + id.padStart(3, '0')).join(', ')} and there ${missing.length > 1 ? 'are no such task files' : 'is no such task file'} (the board has ${have.size ? [...have].map(id => '#' + id.padStart(3, '0')).join(', ') : 'none'}). Write each missing one now as fg-tasks/NNN-slug.md with status: open and an ## Acceptance Criteria list (one write_file each), or say the plan is only what exists. Then reply COMPLETED.` };
+    },
+};
+
 /** In the order they are tried; the first to answer ends the step with a nudge. */
-export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, missingCheck, testFixturesLeft, inventedData, envConfig];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
+export const COMPLETION_GATES: CompletionGate[] = [scratchOnly, brokenSyntax, failedCheck, missingCheck, testFixturesLeft, inventedData, envConfig, plannedTasksMissing];   // bench-policy.ts appends no_edit_complete, no_change_fix and blocked_untried_fix for a benchmark run
 
 export async function runCompletionGates(c: GateContext): Promise<GateHit | null> {
     for (const g of COMPLETION_GATES) {

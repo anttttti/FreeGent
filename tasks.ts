@@ -4,7 +4,7 @@
 import { splitFrontmatter, parseFmLines, setFmLines, buildFrontmatter } from './frontmatter.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { lease } from './lease.js';
-import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, isScratchTask } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -23,7 +23,7 @@ async function loadTaskFiles({ strict = false }: { strict?: boolean } = {}) {
         const files = await agentListFiles();
         await Promise.all(
             files
-                .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md'))
+                .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md') && !isScratchTask(f.name))
                 .map(async f => {
                     let content: string;
                     try {
@@ -194,6 +194,14 @@ function makeKanbanCard(task) {
         badge.className = 'kanban-card-log';
         badge.style.color = '#c62828';
         badge.textContent = '⊘ blocked';
+        card.appendChild(badge);
+    } else if (canonTaskStatus(status) === 'done' && String(task.fm.qa).trim() === 'unverified') {
+        // Accepted on a second `done` with a check still failing, or with a gate that could not run (qa.ts): Done, but not a verified Done.
+        card.style.borderLeft = '3px solid #e65100';
+        const badge = document.createElement('div');
+        badge.className = 'kanban-card-log';
+        badge.style.color = '#e65100';
+        badge.textContent = '⚠ not verified: see its QA notes';
         card.appendChild(badge);
     }
 

@@ -291,6 +291,20 @@ describe('what the run says when it ends or is interrupted', () => {
         expect(log()).toMatch(/Finished: 1 blocked \(#003\): answer in the task's chat or edit it, then run it again; 1 failed \(#004\)/);
         expect(log()).not.toMatch(/All tasks complete/);
     });
+    it('does not call the run complete when a done task was accepted unverified', async () => {
+        files['fg-tasks/003-c.md'] = task('003', 'Accepted').replace('status: todo', 'status: done\nqa: unverified');
+        W.runnerAutopilot();
+        await idle();
+        expect(log()).toMatch(/All tasks done, 1 not verified \(#003\)/);
+        expect(log()).not.toMatch(/All tasks complete/);
+    });
+    it('says there was nothing to run on an empty board instead of "All tasks complete"', async () => {
+        for (const k of Object.keys(files)) delete files[k];
+        W.runnerAutopilot();
+        await idle();
+        expect(log()).toMatch(/No tasks on the board to run/);
+        expect(log()).not.toMatch(/All tasks complete/);
+    });
     it('still says "All tasks complete" when nothing is left', async () => {
         W.runnerAutopilot();
         await idle();

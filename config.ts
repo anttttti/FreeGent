@@ -4,7 +4,7 @@ import './key-vault.js';   // first: with the key lock on, it serves the saved k
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard, EXEC_TIMEOUT_MS } from './exec-limits.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
@@ -1488,7 +1488,7 @@ async function runWithPyodide(code, { filepath, signal, timeoutMs = PYODIDE_RUN_
 // The shell runs inside the exec sandbox frame (exec-sandbox-host.ts): its node / js-eval / python
 // commands execute agent code, which must not run with the page's privileges. /workspace writes
 // reach the FreeGent workspace as they happen, through the frame's workspace channel.
-const WASM_TIMEOUT_MS = 10 * 60_000;
+const WASM_TIMEOUT_MS = EXEC_TIMEOUT_MS;   // the 120 s the tool description promises; a longer step asks for it with timeout_s (a 10 min default held a Firefox Autopilot run twice, kanbanflow 2026-11-08)
 const PYODIDE_RUN_TIMEOUT_MS = WASM_TIMEOUT_MS;   // the browser's Python runs are limited like its shell
 async function runWithWasm(code: string, onProgress?: (message: string) => void, timeoutMs: number = WASM_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; exit_code: number }> {
     if (!browserBashAvailable()) throw new Error('Browser bash is unavailable: use JavaScript or configure a local execution server');

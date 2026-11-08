@@ -7,7 +7,7 @@ import { pptxSlides, odfText, docxText, fixXlsxCharRefs } from './office-text.js
 import { decodeTextBytes } from './text-decode.js';
 import { bytesToBase64, base64ToBytes } from './shiro/utils/bytes.js';
 import { gunzipSync } from './inflate.js';
-import { taskTitleKey, isTaskPath } from './task-status.js';
+import { taskTitleKey, isTaskPath, isScratchTask } from './task-status.js';
 import { clearChatHistory } from './chat-history.js';
 import { tryMerge } from './diff-utils.js';
 import { CloudSyncClient, sha256Hex, cloudSlug, pool, type CloudFile, type CloudManifest } from './cloud-sync.js';
@@ -1662,7 +1662,7 @@ function _refuseGitMetadata(path: string, op: string): void {
 // working a task): refuse it and point at the original so the agent continues that one.
 async function _refuseDuplicateTask(path: string, content: any): Promise<void> {
     // The task folders are task-status.ts's (fg-tasks/, local/fg-tasks/) and any .md file there with a title is a task, numbered name or not, as for the board (codex R118).
-    if (typeof content !== 'string' || !isTaskPath(path) || !/\.md$/i.test(path) || path.endsWith('/ledger.md')) return;
+    if (typeof content !== 'string' || !isTaskPath(path) || !/\.md$/i.test(path) || path.endsWith('/ledger.md') || isScratchTask(path)) return;
     if (typeof loadTaskFiles !== 'function' || typeof parseFrontmatter !== 'function') return;
     const key = taskTitleKey(parseFrontmatter(content).title);
     if (!key) return;

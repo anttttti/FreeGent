@@ -58,6 +58,22 @@ const TOOL_DESCRIPTIONS = {
 };
 
 
+const DIRECT_TASK_PATHS = `**Direct task path** (first message is a concrete request): THAT is your task. Missing fg-tasks/ledger.md is not a blocker. If the message names an existing fg-tasks/NNN-*.md file (a task started from the Tasks board), that file is the task: read it, work against it and set its status — do not create current.md. Otherwise, before your first code edit, write the task to fg-tasks/current.md:
+1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section. Overwrite it without reading it first: an existing current.md is left over from an earlier chat. Never touch the status of a task that is not yours.
+2. Work: read, edit, verify
+3. After each edit attempt, append_file under ## Attempts: what changed (file:line), whether resolved
+current.md is only your scratch note: never set its status with update_task_status; finish by telling the user what you did.
+
+**Autonomous path** (first message points at ledger): read fg-tasks/ledger.md. Pick highest-priority open task (High > Medium > Low; lowest ID first).
+
+`;
+const KANBAN_RULES = `### Kanban rules
+open → **in-progress** → **in-review** → **done**
+- update_task_status(path, status) updates both the task file and ledger — do NOT also call replace_in_file.
+- Failure reason must specify: file, line, what was changed, why it did not resolve.
+- List_files only when task filenames are unknown.
+- Ledger shows open but task file says done → ledger is stale. Sync with update_task_status and investigate.`;
+
 const BUILTIN_SKILLS = [
     {
         name: 'debug',
@@ -158,20 +174,10 @@ After the worker returns, use its findings to proceed with the task. Do not foll
         description: 'Initialize a new task: task file creation, kanban rules.',
         exclude_mode: 'container',
         trigger_on_file_present: 'fg-tasks/',
-        body: `**Direct task path** (first message is a concrete request): THAT is your task. Missing fg-tasks/ledger.md is not a blocker. If the message names an existing fg-tasks/NNN-*.md file (a task started from the Tasks board), that file is the task: read it, work against it and set its status — do not create current.md. Otherwise, before your first code edit, write the task to fg-tasks/current.md:
-1. write_file("fg-tasks/current.md", ...) — verbatim request, concrete acceptance criteria, empty ## Attempts section. Overwrite it without reading it first: an existing current.md is left over from an earlier chat. Never touch the status of a task that is not yours.
-2. Work: read, edit, verify
-3. After each edit attempt, append_file under ## Attempts: what changed (file:line), whether resolved
-current.md is only your scratch note: never set its status with update_task_status; finish by telling the user what you did.
+        // In Cowork mode the plan is the fg-tasks/NNN-*.md files (system prompt); the scratch-note procedure made the model plan into current.md and
+        // ledger.md and leave the board empty (kanbanflow 2026-11-08: 5 of 8 planning turns in the last round).
+        body_fn: () => (typeof getMode === 'function' && getMode() === 'cowork' ? '' : DIRECT_TASK_PATHS) + KANBAN_RULES,
 
-**Autonomous path** (first message points at ledger): read fg-tasks/ledger.md. Pick highest-priority open task (High > Medium > Low; lowest ID first).
-
-### Kanban rules
-open → **in-progress** → **in-review** → **done**
-- update_task_status(path, status) updates both the task file and ledger — do NOT also call replace_in_file.
-- Failure reason must specify: file, line, what was changed, why it did not resolve.
-- List_files only when task filenames are unknown.
-- Ledger shows open but task file says done → ledger is stale. Sync with update_task_status and investigate.`
     },
     {
         name: 'execution-workflow',

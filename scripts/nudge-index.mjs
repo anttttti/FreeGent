@@ -26,6 +26,7 @@ export const WHEN = {
     completion_gate: 'first COMPLETED after edits: the completion checklist (and, in benchmark runs, the graded-test bounce)',
     dup_cycle: 'the same sequence of calls repeating in a cycle',
     empty_code: 'execute_code called with no code argument',
+    planned_tasks_missing: 'gate: the COMPLETED reply names tasks (Task 002:, fg-tasks/002-…) that have no file on the board',
     env_config_edits: 'gate: test or packaging configuration edited, or a new top-level package added, instead of fixing the code',
     env_failure: 'execute_code failing repeatedly with the same error (3) or in total (8); also two inline python3 -c syntax failures in a row',
     failed_check_complete: 'gate: COMPLETED while the last test/compile check after the last change failed',

@@ -68,7 +68,7 @@ describe('verify reminder (on by default): a change nothing checked', () => {
 describe('completion gates', () => {
     it('are tried in a fixed order', () => {
         expect(COMPLETION_GATES.map(g => g.name)).toEqual(
-            ['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'missing_check_complete', 'test_fixtures_left', 'invented_data', 'env_config_edits', 'no_edit_complete',
+            ['scratch_only_edits', 'broken_syntax', 'failed_check_complete', 'missing_check_complete', 'test_fixtures_left', 'invented_data', 'env_config_edits', 'planned_tasks_missing', 'no_edit_complete',
              'no_change_fix', 'blocked_untried_fix']);
     });
     it('never fire for BLOCKED, on the last step, or in soft stop', async () => {
@@ -194,5 +194,59 @@ describe('test fixtures left in the system', () => {
     });
     it('is silent when the task is about users', async () => {
         expect(await runCompletionGates(ctx({ task: 'Create a user alice and let her use sudo.', shellCommands: ['useradd alice'] }))).toBeNull();
+    });
+});
+
+describe('planned_tasks_missing: a reply that lists tasks the board does not have', () => {
+    const planned = (over: Partial<GateContext> = {}) => ctx({
+        text: 'Plan:\n1. **Task 001: Setup**\n2. **Task 002: Logic**\n3. **Task 003: UI**\nCOMPLETED', taskIds: async () => new Set(['1']), ...over });
+    it('asks once for the missing task files, forcing a tool call; the second COMPLETED passes', async () => {
+        const c = planned();
+        const hit = await runCompletionGates(c);
+        expect(hit?.name).toBe('planned_tasks_missing');
+        expect(hit?.force).toBe(true);
+        expect(hit?.text).toMatch(/#002, #003/);
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('asks twice when the board is still empty (the plan came as text), then lets it pass', async () => {
+        const c = planned({ taskIds: async () => new Set() });
+        expect((await runCompletionGates(c))?.name).toBe('planned_tasks_missing');
+        expect((await runCompletionGates(c))?.name).toBe('planned_tasks_missing');
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('names files by path too, and is silent when every named task exists, there is no board, or the reply names none', async () => {
+        expect((await runCompletionGates(planned({ text: 'Created fg-tasks/001-a.md and fg-tasks/004-d.md\nCOMPLETED' })))?.text).toMatch(/#004/);
+        expect((await runCompletionGates(planned({ text: 'Plan: 1. `002`: logic 2. `003`: ui\nCOMPLETED' })))?.text).toMatch(/#002, #003/);
+        expect(await runCompletionGates(planned({ taskIds: async () => new Set(['1', '2', '3']) }))).toBeNull();
+        expect(await runCompletionGates(planned({ taskIds: async () => null }))).toBeNull();
+        expect((await runCompletionGates(planned({ taskIds: async () => new Set() })))?.text).toMatch(/the board has none/);   // Cowork, nothing written yet
+        expect(await runCompletionGates(planned({ taskIds: undefined }))).toBeNull();
+        expect(await runCompletionGates(planned({ text: 'Made the change.\nCOMPLETED' }))).toBeNull();
+    });
+});
+
+describe('planned_tasks_missing: files the request names that no task covers', () => {
+    const planning = (over: Partial<GateContext> = {}) => ctx({
+        text: 'Planned.\nCOMPLETED', task: 'Create a tip page: write calc.js with test_calc.mjs, and index.html. Plan it as Kanban tasks.', planning: true,
+        taskIds: async () => new Set(['1']), taskText: async () => '# set up calc.js and test_calc.mjs', ...over });
+    it('asks once for the task that covers the left-out file', async () => {
+        const c = planning();
+        const hit = await runCompletionGates(c);
+        expect(hit?.name).toBe('planned_tasks_missing');
+        expect(hit?.text).toMatch(/index\.html/);
+        expect(hit?.text).not.toMatch(/calc\.js,/);
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('also asks for acceptance criteria on the task files written without them, in the same single bounce', async () => {
+        const c = planning({ taskText: async () => 'calc.js test_calc.mjs index.html', noCriteria: async () => ['fg-tasks/001-a.md'] });
+        const hit = await runCompletionGates(c);
+        expect(hit?.text).toMatch(/fg-tasks\/001-a\.md has no "## Acceptance Criteria"/);
+        expect(hit?.text).not.toMatch(/no task covers/);
+        expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('is silent when every file is covered, outside the planning turn, or without a board', async () => {
+        expect(await runCompletionGates(planning({ taskText: async () => 'calc.js test_calc.mjs index.html' }))).toBeNull();
+        expect(await runCompletionGates(planning({ planning: false }))).toBeNull();
+        expect(await runCompletionGates(planning({ taskText: undefined }))).toBeNull();
     });
 });

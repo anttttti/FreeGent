@@ -39,3 +39,5 @@ export const TASK_DIRS = ['fg-tasks/', 'local/fg-tasks/'];
 export function isTaskPath(path: unknown): boolean {
     return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d));
 }
+// fg-tasks/current.md is the scratch note a chat starts with (task-setup skill), not a board task: no gates, no duplicate check against it.
+export const isScratchTask = (path: unknown): boolean => /^(?:\.\/)?fg-tasks\/current\.md$/.test(String(path ?? ''));

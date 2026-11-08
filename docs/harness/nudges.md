@@ -16,6 +16,7 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | `dup_cycle` | nudge | `llm-loops.ts` | the same sequence of calls repeating in a cycle |
 | `empty_code` | nudge | `llm-loops.ts` | execute_code called with no code argument |
 | `env_config_edits` | gate | `completion-gates.ts` | gate: test or packaging configuration edited, or a new top-level package added, instead of fixing the code |
+| `planned_tasks_missing` | gate | `completion-gates.ts` | gate: the COMPLETED reply names tasks (Task 002:, fg-tasks/002-…) that have no file on the board |
 | `env_failure` | nudge | `llm-loops.ts` | execute_code failing repeatedly with the same error (3) or in total (8); also two inline python3 -c syntax failures in a row |
 | `failed_check_complete` | gate | `completion-gates.ts` | gate: COMPLETED while the last test/compile check after the last change failed |
 | `invented_data` | gate | `completion-gates.ts` | gate: the work created stand-in data or files nobody supplied |

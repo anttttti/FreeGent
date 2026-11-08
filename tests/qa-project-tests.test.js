@@ -67,6 +67,39 @@ describe('test-runner gate', () => {
         expect(second.unverified.join(' ')).toMatch(/test_game\.mjs still fails \(accepted on the second attempt\)/);
         expect(files[TASK]).toMatch(/qa: unverified/);
     });
+    it('a failure met again is accepted only when the task changed nothing in the project since it started (kanbanflow 2026-11-08)', async () => {
+        const stamps = { 'test_game.mjs': 1, 'game.js': 1 };
+        files['test_game.mjs'] = 'x'; files['game.js'] = 'y';
+        W.agentListFiles = async () => Object.keys(files).map(name => ({ name, lastModified: stamps[name] ?? 0 }));
+        W.executeToolAsync = async () => ({ stdout: '== test_game.mjs (exit 1)\nTypeError: countWords is not a function\nFAILED: test_game.mjs\n', stderr: '', exit_code: 1 });
+        const untouched = 'fg-tasks/006-untouched.md', touched = 'fg-tasks/007-touched.md';
+        files[untouched] = task('006'); files[touched] = task('007');
+        await W.transitionTask(untouched, 'in-progress');
+        expect((await W.transitionTask(untouched, 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask(untouched, 'done')).transitioned).toBe(true);   // nothing changed: the failure was there before the task
+        await W.transitionTask(touched, 'in-progress');
+        stamps['game.js'] = 2;   // the task edited the code
+        expect((await W.transitionTask(touched, 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask(touched, 'done')).transitioned).toBe(false);   // a re-sent done does not pass while the test still fails
+        W.executeToolAsync = async () => ({ stdout: '1 test file(s) passed', stderr: '', exit_code: 0 });
+        expect((await W.transitionTask(touched, 'done')).transitioned).toBe(true);
+    });
+    it('a task set to failed right after a bounced done is challenged once; the second failed stands (kanbanflow 2026-11-08)', async () => {
+        const t = 'fg-tasks/008-give-up.md';
+        files[t] = task('008'); files['test_a.mjs'] = 'x';
+        W.executeToolAsync = async () => ({ stdout: 'AssertionError: no\nFAILED: test_a.mjs\n', stderr: '', exit_code: 1 });
+        expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);
+        const first = await W.transitionTask(t, 'failed');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/Not marked failed yet.*Tests failed: test_a\.mjs/);
+        expect((await W.transitionTask(t, 'failed')).transitioned).toBe(true);
+        expect(files[t]).toMatch(/status: failed/);
+    });
+    it('failed without an earlier bounce is not challenged', async () => {
+        const t = 'fg-tasks/009-plain.md';
+        files[t] = task('009');
+        expect((await W.transitionTask(t, 'failed')).transitioned).toBe(true);
+    });
     it('a different failure after a fix is bounced again', async () => {
         files['test_a.mjs'] = 'x'; files['test_b.mjs'] = 'y';
         let failing = 'test_a.mjs';

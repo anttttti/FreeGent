@@ -250,7 +250,8 @@ async function _runLoop() {
             const task = _selectNextTask(tasks);
             if (!task) {
                 const left = _leftOpen(tasks);
-                _appendRunnerLog(null, left ? `Finished: ${left}` : 'All tasks complete', 'info', '');
+                const unverified = _unverifiedDone(tasks);
+                _appendRunnerLog(null, left ? `Finished: ${left}` : !tasks.length ? 'No tasks on the board to run' : unverified ? `All tasks done, ${unverified}` : 'All tasks complete', 'info', '');
                 break;
             }
 
@@ -415,6 +416,14 @@ function _leftOpen(tasks: Task[]): string {
         deferred.length ? `${deferred.length} not started (${deferred.map(label).join(', ')}): a start gate refused ${deferred.length > 1 ? 'them' : 'it'}` : '',
     ].filter(Boolean);
     return parts.join('; ');
+}
+
+// Done on a second attempt or with a gate that could not decide (qa: unverified, qa.ts): the run is not "complete" without saying so
+// (kanbanflow 2026-11-08: 004 was accepted with test_words.mjs still failing and the log read "All tasks complete").
+function _unverifiedDone(tasks: Task[]): string {
+    const scope = _runnerOnlyPath ? tasks.filter(t => t.path === _runnerOnlyPath) : tasks;
+    const bad = scope.filter(t => canonTaskStatus(t.fm.status) === 'done' && String(t.fm.qa).trim() === 'unverified');
+    return bad.length ? `${bad.length} not verified (${bad.map(t => `#${t.fm.id || t.path.split('/').pop()}`).join(', ')}): a check was still failing or could not run; see its QA notes` : '';
 }
 
 function _selectNextTask(tasks: Task[]): Task | null {

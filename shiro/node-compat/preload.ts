@@ -35,7 +35,7 @@ export async function preloadDir(
       } catch { /* skip */ }
     }
   } catch (e: any) {
-    if (depth === 0) console.warn(`[preload] readdir('${dir}') FAILED: ${e.message}`);
+    if (depth === 0 && !/no such file|ENOENT/i.test(e.message)) console.warn(`[preload] readdir('${dir}') FAILED: ${e.message}`);
   }
 }
 

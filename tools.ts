@@ -18,7 +18,8 @@ import { omittedFileWriteMessage, shrinkNote, snapshotEpoch, snapshotWorkspace, 
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
-import { isTaskPath } from './task-status.js';
+import { isTaskPath, isScratchTask, canonTaskStatus } from './task-status.js';
+import { parseFrontmatter } from './frontmatter.js';
 import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
@@ -220,7 +221,6 @@ function _decodeEscapedArg(text: string, mode: 'full' | 'backslash' | 'quote'): 
 const _lookalikeRefusals = new Map<string, number>();
 export function resetLookalikeRefusals(): void { _lookalikeRefusals.clear(); _shrinkRefused.clear(); }   // called at the start of every turn
 
-const _isScratchTask = (path: string) => /^(?:\.\/)?fg-tasks\/current\.md$/.test(String(path ?? ''));
 
 // read_file: inline full content up to this many chars; above it, a snippet is shown and the
 // user/model must explicitly paginate via start_line/end_line.
@@ -1728,11 +1728,11 @@ async function _handleWriteFile(args, context) {
         const old = context.staging.has(args.path)
             ? (context.staging.get(args.path) ?? '')
             : ((await context.snapshot.get(args.path)) ?? '');
-        if (!_isScratchTask(args.path) && old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD
+        if (!isScratchTask(args.path) && old.length >= _SHRINK_MIN_OLD && args.content.length < old.length * _SHRINK_THRESHOLD
                 && _shrinkNeedsConfirm(args.path, old, args.content, context)) {
             return { error: _shrinkError(args.path, old.length, args.content.length, _callerHasTool(context)) };
         }
-        if (!_isScratchTask(args.path) && old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
+        if (!isScratchTask(args.path) && old.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(old, args.content) > _EDIT_REVIEW_THRESHOLD) {
             const review = await _reviewFileEdit(args.path, old, args.content);
             if (!review.approved)
@@ -1747,15 +1747,21 @@ async function _handleWriteFile(args, context) {
         let previous = '';
         let existed = true;
         try { previous = await agentReadFile(args.path); } catch { existed = false; }
-        if (!_isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD
+        if (!isScratchTask(args.path) && previous.length >= _SHRINK_MIN_OLD && args.content.length < previous.length * _SHRINK_THRESHOLD
                 && _shrinkNeedsConfirm(args.path, previous, args.content, null)) {
             return { error: _shrinkError(args.path, previous.length, args.content.length, _callerHasTool(context)) };
         }
-        if (!_isScratchTask(args.path) && previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
+        if (!isScratchTask(args.path) && previous.length >= _EDIT_REVIEW_MIN_OLD && getEditReviewEnabled()
                 && _changeRatio(previous, args.content) > _EDIT_REVIEW_THRESHOLD) {
             const review = await _reviewFileEdit(args.path, previous, args.content);
             if (!review.approved)
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
+        }
+        // A task file's status moves through update_task_status, which runs the checks. write_file used to do both: a task was written `done` past every gate,
+        // and a resumed planning task re-created 003-005 as open over finished work and they ran again (kanbanflow 2026-11-08).
+        if (existed && isTaskPath(args.path) && !isScratchTask(args.path)) {
+            const from = canonTaskStatus(parseFrontmatter(previous).status), to = canonTaskStatus(parseFrontmatter(String(args.content)).status);
+            if (from !== to) return { error: `write_file: this would change the status of ${args.path} from ${from} to ${to}. Keep its status line as it is and set the status with update_task_status; to redo a finished task, call it with the new status.` };
         }
         const _ep = workspaceEpoch();
         await agentWriteFile(args.path, args.content, null, { epoch: _ep });
@@ -1768,6 +1774,9 @@ async function _handleWriteFile(args, context) {
         if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
         Object.assign(wfResult, lineBreakNote);
+        // A task file with no criteria makes the completeness and review gates vacuous (kanbanflow 2026-11-08: 5 of 28 planning turns).
+        if (isTaskPath(args.path) && !isScratchTask(args.path) && /\.md$/i.test(args.path) && !/\/ledger\.md$/.test(args.path) && !/^## Acceptance Criteria[ \t]*$/im.test(String(args.content)))
+            wfResult.note = 'This task has no "## Acceptance Criteria" list, so nothing can check it is done. Add the list (- [ ] items) to the file.';
         return _withSyntaxError(wfResult, synErr, context);
     } catch (e) { return { error: e.message }; }
 }

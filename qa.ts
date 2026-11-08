@@ -2,7 +2,7 @@
 // Depends on: config.js, tools.js, workers.js, tasks.js
 
 
-import { canonTaskStatus, TASK_DIRS } from './task-status.js';
+import { canonTaskStatus, TASK_DIRS, isScratchTask } from './task-status.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
@@ -358,6 +358,7 @@ const _ACCEPTANCE_CHECKS = [{
         (ctx.omitted.length ? `Source files that exist in the project but are not shown: ${ctx.omitted.join(', ')}${ctx.omittedCount > ctx.omitted.length ? ` (and ${ctx.omittedCount - ctx.omitted.length} more)` : ''}. Do not treat a file as missing because it is not shown.\n` : '') +
         (ctx.missing.length ? `Names from the criteria that appear in none of the code shown: ${ctx.missing.join(', ')}.\n` : '') +
         `A behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it. ` +
+        `This check is what marks the task done: do not hold it against the task that its own status or its ledger row still reads open or in-progress. ` +
         `Answer YES only when at least one criterion is clearly NOT met or is contradicted by the code. ` +
         `Answer NO when every criterion is met or the code needed to decide is not shown.\n` +
         `Reply with the first line YES or NO. When YES, add a second line "payload: " followed by the unmet criteria, each with a short reason, separated by "; ".`,
@@ -371,7 +372,7 @@ async function gate_acceptance_review(taskPath, content) {
 
     const criteria = acceptM.trim();
     const fileSec  = _mdSection(content, 'Files');
-    const filePaths = fileSec
+    let filePaths = fileSec
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
         : [];
     // No readable `## Files` list: the reviewer would only see "(no files available)" and fail
@@ -379,6 +380,24 @@ async function gate_acceptance_review(taskPath, content) {
     if (!filePaths.length) {
         const found = [...content.matchAll(/\b((?:[\w.-]+\/)*[\w.-]+\.(?:js|ts|mjs|css|html|json|py))\b/g)].map(m => m[1]);
         for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && filePaths.length < 5) filePaths.push(f);
+    }
+
+    // The other task files a criterion names are evidence too: a planning task's work is those files. Without them the reviewer judged
+    // "fg-tasks/003-x.md exists" from code that does not contain it (kanbanflow 2026-11-08: tasks blocked 9, 5 and 4 times in three runs).
+    for (const m of criteria.matchAll(/\b(fg-tasks\/[\w.-]+\.md)\b/g)) if (!filePaths.includes(m[1])) filePaths.unshift(m[1]);
+    filePaths = filePaths.slice(0, 5);
+    // A criterion that names a file (`test_calc.mjs`) is not met by a workspace without it. The reviewer cannot see that: "the code needed to decide is not
+    // shown" reads as met (kanbanflow 2026-11-08: "Add tests" was done with no test file, twice).
+    const named = [...new Set([...criteria.matchAll(/`([\w][\w./-]*\.(?:js|mjs|ts|py|html|css|json))`/g)].map(m => m[1]))].filter(n => !/^fg-tasks\//.test(n));
+    if (named.length) {
+        let have: string[] | null = null;
+        try { have = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean); } catch {}
+        const absent = have ? named.filter(n => !have!.some(f => f === n || f.endsWith('/' + n))) : [];
+        if (absent.length) {
+            const why = `the criteria name ${absent.join(', ')}, which ${absent.length > 1 ? 'do' : 'does'} not exist in the project. Create ${absent.length > 1 ? 'them' : 'it'}, or correct the criteria`;
+            await appendGateNote(taskPath, `## QA: Acceptance Review (${new Date().toISOString().slice(0, 16)}Z)\nNot met: ${why}`);
+            return { blocks: true, reason: `Criteria not met: ${why}` };
+        }
     }
 
     const { text: fileContents, shown, omitted, omittedCount } = await gatherReviewCode(filePaths);
@@ -592,7 +611,7 @@ async function gate_test_runner(taskPath, content) {
             const block = hdr < 0 ? [] : lines.slice(hdr + 1, (i => i < 0 ? undefined : hdr + 1 + i)(lines.slice(hdr + 1).findIndex(l => /^== |^FAILED:/.test(l)))).filter(l => l.trim());
             const first = (/^Traceback/.test(block[0] ?? '') ? block[block.length - 1] : block[0])?.trim().slice(0, 200)
                 || lines.find(l => /error|fail|assert/i.test(l) && !/^FAILED:/.test(l))?.trim().slice(0, 200) || 'see the task file';
-            if (_bouncedBefore(taskPath, 'test-runner', failed.join(' ') || first))
+            if (_bouncedBefore(taskPath, 'test-runner', failed.join(' ') || first) && !(await _projectTouchedSince(taskPath)))
                 return { blocks: false, outcome: 'unknown', detail: `${which} still fail${failed.length === 1 ? 's' : ''} (accepted on the second attempt): ${first}` };
             const ts = new Date().toISOString().slice(0, 16) + 'Z';
             await appendGateNote(taskPath, `## QA: Test Failures (${ts})\nCommand: ${testFiles.length ? `each of ${testFiles.join(', ')}` : cmd}\n${output}`);
@@ -633,7 +652,7 @@ async function gate_page_check(taskPath) {
     // No error but nothing on the page either (no text, no media, canvases transparent): its start-up code did not run.
     if (!errors.length && r?.blank) errors.push('The page shows nothing: no text and no drawing after it loaded, so its start-up code probably does not run (a function that is defined but no longer called, a script that only exports).');
     if (!errors.length) return r?.loaded === false ? { blocks: false, outcome: 'unknown', detail: `${page}: ${r.summary}` } : { blocks: false };
-    if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')))
+    if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')) && !(await _projectTouchedSince(taskPath)))
         return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt): ${errors[0].slice(0, 160)}` };
     const ts = new Date().toISOString().slice(0, 16) + 'Z';
     await appendGateNote(taskPath, `## QA: Page Errors (${ts})\n${page}:\n${errors.map(e => `- ${e.slice(0, 300)}`).join('\n')}`);
@@ -673,6 +692,25 @@ async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
 }
 async function noteTaskStart(taskPath: string): Promise<void> {
     try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
+    try { _taskStartFiles.set(taskPath, await _projectStamps()); } catch {}
+}
+// The project's files and when they last changed, as the task started. A failing check met again at the next "done" is accepted as one the task
+// did not cause only when nothing in the project changed since the task started (AE01); if the task edited the project, the failure is its own
+// to fix (kanbanflow 2026-11-08: a task renamed an export, its test failed, "done" was sent again unchanged and accepted).
+const _taskStartFiles = new Map<string, Map<string, number>>();
+async function _projectStamps(): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const f of (await agentListFiles()) || []) if (f?.name && !/^(?:local\/)?(?:fg-tasks|memory|node_modules)\//.test(f.name)) out.set(f.name, Number(f.lastModified) || 0);
+    return out;
+}
+async function _projectTouchedSince(taskPath: string): Promise<boolean> {
+    const before = _taskStartFiles.get(taskPath);
+    if (!before) return false;   // no record of the start (a reload): keep the old rule
+    const now = await _projectStamps().catch(() => null);
+    if (!now) return false;
+    if (now.size !== before.size) return true;
+    for (const [n, t] of now) if (before.get(n) !== t) return true;
+    return false;
 }
 const _GENERIC_IDS = new Set(['main', 'init', 'start', 'setup', 'update', 'render', 'draw', 'loop', 'run', 'app', 'root', 'game', 'data', 'handle',
     'click', 'value', 'item', 'items', 'list', 'test', 'tests', 'helper', 'utils', 'content', 'container', 'wrapper', 'output', 'input', 'result', 'state',
@@ -768,8 +806,18 @@ const _gatesPassedDone = new Set<string>();
 export const forgetGatePass = (taskPath: string): void => { _gatesPassedDone.delete(taskPath); };
 export const gatesPassedDone = (taskPath: string): boolean => _gatesPassedDone.has(taskPath);
 
+// A task set to `failed` right after a check bounced its `done` is challenged once: the bounce names a fixable cause and the agent gave up on it
+// (kanbanflow 2026-11-08: "export" in a classic script, one `type="module"` away, and the task was marked failed). A second `failed` stands.
+const _lastBounce = new Map<string, string>();
+const _failChallenged = new Set<string>();
 async function transitionTask(taskPath, toStatus) {
+    if (canonTaskStatus(toStatus) === 'failed' && _lastBounce.has(taskPath) && !_failChallenged.has(taskPath) && getQaEnabled() && !isScratchTask(taskPath)) {
+        _failChallenged.add(taskPath);
+        return { transitioned: false, reason: `Not marked failed yet: the last check refused done with "${_lastBounce.get(taskPath)!.slice(0, 300)}". Fix that cause and set done again. If it cannot be fixed, set failed again with the reason.` };
+    }
     const r = await _transitionTask(taskPath, toStatus);
+    if (r.transitioned) { _lastBounce.delete(taskPath); _failChallenged.delete(taskPath); }
+    else if (canonTaskStatus(toStatus) === 'done' && r.reason) _lastBounce.set(taskPath, r.reason);
     if (r.transitioned && canonTaskStatus(toStatus) === 'done') _gatesPassedDone.add(taskPath);
     if (r.transitioned && canonTaskStatus(toStatus) === 'in-progress' && getQaEnabled()) await noteTaskStart(taskPath);   // for kept-features
     return r;
@@ -778,7 +826,7 @@ async function transitionTask(taskPath, toStatus) {
 async function _transitionTask(taskPath, toStatus) {
     // fg-tasks/current.md is a chat's scratch note, not a board task: the review, test and page gates are for tasks someone plans and
     // follows (logs of 2026-11-07: a plain chat's `done` on current.md ran 281 s and took the tab down).
-    if (!getQaEnabled() || /^(?:\.\/)?fg-tasks\/current\.md$/.test(taskPath)) {
+    if (!getQaEnabled() || isScratchTask(taskPath)) {
         await setTaskStatus(taskPath, toStatus);
         return { transitioned: true };
     }

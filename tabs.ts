@@ -950,6 +950,7 @@ export const _CHECK_CAPTURE = `<script>(function(){
 var P=parent,T0=Date.now();
 function s(v){try{if(typeof v==='string')return v;if(v instanceof Error)return v.name+': '+v.message;if(v===undefined)return 'undefined';if(typeof v==='function')return 'function';return JSON.stringify(v)}catch(e){return String(v)}}
 function send(l,t){try{P.postMessage({type:'fg-check-log',level:l,text:String(t).slice(0,4000),t:Date.now()-T0},'*')}catch(e){}}
+try{window.alert=function(m){send('log','alert('+s(m)+') was called; dialogs are not shown while a page is checked')};window.confirm=function(m){send('log','confirm('+s(m)+') answered true');return true};window.prompt=function(m,d){send('log','prompt('+s(m)+') answered with the default');return d==null?'':String(d)}}catch(e){}
 ['log','info','warn','error','debug'].forEach(function(k){var o=console[k];console[k]=function(){send(k,[].map.call(arguments,s).join(' '));try{o&&o.apply(console,arguments)}catch(e){}}});
 addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&(t.src||t.href)){send('error','Failed to load resource: '+(t.src||t.href)+(t.integrity?' — it has integrity="'+t.integrity+'": a wrong hash blocks the file, so check it or remove the attribute':''));return}
  var m=e.error&&e.error.name?e.error.name+': '+e.error.message:e.message;
@@ -1107,6 +1108,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     signal?.addEventListener('abort', stopCheck);
 
     const steps: any[] = [];
+    const stepNotes: string[] = [];
     const expectResults: ExpectResult[] = [];
     let loaded = false, blank = false, fps: number | null = null;
     window.addEventListener('message', onMsg);
@@ -1132,6 +1134,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
             if (aborted) break;
             if (!a || typeof a !== 'object') continue;
             notePageCheck({ stage: `during the action ${JSON.stringify(a).slice(0, 120)}` });
+            // One verb per step: {"click": s, "type": "text", "text": "100"} used to run only the click and drop the typing without a word
+            // (kanbanflow 2026-11-08, WebKit: ~100 messages of a verify task spent finding out why the field stayed empty).
+            const verbs = ['click', 'type', 'key', 'wait_ms'].filter(k => a[k] != null);
+            if (verbs.length > 1 || (a.text != null && a.type == null)) {
+                const msg = `A step does one thing and was skipped: ${JSON.stringify(a).slice(0, 100)}. Send click and type as separate steps; "text" goes with "type", whose value is the CSS selector of the field, e.g. {"type": "#bill", "text": "100"}.`;
+                steps.push({ error: msg }); stepNotes.push(msg);
+                continue;
+            }
             if (typeof a.click === 'string') {
                 steps.push({ click: a.click, ...(await cmd({ cmd: 'click', selector: a.click })) });
             } else if (typeof a.type === 'string') {
@@ -1186,7 +1196,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const errors = collapse(logs.filter(l => l.level === 'error'), 20);
     const warnings = collapse(logs.filter(l => l.level === 'warn'), 10);
     const consoleOut = collapse(logs.filter(l => l.level !== 'error' && l.level !== 'warn'), 30);
-    const notes: string[] = [];
+    const notes: string[] = [...stepNotes];
     if (!loaded) notes.push(alive
         ? 'The check script started in the page, but the page did not finish parsing its scripts within 20 s. Heavy synchronous start-up work (building sprite atlases, decoding large inlined images, long loops) on a slow device is the usual cause: defer it (requestAnimationFrame / setTimeout chunks) or shrink it, and compare with the errors above.'
         : 'Nothing in the page ran, not even the check script, within 8 s: the browser blocked or never rendered the frame (page too large to build, fatal parse failure of the document).');

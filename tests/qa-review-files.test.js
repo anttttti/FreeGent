@@ -49,6 +49,33 @@ describe('acceptance review input', () => {
         expect(prompt).not.toContain('no files available');
     });
 
+    it('shows the other task files to a planning task whose criteria name them (no project code yet)', async () => {
+        files['fg-tasks/ledger.md'] = '| 002 | Plan |';
+        files['calc.js'] = 'function calc(){}';   // a readable source file does not hide the task files the criteria name
+        files['fg-tasks/003-ui.md'] = '---\nid: 003\ntitle: UI\n---\n# UI\n';
+        files['fg-tasks/002-core.md'] = '---\nid: 002\ntitle: Plan\nstatus: in-review\n---\n# Plan\n## Acceptance Criteria\n- [ ] `fg-tasks/003-ui.md` exists\n- [ ] `calc.js` is written by it\n- [ ] `fg-tasks/002-core.md` lists the steps\n';
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        await W.transitionTask('fg-tasks/002-core.md', 'done');
+        const prompt = W.callLLMComplete.mock.calls[0][0];
+        expect(prompt).toContain('### fg-tasks/003-ui.md');
+        expect(prompt).toContain('### calc.js');
+        expect(prompt).toMatch(/do not hold it against the task that its own status/);
+        expect(prompt).toContain('### fg-tasks/002-core.md');   // its own file too, when a criterion names it
+        expect(prompt).not.toContain('no files available');
+    });
+
+    it('blocks without asking the reviewer when a criterion names a file the project does not have', async () => {
+        files['calc.js'] = 'function calc(){}';
+        files['fg-tasks/002-core.md'] = task.replace('- [ ] canvas runs', '- [ ] `test_calc.mjs` tests `calc.js`');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        const r = await W.transitionTask('fg-tasks/002-core.md', 'done');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/test_calc\.mjs, which does not exist/);
+        expect(W.callLLMComplete).not.toHaveBeenCalled();
+        files['test_calc.mjs'] = 'x';
+        expect((await W.transitionTask('fg-tasks/002-core.md', 'done')).transitioned).toBe(true);
+    });
+
     it('puts files the task names first', async () => {
         files['a.js'] = 'A'; files['b.js'] = 'B'; mtimes['a.js'] = 500; mtimes['b.js'] = 1;
         files['fg-tasks/002-core.md'] = task.replace('# Game core\n', '# Game core\n## Files\n- `b.js`\n');

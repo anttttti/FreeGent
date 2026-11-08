@@ -1576,6 +1576,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
                 isScratchPath, envConfigEdits, brokenFiles: brokenFileReport, autoCheck: autoCheckEdited, shellCommands: _shellCmds,
+                planning: typeof getMode === 'function' && getMode() === 'cowork' && (() => { const calls = _histR(_s).flatMap((m: any) => m.tool_calls || []); return calls.some((t: any) => t.function?.name === 'write_file' && /fg-tasks\/\d+-/.test(String(t.function?.arguments))); })(),
+                noCriteria: async () => { const out: string[] = []; for (const f of await agentListFiles().catch(() => [])) { const p = f.name; if (/^fg-tasks\/\d+-/.test(p)) { try { if (!/^## Acceptance Criteria[ \t]*$/im.test(await agentReadFile(p))) out.push(p); } catch {} } } return out; },
+                taskText: async () => { try { let t = ''; for (const f of await agentListFiles()) if (/^fg-tasks\/\d+-/.test(f.name)) t += (await agentReadFile(f.name)).toLowerCase() + '\n'; return t; } catch { return ''; } },
+                taskIds: async () => typeof getMode !== 'function' || getMode() !== 'cowork' ? null : new Set((typeof agentListFiles === 'function' ? await agentListFiles().catch(() => []) : []).map((f: any) => /^fg-tasks\/0*(\d+)-/.exec(f.name)?.[1]).filter(Boolean) as string[]),
             });
             if (_gate) {
                 if (!_BLOCKED_DECLARATION_RE.test(textContent)) _saveAnswer(ps, textContent);   // a bounced BLOCKED is not an answer

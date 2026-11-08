@@ -170,3 +170,17 @@ describe('forceSkillsNextTurn (/skill in the TUI)', () => {
         W.skillsRegistry.delete('needs-exec');
     });
 });
+
+describe('task-setup in Cowork mode', () => {
+    it('does not tell the model to plan into fg-tasks/current.md (kanbanflow 2026-11-08: the board stayed empty), the chat variant still does', async () => {
+        await import('../skills.ts');
+        const skill = W.BUILTIN_SKILLS.find(s => s.name === 'task-setup');
+        W.localStorage.setItem('fg_mode', 'cowork');
+        try {
+            expect(skill.body_fn()).not.toMatch(/current\.md/);
+            expect(skill.body_fn()).toMatch(/Kanban rules/);
+            W.localStorage.setItem('fg_mode', 'chat');
+            expect(skill.body_fn()).toMatch(/current\.md/);
+        } finally { W.localStorage.removeItem('fg_mode'); }
+    });
+});
