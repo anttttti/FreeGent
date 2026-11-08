@@ -3,6 +3,7 @@
 
 
 import { canonTaskStatus, TASK_DIRS, isScratchTask } from './task-status.js';
+import { isScratchPath } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
@@ -272,7 +273,7 @@ export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: st
     // it is the project, so it is reviewed too. The noise filter looks at the path inside the folder.
     const inProject = (name: string) => name.replace(/^local\//, '');
     const recent = all
-        .filter(f => f?.name && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.isLocal ? inProject(f.name) : f.name))
+        .filter(f => f?.name && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.isLocal ? inProject(f.name) : f.name) && !isScratchPath(inProject(f.name)))
         .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0) || a.name.localeCompare(b.name))
         .map(f => f.name);
     const order = [...new Set([...namedPaths, ...recent])];
@@ -354,7 +355,10 @@ const _ACCEPTANCE_CHECKS = [{
     max: Infinity,
     extract: () => '',   // the default extractor would pull a "command" out of the code under review
     llmPrompt: (_code: string, ctx: any) =>
-        `Check whether each acceptance criterion is met by the code below.\n\nCriteria:\n${ctx.criteria}\n\n` +
+        `Check whether each acceptance criterion is met by the code below.\n\n` +
+        (ctx.desc ? `Task description (it says what the criteria mean; for example that #error is an element id, not text):\n${ctx.desc}\n\n` : '') +
+        (ctx.answers.length ? `The user answered the agent's questions while it worked on this task; those answers are not in the code, so a value that matches them is the value the user gave:\n${ctx.answers.map((a: any) => `- Q: ${a.question}\n  A: ${a.answer}`).join('\n')}\n\n` : '') +
+        `Criteria:\n${ctx.criteria}\n\n` +
         (ctx.omitted.length ? `Source files that exist in the project but are not shown: ${ctx.omitted.join(', ')}${ctx.omittedCount > ctx.omitted.length ? ` (and ${ctx.omittedCount - ctx.omitted.length} more)` : ''}. Do not treat a file as missing because it is not shown.\n` : '') +
         (ctx.missing.length ? `Names from the criteria that appear in none of the code shown: ${ctx.missing.join(', ')}.\n` : '') +
         `A behaviour that happens at run time, such as input handling or what is saved, is judged from the code that produces it. ` +
@@ -371,6 +375,10 @@ async function gate_acceptance_review(taskPath, content) {
     if (acceptM === null || !acceptM.trim()) return { blocks: false, outcome: 'skipped', detail: 'No acceptance criteria — skipping review' };
 
     const criteria = acceptM.trim();
+    // The task's own words, before its first section: terse criteria ("invalid input shows #error") mean what the description says. Judged without it, a working
+    // form was refused four times as showing text "instead of #error" (kanbanflow set 2, multipage).
+    const answers = typeof (globalThis as any).getRunnerUserAnswers === 'function' ? (globalThis as any).getRunnerUserAnswers(String(parseFrontmatter(content).title || '')).slice(-4) : [];
+    const desc = content.replace(/^---[\s\S]*?\n---[ \t]*\n?/, '').split(/^## /m)[0].replace(/^#[^\n]*\n/, '').trim().slice(0, 1200);
     const fileSec  = _mdSection(content, 'Files');
     let filePaths = fileSec
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
@@ -417,7 +425,7 @@ async function gate_acceptance_review(taskPath, content) {
         catch (e) { unavailable = true; throw e; }
     };
     const hit = await validateOutput(fileContents || '(no files available)', _ACCEPTANCE_CHECKS, {
-        llm, maxTokens: 300, budget: Infinity, ctx: { criteria, omitted, omittedCount, missing },
+        llm, maxTokens: 300, budget: Infinity, ctx: { criteria, desc, answers, omitted, omittedCount, missing },
     });
 
     // The answer is about the criteria, the code and the status the reviewer was shown. If any of them changed while it thought (the criteria edited, the
@@ -475,6 +483,11 @@ const _QA_PY_RUNNER = 'import sys,os,runpy,inspect,unittest\n' +
     'sys.exit(0 if not s.countTestCases() or unittest.TextTestRunner(verbosity=0).run(s).wasSuccessful() else 1)\n';
 // A command the sandbox does not have (a test framework that is not installed) says nothing about the code under test.
 const _QA_RUNNER_MISSING_RE = /command not found|: not found\b|Cannot find (?:module|package) '(?:node:test|vitest|jest|mocha|pytest)'|No module named '?pytest/i;
+// Any other bare package a test imports (`jsdom`, `puppeteer`, …) is just as unavailable in the browser sandbox, which has no npm packages: the test cannot run there,
+// and the task whose agent wrote it cannot make it pass (kanbanflow set 2, interact: dark-mode and viewport tasks blocked on `Cannot find module 'jsdom'`).
+// A relative module (`./x.js`) missing is a real failure; with a native executor node_modules may exist, so a missing package is a failure there too.
+const _QA_BARE_MODULE_RE = /Cannot find (?:module|package) '(?![./])[^']+'/i;
+const _sandboxLacks = (text: string): boolean => _QA_RUNNER_MISSING_RE.test(text) || (!runtime.hasNativeExec && _QA_BARE_MODULE_RE.test(text));
 
 const _shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -536,7 +549,7 @@ export async function autoCheckEdited(edited: string[], { stillExist = [] as str
         try {
             const res: any = await executeToolAsync('execute_code', { language: 'bash', code: _testCommand(files), timeout_s: _QA_TEST_TIMEOUT_MS / 1000 }, null);
             const out = ((res.stdout || '') + (res.stderr || '') + (res.error ? `\n${res.error}` : '')).slice(0, _QA_OUTPUT_MAX);
-            const missingTool = res.exit_code === 127 || _QA_RUNNER_MISSING_RE.test(out);
+            const missingTool = res.exit_code === 127 || _sandboxLacks(out);
             if (res.exit_code != null && !missingTool) {
                 ran = true;
                 if (res.exit_code !== 0) failures.push(`${files.join(', ')} failed:\n${out.split('\n').slice(-12).join('\n')}`);
@@ -602,7 +615,7 @@ async function gate_test_runner(taskPath, content) {
         if (res.exit_code == null && res.error) return { blocks: false, outcome: 'unknown', detail: `Tests could not be run: ${String(res.error).slice(0, 160)}` };
         if (res.exit_code !== 0) {
             const failed = /FAILED:(.*)$/m.exec(output)?.[1].trim().split(/\s+/) ?? [];
-            if (res.exit_code === 127 || _QA_RUNNER_MISSING_RE.test(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _QA_RUNNER_MISSING_RE.test(l)) || '').trim().slice(0, 160)}` };
+            if (res.exit_code === 127 || _sandboxLacks(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
             const which = failed.length ? failed.join(', ') : 'the test command';
             // What the first failing file printed (its header is "== <file> (exit N)"): the first line, or for a Python traceback the
             // exception at its end. Without a header, the first error-looking line.
@@ -652,8 +665,10 @@ async function gate_page_check(taskPath) {
     // No error but nothing on the page either (no text, no media, canvases transparent): its start-up code did not run.
     if (!errors.length && r?.blank) errors.push('The page shows nothing: no text and no drawing after it loaded, so its start-up code probably does not run (a function that is defined but no longer called, a script that only exports).');
     if (!errors.length) return r?.loaded === false ? { blocks: false, outcome: 'unknown', detail: `${page}: ${r.summary}` } : { blocks: false };
-    if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')) && !(await _projectTouchedSince(taskPath)))
-        return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt): ${errors[0].slice(0, 160)}` };
+    const atStart = _taskStartPageErrors.get(taskPath);
+    const inherited = !!atStart && errors.every(e => atStart.includes(_errKey(e)));   // all of them were there before the task began
+    if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')) && (inherited || !(await _projectTouchedSince(taskPath))))
+        return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt${inherited ? '; they were already there when the task started' : ''}): ${errors[0].slice(0, 160)}` };
     const ts = new Date().toISOString().slice(0, 16) + 'Z';
     await appendGateNote(taskPath, `## QA: Page Errors (${ts})\n${page}:\n${errors.map(e => `- ${e.slice(0, 300)}`).join('\n')}`);
     return { blocks: true, reason: `${page} reports ${errors.length > 1 ? `${errors.length} errors` : 'an error'} when it loads: ${errors.map(e => e.slice(0, 200)).join(' | ')}. Find the cause (check_page shows the details), fix it, then set the status again. If the error was there before this task and is not yours, say so in the summary and set the status again.` };
@@ -693,6 +708,22 @@ async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
 async function noteTaskStart(taskPath: string): Promise<void> {
     try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
     try { _taskStartFiles.set(taskPath, await _projectStamps()); } catch {}
+    try { const e = await _rootPageErrors(); if (e) _taskStartPageErrors.set(taskPath, e.errors); } catch {}
+}
+// The errors the root page reports when a task starts. A task that fails leaves its code behind (a fetch to a dead URL), so every later task would meet that
+// error at its own `done` and, having edited the page, own it: kanbanflow set 2, failchain: the independent footer task ended failed or blocked
+// on two of three engines. At `done` an error that was already there at the start is not this task's, whatever it edited.
+const _taskStartPageErrors = new Map<string, string[]>();
+const _errKey = (e: string) => e.replace(/\(line \d+:\d+[^)]*\)/g, '').replace(/\d+/g, '#').trim();
+async function _rootPageErrors(): Promise<{ page: string; errors: string[] } | null> {
+    if (!getQaTestRunner() || typeof runPageCheck !== 'function' || runtime.hasNativeExec) return null;
+    const names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean) as string[];
+    const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
+    const page = roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : null);
+    if (!page) return null;
+    const r: any = await runPageCheck(page, { waitMs: 1500 });
+    if (r?.crashed || r?.error) return null;
+    return { page, errors: (r?.errors ?? []).map((e: any) => _errKey(String(e.text ?? e))) };
 }
 // The project's files and when they last changed, as the task started. A failing check met again at the next "done" is accepted as one the task
 // did not cause only when nothing in the project changed since the task started (AE01); if the task edited the project, the failure is its own

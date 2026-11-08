@@ -115,6 +115,16 @@ describe('test-runner gate', () => {
         expect(r.transitioned).toBe(true);
         expect(r.unverified.join(' ')).toMatch(/lacks/);
     });
+    it('a test importing an npm package the browser sandbox does not have (jsdom) cannot be passed, so it is not a failure; a missing relative module still is (kanbanflow set 2)', async () => {
+        files['test_dark.js'] = "const { JSDOM } = require('jsdom');";
+        W.executeToolAsync = async () => ({ stdout: "== test_dark.js (exit 1)\nError: Cannot find module 'jsdom'\nFAILED: test_dark.js\n", stderr: '', exit_code: 1 });
+        const r = await W.transitionTask(TASK, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified.join(' ')).toMatch(/lacks.*jsdom/);
+        const t2 = 'fg-tasks/010-rel.md'; files[t2] = task('010');
+        W.executeToolAsync = async () => ({ stdout: "== test_dark.js (exit 1)\nError: Cannot find module './helpers.js'\nFAILED: test_dark.js\n", stderr: '', exit_code: 1 });
+        expect((await W.transitionTask(t2, 'done')).transitioned).toBe(false);
+    });
     it("npm init's placeholder test script is not run", async () => {
         files['package.json'] = JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } });
         files['test_m.mjs'] = 'x';
@@ -160,6 +170,25 @@ describe('page-check gate', () => {
         const second = await W.transitionTask(TASK, 'done');
         expect(second.transitioned).toBe(true);
         expect(second.unverified.join(' ')).toMatch(/still reports errors/);
+    });
+    it('an error the page already reported when the task started is not the task\'s, even though the task edited the page; a new error still is (kanbanflow set 2, failchain)', async () => {
+        const stamps = { 'index.html': 1 };
+        files['index.html'] = '<p>x</p>';
+        W.agentListFiles = async () => Object.keys(files).map(name => ({ name, lastModified: stamps[name] ?? 0 }));
+        let errs = [{ text: 'TypeError: Failed to fetch https://api.example.invalid/v1 (line 12:3 of the inlined page)', count: 1 }];
+        W.runPageCheck = async (p) => ({ path: p, loaded: true, summary: 'err', errors: errs });
+        const t = 'fg-tasks/011-footer.md', u = 'fg-tasks/012-other.md'; files[t] = task('011'); files[u] = task('012');
+        await W.transitionTask(t, 'in-progress');
+        stamps['index.html'] = 2;   // the task added a footer to the page
+        expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);   // still told once
+        const second = await W.transitionTask(t, 'done');
+        expect(second.transitioned).toBe(true);
+        expect(second.unverified.join(' ')).toMatch(/already there when the task started/);
+        await W.transitionTask(u, 'in-progress');
+        stamps['index.html'] = 3;
+        errs = [{ text: 'ReferenceError: render is not defined (line 30:1 of the inlined page)', count: 1 }];   // an error the task caused
+        expect((await W.transitionTask(u, 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask(u, 'done')).transitioned).toBe(false);
     });
     it('blocks done on a page that crashed the tab and is unchanged (it is refused, not passed), once', async () => {
         files['index.html'] = '<script>for(;;){}</script>';

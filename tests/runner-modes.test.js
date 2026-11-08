@@ -291,6 +291,27 @@ describe('what the run says when it ends or is interrupted', () => {
         expect(log()).toMatch(/Finished: 1 blocked \(#003\): answer in the task's chat or edit it, then run it again; 1 failed \(#004\)/);
         expect(log()).not.toMatch(/All tasks complete/);
     });
+    // kanbanflow set 2: task 003 needs 005 (a higher id). It was refused at its turn, deferred for the run, never retried, and the tasks behind it were
+    // refused in turn until the run paused with "5 consecutive failures".
+    it('starts a task only when its dependencies are done, whatever their ids, and finishes the whole chain', async () => {
+        const dep = (id, title, d) => task(id, title).replace('status: todo', `status: todo\ndepends: ${d}`);
+        files = { 'fg-tasks/001-a.md': task('001', 'A'), 'fg-tasks/002-b.md': dep('002', 'B', '005'), 'fg-tasks/003-c.md': dep('003', 'C', '002, 001'),
+            'fg-tasks/004-d.md': task('004', 'D'), 'fg-tasks/005-e.md': dep('005', 'E', '004') };
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/001-a.md', 'fg-tasks/004-d.md', 'fg-tasks/005-e.md', 'fg-tasks/002-b.md', 'fg-tasks/003-c.md']);
+        expect(log()).toMatch(/All tasks complete/);
+    });
+    it('names the tasks left waiting on a dependency that failed or does not exist', async () => {
+        const dep = (id, title, d) => task(id, title).replace('status: todo', `status: todo\ndepends: ${d}`);
+        files = { 'fg-tasks/001-a.md': task('001', 'A').replace('status: todo', 'status: failed'), 'fg-tasks/002-b.md': dep('002', 'B', '001'),
+            'fg-tasks/003-c.md': dep('003', 'C', '099'), 'fg-tasks/004-d.md': task('004', 'D') };
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/004-d.md']);
+        expect(log()).toMatch(/2 waiting on a task that is not done \(#002 needs #001; #003 needs #099\)/);
+        expect(log()).not.toMatch(/All tasks complete/);
+    });
     it('does not call the run complete when a done task was accepted unverified', async () => {
         files['fg-tasks/003-c.md'] = task('003', 'Accepted').replace('status: todo', 'status: done\nqa: unverified');
         W.runnerAutopilot();

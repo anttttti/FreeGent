@@ -1765,10 +1765,7 @@ async function _handleWriteFile(args, context) {
         }
         // A task file's status moves through update_task_status, which runs the checks. write_file used to do both: a task was written `done` past every gate,
         // and a resumed planning task re-created 003-005 as open over finished work and they ran again (kanbanflow 2026-11-08).
-        if (existed && isTaskPath(args.path) && !isScratchTask(args.path)) {
-            const from = canonTaskStatus(parseFrontmatter(previous).status), to = canonTaskStatus(parseFrontmatter(String(args.content)).status);
-            if (from !== to) return { error: `write_file: this would change the status of ${args.path} from ${from} to ${to}. Keep its status line as it is and set the status with update_task_status; to redo a finished task, call it with the new status.` };
-        }
+        if (existed) { const moved = _statusChangeError('write_file', args.path, previous, args.content); if (moved) return { error: moved }; }
         const _ep = workspaceEpoch();
         await agentWriteFile(args.path, args.content, null, { epoch: _ep });
         _pushCheckpoint(args.path, previous, existed, args.content, _ep);
@@ -1843,6 +1840,14 @@ async function _assistReplaceLines(args: any, original: string, lines: string[],
     const n = g.updated.split('\n').length - (lines.length - (e - s + 1));
     return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated),
         note: `${note}Change applied at lines ${s}–${s + Math.max(n, 1) - 1}.${dup.note}${g.note} No need to re-read the file to verify.` };
+}
+
+// A task file's status moves through update_task_status, which runs the gates; a tool that edits the file must not move it (write_file and
+// replace_in_file both did: kanbanflow, `status: in-progress` -> `done` by an edit, past every gate). null when the edit leaves the status alone.
+function _statusChangeError(tool: string, path: string, previous: string, next: string): string | null {
+    if (!isTaskPath(path) || isScratchTask(path) || /\/ledger\.md$/.test(path) || !/\.md$/i.test(path)) return null;
+    const from = canonTaskStatus(parseFrontmatter(previous).status), to = canonTaskStatus(parseFrontmatter(String(next)).status);
+    return from === to ? null : `${tool}: this would change the status of ${path} from ${from} to ${to}. Keep its status line as it is and set the status with update_task_status; to redo a finished task, call it with the new status.`;
 }
 
 async function _handleReplaceInFile(args, context) {
@@ -2066,7 +2071,7 @@ async function _handleReplaceInFile(args, context) {
         const _ep = workspaceEpoch();
         const rif = await doReplace(
             () => Promise.resolve(before),
-            async c => { await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, existed, c, _ep); }
+            async c => { const moved = existed ? _statusChangeError('replace_in_file', args.path, before, c) : null; if (moved) throw new Error(moved); await agentWriteFile(args.path, c, null, { epoch: _ep }); _pushCheckpoint(args.path, before, existed, c, _ep); }
         );
         return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path), context) : rif;
     } catch (e) { return { error: e.message }; }

@@ -34,6 +34,19 @@ describe('write_file on an existing task file', () => {
     });
 });
 
+describe('replace_in_file on an existing task file', () => {
+    const doneTask = '---\nid: 3\ntitle: UI\nstatus: in-progress\n---\n# UI\n- [ ] a\n';
+    beforeEach(() => { W.agentReadFile = async (p) => { if (p === 'fg-tasks/003-ui.md') return doneTask; throw new Error('File not found'); }; W.agentWriteFile = vi.fn(async () => {}); });
+    it('cannot move the status (kanbanflow set 2: in-progress -> done by an edit went past the gates), but ticks a box', async () => {
+        const moved = await W.executeToolAsync('replace_in_file', { path: 'fg-tasks/003-ui.md', old_string: 'status: in-progress', new_string: 'status: done' });
+        expect(moved.error).toMatch(/from in-progress to done/);
+        expect(W.agentWriteFile).not.toHaveBeenCalled();
+        const ticked = await W.executeToolAsync('replace_in_file', { path: 'fg-tasks/003-ui.md', old_string: '- [ ] a', new_string: '- [x] a' });
+        expect(ticked.error).toBeUndefined();
+        expect(W.agentWriteFile).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('the board card of a task accepted unverified', () => {
     it('says so', async () => {
         document.body.innerHTML = ['todo', 'in-progress', 'review', 'done'].map(c => `<div class="kanban-col" data-status="${c}"><span class="kanban-col-count">0</span><div id="col-${c}"></div></div>`).join('');

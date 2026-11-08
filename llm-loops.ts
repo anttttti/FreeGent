@@ -2,7 +2,8 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW } from './detectors.js';
+import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
+export { isScratchPath };
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
@@ -756,16 +757,10 @@ export function _isReadOnlyCall(c: { name: string; args: any }): boolean {
 
 // Synthesises a short termination summary when the agent is force-stopped by a hard limit.
 // Falls back to a raw stop string when callLLMComplete is unavailable (e.g. unit tests).
-// Scratch files an agent creates while working — reproduction/debug scripts, temp and backup
-// copies, test-run output (report.xml, junit*.xml, .coverage, htmlcov/; v0.55 pytest-5692's whole
-// patch was an 87 KB report.xml). Never part of a fix: they should not be the only edit behind COMPLETED, and the
-// SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
-const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
 // Test runner / packaging configuration. Edits to these are almost never the fix itself.
 const _ENV_CONFIG_RE = /(?:^|\/)(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setup\.py|pyproject\.toml|\.coveragerc|requirements[\w.-]*\.txt)$/;
 // Model-native tool-call markup left in a reply's text (Gemma-4: <|tool_call>, <tool_call|>, <|"|>).
 const _BROKEN_CALL_RE = /<tool_call\|>|<\|tool_call>|<\|"\|>/;
-export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
 
 // Test/packaging configuration changed in this run that the task doesn't name. Combines the loop's
 // own edit tracking with git's view of the workspace where the runner provides one (headless:

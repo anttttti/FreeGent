@@ -746,3 +746,10 @@ export function _updateEnvFailureDetector(
 
 // Window bridge for free-variable access from sibling modules (house pattern).
 Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector });
+
+// Scratch files an agent creates while working — reproduction/debug scripts, temp and backup
+// copies, test-run output (report.xml, junit*.xml, .coverage, htmlcov/; v0.55 pytest-5692's whole
+// patch was an 87 KB report.xml). Never part of a fix: they should not be the only edit behind COMPLETED, and the
+// SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
+export const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out|html?)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
+export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }

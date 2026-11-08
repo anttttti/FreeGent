@@ -76,6 +76,31 @@ describe('acceptance review input', () => {
         expect((await W.transitionTask('fg-tasks/002-core.md', 'done')).transitioned).toBe(true);
     });
 
+    it('does not show the reviewer the agent\'s own reproduction page (kanbanflow set 2: "repro.html is 400px wide" refused done nine times)', async () => {
+        files['index.html'] = '<body style="margin:0">ok</body>';
+        files['repro.html'] = '<div style="width:400px">the bug, on purpose</div>';
+        mtimes['repro.html'] = 900; mtimes['index.html'] = 100;
+        const { prompt } = await review();
+        expect(prompt).toContain('### index.html');
+        expect(prompt).not.toContain('repro.html');
+    });
+    it('gives the reviewer the task description, which defines terse criteria', async () => {
+        files['index.html'] = '<p id="error"></p>';
+        files['fg-tasks/002-core.md'] = task.replace('# Game core\n', '# Game core\nInvalid input shows the text in <p id="error">.\n');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        await W.transitionTask('fg-tasks/002-core.md', 'done');
+        const prompt = W.callLLMComplete.mock.calls[0][0];
+        expect(prompt).toMatch(/Task description[^\n]*:\nInvalid input shows the text in <p id="error">\./);
+        expect(prompt.indexOf('Task description')).toBeLessThan(prompt.indexOf('Criteria:'));
+    });
+    it('tells the reviewer what the user answered during the task (kanbanflow set 2: a footer with the name the user gave was refused seven times as "hardcoded")', async () => {
+        files['index.html'] = '<footer>© 2026 Ada Lovelace</footer>';
+        W.getRunnerUserAnswers = (title) => title === 'Game core' ? [{ question: 'Whose name goes in the footer?', answer: 'Ada Lovelace.' }] : [];
+        try {
+            const { prompt } = await review();
+            expect(prompt).toMatch(/Q: Whose name goes in the footer\?\n  A: Ada Lovelace\./);
+        } finally { delete W.getRunnerUserAnswers; }
+    });
     it('puts files the task names first', async () => {
         files['a.js'] = 'A'; files['b.js'] = 'B'; mtimes['a.js'] = 500; mtimes['b.js'] = 1;
         files['fg-tasks/002-core.md'] = task.replace('# Game core\n', '# Game core\n## Files\n- `b.js`\n');

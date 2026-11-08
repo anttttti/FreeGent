@@ -565,6 +565,28 @@ async function _inlineCssUrls(css: string, fromPath: string, deps?: Set<string>)
     });
 }
 
+// Re-exports (`export { a } from './x.js'`, `export * from './x.js'`) pull a file in like an import does. The inliner used to follow only `import`, and
+// stripped `export { a }` but left `from './x.js'` behind: "SyntaxError: Unexpected string" on a page that works in a browser, and a task blocked by the
+// page check (kanbanflow set 2, brownfield: the very refactor the task asked for).
+const _IMPORT_RE = /^\s*import\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]\s*;?/gm;
+const _REEXPORT_RE = /^\s*export\s+(\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]\s*;?/gm;
+const _isLocalRef2 = (dep: string) => !dep.startsWith('http') && !dep.startsWith('//') && (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/'));
+/** The local files a module source imports or re-exports, in order. */
+function _localModuleDeps(src: string): string[] {
+    const out: string[] = [];
+    for (const re of [_IMPORT_RE, _REEXPORT_RE]) { re.lastIndex = 0; let m: RegExpExecArray | null; while ((m = re.exec(src)) !== null) { const dep = m[re === _IMPORT_RE ? 1 : 2]; if (_isLocalRef2(dep) && !out.includes(dep)) out.push(dep); } }
+    return out;
+}
+/** The source with import/export syntax removed (everything is concatenated into one scope); `export { a as b } from` keeps its alias as `var b = a;`. */
+function _stripModuleSyntax(src: string): string {
+    return src
+        .replace(_REEXPORT_RE, (_m, what: string) => (what.startsWith('{') ? what.slice(1, -1).split(',') : []).map(x => /^\s*([\w$]+)\s+as\s+([\w$]+)\s*$/.exec(x)).filter((a): a is RegExpExecArray => !!a && a[1] !== a[2] && a[2] !== 'default').map(a => `var ${a[2]} = ${a[1]};`).join(' '))
+        .replace(/^\s*import\s+(?:[^'"]*?\s+from\s+)?['"][^'"]+['"]\s*;?/gm, '')
+        .replace(/^\s*export\s+default\s+/gm, '')
+        .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
+        .replace(/^(\s*)export\s+((?:async\s+)?(?:function|class|const|let|var)\s)/gm, '$1$2');
+}
+
 // Recursively inline a JS module: strip import/export statements, inline imported files first.
 // visited guards against circular imports.
 async function _inlineJsModule(path, readFile, visited = new Set()) {
@@ -573,30 +595,13 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
     let src = '';
     try { src = await readFile(path) ?? ''; } catch { return ''; }
 
-    // Collect static import paths: import ... from './x.js'  or  import './x.js'
-    const importRe = /^\s*import\s+(?:[^'"]*\s+from\s+)?['"]([^'"]+)['"]\s*;?/gm;
-    const imports = [];
-    let m: RegExpExecArray | null;
-    while ((m = importRe.exec(src)) !== null) {
-        const dep = m[1];
-        // Only treat as local if it looks like a path: must start with ./ ../ or /.
-        // Bare specifiers ('vue', 'react', 'pyodide', …) are npm-style — browsers
-        // never resolve them as relative URLs and we cannot inline them from the workspace.
-        if (!dep.startsWith('http') && !dep.startsWith('//') &&
-            (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/'))) {
-            imports.push(resolvePageRef(dep, path));
-        }
-    }
+    // Local files this one imports or re-exports; bare specifiers ('vue', 'react', 'pyodide', …) are npm-style and cannot be inlined from the workspace.
+    const imports = _localModuleDeps(src).map(dep => resolvePageRef(dep, path));
 
     // Recursively inline dependencies first
     const depSrcs = await Promise.all(imports.map(d => _inlineJsModule(d, readFile, visited)));
 
-    // Strip import and export statements from this file's source
-    const stripped = src
-        .replace(/^\s*import\s+(?:[^'"]*\s+from\s+)?['"][^'"]+['"]\s*;?/gm, '')
-        .replace(/^\s*export\s+default\s+/gm, '')
-        .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
-        .replace(/^(\s*)export\s+((?:async\s+)?(?:function|class|const|let|var)\s)/gm, '$1$2');
+    const stripped = _stripModuleSyntax(src);
 
     return [...depSrcs, stripped].join('\n');
 }
@@ -675,17 +680,7 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
             if (/\bsrc=/i.test(attrs)) return match;
             if (!_STATIC_IMPORT_RE.test(content)) return match;
             try {
-                const importRe = /^\s*import\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]\s*;?/gm;
-                const localDeps: string[] = [];
-                let im: RegExpExecArray | null;
-                while ((im = importRe.exec(content)) !== null) {
-                    const dep = im[1];
-                    // Only local if it's a path (./ ../ /). Bare specifiers ('vue', 'react', …)
-                    // are external and cannot be inlined from the workspace.
-                    if (!dep.startsWith('http') && !dep.startsWith('//') &&
-                        (dep.startsWith('./') || dep.startsWith('../') || dep.startsWith('/')))
-                        localDeps.push(ref(dep));
-                }
+                const localDeps: string[] = _localModuleDeps(content).map(dep => ref(dep));
                 if (!localDeps.length) {
                     // All imports are external (http/CDN) — the browser handles them natively,
                     // but only in a module script.  If the tag lacks type="module", add it so
@@ -696,11 +691,7 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
                 }
                 const depSrcs = await Promise.all(localDeps.map(d => _inlineJsModule(d, readFile)));
                 // Strip static import/export declarations from the inline script body.
-                const stripped = content
-                    .replace(/^\s*import\s+(?:[^'"]*?\s+from\s+)?['"][^'"]+['"]\s*;?/gm, '')
-                    .replace(/^\s*export\s+default\s+/gm, '')
-                    .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
-                    .replace(/^(\s*)export\s+((?:async\s+)?(?:function|class|const|let|var)\s)/gm, '$1$2');
+                const stripped = _stripModuleSyntax(content);
                 const cleanAttrs = attrs.replace(/\s*\btype=["']module["']/gi, '').trim();
                 return `<script${cleanAttrs ? ' ' + cleanAttrs : ''}>\n${[...depSrcs, stripped].join('\n')}\n</script>`;
             } catch { return match; }

@@ -410,9 +410,12 @@ function _leftOpen(tasks: Task[]): string {
     const by = (st: string[]) => scope.filter(t => st.includes(canonTaskStatus(t.fm.status)));
     const blocked = by(['blocked']), failed = by(['failed']);
     const deferred = scope.filter(t => _runnerDeferred.has(t.path) && !blocked.includes(t) && !failed.includes(t) && canonTaskStatus(t.fm.status) !== 'done');
+    // Open tasks whose dependencies did not finish (failed, blocked, missing): never started, named so the user sees why.
+    const waiting = scope.filter(t => ['todo', 'open'].includes(canonTaskStatus(t.fm.status)) && !_runnerDeferred.has(t.path) && _unmetDeps(t, tasks).length);
     const parts = [
         blocked.length  ? `${blocked.length} blocked (${blocked.map(label).join(', ')}): answer in the task's chat or edit it, then run it again` : '',
         failed.length   ? `${failed.length} failed (${failed.map(label).join(', ')})` : '',
+        waiting.length  ? `${waiting.length} waiting on a task that is not done (${waiting.map(t => `${label(t)} needs ${_unmetDeps(t, tasks).map(d => '#' + d.replace(/^#/, '')).join(', ')}`).join('; ')})` : '',
         deferred.length ? `${deferred.length} not started (${deferred.map(label).join(', ')}): a start gate refused ${deferred.length > 1 ? 'them' : 'it'}` : '',
     ].filter(Boolean);
     return parts.join('; ');
@@ -426,6 +429,17 @@ function _unverifiedDone(tasks: Task[]): string {
     return bad.length ? `${bad.length} not verified (${bad.map(t => `#${t.fm.id || t.path.split('/').pop()}`).join(', ')}): a check was still failing or could not run; see its QA notes` : '';
 }
 
+// The dependencies (`depends: 003, 005` in the task file) that are not done yet. The selector took the lowest id and the start gate then refused a task
+// whose dependency had a higher id; it was deferred for the whole run, never retried when the dependency finished, and the tasks behind it were refused
+// in turn until "5 consecutive failures" paused the run with six of ten tasks open (kanbanflow set 2, depends10).
+const _idKey = (x: any) => { const s = String(x ?? '').trim(); return /^\d+$/.test(s) ? String(parseInt(s, 10)) : s; };
+function _unmetDeps(t: Task, tasks: Task[]): string[] {
+    const deps = String(t.fm.depends ?? '').split(/[\s,]+/).filter(Boolean);
+    if (!deps.length) return [];
+    const byId = new Map(tasks.map(x => [_idKey(x.fm.id), x] as [string, Task]));
+    return deps.filter(d => { const dt = byId.get(_idKey(d)); return !dt || canonTaskStatus(dt.fm.status) !== 'done'; });
+}
+
 function _selectNextTask(tasks: Task[]): Task | null {
     if (_runnerOnlyPath) return tasks.find(t => t.path === _runnerOnlyPath && !_runnerDeferred.has(t.path)) ?? null;
     const groups = [
@@ -434,7 +448,7 @@ function _selectNextTask(tasks: Task[]): Task | null {
         ['todo', 'open'],
     ];
     for (const group of groups) {
-        const matched = tasks.filter(t => !_runnerDeferred.has(t.path) && group.includes((t.fm.status || 'todo').toLowerCase()));
+        const matched = tasks.filter(t => !_runnerDeferred.has(t.path) && group.includes((t.fm.status || 'todo').toLowerCase()) && !_unmetDeps(t, tasks).length);
         if (matched.length) {
             matched.sort((a, b) => parseInt(a.fm.id || '9999', 10) - parseInt(b.fm.id || '9999', 10));
             return matched[0];
@@ -928,4 +942,8 @@ function runnerStartedTask(path: string): boolean { return _runnerRunning && _ru
 /** What the paused run waits for, or null when it is not paused. */
 function getRunnerPauseReason(): string | null { return _runnerRunning && _runnerPaused ? (_runnerPauseReason || 'it asked a question') : null; }
 
-Object.assign(window, { getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+/** What the user answered while the run was on `title`: the acceptance review cannot see the chat, only the code. */
+function getRunnerUserAnswers(title: string): { question: string; answer: string }[] {
+    return _runnerUserNotes.filter(n => n.task === title).map(n => ({ question: n.question, answer: n.answer }));
+}
+Object.assign(window, { getRunnerUserAnswers, getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
