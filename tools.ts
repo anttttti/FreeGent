@@ -1208,7 +1208,13 @@ async function _handleSubmitAnswer(args: any) {
 async function _handleCheckPage(args: any) {
     if (runtime.hasNativeExec || typeof runPageCheck !== 'function')
         return { error: 'check_page needs the browser app — it is not available in this environment.' };
-    const path = _normToolPath(String(args?.path ?? '').trim());
+    let path = _normToolPath(String(args?.path ?? '').trim());
+    // No path: the project's page, as the done gate finds it (root index.html, else the only .html at the root). 34 calls in 145 chats left it out
+    // and were refused (kanbanflow 2026-11-08).
+    if (!path) {
+        const roots = ((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter((n: any) => typeof n === 'string' && /^[^/]+\.html?$/i.test(n));
+        path = roots.find((n: string) => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : '');
+    }
     if (!/\.html?$/i.test(path)) return { error: 'check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.' };
     try {
         return await runPageCheck(path, {

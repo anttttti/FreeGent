@@ -1130,9 +1130,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
             steps.push({ probes: when, values });
         };
         await probeAll('after load');
-        for (const a of actions.slice(0, 20)) {
+        for (const a0 of actions.slice(0, 20)) {
             if (aborted) break;
-            if (!a || typeof a !== 'object') continue;
+            if (!a0 || typeof a0 !== 'object') continue;
+            // The model often nests the selector: {"type": {"selector": "#bill", "text": "100"}}, {"click": {"selector": "#go"}}. 22 of 145 chats (kanbanflow 2026-11-08).
+            const a: any = { ...a0 };
+            for (const k of ['click', 'type']) if (a[k] && typeof a[k] === 'object' && typeof a[k].selector === 'string') {
+                const o = a[k]; a[k] = o.selector; if (k === 'type') { if (a.text == null) a.text = o.text; if (a.clear == null) a.clear = o.clear; }
+            }
             notePageCheck({ stage: `during the action ${JSON.stringify(a).slice(0, 120)}` });
             // One verb per step: {"click": s, "type": "text", "text": "100"} used to run only the click and drop the typing without a word
             // (kanbanflow 2026-11-08, WebKit: ~100 messages of a verify task spent finding out why the field stayed empty).
