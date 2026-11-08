@@ -308,7 +308,6 @@ declare global {
     var updateModelLabel: any;
     var updatePyodideStatusEl: any;
     var updateTokenLabel: any;
-    var updateTokenLabelAccurate: any;
     // ── bridged by convo-log.ts ──
     var _updateLogBadge: any;
     var conversationLog: any;
@@ -457,7 +456,6 @@ declare global {
     var isTransient: any;
     var knownLimitWaitMs: any;
     var loadAgentsContext: any;
-    var loadMemoryContext: any;
     var oaiEndpoint: any;
     var parseContextOverflow: any;
     var recordRequest: any;
@@ -655,9 +653,7 @@ declare global {
     var lastUserMessageText: any;
     var _userInputHistory: string[];
     var mainAgentRole: any;
-    var memoryContext: any;
     var pendingAgentsContextInject: any;
-    var pendingMemoryInject: any;
     var setActiveAbortController: any;
     var setActiveChatId: any;
     var setActivePlaceholder: any;
@@ -669,9 +665,7 @@ declare global {
     var setLastProvider: any;
     var setLastTurnDoneToken: any;
     var setLastUserMessageText: any;
-    var setMemoryContext: any;
     var setPendingAgentsContextInject: any;
-    var setPendingMemoryInject: any;
     var setReactiveFired: any;
     var setSeenListFiles: any;
     var setSeenReadFiles: any;
@@ -776,7 +770,6 @@ declare global {
     var writeFsaFile: any;
     var writeWorkspaceFile: any;
     // ── CDN / environment globals ──
-    var Prism: any; // prism CDN
     var TurndownService: any; // turndown CDN
     var XLSX: any; // xlsx CDN
     var importScripts: any; // WebWorker global (pyodide-worker.ts)
