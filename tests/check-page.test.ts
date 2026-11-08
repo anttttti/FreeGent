@@ -22,6 +22,8 @@ describe('check_page', () => {
         let got: any = null;
         W.runPageCheck = async (path: string, opts: any) => { got = { path, opts }; return { path, summary: 'ok' }; };
         expect((await W.executeToolAsync('check_page', { path: 'game.js' })).error).toMatch(/HTML page/);
+        await W.executeToolAsync('check_page', { path: '"index.html"' });   // a path sent with its own quote marks (36 refusals in one chat)
+        expect(got.path).toBe('index.html');
         const r = await W.executeToolAsync('check_page', { path: 'index.html', actions: [{ click: '#start-btn' }], probes: ['gameState', 42], wait_ms: 500 });
         expect(r.summary).toBe('ok');
         expect(got).toEqual({ path: 'index.html', opts: { actions: [{ click: '#start-btn' }], probes: ['gameState', '42'], waitMs: 500, expect: [] } });

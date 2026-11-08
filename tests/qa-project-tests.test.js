@@ -263,6 +263,19 @@ describe('kept-features gate', () => {
         expect(second.transitioned).toBe(true);
     });
 
+    it('names a command of a command-line tool that the task dropped', async () => {
+        const T2 = 'fg-tasks/002-json-report.md', T3 = 'fg-tasks/003-argument-errors.md';
+        const tool = (cmds) => cmds.map((c, i) => `    ${i ? 'elif' : 'if'} ${['command', 'mode', 'sys.argv[1]'][i % 3]} == "${c}":\n        pass`).join('\n') + (cmds.length ? '\nsub.add_parser("' + cmds[0] + '")' : '');
+        Object.assign(files, { [T2]: done1.replace('Search box', 'JSON report').replace('Add a search input that filters the table.', 'The report command writes the summary as JSON.'), [T3]: t4('todo').replace('004', '003'), 'logtool.py': tool(['report', 'errors']) });
+        delete files[TASK];
+        W.loadTaskFiles = async () => Object.keys(files).filter(f => /^fg-tasks\/\d+-/.test(f)).map(f => ({ path: f, fm: { id: f.slice(9, 12), title: /title: (.*)/.exec(files[f])[1], status: /status: (.*)/.exec(files[f])[1] } }));
+        await W.transitionTask(T3, 'in-progress');
+        files['logtool.py'] = tool(['errors']);
+        const r = await W.transitionTask(T3, 'done');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/report \(logtool\.py; task #002/);
+    });
+
     it('says nothing when the earlier work is still there or nothing mentions it', async () => {
         Object.assign(files, { [T1]: done1, [T4]: t4('todo'), 'index.html': page(true) });
         delete files[TASK];
@@ -270,5 +283,47 @@ describe('kept-features gate', () => {
         await W.transitionTask(T4, 'in-progress');
         files['index.html'] = page(true).replace('<canvas id="chart"></canvas>', '<canvas id="chart" width="320"></canvas>');
         expect((await W.transitionTask(T4, 'done')).transitioned).toBe(true);
+    });
+});
+
+
+// kanbanflow set 3 (datapipe, 2 of 2 runs): a task tested its code by writing sample rows to data/app.log, the input the tool is meant to process.
+describe('completeness gate', () => {
+    // kanbanflow set 3: one chat sent `done` 21 times with a box unticked; the message named the box but never the call that ticks it.
+    it('names the call that ticks the first unticked box', async () => {
+        const T = 'fg-tasks/014-readme.md';
+        files[T] = `---\nid: 014\ntitle: README\nstatus: todo\n---\n# README\n## Acceptance Criteria\n- [x] done one\n- [ ] every function name appears in README.md\n`;
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toContain(JSON.stringify({ path: T, old_string: '- [ ] every function name appears in README.md', new_string: '- [x] every function name appears in README.md' }));
+    });
+});
+
+describe('kept-data gate', () => {
+    const T = 'fg-tasks/003-json-report.md';
+    const task3 = (st) => `---\nid: 003\ntitle: JSON report\nstatus: ${st}\n---\n# JSON report\nWrite the report.\n`;
+    beforeEach(() => { localStorage.setItem('fg_qa_test_runner', 'false'); });
+
+    it('bounces a done that replaced an input data file, names what it held, and accepts the second attempt', async () => {
+        Object.assign(files, { [T]: task3('todo'), 'data/app.log': 'real line 1\nreal line 2\n', 'package.json': '{"a":1}' });
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        files['data/app.log'] = 'invented\n'; files['package.json'] = '{"a":2}'; files['out/report.json'] = '{}';
+        const first = await W.transitionTask(T, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/changed data\/app\.log/);
+        expect(first.reason).toMatch(/real line 1/);
+        expect(first.reason).not.toMatch(/package\.json/);
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
+    });
+
+    it('says nothing when the data files are as they were or only new ones appeared', async () => {
+        Object.assign(files, { [T]: task3('todo'), 'data/app.log': 'real\n' });
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        files['out/report.json'] = '{}';
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
     });
 });

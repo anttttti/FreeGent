@@ -52,3 +52,24 @@ describe('formatThrown', () => {
         expect(r.stderr).toMatch(/^RangeError: too big/);
     });
 });
+
+// A model's usual test wrapper is `(async () => { … process.exit(1) })()` that nobody awaits: Node runs it to its end and exits with its code.
+describe('runJs detached async code', () => {
+    it('keeps the output of a timer and the exit code of a detached process.exit', async () => {
+        const r = await runJs(`(async () => { await new Promise(r => setTimeout(r, 20)); console.log('late'); process.exit(3); })(); console.log('first');`, {});
+        expect(r.stdout).toBe('first\nlate\n');
+        expect(r.exit_code).toBe(3);
+    });
+    it('still ends at once on a plain process.exit', async () => {
+        const r = await runJs(`console.log('a'); process.exit(2); console.log('b');`, {});
+        expect([r.stdout, r.exit_code]).toEqual(['a\n', 2]);
+    });
+});
+
+describe('runJs dynamic import', () => {
+    it('says what to do instead when import() cannot load a workspace file', async () => {
+        const r = await runJs(`await import('./lib/list.mjs');`, {});
+        expect(r.exit_code).toBe(1);
+        expect(r.stderr).toMatch(/import\(\) cannot load workspace files/);
+    });
+});

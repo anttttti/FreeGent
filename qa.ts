@@ -2,8 +2,8 @@
 // Depends on: config.js, tools.js, workers.js, tasks.js
 
 
-import { canonTaskStatus, TASK_DIRS, isScratchTask } from './task-status.js';
-import { isScratchPath } from './detectors.js';
+import { canonTaskStatus, TASK_DIRS, isScratchTask, taskIdOf } from './task-status.js';
+import { isScratchPath, rootPageOf } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
@@ -13,9 +13,9 @@ const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
     'open->in-progress':      ['dependency-check', 'task-enrichment'],
     'in-progress->in-review': ['completeness-check'],
-    'in-review->done':        ['acceptance-review', 'test-runner', 'page-check', 'kept-features'],
+    'in-review->done':        ['acceptance-review', 'test-runner', 'page-check', 'kept-features', 'kept-data'],
     // Direct in-progress→done (model skipped in-review): run the full review suite
-    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner', 'page-check', 'kept-features'],
+    'in-progress->done':      ['completeness-check', 'acceptance-review', 'test-runner', 'page-check', 'kept-features', 'kept-data'],
 };
 
 // The body of the first "## <name>" section (any of `names`, case-insensitive), up to the next
@@ -189,7 +189,7 @@ async function gate_dependency_check(taskPath, content) {
     if (!depends.length) return { blocks: false };
 
     const allTasks = await loadTaskFiles();
-    const byId     = new Map(allTasks.map(t => [String(t.fm.id || ''), t] as [string, any]));
+    const byId     = new Map(allTasks.map(t => [String(taskIdOf(t)), t] as [string, any]));
     const blocking = [];
 
     for (const dep of depends) {
@@ -212,7 +212,7 @@ async function gate_completeness_check(taskPath, content) {
         // Name them: the bare count was answered by trying `done` again (uploaded chat logs of
         // 2026-10-08: five tries in a row with 3 boxes never ticked).
         const items = unchecked.slice(0, 3).map(m => `"${m[1].trim().slice(0, 70)}"`).join(', ');
-        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''} in ${taskPath}: ${items}${unchecked.length > 3 ? ', …' : ''}. Mark each one that is done as "- [x]" in the task file (replace_in_file), then set the status again.` };
+        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''} in ${taskPath}: ${items}${unchecked.length > 3 ? ', …' : ''}. Mark each one that is done as "- [x]" in the task file, e.g. replace_in_file ${JSON.stringify({ path: taskPath, old_string: `- [ ] ${unchecked[0][1].trim()}`, new_string: `- [x] ${unchecked[0][1].trim()}` })}, then set the status again.` };
     }
 
     const fileSec = _mdSection(content, 'Files');
@@ -645,8 +645,7 @@ async function gate_page_check(taskPath) {
     if (typeof runPageCheck !== 'function' || runtime.hasNativeExec) return { blocks: false, outcome: 'skipped', detail: 'No browser page check here' };
     let names: string[] = [];
     try { names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean); } catch {}
-    const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
-    const page = roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : null);
+    const page = rootPageOf(names);
     if (!page) return { blocks: false, outcome: 'skipped', detail: 'No page at the project root' };
     let r: any;
     try { r = await runPageCheck(page, { waitMs: 1500 }); }
@@ -691,6 +690,12 @@ export function sourceIdentifiers(path: string, text: string): Set<string> {
         add(/\bexport\s+(?:default\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g);
     }
     if (/\.py$/i.test(path)) add(/^\s*(?:def|class)\s+([A-Za-z_]\w*)/gm);
+    // The commands of a command-line tool: `command == "report"`, `case "report":` (kanbanflow set 3: a later task rewrote the dispatch and dropped `report`).
+    if (/\.(?:m?[jt]s|py)$/i.test(path)) {
+        add(/(?:\b(?:command|cmd|action|subcommand|subcmd|sub|verb|mode|op|operation)|\bargv\[\d\]|\bargs\[\d\])\s*===?\s*["']([a-z][\w-]*)["']/gi);
+        add(/\badd_parser\(\s*["']([a-z][\w-]*)["']/g);     // argparse sub-commands
+        add(/\.command\(\s*["']([a-z][\w-]*)["']/g);        // commander
+    }
     return ids;
 }
 async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
@@ -705,7 +710,37 @@ async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
     }
     return out;
 }
+// The user's data files as the task started (a log, a CSV, JSON): a task that tests its code by writing sample rows to `data/app.log` has replaced the
+// input it is meant to process (kanbanflow set 3, datapipe: 2 of 2 runs; every later task then worked on four invented lines).
+const _DATA_RE = /\.(?:log|csv|tsv|json|jsonl|txt|xml|ya?ml|ini|toml|sql)$/i;
+const _CONFIG_RE = /(?:^|\/)(?:package(?:-lock)?|tsconfig[\w.-]*|manifest|\.eslintrc|composer|deno)\.json$|^(?:local\/)?(?:fg-tasks|memory|node_modules)\//;
+const _taskStartData = new Map<string, Map<string, string>>();
+async function _projectData(): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (const f of (await agentListFiles()) || []) {
+        if (!f?.name || !_DATA_RE.test(f.name) || _CONFIG_RE.test(f.name) || Number(f.size) > 200_000) continue;
+        try { const t = await agentReadFile(f.name); if (typeof t === 'string') out.set(f.name, t); } catch {}
+        if (out.size >= 40) break;
+    }
+    return out;
+}
+async function gate_kept_data(taskPath) {
+    const before = _taskStartData.get(taskPath);
+    if (!before?.size) return { blocks: false };
+    const now = await _projectData();
+    const changed = [...before].filter(([n, t]) => now.has(n) && now.get(n) !== t);
+    if (!changed.length) return { blocks: false };
+    const names = changed.map(([n]) => n).join(', ');
+    if (_bouncedBefore(taskPath, 'kept-data', names))
+        return { blocks: false, outcome: 'unknown', detail: `Changed data files that existed before the task (accepted on the second attempt): ${names.slice(0, 200)}` };
+    const [n0, t0] = changed[0];
+    const orig = t0.length <= 1500 ? `Its content when the task started:\n${t0}` : `It began: ${t0.slice(0, 600)}`;
+    const ts = new Date().toISOString().slice(0, 16) + 'Z';
+    await appendGateNote(taskPath, `## QA: Data Files Changed (${ts})\n${changed.map(([n]) => `- ${n}`).join('\n')}`);
+    return { blocks: true, reason: `This task changed ${names}, which existed before it. Test data goes in a scratch file (tmp/…), not in the input the code is meant to process. Put it back; if changing it is what the task asks for, say so in the summary and set the status again. ${n0}: ${orig}`.slice(0, 2200) };
+}
 async function noteTaskStart(taskPath: string): Promise<void> {
+    try { _taskStartData.set(taskPath, await _projectData()); } catch {}
     try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
     try { _taskStartFiles.set(taskPath, await _projectStamps()); } catch {}
     try { const e = await _rootPageErrors(); if (e) _taskStartPageErrors.set(taskPath, e.errors); } catch {}
@@ -718,8 +753,7 @@ const _errKey = (e: string) => e.replace(/\(line \d+:\d+[^)]*\)/g, '').replace(/
 async function _rootPageErrors(): Promise<{ page: string; errors: string[] } | null> {
     if (!getQaTestRunner() || typeof runPageCheck !== 'function' || runtime.hasNativeExec) return null;
     const names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean) as string[];
-    const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
-    const page = roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : null);
+    const page = rootPageOf(names);
     if (!page) return null;
     const r: any = await runPageCheck(page, { waitMs: 1500 });
     if (r?.crashed || r?.error) return null;
@@ -828,6 +862,7 @@ const GATES = {
     'page-check':         gate_page_check,
     'regression-guard':   gate_regression_guard,
     'kept-features':      gate_kept_features,
+    'kept-data':          gate_kept_data,
 };
 
 

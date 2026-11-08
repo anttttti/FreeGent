@@ -437,7 +437,10 @@ export async function executeNodeScript(
         if (!_timersDone) _timersDone = new Promise(r => { _timersResolve = r; });
         const id = _prevST(() => {
           _timerIds.delete(id);
+          // process.exit() in a timer ends the run through the exit state it set; thrown on, it was an uncaught error in the app's page
+          // (kanbanflow set 3: `setTimeout(() => { …; process.exit(0); }, ms)` in a model's test, 2 of 5 runs of a 14-task board).
           try { if (typeof fn === 'function') fn(...args); }
+          catch (e: any) { if (!e?._isProcessExit) throw e; }
           finally {
             _activeTimers--;
             if (_activeTimers <= 0 && _timersResolve) { _timersResolve(); _timersResolve = null; _timersDone = null; }

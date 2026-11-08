@@ -54,6 +54,8 @@ export interface NodeEnv {
 export interface SharedState {
   exitCode: number;
   exitCalled: boolean;
+  /** process.exit() has run its 'exit' handlers: nothing the script prints after this point is output (Node runs no more code). */
+  exitDone?: boolean;
   streamedToTerminal: boolean;
   isInteractiveMode: boolean;
   scriptTimeoutId: any;

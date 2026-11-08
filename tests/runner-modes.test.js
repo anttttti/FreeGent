@@ -141,6 +141,41 @@ describe('start gates and unblock (v0.62 review R14, R15)', () => {
         expect(files['fg-tasks/001-a.md']).toMatch(/^status: todo$/m);
     });
 
+    // kanbanflow set 3: "BLOCKED: logtool.py is missing" for a task that says to write logtool.py stopped the board for the user in 5 of 8 runs.
+    it('asks once whether a missing file is the task\'s to create before stopping for the user, and stops for any other question', async () => {
+        const prompts = [];
+        W.runAgentTurn = async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length === 1) return { text: 'BLOCKED: logtool.py is missing from the workspace.', finishSignal: 'blocked' };
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');
+            return { text: 'ok', finishSignal: 'completed' };
+        };
+        W.runnerStart();
+        await idle();
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]).toMatch(/missing file.*yours to create/);
+        expect(files['fg-tasks/001-a.md']).toMatch(/^status: done$/m);
+        // the same question again, or a question that is not about a file, reaches the user
+        prompts.length = 0; files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('status: done', 'status: todo');
+        W.runAgentTurn = async (prompt) => { prompts.push(prompt); return { text: prompts.length === 1 ? 'BLOCKED: file x is missing' : 'BLOCKED: file x is still missing', finishSignal: 'blocked' }; };
+        W.runnerStart();
+        await vi.waitFor(() => expect(prompts).toHaveLength(2));
+        await new Promise(r => setTimeout(r, 30));
+        expect(document.getElementById('runner-status').textContent).toMatch(/Paused/);
+        W.runnerStop();
+    });
+
+    // kanbanflow set 3: 234 of 245 task chats were bounced once by the completeness check ("N unchecked steps") on their first done.
+    it('tells the agent to tick the acceptance criteria before it sets done, only when the task has some', async () => {
+        const prompts = [];
+        W.runAgentTurn = async (prompt) => { prompts.push(prompt); const path = /File: (\S+)/.exec(prompt)[1]; await W.setTaskStatus(path, 'done'); return { text: 'done', finishSignal: 'completed' }; };
+        files['fg-tasks/001-a.md'] = files['fg-tasks/001-a.md'].replace('Body.', '## Acceptance Criteria\n- [ ] it works\n');
+        W.runnerAutopilot();
+        await idle();
+        expect(prompts[0]).toMatch(/Tick each acceptance criterion in the file/);
+        expect(prompts[1]).not.toMatch(/Tick each acceptance criterion/);
+    });
+
     it('R15: Run does not start a second task after a blocked task is resumed', async () => {
         let n = 0;
         W.runAgentTurn = async (prompt) => {
@@ -301,6 +336,13 @@ describe('what the run says when it ends or is interrupted', () => {
         await idle();
         expect(turns).toEqual(['fg-tasks/001-a.md', 'fg-tasks/004-d.md', 'fg-tasks/005-e.md', 'fg-tasks/002-b.md', 'fg-tasks/003-c.md']);
         expect(log()).toMatch(/All tasks complete/);
+    });
+    it('finds a dependency by its file number when its front matter lost the id line', async () => {
+        const dep = (id, title, d) => task(id, title).replace('status: todo', `status: todo\ndepends: ${d}`);
+        files = { 'fg-tasks/004-d.md': task('004', 'D').replace('status: todo', 'status: done').replace('id: 004\n', ''), 'fg-tasks/005-e.md': dep('005', 'E', '004') };
+        W.runnerAutopilot();
+        await idle();
+        expect(turns).toEqual(['fg-tasks/005-e.md']);
     });
     it('names the tasks left waiting on a dependency that failed or does not exist', async () => {
         const dep = (id, title, d) => task(id, title).replace('status: todo', `status: todo\ndepends: ${d}`);

@@ -57,3 +57,19 @@ describe('the board card of a task accepted unverified', () => {
         expect(cards.map(c => /not verified/.test(c.textContent))).toEqual([true, false]);
     });
 });
+
+describe('keepTaskFrontMatter (a worker run merging a task file)', () => {
+    const file = (status, box, fm = true) => `${fm ? `---\nid: 003\ntitle: T\nstatus: ${status}\n---\n` : ''}# T\n## Acceptance Criteria\n- [${box}] a\n`;
+    it('keeps the front matter on disk and the body of the worker\'s edit', async () => {
+        const { keepTaskFrontMatter } = await import('../task-status.js');
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('in-progress', ' '), file('done', 'x'))).toBe(file('in-progress', 'x'));
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('in-progress', ' '), file('', 'x', false))).toBe(file('in-progress', 'x'));
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('in-progress', ' '), '---\ntitle: T\n---\n# T\n')).toBe(file('in-progress', ' ').split('## Acceptance')[0]);
+    });
+    it('leaves other files, an unchanged front matter and a new file alone', async () => {
+        const { keepTaskFrontMatter } = await import('../task-status.js');
+        expect(keepTaskFrontMatter('src/a.md', file('todo', ' '), file('done', ' '))).toBe(file('done', ' '));
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('open', ' '), file('open', 'x'))).toBe(file('open', 'x'));
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', null, file('done', 'x'))).toBe(file('done', 'x'));
+    });
+});

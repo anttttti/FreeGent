@@ -20,7 +20,7 @@ import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
 import { isTaskPath, isScratchTask, canonTaskStatus } from './task-status.js';
 import { parseFrontmatter } from './frontmatter.js';
-import { destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
+import { rootPageOf, destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
 import { taskPolicy } from './task-policy.js';
 import { checkSyntax, syntaxCheckable } from './syntax-check.js';
@@ -143,8 +143,16 @@ function _pushCheckpoint(path: string, content: string, existed: boolean, after:
 // apply_patch / delete_file.  Those tools always operate on plain relative paths stored
 // in IDB; /workspace/ is the bash-internal mount point and is not a valid prefix here.
 // Also strips a lone leading / (e.g. /tictactoe.html → tictactoe.html).
+// A string value that the model closed with a backtick (or <|"|>) makes the server's parser read on: the text ends in "`,path:" and the path itself is gone.
+// The bare "path is required" was answered with the same call, up to 36 times (kanbanflow set 3: a 14-task board paused on 10 failures in a row).
+const _PATH_LOST_RE = /(?:`|<\|"\|>)\s*[,;]\s*path\s*:?\s*$/;
+const _pathLostToQuote = (...vals: any[]): boolean => vals.some(v => typeof v === 'string' && _PATH_LOST_RE.test(v));
+const _PATH_LOST_MSG = (tool: string, example: string): string => `${tool}: your call arrived damaged: a value was closed with a backtick, the rest of the call was read as text and "path" was lost. Send it again with "path" FIRST and every value a normal JSON string in double quotes, no backticks: ${example}.`;
 export function _normToolPath(p: string): string {
     if (!p) return p;
+    // A path sent with its own quote marks ("\"index.html\"": the model quoted a value that was already a string) names no file; kanbanflow set 3:
+    // one chat sent check_page that path 36 times and was refused each time.
+    p = p.replace(/^\s*(["'`])(.+)\1\s*$/, '$2');
     // A Docker task container takes its own absolute paths (/app/…, /workspace/…) unchanged.
     if (typeof workspaceUsesAbsolutePaths === 'function' && workspaceUsesAbsolutePaths()) return p;
     // Headless: an absolute path inside the workspace directory (as pwd or os.getcwd() give it)
@@ -1212,10 +1220,9 @@ async function _handleCheckPage(args: any) {
     // No path: the project's page, as the done gate finds it (root index.html, else the only .html at the root). 34 calls in 145 chats left it out
     // and were refused (kanbanflow 2026-11-08).
     if (!path) {
-        const roots = ((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter((n: any) => typeof n === 'string' && /^[^/]+\.html?$/i.test(n));
-        path = roots.find((n: string) => /^index\.html?$/i.test(n)) ?? (roots.length === 1 ? roots[0] : '');
+        path = rootPageOf(((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter((n: any) => typeof n === 'string')) ?? '';
     }
-    if (!/\.html?$/i.test(path)) return { error: 'check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.' };
+    if (!/\.html?$/i.test(path)) return { error: `check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.${args?.path ? ` Got ${JSON.stringify(args.path)}.` : ''}` };
     try {
         return await runPageCheck(path, {
             actions: Array.isArray(args.actions) ? args.actions : [],
@@ -1679,6 +1686,7 @@ async function _handleWriteFile(args, context) {
         // v0.66: 47 calls had content and no path, 24 of them with a `language` argument — code
         // meant to be run, sent to the wrong tool. The bare message got the same call re-sent.
         const meantToRun = args.language != null || args.code != null || args.command != null;
+        if (_pathLostToQuote(args.content)) return { error: _PATH_LOST_MSG('write_file', '{"path": "src/app.py", "content": "…"}') };
         return { error: 'write_file: "path" is required — the file to write, e.g. {"path": "src/app.py", "content": "…"}.'
             + (meantToRun ? ' To run code instead of saving it, call execute_code with "code" and "language".' : ''),
             note: `Received keys: ${Object.keys(args).filter(k => k !== 'path' && args[k] != null && args[k] !== '').join(', ') || 'none'}` };
@@ -1859,6 +1867,7 @@ async function _handleReplaceInFile(args, context) {
     };
     args.path = await _rootRelativeToolPath(args.path);
     // Without one, the reply was `old_string not found in ""` (antigravity AG-02). Other names for it are mapped by _repairPathArg.
+    if (!args.path && _pathLostToQuote(args.new_string, args.old_string)) return { error: _PATH_LOST_MSG('replace_in_file', '{"path": "src/app.py", "old_string": "…", "new_string": "…"}') };
     if (!args.path) return { error: 'replace_in_file: "path" is required — the file to edit, e.g. {"path": "src/app.py", "old_string": "…", "new_string": "…"}.' };
     if (!context && _requireReadBack.has(args.path)) {
         return { error: `replace_in_file: "${args.path}" was written by a blocked worker and may be corrupt. Read it back first to verify its contents before making further edits.` };
@@ -2576,6 +2585,14 @@ function _looksLikePython(code: string): boolean {
     return _PY_LINE_RE.test(code);
 }
 
+// JavaScript at the start of a line (an import, a require, console.log, an async IIFE). Run as bash its `>` and `<` are redirections: `if (n > 0) {` wrote
+// files named `0)`, `b;` and `{` into the project (kanbanflow set 3: 3 of 45 workspaces). A bash script wrapping node (heredoc, node -e) is excluded.
+const _JS_LINE_RE = /^\s*(?:import\s*[{*][^\n]*\sfrom\s|import\s+[\w$]+\s+from\s+['"]|(?:const|let|var)\s+[\w${[][^\n=]*=\s*(?:require\(|await\s|\(?async\b)|console\.(?:log|error)\(|\(async\s*\(\)\s*=>)/m;
+export function _looksLikeJs(code: string): boolean {
+    if (code.includes('<<') || /\bnode\b[^\n]*\s(?:-e|--eval|-p|--print|--input-type\S*)(?:\s|$)/.test(code)) return false;   // node --input-type=module -e "…" was refused 22 times in the first runs
+    return _JS_LINE_RE.test(code);
+}
+
 // Python compile error at line 1 of the script itself (no Traceback: a SyntaxError raised while
 // importing another module has one) whose first line starts with a shell command.
 const _SHELL_FIRST_LINE_RE = /^\s*(?:sudo\s+)?(?:python3?|pip3?|curl|wget|cat|cd|ls|grep|find|echo|export|sed|awk|git|mkdir|rm|cp|mv|chmod|pytest|bash|sh|head|tail|wc|sort|source|apt(?:-get)?|npm|node)(?:\s|$)|^\s*\.\/\S/;
@@ -2813,6 +2830,8 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         return { error: 'No code provided. Use the "code" parameter (not "content", "command", "bash", etc.).',
                  note: `Received keys: ${Object.keys(args).join(', ')}` };
     }
+    if (args.language === 'bash' && _looksLikeJs(args.code))
+        return { error: 'This is JavaScript, and bash would read its > and < as redirections and write files named after them. Send it with language "javascript" (workspace files: require("fs")), or save it as a file and run it with bash: node file.mjs.' };
     let execResult = null;
     const _needsDisplay = DISPLAY_LIBS_RE.test(args.code);
     // Browser JavaScript: runs in the exec sandbox frame with a virtual fs shim (not headless).

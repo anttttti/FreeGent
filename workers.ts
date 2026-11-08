@@ -3,6 +3,7 @@
 // Note: setMainAgentRole(name) here takes a role-NAME string and resolves it through rolesRegistry;
 // state.js's setMainAgentRoleObject(role) is the raw setter for direct-assignment sites.
 import { splitFrontmatter, parseFmLines } from './frontmatter.js';
+import { isTaskPath, keepTaskFrontMatter } from './task-status.js';
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { setMainAgentRoleObject, activePlaceholder, softStopPending, activeChatId, workflowMode, mainAgentRole } from './state.js';
@@ -1846,7 +1847,10 @@ async function executeWorkers(args: any): Promise<any> {
                 return false;
             }
             if (content === null) await agentDeleteFile(path, { epoch });
-            else await agentWriteFile(path, content, encoding, { epoch });
+            else {
+                const disk = encoding === 'base64' || !isTaskPath(path) ? null : await agentReadFile(path).catch(() => null);
+                await agentWriteFile(path, typeof disk === 'string' ? keepTaskFrontMatter(path, disk, content) : content, encoding, { epoch });
+            }
             return true;
         } catch (e: any) { failedCommits.push({ path, error: String(e?.message ?? e) }); return false; }
     };

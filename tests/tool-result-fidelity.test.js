@@ -117,6 +117,21 @@ describe('execute_code language', () => {
         expect(seen).toBe('bash');
     });
 
+    it('bash is not run on JavaScript (its > and < would be redirections), but a node heredoc and node -e are', async () => {
+        seen = null;
+        const r = await run({ code: "import { add } from './notes.mjs';\nif (add('x') > 0) { console.log('ok'); }", language: 'bash' });
+        expect(r.error).toMatch(/This is JavaScript/);
+        expect(seen).toBe(null);
+        await run({ code: "cat > t.mjs <<'EOF'\nimport { add } from './notes.mjs';\nEOF\nnode t.mjs", language: 'bash' });
+        expect(seen).toBe('bash');
+        seen = null;
+        await run({ code: "node -e \"console.log(1)\"", language: 'bash' });
+        expect(seen).toBe('bash');
+        seen = null;
+        await run({ code: "node --input-type=module -e \"\nimport { add } from './notes.mjs';\nconsole.log(add('x'));\"", language: 'bash' });
+        expect(seen).toBe('bash');
+    });
+
     it('explicit bash that fails on Python-looking code gets a hint', async () => {
         const r = await run({ code: 'import os\nprint(1)', language: 'bash' },
             { stdout: '', stderr: "bash: line 1: import: command not found\nbash: line 2: syntax error near unexpected token `1'", exit_code: 2 });

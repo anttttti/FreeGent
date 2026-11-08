@@ -2,7 +2,7 @@
 // Depends on: config.js, qa.js, tasks.js, chat-state.js, agent-core.js, state.js
 import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
-import { canonTaskStatus } from './task-status.js';
+import { canonTaskStatus, taskIdOf } from './task-status.js';
 import * as MsgQueue from './msg-queue.js';
 import { isStepLimitStop } from './loop-director.js';
 import { sendTaskLog } from './dev-log.js';
@@ -436,9 +436,11 @@ const _idKey = (x: any) => { const s = String(x ?? '').trim(); return /^\d+$/.te
 function _unmetDeps(t: Task, tasks: Task[]): string[] {
     const deps = String(t.fm.depends ?? '').split(/[\s,]+/).filter(Boolean);
     if (!deps.length) return [];
-    const byId = new Map(tasks.map(x => [_idKey(x.fm.id), x] as [string, Task]));
+    const byId = new Map(tasks.map(x => [_idKey(taskIdOf(x)), x] as [string, Task]));
     return deps.filter(d => { const dt = byId.get(_idKey(d)); return !dt || canonTaskStatus(dt.fm.status) !== 'done'; });
 }
+
+const _MISSING_FILE_RE = /\b(?:not found|missing|does not exist|doesn't exist|no such file|cannot find|can't find|could not find|not present|absent)\b/i;
 
 function _selectNextTask(tasks: Task[]): Task | null {
     if (_runnerOnlyPath) return tasks.find(t => t.path === _runnerOnlyPath && !_runnerDeferred.has(t.path)) ?? null;
@@ -555,6 +557,8 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     let turn: number          = 0;
     let stepLimitContinues: number = 0;
     let continueNext: boolean = false;   // the last turn stopped at its step limit: the next one is "Continue"
+    let challengeNext: string | null = null;   // a BLOCKED that only says a file is missing is challenged once before the board stops for the user
+    let challenged = false;
 
     while (_runnerRunning && !_runnerAbort && !blocked && turn < _MAX_TURNS_PER_EPISODE) {
         turn++;
@@ -577,9 +581,11 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         continueNext = false;
         // A step-limit continuation is not a re-prompt of an unfinished task: it leaves the turn count where it was.
         if (isContinuation) turn--;
-        const prompt = isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
+        const challenge = challengeNext; challengeNext = null;
+        const prompt = challenge ? challenge
+            : isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
             : turn === 1
-            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").\nIf you need a value or decision only the user can give (a credential, a choice, a missing fact), do not guess or invent it: finish your reply with a line "BLOCKED: <your question for the user, one sentence>" — the user sees that text and can answer.`
+            ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}${/^- \[ \]/m.test(taskContent) ? 'Tick each acceptance criterion in the file ("- [ ]" to "- [x]") as it holds. ' : ''}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").\nIf you need a value or decision only the user can give (a credential, a choice, a missing fact), do not guess or invent it: finish your reply with a line "BLOCKED: <your question for the user, one sentence>" — the user sees that text and can answer.`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
         const _lastResult: any = await _runnerTurn(prompt);
@@ -612,6 +618,13 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             const _blockedLine = /^\s*\**BLOCKED\**:?\s*(.+)$/im.exec(lastMsg)?.[1];
             blockedReason = (_statusBlocked?.[1] ?? _blockedLine ?? lastMsg.trim().split('\n').filter(l => l.trim()).pop() ?? '').trim().slice(0, 200)
                 || 'Task blocked — needs user input';
+            // "logtool.py is missing": the task says what to write, so a file that is not there is the task's to create; the question stopped the board for the
+            // user in 5 of 8 kanbanflow set 3 `datapipe` runs and in 4 `vague` runs (a conditional "if there is an app.js"). Asked once, with the way out.
+            if (!challenged && _MISSING_FILE_RE.test(blockedReason)) {
+                challenged = true; blocked = false; blockedReason = '';
+                challengeNext = `You stopped to ask about a missing file: a file that the task tells you to write is yours to create, so create it and carry on. If the task only applies when that file exists, it has nothing to do: set it to done and say so. Stop for the user only for a value or decision that nothing in the workspace can give, and then end with "BLOCKED: <the one thing you need>".`;
+                continue;
+            }
             break;
         }
 

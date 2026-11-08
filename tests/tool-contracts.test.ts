@@ -47,6 +47,13 @@ describe('write_file', () => {
         if (be.name === 'browser') expect((await W.readWorkspaceFile('b.bin')).encoding).toBe('base64');
     });
 
+    it('says a call arrived damaged when its content ends in a backtick and the lost path name', async () => {
+        const r = await tool('write_file', { content: 'export const a = 1;\n`,path:' });
+        expect(r.error).toMatch(/arrived damaged.*"path" FIRST/);
+        const e = await tool('replace_in_file', { old_string: 'a', new_string: 'b\n<|"|>,path:' });
+        expect(e.error).toMatch(/arrived damaged/);
+    });
+
     it('asks for a path when there is none', async () => {
         const r = await tool('write_file', { content: 'x' });
         expect(r.error).toMatch(/"path" is required/);

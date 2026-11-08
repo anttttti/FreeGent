@@ -33,6 +33,12 @@ export function formatThrown(e: any): string {
     return body.join('\n');
 }
 
+// import() reaches the page's module loader, not the workspace: the three engines word the refusal differently and none says what to do instead
+// (kanbanflow set 3: a model's `await import('./lib/list.mjs')` died with "Failed to resolve module specifier" and it tried again).
+const _IMPORT_HINT = '\n(import() cannot load workspace files in the browser JS sandbox: read the file with require("fs") and run it with the bash tool: node file.mjs)';
+const _IMPORT_FAILED_RE = /Failed to resolve module specifier|error loading dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported module|dynamic import callback/;
+const thrownText = (e: any): string => formatThrown(e) + (_IMPORT_FAILED_RE.test(String(e?.message ?? e)) ? _IMPORT_HINT : '') + '\n';
+
 export async function runJs(code: string, files: Record<string, WorkspaceFileData>) {
     const stdout: string[] = [], stderr: string[] = [];
     // Writes and deletions made before an error still apply, as they would in the shell.
@@ -58,10 +64,11 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
         ArrayBuffer.isView(c) ? d.decode(c, { stream: true })
             : d.decode(encoder.encode(typeof c === 'string' ? c : String(c)), { stream: true });
     const con = nodeConsole(t => { stdout.push(text(decoders.out, t)); }, t => { stderr.push(text(decoders.err, t)); });
+    let exited: number | undefined;   // set by process.exit, also when it is thrown inside code nobody awaits
     const process = {
         env: {}, argv: ['node'], platform: 'linux', exitCode: undefined as number | undefined,
         cwd: () => WORKSPACE,
-        exit: (c?: number) => { throw new ProcessExit(c ?? process.exitCode ?? 0); },
+        exit: (c?: number) => { throw new ProcessExit(exited = c ?? process.exitCode ?? 0); },
         stdout: { write: (c: any) => { stdout.push(text(decoders.out, c)); return true; }, isTTY: false },
         stderr: { write: (c: any) => { stderr.push(text(decoders.err, c)); return true; }, isTTY: false },
     };
@@ -70,14 +77,30 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
         stdout.push(decoders.out.decode()); stderr.push(decoders.err.decode());
         return { stdout: stdout.join(''), stderr: stderr.join(''), written, deleted: [...deleted], exit_code, failed: exit_code !== 0, ...extra };
     };
+    // Node keeps running while timers are pending and a detached `(async () => { … process.exit(1) })()` still ends the process
+    // with its code: the code waits for its own timers, and a late exit or throw is the result instead of an unhandled rejection
+    // that dropped the output and reported exit 0 (a model's usual test wrapper; seen as a "ProcessExit" page error).
+    let pending = 0, lateErr: any;
+    const timeout = (f: any, ms?: number, ...a: any[]) => { pending++; return setTimeout(() => { pending--; f(...a); }, ms); };
+    const onRejection = (ev: any) => {   // a browser event (preventDefault) or Node's (the reason itself)
+        const reason = ev && 'reason' in ev ? ev.reason : ev;
+        ev?.preventDefault?.();
+        if (!(reason instanceof ProcessExit)) lateErr ??= reason;
+    };
+    const host = globalThis as any;
+    host.addEventListener?.('unhandledrejection', onRejection); host.process?.on?.('unhandledRejection', onRejection);
     try {
         // eslint-disable-next-line no-new-func
-        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', `return (async()=>{ ${code}\n})()`);
-        await fn(fs, require, con, process, Buffer);
+        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', `return (async()=>{ ${code}\n})()`);
+        await fn(fs, require, con, process, Buffer, timeout);
+        const end = Date.now() + 10000;
+        for (let i = 0; i < 3 || (pending > 0 && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
+        if (exited !== undefined) return result(exited & 0xff);
+        if (lateErr !== undefined) { stderr.push(thrownText(lateErr)); return result(1); }
         return result((process.exitCode ?? 0) & 0xff);
     } catch (e: any) {
         if (e instanceof ProcessExit) return result(e.code & 0xff);
-        stderr.push(formatThrown(e) + '\n');
+        stderr.push(thrownText(e));
         return result(1);
-    }
+    } finally { host.removeEventListener?.('unhandledrejection', onRejection); host.process?.off?.('unhandledRejection', onRejection); }
 }

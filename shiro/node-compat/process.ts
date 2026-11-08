@@ -55,6 +55,7 @@ export function createFakeProcess(
       _st.exitCalled = true;
       // Fire 'exit' event handlers (CLI registers cleanup here)
       try { (processEvents['exit'] || []).forEach(fn => fn(_st.exitCode)); } catch (_) {}
+      _st.exitDone = true;
       _st.deferredExitResolve?.(_st.exitCode);
       throw new ProcessExitError(_st.exitCode);
     },
@@ -181,6 +182,7 @@ function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState
         );
         str += `\r\n\r\n  \x1b]8;;${fixedUrl}\x07\x1b[1;36m[ Click here to sign in ]\x1b[0m\x1b]8;;\x07\r\n`;
       }
+      if (_st.exitDone) return true;
       stdoutBuf.push(str);
       // Stream to terminal in real-time if available
       if (ctx.terminal) {
@@ -274,6 +276,7 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
   const stderrObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
       const str = typeof s === 'string' ? s : bytesToText(s);
+      if (_st.exitDone) return true;
       stderrBuf.push(str);
       if (ctx.terminal) {
         _st.streamedToTerminal = true;

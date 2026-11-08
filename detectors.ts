@@ -753,3 +753,9 @@ Object.assign(window, { _fpHash, _fpTrunc, _updateStuckDetector, _checkTextRespo
 // SWE-bench runner leaves new ones out of the submitted patch (same patterns there).
 export const SCRATCH_PATH_RE = /(?:^|\/)(?:repro|reproduce|reproduction|debug|scratch|tmp|temp)(?:[_-][\w.-]*)?\.(?:py|js|ts|sh|txt|log|out|html?)$|(?:^|\/)(?:reproduction|scratch|htmlcov|\.pytest_cache)\/|(?:^|\/)(?:report|junit[\w.-]*|test[_-]?results?|coverage)\.xml$|(?:^|\/)\.coverage(?:\.[\w.-]+)?$|\.(?:tmp|bak|orig|rej|swp)$|~$/i;
 export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(String(p || '').replace(/^\/workspace\//, '')); }
+// The project's page among the files at the workspace root: index.html, else the only .html there that is not a test page of the agent's own
+// (kanbanflow set 3: `test_page.html`, written to try a function, was "the only page", and its error refused a task's `done` for 13 turns).
+export function rootPageOf(names: string[]): string | null {
+    const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
+    return roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 && !/^(?:test|tmp|temp|debug|scratch|repro)[\w.-]*\.html?$|[_-]test\.html?$/i.test(roots[0]) ? roots[0] : null);
+}
