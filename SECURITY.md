@@ -38,7 +38,10 @@ FreeGent has four parts, and they have different exposure:
     bubblewrap it runs isolated like `/api/execute`, seeing only the repository. The agent's file
     tools can't write inside `.git` (hooks, repo config). Remote operations that need your SSH keys
     or credential helper don't work from the agent — push from your own shell.
-- **The CF Worker** (`cf-worker/`) is the CORS proxy for freegent.ai. It forwards model calls only
+- **The CF Worker** (`cf-worker/`) is the CORS proxy for freegent.ai. The page contacts it only
+  at the Routed privacy level, which is the default for browsers without a saved privacy choice.
+  Startup checks `/keys` there for guest availability without requiring a Developer key. Saved
+  Provider-only and Local choices still prevent hosted Worker requests. It forwards model calls only
   to a fixed list of provider hosts and stores nothing, except a chat log a user chooses to send
   (kept 14 days). Optional provider keys stored as Worker secrets (Worker keys) never leave the
   Worker; all of them are injected only into requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every

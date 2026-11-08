@@ -25,7 +25,7 @@
 
 ## How it fits together
 
-![FreeGent architecture: the WebUI, FreeGent harness, project files, code sandboxes and MCP run in your browser; model requests go straight to providers (Provider-only, the default), through a Cloudflare Worker (Routed), or to your own network (Local)](docs/assets/architecture.svg)
+![FreeGent architecture: the WebUI, FreeGent harness, project files, code sandboxes and MCP run in your browser; model requests go straight to providers (Provider-only), through a Cloudflare Worker (Routed, the default), or to your own network (Local)](docs/assets/architecture.svg)
 
 ## Run it locally
 

@@ -33,7 +33,7 @@ FreeGent uses a proxy Worker to enable request types that a browser cannot make 
 - **Web search** through Brave, and **`fetch_url`** and other plain page requests to sites that do not send CORS headers. The Worker fetches the page and returns it, for public HTTPS addresses only.
 - **Optional extras**: your own provider keys held by the Worker (Worker keys) for sessions with a Developer key, a guest quota for visitors without a key, and chat logs a user chooses to send.
 
-A static site without a Worker still loads, but these requests fail. Providers that do allow browser requests (Gemini, Groq, OpenRouter and others) work directly at the Provider-only level, which is the default.
+A static site without a Worker still loads, but these requests fail at the default Routed level. Choose Provider-only for direct browser calls to providers that allow them (Gemini, Groq, OpenRouter and others).
 
 
 1. Create a free Cloudflare account.

@@ -11,6 +11,8 @@ import { buildRedactedChatJson } from './convo-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
 import { lease, revokeLeases } from './lease.js';
+import { guestModeOn, getCfKeysDiagnostics } from './config.js';
+import { storedCredentialValues } from './stored-credentials.js';
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
 // data-theme is set by an inline <script> in <head> (before styles.css) to
@@ -163,7 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Back from Connect OpenRouter (?code=…&state=…): exchange the code for a key, then show the result in Settings → Credentials.
     globalThis.handleOpenRouterCallback?.().then((r: boolean | null) => { if (r !== null) showSettings?.('credentials'); }).catch(() => {});
     // Query the CF Worker for the keys it will use for this session (Developer key or guest quota) (non-blocking — re-renders model lists when done)
-    loadCfWorkerKeys?.().catch(() => {});
+    const workerKeys = loadCfWorkerKeys?.().catch(() => {});
 
     // Init IndexedDB session adapter — no COOP/COEP headers required.
     // Must run before getChatList() so the warmed localStorage is available immediately.
@@ -892,6 +894,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const validIds = getChatList().map(c => c.id);
         cleanupDanglingCheckpoints(validIds).catch(() => {});
     } catch {}
+
+    // Wait for the current Worker answer before sending a keyless visitor to Credentials. A failed
+    // lookup is unknown, not disabled; re-check saved keys in case one was entered while it ran.
+    workerKeys?.then(() => {
+        if (getCfKeysDiagnostics().loaded && !guestModeOn() && !storedCredentialValues().length)
+            showSettings('credentials');
+    });
 
     // ── Suspension detection — log only, do NOT abort ─────────────────────────
     // When the tab is hidden (tab switch, OS sleep, phone lock), in-flight SSE

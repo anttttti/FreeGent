@@ -10,8 +10,8 @@
 //   local     only localhost and local-network addresses. Cloud providers, web search and fetch_url are
 //             refused, and sandboxed code gets a CSP that blocks its own network calls.
 //
-// Without a saved choice the level is Provider-only, or Routed while a Developer key is saved (the key only
-// works through the Worker). The choice is made in the sidebar's Privacy button or Settings → Privacy.
+// Without a saved choice the level is Routed, so a fresh browser discovers the Worker's guest quota.
+// The choice is made in the sidebar's Privacy button or Settings → Privacy.
 // "default" is the old name of "routed" and still reads as it.
 //
 // Libraries and runtimes that the page loads with <script> or import() (jsdelivr, esm.sh) are not fetch calls
@@ -19,16 +19,10 @@
 
 type PrivacyLevel = 'routed' | 'provider' | 'local';
 const PRIVACY_LEVEL_KEY = 'fg_privacy_level';
-const DEV_KEY_STORAGE = 'fg_dev_key';   // proxy.ts DEV_KEY_LS; not imported, to keep this module import-free
 
 /** The saved level, or null when `v` is not one (never chosen, or an unknown value). */
 export function parsePrivacyLevel(v: unknown): PrivacyLevel | null {
     return v === 'routed' || v === 'default' ? 'routed' : v === 'provider' || v === 'local' ? v : null;
-}
-
-/** The level when nothing is saved: Routed with a Developer key, else Provider-only. */
-export function defaultPrivacyLevel(hasDevKey: boolean): PrivacyLevel {
-    return hasDevKey ? 'routed' : 'provider';
 }
 
 export function getPrivacyLevel(): PrivacyLevel {
@@ -36,8 +30,8 @@ export function getPrivacyLevel(): PrivacyLevel {
     try { if ((globalThis as any).window?._fgHeadless || (globalThis as any)._fgHeadless) return 'routed'; } catch {}
     try {
         const saved = parsePrivacyLevel(localStorage.getItem(PRIVACY_LEVEL_KEY));
-        return saved ?? defaultPrivacyLevel(!!localStorage.getItem(DEV_KEY_STORAGE));
-    } catch { return 'provider'; }
+        return saved ?? 'routed';
+    } catch { return 'routed'; }
 }
 
 export function setPrivacyLevel(level: PrivacyLevel): void {

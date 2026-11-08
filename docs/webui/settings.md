@@ -21,7 +21,7 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 ## Models
 
 - **Model Selections**: the heading over the three lists below. **✦ Populate** asks a model to rank the available ones and keeps the top ten in Model Priority. **Defaults** restores the shipped priority list, resumes paused models, and sets Worker Model and Utility Model back to Default. See [Priority, fallbacks and retries](../models/rotation.md).
-- **Guest access: Enabled / Disabled**, after Populate and Defaults, shows whether FreeGent's Worker has [guest access](../models/access.md#guest-access) switched on. FreeGent's operator sets it on the Worker; it is not a setting of yours. The page asks the Worker only at the Routed level, so at Provider-only and Local, and on a local server, it shows Disabled. Point at it for what it means.
+- **Guest access: Enabled / Disabled**, after Populate and Defaults, shows whether FreeGent's Worker has [guest access](../models/access.md#guest-access) switched on. FreeGent's operator sets it on the Worker; it is not a setting of yours. At the default Routed level, the page checks on every load without needing a Developer key. Until the answer arrives it shows Checking; if the lookup fails, or the privacy level prevents it, it shows Unknown. When the Worker confirms guest access is disabled and no credentials are saved, the page opens Credentials. Point at the status for what it means.
 - **Model Priority**: the ordered list FreeGent tries.
 - **Worker Model**: "Default" follows the priority rotation; "Priority model" always uses model #1.
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
@@ -34,7 +34,7 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 
 Controls where FreeGent may send requests. Change it with **Settings → Privacy** or the **Privacy** button in the sidebar above Dark mode, which shows the current level and explains each option when you point at it. The level is saved in this browser only and is not part of [profiles](#profiles).
 
-Until you choose, the level is **Provider-only**. Saving a Developer key switches it to **Routed**, because the Worker's keys only work through the Worker; you can switch back afterwards.
+Until you choose, the level is **Routed**. Saved privacy choices are preserved. Saving a Developer key also switches to **Routed**, because the Worker's keys only work through the Worker; you can switch back afterwards.
 
 | Level | What it does |
 |---|---|

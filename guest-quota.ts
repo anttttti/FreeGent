@@ -12,7 +12,7 @@
 //    quota is off. A refusal for the day's limit pauses the guest models until 00:00 UTC.
 import { isStaticHost } from './static-hosts.js';
 import { getPrivacyLevel } from './privacy.js';
-import { guestQuotaOn, guestModeOn, loadCfWorkerKeys, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
+import { guestQuotaOn, guestModeOn, getCfKeysDiagnostics, loadCfWorkerKeys, guestQuotaDaily, guestQuotaPausedUntil, pauseGuestQuota, cfWorkerKeysLoadedAt } from './config.js';
 
 const DIALOG_ID = 'fg-guest-quota-dialog';
 const PROVIDERS_URL = 'https://freegent.ai/docs/models/providers';
@@ -109,19 +109,23 @@ export function installGuestQuotaWatch(): void {
 
 // ── "Guest access" in Settings → Models, after Populate and Defaults ──────────
 // A status, not a switch: whether FreeGent's Worker has its guest quota on (FG_GUEST_QUOTA, set by the operator), as its
-// last /keys reply said. The page asks the Worker only at the Routed level, so below it the status is Disabled.
+// last /keys reply said. No answer (including a failed lookup) is unknown, not a disabled quota.
 export function renderGuestAccess(): void {
     const el = document.getElementById('guest-access-status');
     if (!el) return;
     const on = guestModeOn();
+    const diag = getCfKeysDiagnostics();
+    const known = !!diag.loaded;
     const daily = guestQuotaDaily();
-    el.textContent = `Guest access: ${on ? 'Enabled' : 'Disabled'}`;
-    el.classList.toggle('guest-access-on', on);
-    const tip = on
+    const checking = !known && !diag.skipped && !diag.error && diag.status == null && !!diag.proxy;
+    el.textContent = `Guest access: ${known ? on ? 'Enabled' : 'Disabled' : checking ? 'Checking…' : 'Unknown'}`;
+    el.classList.toggle('guest-access-on', known && on);
+    const tip = !known
+        ? 'Guest access has not been confirmed. Checking it needs a reachable Cloudflare Worker and Privacy: Routed.'
+        : on
         ? 'FreeGent\'s Worker has guest access on: visitors without a key of their own for Groq, Kilo, OpenRouter or TokenHarbor can '
           + `run those models on FreeGent's free-tier accounts${daily ? `, up to ${daily} requests a day per network` : ''}.`
-        : 'Guest access is off: every model needs a key of your own (or the Developer key). Either FreeGent\'s operator has it switched '
-          + 'off on the Worker, or this page does not ask the Worker (Privacy: Provider-only or Local, or a local server with its own keys).';
+        : 'FreeGent\'s Worker has guest access off. Add your own provider key in Settings → Credentials.';
     el.dataset.tip = tip;   // the hover/focus explanation (styles.css .guest-access-status::after)
     el.setAttribute('aria-label', `${el.textContent}. ${tip}`);
 }

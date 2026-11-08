@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 552" width="960" height="552" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <title id="t">How FreeGent fits together</title>
-  <desc id="d">The WebUI, FreeGent harness, project files, code sandboxes and MCP connections all run in your browser. Model requests leave by one of three routes chosen by the privacy level: straight to model providers (Provider-only, the default), through a Cloudflare Worker to providers (Routed), or to models on your own network (Local).</desc>
+  <desc id="d">The WebUI, FreeGent harness, project files, code sandboxes and MCP connections all run in your browser. Model requests leave by one of three routes chosen by the privacy level: straight to model providers (Provider-only), through a Cloudflare Worker to providers (Routed, the default), or to models on your own network (Local).</desc>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5b6b8c"/></marker>
     <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#3b6fe0"/></marker>
@@ -50,14 +50,14 @@
   <path d="M815 392V430" stroke="#3b6fe0" stroke-width="1.8" fill="none" marker-end="url(#ahb)"/>
 
   <!-- Provider-only -->
-  <rect x="50" y="432" width="340" height="86" rx="10" fill="#fff" stroke="#3b6fe0" stroke-width="1.5"/>
-  <text x="68" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Provider-only <tspan font-weight="500" fill="#5b6b8c">(the default)</tspan></text>
+  <rect x="50" y="432" width="340" height="86" rx="10" fill="#fff" stroke="#c9d4ee"/>
+  <text x="68" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Provider-only</text>
   <text x="68" y="482" font-size="13" fill="#1b2438">Straight to the model providers</text>
   <text x="68" y="502" font-size="12" fill="#4a5879">Model endpoints and services allowing direct requests</text>
 
   <!-- Routed -->
-  <rect x="410" y="432" width="270" height="86" rx="10" fill="#fff" stroke="#c9d4ee"/>
-  <text x="428" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Routed</text>
+  <rect x="410" y="432" width="270" height="86" rx="10" fill="#fff" stroke="#3b6fe0" stroke-width="1.5"/>
+  <text x="428" y="458" font-size="14" font-weight="700" fill="#2a4fb0">Routed <tspan font-weight="500" fill="#5b6b8c">(the default)</tspan></text>
   <text x="428" y="482" font-size="13" fill="#1b2438">Cloudflare Worker, then providers</text>
   <text x="428" y="502" font-size="12" fill="#4a5879">Services not accepting direct web requests</text>
 

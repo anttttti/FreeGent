@@ -1,6 +1,6 @@
 # How requests reach providers
 
-Browsers block most direct calls to model APIs (CORS), and some providers also require the call to come from a server. By default (**Provider-only**) the browser calls providers directly and no Worker is used; that works for providers that allow browser calls. At the **Routed** level FreeGent sends calls through a proxy, chosen by where the page is served from:
+Browsers block most direct calls to model APIs (CORS), and some providers also require the call to come from a server. By default (**Routed**) FreeGent sends calls through a proxy, chosen by where the page is served from:
 
 | Page served from | Provider calls go through |
 |---|---|
@@ -10,11 +10,11 @@ Browsers block most direct calls to model APIs (CORS), and some providers also r
 
 If you fill in **Settings → Privacy → CORS Proxy / CF Worker URL**, that Worker is used instead of the default.
 
-On freegent.ai you never set up a proxy for the [default providers](providers.md); a key is enough. Choose Routed from the sidebar's **Privacy** button for NVIDIA and Kilo, which browsers cannot call directly. Saving a Developer key switches to Routed.
+On freegent.ai you never set up a proxy for the [default providers](providers.md); a key is enough, or use the guest quota while it is enabled. Routed is the default and also supports NVIDIA and Kilo, which browsers cannot call directly. Saving a Developer key switches to Routed.
 
 ## Turning the Worker off
 
-The sidebar's **Privacy** button and **Settings → Privacy** have two levels that use no Worker; Provider-only is the default:
+The sidebar's **Privacy** button and **Settings → Privacy** have two alternatives to the default Routed level that use no Worker:
 
 - **Provider-only**: the browser calls providers directly. This works for Gemini, Groq, OpenRouter, Nous, Vercel, TokenHarbor, MoonMath, Requesty, OpenAI and Tavily, which allow browser calls. NVIDIA, Kilo and Brave search do not, so they stop working on a hosted page, and web fetches only reach sites that send CORS headers.
 - **Local**: only `localhost` and local-network addresses; see [Settings → Privacy](../webui/settings.md#privacy).

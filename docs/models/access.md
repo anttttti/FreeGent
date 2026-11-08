@@ -18,7 +18,7 @@ The keys behind 2 and 3 are the Worker's keys ("Worker keys"). They are stored a
 
 ## Guest access
 
-Guest access lets you try FreeGent before getting a key. At the Routed privacy level, while FreeGent offers it, the models of the providers below are simply available: they show up in Settings → Models and in the model picker like models you have a key for. At Provider-only (the default), when you send a message with no usable key on freegent.ai, FreeGent shows **No API key yet** with two choices:
+Guest access lets you try FreeGent before getting a key. At the default Routed privacy level, the page checks the Worker on each load without a Developer key. While FreeGent offers guest access, the models of the providers below are simply available: they show up in Settings → Models and in the model picker like models you have a key for. If guest access is disabled and no credentials are saved, the page opens Settings → Credentials. If you choose Provider-only, sending a message with no usable key on freegent.ai shows **No API key yet** with two choices:
 
 - **Use the guest quota**: Privacy switches to Routed, Cloudflare's bot check runs once (usually invisibly), and your message runs on a guest model.
 - **Add my own key**: opens Settings → Credentials. [Default providers](providers.md) lists where to get free keys.

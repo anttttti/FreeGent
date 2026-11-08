@@ -92,13 +92,15 @@ describe('sandboxCspMeta / parsePrivacyLevel', () => {
         expect(parsePrivacyLevel('strict')).toBeNull();
         expect(parsePrivacyLevel(null)).toBeNull();
     });
-    it('with nothing saved the level is Provider-only, or Routed while a Developer key is saved', () => {
+    it('defaults to Routed without a Developer key and preserves explicit privacy choices', () => {
         stubPage('freegent.ai', null);
-        expect(getPrivacyLevel()).toBe('provider');
+        expect(getPrivacyLevel()).toBe('routed');
         localStorage.setItem('fg_dev_key', 'k');
         expect(getPrivacyLevel()).toBe('routed');
         localStorage.setItem('fg_privacy_level', 'local');
         expect(getPrivacyLevel()).toBe('local');
+        localStorage.setItem('fg_privacy_level', 'provider');
+        expect(getPrivacyLevel()).toBe('provider');
         localStorage.setItem('fg_privacy_level', 'default');
         expect(getPrivacyLevel()).toBe('routed');
     });

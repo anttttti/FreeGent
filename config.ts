@@ -1008,7 +1008,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
         _cfWorkerKeys = {}; _cfKeysFor = worker ? who : '';
         if (had || !proxy) _cfKeysRerender();
     }
-    if (!worker) return;
+    if (!worker) { _cfKeysRerender(); return; }
     try {
         const resp = await fetch(`${proxy}/keys`, { signal: AbortSignal.timeout(5_000) });
         if (gen !== _cfKeysGen) return;   // a newer lookup has been started: this answer is not the current one
@@ -1024,10 +1024,10 @@ export async function loadCfWorkerKeys(): Promise<void> {
                 _cfKeysLoadedAt = Date.now();
                 _cfKeysDiag.loaded = true;
                 _cfKeysDiag.keys = Object.keys(data).filter(k => data[k]);
-                _cfKeysRerender();   // newly-available providers appear
             }
         }
-    } catch (e: any) { _cfKeysDiag.error = String(e?.message || e); }
+    } catch (e: any) { if (gen === _cfKeysGen) _cfKeysDiag.error = String(e?.message || e); }
+    finally { if (gen === _cfKeysGen) _cfKeysRerender(); }   // update the status even when the lookup failed
 }
 
 // True while the Worker's guest quota is on for this visitor (cf-worker/worker.js "Guest quota"); the guest-provider

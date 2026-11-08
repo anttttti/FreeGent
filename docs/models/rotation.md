@@ -32,7 +32,7 @@ By default a turn stays on the first available model. **Rotate endpoints every N
 
 Both selections, like **Search to add models** and the media model selections, list only models that can be called now: with a key of your own, a Worker key from a Developer key or the guest quota, or no key needed, and allowed by Settings → Privacy. If the model you picked earlier has lost its key, the next one in the list that has a key is used instead, and a note under the selection says which. Your choice is kept and applies again once its key is there.
 - **Role model routing** (Settings → Agent): planning workers use your first model, execution workers use later ones.
-- **Utility Model**: a separate, lighter model for short side calls: chat titles, prompt suggestions, tool classification, Populate's ranking and the judge calls of the output checks. Left unset it is a Google Gemma model, unless your first model is a custom endpoint or Settings → Privacy is stricter than Routed (Provider-only, the default, counts), in which case it follows your first model. Set it to "None" to switch titles and suggestions off; the other calls then use a model from your list.
+- **Utility Model**: a separate, lighter model for short side calls: chat titles, prompt suggestions, tool classification, Populate's ranking and the judge calls of the output checks. Left unset it is a Google Gemma model, unless your first model is a custom endpoint or Settings → Privacy is stricter than Routed (Provider-only or Local), in which case it follows your first model. Set it to "None" to switch titles and suggestions off; the other calls then use a model from your list.
 
 See [Roles and sub-agents](../harness/roles.md).
 

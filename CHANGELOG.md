@@ -20,7 +20,7 @@ The first stable release. FreeGent is an agentic AI platform for chat and cowork
 
 ### Privacy and security
 
-- Keys, chats and files stay in your browser. The default privacy level, **Provider-only**, sends requests straight from your browser to the model provider and uses no FreeGent server. **Routed** goes through a small Cloudflare Worker that forwards to a fixed list of providers and stores nothing. **Local** reaches only your own network. See [Privacy](docs/privacy.md).
+- Keys, chats and files stay in your browser. The default privacy level, **Routed**, goes through a small Cloudflare Worker that forwards to a fixed list of providers and stores nothing. **Provider-only** sends requests straight from your browser to the model provider and uses no FreeGent server. **Local** reaches only your own network. See [Privacy](docs/privacy.md).
 - Agent code in the browser runs in an opaque-origin sandbox. On the local dev server every API call needs a per-install token, credentials never reach the page, and commands run isolated (bubblewrap on Linux) with a credential-free environment. See [SECURITY.md](SECURITY.md).
 - Third-party software and licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 

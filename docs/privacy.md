@@ -34,8 +34,8 @@ Change the level with the **Privacy** button in the sidebar or under **Settings 
 
 | Level | Model calls | Everything else |
 |---|---|---|
-| **Provider-only** (default) | Straight from your browser to the provider | No Worker. No location lookup and no log uploads. The page-view counter is on. |
-| **Routed** | Through FreeGent's Worker | Location lookup, page-view counter and log sending are available. Page fetches through the Worker first pass a Cloudflare Turnstile check. |
+| **Provider-only** | Straight from your browser to the provider | No Worker. No location lookup and no log uploads. The page-view counter is on. |
+| **Routed** (default) | Through FreeGent's Worker | The page checks guest access on load. Location lookup, page-view counter and log sending are available. Page fetches through the Worker first pass a Cloudflare Turnstile check. |
 | **Local** | Only to `localhost` and private-network addresses (Ollama, vLLM, LM Studio) | Cloud providers, web search and `fetch_url` are refused. No page-view counter. Libraries and runtimes you have not yet cached still download. |
 
 Details are in [Settings → Privacy](webui/settings.md#privacy) and [How requests reach providers](models/proxy.md).

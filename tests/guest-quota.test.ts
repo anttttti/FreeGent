@@ -5,6 +5,7 @@ vi.mock('../config.js', () => ({
     guestQuotaOn: () => state.guest,
     loadCfWorkerKeys: vi.fn(async () => { state.loads++; }),
     guestModeOn: () => state.mode,
+    getCfKeysDiagnostics: () => ({ loaded: true }),
     guestQuotaDaily: () => state.daily,
     guestQuotaPausedUntil: () => state.pausedUntil,
     pauseGuestQuota: (t: number) => { state.pausedUntil = t; },
@@ -118,7 +119,7 @@ describe('Guest access status (Settings → Models)', () => {
     it("is always shown, as the Worker's setting: Disabled, or Enabled with what that means on hover", () => {
         renderGuestAccess();
         expect(el.textContent).toBe('Guest access: Disabled');
-        expect(el.dataset.tip).toMatch(/switched off on the Worker, or this page does not ask the Worker/);
+        expect(el.dataset.tip).toMatch(/Worker has guest access off.*Settings → Credentials/);
         state.mode = true;
         renderGuestAccess();
         expect(el.textContent).toBe('Guest access: Enabled');
