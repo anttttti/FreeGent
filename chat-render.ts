@@ -4,6 +4,7 @@ import { mainAgentRole } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { escapeHtml } from './html-escape.js';
+import { getPrivacyLevel, isLocalAddress } from './privacy.js';
 import { friendlyLabel } from './step-label.js';
 import { requestKeeper, trimKeptRequest } from './request-trim.js';
 
@@ -390,9 +391,15 @@ export function renderMarkdown(text: any): any {
             // Sanitize before setting innerHTML — DOMPurify strips injected scripts and
             // event handlers while preserving benign HTML. ADD_ATTR keeps target="_blank"
             // that the replace below adds. Falls back to HTML-escaped text if DOMPurify absent.
-            let html = (typeof DOMPurify !== 'undefined')
-                ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
-                : escapeHtml(raw);
+            // At Local privacy a remote image would be fetched by the browser itself, which the fetch guard cannot see: its address and the URL's query go to a public host (codex R912).
+            const local = typeof DOMPurify !== 'undefined' && getPrivacyLevel() === 'local';
+            if (local) DOMPurify.addHook('afterSanitizeAttributes', _dropRemoteMedia);
+            let html: string;
+            try {
+                html = (typeof DOMPurify !== 'undefined')
+                    ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
+                    : escapeHtml(raw);
+            } finally { if (local) DOMPurify.removeHook('afterSanitizeAttributes'); }
             html = html.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=');
             // Restore pre-rendered math (%%FWMATH0%% placeholders survive DOMPurify as text)
             if (_mathParts.length) {
@@ -410,6 +417,16 @@ export function renderMarkdown(text: any): any {
                  .replace(/`([^`]+)`/g, '<code>$1</code>')
                  .replace(/\n/g, '<br>'))
         .join('');
+}
+
+export function _dropRemoteMedia(node: any): void {
+    for (const a of ['src', 'srcset', 'poster']) {
+        const v = node.getAttribute?.(a);
+        if (!v) continue;
+        const urls = a === 'srcset' ? v.split(',').map((x: string) => x.trim().split(/\s+/)[0]) : [v.trim()];
+        const remote = urls.some((u: string) => { try { return /^(?:https?:)?\/\//i.test(u) && !isLocalAddress(new URL(u, 'http://x').hostname); } catch { return true; } });
+        if (remote) node.removeAttribute(a);
+    }
 }
 
 // Build a self-contained HTML page showing Python execution output.

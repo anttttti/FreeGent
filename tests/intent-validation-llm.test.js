@@ -27,6 +27,30 @@ describe('intent validation', () => {
         expect(files.has('notes.md')).toBe(true);
     });
 
+    it('the heuristic guard refuses credential files (.env variants, auth dotfiles) and leaves templates writable', async () => {
+        for (const p of ['.env', '.env.local', 'app/.env.production', '.npmrc', '.git-credentials']) expect((await write(p)).error, p).toMatch(/Sensitive path/);
+        for (const p of ['.env.example', '.env.sample', 'env.md', 'npmrc.txt']) expect((await write(p)).error, p).toBeUndefined();
+    });
+
+    // codex R827: replace_in_file and append_file reached `.env` and `.ssh/` although write_file was refused.
+    it('the sensitive-path guard covers append_file and replace_in_file', async () => {
+        files.set('.env', 'A=1');
+        expect((await run('append_file', { path: '.env', content: 'B=2' })).error).toMatch(/Sensitive path/);
+        expect((await run('replace_in_file', { path: '.env', old_string: 'A=1', new_string: 'A=2' })).error).toMatch(/Sensitive path/);
+        expect(files.get('.env')).toBe('A=1');
+    });
+
+    // codex R902: Stop aborts the judge's request, which looked like "no verdict" and let the call run.
+    it('a call whose turn was stopped during the intent check does not run', async () => {
+        localStorage.setItem('fg_intent_validation', 'llm');
+        await seeWeb();
+        const ac = new AbortController();
+        W.callLLMComplete = vi.fn(async () => { ac.abort(); throw new Error('aborted'); });
+        W.activeAbortController = ac;
+        try { expect((await write()).error).toMatch(/stopped/); expect(files.has('notes.md')).toBe(false); }
+        finally { W.activeAbortController = null; }
+    });
+
     describe('LLM-based', () => {
         beforeEach(() => localStorage.setItem('fg_intent_validation', 'llm'));
 

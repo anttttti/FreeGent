@@ -118,16 +118,21 @@ const TOOLS_RUNNING = 'fg_tools_running';
 const TOOL_CRASHES = 'fg_tool_crashes';
 
 export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; scripts?: string[]; }
-export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; }
+export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; heapMb?: number; heapLimitMb?: number; }
 
 const _calls = new Map<number, ToolCallMark>();
 let _seq = 0;
 let _callsChat: string | null = null;
 let _callsRunner = false;
+// The JS heap at the last beat (Chromium only): tells a crash by memory from one by a loop that never returns (uploaded logs: `node check_chem.mjs`, 25 s, a 13-line script).
+function _heap(): { heapMb?: number; heapLimitMb?: number } {
+    const m = (globalThis as any).performance?.memory;
+    return m?.usedJSHeapSize ? { heapMb: Math.round(m.usedJSHeapSize / 1048576), heapLimitMb: Math.round(m.jsHeapSizeLimit / 1048576) } : {};
+}
 function _writeCalls(beat = Date.now()): void {
     try {
         if (!_calls.size) { sessionStorage.removeItem(TOOLS_RUNNING); return; }
-        const m: ToolCrash = { calls: [..._calls.values()], chatId: _callsChat, session: SESSION_ID, version: FG_VERSION, beat, runner: _callsRunner };
+        const m: ToolCrash = { calls: [..._calls.values()], chatId: _callsChat, session: SESSION_ID, version: FG_VERSION, beat, runner: _callsRunner, ..._heap() };
         sessionStorage.setItem(TOOLS_RUNNING, JSON.stringify(m));
     } catch {}
 }
@@ -219,7 +224,8 @@ export function toolCrashCount(part: string, withinMs = Infinity): number {
 
 export function describeToolCrash(c: ToolCrash): string {
     const at = Math.min(...c.calls.map(x => x.t));
-    const calls = c.calls.map(x => `  ${x.label} — running for ${Math.max(0, Math.round((c.beat - x.t) / 100) / 10)} s when the app last responded`).join('\n');
+    const calls = c.calls.map(x => `  ${x.label} — running for ${Math.max(0, Math.round((c.beat - x.t) / 100) / 10)} s when the app last responded`).join('\n')
+        + (c.heapMb ? `\n  (JS heap ${c.heapMb} MB of ${c.heapLimitMb} MB at that time${c.heapLimitMb && c.heapMb > 0.8 * c.heapLimitMb ? ': out of memory is the likely cause, work in smaller pieces' : ''})` : '');
     return `The browser tab crashed or was killed while ${c.calls.length === 1 ? 'this tool call was' : 'these tool calls were'} running (${new Date(at).toISOString().slice(0, 16)}Z):\n${calls}\n`
         + `${c.calls.length === 1 ? 'Its result' : 'Their results'} never came back, and the step is not in the chat. A run that never ends (an endless loop, `
         + 'a wait for input that never comes) or uses ever more memory is the usual cause. Do not run it again unchanged: bound the loop, '

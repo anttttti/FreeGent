@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { toolSig, sameCallCrashed, toolCrashCount, commandScripts } from '../page-check-guard.ts';
+import { toolSig, sameCallCrashed, toolCrashCount, commandScripts, describeToolCrash } from '../page-check-guard.ts';
 
 // Uploaded logs (23 sessions, 48 tab crashes): the same `node test_imports.mjs && …` took the tab down four times in four minutes.
 describe('a call that took the tab down is recognised by its tool, arguments and the state of the files', () => {
@@ -31,5 +31,12 @@ describe('a call that took the tab down is recognised by its tool, arguments and
         expect(sameCallCrashed('other', 501, longer)).toBeNull();                                   // a file changed
         expect(sameCallCrashed('other', 500, ['check_chem.mjs'])).toBeNull();                       // only part of the crashed set: the culprit may be the other script
         expect(sameCallCrashed('other', 500, ['check_cpz.mjs'])).toBeNull();
+    });
+    it('a crash note gives the JS heap at the last beat, and says memory when it was near the limit', () => {
+        const c = { calls: [{ name: 'execute_code', label: 'x', t: 1000 }], chatId: null, session: 's', version: 'v', beat: 5000 };
+        expect(describeToolCrash({ ...c, heapMb: 300, heapLimitMb: 4000 })).toContain('JS heap 300 MB of 4000 MB');
+        expect(describeToolCrash({ ...c, heapMb: 300, heapLimitMb: 4000 })).not.toContain('out of memory');
+        expect(describeToolCrash({ ...c, heapMb: 3500, heapLimitMb: 4000 })).toContain('out of memory');
+        expect(describeToolCrash(c)).not.toContain('heap');
     });
 });

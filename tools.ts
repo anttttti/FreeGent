@@ -432,7 +432,8 @@ const _IV_INJECTION_PATTERNS = [
     /stop\s+what\s+you('?re| are)\s+doing/i,
 ];
 
-const _IV_SENSITIVE_PATH = /(?:^|[/\\])\.(?:ssh|gnupg|aws|env(?:ironments?)?|config|netrc)(?:[/\\]|$)|(?:id_rsa|\.pem|\.key|\.bash_history|\.zsh_history)(?:\b|$)/i;
+// Dotenv variants (`.env.local`, `.env.production`) and package-manager / VCS auth files hold credentials like `.env` does; templates stay editable (codex R895, R897).
+const _IV_SENSITIVE_PATH = /(?:^|[/\\])\.(?:ssh|gnupg|aws|env(?:ironments?)?|config|netrc)(?:[/\\]|$)|(?:^|[/\\])\.(?:env\.(?!(?:example|sample|template|dist)$)[\w.-]+|npmrc|pypirc|git-credentials|pgpass)$|(?:id_rsa|\.pem|\.key|\.bash_history|\.zsh_history)(?:\b|$)/i;
 
 const _IV_PATH_TRAVERSAL_RE = /\.\.[\/\\]/;
 
@@ -489,6 +490,16 @@ const _IV_DETECTOR_TASK_RE = /_IV_INJECTION_PATTERNS|injection-patterns|findInje
 // Tools whose arguments stay in the workspace: writing files and running code there.
 const _IV_LOCAL_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch', 'execute_code']);
 
+// Every tool that writes a file by path: replace_in_file and append_file reach `.env` as well as write_file does (codex R827).
+const _IV_PATH_TOOLS = new Set(['write_file', 'delete_file', 'append_file', 'replace_in_file']);
+function _ivPathCheck(name: string, args: any): { level: string; reason: string; quiet?: boolean } | null {
+    if (!_IV_PATH_TOOLS.has(name)) return null;
+    const path = String(args?.path || '');
+    if (_IV_PATH_TRAVERSAL_RE.test(path)) return { level: 'block', reason: `Path traversal in ${name}: ${path}` };
+    if (_IV_SENSITIVE_PATH.test(path)) return { level: 'block', reason: `Sensitive path in ${name}: ${path}` };
+    return null;
+}
+
 function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean } | null {
     const argsStr = JSON.stringify(args);
     // A phrase the person typed in their own request is theirs (a test fixture for an injection detector, a document about prompt
@@ -514,11 +525,7 @@ function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean 
         if (why) return { level: 'block', quiet: true, reason: `${why}. Nothing in this call was run. Send it again WITHOUT that command: leave untracked files, stashes and branches alone (a commit or a branch does not need a clean directory, and git status just lists untracked files). Only the user can ask for this` };
     }
 
-    if (name === 'write_file' || name === 'delete_file') {
-        const path = args.path || '';
-        if (_IV_PATH_TRAVERSAL_RE.test(path)) return { level: 'block', reason: `Path traversal in ${name}: ${path}` };
-        if (_IV_SENSITIVE_PATH.test(path)) return { level: 'block', reason: `Sensitive path in ${name}: ${path}` };
-    }
+
 
     return null;
 }
@@ -3228,13 +3235,16 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
         }
     }
 
-    if (getIntentValidation() !== 'off' && _IV_HIGH_RISK.has(name)) {
-        const check = _ivCheck(name, args) ?? await _ivLlmCheck(name, args);
+    if (getIntentValidation() !== 'off' && (_IV_HIGH_RISK.has(name) || _IV_PATH_TOOLS.has(name))) {
+        const check = _ivPathCheck(name, args) ?? (_IV_HIGH_RISK.has(name) ? (_ivCheck(name, args) ?? await _ivLlmCheck(name, args)) : null);
         if (check) {
             if (!check.quiet) _ivLog(name, args, check).catch(() => {});   // quiet: a refusal that is not an injection attempt (destructive git)
             return { error: `[Intent validation — ${check.level === 'block' ? 'BLOCKED' : 'FLAGGED'}] ${check.reason}. If this is intentional, make the request explicit in your message.` };
         }
     }
+
+    // Stop during the intent judge aborts its request, which reads as "no verdict": the call must not run on that (codex R902).
+    if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
 
     // Content from outside the conversation is about to enter the context: from here on this turn, risky calls can be screened.
     // (After this call's own check: the fetch that brings content in is not judged against content it has not returned yet.)
@@ -3258,6 +3268,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
             if (!allowed) return { error: 'User denied tool execution.' };
             // Approved late: if the turn was stopped meanwhile, nothing may run.
             if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
+            if (!context && isToolOffByUser(name)) return { error: `Tool '${name}' was turned off in Settings → Tools while waiting for approval.` };   // codex R901
         }
     }
 

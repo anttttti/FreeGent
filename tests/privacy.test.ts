@@ -79,7 +79,7 @@ describe('sandboxCspMeta / parsePrivacyLevel', () => {
     it('local limits every kind of request, and the CDN to the runtime paths', () => {
         const csp = sandboxCspMeta('local', 'http://localhost:5000');
         expect(csp).toMatch(/default-src 'none'/);
-        for (const d of ['img-src', 'font-src', 'media-src', 'frame-src', 'script-src']) expect(csp).toMatch(new RegExp(`${d} [^;]*`));
+        for (const d of ['img-src', 'font-src', 'media-src', 'frame-src', 'script-src', 'form-action']) expect(csp).toMatch(new RegExp(`${d} [^;]*`));
         expect(csp).not.toMatch(/https:\/\/cdn\.jsdelivr\.net[ ;"]/);
         expect(csp).toMatch(/https:\/\/cdn\.jsdelivr\.net\/pyodide\//);
         expect(csp.match(/img-src[^;]*/)![0]).not.toMatch(/jsdelivr|https:\/\/(?!localhost|127)/);

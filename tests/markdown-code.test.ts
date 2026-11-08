@@ -1,6 +1,6 @@
 // codex report 8, cases 372-373, 376-379, 381: Markdown rendering keeps code literal and links to workspace files work.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { _workspacePathFromHref } from '../chat-render.ts';
+import { _workspacePathFromHref, _dropRemoteMedia } from '../chat-render.ts';
 
 const W: any = window;
 beforeAll(async () => {
@@ -113,5 +113,16 @@ describe('code that spans lines stays literal (459-461)', () => {
         const html = W.renderMarkdown('Intro\n\n    <svg width="10"><circle r="4"/></svg>\n\nafter');
         expect(html).not.toContain('md-img-slot');
         expect(html).toContain('<svg width="10">');
+    });
+});
+
+// codex R912: at Local privacy the browser loads a remote Markdown image by itself, outside the fetch guard.
+describe('remote media at Local privacy', () => {
+    const img = (attr: string, v: string) => { const e = document.createElement('img'); e.setAttribute(attr, v); _dropRemoteMedia(e); return e.getAttribute(attr); };
+    it('drops public addresses (also in srcset, and protocol-relative), keeps local, data and relative ones', () => {
+        expect(img('src', 'https://evil.example/p.png?q=secret')).toBeNull();
+        expect(img('src', '//evil.example/p.png')).toBeNull();
+        expect(img('srcset', 'a.png 1x, http://8.8.8.8/b.png 2x')).toBeNull();
+        for (const v of ['data:image/png;base64,AA', 'blob:x', 'pics/a.png', 'http://localhost:5000/a.png', 'http://192.168.1.4/a.png']) expect(img('src', v), v).toBe(v);
     });
 });
