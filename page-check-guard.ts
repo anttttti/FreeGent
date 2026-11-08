@@ -54,7 +54,7 @@ export function beginPageCheck(path: string, content: string, chatId: string | n
 /** What the check is doing now, and/or one console line from the page. */
 export function notePageCheck({ stage, line }: { stage?: string; line?: string }): void {
     if (!_cur) return;
-    if (stage) _cur.stage = stage;
+    if (stage) _cur.stage = redactForLog(String(stage).slice(0, 400)).slice(0, 300);   // a stage can hold what the check typed or evaluated
     // Redacted now: after a reload a locked key vault no longer gives the values to redact them with.
     if (line) _cur.lines = [..._cur.lines, redactForLog(String(line).slice(0, 400)).slice(0, 200)].slice(-LINES);
     _cur.beat = Date.now();
@@ -79,8 +79,9 @@ export function crashedBefore(path: string, content: string): PageCheckCrash | n
 
 /** A check that took its separate check window down (the tab and the chats lived): recorded like a tab crash, so the unchanged page is not loaded again. */
 export function recordIsolatedPageCrash(path: string, content: string, info: { chatId: string | null; t: number; beat: number; stage: string; lines: string[] }): PageCheckCrash {
-    const m: PageCheckCrash = { path, hash: hashContent(content), chatId: info.chatId, session: SESSION_ID, version: FG_VERSION, t: info.t, beat: info.beat, stage: info.stage,
-        lines: info.lines.slice(-LINES), runner: _isRunner(), told: true };   // told: the check's own answer carries it
+    const clean = (x: string, n: number) => redactForLog(String(x).slice(0, 400)).slice(0, n);   // stored for good: a credential saved in Settings must not outlive its lock
+    const m: PageCheckCrash = { path, hash: hashContent(content), chatId: info.chatId, session: SESSION_ID, version: FG_VERSION, t: info.t, beat: info.beat, stage: clean(info.stage, 300),
+        lines: info.lines.slice(-LINES).map(l => clean(l, 200)), runner: _isRunner(), told: true };   // told: the check's own answer carries it
     _save([..._crashed().filter(c => !(c.path === path && c.hash === m.hash)), m]);
     return m;
 }

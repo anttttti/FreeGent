@@ -73,3 +73,17 @@ describe('runJs dynamic import', () => {
         expect(r.stderr).toMatch(/import\(\) cannot load workspace files/);
     });
 });
+
+// review 2026-11-08 (CR20-05): a cancelled timer never fires, so the drain waited its whole deadline for it.
+describe('runJs timers', () => {
+    it('does not wait for a timer the program cancelled, nor for one that fired', async () => {
+        const t0 = Date.now();
+        const r = await runJs(`const t = setTimeout(() => console.log('never'), 100000); clearTimeout(t); clearTimeout(t); setTimeout(() => console.log('fired'), 20); console.log('done');`, {});
+        expect(Date.now() - t0).toBeLessThan(2000);
+        expect(r.stdout).toBe('done\nfired\n');
+    });
+    it('waits for a timer the program left pending (a detached timer is part of the program)', async () => {
+        const r = await runJs(`setTimeout(() => console.log('leaked'), 200); `, {});
+        expect(r.stdout).toBe('leaked\n');
+    });
+});

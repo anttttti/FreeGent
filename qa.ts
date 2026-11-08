@@ -671,6 +671,11 @@ async function gate_test_runner(taskPath, content) {
             await appendGateNote(taskPath, `## QA: Test Failures (${ts})\nCommand: ${testFiles.length ? `each of ${testFiles.join(', ')}` : cmd}\n${output}`);
             return { blocks: true, reason: `Tests failed: ${which}. ${first}. Fix the code (or the test, if this task changed the behaviour it checks), run it, then set the status again. If the failure was there before this task and is not yours, say so in the summary and set the status again.` };
         }
+        // The cap and the time budget are for the browser's sake; a pass that left tests out is not a full pass, and the task says so (unverified).
+        if (notRun > 0) {
+            await appendGateNote(taskPath, `## QA: tests not run (${new Date().toISOString().slice(0, 16)}Z)\n${allTests.length - notRun} of ${allTests.length} test files ran and passed; ${notRun} were left out (at most ${_QA_TEST_RUN_MAX}, the ones naming files this task changed first, within ${_QA_TEST_BUDGET_MS / 1000} s).`);
+            return { blocks: false, outcome: 'unknown', detail: `${notRun} of ${allTests.length} test files were not run` };
+        }
     } catch (e) {
         return { blocks: false, outcome: 'unknown', detail: `Test runner error: ${e.message}` };
     }

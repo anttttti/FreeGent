@@ -1,7 +1,7 @@
 // A page that crashed the tab under check_page (page-check-guard.ts): recorded at the next start-up, and that same content is refused
 // instead of crashing the tab again; a normal unload is not a crash.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { beginPageCheck, endPageCheck, notePageCheck, takePageCheckCrash, crashedBefore, takeCrashNote, beginToolCall, endToolCall, takeToolCrash } from '../page-check-guard.ts';
+import { beginPageCheck, endPageCheck, notePageCheck, takePageCheckCrash, crashedBefore, takeCrashNote, beginToolCall, endToolCall, takeToolCrash, recordIsolatedPageCrash } from '../page-check-guard.ts';
 import '../tabs.ts';
 
 const W = window as any;
@@ -111,5 +111,20 @@ describe('check_page crash guard', () => {
         const stored = JSON.stringify([sessionStorage.getItem('fg_tools_running'), sessionStorage.getItem('fg_check_page_running')]);
         expect(stored).toContain('exec(python): key = ');
         expect(stored).not.toContain('plainsecretvalue123');
+    });
+
+    // review 2026-11-08 (CR20-01): the stage text (what the check typed or evaluated) and the separate window's console lines were stored as they came.
+    it('the stage and the separate window\'s lines are redacted too, and an ordinary diagnostic is kept', () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        localStorage.setItem('some_api_key', 'plainsecretvalue123');
+        beginPageCheck('p.html', 'x', 'c');
+        notePageCheck({ stage: 'during the action {"type":"#token","text":"plainsecretvalue123"} on #field' });
+        const running = sessionStorage.getItem('fg_check_page_running')!;
+        expect(running).not.toContain('plainsecretvalue123');
+        expect(running).toContain('during the action');
+        recordIsolatedPageCrash('q.html', 'fp', { chatId: null, t: 1, beat: 2, stage: 'while evaluating plainsecretvalue123', lines: ['log plainsecretvalue123', 'error: Boom at line 4'] });
+        const kept = localStorage.getItem('fg_check_page_crashed')!;
+        expect(kept).not.toContain('plainsecretvalue123');
+        expect(kept).toContain('error: Boom at line 4');
     });
 });

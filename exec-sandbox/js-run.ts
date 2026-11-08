@@ -80,8 +80,15 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
     // Node keeps running while timers are pending and a detached `(async () => { … process.exit(1) })()` still ends the process
     // with its code: the code waits for its own timers, and a late exit or throw is the result instead of an unhandled rejection
     // that dropped the output and reported exit 0 (a model's usual test wrapper; seen as a "ProcessExit" page error).
-    let pending = 0, lateErr: any;
-    const timeout = (f: any, ms?: number, ...a: any[]) => { pending++; return setTimeout(() => { pending--; f(...a); }, ms); };
+    let lateErr: any;
+    const owned = new Set<any>();   // timers this program set and has not seen fire or cancel: the drain below waits for these only
+    const timeout = (f: any, ms?: number, ...a: any[]) => {
+        const h: any = setTimeout(() => { owned.delete(h); f(...a); }, ms);
+        owned.add(h);
+        return h;
+    };
+    // The paired clearTimeout: a cancelled timer never fires, so without this the drain waited its whole deadline for it (a timeout race that cancels its loser took 10 s).
+    const clearTimer = (h: any) => { owned.delete(h); clearTimeout(h); };
     const onRejection = (ev: any) => {   // a browser event (preventDefault) or Node's (the reason itself)
         const reason = ev && 'reason' in ev ? ev.reason : ev;
         ev?.preventDefault?.();
@@ -91,10 +98,12 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
     host.addEventListener?.('unhandledrejection', onRejection); host.process?.on?.('unhandledRejection', onRejection);
     try {
         // eslint-disable-next-line no-new-func
-        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', `return (async()=>{ ${code}\n})()`);
-        await fn(fs, require, con, process, Buffer, timeout);
+        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', 'clearTimeout', `return (async()=>{ ${code}\n})()`);
+        await fn(fs, require, con, process, Buffer, timeout, clearTimer);
         const end = Date.now() + 10000;
-        for (let i = 0; i < 3 || (pending > 0 && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
+        for (let i = 0; i < 3 || (owned.size > 0 && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
+        for (const h of owned) clearTimeout(h);   // what is still pending after the deadline does not fire into the next run
+        owned.clear();
         if (exited !== undefined) return result(exited & 0xff);
         if (lateErr !== undefined) { stderr.push(thrownText(lateErr)); return result(1); }
         return result((process.exitCode ?? 0) & 0xff);

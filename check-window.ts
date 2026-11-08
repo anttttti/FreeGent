@@ -11,7 +11,11 @@
 
 import { pathCrashedBefore } from './page-check-guard.js';
 
-const CHANNEL = 'fg-check';
+// One channel per app tab (its token is in the window's address): several tabs, each with its own window, never see each other's pages, replies or unloads.
+const TOKEN = (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 16);
+const CHANNEL = `fg-check-${TOKEN}`;
+/** The address of the check window that belongs to this tab. */
+export const checkWindowUrl = (): string => { const u = new URL('fg-check-window.html', document.baseURI); u.searchParams.set('c', TOKEN); return u.href; };
 const BEAT_STALE_MS = 3000;
 
 let _ch: BroadcastChannel | null = null;
@@ -58,7 +62,7 @@ let _openedSilently = false;   // FreeGent opened the window itself (no click): 
 const SILENT_BLOCKED = 'fg_check_silent_blocked';   // the browser refused a window opened without a click: the bar asks from now on (this tab session)
 
 const _openWindow = (): void => {
-    try { window.open(new URL('fg-check-window.html', document.baseURI).href, '_blank', 'noopener,popup,width=520,height=420'); } catch {}
+    try { window.open(checkWindowUrl(), '_blank', 'noopener,popup,width=520,height=420'); } catch {}
 };
 
 // One bar, one button: the click is the user activation the browser asks for before it lets a page open a window.
@@ -131,3 +135,5 @@ export function releaseCheckWindow(): void {
     _ch?.postMessage({ kind: 'close' });
     _lastBeat = 0;
 }
+
+(globalThis as any).fgCheckWindowUrl = checkWindowUrl;   // for the browser probes, which open the window by hand

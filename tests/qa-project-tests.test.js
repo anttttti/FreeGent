@@ -312,6 +312,32 @@ describe('test-runner gate scope', () => {
     });
 });
 
+describe('tests left out by the cap', () => {
+    // review 2026-11-08 (CR20-04): eight test files, six ran and passed: the task was finished as if all had.
+    it('are named: the task is done but marked unverified', async () => {
+        const T = 'fg-tasks/160-x.md';
+        for (let i = 1; i <= 8; i++) files[`test_${i}.mjs`] = 'x';
+        delete files[TASK];
+        files[T] = `---\nid: 160\ntitle: X\nstatus: todo\n---\n# X\n## Acceptance Criteria\n- [x] ok\n`;
+        await W.transitionTask(T, 'in-progress');
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified.join(' ')).toMatch(/2 of 8 test files were not run/);
+        expect(files[T]).toMatch(/qa: unverified/);
+        expect(files[T]).toMatch(/6 of 8 test files ran and passed; 2 were left out/);
+    });
+    it('a complete run is a plain pass', async () => {
+        const T = 'fg-tasks/161-x.md';
+        for (let i = 1; i <= 4; i++) files[`test_${i}.mjs`] = 'x';
+        delete files[TASK];
+        files[T] = `---\nid: 161\ntitle: X\nstatus: todo\n---\n# X\n## Acceptance Criteria\n- [x] ok\n`;
+        await W.transitionTask(T, 'in-progress');
+        const r = await W.transitionTask(T, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(r.unverified).toBeUndefined();
+    });
+});
+
 describe('the done gate after a gate crash', () => {
     const T = 'fg-tasks/150-x.md';
     it('does not run the tests again once the gate took the tab down in the last day; the task is accepted unverified', async () => {

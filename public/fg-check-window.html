@@ -8,7 +8,9 @@
 // A separate window of the same origin: opened with noopener it gets its own browsing context group (its own process in current browsers) and talks to FreeGent over a
 // BroadcastChannel. It builds the same sandboxed frame the in-tab check uses and only relays messages between that frame and the channel.
 (function () {
-  var ch = new BroadcastChannel('fg-check'), fr = null, id = null, wrap = document.getElementById('w'), st = document.getElementById('s');
+  var tok = new URLSearchParams(location.search).get('c');
+  if (!tok) { document.getElementById('s').textContent = 'This window belongs to a FreeGent tab: open it from there.'; return; }
+  var ch = new BroadcastChannel('fg-check-' + tok), fr = null, id = null, wrap = document.getElementById('w'), st = document.getElementById('s');
   setInterval(function () { ch.postMessage({ kind: 'beat', t: Date.now() }); }, 500);
   ch.onmessage = function (e) {
     var d = e.data || {};
@@ -21,7 +23,7 @@
       fr.srcdoc = d.content; wrap.appendChild(fr);
     } else if (d.kind === 'to-frame' && fr && d.id === id) { try { fr.contentWindow.postMessage(d.data, '*'); } catch (_) {} }
     else if (d.kind === 'close') { try { window.close(); } catch (_) {} }
-    else if (d.kind === 'unload') { if (fr) { fr.remove(); fr = null; } st.textContent = 'Waiting for a page…'; }
+    else if (d.kind === 'unload') { if (fr && d.id === id) { fr.remove(); fr = null; } st.textContent = 'Waiting for a page…'; }
   };
   addEventListener('message', function (e) { if (fr && e.source === fr.contentWindow) ch.postMessage({ kind: 'from-frame', id: id, data: e.data }); });
   ch.postMessage({ kind: 'hello' });

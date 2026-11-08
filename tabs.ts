@@ -899,6 +899,11 @@ async function _relayPreviewFetch(e: MessageEvent) {
     if (!d || d.type !== 'fg-fetch' || typeof d.id !== 'number' || typeof d.url !== 'string') return;
     if (!_isPreviewWindow(e.source)) return;
     const src = e.source as Window;
+    await _relayFetch(d, (msg, transfer) => src.postMessage(msg, '*', transfer ?? []));
+}
+
+// The same request, from a page checked in the separate window (it arrives over that tab's own channel); the answer goes back the same way.
+async function _relayFetch(d: any, reply: (msg: any, transfer?: Transferable[]) => void) {
     try {
         const proxy = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
         if (!proxy) throw new Error('no CORS proxy configured');
@@ -922,10 +927,9 @@ async function _relayPreviewFetch(e: MessageEvent) {
             try { msg = JSON.parse(new TextDecoder().decode(body)).error; } catch {}
             throw new Error(`proxy: ${msg || `HTTP ${resp.status}`}`);
         }
-        src.postMessage({ type: 'fg-fetch-result', id: d.id, status: resp.status, statusText: resp.statusText,
-            headers: [...resp.headers], body }, '*', [body]);
+        reply({ type: 'fg-fetch-result', id: d.id, status: resp.status, statusText: resp.statusText, headers: [...resp.headers], body }, [body]);
     } catch (err) {
-        src.postMessage({ type: 'fg-fetch-result', id: d.id, error: String((err as Error)?.message || err) }, '*');
+        reply({ type: 'fg-fetch-result', id: d.id, error: String((err as Error)?.message || err) });
     }
 }
 window.addEventListener('message', _relayPreviewFetch);
@@ -1076,6 +1080,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
+        else if (d.type === 'fg-fetch' && cw && typeof d.id === 'number' && typeof d.url === 'string') void _relayFetch(d, msg => cw?.send(msg));
     };
     const onMsg = (e: MessageEvent) => { if (e.source === iframe.contentWindow) onData(e.data); };
     const cmd = (c: any): Promise<any> => new Promise(res => {
