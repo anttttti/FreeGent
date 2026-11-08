@@ -77,6 +77,17 @@ export function crashedBefore(path: string, content: string): PageCheckCrash | n
     return _crashed().find(c => c.path === path && c.hash === h) ?? null;
 }
 
+/** A check that took its separate check window down (the tab and the chats lived): recorded like a tab crash, so the unchanged page is not loaded again. */
+export function recordIsolatedPageCrash(path: string, content: string, info: { chatId: string | null; t: number; beat: number; stage: string; lines: string[] }): PageCheckCrash {
+    const m: PageCheckCrash = { path, hash: hashContent(content), chatId: info.chatId, session: SESSION_ID, version: FG_VERSION, t: info.t, beat: info.beat, stage: info.stage,
+        lines: info.lines.slice(-LINES), runner: _isRunner(), told: true };   // told: the check's own answer carries it
+    _save([..._crashed().filter(c => !(c.path === path && c.hash === m.hash)), m]);
+    return m;
+}
+
+/** Whether any check of this page (whatever its content then) is known to have crashed. */
+export function pathCrashedBefore(path: string): boolean { return _crashed().some(c => c.path === path); }
+
 /** At start-up: the check this tab was running when it died, recorded (and the marker cleared); null when there was none. */
 export function takePageCheckCrash(): PageCheckCrash | null {
     let m: PageCheckCrash | null = null;

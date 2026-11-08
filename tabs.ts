@@ -8,7 +8,8 @@ import { buildSheetTable, SHEET_TABLE_CSS } from './sheet-table.js';
 import { previewKindOfName, mimeOfName } from './mime.js';
 import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
 import { sandboxCspMeta } from './privacy.js';
-import { beginPageCheck, endPageCheck, notePageCheck, crashedBefore, describePageCheckCrash } from './page-check-guard.js';
+import { wantsCheckWindow, ensureCheckWindow, loadInCheckWindow, checkWindowAlive, type CheckWindowSession } from './check-window.js';
+import { beginPageCheck, endPageCheck, notePageCheck, crashedBefore, describePageCheckCrash, recordIsolatedPageCrash } from './page-check-guard.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
 // The editor holds a file's text with "\n" line breaks, whatever the file has. Whether it is "changed" is judged on the text, not on
@@ -1037,6 +1038,11 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // The capture script must run before every other script, so it goes first in <head>.
     content = injectIntoHead(content, _CHECK_CAPTURE);
 
+    // A page whose check took the tab down before is checked in a separate window when there is one (check-window.ts); otherwise in the tab, as always.
+    const useWindow = wantsCheckWindow(path) && await ensureCheckWindow();
+    let cw: CheckWindowSession | null = null;
+    let windowDied = false;
+    const startedAt = Date.now();
     const iframe = document.createElement('iframe');
     // artifact-iframe: lets the page's cross-origin GETs use the preview fetch relay.
     iframe.className = 'artifact-iframe fg-check-iframe';
@@ -1064,21 +1070,26 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const pending = new Map<number, (r: any) => void>();
     let seq = 0, alive = false, readyResolve: (v: boolean) => void = () => {};
     const ready = new Promise<boolean>(r => { readyResolve = r; });
-    const onMsg = (e: MessageEvent) => {
-        if (e.source !== iframe.contentWindow) return;
-        const d = e.data;
+    const onData = (d: any) => {
         if (!d || typeof d !== 'object') return;
         if (d.type === 'fg-check-log' && logs.length < 500) { logs.push({ level: d.level, text: d.text, t: d.t }); notePageCheck({ line: `${d.level}: ${d.text}` }); }
         else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
     };
+    const onMsg = (e: MessageEvent) => { if (e.source === iframe.contentWindow) onData(e.data); };
     const cmd = (c: any): Promise<any> => new Promise(res => {
-        if (aborted) return res({ error: 'stopped' });
+        if (aborted || windowDied) return res({ error: 'stopped' });
         const id = ++seq;
         pending.set(id, res);
-        iframe.contentWindow?.postMessage({ type: 'fg-check-cmd', id, ...c }, '*');
-        setTimeout(() => { if (pending.has(id)) { pending.delete(id); res({ error: 'no reply — the page script is not running or is stuck' }); } }, 3000);
+        if (cw) cw.send({ type: 'fg-check-cmd', id, ...c }); else iframe.contentWindow?.postMessage({ type: 'fg-check-cmd', id, ...c }, '*');
+        setTimeout(() => {
+            if (!pending.has(id)) return;
+            pending.delete(id);
+            // The separate window stopped answering and stopped beating: the page took it down (the tab did not go with it).
+            if (cw && !checkWindowAlive()) { windowDied = true; res({ error: 'stopped' }); wake(); return; }
+            res({ error: 'no reply — the page script is not running or is stuck' });
+        }, 3000);
     });
 
     // Stop: the AI turn's abort signal closes the preview at once and ends the check.
@@ -1105,10 +1116,10 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     window.addEventListener('message', onMsg);
     // A page that crashes the tab takes the unsaved turn with it: save the chat first, and leave a marker the next start-up reads.
     try { (globalThis as any).saveHistory?.(); } catch {}
-    beginPageCheck(path, fingerprint, typeof activeChatId !== 'undefined' ? activeChatId : null);
+    if (!useWindow) beginPageCheck(path, fingerprint, typeof activeChatId !== 'undefined' ? activeChatId : null);   // in a window the tab is not at risk, and is not blamed
     try {
-        iframe.srcdoc = content;
-        document.body.appendChild(wrap);
+        if (useWindow) cw = loadInCheckWindow(path, content, onData);
+        else { iframe.srcdoc = content; document.body.appendChild(wrap); }
         loaded = await Promise.race([ready, sleep(8000).then(() => false)]);
         // Slow device: scripts that start are given longer before the page is called not-loaded.
         if (!loaded && alive) loaded = await Promise.race([ready, sleep(12000).then(() => false)]);
@@ -1173,7 +1184,15 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         window.removeEventListener('message', onMsg);
         signal?.removeEventListener('abort', stopCheck);
         wrap.remove();
+        if (!windowDied) cw?.close();
         endPageCheck();
+    }
+    if (windowDied) {
+        recordIsolatedPageCrash(path, fingerprint, { chatId: typeof activeChatId !== 'undefined' ? activeChatId : null, t: startedAt, beat: Date.now() - 3000,
+            stage: 'while the page was being checked in the separate window', lines: logs.slice(-8).map(l => `${l.level}: ${l.text}`.slice(0, 200)) });
+        const last = logs.slice(-3).map(l => `${l.level}: ${l.text}`.slice(0, 160)).join(' | ');
+        return { error: `check_page: "${path}" took the check window down: it stopped responding while being checked. The browser tab and the chats were not affected. ${last ? `The page's last console output: ${last}. ` : 'The page wrote nothing to the console. '}`
+            + 'Look for an endless loop or recursion, or arrays, strings or DOM that keep growing, and fix it before checking this page again: the unchanged page is not loaded again. The window has to be opened again for the next check.', crashed: true };
     }
     if (aborted) return { error: 'check_page stopped' };
 

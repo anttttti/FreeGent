@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>FreeGent page check</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:13px/1.45 system-ui,sans-serif;margin:10px;color:#222}#f{margin-top:8px;border:1px solid #ccc;width:1024px;height:640px;transform:scale(.36);transform-origin:0 0}#w{height:240px}</style></head>
+<body><div><b>FreeGent page check</b> — keep this window open. It runs the pages <code>check_page</code> loads, so a page that hangs or runs out of memory takes down this window and not your chats.</div>
+<div id="s">Waiting for a page…</div><div id="w"></div>
+<script>
+// A separate window of the same origin: opened with noopener it gets its own browsing context group (its own process in current browsers) and talks to FreeGent over a
+// BroadcastChannel. It builds the same sandboxed frame the in-tab check uses and only relays messages between that frame and the channel.
+(function () {
+  var ch = new BroadcastChannel('fg-check'), fr = null, id = null, wrap = document.getElementById('w'), st = document.getElementById('s');
+  setInterval(function () { ch.postMessage({ kind: 'beat', t: Date.now() }); }, 500);
+  ch.onmessage = function (e) {
+    var d = e.data || {};
+    if (d.kind === 'ping') ch.postMessage({ kind: 'hello' });
+    else if (d.kind === 'load') {
+      if (fr) fr.remove();
+      id = d.id; st.textContent = 'Checking ' + d.path;
+      fr = document.createElement('iframe'); fr.id = 'f';
+      fr.setAttribute('sandbox', 'allow-scripts allow-forms');
+      fr.srcdoc = d.content; wrap.appendChild(fr);
+    } else if (d.kind === 'to-frame' && fr && d.id === id) { try { fr.contentWindow.postMessage(d.data, '*'); } catch (_) {} }
+    else if (d.kind === 'unload') { if (fr) { fr.remove(); fr = null; } st.textContent = 'Waiting for a page…'; }
+  };
+  addEventListener('message', function (e) { if (fr && e.source === fr.contentWindow) ch.postMessage({ kind: 'from-frame', id: id, data: e.data }); });
+  ch.postMessage({ kind: 'hello' });
+})();
+</script></body></html>
