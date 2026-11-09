@@ -7,6 +7,10 @@ The Project tab is the agent's workspace. Everything the agent reads, writes or 
 - A file tree and a CodeMirror editor, with tabs for open files.
 - Files are stored in your browser (IndexedDB). They stay there until you clear site data.
 - On browsers that support the File System Access API you can also attach a folder from your disk. It appears under `local/` and the agent reads and writes real files there. A bare path such as `notes.md` goes to the browser workspace; `local/notes.md` goes to the attached folder.
+  - Which root a thing belongs to: a task belongs to the root its file is in (`fg-tasks/` in the workspace, `local/fg-tasks/` in the folder), and the QA gates run that root's `package.json`, tests and build command (the folder's with `cd local`). A new task goes to the folder only when every task on the board is already there.
+  - Project instructions (`AGENTS.md`), skills, rules and roles are read from the workspace first and from `local/` when the workspace has none; a write to either reloads them.
+  - Code you run (Bash, Python, JavaScript) sees the folder's live files under `local/` and does not overwrite one you changed while it ran.
+  - In browsers without the File System Access API, an imported folder is kept as `local/` records in the browser workspace. That copy is the folder there, so it stays.
 - The agent works on the project through its file tools (see [Tools](../../harness/tools.md)): `list_files`, `read_file`, `search_workspace` and, when enabled for the [mode](../chats/modes.md), `write_file`, `replace_in_file` and others.
 
 ## Buttons
