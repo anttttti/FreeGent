@@ -2,7 +2,7 @@
 // Depends on: config.js, tools.js, workers.js, tasks.js
 
 
-import { canonTaskStatus, TASK_DIRS, isScratchTask, taskIdOf } from './task-status.js';
+import { canonTaskStatus, TASK_DIRS, isScratchTask, taskIdOf, taskRootOf } from './task-status.js';
 import { isScratchPath, rootPageOf } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
@@ -508,7 +508,7 @@ const _sandboxLacks = (text: string): boolean => _QA_RUNNER_MISSING_RE.test(text
 
 const _shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-export async function findProjectTests(named: string[] = []): Promise<string[]> {
+export async function findProjectTests(named: string[] = [], root: '' | 'local/' = ''): Promise<string[]> {
     const found = new Set<string>();
     for (const fp of named) {
         const base = fp.replace(/\.[^.]+$/, '');
@@ -519,7 +519,8 @@ export async function findProjectTests(named: string[] = []): Promise<string[]> 
     }
     let all: Array<{ name: string }> = [];
     try { all = (await agentListFiles()) || []; } catch {}
-    const conv = all.map(f => f?.name).filter((n): n is string => !!n && _QA_TEST_FILE_RE.test(n) && !_QA_NOT_SOURCE_RE.test(n) && !n.startsWith('local/') && !/['"$`\\]/.test(n))
+    // The task's own root only: a Local Folder task runs the folder's tests, a workspace task the workspace's (codex R381).
+    const conv = all.map(f => f?.name).filter((n): n is string => !!n && _QA_TEST_FILE_RE.test(n) && !_QA_NOT_SOURCE_RE.test(n.slice(root.length)) && (root ? n.startsWith(root) : !n.startsWith('local/')) && !/['"$`\\]/.test(n))
         .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
     for (const n of conv) found.add(n);
     const py = [...found].filter(f => f.endsWith('.py')).slice(0, _QA_PY_TEST_FILES_MAX);
@@ -622,17 +623,18 @@ async function gate_test_runner(taskPath, content) {
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1])
         : [];
 
+    const root = taskRootOf(taskPath);
     let cmd: string | null = null;
     try {
-        const pkg = JSON.parse(await agentReadFile('package.json'));
+        const pkg = JSON.parse(await agentReadFile(`${root}package.json`));
         // `npm init` writes a test script that always fails ("Error: no test specified").
-        if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus('npm test', 40);
+        if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus(root ? 'cd local && npm test' : 'npm test', 40);
     } catch {}
     // The gate's test run took the tab down in the last day (any task of this project): a `done` that waits on it only repeats that, and the chat stops with the tab. It is not run
     // again; the task is accepted unverified (the other gates still run). Uploaded logs: 26 such crashes in 9 sessions, every one at the task's `done`.
     if (toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000) >= 1)
         return { blocks: false, outcome: 'unknown', detail: 'The test run took the browser tab down earlier: not run again here' };
-    const allTests = cmd ? [] : await findProjectTests(filePaths);
+    const allTests = cmd ? [] : await findProjectTests(filePaths, root);
     const testFiles = cmd ? [] : await _pickTests(taskPath, allTests);
     if (!cmd && !testFiles.length) return { blocks: false, outcome: 'skipped', detail: 'No test files found in the project' };
 
@@ -885,10 +887,11 @@ async function gate_regression_guard(taskPath) {
     let cmd: string | null = config?.regression_guard_command || null;
     if (!cmd) {
         try {
-            const pkg = JSON.parse(await agentReadFile('package.json'));
-            cmd = pkg.scripts?.typecheck ? 'npm run typecheck'
-                : pkg.scripts?.build    ? 'npm run build'
-                : pkg.scripts?.lint     ? 'npm run lint'
+            const root = taskRootOf(taskPath), cd = root ? 'cd local && ' : '';
+            const pkg = JSON.parse(await agentReadFile(`${root}package.json`));
+            cmd = pkg.scripts?.typecheck ? `${cd}npm run typecheck`
+                : pkg.scripts?.build    ? `${cd}npm run build`
+                : pkg.scripts?.lint     ? `${cd}npm run lint`
                 : null;
         } catch {}
     }

@@ -140,6 +140,32 @@ describe('test-runner gate', () => {
     });
 });
 
+// codex R381: a task kept in the Local Folder ran the workspace's package.json and tests.
+describe('a Local Folder task is checked in its own root', () => {
+    const LT = 'local/fg-tasks/005-high-score.md';
+    beforeEach(() => { files = { [LT]: task('005') }; });
+    it('runs the folder\'s npm test, not the workspace\'s, and only the folder\'s test files', async () => {
+        files['package.json'] = '{"scripts":{"test":"echo workspace"}}';
+        files['local/package.json'] = '{"scripts":{"test":"echo folder"}}';
+        const r = await W.transitionTask(LT, 'done');
+        expect(r.transitioned).toBe(true);
+        expect(runs).toHaveLength(1);
+        expect(runs[0]).toContain('cd local && npm test');
+    });
+    it('without a package.json runs the folder\'s test files by their local/ path and ignores the workspace\'s', async () => {
+        files['test_ws.mjs'] = 'x'; files['local/test_dir.mjs'] = 'y';
+        await W.transitionTask(LT, 'done');
+        expect(runs[0]).toContain("node 'local/test_dir.mjs'");
+        expect(runs[0]).not.toContain('test_ws.mjs');
+    });
+    it('a workspace task still ignores the folder\'s tests', async () => {
+        files[TASK] = task('005'); files['test_ws.mjs'] = 'x'; files['local/test_dir.mjs'] = 'y';
+        await W.transitionTask(TASK, 'done');
+        expect(runs[0]).toContain("node 'test_ws.mjs'");
+        expect(runs[0]).not.toContain('local/test_dir.mjs');
+    });
+});
+
 describe('test-runner gate timeout', () => {
     it('gives up on a test run that never returns (AE-11) and accepts the task as unverified', async () => {
         vi.useFakeTimers();

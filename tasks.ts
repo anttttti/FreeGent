@@ -4,7 +4,7 @@
 import { splitFrontmatter, parseFmLines, setFmLines, buildFrontmatter } from './frontmatter.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { lease } from './lease.js';
-import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, isLedgerPath, isScratchTask } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, isLedgerPath, isScratchTask, newTaskRoot } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -484,9 +484,10 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
                 // The id is the next free one; a file already at that path (written by a tab that has not shown up in the
                 // list yet) moves it on instead of being replaced.
                 let id = String(nextId).padStart(3, '0');
-                while (await agentReadFile(`fg-tasks/${id}-${slug}.md`).then(() => true, () => false)) { nextId++; id = String(nextId).padStart(3, '0'); }
+                const root = newTaskRoot(existing);
+                while (await agentReadFile(`${root}fg-tasks/${id}-${slug}.md`).then(() => true, () => false)) { nextId++; id = String(nextId).padStart(3, '0'); }
                 const content = `${buildFrontmatter({ id, title, status: $('atd-status').value, priority: $('atd-priority').value, created: today })}# ${title}\n${$('atd-desc').value.trim()}\n## Acceptance Criteria\n${criteria.map((c: string) => `- [ ] ${c}`).join('\n')}\n${attachmentsBlock(attached)}## Log\n`;
-                await agentWriteFile(`fg-tasks/${id}-${slug}.md`, content, null, { epoch });
+                await agentWriteFile(`${root}fg-tasks/${id}-${slug}.md`, content, null, { epoch });
             });
             saved = true;
             overlay.remove();

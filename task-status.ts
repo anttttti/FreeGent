@@ -36,6 +36,12 @@ export function dedupeTasksByTitle<T extends { path: string; fm: any }>(tasks: T
 // not reach the board.) The older `tasks/` and `local/tasks/` are no longer task folders: nothing
 // writes tasks there and files left there are not read as tasks.
 export const TASK_DIRS = ['fg-tasks/', 'local/fg-tasks/'];
+/** The root a task belongs to: `local/` for a task kept in the attached Local Folder, '' for the workspace. Its project files, package.json,
+ *  tests and ledger are in the same root (codex R381, R384). */
+export const taskRootOf = (taskPath: string): '' | 'local/' => String(taskPath).startsWith('local/') ? 'local/' : '';
+/** Where a new task goes: with the board's tasks all in the Local Folder (and none in the workspace), there; otherwise the workspace (codex R383). */
+export const newTaskRoot = (existing: Array<{ path: string }>): '' | 'local/' =>
+    existing.length > 0 && existing.every(t => taskRootOf(t.path) === 'local/') ? 'local/' : '';
 export function isTaskPath(path: unknown): boolean {
     // `fg-tasks/../AGENTS.md` starts with the task folder and resolves outside it (codex R362).
     return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d)) && !/(?:^|[/\\])\.\.(?:[/\\]|$)/.test(path);
