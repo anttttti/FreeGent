@@ -613,6 +613,12 @@ async function _inlineJsModule(path, readFile, visited = new Set()) {
 // Handles: <link rel="stylesheet" href="...">, <script src="..." [type="module"]>,
 //          inline <script> blocks containing static ES import statements.
 // `deps`, when given, collects every workspace path the page reads (found or not), so a later write can tell whether it matters to the page.
+const _WINDOW_OWNED = /^(?:location|name|status|top|parent|self|window|document|history|opener|closed|frames|length|event|origin|navigator|screen|performance|console|localStorage|sessionStorage)$/;
+/** The value of an HTML attribute in a tag: quoted either way, or unquoted, with optional spaces around `=` (codex R467, R471, R472). */
+const _attrOf = (tag: string, name: string): string | null => {
+    const m = new RegExp(`(?:^|[^\\w-])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i').exec(tag);
+    return m ? (m[1] ?? m[2] ?? m[3]) : null;
+};
 async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
     const readFileRaw = typeof agentReadFile === 'function' ? agentReadFile : null;
     if (!readFileRaw) return html;
@@ -621,13 +627,17 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
 
     // Inline <link rel="stylesheet" href="...">
     html = await _replaceAsync(html,
-        /<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["'][^>]*\/?>/gi,
-        async (match, href) => {
-            if (href.startsWith('http') || href.startsWith('//')) return match;
+        /<link\b[^>]*>/gi,
+        async (match) => {
+            // Any attribute order, and the media query stays on the sheet (a print sheet must not style the screen preview) (codex R467, R468).
+            if (!/\bstylesheet\b/i.test(_attrOf(match, 'rel') ?? '')) return match;
+            const href = _attrOf(match, 'href');
+            if (!href || href.startsWith('http') || href.startsWith('//')) return match;
             try {
                 const css = await readFile(ref(href));
                 if (css == null) return match;
-                return `<style>\n${await _inlineCssUrls(css, ref(href), deps)}\n</style>`;
+                const media = _attrOf(match, 'media');
+                return `<style${media ? ` media="${media.replace(/"/g, '&quot;')}"` : ''}>\n${await _inlineCssUrls(css, ref(href), deps)}\n</style>`;
             } catch { return match; }
         });
 
@@ -643,7 +653,8 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
     html = await _replaceAsync(html, /<(img|audio|video|source|track|input|embed|link)\b[^>]*>/gi, async (tag, name) => {
         if (name.toLowerCase() === 'link' && !/\brel=["'][^"']*\b(?:icon|apple-touch-icon|preload)\b/i.test(tag)) return tag;
         let shared = '';
-        const out = await _replaceAsync(tag, /\b(src|href|poster)=(["'])([^"']*)\2/gi, async (m, attr, q, val) => {
+        const out = await _replaceAsync(tag, /\b(src|href|poster)\s*=\s*(?:(["'])([^"']*)\2|([^\s"'>]+))/gi, async (m, attr, q0, qv, bare) => {
+            const q = q0 || '"', val = q0 ? qv : bare;   // unquoted values and spaces around = are valid HTML (codex R471, R472)
             if (!_isLocalRef(val)) return m;
             const d = await _dataUrlFor(ref(val), deps);
             if (d && attr.toLowerCase() === 'src' && !shared && d.length > 4096 && /^(img|audio|video|source|embed)$/i.test(name)) { shared = ref(val); markupAssets.add(shared); }
@@ -656,9 +667,10 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
     // Note: check `match` (full tag) for type="module" — `attrs` only captures before src=,
     // so <script src="..." type="module"> would miss the attribute if checked via attrs.
     html = await _replaceAsync(html,
-        /<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi,
-        async (match, src) => {
-            if (src.startsWith('http') || src.startsWith('//')) return match;
+        /<script\b[^>]*\bsrc\s*=[^>]*><\/script>/gi,
+        async (match) => {
+            const src = _attrOf(match, 'src');
+            if (!src || src.startsWith('http') || src.startsWith('//')) return match;
             try {
                 const isModule = /\btype=["']module["']/i.test(match);
                 const js = isModule
@@ -712,9 +724,11 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
         /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
         (match, attrs, content) => {
             if (/\bsrc=/i.test(attrs)) return match; // external src — skip
+            // Not a name the window already owns: `const location = {…}` became `window.location = {…}` and navigated the preview, `const name` is coerced to a
+            // string (codex R465).
             const out = content.replace(
                 /^(const|let)\s+([a-zA-Z_$][\w$]*)\s*=/gm,
-                'window.$2 ='
+                (m, _kw, id) => _WINDOW_OWNED.test(id) ? m : `window.${id} =`
             );
             return out === content ? match : `<script${attrs}>${out}</script>`;
         }
@@ -771,9 +785,11 @@ try { window.localStorage; } catch(e) {
    target (a canvas, a library's element) is already non-passive, so leave those listeners alone. */
 const _ael=EventTarget.prototype.addEventListener;
 EventTarget.prototype.addEventListener=function(t,f,p){
-  if((t==='touchstart'||t==='touchmove')&&(p==null||p===true||p===false)&&
-     (this===window||this===document||this===document.documentElement||this===document.body))
-    p={passive:false,capture:p===true};
+  if((t==='touchstart'||t==='touchmove')&&
+     (this===window||this===document||this===document.documentElement||this===document.body)){
+    if(p==null||typeof p==='boolean')p={passive:false,capture:p===true};
+    else if(typeof p==='object'&&!('passive' in p))p=Object.assign({},p,{passive:false});
+  }
   return _ael.call(this,t,f,p);
 };
 /* 3. fetch interceptor: workspace assets + silent-audio fallback + CORS proxy */
@@ -806,10 +822,13 @@ function _dataUrlResponse(dataUrl){
   /* decode each asset once; later fetches reuse the Blob */
   let bl=_blobs[dataUrl];
   if(!bl){
-    const s=dataUrl.split(','),mt=s[0].split(':')[1].split(';')[0],
-        b=atob(s[1]),a=new Uint8Array(b.length);
-    for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
-    bl=_blobs[dataUrl]=new Blob([a],{type:mt});
+    const k=dataUrl.indexOf(','),head=dataUrl.slice(0,k),mt=head.split(':')[1].split(';')[0];
+    if(!/;base64$/i.test(head)){bl=_blobs[dataUrl]=new Blob([decodeURIComponent(dataUrl.slice(k+1))],{type:mt});}   /* a text SVG is percent-encoded, not base64 (codex R458) */
+    else{
+      const b=atob(dataUrl.slice(k+1)),a=new Uint8Array(b.length);
+      for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
+      bl=_blobs[dataUrl]=new Blob([a],{type:mt});
+    }
   }
   return Promise.resolve(new Response(bl));
 }
@@ -842,7 +861,7 @@ window.fetch=function(u,opts){
   if(typeof u==='string'){
     /* workspace assets + silent audio */
     if(!u.startsWith('http')&&!u.startsWith('//')&&!u.startsWith('data:')){
-      if(_M[u]){
+      if(Object.prototype.hasOwnProperty.call(_M,u)){   /* not constructor, toString, __proto__ (codex R455) */
         if(_M[u][0]!=='@') return _dataUrlResponse(_M[u]);
         const _self=this;
         return _domAsset(_M[u].slice(1)).then(function(d){return d?_dataUrlResponse(d):_F.call(_self,u,opts);});
@@ -867,7 +886,8 @@ window.fetch=function(u,opts){
 })();
 </script>
 `;
-    html = html.includes('</head>') ? html.replace('</head>', shimTag + '</head>') : injectIntoHead(html, shimTag);
+    // Tag names are case-insensitive: </HEAD> used to take the fallback that put the shim before the doctype (codex R412).
+    html = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, () => shimTag + '</head>') : injectIntoHead(html, shimTag);
     // Local privacy level: the page's own fetch/XHR may reach only this machine (the CSP must precede the scripts).
     const _csp = sandboxCspMeta();
     if (_csp) html = injectIntoHead(html, _csp);
@@ -959,6 +979,7 @@ function code(k){if(/^Arrow/.test(k))return k;if(k===' ')return 'Space';if(/^[a-
 function run(d){
  if(d.cmd==='click'){var el=document.querySelector(d.selector);if(!el)return{error:'no element matches '+d.selector};
   var r=el.getBoundingClientRect(),cs=getComputedStyle(el),o={bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window};
+  if(!(cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0))return{error:d.selector+' is not visible (display:none, visibility:hidden or no size), so a person could not click it: the click was not sent'};
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){try{el.dispatchEvent(new (t.charAt(0)==='p'&&window.PointerEvent?PointerEvent:MouseEvent)(t,o))}catch(e){}});
   el.click();return{ok:true,visible:cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0,disabled:!!el.disabled}}
  if(d.cmd==='type'){var el=document.querySelector(d.selector);if(!el)return{error:'no element matches '+d.selector};
@@ -1078,7 +1099,8 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const ready = new Promise<boolean>(r => { readyResolve = r; });
     const onData = (d: any) => {
         if (!d || typeof d !== 'object') return;
-        if (d.type === 'fg-check-log' && logs.length < 500) { logs.push({ level: d.level, text: d.text, t: d.t }); notePageCheck({ line: `${d.level}: ${d.text}` }); }
+        if (d.type === 'fg-check-log' && (logs.length < 500 || (d.level === 'error' && logs.length < 700))) {   // errors keep a reserve after a noisy start (codex R421)
+             logs.push({ level: d.level, text: d.text, t: d.t }); notePageCheck({ line: `${d.level}: ${d.text}` }); }
         else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
@@ -1308,8 +1330,10 @@ window.openArtifactTab = openArtifactTab;
 let _artifactRefreshTimer: any = 0;
 let _artifactChanged = new Set<string>();   // files written since the last rebuild; '' = unknown, rebuild every page
 function scheduleArtifactRefresh(changedName = '') {
-    if (/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName)) return;
     if (!fileTabs.size) return;
+    // Notes and task files do not change a page, unless an open page links one of them (a script under memory/ or a stylesheet) (codex R437).
+    if ((/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName))
+        && ![...fileTabs.values()].some(ft => ft.isPreview && ft.deps?.has(changedName))) return;
     _artifactChanged.add(changedName);
     clearTimeout(_artifactRefreshTimer);
     _artifactRefreshTimer = setTimeout(async () => {

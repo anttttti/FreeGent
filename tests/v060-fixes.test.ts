@@ -150,6 +150,8 @@ describe('environment check: stub packages', () => {
         (globalThis as any).fgNewFiles = async () => ['asgiref/__init__.py', 'asgiref/local.py', 'django/new_mod/__init__.py', 'repro.py'];
         expect(await envConfigEdits('Fix QuerySet.delete() results.')).toEqual(['asgiref/']);
         expect(await envConfigEdits('Add an asgiref compatibility package.')).toEqual([]);
+        // a package named only to be left alone is not asked for (codex R660)
+        expect(await envConfigEdits('Fix QuerySet.delete() results. Do not add an asgiref stub.')).toEqual(['asgiref/']);
     });
 });
 

@@ -19,6 +19,7 @@ import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext, resolveRoleBody } from './system-prompt.js';
+import { _skillRequiresUnmet } from './skill-guidance.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
 import { getProvider, getMainModelList, mainModelListIsEmptyByChoice, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled } from './config.js';
@@ -397,6 +398,8 @@ async function loadRoles() {
     let complete = true;
     try {
         const files = await agentListFiles();
+        // A listing the Docker adapter cut (its 500-entry marker) or could not make says nothing about which roles exist (codex R688).
+        if (files.some(f => /^\[listing (?:truncated|failed)/.test(String(f.name)))) complete = false;
         const roleFiles = files.filter(f => /^(?:local\/)?roles\/[^/]+\.md$/i.test(f.name));
         await Promise.all(roleFiles.map(async f => {
             try {
@@ -486,7 +489,7 @@ function _roleSkillBodies(roleName: string, toolSet?: Set<string>): string {
         // The exclusions every other skill path applies: exclude_roles names main-agent roles (here the one that launched the worker),
         // exclude_mode the runtime (codex R222/R223).
         if (_skillExcludedForRole(skill, mainAgentRole?.name?.toLowerCase() ?? null) || _skillExcludedForMode(skill)) continue;
-        if (skill.requires && localStorage.getItem(String(skill.requires).trim()) !== 'true') continue;   // same rule as _skillRequiresUnmet
+        if (skill.requires && _skillRequiresUnmet(skill)) continue;   // the one rule, with its storage guard (codex R567)
         if (skill.requires_tools && skill.requires_tools.split(',').some(t => !_toolCheck(t.trim()))) continue;
         const body = typeof skill.body_fn === 'function' ? skill.body_fn() : skill.body;
         if (body) parts.push('\n\n' + _filterRoleBody(body, toolSet));
@@ -809,7 +812,13 @@ export async function _revertWorkerDiskEdits(context: any, epoch: number): Promi
 }
 
 async function takeWorkspaceSnapshot(): Promise<LazySnapshot> {
-    try { return new LazySnapshot((await agentListFiles()).filter(f => !f.isLocal)); }
+    try {
+        const files = (await agentListFiles()).filter(f => !f.isLocal);
+        // A listing that says it was cut ("[listing truncated …]" / "[listing failed …]", the Docker adapter's markers) is not the whole workspace:
+        // a path beyond the cut must not read as "absent" when a worker's code changes it (codex R579).
+        const cut = files.some(f => /^\[listing (?:truncated|failed)/.test(String(f.name)));
+        return new LazySnapshot(files.filter(f => !/^\[listing (?:truncated|failed)/.test(String(f.name))), cut ? { inventoryKnown: false } : {});
+    }
     catch { return new LazySnapshot([], { inventoryKnown: false }); }   // not an empty workspace: nothing may be inferred from a name's absence
 }
 
@@ -828,9 +837,11 @@ const _busyEndpointSpecs = new Set();
  */
 // Parallel workers start on distinct models when rotation is on, or when only one request per endpoint may run at a time
 // (unless the person pinned the worker model, which then applies to every worker).
+/** A Worker Model chosen in Settings is "always that model" (config.ts): a worker on it is as explicit as one with its own `model`, so rotation leaves it where it is (codex R558). */
+const _fixedWorkerModel = (): boolean => typeof getEffectiveWorkerModel === 'function' && !!getEffectiveWorkerModel();
 function _assignsDistinctEndpoints(): boolean {
-    if (getEndpointRotation()) return true;
-    return singleRequestPerEndpoint() && !(typeof getEffectiveWorkerModel === 'function' && getEffectiveWorkerModel());
+    if (_fixedWorkerModel()) return false;   // the pinned model applies to every worker, rotation or not (codex R558)
+    return getEndpointRotation() || singleRequestPerEndpoint();
 }
 
 function _pickFreeRotationSpec(alreadyPicked: Set<string> | null): string | null {
@@ -1563,7 +1574,8 @@ function parseWorkerStatus(text: string): { status: string; note: string | null;
 // no footer → LLM judges whether the output actually reflects completed work.
 const _WORKER_STATUS_CHECKS = [{
     name: 'missing_status_footer',
-    re_pass: t => /STATUS:\s*(complete|blocked|partial)/im.test(t),
+    // A STATUS line inside a fenced example is not the worker's footer (parseWorkerStatus ignores fences too): without this a fenced example skipped the judge (codex R505).
+    re_pass: t => /STATUS:\s*(complete|blocked|partial)/im.test(String(t).replace(/```[\s\S]*?```/g, '')),
     llmPrompt: 'A worker agent ended its turn with the output below, without the required STATUS footer. Does the output indicate the worker FAILED to complete its assigned work — it stalled, gave up, asked a question instead of acting, or only partially finished? Answer YES (incomplete) or NO (the work appears done).',
 }];
 
@@ -1731,7 +1743,7 @@ async function executeWorkers(args: any): Promise<any> {
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 const role = agent.role ? ((isRoleEnabled(agent.role) ? rolesRegistry.get(agent.role) : null) || null) : null;
-                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase, getEndpointRotation(), !!agent.model);
+                const { output: _rawOut, toolCalls: _wCalls } = await runWorkerTurn(agent.task, context, handle, agent.model || rotationSpec || null, role, forkBase, getEndpointRotation(), !!agent.model || _fixedWorkerModel());
                 let output = _rawOut;
                 let { status, note, footer, index: _footerAt } = parseWorkerStatus(output || '');
                 if (footer) {
@@ -1773,6 +1785,7 @@ async function executeWorkers(args: any): Promise<any> {
                     await _revertWorkerDiskEdits(context, epoch);
                     staging.clear();
                     binary.clear();
+                    context.codeBinary.clear();   // rolled back with the rest: a retry that does not recreate a path must not report it (codex R549)
                     handle.setOutput(`Error: ${e.message}\n[Retrying… attempt ${attempt + 2} of ${MAX_RETRIES + 1}]`);
                     await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
                 }
@@ -1860,7 +1873,7 @@ async function executeWorkers(args: any): Promise<any> {
     for (const path of binaryAuthors.keys()) if (fileAuthors.has(path)) mixedKind.add(path);
     for (const path of mixedKind) fileAuthors.delete(path);
 
-    const clean = {}, conflicts = {};
+    const clean: Record<string, string | null> = Object.create(null), conflicts = {};   // a file named __proto__ must stay an own key (codex R625)
     for (const [path, authors] of fileAuthors) {
         if (authors.length === 1 || authors.every(a => a.content === authors[0].content)) clean[path] = authors[0].content;   // same text: no conflict
         else conflicts[path] = Object.fromEntries(authors.map(a => [a.id, a.content]));

@@ -75,6 +75,12 @@ describe('evaluateSkillTriggers — seed + per-type matching', () => {
         expect(W.evaluateSkillTriggers(r, new Set(), baseInputs({ wsAllPaths: new Set(['tasks/ledger.md']) })).has('ledger')).toBe(true);
     });
 
+    it('file-present trigger also fires for the same path under the Local Folder (codex R444)', () => {
+        const r = reg({ name: 'ledger', trigger_on_file_present: 'tasks/' });
+        expect(W.evaluateSkillTriggers(r, new Set(), baseInputs({ wsAllPaths: new Set(['local/tasks/ledger.md']) })).has('ledger')).toBe(true);
+        expect(W.evaluateSkillTriggers(r, new Set(), baseInputs({ wsAllPaths: new Set(['local/other/tasks/x.md']) })).has('ledger')).toBe(false);
+    });
+
     it('message-pattern trigger fires on a regex match and tolerates a bad regex', () => {
         const good = reg({ name: 'trace', trigger_on_message_pattern: 'Traceback|Error:' });
         expect(W.evaluateSkillTriggers(good, new Set(), baseInputs({ rawText: 'TypeError: x' })).has('trace')).toBe(true);

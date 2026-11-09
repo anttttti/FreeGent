@@ -96,3 +96,23 @@ describe('replaceMessages', () => {
         expect(ms).toBeLessThan(60);                                        // the full rewrite of 4 MB took 40-120 ms
     });
 });
+
+describe('deleteChat (codex R608, R609)', () => {
+    it('removes the chat\'s turn log and worker runs with it, and leaves other chats alone', async () => {
+        const { a, peek } = setup();
+        await a.replaceMessages('c1', [msg(0)]); await a.replaceMessages('c2', [msg(0)]);
+        await a.logTurn({ ts: new Date().toISOString(), chatId: 'c1', type: 'model', response: 'secret-c1' });
+        await a.logTurn({ ts: new Date().toISOString(), chatId: 'c2', type: 'model', response: 'keep-c2' });
+        await a.createWorkerRun('r1', 'c1'); await a.createWorkerRun('r2', 'c2');
+        await a.deleteChat('c1');
+        const db = peek();
+        expect((db.prepare('SELECT COUNT(*) n FROM turn_log WHERE chat_id = ?').get('c1') as any).n).toBe(0);
+        expect((db.prepare('SELECT COUNT(*) n FROM turn_log WHERE chat_id = ?').get('c2') as any).n).toBe(1);
+        expect((db.prepare('SELECT COUNT(*) n FROM worker_runs WHERE chat_id = ?').get('c1') as any).n).toBe(0);
+        expect((db.prepare('SELECT COUNT(*) n FROM worker_runs WHERE chat_id = ?').get('c2') as any).n).toBe(1);
+        expect((db.prepare("SELECT COUNT(*) n FROM turn_log_fts WHERE turn_log_fts MATCH 'secret'").get() as any).n).toBe(0);
+        expect((a as any)._saved.has('c1')).toBe(false);   // and the incremental-save cache of the deleted chat (codex R631)
+        expect((a as any)._saved.has('c2')).toBe(true);
+    });
+});
+

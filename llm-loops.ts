@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
+import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, withoutNegatedClauses, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
 export { isScratchPath };
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
@@ -781,11 +781,12 @@ export async function envConfigEdits(task: string, edited: Iterable<string> = []
     let changed: string[] = [], created: string[] = [];
     try { changed = (await (globalThis as any).fgChangedFiles?.()) ?? []; } catch {}
     try { created = (await (globalThis as any).fgNewFiles?.()) ?? []; } catch {}
+    const asked = withoutNegatedClauses(task);   // naming a file to leave alone is not asking for its edit (codex R660)
     const config = [...new Set([...edited, ...changed].map(String))]
-        .filter(p => _ENV_CONFIG_RE.test(p) && !task.includes(p.split('/').pop() ?? ''));
+        .filter(p => _ENV_CONFIG_RE.test(p) && !asked.includes(p.split('/').pop() ?? ''));
     const stubPkgs = created.map(String)
         .map(p => /^([\w.-]+)\/__init__\.py$/.exec(p)?.[1])
-        .filter((d): d is string => !!d && !new RegExp(`\\b${d.replace(/[.-]/g, '\\$&')}\\b`).test(task))
+        .filter((d): d is string => !!d && !new RegExp(`\\b${d.replace(/[.-]/g, '\\$&')}\\b`).test(asked))
         .map(d => `${d}/`);
     return [...config, ...stubPkgs];
 }
@@ -2457,6 +2458,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     if (m[1] !== '/dev/null') _editedPaths.add(m[1]);
             } else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && Array.isArray(r.result?.files_written)) {
                 for (const p of r.result.files_written) _editedPaths.add(String(p));
+            } else if (r.name === 'run_workers') {
+                // What workers committed is a change of this run as much as the director's own edit: the invented-data gate looks at this set (codex R661).
+                for (const a of r.result?.agents ?? []) for (const p of (Array.isArray(a?.wrote) ? a.wrote : [])) if (!String(p).startsWith('fg-tasks/')) _editedPaths.add(String(p));
             }
         }
         if (results.some(r => !r.result?.error && (r.name === 'run_workers' || r.name === 'write_file'
@@ -2818,7 +2822,9 @@ async function callOAI(onChunk: (chunk: string, ...rest: any[]) => void, onReque
         console.warn(`[tool-format] ${provider}/${model}: tools rejected — now 'none':`, e.message);
         const { tools: _t, tool_choice: _tc, ...noTools } = payload;
         noTools.messages = [{ role: 'system', content: forWorker ? _bwsp(roleOverride) : _bsp() }, ...payload.messages.slice(1)];
-        result = await _send(noTools);
+        // The first attempt may already have learned that this model refuses the thinking controls (the refusal came first, the tools one on the stripped retry):
+        // the no-tools copy is built from the original payload and must not send them again, or `_send` would throw the thinking refusal it can no longer retry (codex R680).
+        result = await _send(modelRejectsThinkingFields(`${provider}|${model}`) ? stripThinkingFields(noTools) : noTools);
     }
     // Native tool calls from a model that started as fn-tag by default → it is an 'openai' model.
     if (toolFormat === 'fn-tag' && result.tool_calls?.length && !isToolFormatListed(provider, model))

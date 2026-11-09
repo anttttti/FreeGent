@@ -19,6 +19,14 @@ describe('shellWrites', () => {
         expect(paths("perl -pi -e 's/a/b/' lib/m.pm")).toEqual(['lib/m.pm']);
         expect(paths('cat > f.txt <<EOF\nhello > not a file\nEOF')).toEqual(['f.txt']);
     });
+    it('reads the destination of cp and mv, but not a directory or a one-argument form (codex R663)', () => {
+        expect(paths('cp backup.csv data.csv')).toEqual(['data.csv']);
+        expect(paths('cp -f ./a.log ./b.log')).toEqual(['b.log']);
+        expect(paths('mv draft.txt final.txt')).toEqual(['final.txt']);
+        expect(paths('cp data.csv out/')).toEqual([]);
+        expect(paths('cp -t out data.csv')).toEqual([]);
+        expect(paths('cp data.csv')).toEqual([]);
+    });
     it('does not read operators from quotes, heredoc bodies, fd duplication or comments', () => {
         expect(paths('ls -la 2>&1')).toEqual([]);
         expect(paths('cmd >/dev/null 2>&1')).toEqual([]);

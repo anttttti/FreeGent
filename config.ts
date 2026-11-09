@@ -630,6 +630,7 @@ function getCustomModels() {
 // localStorage fills up with cached chat histories; on a quota error, evict old chats' caches
 // and retry. Throws if it still does not fit, so callers can tell the user.
 function saveCustomModels(arr) {
+    (globalThis as any).clearLearnedToolFormats?.();   // and a learned "no tools" (codex R546)
     (globalThis as any).clearLearnedRefusals?.();   // a changed model list may mean a different server: ask it again (images, thinking controls, reasoning echo)
     const val = JSON.stringify(arr);
     const set = () => { try { return setPref(KEYS.CUSTOM_MODELS, val); } catch { return false; } };

@@ -67,6 +67,12 @@ describe('mcpToolName', () => {
 });
 
 describe('sanitizeMcpSchema', () => {
+    it('resolves percent-encoded and empty-token $ref pointers (codex R431, R432)', () => {
+        const root = { type: 'object', properties: { a: { $ref: '#/$defs/Some%20Type' }, b: { $ref: '#/$defs/' } }, $defs: { 'Some Type': { type: 'number' }, '': { type: 'boolean' } } };
+        const out = W.sanitizeMcpSchema(root);
+        expect(out.properties.a.type).toBe('number');
+        expect(out.properties.b.type).toBe('boolean');
+    });
     it('const narrows an enum instead of giving way to it (codex R369)', () => {
         expect(W.sanitizeMcpSchema({ type: 'string', enum: ['a', 'b'], const: 'a' }).enum).toEqual(['a']);
         expect(W.sanitizeMcpSchema({ type: 'string', const: 'a' }).enum).toEqual(['a']);
@@ -186,6 +192,18 @@ describe('server registry', () => {
         expect(W.mcpToolRisk(W.mcpExposedName(s.id, 'delete.everything'))).toBe('destructive');
         W.setMcpServerTrust(s.id, false);
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'search_places'))).toBe('destructive');
+    });
+
+    it('a tool whose trusted annotations say both read-only and destructive is destructive (codex R709)', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18' } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 'both', annotations: { readOnlyHint: true, destructiveHint: true } }, { name: 'ro', annotations: { readOnlyHint: true } }] } };
+            return { result: {} };
+        });
+        const s = await W.addMcpServer({ name: 'both', url: 'https://both.example.com/mcp' });
+        W.setMcpServerTrust(s.id, true);
+        expect(W.mcpToolRisk(W.mcpToolName(s.id, 'both'))).toBe('destructive');
+        expect(W.mcpToolRisk(W.mcpToolName(s.id, 'ro'))).toBe('read');
     });
 
     it('follows tools/list pagination', async () => {

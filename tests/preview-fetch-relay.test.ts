@@ -128,6 +128,13 @@ describe('iframe fetch shim', () => {
         await expect(p).rejects.toMatchObject({ name: 'AbortError' });
     });
 
+    it('a relative name that is an inherited object property goes to the native fetch (codex R455)', async () => {
+        const { win, directFetch } = frame(() => null);
+        await win.fetch('constructor');
+        await win.fetch('toString');
+        expect(directFetch).toHaveBeenCalledTimes(2);
+    });
+
     it('sends non-GET requests directly', async () => {
         const { win, posted, directFetch } = frame(() => null);
         await win.fetch('https://api.test/x', { method: 'POST', body: '{}' });

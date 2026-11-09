@@ -220,9 +220,11 @@ async function reloadChatIfChangedElsewhere(): Promise<boolean> {
     if (!activeChatId || agentStreaming || _loadingChatId || !chatChangedElsewhere()) return false;
     const inp = document.getElementById('agent-input');
     const draft = inp?.innerHTML ?? '';
+    const reloaded = activeChatId;
     await switchToChat(activeChatId, true);
     // The composer as it was, empty or not: the saved draft is older than what is in it (code review CR-03).
-    if (inp) inp.innerHTML = draft;
+    // Only if the open chat is still the one that was reloaded: the draft is that chat's, not the next one's (codex R599).
+    if (inp && activeChatId === reloaded) inp.innerHTML = draft;
     return true;
 }
 let _xTabTimer: any = null;
@@ -1109,6 +1111,7 @@ async function switchToChat(id, force = false) {
         if (typeof clearImageAttachments === 'function') clearImageAttachments();
     }
     activeChatId        = id;
+    setSessionToolFilter?.(null);   // tools the keyword matcher added for the chat being left are not this chat's (codex R551)
     const endLoad       = beginChatLoad(id);
     localStorage.setItem(KEYS.ACTIVE_CHAT, id);
     setChatHistory([]);

@@ -131,7 +131,7 @@ async function _drExtractPage(question, page) {
 
 // Integrate this round's findings into the evolving report. The model appends a GAPS
 // line that drives the next round's queries — "GAPS: none" ends the loop early.
-async function _drSynthesize(state, findings) {
+export async function _drSynthesize(state, findings) {
     const prompt = `${_drDateContext()}
 
 You are updating an evolving research report.
@@ -153,9 +153,11 @@ GAPS: <comma-separated open questions the report still cannot answer, or "none" 
 Write only the updated report followed by the GAPS line — no preamble.`;
     const resp = await callLLMComplete(prompt, { maxTokens: 8192, label: 'research:synthesize' });
     if (!resp?.trim()) return false;
-    const gapsMatch = resp.match(/^GAPS:\s*(.+)$/im);
-    state.gaps   = gapsMatch ? gapsMatch[1].trim() : '';
-    state.report = resp.replace(/^GAPS:.*$/im, '').trim().slice(0, _DR_REPORT_MAX_CHARS);
+    // The status line is the LAST GAPS: line: a quoted source or the report body can contain an earlier one (codex R491).
+    const gapsLines = [...resp.matchAll(/^GAPS:[ \t]*(.*)$/gim)];
+    const lastGaps = gapsLines.at(-1);
+    state.gaps   = lastGaps ? lastGaps[1].trim() : '';
+    state.report = (lastGaps ? resp.slice(0, lastGaps.index) + resp.slice(lastGaps.index! + lastGaps[0].length) : resp).trim().slice(0, _DR_REPORT_MAX_CHARS);
     // Three-band done detection. The old exact match /^none/ ran an extra
     // iteration on "No significant gaps remain." and on a missing GAPS line ('').
     if (/^none\.?$/i.test(state.gaps)) return true;                        // definitely done

@@ -355,6 +355,25 @@ describe('SessionRegistry', () => {
 
             await fs.rm(dir, { recursive: true, force: true });
         });
+
+        it('a persisted fork can be resumed with its inherited history (codex R499, R535)', async () => {
+            const dir = `/tmp/fg-test-session-fork-${Date.now()}`;
+            const { default: fs } = await import('node:fs/promises');
+            await fs.mkdir(`${dir}/events`, { recursive: true });
+            reg.setPersistence(initPersistence(dir, 0));
+            const parent = reg.create({ id: 'par1', chatId: 'c' });
+            parent.append('user/message', { role: 'user', content: 'shared start' }, { surfaceOp: 'append' });
+            const child = reg.fork(parent);
+            child.append('user/message', { role: 'user', content: 'child only' }, { surfaceOp: 'append' });
+            await reg.flush();
+
+            const reg2 = new SessionRegistry();
+            reg2.setPersistence(initPersistence(dir, 0));
+            const back = await reg2.resume(child.id);
+            const texts = back.deriveMessages().map(m => String(m.content));
+            expect(texts).toEqual(expect.arrayContaining(['shared start', 'child only']));
+            await fs.rm(dir, { recursive: true, force: true });
+        });
     });
 });
 

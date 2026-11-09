@@ -14,3 +14,17 @@ describe('deep research GAPS line', () => {
         expect(pass('Sufficient for pricing, but the 2025 figures are missing')).toBe(false);
     });
 });
+
+describe('deep research synthesis keeps the LAST GAPS line (codex R491)', () => {
+    it('a GAPS: line quoted in the body does not decide the status', async () => {
+        const { _drSynthesize } = await import('../deep-research.ts');
+        (globalThis as any).callLLMComplete = async () => 'Report body.\nA source says:\nGAPS: none\nMore body.\nGAPS: the 2025 figures, the pricing page';
+        (globalThis as any).validateOutput = undefined;
+        const state: any = { question: 'q', round: 1, report: '', gaps: '' };
+        const done = await _drSynthesize(state, 'findings');
+        expect(state.gaps).toBe('the 2025 figures, the pricing page');
+        expect(done).toBe(false);
+        expect(state.report).toContain('GAPS: none');   // the quoted line stays in the report body
+        expect(state.report).not.toContain('2025 figures');
+    });
+});

@@ -77,7 +77,8 @@ function _setInputText(el: HTMLElement, text: string): void {
 // ── Checkpoints ────────────────────────────────────────────────────────────
 
 function saveCheckpoint(userText: string): string {
-    const id   = Date.now().toString();
+    // Ids are global (one key per id, whatever the chat): two tabs in the same millisecond got the same one and the second overwrote the first (codex R544).
+    const id   = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;   // parseInt(id) is still the timestamp (_pruneLogsFrom)
     const base = {
         chatId:      activeChatId,
         openaiLen:   chatHistoryLength(),
@@ -315,6 +316,11 @@ async function applyCheckpoint(ckptId: string): Promise<boolean> {
     }
     // The workspace goes back first: when it cannot, the conversation stays as it is (history cut and a rerun sent against the newer files is a mismatch nobody asked for).
     const restored = await _restoreCheckpointWorkspaceUI(ckptId);
+    // The workspace restore awaits; chat switching stays on meanwhile. Rewinding the history now would cut the chat the user has since opened (codex R543).
+    if (ckptChat && activeChatId && ckptChat !== activeChatId) {
+        appendMessage?.('model', '<em style="color:var(--muted)">You switched chats while the workspace was being restored, so the conversation was not rewound.</em>');
+        return false;
+    }
     if (restored === 'failed') {
         appendMessage?.('model', '<em style="color:var(--muted)">The workspace could not be restored to this point, so the conversation was not rewound either. Nothing was changed.</em>');
         return false;
@@ -1474,6 +1480,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     if (rawText.trim()) _userInputHistory.push(rawText);
     endPreparation(_prep);
     setAgentStreaming(true);
+    const _stopSeq0 = _stopSeq;   // a Stop from here on, before the turn's AbortController exists, must still end this turn (codex R649)
     setInputState(false);
 
     // If the previous run for this chat was aborted or crashed (the run marker persists across
@@ -1578,6 +1585,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     _earlyPlaceholder = null;
     setActivePlaceholder(_ph);
     setActiveAbortController(new AbortController());
+    if (_stopSeq !== _stopSeq0) activeAbortController?.abort();   // Stop came in during the preparation awaits: the new controller starts aborted
     const placeholder     = activePlaceholder;
 
     if (!mainAgentRole) setMainAgentRole('director');
@@ -1714,7 +1722,9 @@ function stopAfterStep(): void {
     if (!sandboxBusy() && !runtime.nativeBusy) activeAbortController?.abort();
 }
 
+let _stopSeq = 0;   // counts Stop presses: lets a turn that is still being prepared notice one
 function stopNow(): void {
+    _stopSeq++;
     // Stopping while the task runner owns the chat must end the runner too; aborting only the
     // stream let its loop carry on with the next turn / task.
     if (aiJob === 'runner' && typeof runnerAbort === 'function') runnerAbort();

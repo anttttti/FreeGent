@@ -88,7 +88,8 @@ const _SKILL_TRIGGER_RULES = [
         if (i.turn === 0 && !i.isTaskCompletion && i.rawText.trim().length <= 25) return false;
         return s.trigger_on_file_present.split(',').some(spec => {
             const p = spec.trim().toLowerCase();
-            return [...i.wsAllPaths].some(f => f === p || f.startsWith(p));
+            // A project kept in the Local Folder lists as local/fg-tasks/…, local/tests/…: the same triggers apply (codex R444).
+            return [...i.wsAllPaths].some(f => f === p || f.startsWith(p) || (f.startsWith('local/') && (f.slice(6) === p || f.slice(6).startsWith(p))));
         });
     } },
     { field: 'trigger_on_message_pattern', match: (s, i) => {

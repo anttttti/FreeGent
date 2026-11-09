@@ -400,8 +400,21 @@ export function testFixtures(task: string, commands: string[]): string[] {
 // log", "convert the CSV"). Overwriting a supplied data file is then the work, not a way of inventing data, so the
 // invented_data gate leaves it alone (s6-misleading-error: the nudge made the model restore a correct fix).
 const _DATA_CHANGE_RE = /\b(?:fix\w*|repair\w*|correct\w*|updat\w*|edit\w*|modif\w*|chang\w*|clean\w*|convert\w*|replac\w*|renam\w*|sort\w*|dedup\w*|reformat\w*|normali[sz]\w*|patch\w*|delet\w*|remov\w*|append\w*|insert\w*|overwrit\w*|rewrit\w*|trim\w*|redact\w*|mask\w*|merge\w*)\b/i;
+/** The request without the clauses a negation governs ("do not change pyproject.toml", "without installing numpy"): a name mentioned there is a thing to leave
+ *  alone, not a thing the person asked for (codex R660). Clauses end at . ; ! ? or a line break. */
+export function withoutNegatedClauses(text: string): string {
+    return (String(text ?? '').match(/[^.;!?\n]*[.;!?\n]?/g) ?? []).filter(c => !/\b(?:not|never|don'?t|without|avoid|no\s+need)\b/i.test(c)).join('');   // no lookbehind: this file ships to Safari < 16.4
+}
 export function taskChangesData(task: string): boolean {
-    return _DATA_CHANGE_RE.test(String(task ?? ''));
+    // A verb that a negation governs in its clause ("do not edit or change the CSV") asks for the opposite (codex R659).
+    const text = String(task ?? '');
+    const re = new RegExp(_DATA_CHANGE_RE.source, _DATA_CHANGE_RE.flags.includes('g') ? _DATA_CHANGE_RE.flags : _DATA_CHANGE_RE.flags + 'g');
+    for (let m: RegExpExecArray | null; (m = re.exec(text)); ) {
+        const before = text.slice(0, m.index);
+        const clause = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(';'), before.lastIndexOf('!'), before.lastIndexOf('?'), before.lastIndexOf('\n'), before.search(/,\s*but\b[^,]*$/)) + 1);
+        if (!/\b(?:not|never|don'?t|without|no|avoid)\b/i.test(clause)) return true;
+    }
+    return false;
 }
 
 // Git commands that throw away work that cannot be got back from the repository: untracked files (git clean),

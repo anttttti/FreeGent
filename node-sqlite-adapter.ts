@@ -53,6 +53,11 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
     async deleteChat(id: any) {
         const db = await this._ensure();
         db.prepare('DELETE FROM chats WHERE id = ?').run(id);
+        this._saved.delete(id);   // the incremental-save row cache of a deleted chat would otherwise live as long as the adapter (codex R631)
+        // chat_id is not a foreign key on these two (see session-schema.ts): without this the turn log (and its FTS rows, through the delete trigger) and the worker
+        // runs of a deleted chat stayed behind, which the IndexedDB adapter does not do (codex R608, R609).
+        db.prepare('DELETE FROM turn_log WHERE chat_id = ?').run(id);
+        db.prepare('DELETE FROM worker_runs WHERE chat_id = ?').run(id);
     }
 
     async setChatRole(id: any, role: any) {

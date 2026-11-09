@@ -17,7 +17,7 @@ interface StorageUsage {
 
 const _CHAT_KEY_RE  = /^fg_chat_(.+)_(gh|oh|msgs|role|raw|log|run_ckpt)$/;
 const _DRAFT_KEY_RE = /^fg_draft_(.+)$/;
-const _CKPT_KEY_RE  = /^fg_ckpt_(\d+)$/;
+const _CKPT_KEY_RE  = /^fg_ckpt_(\d+)(?:_[a-z0-9]+)?$/;
 
 export function computeStorageUsage(): StorageUsage {
     const u: StorageUsage = { total: 0, settings: 0, project: 0, checkpoints: 0, chats: new Map() };

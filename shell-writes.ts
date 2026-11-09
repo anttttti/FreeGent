@@ -101,6 +101,8 @@ export function shellWrites(code: string): ShellWrites {
         const opts = args.filter(a => a.startsWith('-') && a.length > 1);
         const plain = args.filter(a => !(a.startsWith('-') && a.length > 1));
         if (name === 'tee') out.paths.push(...plain);
+        // cp and mv overwrite their destination: with two or more plain arguments it is the last one (a destination written as a directory is not a file) (codex R663).
+        else if ((name === 'cp' || name === 'mv') && plain.length >= 2 && !opts.some(o => /^-[A-Za-z]*t$|^--target-directory/.test(o)) && !plain[plain.length - 1].endsWith('/')) out.paths.push(plain[plain.length - 1]);
         else if (name === 'sed' && opts.some(o => /^-[A-Za-z]*i/.test(o) || o.startsWith('--in-place'))) {
             // the script is the first plain argument unless -e/-f supplied it (and then it is that flag's value)
             let scripted = false;

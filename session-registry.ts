@@ -105,6 +105,9 @@ export class SessionRegistry {
         if (this._persistence) {
             const p = this._persistence;
             forked.onAppend = (ev) => p.enqueue(forked.id, ev);
+            // The inherited events (and the end-seed marker) go into the child's own file first, as create() does for a seeded session: without them the child's
+            // first new event was written with a non-zero seq, which load() rejects (codex R499, R535).
+            for (const ev of forked.events) p.enqueue(forked.id, ev);
         }
         return forked;
     }

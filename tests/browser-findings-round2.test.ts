@@ -17,6 +17,9 @@ describe('project import validation', () => {
         expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: 'a', content: 5 }] })).toThrow();
         expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: [] })).toThrow();
         expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: 'a', content: 'x' }], chatData: {} })).not.toThrow();
+        // a chat list or history that is not text must not read as "no chats" and wipe the current ones (codex R538, R539)
+        expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: { fg_chat_list: { id: 'a' } } })).toThrow(/chat list is not text/);
+        expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: { fg_chat_list: '[]', fg_chat_c1_oh: 5 } })).toThrow(/history of chat "c1" is not text/);
     });
 });
 
@@ -86,5 +89,10 @@ describe('browser action approvals', () => {
         expect(approvalSummary('browser_navigate', { url: 'http://localhost:3000/checkout' })).toBe('browser_navigate: http://localhost:3000/checkout');
         expect(approvalSummary('browser_type', { ref: 'e12', text: 'ada@example.com', submit: true })).toBe('browser_type element e12: types "ada@example.com" and presses Enter');
         expect(approvalSummary('browser_select', { ref: 'e3', values: ['NZ'] })).toBe('browser_select element e3: chooses "NZ"');
+    });
+    it('an MCP call shows what it is sent (codex R708)', async () => {
+        const { approvalSummary } = await import('../tools.ts');
+        expect(approvalSummary('mcp__crm__delete_contact', { id: 42, hard: true })).toBe('mcp__crm__delete_contact: {"id":42,"hard":true}');
+        expect(approvalSummary('mcp__crm__list', {})).toBe('mcp__crm__list');
     });
 });

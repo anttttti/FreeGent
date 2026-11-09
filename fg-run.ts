@@ -119,7 +119,10 @@ const printRequest = [printText, stdinText].filter(Boolean).join('\n\n');
 if (printMode && !printRequest) _fail('-p needs a request: freegent -p "what to do", or pipe text in.');
 const promptArg    = _arg('--prompt');
 const promptText    = printMode && _flag('--no-tools') ? printRequest : promptArg;
-const taskText      = _arg('--task') || _arg('--workflow');
+const taskArg       = _arg('--task'), workflowArg = _arg('--workflow');
+// --workflow is an alias of --task: two different texts under the two names are two inputs, and one of them was dropped without a word (codex R508).
+if (taskArg && workflowArg && taskArg !== workflowArg) _fail('--task and --workflow are the same option: give one of them.');
+const taskText      = taskArg || workflowArg;
 const taskFile      = _arg('--task-file');
 // Exactly one input: with --task and --prompt together the task was silently ignored and the model called in prompt mode (case 006). The -p request (its
 // text and what is piped in) is an input too: it won over --task and --prompt, which were dropped without a word (codex R8-001).
@@ -163,6 +166,8 @@ const temperature     = temperatureArg != null ? parseFloat(temperatureArg) : nu
 // Documented range 0–2 (--help); 3.5 used to go to the provider as it was (case 031).
 if (temperature != null && !(temperature >= 0 && temperature <= 2)) _fail(`--temperature must be a number in the range 0–2 (got "${temperatureArg}").`);
 const thinkingLevel   = _arg('--thinking-level') || '';
+// An unknown level read as "off" for a custom endpoint, so a typo switched reasoning off without a word (codex R510).
+if (thinkingLevel && !['off', 'low', 'medium', 'high', 'default'].includes(thinkingLevel)) _fail(`--thinking-level must be one of off, low, medium, high, default (got "${thinkingLevel}").`);
 const retryMode       = _arg('--retry-mode')     || '';
 const retryFixedMs    = parseInt(_arg('--retry-fixed-ms') || '') || 0;
 const maxRounds       = parseInt(_arg('--max-rounds')     || '') || 0;

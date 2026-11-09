@@ -183,6 +183,16 @@ describe('proxy deadlines', () => {
             await expect(pinnedFetch(1, 300)(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', body: '{}' })).rejects.toThrow(/no data for 0.3 s/);
         } finally { srv.closeAllConnections(); srv.close(); }
     });
+    it('the POST transport opens no connection for a request that was already ended (codex R436)', async () => {
+        let connected = 0;
+        const { srv, port } = await listen(() => { connected++; });
+        try {
+            const ac = new AbortController(); ac.abort();
+            await expect(pinnedFetch(1, 300)(`http://127.0.0.1:${port}/x`, { method: 'POST', body: '{}', signal: ac.signal })).rejects.toThrow(/aborted/);
+            await new Promise(r => setTimeout(r, 50));
+            expect(connected).toBe(0);
+        } finally { srv.closeAllConnections(); srv.close(); }
+    });
 });
 
 describe('scrubEnv', () => {

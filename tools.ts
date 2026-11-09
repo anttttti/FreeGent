@@ -606,6 +606,8 @@ export function approvalSummary(toolName: string, args: any): string {
     const cmd = toolName === 'run_git' ? ['git', ...runGitArgv(args)].join(' ')
         : (typeof args.code === 'string' ? args.code : '');
     if (cmd) summary += `: ${clip(cmd, 300)}`;
+    // An MCP call: what it is sent, so the person approves the action and not just a tool name (codex R708).
+    else if (toolName.startsWith('mcp__') && Object.keys(args).length) { try { summary += `: ${clip(JSON.stringify(args), 300)}`; } catch {} }
     return summary;
 }
 
@@ -1237,12 +1239,20 @@ async function _handleCheckPage(args: any) {
     }
     if (!/\.html?$/i.test(path)) return { error: `check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.${args?.path ? ` Got ${JSON.stringify(args.path)}.` : ''}` };
     try {
-        return await runPageCheck(path, {
+        const expect = parseExpectations(args.expect);
+        const res = await runPageCheck(path, {
             actions: Array.isArray(args.actions) ? args.actions : [],
             probes:  Array.isArray(args.probes) ? args.probes.map(String).slice(0, 10) : [],
             waitMs:  args.wait_ms,
-            expect:  parseExpectations(args.expect),
+            expect,
         });
+        // Limits that cut the request short are said, so "no errors" is not read as "everything you asked for ran" (codex R416, R418).
+        const cut: string[] = [];
+        const asked = (v: any) => Array.isArray(v) ? v.length : 0;
+        if (asked(args.expect) > expect.length) cut.push(`${asked(args.expect) - expect.length} of ${asked(args.expect)} expectations were not run (at most 10, each needs a non-empty "expr" string)`);
+        if (asked(args.actions) > 20) cut.push(`${asked(args.actions) - 20} actions after the first 20 were not run`);
+        if (asked(args.probes) > 10) cut.push(`${asked(args.probes) - 10} probes after the first 10 were not read`);
+        return cut.length && res && typeof res === 'object' ? { ...res, not_run: cut.join('; ') } : res;
     } catch (e) {
         const msg = String((e as any)?.message ?? e);
         return { error: /not found/i.test(msg)
@@ -3197,7 +3207,8 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     // Role tool-filter enforcement: reject calls to tools outside the role's allowed set.
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
-        && !mainAgentRole.tools.has(name) && !mainAgentRole.tools.has(_PHANTOM_ALIASES[name]?.tool)) {
+        && !mainAgentRole.tools.has(name) && !mainAgentRole.tools.has(_PHANTOM_ALIASES[name]?.tool)
+        && !(typeof _sessionToolFilter !== 'undefined' && _sessionToolFilter?.has?.(name))) {   // a specialist tool the keyword matcher added for this turn was advertised: it is allowed (codex R430)
         // v0.60: the headless director, which has no write tools, kept calling edit_file (an alias of
         // replace_in_file), and AutomationBench runs called service operations
         // (google_drive_find_multiple_files ×11) as if they were tools. Say what works instead.

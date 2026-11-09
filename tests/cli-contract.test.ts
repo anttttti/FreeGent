@@ -11,10 +11,11 @@ const ROOT = join(__dirname, '..');
 const RUN = [join(ROOT, 'node_modules/tsx/dist/cli.mjs'), join(ROOT, 'fg-run.ts')];
 let server: http.Server, base = '', delayMs = 0;
 const posts: any[] = [];
+const modelsAuth: string[] = [];
 
 beforeAll(async () => {
     server = http.createServer((req, res) => {
-        if (req.method === 'GET') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ object: 'list', data: [{ id: 'm', max_model_len: 131072 }] })); return; }
+        if (req.method === 'GET') { modelsAuth.push(String(req.headers.authorization ?? '')); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ object: 'list', data: [{ id: 'm', max_model_len: 131072 }] })); return; }
         let body = ''; req.on('data', c => body += c); req.on('end', () => setTimeout(() => {
             const j = JSON.parse(body || '{}'); posts.push(j);
             const msg = { role: 'assistant', content: '{"answer":42}' };
@@ -77,6 +78,20 @@ describe('fg-run argument contract', () => {
         const ok = await run([...std(), '--prompt', 'hi', '--temperature', '0.4']);
         expect(ok.code).toBe(0);
     }, 90_000);
+    it('two different texts under --task and --workflow, and an unknown --thinking-level, are refused (codex R508, R510)', async () => {
+        const both = await run([...std(), '--task', 'A', '--workflow', 'B']);
+        expect(both.code).toBe(2);
+        expect(both.err).toMatch(/same option/);
+        const typo = await run([...std(), '--prompt', 'hi', '--thinking-level', 'medum']);
+        expect(typo.code).toBe(2);
+        expect(typo.err).toMatch(/--thinking-level must be one of/);
+    }, 60_000);
+    it('the context probe of /models carries the API key (codex R516)', async () => {
+        modelsAuth.length = 0;
+        const r = await run([...std(), '--prompt', 'hi', '--no-log']);   // std() gives --api-key k
+        expect(r.code).toBe(0);
+        expect(modelsAuth).toContain('Bearer k');
+    }, 60_000);
     it('-p takes a request that begins with a dash as the request, and a known option after -p as an option (hermes review §62)', async () => {
         posts.length = 0;
         const r = await run([...std(), '-p', '-5 degrees in F?', '--no-log']);

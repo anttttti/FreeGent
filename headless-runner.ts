@@ -315,15 +315,19 @@ export function getHeadlessPrimaryModel(opts: Record<string, any> = {}): string 
  * Idempotent — safe to call multiple times; only executes on the first call.
  * Used by fg-tui.tsx to prepare for an interactive session before the first user message.
  */
-let _setupDone = false;
-export async function setup(opts: Record<string, any> = {}): Promise<void> {
-    if (_setupDone) return;
-    _setupDone = true;
+let _setupP: Promise<void> | null = null;
+export function setup(opts: Record<string, any> = {}): Promise<void> {
+    // A second caller waits for the first one's initialisation instead of returning while skills and roles are still loading (codex R706). A setup that threw
+    // halfway (a bad --fetch-allow, an MCP server that did not answer) is not "done": a retry in the same process runs it again (codex R517).
+    if (!_setupP) _setupP = _setupOnce(opts).catch(e => { _setupP = null; throw e; });
+    return _setupP;
+}
+async function _setupOnce(opts: Record<string, any> = {}): Promise<void> {
+    loadDotenv();  // load .env keys into process.env before the policy switches, the profile or config are read (a switch set only in .env came too late, codex R705)
     // Benchmark task policies (bench-policy.ts) are loaded only when the runner asks for one of them.
     const _env = (globalThis as any).process?.env ?? {};
     if (_env.FG_EDIT_REQUIRED === '1' || _env.FG_CHANGE_REQUIRED === '1' || _env.FG_PROTECT_TESTS === '1')
         (await import('./bench-policy.js')).installBenchPolicy();
-    loadDotenv();  // load .env keys into process.env before profile or config reads
     loadProfile();  // populate JSDOM localStorage from fg-current-profile.json before config write
     const {
         workspaceRoot, provider, model, apiKey, apiUrl, logFile, sidecarDir,
@@ -460,8 +464,9 @@ export async function setup(opts: Record<string, any> = {}): Promise<void> {
     if (apiUrl) {
         (async () => {
             try {
+                // The same key the requests use: an endpoint that protects /models never told its context size otherwise (codex R516).
                 const modelsResp = await fetch(`${apiUrl}/models`,
-                    { signal: AbortSignal.timeout(10_000) });
+                    { signal: AbortSignal.timeout(10_000), ...(apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : {}) });
                 if (!modelsResp.ok) return;
                 const modelsData = await modelsResp.json();
                 const modelEntry = modelsData.data?.find((m: any) => !model || m.id === model) ?? modelsData.data?.[0];
@@ -855,7 +860,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         _flushFinalHistory();
         const _exit = () => process.exit(1);
         const _t = setTimeout(_exit, 2000);
-        registry.flush().catch(() => {}).then(() => { clearTimeout(_t); _exit(); });
+        Promise.all([registry.flush().catch(() => {}), _persisting]).then(() => { clearTimeout(_t); _exit(); });   // the SQLite history too, within the 2 s (codex R518)
     };
     process.once('SIGTERM', _sigtermHandler);
 

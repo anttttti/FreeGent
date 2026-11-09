@@ -78,10 +78,9 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         child.stderr?.setEncoding('utf8');
         child.stdout?.on('data', d => appendOut(out, String(d), MAX_OUTPUT));
         child.stderr?.on('data', d => appendOut(err, String(d), MAX_OUTPUT));
-        child.on('close', async (exitCode, signal) => {
-            // Ended by a signal (OOM killer, kill, a crash): never a success.
-            const result: Record<string, any> = { ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
-                ...(exitCode == null && signal ? { signal } : {}) };
+        let timedOut = false;
+        // What the command changed (files written, a shrunk file, a planted hook): added to every outcome, a timeout included (codex R674).
+        const _withChanges = async (result: Record<string, any>): Promise<Record<string, any>> => {
             // Detect files written/modified during execution via post-snapshot diff.
             // Populate files_written so llm-loops.ts can set _editsThisRun for the completion gate.
             // Whatever the exit code: a failing command can have changed files too.
@@ -111,13 +110,20 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
                     }
                 } catch {}
             }
-            _done(result);
+            return result;
+        };
+        child.on('close', async (exitCode, signal) => {
+            if (timedOut) return;   // the timeout path is already reporting this run
+            // Ended by a signal (OOM killer, kill, a crash): never a success.
+            _done(await _withChanges({ ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
+                ...(exitCode == null && signal ? { signal } : {}) }));
         });
         child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));
         const timer = setTimeout(() => {
+            timedOut = true;
             try { process.kill(-(child.pid ?? 0), 'SIGKILL'); } catch {}
-            _done({ ..._shaped(),
-                    exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` });
+            void _withChanges({ ..._shaped(),
+                    exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` }).then(_done);
         }, TIMEOUT_MS);
     })().catch(e => resolve({ error: `nativeExec: ${e?.message ?? e}`, exit_code: 1 })); });
 }

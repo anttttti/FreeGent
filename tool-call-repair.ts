@@ -202,6 +202,9 @@ export function _repairExecCodeArgs(normCalls: any[]): boolean {
 // Returns array of {name, args} for direct execution, or null if none found.
 export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
     if (!toolNames?.length) return null;
+    // A tag shown as an example (inside a fenced block or `inline code`) is text about a call, not a call: `<delete_file>{…}</delete_file>` quoted in an
+    // explanation used to run (codex R537). Masked with spaces so the offsets stay.
+    text = text.replace(/```[\s\S]*?```|`[^`\n]*`/g, m => m.replace(/[^\n]/g, ' '));
     const nameRe = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const openRe = new RegExp(`<(${nameRe})>`, 'gi');
     const results: Array<{name: string; args: any}> = [];

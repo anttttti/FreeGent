@@ -37,6 +37,13 @@ describe('execute_code write detection', () => {
         const r = await exec('bash', 'echo x > big/out.bin');
         expect(r.files_written).toEqual(['big/out.bin']);
     });
+    it('a command that times out still reports the files it wrote first (codex R674)', async () => {
+        const exec = createNativeExec({ workspaceRoot: dir });
+        const r = await exec('bash', 'echo partial > src/partial.txt; sleep 30', { timeoutMs: 600 });
+        expect(r.exit_code).toBe(124);
+        expect(r.error).toMatch(/timed out/);
+        expect(r.files_written).toEqual(['src/partial.txt']);
+    }, 20_000);
     it('does not hold the event loop: the screen and other workers keep running while commands snapshot', async () => {
         for (let i = 0; i < 40; i++) { mkdirSync(join(dir, 'src', `d${i}`), { recursive: true }); for (let j = 0; j < 30; j++) writeFileSync(join(dir, 'src', `d${i}`, `f${j}`), 'x'); }
         const exec = createNativeExec({ workspaceRoot: dir });

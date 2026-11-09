@@ -4,6 +4,8 @@
 import { activeAbortController } from './state.js';
 import { combineSignals } from './abort.js';
 import { getPrivacyLevel } from './privacy.js';
+import { redactText } from './secrets.js';
+import { storedCredentialValues } from './stored-credentials.js';
 
 // The manual proxy is a Routed-level setting (Settings disables it below that) and resolveProxy() ignores it there; the Brave branch read it
 // directly, so at Local privacy a saved LAN proxy still received every query (codex R251).
@@ -57,7 +59,8 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
             if (resp.status === 401 || resp.status === 403) {
                 let detail = '';
                 try { detail = (await resp.json())?.detail?.error ?? ''; } catch {}
-                const hint = detail || 'invalid or expired API key — check Settings → Credentials';
+                // A 401 body can reflect the submitted Authorization value: it must not reach the tool result (codex R615).
+                const hint = redactText(detail || 'invalid or expired API key — check Settings → Credentials', storedCredentialValues());
                 return { error: `Tavily ${resp.status}: ${hint}`, authFailed: true };
             }
             return { error: `Tavily HTTP ${resp.status}` };

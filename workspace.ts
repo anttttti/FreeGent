@@ -268,6 +268,7 @@ async function applyWorkspaceBatch(writes: Array<{ name: string; content: string
     return new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE, 'readwrite');
         tx.oncomplete = () => {
+            for (const n of deletes) { try { scheduleArtifactRefresh?.(n); } catch {} }
             for (const w of writes) { try { scheduleArtifactRefresh?.(w.name); } catch {} try { (window as any).refreshOpenFileTab?.(w.name); } catch {} }
             try { (window as any).invalidateWorkspacePaths?.(); } catch {}
             if (opts.clearAll || deletes.some(n => n.startsWith('local/')) || writes.some(w => w.name.startsWith('local/'))) _resyncImportedLocal().then(() => resolve());
@@ -834,6 +835,7 @@ async function writeFsaFile(name, content, encoding: string | null = null) {
     // decoded size was written: codex R31-001).
     await writable.write(encoding === 'base64' ? base64ToBytes(String(content ?? '')) : content);
     await writable.close();
+    try { scheduleArtifactRefresh?.(name); } catch {}   // an open preview of this file, or of a page that reads it, is rebuilt (codex R408)
 }
 function _fsaMissing(e: any): boolean { return e?.name === 'NotFoundError' || /not[ _-]?found|could not be found|no such/i.test(String(e?.message ?? '')); }
 /** Does the synced folder have this file? A folder that cannot be asked (the permission lapsed) is treated as having nothing: the workspace copy is
@@ -848,6 +850,7 @@ async function deleteFsaFile(name) {
     if (!fsaHandle) throw new Error('No local folder is synced — "local/…" paths are unavailable. Use the plain workspace path without the "local/" prefix (e.g. "src/main.js").');
     const { dir, filename } = await fsaNavigate(name);
     await dir.removeEntry(filename);
+    try { scheduleArtifactRefresh?.(name); } catch {}   // a page that inlined this file is rebuilt without it (codex R414)
 }
 
 
@@ -1035,6 +1038,8 @@ interface _SyncDialog {
     note: string;
     apply: (items: SyncItem[], chosen: Map<string, SyncAction>) => Promise<_SyncResult>;
     withUndo: boolean;
+    /** The project epoch when the comparison BEGAN (the awaits of the comparison can outlast a project replacement); defaults to the time the dialog opens (codex R595). */
+    epoch?: number;
     /** Called when Apply is clicked: the paths whose files are no longer what the comparison was made from. They are left out of the apply. */
     staleCheck?: () => Promise<Set<string>>;
     /** Called after Apply failed, so the dialog can be rebuilt from the current state of both sides. */
@@ -1100,7 +1105,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
     const ov = document.createElement('div');
     ov.className = 'fg-modal-overlay'; ov.id = 'fg-localsync-overlay';
     const chosen = new Map<string, SyncAction>();
-    const epoch0 = workspaceEpoch();
+    const epoch0 = d.epoch ?? workspaceEpoch();
     const MAX_ROWS = 300;
     const groups = new Map<string, SyncItem[]>();
     for (const it of items) { if (!groups.has(it.kind)) groups.set(it.kind, []); groups.get(it.kind)!.push(it); }
@@ -1172,6 +1177,7 @@ async function _showSyncDialog(d: _SyncDialog): Promise<void> {
 
 /** Compare the imported Local Folder with the Workspace and let the user decide per file or per group. */
 export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = {}): Promise<void> {
+    const epoch = workspaceEpoch();
     const { workspace, local } = await _hashBothSides();
     const base = _lsGet(_LS_BASE);
     let items = planSync(workspace, local, base);
@@ -1181,7 +1187,7 @@ export async function openLocalSyncDialog(flags: { onlyIfIncoming?: boolean } = 
     // After an import the Workspace's own files are not news: only open when the folder brought something that differs.
     if (flags.onlyIfIncoming && !items.some(i => i.kind !== 'new-in-workspace')) return;
     await _showSyncDialog({
-        title: 'Sync Local Folder with Workspace', other: 'Local Folder', items, merges, withUndo: true,
+        title: 'Sync Local Folder with Workspace', other: 'Local Folder', items, merges, withUndo: true, epoch,
         staleCheck: async () => {
             const now = await _hashBothSides();
             return new Set(items.filter(i => now.workspace[i.path] !== workspace[i.path] || now.local[i.path] !== local[i.path]).map(i => i.path));
@@ -1203,6 +1209,7 @@ export async function projectBaseFits(baseText: string, incoming: { content?: st
 
 /** Project import as a merge: the project's files are compared with the Workspace; files edited on both sides merge when the base that copy started from is known. Chats stay as they are. */
 async function _mergeProjectFiles(data: any): Promise<void> {
+    const epoch = workspaceEpoch();
     const incoming: Record<string, any> = {}, incomingHash: Record<string, string> = {};
     for (const f of data.workspace || []) {
         const segs = String(f.name).split('/');
@@ -1220,7 +1227,7 @@ async function _mergeProjectFiles(data: any): Promise<void> {
             const choices: SyncAction[] = m ? (m.conflicts ? ['keep-both', 'merge', 'to-workspace', 'skip'] : ['merge', 'keep-both', 'to-workspace', 'skip']) : ['keep-both', 'to-workspace', 'skip'];
             return { ...i, action: choices[0], choices }; })());
     await _showSyncDialog({
-        title: `Merge project “${data.name || 'Project'}” into the Workspace`, other: 'imported project', items, merges, withUndo: true,
+        title: `Merge project “${data.name || 'Project'}” into the Workspace`, other: 'imported project', items, merges, withUndo: true, epoch,
         staleCheck: async () => {
             const now = (await _hashBothSides()).workspace;
             return new Set(items.filter(i => now[i.path] !== workspace[i.path]).map(i => i.path));
@@ -1322,6 +1329,7 @@ export async function openCloudSyncDialog(): Promise<void> {
     // base: syncing the second read the first one's files as deleted here (codex R324). The base says which project last synced.
     if (baseRec?.name && baseRec.name !== name && !confirm(`The cloud project “${slug}” was last synced from the project “${baseRec.name}”, not “${name}”. Syncing now would mix the two projects' files. Rename this project to give it a cloud project of its own, or press OK to sync it with “${slug}” anyway.`)) return;
     const client = new CloudSyncClient(url, key);
+    const epoch = workspaceEpoch();
     try {
         _cloudStatus('Connecting…');
         const remote = await client.getManifest(slug);
@@ -1347,7 +1355,7 @@ export async function openCloudSyncDialog(): Promise<void> {
             alert(`“${slug}” is in sync with the cloud.`); return;
         }
         await _showSyncDialog({
-            title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true,
+            title: `Sync “${slug}” with the cloud`, other: 'Cloud', items, merges, withUndo: true, epoch,
             staleCheck: async () => {
                 const now = await _cloudHashWorkspace(slug);
                 return new Set(items.filter(i => now.hashes[i.path] !== ws.hashes[i.path]).map(i => i.path));
@@ -1692,6 +1700,7 @@ function _scheduleFileListRender() {
 // skill the agent wrote worked only after a restart (TUI report case 046).
 function _reloadAfterWorkspaceChange(path: string): void {
     const p = String(path).replace(/^\.?\/+/, '');
+    try { (window as any).invalidateWorkspacePaths?.(); } catch {}   // the skill-trigger path index is cached for 30 s: a file the adapter just made or removed must show in it (codex R443)
     if (p === 'AGENTS.md')       loadAgentsContext?.();
     if (p.startsWith('roles/'))  loadRoles?.();
     if (p.startsWith('skills/') || p.startsWith('rules/')) loadSkills?.();
@@ -3661,9 +3670,10 @@ export function validateProjectData(data: any): void {
     // The chat list and every chat's history are parsed here, before anything is replaced: a corrupt one found afterwards left the new workspace in and the old chats
     // gone, or an emptied conversation without a word (codex R97).
     for (const [k, v] of Object.entries(data.chatData || {})) {
-        if (typeof v !== 'string') continue;
         const isList = k === 'fg_chat_list', isHistory = /^fg_chat_.+_oh$/.test(k);
         if (!isList && !isHistory) continue;
+        // Skipped, a non-string list read as "no chats": the restore then deleted every chat the person had (codex R538, R539).
+        if (typeof v !== 'string') throw new Error(`The project's ${isList ? 'chat list' : `history of chat "${k.slice(8, -3)}"`} is not text, so nothing was imported.`);
         let parsed: unknown;
         try { parsed = JSON.parse(v); } catch { throw new Error(`The project's ${isList ? 'chat list' : `history of chat "${k.slice(8, -3)}"`} is damaged (not valid JSON), so nothing was imported.`); }
         if (!Array.isArray(parsed)) throw new Error(`The project's ${isList ? 'chat list' : `history of chat "${k.slice(8, -3)}"`} is not a list, so nothing was imported.`);

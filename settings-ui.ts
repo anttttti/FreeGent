@@ -416,13 +416,12 @@ function saveSettings() {
         // Unchanged since the form was filled: not this control's write. A tab whose form was filled before another tab
         // stored a newer key wrote its old key back whenever any other field was edited (codex 243/244).
         if (el && el.dataset.fgBase !== undefined && val === el.dataset.fgBase) return;
+        // The baseline moves only when the write went through: setPref returns false on a refused write, and a cleared key that is still stored must not read as saved (codex R563).
         if (val) {
-            setPref(lsKey, val);
-            if (el) { el.dataset.fgBase = val; el.dataset.fgLoaded = '1'; }
+            if (setPref(lsKey, val) !== false && el) { el.dataset.fgBase = val; el.dataset.fgLoaded = '1'; }
         } else if (el?.dataset.fgLoaded) {
             // Field was shown with a value and user deliberately cleared it — honour that.
-            setPref(lsKey, '');
-            el.dataset.fgBase = '';
+            if (setPref(lsKey, '') !== false) el.dataset.fgBase = '';
         }
         // else: field never populated (race with keys endpoint) — leave stored value intact.
     };

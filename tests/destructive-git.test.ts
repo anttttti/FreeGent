@@ -139,4 +139,9 @@ describe('taskChangesData', () => {
         expect(taskChangesData('How many lines in all the log files under /var/log/app contain the word error?')).toBe(false);
         expect(taskChangesData('Count the unique characters in `logfile.txt`. The result must be an integer.')).toBe(false);
     });
+    it('a verb the request forbids does not count as a request to change the data (codex R659)', () => {
+        expect(taskChangesData('Count the rows in data.csv. Do not edit or change the CSV.')).toBe(false);
+        expect(taskChangesData("Count the rows in data.csv, don't modify it.")).toBe(false);
+        expect(taskChangesData('Do not touch the log. Then fix the bad value in data.csv.')).toBe(true);   // the next sentence asks for it
+    });
 });

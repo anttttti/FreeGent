@@ -416,6 +416,8 @@ export function pinnedFetch(serverPort: number, idleMs = POST_IDLE_MS): typeof f
         if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ProxyRefusal('only http(s) URLs can be fetched');
         const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
         const headers: Record<string, string> = { ...(init.headers ?? {}), 'accept-encoding': 'identity' };
+        // The page may have ended the request while the target checks were still running: an abort that already fired is not replayed to a listener added later (codex R436).
+        if (init.signal?.aborted) throw new Error('aborted');
         return await new Promise<Response>((resolve, reject) => {
             const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, {
                 method: init.method ?? 'GET', headers, lookup: _guardLookup(serverPort, port) as any,

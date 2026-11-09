@@ -17,6 +17,20 @@ describe('check_page', () => {
         expect(r.error).toMatch(/not available|needs the browser app/);
     });
 
+    it('says which expectations, actions and probes were cut (codex R416, R418)', async () => {
+        W.nativeExec = undefined;
+        W.runPageCheck = async () => ({ summary: 'ok' });
+        const many = (n: number, f: (i: number) => any) => Array.from({ length: n }, (_, i) => f(i));
+        const r = await W.executeToolAsync('check_page', { path: 'index.html',
+            expect: [...many(12, i => ({ expr: `a${i}` })), { expr: '  ' }],
+            actions: many(25, () => ({ click: '#a' })), probes: many(11, i => `p${i}`) }, null);
+        expect(r.summary).toBe('ok');
+        expect(r.not_run).toMatch(/3 of 13 expectations were not run/);
+        expect(r.not_run).toMatch(/5 actions after the first 20/);
+        expect(r.not_run).toMatch(/1 probes after the first 10/);
+        expect((await W.executeToolAsync('check_page', { path: 'index.html' }, null)).not_run).toBeUndefined();
+    });
+
     it('requires an .html path and passes actions/probes through', async () => {
         W.nativeExec = undefined;
         let got: any = null;

@@ -108,6 +108,7 @@ async function _startMediaRecorder(key, provider, model) {
     if (_micCancelled) { _micCancelled = false; stream.getTracks().forEach(t => t.stop()); return; }   // stopped while the permission prompt was open
 
     _audioChunks = [];
+    const owner = _activeChat();   // the chat the recording was made in (codex R481)
     try { _mediaRecorder = new MediaRecorder(stream); }
     catch (e) {
         stream.getTracks().forEach(t => t.stop()); // release the mic — otherwise it stays hot
@@ -119,9 +120,12 @@ async function _startMediaRecorder(key, provider, model) {
     _mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         _setMicState(false);
-        const blob = new Blob(_audioChunks, { type: 'audio/webm' });
+        // The browser picks the container (WebM, or MP4 on Safari): say what it is, not always WebM (codex R484).
+        const mime = _mediaRecorder?.mimeType || 'audio/webm';
+        const blob = new Blob(_audioChunks, { type: mime });
+        _audioChunks = [];   // the recording is in the Blob now; do not keep a second copy until the next one (codex R485)
         const text = await _apiTranscribe(blob, key, provider, model);
-        if (text) _insertVoiceText(text);
+        if (text) _insertVoiceText(text, owner);
         else _micNotice('Transcription failed — nothing was inserted.');
     };
     _mediaRecorder.start();
@@ -146,7 +150,8 @@ function _startWebSpeech() {
         _setMicState(false);
         if (ev?.error && ev.error !== 'aborted' && ev.error !== 'no-speech') _micNotice(ev.error === 'not-allowed' || ev.error === 'service-not-allowed' ? _micErrorText({ name: 'NotAllowedError' }) : `Voice input failed (${ev.error}).`);
     };
-    rec.onresult = e => _insertVoiceText(e.results[0][0].transcript);
+    const owner = _activeChat();
+    rec.onresult = e => _insertVoiceText(e.results[0][0].transcript, owner);
     _speechRec = rec;
     try { rec.start(); } catch (e) { _speechRec = null; _micNotice(_micErrorText(e)); }
 }
@@ -155,7 +160,7 @@ async function _apiTranscribe(blob, key, provider, model) {
     const url = _transcribeUrl(provider);
     if (!url) return '';
     const form = new FormData();
-    form.append('file', blob, 'audio.webm');
+    form.append('file', blob, /mp4|aac|m4a/i.test(blob.type) ? 'audio.mp4' : /ogg/i.test(blob.type) ? 'audio.ogg' : 'audio.webm');
     form.append('model', model);
     const lang = localStorage.getItem(KEYS.VOICE_STT_LANG);
     if (lang) form.append('language', lang);
@@ -173,7 +178,10 @@ async function _apiTranscribe(blob, key, provider, model) {
     }
 }
 
-function _insertVoiceText(text) {
+const _activeChat = (): string | null => (typeof window !== 'undefined' ? (window as any).activeChatId ?? null : null);
+function _insertVoiceText(text, owner: string | null = null) {
+    // The composer shows the chat that is open now: a transcript that finished after a switch would be sent in the wrong conversation (codex R481).
+    if (owner && _activeChat() && owner !== _activeChat()) { _micNotice('Voice input finished in another chat, so it was not inserted here.'); return; }
     const el = document.getElementById('agent-input');
     if (!el) return;
     const cur = (el.innerText || '').trim();

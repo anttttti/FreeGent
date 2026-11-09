@@ -590,7 +590,13 @@ const _SCHEMA_KEYS = new Set(['type', 'description', 'properties', 'required', '
 function _resolveRef(ref: string, root: any): any {
     if (typeof ref !== 'string' || !ref.startsWith('#')) return undefined;
     let node = root;
-    for (const part of ref.slice(1).split('/').filter(Boolean)) {
+    const ptr = ref.slice(1);
+    if (ptr === '') return root;
+    if (!ptr.startsWith('/')) return undefined;
+    // RFC 6901: an empty token is the empty-string key, and a URI fragment is percent-encoded (`#/$defs/Some%20Type`) (codex R431, R432).
+    for (const raw of ptr.slice(1).split('/')) {
+        let part: string;
+        try { part = decodeURIComponent(raw); } catch { return undefined; }
         if (node == null || typeof node !== 'object') return undefined;
         node = node[part.replace(/~1/g, '/').replace(/~0/g, '~')];
     }
@@ -736,7 +742,8 @@ function _resolve(name: string): { server: McpServer; tool: McpToolInfo } | null
 // destructiveHint true — so an unannotated tool counts as destructive.
 function mcpToolClaim(name: string): 'read' | 'write' | 'destructive' {
     const a = _resolve(name)?.tool.annotations || {};
-    if (a.readOnlyHint === true) return 'read';
+    // Conflicting hints (read-only and destructive): the cautious one wins, a tool cannot be both (codex R709).
+    if (a.readOnlyHint === true && a.destructiveHint !== true) return 'read';
     return a.destructiveHint === false ? 'write' : 'destructive';
 }
 // Whether a server's annotations may lower the approval a tool needs. They are the server's own

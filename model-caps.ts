@@ -40,6 +40,14 @@ const _NONE_TTL_MS = 7 * 24 * 3600_000;
 function _readLearned(): Record<string, { fmt: string; at: number }> {
     try { return JSON.parse(localStorage.getItem(KEYS.TOOL_FORMATS_LEARNED) || '{}') || {}; } catch { return {}; }
 }
+/** Forget what was learned about custom and vLLM endpoints: the same provider/model can be served by another URL after an edit, and a learned 'none' would keep
+ *  the tools off there for a week (codex R546). Listed providers keep what they learned. */
+export function clearLearnedToolFormats(): void {
+    const all = _readLearned();
+    let changed = false;
+    for (const k of Object.keys(all)) if (/^(?:custom|vllm)\//.test(k)) { delete all[k]; changed = true; }
+    if (changed) try { localStorage.setItem(KEYS.TOOL_FORMATS_LEARNED, JSON.stringify(all)); } catch {}
+}
 export function isToolFormatListed(provider: any, model: any): boolean {
     return `${provider}/${model}` in _TOOL_FORMATS;
 }
@@ -470,4 +478,4 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
 }
 
 // Window bridge for classic scripts.
-Object.assign(window, { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError });
+Object.assign(window, { getModelToolFormat, parseFnTagCalls, recordToolFormat, isToolFormatListed, isToolsRejectedError, clearLearnedToolFormats });
