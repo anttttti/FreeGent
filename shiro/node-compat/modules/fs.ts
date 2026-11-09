@@ -161,6 +161,7 @@ export function createFsModule(deps: FsDeps): any {
       tickSyncOps();
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
       if (fileCache.has(resolved) || fileCache.has(resolved + '.js') || fileCache.has(resolved + '/index.js')) return true;
+      if (fileMtimes.has(resolved)) return true;   // preloaded by name only (binary or over the preload budget)
       // Check for directory sentinel (from mkdirSync)
       if (fileCache.has(resolved + '/.')) return true;
       // Check if path is a directory (has files under it)

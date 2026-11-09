@@ -2,6 +2,15 @@ import type { CommandContext } from '../commands/index';
 import { getShiroOrigin } from '../utils/shiro-origin';
 import { DEFAULT_CLAUDE_THEME, ensureClaudeBootstrap } from '../claude-config';
 
+// Every `node` run copies the files around it into strings. A game project with hundreds of images and saved pages made that
+// step run for 20-40 s and then took the tab down, even for `node -e "console.log('hi')"` (uploaded logs 2026-11-09, 40 crash
+// records). Binary files read as UTF-8 text are useless to a script anyway, and the total is capped.
+const _BINARY_EXT = /\.(?:png|jpe?g|gif|webp|bmp|ico|avif|tiff?|mp[34]|m4a|ogg|oga|wav|flac|webm|mov|avi|mkv|zip|gz|tgz|bz2|xz|7z|rar|tar|pdf|woff2?|ttf|otf|eot|wasm|bin|so|dll|exe|dylib|class|jar|pyc|npy|npz|onnx|pt|safetensors|sqlite3?|db)$/i;
+const _PRELOAD_BUDGET = 48 * 1024 * 1024;   // characters held by one run's preload
+const _spent = new WeakMap<object, number>();
+const _budgetLeft = (cache: object): number => _PRELOAD_BUDGET - (_spent.get(cache) ?? 0);
+const _spend = (cache: object, n: number): void => { _spent.set(cache, (_spent.get(cache) ?? 0) + n); };
+
 /**
  * Pre-load files from the virtual filesystem into the memory cache.
  * This enables synchronous readFileSync/statSync to work without IndexedDB round-trips.
@@ -27,10 +36,15 @@ export async function preloadDir(
           fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());
           fileCache.set(fp + '/.', '');   // the directory exists, even when empty
           await preloadDir(ctx, fileCache, fileMtimes, fp, depth + 1, maxDepth);
-        } else if (st.size < 16777216) { // 16MB limit
+        } else if (fileCache.has(fp)) {
+          // already read in this run (the script's project root is walked again after the working directory)
+        } else if (st.size < 16777216 && !_BINARY_EXT.test(fp) && _budgetLeft(fileCache) > st.size) { // 16MB limit
           const content = await ctx.fs.readFile(fp, 'utf8');
           fileCache.set(fp, content as string);
+          _spend(fileCache, (content as string).length);
           fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());
+        } else {
+          fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());   // not read, but existsSync still finds it
         }
       } catch { /* skip */ }
     }
