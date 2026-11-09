@@ -496,7 +496,9 @@ function setIntentValidation(value) { localStorage.setItem(KEYS.INTENT_VALIDATIO
 function getToolApproval() {
     const hostUnisolated = getSandboxProvider() === 'local'
         && !(typeof window !== 'undefined' && (window as any).__FG_SERVER_INFO?.execIsolated);
-    return ls('fg_tool_approval', hostUnisolated ? 'high' : 'off');
+    const stored = ls('fg_tool_approval', hostUnisolated ? 'high' : 'off');
+    // An imported or hand-edited value outside the three means nothing to the approval gate, which only asks for 'high' and 'all': it would read as 'off' (codex R403).
+    return stored === 'off' || stored === 'high' || stored === 'all' ? stored : (hostUnisolated ? 'high' : 'off');
 }
 
 

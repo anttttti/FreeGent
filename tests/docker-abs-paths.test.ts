@@ -35,6 +35,14 @@ describe('_normToolPath', () => {
     });
 });
 
+describe('DockerFsAdapter listing (codex R351)', () => {
+    it('a failed docker exec is reported as a failed listing, not an empty workspace', async () => {
+        const files = await new DockerFsAdapter('fg-no-such-container-xyz').agentListFiles();   // docker missing or no such container: either way the exec fails
+        expect(files).toHaveLength(1);
+        expect(files[0].name).toMatch(/^\[listing failed: /);
+    });
+});
+
 describe('read_file / write_file reach the container with the absolute path', () => {
     it('passes /app/compute_seq.py through', async () => {
         const seen: string[] = [];

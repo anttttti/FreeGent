@@ -12,7 +12,7 @@ beforeEach(() => {
     saved = Object.fromEntries(STUBBED.map(k => [k, W[k]]));
     files = {}; mtimes = {};
     W.agentListFiles = async () => Object.keys(files).map(name => ({ name, lastModified: mtimes[name] ?? 0 }));
-    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`nf ${p}`); return files[p]; };
+    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`File not found: ${p}`); return files[p]; };
     W.agentWriteFile = async (p, c) => { files[p] = c; };
     W.agentDeleteFile = async (p) => { delete files[p]; };
     W.refreshTasks = async () => {};
@@ -31,6 +31,16 @@ const review = async () => {
 };
 
 describe('acceptance review input', () => {
+    it('does not send a credential file the task names to the reviewing model (codex R388)', async () => {
+        files['js/game.js'] = 'function jump(){}';
+        files['config/.env'] = 'API_KEY=sk-live-0123456789abcdef0123456789abcdef';
+        files['fg-tasks/002-core.md'] = task + '## Files\n- `config/.env`\n- `js/game.js`\n';
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        await W.transitionTask('fg-tasks/002-core.md', 'done');
+        const prompt = W.callLLMComplete.mock.calls[0][0];
+        expect(prompt).toContain('function jump');
+        expect(prompt).not.toContain('sk-live-0123456789abcdef');
+    });
     it('includes the project source files when the task names none, newest first', async () => {
         files['index.html'] = '<canvas id="game"></canvas>';
         files['js/game.js'] = 'function jump(){}';

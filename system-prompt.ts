@@ -22,7 +22,9 @@ export function _buildWorkspaceDesc(): string {
     // with "No local folder open" when nothing was synced (fg-chat 2026-07-16).
     const _localSynced = typeof hasLocalFolder === 'function' && hasLocalFolder();
     if (_localSynced) {
-        return `Files live in the user's browser (IndexedDB). "local/" files are in a folder from the user's filesystem — changes write to disk. Use "local/" prefix for all local paths (e.g. "local/src/main.js").`;
+        // Only a live folder handle writes to disk; an imported snapshot is browser-only until the user exports or reconnects it (codex R343).
+        const _disk = typeof hasFsaFolder === 'function' ? hasFsaFolder() : true;
+        return `Files live in the user's browser (IndexedDB). "local/" files are ${_disk ? 'in a folder from the user\'s filesystem — changes write to disk' : 'an imported copy of a folder from the user\'s filesystem — changes stay in the browser, not on disk, until the user exports them or reconnects the folder'}. Use "local/" prefix for all local paths (e.g. "local/src/main.js").`;
     }
     // WASM bash: workspace files are pre-loaded at /workspace; bash is the primary file tool.
     if (typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm' && browserBashAvailable()) {

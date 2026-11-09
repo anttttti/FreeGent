@@ -25,6 +25,8 @@ import { SURFACE_TYPES } from './session-event.js';
  * deriveMessages(); chat-history.ts uses it to read the chat's surface.
  */
 export function eventMessage(ev: SessionEvent): any | null {
+    // A record from a file on disk can be valid JSON with the right seq and still have no usable data: skip it, do not throw out of every later projection (codex R338).
+    if (!ev.data || typeof ev.data !== 'object') return null;
     switch (ev.type) {
         case 'user/message': {
             const d = ev.data as any;
@@ -34,6 +36,7 @@ export function eventMessage(ev: SessionEvent): any | null {
         }
         case 'assistant/message': {
             const m = (ev.data as any).message;
+            if (!m || typeof m !== 'object') return null;
             // Skip bare usage-only messages (content null, no tool_calls).
             return m.content !== null || m.tool_calls?.length ? m : null;
         }

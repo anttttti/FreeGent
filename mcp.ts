@@ -612,6 +612,22 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
         const note = `(schema reference ${ref} could not be resolved${refStack.includes(ref) ? ' — recursive' : ''})`;
         return { type: 'object', properties: {}, description: rest.description ? `${rest.description} ${note}` : note };
     }
+    // allOf: merge the branches (properties and required are unioned, the first branch to give any other key wins) instead of dropping them, which turned
+    // an object made of allOf parts into an empty object or a string (codex R368).
+    if (Array.isArray(schema.allOf) && schema.allOf.length) {
+        const { allOf, ...rest } = schema;
+        const merged: any = { ...rest };
+        for (const part of allOf) {
+            if (!part || typeof part !== 'object') continue;
+            const p = typeof part.$ref === 'string' ? (_resolveRef(part.$ref, root) ?? {}) : part;
+            for (const [k, v] of Object.entries(p)) {
+                if (k === 'properties') merged.properties = { ...(merged.properties ?? {}), ...(v as object) };
+                else if (k === 'required' && Array.isArray(v)) merged.required = [...new Set([...(merged.required ?? []), ...v])];
+                else if (!(k in merged)) merged[k] = v;
+            }
+        }
+        return sanitizeMcpSchema(merged, depth + 1, root, refStack);
+    }
     const out: any = {};
     let type = schema.type;
     if (Array.isArray(type)) {                          // ["string","null"] → "string"
@@ -635,7 +651,7 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
     for (const k of Object.keys(schema)) {
         if (!_SCHEMA_KEYS.has(k) || k === 'type') continue;
         if (k === 'properties') {
-            out.properties = {};
+            out.properties = Object.create(null);   // a property named __proto__ must stay an own key (codex R340)
             for (const [p, v] of Object.entries(schema.properties || {})) out.properties[p] = sanitizeMcpSchema(v, depth + 1, root, refStack);
         } else if (k === 'items') {
             out.items = sanitizeMcpSchema(Array.isArray(schema.items) ? schema.items[0] : schema.items, depth + 1, root, refStack);
@@ -645,7 +661,8 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
             out[k] = schema[k];
         }
     }
-    if (schema.const !== undefined && !out.enum) out.enum = [schema.const];
+    // Both constraints apply: with an enum as well, const narrows it (the intersection), it does not give way to it (codex R369).
+    if (schema.const !== undefined) out.enum = Array.isArray(out.enum) ? out.enum.filter((v: any) => JSON.stringify(v) === JSON.stringify(schema.const)) : [schema.const];
     if (type === 'object' && !out.properties) out.properties = {};
     if (type === 'array' && !out.items) out.items = { type: 'string' };
     if (Array.isArray(out.required) && !out.required.length) delete out.required;

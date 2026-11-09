@@ -3,7 +3,16 @@ import { KEYS, voiceApivKey } from './storage-keys.js';
 
 let _mediaRecorder: MediaRecorder | null = null;
 let _audioChunks: Blob[]   = [];
+let _speechRec: any        = null;    // the running Web Speech recognizer, so the mic button can stop it (codex R342)
+let _micPending            = false;   // waiting for the microphone permission prompt
+let _micCancelled          = false;   // the button was pressed again during that wait
 let _ttsAudio: HTMLAudioElement | null      = null;
+let _ttsUrl: string | null                  = null;
+/** Stop the API TTS element and revoke its object URL (it used to be revoked only when playback ended). */
+function _releaseTtsAudio() {
+    if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+    if (_ttsUrl) { URL.revokeObjectURL(_ttsUrl); _ttsUrl = null; }
+}
 
 // ── Provider routing ─────────────────────────────────────────────────────────
 
@@ -79,6 +88,8 @@ async function toggleVoiceInput() {
         _mediaRecorder.stop();
         return;
     }
+    if (_speechRec) { try { _speechRec.stop(); } catch {} return; }
+    if (_micPending) { _micCancelled = true; return; }
     for (const entry of _getSttList()) {
         const [provider, model] = entry.split('|');
         if (provider === 'browser') { _startWebSpeech(); return; }
@@ -90,8 +101,11 @@ async function toggleVoiceInput() {
 
 async function _startMediaRecorder(key, provider, model) {
     let stream: MediaStream;
+    _micPending = true; _micCancelled = false;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (e) { console.error('[voice] mic access denied:', e); _micNotice(_micErrorText(e)); return; }
+    finally { _micPending = false; }
+    if (_micCancelled) { _micCancelled = false; stream.getTracks().forEach(t => t.stop()); return; }   // stopped while the permission prompt was open
 
     _audioChunks = [];
     try { _mediaRecorder = new MediaRecorder(stream); }
@@ -126,13 +140,15 @@ function _startWebSpeech() {
     const lang = localStorage.getItem(KEYS.VOICE_STT_LANG);
     if (lang) rec.lang = lang;
     rec.onstart  = () => _setMicState(true);
-    rec.onend    = () => _setMicState(false);
+    rec.onend    = () => { if (_speechRec === rec) _speechRec = null; _setMicState(false); };
     rec.onerror  = (ev: any) => {
+        if (_speechRec === rec) _speechRec = null;
         _setMicState(false);
         if (ev?.error && ev.error !== 'aborted' && ev.error !== 'no-speech') _micNotice(ev.error === 'not-allowed' || ev.error === 'service-not-allowed' ? _micErrorText({ name: 'NotAllowedError' }) : `Voice input failed (${ev.error}).`);
     };
     rec.onresult = e => _insertVoiceText(e.results[0][0].transcript);
-    try { rec.start(); } catch (e) { _micNotice(_micErrorText(e)); }
+    _speechRec = rec;
+    try { rec.start(); } catch (e) { _speechRec = null; _micNotice(_micErrorText(e)); }
 }
 
 async function _apiTranscribe(blob, key, provider, model) {
@@ -215,12 +231,14 @@ async function _apiSpeak(text, key, provider, model, entryKey) {
         });
         if (!r.ok) { console.error('[voice] TTS error:', await r.text()); return; }
         const blob    = await r.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        _ttsAudio = new Audio(audioUrl);
-        _ttsAudio.onended = () => URL.revokeObjectURL(audioUrl);
-        await _ttsAudio.play();
+        _releaseTtsAudio();
+        _ttsUrl = URL.createObjectURL(blob);
+        const audio = _ttsAudio = new Audio(_ttsUrl);
+        audio.onended = () => { if (_ttsAudio === audio) _releaseTtsAudio(); };
+        await audio.play();
     } catch (e) {
         console.error('[voice] TTS error:', e);
+        _releaseTtsAudio();   // a rejected play() (autoplay policy) must not keep the Blob (codex R341)
     }
 }
 
@@ -239,7 +257,7 @@ function _cleanForSpeech(text) {
 
 function stopSpeaking() {
     window.speechSynthesis?.cancel();
-    if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+    _releaseTtsAudio();
 }
 
 // ── Speaker buttons ──────────────────────────────────────────────────────────

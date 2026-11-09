@@ -277,9 +277,9 @@ const _isPlainObject = (v: any): boolean => !!v && typeof v === 'object' && !Arr
 // (codex R198/R200): only object records with object settings are profiles.
 function getSavedProfiles() {
     let root: any;
-    try { root = JSON.parse(localStorage.getItem('fg_profiles') || '{}'); } catch { return {}; }
-    if (!_isPlainObject(root)) return {};
-    const out: Record<string, any> = {};
+    const out: Record<string, any> = Object.create(null);   // a profile named __proto__ must be an own key, not a prototype assignment (codex R359)
+    try { root = JSON.parse(localStorage.getItem('fg_profiles') || '{}'); } catch { return out; }
+    if (!_isPlainObject(root)) return out;
     for (const [name, rec] of Object.entries(root)) if (_isPlainObject(rec) && _isPlainObject((rec as any).settings)) out[name] = rec;
     return out;
 }

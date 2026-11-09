@@ -18,7 +18,7 @@ import { omittedFileWriteMessage, shrinkNote, snapshotEpoch, snapshotWorkspace, 
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
-import { isTaskPath, isScratchTask, canonTaskStatus } from './task-status.js';
+import { isTaskPath, isScratchTask, canonTaskStatus, isLedgerPath, TASK_STATUSES } from './task-status.js';
 import { parseFrontmatter } from './frontmatter.js';
 import { rootPageOf, destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
@@ -552,29 +552,29 @@ export function revokeToolApprovals(prefix: string): void {
 
 // FIFO queue so parallel tool calls (Promise.all) don't overwrite each other's resolver.
 // Each entry is shown one at a time; the next shows as soon as the user responds.
-const _approvalQueue: Array<{ toolName: string; summary: string; resolve: (v: boolean) => void }> = [];
+const _approvalQueue: Array<{ toolName: string; key: string; summary: string; resolve: (v: boolean) => void }> = [];
 let _approvalActive = false;
 
 async function _drainApprovalQueue() {
     _approvalActive = true;
     while (_approvalQueue.length) {
-        const { toolName, summary, resolve } = _approvalQueue.shift()!;
+        const { toolName, key, summary, resolve } = _approvalQueue.shift()!;
         // Re-check session whitelist: it may have been granted while this entry was waiting
-        if (_toolApprovalSession.has(toolName)) { resolve(true); continue; }
-        const result = await _showApprovalToast(toolName, summary);
+        if (_toolApprovalSession.has(key)) { resolve(true); continue; }
+        const result = await _showApprovalToast(toolName, summary, key);
         resolve(result);
     }
     _approvalActive = false;
 }
 
-function _showApprovalToast(toolName: string, summary: string): Promise<boolean> {
+function _showApprovalToast(toolName: string, summary: string, key: string = toolName): Promise<boolean> {
     const toast   = document.getElementById('tool-approval-toast');
     const label   = document.getElementById('tool-approval-label');
     const sesName = document.getElementById('tool-approval-session-name');
     const sesCb   = document.getElementById('tool-approval-session') as HTMLInputElement | null;
     if (!toast) return Promise.resolve(true);
     if (label)   label.textContent   = summary;
-    if (sesName) sesName.textContent = toolName;
+    if (sesName) { sesName.textContent = toolName + (key !== toolName ? ' (on this computer)' : ''); sesName.dataset.key = key; }
     if (sesCb)   sesCb.checked       = false;
     toast.style.display = '';
     return new Promise(resolve => { _currentApprovalResolve = resolve; });
@@ -613,8 +613,9 @@ export function requestToolApproval(toolName, args) {
     if (!document.getElementById('tool-approval-toast')) return Promise.resolve(true);
     if (_approvalsGated) return Promise.resolve(false);
     const summary = approvalSummary(toolName, args);
+    const key = _approvalKey(toolName, args);
     return new Promise<boolean>(resolve => {
-        _approvalQueue.push({ toolName, summary, resolve });
+        _approvalQueue.push({ toolName, key, summary, resolve });
         if (!_approvalActive) _drainApprovalQueue();
     });
 }
@@ -624,7 +625,7 @@ function resolveToolApproval(allowed) {
     const sesCb = document.getElementById('tool-approval-session') as HTMLInputElement | null;
     const label = document.getElementById('tool-approval-session-name');
     if (allowed && sesCb?.checked && label?.textContent)
-        _toolApprovalSession.add(label.textContent);
+        _toolApprovalSession.add(label.dataset.key || label.textContent);
     if (toast) toast.style.display = 'none';
     if (_currentApprovalResolve) { _currentApprovalResolve(allowed); _currentApprovalResolve = null; }
 }
@@ -649,6 +650,11 @@ const _APPROVAL_HIGH_RISK = new Set(['delete_file', 'execute_code']);
 // True when the call would run a command on the user's machine through the dev server
 // (/api/execute or /api/git), as opposed to a browser sandbox or a headless container.
 // Mirrors the routing in _handleExecuteCode.
+/** What a session grant is kept under: code the user allowed in the browser sandbox is not code allowed to run on their computer (codex R402). */
+function _approvalKey(name: string, args: any): string {
+    return name === 'execute_code' && _runsOnHost(name, args) ? 'execute_code:host' : name;
+}
+
 function _runsOnHost(name: string, args: any): boolean {
     if (runtime.hasNativeExec) return false;   // headless: the runner's own sandboxing applies
     if (name === 'run_git') return true;
@@ -1246,8 +1252,11 @@ async function _handleCheckPage(args: any) {
 }
 
 async function _handleUpdateTaskStatus(args: any) {
-    const { path, status, log_entry } = args;
-    if (!path || !status) return { error: 'path and status are required.' };
+    const { path, log_entry } = args;
+    if (!path || !args.status) return { error: 'path and status are required.' };
+    const status = canonTaskStatus(args.status);   // one spelling for the transition, the ledger and the reply: "review" and "completed" are written as in-review and done
+    if (!TASK_STATUSES.includes(status)) return { error: `update_task_status: unknown status "${args.status}". Use one of: ${TASK_STATUSES.join(', ')}. Nothing was changed.` };
+    if (isLedgerPath(path)) return { error: `update_task_status: "${path}" is the task ledger, not a task. Nothing was changed.` };
     // Only task files carry a status. Run on any other file this prepended frontmatter and a log
     // line to it (a model "finishing" config.json left the JSON unparsable, sim chat-clarify-config).
     if (!isTaskPath(path)) return { error: `update_task_status: "${path}" is not a task file (task files live in fg-tasks/). Nothing was changed; to finish ordinary work, just say so in your answer.` };
@@ -1306,15 +1315,20 @@ async function _handleUpdateTaskStatus(args: any) {
         if (!result.transitioned) {
             return { ok: false, path, status, blocked: true, reason: result.reason || 'QA gate blocked transition' };
         }
+        let logFailed = '';
         if (log_entry) {
-            const date = new Date().toISOString().slice(0, 10);
-            await agentWriteFile(path,
-                (await agentReadFile(path)).trimEnd() + `\n### ${date}\n${log_entry}\n`);
+            // The status is already written: a failing log append is reported next to it, not as a failed call (codex R361).
+            try {
+                const date = new Date().toISOString().slice(0, 10);
+                await agentWriteFile(path,
+                    (await agentReadFile(path)).trimEnd() + `\n### ${date}\n${log_entry}\n`);
+            } catch (e) { logFailed = `The status was changed, but the log note was not added: ${e.message}`; }
         }
         // Always sync ledger directly — guards against any call-chain path that skips _updateLedgerRow
         await _updateLedgerRow(path, status);
         refreshTasks?.();
         const unverified = (result as any).unverified as string[] | undefined;
+        if (logFailed) return { ok: true, path, status, note: logFailed + (unverified?.length ? ` Not verified: ${unverified.join('; ')}.` : '') };
         return unverified?.length
             ? { ok: true, path, status, unverified,
                 note: `The task is ${status}, but not verified: ${unverified.join('; ')}. Say so in your answer; do not describe it as checked.` }
@@ -3254,7 +3268,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     // local sandbox, and run_git — are gated for workers too, and so are MCP tools (a tools/call
     // reaches a third-party server with the user's credentials; nothing sandboxes it). Other tools
     // only for the main agent.
-    if (!_toolApprovalSession.has(name)) {
+    if (!_toolApprovalSession.has(_approvalKey(name, args))) {
         const approval = getToolApproval();
         const onHost = _runsOnHost(name, args);
         // MCP tools: 'destructive' (the MCP default for unannotated tools) counts as high risk,

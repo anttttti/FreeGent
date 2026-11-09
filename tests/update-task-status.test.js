@@ -62,6 +62,46 @@ describe('update_task_status', () => {
         expect(files.get('config.json')).toBe('{"port": 1}\n');
     });
 
+    it('refuses a path that leaves the task folder, the ledger, and an unknown status (codex R362, R365, R366)', async () => {
+        files.set('AGENTS.md', 'rules\n');
+        files.set('fg-tasks/ledger.md', '| ID | Status |\n');
+        files.set('fg-tasks/007.md', TASK);
+        const up = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/../AGENTS.md', status: 'done' }, null);
+        expect(up.error).toMatch(/not a task file/);
+        expect(files.get('AGENTS.md')).toBe('rules\n');
+        const ledger = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/ledger.md', status: 'done' }, null);
+        expect(ledger.error).toMatch(/ledger/);
+        expect(files.get('fg-tasks/ledger.md')).toBe('| ID | Status |\n');
+        const typo = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/007.md', status: 'complete' }, null);
+        expect(typo.error).toMatch(/unknown status "complete"/);
+        expect(files.get('fg-tasks/007.md')).toBe(TASK);
+        // a documented alias is written in its canonical form
+        const alias = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/007.md', status: 'completed' }, null);
+        expect(alias.ok).toBe(true);
+        expect(files.get('fg-tasks/007.md')).toMatch(/^status: done$/m);
+    });
+
+    it('a failing log append is reported beside the committed status, not as a failed call (codex R361)', async () => {
+        files.set('fg-tasks/007.md', TASK);
+        const write = W.agentWriteFile;
+        W.agentWriteFile = async (p, c) => { if (String(c).includes('\nnote\n')) throw new Error('disk full'); return write(p, c); };
+        const res = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/007.md', status: 'done', log_entry: 'note' }, null);
+        expect(res.error).toBeUndefined();
+        expect(res.ok).toBe(true);
+        expect(res.note).toMatch(/status was changed, but the log note was not added: disk full/);
+        expect(files.get('fg-tasks/007.md')).toMatch(/^status: done$/m);
+    });
+
+    it('updates the ledger row of the task\'s front-matter id, not of its file name\'s number (codex R375)', async () => {
+        files.set('fg-tasks/005-renamed.md', '---\nid: 120\nstatus: todo\ntitle: Renamed\n---\n\nBody.\n');
+        files.set('fg-tasks/ledger.md', '| ID  | Status      | Title |\n|-----|-------------|-------|\n| 005 | todo        | Other |\n| 120 | todo        | Renamed |\n');
+        const res = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/005-renamed.md', status: 'done' }, null);
+        expect(res.ok).toBe(true);
+        const ledger = files.get('fg-tasks/ledger.md');
+        expect(ledger).toMatch(/\| 005 \| todo\s+\| Other/);
+        expect(ledger).toMatch(/\| 120 \| done\s+\| Renamed/);
+    });
+
     it('appends a log entry when one is supplied', async () => {
         files.set('fg-tasks/007.md', TASK);
         await W.executeToolAsync('update_task_status',

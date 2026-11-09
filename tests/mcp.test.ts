@@ -67,6 +67,26 @@ describe('mcpToolName', () => {
 });
 
 describe('sanitizeMcpSchema', () => {
+    it('const narrows an enum instead of giving way to it (codex R369)', () => {
+        expect(W.sanitizeMcpSchema({ type: 'string', enum: ['a', 'b'], const: 'a' }).enum).toEqual(['a']);
+        expect(W.sanitizeMcpSchema({ type: 'string', const: 'a' }).enum).toEqual(['a']);
+    });
+    it('merges allOf branches into one object instead of dropping them (codex R368)', () => {
+        const out = W.sanitizeMcpSchema({ allOf: [
+            { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+            { type: 'object', properties: { b: { type: 'number' } }, required: ['b'] },
+        ] });
+        expect(out.type).toBe('object');
+        expect(Object.keys(out.properties)).toEqual(['a', 'b']);
+        expect(out.required).toEqual(['a', 'b']);
+    });
+    it('keeps a property named __proto__ as an own key, so required still matches properties (codex R340)', () => {
+        const input = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"},"a":{"type":"string"}},"required":["__proto__"]}');
+        const out = W.sanitizeMcpSchema(input);
+        expect(Object.keys(out.properties)).toEqual(['__proto__', 'a']);
+        expect(out.required).toEqual(['__proto__']);
+        expect(JSON.parse(JSON.stringify(out)).properties).toHaveProperty('a');
+    });
     it('strips unsupported keys, flattens nullable types, drops unknown required', () => {
         const out = W.sanitizeMcpSchema(TOOLS[0].inputSchema);
         expect(out).toEqual({

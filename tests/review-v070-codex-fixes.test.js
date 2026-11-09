@@ -17,7 +17,7 @@ beforeEach(() => {
     saved = Object.fromEntries(STUBBED.map(k => [k, W[k]]));
     files = {}; mtimes = {};
     W.agentListFiles = async () => Object.entries(files).map(([name]) => ({ name, lastModified: mtimes[name] ?? 0, isLocal: name.startsWith('local/') }));
-    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`nf ${p}`); return files[p]; };
+    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`File not found: ${p}`); return files[p]; };
     W.agentWriteFile = async (p, c) => { files[p] = c; };
     W.agentDeleteFile = async (p) => { delete files[p]; };
     W.refreshTasks = async () => {};

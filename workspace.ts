@@ -61,19 +61,24 @@ let fsaSyncTimer: ReturnType<typeof setInterval> | null = null;
 let fsaSyncMtimes: Map<string, number> = new Map(); // relative path → lastModified timestamp
 let fsaSyncSizes: Map<string, number> = new Map();  // relative path → size in bytes (filled by getFsaMtime)
 
+let _fsaSyncGen = 0;   // each start and each stop takes a new number: a start that was overtaken while it enumerated must not install a timer (codex R352)
 async function startFsaSync() {
     stopFsaSync();
+    const gen = _fsaSyncGen;
     // Seed initial mtimes so first poll doesn't flag everything as changed
     const names = await listFsaFiles();
+    if (gen !== _fsaSyncGen) return;
     await Promise.all(names.map(async name => {
         if (name.endsWith('/')) { fsaSyncMtimes.set(name, 0); return; }
-        try { fsaSyncMtimes.set(name, await getFsaMtime(name)); } catch {}
+        try { const m = await getFsaMtime(name); if (gen === _fsaSyncGen) fsaSyncMtimes.set(name, m); } catch {}
     }));
+    if (gen !== _fsaSyncGen) return;
     fsaSyncTimer = setInterval(pollFsaChanges, 1500);
     renderFileList();   // sizes and timestamps are known now
 }
 
 function stopFsaSync() {
+    _fsaSyncGen++;
     if (fsaSyncTimer) { clearInterval(fsaSyncTimer); fsaSyncTimer = null; }
     fsaSyncMtimes = new Map();
     fsaSyncSizes = new Map();
@@ -1402,11 +1407,15 @@ async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remot
     const uploads = new Map<string, Uint8Array>();                               // hash → bytes still to send
     const markers: string[] = [];
     const names = new Set(await listWorkspaceFileNames());
-    let pullBytes = 0;
+    let pullBytes = 0, actualBytes = 0;
     const pull = async (path: string, as: string) => {
         const f = remote.manifest.files[path];
-        pullBytes += f.s; if (pullBytes > _CLOUD_PULL_MAX) throw new Error('Too much to download in one sync (over 200 MB): choose “Leave” for the large files and sync again.');
-        const rec = _bytesToRec(await client.getBlob(slug, f.h), f.e === 'base64');
+        const tooMuch = () => new Error('Too much to download in one sync (over 200 MB): choose “Leave” for the large files and sync again.');
+        pullBytes += Number.isFinite(f.s) && f.s > 0 ? f.s : 0; if (pullBytes > _CLOUD_PULL_MAX) throw tooMuch();
+        const bytes = await client.getBlob(slug, f.h);
+        // The manifest's size is only a claim (a hand-made one can say 0): the cap is also kept on the bytes that arrived (codex R354).
+        actualBytes += bytes.byteLength; if (actualBytes > _CLOUD_PULL_MAX) throw tooMuch();
+        const rec = _bytesToRec(bytes, f.e === 'base64');
         writes.push({ name: as, content: rec.content, encoding: rec.encoding, lastModified: f.m || Date.now() });
         return f;
     };
@@ -3136,7 +3145,7 @@ async function downloadFile(name) {
         const url = URL.createObjectURL(blob);
         const a   = Object.assign(document.createElement('a'), { href: url, download: name.replace(/^local\//, '') });
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);   // a synchronous revoke cancels the download in Firefox (codex R344)
     } catch (e) {
         alert(`Download failed: ${e.message}`);
     }

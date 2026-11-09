@@ -561,6 +561,16 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
     let challengeNext: string | null = null;   // a BLOCKED that only says a file is missing is challenged once before the board stops for the user
     let challenged = false;
 
+    // The task file's own verdict, read after any turn (the agent, or a steer, may have called update_task_status).
+    const _endStatus = async (): Promise<'done' | 'failed' | null> => {
+        try {
+            const s = (parseFrontmatter(await agentReadFile(task.path)).status || '').toLowerCase();
+            if (s === 'done' || s === 'completed') return 'done';
+            if (s === 'failed' || s === 'impossible') return 'failed';
+        } catch {}
+        return null;
+    };
+
     while (_runnerRunning && !_runnerAbort && !blocked && turn < _MAX_TURNS_PER_EPISODE) {
         turn++;
         await _waitWhilePaused();
@@ -572,10 +582,18 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             : await agentReadFile(task.path).catch(() => _initialTaskContent);
 
         // Messages the user sent while the task ran: each is its own turn, then the task prompt resumes.
+        let _steered = false;
         while (_runnerPendingSteer.length && !_runnerAbort) {
             await _runnerTurn(_runnerPendingSteer.shift()!);
+            _steered = true;
         }
         if (_runnerAbort) break;
+        // A steer can finish or fail the task itself: stop here instead of sending the task prompt for finished work (codex R371).
+        if (_steered) {
+            const ended = await _endStatus();
+            if (ended === 'done') { success = true; break; }
+            if (ended === 'failed') { failReason = 'Task marked failed/impossible'; break; }
+        }
 
         const taskName = task.fm.title || task.path;
         const isContinuation = continueNext;
@@ -634,13 +652,9 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             continue;
         }
 
-        try {
-            const content = await agentReadFile(task.path);
-            const fm = parseFrontmatter(content);
-            const s  = (fm.status || '').toLowerCase();
-            if (s === 'done' || s === 'completed')    { success    = true;                          break; }
-            if (s === 'failed' || s === 'impossible') { failReason = 'Task marked failed/impossible'; break; }
-        } catch {}
+        const _ended = await _endStatus();
+        if (_ended === 'done')   { success    = true;                          break; }
+        if (_ended === 'failed') { failReason = 'Task marked failed/impossible'; break; }
 
         if (_stepLimited) {
             stepLimitContinues++;
@@ -709,6 +723,12 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
 
     // Restore Director role for any follow-up (e.g. post-task chat).
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
+
+    // A steer that arrived after the last turn belongs to this task: the next one must not receive it (codex R372).
+    if (_runnerPendingSteer.length) {
+        _appendRunnerLog(task.fm.id || '', `${task.fm.title || task.path}`, 'info', `${_runnerPendingSteer.length} steering message(s) arrived after the task ended and were not delivered`);
+        _runnerPendingSteer.length = 0;
+    }
 
     // The episode is over when its chat is, not when the task file says done.
     if (!blocked) await _waitUntilQuiet(250);   // a blocked task pauses for the user at once

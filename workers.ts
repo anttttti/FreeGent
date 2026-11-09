@@ -449,7 +449,8 @@ function _saveRoleForChat(name: string): void {
 /** Select the main role by name. A name that is not in the registry is refused (false) and nothing changes: it used to be accepted,
  *  leave the role null and run the agent with an empty system prompt, with the bad name saved on the chat (TUI report cases 035, 043). */
 export function setMainAgentRole(name: string): boolean {
-    const _name = name?.toLowerCase() ?? name;
+    // A custom role keeps the case of its file's name: the exact key first, as _normWorkerRole does (codex R398).
+    const _name = name && rolesRegistry.has(name) ? name : (name?.toLowerCase() ?? name);
     if (_name && !rolesRegistry.has(_name)) return false;
     setMainAgentRoleObject(rolesRegistry.get(_name) || null);
     _saveRoleForChat(_name);
@@ -1675,6 +1676,8 @@ async function executeWorkers(args: any): Promise<any> {
     // The project this run belongs to. Its edits are staged and applied at the end; if the project was cleared or replaced meanwhile (another tab, Load),
     // they are not applied to the new one (codex R7-001).
     const epoch = workspaceEpoch();
+    // This run's own turn: the next send replaces activeAbortController and clears softStopPending, so a stopped run that is still unwinding must not look retryable then (codex R336).
+    const _turnSignal = activeAbortController?.signal;
     const snapshot = args._parentSnapshot || await takeWorkspaceSnapshot();
     console.log(`[executeWorkers] snapshot taken (${snapshot.size} files), launching workers`);
     const labels   = agents.map(a => a.role ? `worker:${a.id}:${a.role}` : `worker:${a.id}`);
@@ -1764,6 +1767,7 @@ async function executeWorkers(args: any): Promise<any> {
                 // Permanent failures (bad auth, model discontinued, no tool support) — don't retry.
                 const isPermanent = /HTTP (?:40[14]|410)\b|no endpoints found|invalid model|model.*not.*exist|does not exist/i.test(e.message ?? '');
                 if (isPermanent) break;   // every further attempt would fail the same way, and cost a full run
+                if (_turnSignal?.aborted || softStopPending) break;   // stopped: no retry (it would run under a later turn's signal)
                 if (attempt < MAX_RETRIES) {
                     // Transient error (stream abort, network) — clear partial staging and retry
                     await _revertWorkerDiskEdits(context, epoch);

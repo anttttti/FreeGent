@@ -37,8 +37,13 @@ export function dedupeTasksByTitle<T extends { path: string; fm: any }>(tasks: T
 // writes tasks there and files left there are not read as tasks.
 export const TASK_DIRS = ['fg-tasks/', 'local/fg-tasks/'];
 export function isTaskPath(path: unknown): boolean {
-    return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d));
+    // `fg-tasks/../AGENTS.md` starts with the task folder and resolves outside it (codex R362).
+    return typeof path === 'string' && TASK_DIRS.some(d => path.startsWith(d)) && !/(?:^|[/\\])\.\.(?:[/\\]|$)/.test(path);
 }
+/** The board's index file: a task folder's ledger.md is not a task (codex R365). */
+export const isLedgerPath = (path: unknown): boolean => /(?:^|\/)ledger\.md$/.test(String(path ?? ''));
+/** Statuses a task can have, after aliases (review, completed) are mapped; anything else is a typo the board and the runner would read differently (codex R366). */
+export const TASK_STATUSES = ['todo', 'open', 'in-progress', 'in-review', 'done', 'blocked', 'failed'];
 // fg-tasks/current.md is the scratch note a chat starts with (task-setup skill), not a board task: no gates, no duplicate check against it.
 export const isScratchTask = (path: unknown): boolean => /^(?:\.\/)?fg-tasks\/current\.md$/.test(String(path ?? ''));
 

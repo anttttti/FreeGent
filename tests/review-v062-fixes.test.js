@@ -11,7 +11,7 @@ beforeEach(() => {
     saved = Object.fromEntries(STUBBED.map(k => [k, W[k]]));
     files = {};
     W.agentListFiles = async () => Object.keys(files).map(name => ({ name }));
-    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`nf ${p}`); return files[p]; };
+    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error(`File not found: ${p}`); return files[p]; };
     W.agentWriteFile = async (p, c) => { files[p] = c; };
     W.agentDeleteFile = async (p) => { delete files[p]; };
 });
@@ -125,6 +125,44 @@ describe('lifecycle gates', () => {
         expect(r.unverified).toBeUndefined();
         expect(files['fg-tasks/001-t.md']).not.toMatch(/^qa:/m);
         expect(files['fg-tasks/001-t.md']).toContain('No criterion was judged unmet');
+    });
+
+    it('a WORKFLOW.md that exists but cannot be read stops the transition instead of using the defaults (codex R374)', async () => {
+        files['fg-tasks/001-t.md'] = task('- [x] done\n');
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- self-review\n';
+        const read = W.agentReadFile;
+        W.agentReadFile = async (p) => { if (p === 'WORKFLOW.md') throw new Error('NotReadableError: permission denied'); return read(p); };
+        const r = await W.transitionTask('fg-tasks/001-t.md', 'in-review');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/WORKFLOW\.md could not be read/);
+        expect(files['fg-tasks/001-t.md']).toMatch(/^status: in-progress$/m);
+    });
+
+    it('a dependency shared by two task files is met only when both are done (codex R373)', async () => {
+        const t = (path, status, extra = '') => { files[path] = `---\nid: 005\ntitle: ${path}\nstatus: ${status}\n${extra}---\n# T\n`; };
+        t('fg-tasks/005-a.md', 'in-progress');
+        t('fg-tasks/005-b.md', 'done');   // the later duplicate is done: a Map that keeps the last one would let the dependent start
+        files['fg-tasks/009-dep.md'] = '---\nid: 009\ntitle: Dependent\nstatus: todo\ndepends: 005\n---\n# T\n';
+        const r = await W.transitionTask('fg-tasks/009-dep.md', 'in-progress');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/waiting on #005 \(in-progress\)/);
+    });
+
+    it('a gate name that does not exist stops the transition instead of counting as passed (codex R385)', async () => {
+        files['fg-tasks/001-t.md'] = task('- [x] done\n');
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- test-runer\n';
+        const r = await W.transitionTask('fg-tasks/001-t.md', 'in-review');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/gate that does not exist: "test-runer"/);
+        expect(files['fg-tasks/001-t.md']).toMatch(/^status: in-progress$/m);
+    });
+
+    it('a local/ task updates the ledger of its own root only (codex R384)', async () => {
+        const ledger = '| ID | Status | Title |\n|----|--------|-------|\n| 005 | todo        | Row |\n';
+        files['fg-tasks/ledger.md'] = ledger; files['local/fg-tasks/ledger.md'] = ledger;
+        await W._updateLedgerRow('local/fg-tasks/005-x.md', 'done');
+        expect(files['fg-tasks/ledger.md']).toBe(ledger);
+        expect(files['local/fg-tasks/ledger.md']).toMatch(/\| 005 \| done\s+\|/);
     });
 
     it('self-review is not generated when no changed file is named (it would invent one)', async () => {

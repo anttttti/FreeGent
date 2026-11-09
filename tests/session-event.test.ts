@@ -81,6 +81,18 @@ describe('Session — surface append', () => {
         expect(sess.surface).toEqual([u.seq, a.seq]);
     });
 
+    it('a resumed record with the right seq but no usable data is skipped, not thrown (codex R338)', () => {
+        const ev = (seq: number, type: string, data: any) => ({ seq, type, ts: 0, data, surfaceOp: 'append' }) as any;
+        const resumed = new Session({ id: 'rs', chatId: 'c', seed: [
+            ev(0, 'user/message', { role: 'user', content: 'hi' }),
+            ev(1, 'assistant/message', {}),
+            ev(2, 'user/message', null),
+            ev(3, 'tool/result', null),
+            ev(4, 'assistant/message', { message: { role: 'assistant', content: 'ok' } }),
+        ] });
+        expect(resumed.deriveMessages().map((m: any) => m.content)).toEqual(['hi', 'ok']);
+    });
+
     it('deriveMessages() reflects exact surface order', () => {
         sess.append('user/message',
             { role: 'user', content: 'ping' },

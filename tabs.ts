@@ -218,6 +218,7 @@ function openFileTab(name) {
                 return;
             }
 
+            if (!ft.tab.isConnected) return;   // closed while loading: nothing would revoke a URL made now (codex R345)
             const blob = pdfBytes
                 ? new Blob([pdfBytes as BlobPart], { type: 'application/pdf' })
                 : new Blob([rec.content], { type: 'application/pdf' });
@@ -331,6 +332,7 @@ function openFileTab(name) {
             if (!rec?.content) { editorWrap.textContent = 'Preview unavailable — file is empty.'; return; }
             const bytes = rec.encoding === 'base64' ? _base64ToUint8?.(rec.content) : new TextEncoder().encode(rec.content);
             if (!bytes) { editorWrap.textContent = 'Could not decode the file.'; return; }
+            if (!ft.tab.isConnected) return;   // closed while loading (codex R345)
             const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mimeOfName(name) }));
             ft._blobUrl = url;
             editorWrap.textContent = '';
@@ -1254,16 +1256,22 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
 }
 
 // title is the page's workspace path when it is a workspace file; its references resolve from there.
+// Each rebuild of an open preview takes a number; only the newest may write its result, whatever order the asynchronous reads finish in (codex R346).
+let _artifactSeq = 0;
 async function openArtifactTab(title, html, { isPreview = true } = {}) {
     const deps = new Set<string>();
+    const key = `artifact:${title}`;
+    const open = fileTabs.get(key);
+    const rev = open ? (open._rev = ++_artifactSeq) : 0;
     const inlined = await _inlineWorkspaceRefs(html, title, deps);
     const content = _wrapArtifact(inlined);
-    const key = `artifact:${title}`;
     const existing = fileTabs.get(key);
     if (existing) {
-        const iframe = existing.panel.querySelector('.artifact-iframe');
-        if (iframe) iframe.srcdoc = content;
-        existing.deps = deps;
+        if (existing._rev === rev || !open) {
+            const iframe = existing.panel.querySelector('.artifact-iframe');
+            if (iframe) iframe.srcdoc = content;
+            existing.deps = deps;
+        }
         activateTab(key);
         return;
     }
@@ -1314,12 +1322,15 @@ function scheduleArtifactRefresh(changedName = '') {
             if (ft.deps && !changed.has('') && ![...changed].some(n => n === title || ft.deps.has(n))) continue;
             const iframe = ft.panel.querySelector('.artifact-iframe') as HTMLIFrameElement | null;
             if (!iframe) continue;
+            const rev = ft._rev = ++_artifactSeq;
             try {
                 const html = await agentReadFile(title);
-                if (typeof html !== 'string' || !html.trim()) continue;
-                ft.savedContent = html;
+                if (typeof html !== 'string' || !html.trim() || ft._rev !== rev) continue;
                 const deps = new Set<string>();
-                iframe.srcdoc = _wrapArtifact(await _inlineWorkspaceRefs(html, title, deps));
+                const doc = _wrapArtifact(await _inlineWorkspaceRefs(html, title, deps));
+                if (ft._rev !== rev || !ft.tab.isConnected) continue;   // a newer rebuild started, or the tab was closed
+                ft.savedContent = html;
+                iframe.srcdoc = doc;
                 ft.deps = deps;
             } catch {}
         }

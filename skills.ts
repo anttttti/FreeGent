@@ -1052,12 +1052,13 @@ export async function loadSkills() {
     for (const s of skillsRegistry.values()) { const d = (s as any).__defaults; if (d) { Object.assign(s, d); (s as any).__defaults = {}; } }
     for (const [name, ov] of Object.entries(_overrides)) {
         const s = skillsRegistry.get(name);
-        if (!s) continue;
+        if (!s || !ov || typeof ov !== 'object') continue;
         const TFIELDS = ['trigger','trigger_on_filetype','trigger_on_tool','trigger_on_failure','trigger_on_event','trigger_on_media','trigger_on_file_present','trigger_on_message_pattern','trigger_on_history_tool','trigger_on_turn','trigger_on_repeat','body'];
         // The entry keeps its own defaults, so the editor can tell an override from the default it replaced (an unchanged
         // Save used to compare against the overridden value and delete the override: codex report 8, cases 254/256).
         const d = ((s as any).__defaults ??= {});
-        for (const f of TFIELDS) { if (f in (ov as any)) { if (!(f in d)) d[f] = (s as any)[f]; (s as any)[f] = (ov as any)[f]; } }
+        for (const f of TFIELDS) { if (typeof (ov as any)[f] === 'string') {   // a number or object here (an imported profile) made every later send throw on .split (codex R393)
+             if (!(f in d)) d[f] = (s as any)[f]; (s as any)[f] = (ov as any)[f]; } }
     }
     renderSkillsList();
     renderSkillsChecklist();

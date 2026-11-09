@@ -7,6 +7,7 @@ import { isScratchPath, rootPageOf } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
+import { isCredentialPath } from './secret-egress.js';
 import { noteToolStage, toolCrashCount } from './page-check-guard.js';
 
 const QA_DEFAULT_GATES = {
@@ -39,11 +40,13 @@ function _mdSection(content: string, ...names: string[]): string | null {
 const _tailKeepStatus = (cmd: string, n: number) =>
     `fg_qa_out=$(${cmd} 2>&1); fg_qa_rc=$?; printf '%s\\n' "$fg_qa_out" | tail -n ${n}; exit $fg_qa_rc`;
 
-async function loadWorkflow() {
+async function loadWorkflow(): Promise<{ gates: any; config: any; unreadable?: string }> {
     try {
         return parseWorkflowMd(await agentReadFile('WORKFLOW.md'));
-    } catch {
-        return { gates: QA_DEFAULT_GATES, config: {} };
+    } catch (e) {
+        // No WORKFLOW.md is the defaults; a file that is there and could not be read is not (codex R374): the caller must not decide on the defaults then.
+        if (_isMissingFile(e)) return { gates: QA_DEFAULT_GATES, config: {} };
+        return { gates: QA_DEFAULT_GATES, config: {}, unreadable: String((e as any)?.message ?? e) };
     }
 }
 
@@ -115,10 +118,13 @@ async function setTaskStatus(taskPath, newStatus) {
 }
 
 async function _updateLedgerRow(taskPath, newStatus) {
-    const idMatch = taskPath.match(/[/\\](\d+)-/);
-    if (!idMatch) return;
-    const id = idMatch[1];
-    const ledgerCandidates = TASK_DIRS.map(d => `${d}ledger.md`);
+    // The same id rule as rebuildLedger (front-matter id first, then the file name's number): a task named 005-x.md with `id: 120` has row 120 (codex R375).
+    let fm: any = {};
+    try { fm = parseFrontmatter(await agentReadFile(taskPath)); } catch {}
+    const id = taskIdOf({ path: taskPath, fm });
+    if (!id) return;
+    // The ledger of the task's own root: a local/ task and an IndexedDB task can share a number (codex R384).
+    const ledgerCandidates = TASK_DIRS.filter(d => d.startsWith('local/') === taskPath.startsWith('local/')).map(d => `${d}ledger.md`);
     for (const ledgerPath of ledgerCandidates) {
         let ledger: string;
         try { ledger = await agentReadFile(ledgerPath); } catch { continue; }
@@ -189,15 +195,19 @@ async function gate_dependency_check(taskPath, content) {
     if (!depends.length) return { blocks: false };
 
     const allTasks = await loadTaskFiles();
-    const byId     = new Map(allTasks.map(t => [String(taskIdOf(t)), t] as [string, any]));
+    // Two files can share an id (imported or agent-written): the dependency is met only when every one of them is done, whatever order they load in (codex R373).
+    const byId     = new Map<string, any[]>();
+    for (const t of allTasks) { const k = String(taskIdOf(t)); byId.set(k, [...(byId.get(k) ?? []), t]); }
     const blocking = [];
 
     for (const dep of depends) {
-        const dt: any = byId.get(dep);
-        if (!dt) { blocking.push(`#${dep} (not found)`); continue; }
-        const s = (dt.fm.status || 'todo').toLowerCase();
-        if (s !== 'done' && s !== 'completed')
-            blocking.push(`#${dep} (${s}): ${dt.fm.title || dep}`);
+        const found: any[] = byId.get(dep) ?? [];
+        if (!found.length) { blocking.push(`#${dep} (not found)`); continue; }
+        for (const dt of found) {
+            const s = (dt.fm.status || 'todo').toLowerCase();
+            if (s !== 'done' && s !== 'completed')
+                blocking.push(`#${dep} (${s}): ${dt.fm.title || dep}`);
+        }
     }
 
     if (blocking.length)
@@ -276,7 +286,8 @@ export async function gatherReviewCode(namedPaths: string[]): Promise<{ text: st
         .filter(f => f?.name && _QA_SOURCE_RE.test(f.name) && !_QA_NOT_SOURCE_RE.test(f.isLocal ? inProject(f.name) : f.name) && !isScratchPath(inProject(f.name)))
         .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0) || a.name.localeCompare(b.name))
         .map(f => f.name);
-    const order = [...new Set([...namedPaths, ...recent])];
+    // A credential file a task names is not sent to the reviewing model (codex R388): the same list the egress check uses.
+    const order = [...new Set([...namedPaths, ...recent])].filter(p => !isCredentialPath(p));
     let text = '', total = 0;
     const shown: string[] = [], omitted: string[] = [];
     let omittedCount = 0;
@@ -517,11 +528,12 @@ export async function findProjectTests(named: string[] = []): Promise<string[]> 
 
 // One command that runs every file on its own, so the result names the files that failed. The shape is the one
 // _tailKeepStatus already relies on ($(…), $?, printf), which the in-browser shell runs too.
-function _testCommand(files: string[]): string {
+export function _testCommand(files: string[]): string {
     const lines = ['fg_qa_failed=""'];
     for (const f of files) {
         const run = f.endsWith('.py') ? `timeout ${_QA_FILE_TIMEOUT_S} python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `timeout ${_QA_FILE_TIMEOUT_S} node ${_shq(f)}`;
-        lines.push(`fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed ${f}"; printf '%s\\n' "== ${f} (exit $fg_qa_rc)" "$fg_qa_out" | tail -n 15; fi`);
+        // The path reaches the shell only as a single-quoted value: in the double-quoted report it was text a `$(…)` or a backtick in a file name could run (codex R387).
+        lines.push(`fg_qa_f=${_shq(f)}; fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed $fg_qa_f"; printf '%s\\n' "== $fg_qa_f (exit $fg_qa_rc)" "$fg_qa_out" | tail -n 15; fi`);
     }
     lines.push(`if [ -n "$fg_qa_failed" ]; then echo "FAILED:$fg_qa_failed"; exit 1; fi; echo "${files.length} test file(s) passed"`);
     return lines.join('\n');
@@ -975,20 +987,23 @@ async function _transitionTask(taskPath, toStatus) {
         return { transitioned: false, reason };
     }
 
-    const { gates: workflowGates } = await loadWorkflow();
+    const { gates: workflowGates, unreadable: workflowUnreadable } = await loadWorkflow();
+    if (workflowUnreadable) return { transitioned: false, reason: `WORKFLOW.md could not be read (${workflowUnreadable}), so the project's gates were not checked. Nothing was changed; try again.` };
     // If the model jumped straight from in-progress to done (skipping in-review),
     // in-progress->done is in QA_DEFAULT_GATES with the full review suite.
     const gateKey  = `${fromStatus}->${toStatus}`;
     // A move to done from a state the workflow has no gates for (todo, open, blocked …) is judged like the move from in-progress: leaving it
     // gateless let a task be completed with every check skipped by jumping straight to done (codex R33-001).
     const gateNames = workflowGates[gateKey] ?? (toStatus === 'done' ? workflowGates['in-progress->done'] : undefined) ?? [];
+    // A gate name that does not exist (a typo in WORKFLOW.md) must not read as a passed gate: with a custom section the default suite is gone too (codex R385).
+    const unknownGates = gateNames.filter(n => !GATES[n]);
+    if (unknownGates.length) return { transitioned: false, reason: `WORKFLOW.md names a gate that does not exist: ${unknownGates.map(n => `"${n}"`).join(', ')}. Known gates: ${Object.keys(GATES).join(', ')}. Nothing was changed; fix WORKFLOW.md.` };
     const passed: string[] = [], unknown: Array<{ gate: string; detail?: string }> = [], skipped: string[] = [];
 
     const failures = [];
     let stale: string | null = null;
     for (const gateName of gateNames) {
         const gateFn = GATES[gateName];
-        if (!gateFn) continue;
 
         let result: { blocks: boolean; reason?: string; detail?: string; outcome?: 'unknown' | 'skipped' | 'stale' };
         noteToolStage('update_task_status', `gate ${gateName}`);   // a crash report then names the gate that was running

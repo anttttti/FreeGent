@@ -47,7 +47,8 @@ let conversationLog: ConvoLogEntry[] = [];
 // Restore any log saved to sessionStorage (survives hot-reloads within a tab session).
 try {
     const saved = sessionStorage.getItem(SESSION_KEYS.CONVO_LOG);
-    if (saved) conversationLog = JSON.parse(saved);
+    const parsed = saved ? JSON.parse(saved) : null;
+    if (Array.isArray(parsed)) conversationLog = parsed;   // a parseable non-array (null, {}) would make every later push throw (codex R337)
 } catch {}
 
 const _LOG_CAP = 200;
@@ -126,7 +127,8 @@ async function _loadPersistedLog(chatId: string): Promise<ConvoLogEntry[]> {
     const fromStore = typeof sessionHas === 'function' && sessionHas('loadTurnLog') ? await sessionLoadTurnLog(chatId, _LOG_CAP) : [];
     if (fromStore.length) return fromStore;
     const saved = localStorage.getItem(chatKey.log(chatId));
-    return saved ? JSON.parse(saved) : [];
+    const list = saved ? JSON.parse(saved) : [];
+    return Array.isArray(list) ? list : [];
 }
 
 // Merge a chat's persisted log into the in-memory conversationLog. Called by switchToChat so

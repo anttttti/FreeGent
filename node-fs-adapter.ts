@@ -362,7 +362,8 @@ export class DockerFsAdapter implements WorkspaceAdapter {
         return new Promise((resolve) => {
             execFile('docker', ['exec', this._ctr, 'bash', '-c', script], { maxBuffer: 10_000_000 },
                 (err, stdout) => {
-                    if (err) { resolve([]); return; }
+                    // A failed docker exec is not an empty container: say so, in the same sentinel form as the truncation notice (codex R351).
+                    if (err) { resolve([{ name: `[listing failed: ${String((err as any).stderr || err.message).trim().slice(0, 160)} — the container may be stopped; try execute_code bash \`ls\`]`, size: 0, lastModified: 0 }]); return; }
                     const files: Array<{name: string, size: number, lastModified: number}> = [];
                     for (const line of stdout.split('\n')) {
                         const m = line.match(/^(\d+)\t([\d.]+)\t(.+)$/);

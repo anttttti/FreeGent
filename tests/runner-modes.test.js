@@ -256,6 +256,26 @@ describe('a turn that stops at its step limit', () => {
 
 // IndexedDB failing mid-run (live logs 2026-10-26, browser run 2026-10-27): the unreadable task list was read as empty and
 // Autopilot ended with "All tasks complete" while tasks were still open; a one-second hiccup was enough.
+describe('a steering message that finishes the task (codex R371)', () => {
+    it('is not followed by another task prompt', async () => {
+        const prompts = [];
+        W.runAgentTurn = async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length === 1) {                                     // the task prompt: out of steps; the user steers meanwhile
+                W.runnerSteer('just finish it');
+                return { text: 'BLOCKED: step budget exhausted', finishSignal: 'blocked', stop: { reason: 'step budget exhausted', edited: true } };
+            }
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');            // the steering turn marks the task done
+            return { text: 'done', finishSignal: 'completed' };
+        };
+        W.runnerStart();
+        await idle();
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]).toBe('just finish it');
+        expect(files['fg-tasks/001-a.md']).toMatch(/^status: done$/m);
+    });
+});
+
 describe('task files that cannot be read', () => {
     const IDB = 'An internal error was encountered in the Indexed Database server';
     let retry, readable;

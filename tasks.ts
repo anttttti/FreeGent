@@ -4,7 +4,7 @@
 import { splitFrontmatter, parseFmLines, setFmLines, buildFrontmatter } from './frontmatter.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { lease } from './lease.js';
-import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, isScratchTask } from './task-status.js';
+import { canonTaskStatus, columnOfStatus, dedupeTasksByTitle, isTaskPath, isLedgerPath, isScratchTask } from './task-status.js';
 
 function parseLastLogEntry(content) {
     const logIdx = content.search(/^## Log/im);
@@ -23,7 +23,7 @@ async function loadTaskFiles({ strict = false }: { strict?: boolean } = {}) {
         const files = await agentListFiles();
         await Promise.all(
             files
-                .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !f.name.endsWith('/ledger.md') && !isScratchTask(f.name))
+                .filter(f => isTaskPath(f.name) && f.name.endsWith('.md') && !isLedgerPath(f.name) && !isScratchTask(f.name))
                 .map(async f => {
                     let content: string;
                     try {
