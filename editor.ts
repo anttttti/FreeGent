@@ -63,6 +63,32 @@ function _pickLanguage(filename, mods) {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
+// Where the editor library cannot load (an old browser, a blocked CDN) the file is still editable: a text box with the little of the EditorView
+// interface the tabs use (state.doc, dispatch of a whole-text replacement, destroy), so saving, the dirty mark and external-change handling work as before.
+export function _plainEditor(container, content, { onSave, onChange }: { onSave?: (c: string) => void; onChange?: (c: string) => void }) {
+    const ta = document.createElement('textarea');
+    ta.className = 'file-panel-textarea';
+    ta.value = content;
+    ta.spellcheck = false;
+    ta.setAttribute('autocapitalize', 'off'); ta.setAttribute('autocomplete', 'off'); ta.setAttribute('autocorrect', 'off'); ta.setAttribute('wrap', 'off');
+    ta.addEventListener('input', () => onChange?.(ta.value));
+    ta.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); onSave?.(ta.value); }
+        else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {   // a tab character, as in the editor, not a jump to the next control
+            e.preventDefault();
+            const a = ta.selectionStart, b = ta.selectionEnd;
+            ta.setRangeText('\t', a, b, 'end'); onChange?.(ta.value);
+        }
+    });
+    container.appendChild(ta);
+    return {
+        plain: true,
+        state: { doc: { toString: () => ta.value, get length() { return ta.value.length; } } },
+        dispatch(tr: { changes: { insert: string } }) { ta.value = tr.changes.insert; onChange?.(ta.value); },
+        destroy() { ta.remove(); },
+    };
+}
+
 // Returns the EditorView, or null if CM fails to load (falls back to plain <pre>).
 // Options: onSave(content), onChange(content), readOnly (bool)
 async function createEditor(container, filename, content, { onSave, onChange, readOnly = false }: { onSave?: (content: string) => void; onChange?: (content: string) => void; readOnly?: boolean } = {}) {
@@ -70,11 +96,12 @@ async function createEditor(container, filename, content, { onSave, onChange, re
     try {
         mods = await _loadCM();
     } catch (err) {
+        console.warn('[editor] CodeMirror failed to load, using a plain text box:', err.message);
+        if (!readOnly) return _plainEditor(container, content, { onSave, onChange });
         const pre = document.createElement('pre');
         pre.className = 'file-panel-pre';
         pre.textContent = content;
         container.appendChild(pre);
-        console.warn('[editor] CodeMirror failed to load, using plain viewer:', err.message);
         return null;
     }
 
