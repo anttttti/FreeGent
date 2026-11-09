@@ -55,6 +55,9 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `Alt+T` | Tasks |
 | `Alt+S` | Settings |
 | `Alt+H` | Help |
+| `Ctrl+A` / `Ctrl+E` | Move to the start / end of the input line (also `Home` / `End`) |
+| `Ctrl+U` | Delete from the cursor back to the start of the line |
+| `Ctrl+X` then `Ctrl+S` | Send the input line as a steer message, interrupting the current turn |
 
 ## Slash commands
 

@@ -3,6 +3,8 @@
 // Pure functions — no state.js deps.
 
 function _astLineOf(content, idx) {
+    // Most patterns begin with a `[\s;{}]` prefix that can be the newline before the symbol: count from the symbol itself.
+    while (idx < content.length && /\s/.test(content[idx])) idx++;
     return content.substring(0, idx).split('\n').length;
 }
 
@@ -96,7 +98,7 @@ function _astQueryJS({ content, lineOf, results, wantFn, wantCls, wantImp, wantE
 function _astQueryPython({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
     let m: RegExpExecArray | null;
     if (wantFn) {
-        const fn = /^(?:async\s+)?def\s+(\w+)\s*\(/gm;
+        const fn = /^[ \t]*(?:async\s+)?def\s+(\w+)\s*\(/gm;   // indented ones are methods: ast_query must list them too
         while ((m = fn.exec(content)) !== null) results.push({ name: m[1], type: 'function', line: lineOf(m.index) });
     }
     if (wantCls) {
@@ -341,12 +343,7 @@ function _astFormatResults(results, query, path) {
 
     const parts = [];
     for (const [type, items] of byType) {
-        const entries = items.map(r => {
-            if (type === 'import' || type === 'require' || type === 'use' || type === 'include' || type === 'using') {
-                return `  ${r.line}: ${r.name}`;
-            }
-            return `  ${r.line}: ${r.name}`;
-        }).join('\n');
+        const entries = items.map(r => `  ${r.line}: ${r.name}`).join('\n');
         parts.push(`${type}s:\n${entries}`);
     }
     return `${path}:\n${parts.join('\n')}`;

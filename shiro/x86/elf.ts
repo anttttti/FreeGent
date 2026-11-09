@@ -251,19 +251,3 @@ export function loadElf(
 
   return info;
 }
-
-/** Get a human-readable summary of ELF info */
-export function elfInfoString(info: ElfInfo): string {
-  const lines = [
-    `ELF64 x86-64 binary`,
-    `Entry point: 0x${info.entryPoint.toString(16)}`,
-    `Linking: ${info.isStaticLinked ? 'static' : 'dynamic (interpreter required)'}`,
-    `Program headers: ${info.programHeaders.length}`,
-  ];
-  for (const ph of info.programHeaders) {
-    const typeName = ph.type === PT_LOAD ? 'LOAD' : ph.type === PT_INTERP ? 'INTERP' : `0x${ph.type.toString(16)}`;
-    const flags = `${ph.flags & 4 ? 'R' : '-'}${ph.flags & 2 ? 'W' : '-'}${ph.flags & 1 ? 'X' : '-'}`;
-    lines.push(`  ${typeName.padEnd(8)} vaddr=0x${ph.vaddr.toString(16).padStart(12, '0')} memsz=0x${ph.memsz.toString(16)} filesz=0x${ph.filesz.toString(16)} ${flags}`);
-  }
-  return lines.join('\n');
-}

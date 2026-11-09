@@ -418,6 +418,7 @@ async function _reviewFileEdit(path, oldContent, newContent) {
 
 const _IV_HIGH_RISK = new Set(['fetch_url', 'execute_code', 'write_file', 'delete_file', 'run_git']);
 
+// No plain `new task:` here: it is everyday text ("Initialize a new task: …", a quoted skill description) and blocked an agent's own script (self-analysis P3, 2026-11-05); `your new task` stays.
 const _IV_INJECTION_PATTERNS = [
     /ignore\s+(all\s+)?previous\s+instructions?/i,
     /disregard\s+(your|all|the)\s+(previous\s+)?instructions?/i,
@@ -428,7 +429,6 @@ const _IV_INJECTION_PATTERNS = [
     /\[SYSTEM]\s*:/i,
     /\[INST]|\[\/INST]/,
     /act\s+as\s+(if\s+you\s+are\s+)?a\s+\w+\s+that/i,
-    /new\s+task\s*:/i,
     /stop\s+what\s+you('?re| are)\s+doing/i,
 ];
 

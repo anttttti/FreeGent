@@ -18,10 +18,10 @@ import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, model
 import { _normPath, truncateResultForHistory } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
-import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext } from './system-prompt.js';
+import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext, resolveRoleBody } from './system-prompt.js';
 import { isCustomEndpoint, buildChatPayload } from './payload-builder.js';
 import { splitLines, diffRegions, tryMerge } from './diff-utils.js';
-import { getProvider, getMainModelList, mainModelListIsEmptyByChoice, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled, getRoleBody, getRoleBodyFn } from './config.js';
+import { getProvider, getMainModelList, mainModelListIsEmptyByChoice, getActiveMainModelList, getTemperature, getAgentConcisePrompts, getAgentLeanWorkers, getAgentWorkerHistory, getAgentWorkerReduce, getEndpointRotation, ls, enabledTools, isToolActive, ALL_TOOL_NAMES, skillsRegistry, isRoleEnabled } from './config.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
@@ -663,28 +663,7 @@ function buildWorkerSystemPrompt(roleOverride: any = null): string {
         const effectiveToolSet: Set<string> | undefined = effectiveRole.tools
             ? new Set([...effectiveRole.tools].filter((t: string) => enabledTools.has(t)))
             : undefined;
-        // Precedence: saved JS source > saved plain text > built-in body_fn > static body.
-        // Saved JS source is the full body_fn.toString() string, edited and saved via Settings →
-        // Roles.  We extract the function body and run it so the saved code has access to all
-        // window globals (enabledTools, rolesRegistry, isToolActive …) exactly like body_fn does.
-        const _savedFnSrc = typeof getRoleBodyFn === 'function' ? getRoleBodyFn(effectiveRole.name) : null;
-        const _rawBody = (_savedFnSrc
-            ? (() => {
-                try {
-                    // Extract body between first { and last } of the saved function definition.
-                    const _b = _savedFnSrc.indexOf('{');
-                    const _e = _savedFnSrc.lastIndexOf('}');
-                    const _body = (_b !== -1 && _e > _b) ? _savedFnSrc.slice(_b + 1, _e) : _savedFnSrc;
-                    // eslint-disable-next-line no-new-func
-                    return new Function(_body)() as string;
-                } catch (err) {
-                    console.warn('[FreeGent] saved role body_fn eval failed — falling back:', err);
-                    return null;
-                }
-              })()
-            : null)
-            || getRoleBody(effectiveRole.name)
-            || (typeof effectiveRole.body_fn === 'function' ? effectiveRole.body_fn() : (effectiveRole.body || ''));
+        const _rawBody = resolveRoleBody(effectiveRole);
         const body = _filterRoleBody(_rawBody, effectiveToolSet);
         return `${body}${_roleSkillBodies(effectiveRole.name, effectiveToolSet)}${_envCtx}${WORKER_STATUS_FOOTER}${concise}`;
     }

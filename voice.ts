@@ -1,5 +1,5 @@
 // voice.js — FreeGent: speech input (STT) and speech output (TTS)
-import { voiceApivKey } from './storage-keys.js';
+import { KEYS, voiceApivKey } from './storage-keys.js';
 
 let _mediaRecorder: MediaRecorder | null = null;
 let _audioChunks: Blob[]   = [];
@@ -38,14 +38,14 @@ const _TTS_VOICE_DEFAULTS = {
 
 function _getSttList() {
     try {
-        return JSON.parse(localStorage.getItem('fg_voice_stt_list') || 'null')
+        return JSON.parse(localStorage.getItem(KEYS.VOICE_STT_LIST) || 'null')
             || ['groq|whisper-large-v3-turbo', 'browser|webspeech'];
     } catch { return ['groq|whisper-large-v3-turbo', 'browser|webspeech']; }
 }
 
 function _getTtsList() {
     try {
-        return JSON.parse(localStorage.getItem('fg_voice_tts_list') || 'null')
+        return JSON.parse(localStorage.getItem(KEYS.VOICE_TTS_LIST) || 'null')
             || ['browser|webspeech'];
     } catch { return ['browser|webspeech']; }
 }
@@ -123,7 +123,7 @@ function _startWebSpeech() {
     const rec = new SR();
     rec.continuous     = false;
     rec.interimResults = false;
-    const lang = localStorage.getItem('fg_voice_stt_lang');
+    const lang = localStorage.getItem(KEYS.VOICE_STT_LANG);
     if (lang) rec.lang = lang;
     rec.onstart  = () => _setMicState(true);
     rec.onend    = () => _setMicState(false);
@@ -141,7 +141,7 @@ async function _apiTranscribe(blob, key, provider, model) {
     const form = new FormData();
     form.append('file', blob, 'audio.webm');
     form.append('model', model);
-    const lang = localStorage.getItem('fg_voice_stt_lang');
+    const lang = localStorage.getItem(KEYS.VOICE_STT_LANG);
     if (lang) form.append('language', lang);
     try {
         const r = await fetch(url, {
@@ -191,13 +191,13 @@ async function speakText(text) {
 function _webSpeechSpeak(text) {
     if (!window.speechSynthesis) return;
     const utt = new SpeechSynthesisUtterance(text);
-    const voiceName = localStorage.getItem('fg_voice_tts_voice');
+    const voiceName = localStorage.getItem(KEYS.VOICE_TTS_VOICE);
     if (voiceName) {
         const voice = window.speechSynthesis.getVoices().find(v => v.name === voiceName);
         if (voice) utt.voice = voice;
     }
-    utt.rate  = parseFloat(localStorage.getItem('fg_voice_tts_rate')  || '1');
-    utt.pitch = parseFloat(localStorage.getItem('fg_voice_tts_pitch') || '1');
+    utt.rate  = parseFloat(localStorage.getItem(KEYS.VOICE_TTS_RATE)  || '1');
+    utt.pitch = parseFloat(localStorage.getItem(KEYS.VOICE_TTS_PITCH) || '1');
     window.speechSynthesis.speak(utt);
 }
 
@@ -258,7 +258,7 @@ function addVoiceButtons() {
         div.classList.add('has-speak-btn');
         if (answer) spoken.push(answer);
     });
-    if (spoken.length && localStorage.getItem('fg_voice_tts_auto') === '1') speakText(spoken[spoken.length - 1]);
+    if (spoken.length && localStorage.getItem(KEYS.VOICE_TTS_AUTO) === '1') speakText(spoken[spoken.length - 1]);
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).

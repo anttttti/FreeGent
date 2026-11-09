@@ -109,6 +109,31 @@ export function _buildDeviceContext(): string {
         + `avoid keyboard shortcuts or hover-only interactions as the primary interface on touch-only devices.`;
 }
 
+/**
+ * The text of a role's body. Precedence: saved JS source > saved plain text > built-in body_fn > static body.
+ * Saved JS source is the full body_fn.toString() edited and saved via Settings → Roles: its function body is run so it has
+ * the window globals (enabledTools, rolesRegistry, isToolActive …) exactly like body_fn does.
+ */
+export function resolveRoleBody(role: any): string {
+    const savedFnSrc = typeof getRoleBodyFn === 'function' ? getRoleBodyFn(role.name) : null;
+    return (savedFnSrc
+        ? (() => {
+            try {
+                const b = savedFnSrc.indexOf('{');
+                const e = savedFnSrc.lastIndexOf('}');
+                const body = (b !== -1 && e > b) ? savedFnSrc.slice(b + 1, e) : savedFnSrc;
+                // eslint-disable-next-line no-new-func
+                return new Function(body)() as string;
+            } catch (err) {
+                console.warn('[FreeGent] saved role body_fn eval failed — falling back:', err);
+                return null;
+            }
+          })()
+        : null)
+        || (typeof getRoleBody === 'function' ? getRoleBody(role.name) : null)
+        || (typeof role.body_fn === 'function' ? role.body_fn() : (role.body || ''));
+}
+
 export function buildSystemPrompt(): string {
     // Date-only (no time) — placed at the END of the prompt so all preceding static content
     // stays in the vLLM prefix cache. Current time is injected on-demand by the 'datetime' rule
@@ -130,24 +155,7 @@ export function buildSystemPrompt(): string {
     const _effectiveToolSet: Set<string> | undefined = mainAgentRole.tools
         ? new Set([...mainAgentRole.tools].filter((t: string) => isToolActive(t)))
         : undefined;
-    // Precedence: saved JS source > saved plain text > built-in body_fn > static body.
-    const _savedFnSrc = typeof getRoleBodyFn === 'function' ? getRoleBodyFn(mainAgentRole.name) : null;
-    const _rawRoleBody = (_savedFnSrc
-        ? (() => {
-            try {
-                const _b = _savedFnSrc.indexOf('{');
-                const _e = _savedFnSrc.lastIndexOf('}');
-                const _body = (_b !== -1 && _e > _b) ? _savedFnSrc.slice(_b + 1, _e) : _savedFnSrc;
-                // eslint-disable-next-line no-new-func
-                return new Function(_body)() as string;
-            } catch (err) {
-                console.warn('[FreeGent] saved role body_fn eval failed — falling back:', err);
-                return null;
-            }
-          })()
-        : null)
-        || (typeof getRoleBody === 'function' ? getRoleBody(mainAgentRole.name) : null)
-        || (typeof mainAgentRole.body_fn === 'function' ? mainAgentRole.body_fn() : (mainAgentRole.body || ''));
+    const _rawRoleBody = resolveRoleBody(mainAgentRole);
     const _mrBody = (typeof _filterRoleBody === 'function' ? _filterRoleBody : (b: string) => b)(_rawRoleBody, _effectiveToolSet);
     const _envCtx = _buildEnvContext();
     // Browser path (_buildEnvContext returns ''): still include workspace location and langs.

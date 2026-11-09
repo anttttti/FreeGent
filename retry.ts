@@ -10,6 +10,7 @@
 // (same stranded-sibling pattern as nonStreamOAICompat before stream-decode.ts).
 //
 // Follows the step-validator/…/stream-decode pattern: ES module, exports, window bridge.
+import { KEYS } from './storage-keys.js';
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 
@@ -175,8 +176,8 @@ const MAX_BACKOFF_MS = 60_000; // 60s — long retries hurt more than they help 
 // fg_retry_mode: 'exponential' (default) | 'fixed'
 // fg_retry_fixed_ms: delay in ms when mode is 'fixed' (default 120000 = 2 min)
 export function retryDelay(attempt, e) {
-    const mode    = (typeof localStorage !== 'undefined' ? localStorage.getItem('fg_retry_mode') : null) || 'exponential';
-    const fixedMs = parseInt(typeof localStorage !== 'undefined' ? localStorage.getItem('fg_retry_fixed_ms') : null) || 120_000;
+    const mode    = (typeof localStorage !== 'undefined' ? localStorage.getItem(KEYS.RETRY_MODE) : null) || 'exponential';
+    const fixedMs = parseInt(typeof localStorage !== 'undefined' ? localStorage.getItem(KEYS.RETRY_FIXED_MS) : null) || 120_000;
     if (mode === 'fixed') return fixedMs;
     const base = /HTTP 429|HTTP 413|rate.?limit|too many requests|request too large|quota|insufficient balance/i.test(e.message || '') ? 8_000 : 1_500;
     return Math.min(base * Math.pow(2, attempt), MAX_BACKOFF_MS);
