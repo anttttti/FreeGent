@@ -97,7 +97,8 @@ export function invalidateWorkspacePaths(): void { _pathCache = null; }
 
 export async function collectWorkspacePaths(): Promise<string[]> {
     const now = Date.now();
-    if (_pathCache && now - _pathCache.at < _PATH_CACHE_MS) return _pathCache.paths;
+    if (_pathCache && now >= _pathCache.at && now - _pathCache.at < _PATH_CACHE_MS)   // a clock moved back counts as expired (N003)
+        return _pathCache.paths;
     // agentListFilesNoStat() walks the whole workspace, skips stat() syscalls, and
     // applies the standard exclusion list (node_modules, dist, .git, …).
     // agentListFilesInDir('') has NO exclusion list and would walk node_modules,

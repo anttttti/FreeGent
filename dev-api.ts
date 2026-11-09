@@ -25,6 +25,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, realpathSync } from 
 import { join, dirname, basename, normalize, relative, sep } from 'node:path';
 import { tmpdir, networkInterfaces, homedir } from 'node:os';
 import { promisify } from 'node:util';
+import { createGunzip, createBrotliDecompress, createInflate } from 'node:zlib';
 import { lookup } from 'node:dns/promises';
 import { lookup as lookupCb, type LookupAddress } from 'node:dns';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
@@ -429,7 +430,17 @@ export function pinnedFetch(serverPort: number, idleMs = POST_IDLE_MS): typeof f
                     if (Array.isArray(v)) v.forEach(x => h.append(k, x)); else if (v != null) h.set(k, String(v));
                 const status = res.statusCode ?? 502;
                 const nullBody = status === 204 || status === 205 || status === 304;
-                resolve(new Response(nullBody ? null : (Readable.toWeb(res) as any), { status, headers: h }));
+                // Like native fetch, hand over the decoded body: a server that ignores the identity request and compresses anyway
+                // otherwise reaches the page as raw bytes with no Content-Encoding (explorations 2026-11-10 N001).
+                const enc = String(res.headers['content-encoding'] ?? '').trim().toLowerCase();
+                const unzip = enc === 'gzip' || enc === 'x-gzip' ? createGunzip() : enc === 'br' ? createBrotliDecompress() : enc === 'deflate' ? createInflate() : null;
+                let body: Readable = res;
+                if (unzip && !nullBody) {
+                    res.pipe(unzip); res.on('error', e => unzip.destroy(e)); unzip.on('error', () => { /* reported to the reader below */ });
+                    h.delete('content-encoding'); h.delete('content-length');
+                    body = unzip;
+                }
+                resolve(new Response(nullBody ? null : (Readable.toWeb(body) as any), { status, headers: h }));
             });
             req.on('error', reject);
             // The page ends a request it gave up on, and that ends this one; this is the backstop for a server that accepts the request and
@@ -956,7 +967,9 @@ export function createDevApi(opts: DevApiOptions) {
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
-                        res.write(value);
+                        // Wait for a slow reader instead of queueing the whole response in memory (N002); a closed client ends the wait.
+                        if (!res.write(value) && !res.destroyed && !res.writableEnded)
+                            await new Promise<void>(r => { const f = () => { res.off('drain', f); res.off('close', f); r(); }; res.once('drain', f); res.once('close', f); });
                     }
                 } catch (streamErr: any) {
                     if (upstreamAbort.signal.aborted) { reader.cancel().catch(() => {}); return; }

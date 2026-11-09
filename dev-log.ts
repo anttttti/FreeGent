@@ -65,15 +65,21 @@ export async function flushDevLog(): Promise<void> {
     if (_timer) { clearTimeout(_timer); _timer = null; }
     if (_sending || !_queue.length || !devLoggingOn()) return;
     const batch = _queue; _queue = []; _sending = true;
+    let ok = false;
     try {
         const r = await _origFetch()(`${DEFAULT_CF_WORKER}/errlog`, {
             method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-FG-Dev-Key': getDevKey() }, keepalive: true,
             body: JSON.stringify({ sessionId: SESSION_ID, version: FG_VERSION, url: location.origin + location.pathname, entries: batch }),
         });
         if (!r.ok) throw new Error(String(r.status));
+        ok = true;
     } catch {
         _queue = batch.concat(_queue).slice(-MAX_QUEUE);
-    } finally { _sending = false; }
+    } finally {
+        _sending = false;
+        // Entries queued during a send whose timer fired meanwhile (flush returned early) still need a timer (explorations N015); not after a failure, so a down server is not retried in a loop.
+        if (ok && _queue.length && !_timer) _timer = setTimeout(() => { void flushDevLog(); }, FLUSH_MS);
+    }
 }
 
 /** Hook console.error / console.warn, window 'error' and 'unhandledrejection'. Idempotent. */
@@ -107,6 +113,7 @@ export async function sendTaskLog(task: { id: string; title: string; path: strin
     if (!devLoggingOn() || !chatId) return;
     try {
         const chat = JSON.parse(await build(chatId));
+        if (!devLoggingOn()) return;   // the Developer key was removed while the chat was being built (explorations 2026-11-10 N026)
         // `build` redacts the chat only: the task's own fields are text from the run too (a crash's reason quotes the code that ran).
         const body = JSON.stringify({ devSession: SESSION_ID, task: { id: redactForLog(task.id), title: redactForLog(task.title), path: redactForLog(task.path),
             outcome, reason: redactForLog(String(reason || '')).slice(0, 500) }, ...chat });

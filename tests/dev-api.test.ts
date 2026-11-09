@@ -183,6 +183,19 @@ describe('proxy deadlines', () => {
             await expect(pinnedFetch(1, 300)(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', body: '{}' })).rejects.toThrow(/no data for 0.3 s/);
         } finally { srv.closeAllConnections(); srv.close(); }
     });
+    // explorations 2026-11-10 N001: a compressed answer to an identity request reached the page as raw bytes without Content-Encoding.
+    it('the POST transport returns a decoded body when the server compresses anyway', async () => {
+        const zlib = await import('node:zlib');
+        const json = JSON.stringify({ ok: true, text: 'hello '.repeat(20) });
+        for (const [enc, pack] of [['gzip', zlib.gzipSync], ['br', zlib.brotliCompressSync], ['deflate', zlib.deflateSync]] as const) {
+            const { srv, port } = await listen((_req, res) => { res.writeHead(200, { 'content-encoding': enc, 'content-type': 'application/json' }); res.end(pack(json)); });
+            try {
+                const r = await pinnedFetch(1, 3000)(`http://127.0.0.1:${port}/x`, { method: 'POST', body: '{}' });
+                expect(r.headers.get('content-encoding'), enc).toBeNull();
+                expect(await r.text(), enc).toBe(json);
+            } finally { srv.closeAllConnections(); srv.close(); }
+        }
+    });
     it('the POST transport opens no connection for a request that was already ended (codex R436)', async () => {
         let connected = 0;
         const { srv, port } = await listen(() => { connected++; });

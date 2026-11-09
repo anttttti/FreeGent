@@ -58,6 +58,31 @@ describe('dev-log', () => {
         expect(body.id).toBe('c1');
     });
 
+    it('entries queued while a send is in flight are sent even when the timer fired meanwhile (N015)', async () => {
+        vi.useFakeTimers();
+        try {
+            localStorage.setItem('fg_dev_key', 'k1');
+            let release!: () => void;
+            f.mockImplementationOnce(() => new Promise(r => { release = () => r({ ok: true }); }));
+            f.mockResolvedValue({ ok: true });
+            devLogEntry('error', 'console', 'first');
+            await vi.advanceTimersByTimeAsync(3000);   // first send starts and waits
+            devLogEntry('error', 'console', 'second');
+            await vi.advanceTimersByTimeAsync(3000);   // its timer fires while the first send is active
+            release();
+            await vi.advanceTimersByTimeAsync(6000);
+            expect(f).toHaveBeenCalledTimes(2);
+            expect(_devLogQueueForTest()).toHaveLength(0);
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('does not send a task log when the key is removed while the chat is being built (N026)', async () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        const build = vi.fn(async () => { localStorage.removeItem('fg_dev_key'); return '{"id":"c1","openaiHistory":[]}'; });
+        await sendTaskLog({ id: '7', title: 'T', path: 'fg-tasks/7.md' }, 'failed', 'why', 'c1', build);
+        expect(f).not.toHaveBeenCalled();
+    });
+
     it("redacts saved credentials from the task's own fields, not only the chat (codex CR-01: a crash reason quotes the code that ran)", async () => {
         localStorage.setItem('fg_dev_key', 'k1');
         localStorage.setItem('some_api_key', 'plainsecretvalue123');

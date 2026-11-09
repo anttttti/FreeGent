@@ -69,6 +69,8 @@ export default defineConfig(() => {
     `https://127.0.0.1:${PORT}`,
     // Bind to all interfaces → auto-allow every local LAN IP (enables phone access)
     ...(BIND === '0.0.0.0' ? _lanOrigins(PORT) : []),
+    // An explicit interface address serves the UI from that address, so the page's own origin has to be accepted too (explorations 2026-11-10 N021).
+    ...(BIND !== '0.0.0.0' && BIND !== '::' && !/^(?:localhost|127\.0\.0\.1)$/.test(BIND) ? [`http://${BIND.includes(':') ? `[${BIND}]` : BIND}:${PORT}`, `https://${BIND.includes(':') ? `[${BIND}]` : BIND}:${PORT}`] : []),
     // FG_ALLOWED_ORIGINS=http://192.168.1.50:5000,http://... for explicit overrides
     ...(process.env.FG_ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
   ]);
