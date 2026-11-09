@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutWindow, lazyHeights, wrapRows, cellWidth } from '../log-layout.ts';
+import { layoutWindow, lazyHeights, wrapRows, cellWidth, stripControls } from '../log-layout.ts';
 
 describe('log layout', () => {
     it('picks items by rows: a tall answer does not hide what comes after it (case 065)', () => {
@@ -26,6 +26,21 @@ describe('log layout', () => {
         expect(far.maxOffset).toBe(5);
         expect(far.end).toBe(1);                      // clamped: the oldest item, not nothing
         expect(layoutWindow(heights, 3, 5).end).toBe(far.end);
+    });
+    // explorations 2026-11-10 N028: a control string split by the wrapper, or written in C1 form, reached the terminal's OSC handlers.
+    it('terminal control strings and escape sequences never reach the rows, wrapped or not', () => {
+        const osc52 = '\x1b]52;c;aGVsbG8=\x07', title = '\x1b]0;pwned\x1b\\', c1 = '\x9d52;c;aGVsbG8=\x9c', csi = '\x1b[2J\x1b[31mred\x1b[0m';
+        for (const bad of [osc52, title, c1, csi, 'a\rb', 'x\x08y']) {
+            for (const width of [3, 12, 80]) {
+                const rows = wrapRows(`${'p'.repeat(64)}${bad}tail`, width).join('\n');
+                expect(rows, JSON.stringify(bad)).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+                expect(rows, JSON.stringify(bad)).not.toContain('52;c;');
+                expect(rows, JSON.stringify(bad)).not.toContain('pwned');
+            }
+        }
+        expect(stripControls('plain\ttext\nline 2 [x] (y)')).toBe('plain\ttext\nline 2 [x] (y)');
+        expect(stripControls(csi)).toBe('red');
+        expect(stripControls('a\x1b]52;c;QQ==\x07b')).toBe('ab');
     });
     it('wrapRows breaks by cell width, with wide characters counting twice', () => {
         expect(wrapRows('abcdef', 4)).toEqual(['abcd', 'ef']);

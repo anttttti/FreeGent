@@ -14,11 +14,22 @@ export function cellWidth(ch: string): number {
     return 1;
 }
 
+// Text from a model, a file or a tool is data on its way to the screen. A terminal control string (OSC 52 sets the clipboard, OSC 0/2 the title)
+// split across rows by the wrapper below reached the terminal's handlers through Ink (explorations 2026-11-10 N028), and C1 forms need no wrapping at all.
+// Everything that is not printable text, a newline or a tab goes: colours the model wrote are not worth a path to the terminal.
+const _CTRL_STRING = /(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)?/g;
+const _CSI = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?/g;
+const _ESC = /\x1b[ -/]*[0-~]?/g;
+const _CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+export function stripControls(text: string): string {
+    return text.replace(_CTRL_STRING, '').replace(_CSI, '').replace(_ESC, '').replace(_CONTROLS, '');
+}
+
 /** `text` broken into terminal rows of at most `width` cells (hard line breaks kept; long lines cut at the width). */
 export function wrapRows(text: string, width: number): string[] {
     const w = Math.max(1, width);
     const rows: string[] = [];
-    for (const line of text.split('\n')) {
+    for (const line of stripControls(text).split('\n')) {
         let cur = '', used = 0;
         for (const ch of line) {
             const cw = cellWidth(ch);

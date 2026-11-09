@@ -21,7 +21,7 @@ import { goalRunning, steerGoal } from './goal.js';
 import { forceSkillsNextTurn } from './turn-context.js';
 import { dom, PROFILE_PATH } from './headless-runner.js';
 import { KEYS } from './storage-keys.js';
-import { layoutWindow, lazyHeights, wrapRows, cursorWindow } from './log-layout.js';
+import { layoutWindow, lazyHeights, wrapRows, cursorWindow, stripControls } from './log-layout.js';
 import { prevBoundary, nextBoundary, deleteBackward, deleteForward } from './input-edit.js';
 import { SETTINGS_DEF, keyedFields, numberFieldError, type FieldDef } from './panel-defs.js';
 import { _stripTerminal } from './turn-protocol.js';
@@ -310,7 +310,7 @@ function StepView({ step, turn, width }: { step: Store.StepState; turn: Store.Tu
     const tokOut = step.tokens.out != null ? `↓${step.tokens.out}` : '';
     const tok = (tokIn || tokOut) ? ' ' + [tokIn, tokOut].filter(Boolean).join(' ') : '';
     const secs  = ` ${step.elapsed.toFixed(1)}s`;
-    const header = `  ${sym} ${label}${model}${tok}${secs}`;
+    const header = stripControls(`  ${sym} ${label}${model}${tok}${secs}`);   // the label can carry text the model wrote (N028)
     const visibleSections = SECTION_ORDER.filter(s => _hasSection(step, s));
     // ↺ Rerun: the turn goes on from this step's model call (a tool step reruns the model call that made it), as the WebUI's step button does.
     const st = Store.getState();
@@ -599,7 +599,7 @@ function RolePanel({ height }: { height: number }) {
             <Text bold>
                 {'Active role: '}
                 <Text color="cyan">{activeName}</Text>
-                {currentRole?.description ? <Text dimColor>{`  — ${currentRole.description}`}</Text> : null}
+                {currentRole?.description ? <Text dimColor>{stripControls(`  — ${currentRole.description}`)}</Text> : null}
             </Text>
             <Text dimColor>{'  ↑/↓ choose, Enter to use it, Esc to close  •  /role <name>  •  Reset to default: /role director'}</Text>
             {roles.map((r, i) => ({ r, i })).slice(roleWin.start, roleWin.end).map(({ r, i }) => (
