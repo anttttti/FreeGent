@@ -4,7 +4,7 @@ import './key-vault.js';   // first: with the key lock on, it serves the saved k
 import { getChatHistory } from './chat-history.js';
 import { KEYS, roleBodyKey, roleBodyFnKey } from './storage-keys.js';
 import { createSandboxedPyodideWorker, sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard, EXEC_TIMEOUT_MS } from './exec-limits.js';
+import { omittedFileWriteMessage, snapshotEpoch, snapshotWorkspace, staleGuard, addLiveFolderInput, withLiveFiles, EXEC_TIMEOUT_MS } from './exec-limits.js';
 import { decodeOutputFile, encodeInputFile } from './pyodide-run.js';
 import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
@@ -1408,26 +1408,16 @@ async function runWithPyodide(code, { filepath, signal, timeoutMs = PYODIDE_RUN_
             // not the raw base64 string, into Pyodide's IDBFS.
             .map(f => [f.name, encodeInputFile(f)])
     );
-    // Include FSA local-folder files so Python can read and write them at local/ paths.
+    // Include FSA local-folder files so Python can read and write them at local/ paths, and so the stale-write guard knows what the run saw.
     // Skip large dirs (logs) to keep startup time reasonable.
-    try {
-        const allFiles = await agentListFiles();
-        for (const f of allFiles) {
-            if (!f.isLocal || /^local\/logs\//.test(f.name)) continue;
-            try {
-                const content = await agentReadFile(f.name);
-                if (typeof content !== 'string') continue;
-                if (content.length <= EXEC_FILE_MAX_CHARS) files[f.name] = content; else omitted.add(f.name);
-            } catch {}
-        }
-    } catch {}
+    try { await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, skip: /^local\/logs\// }); } catch {}
     const id = ++pyodideMsgId;
     return new Promise(resolve => {
         pyodideCallbacks[id] = async data => {
             const imageNames = [];
             const writeErrors: string[] = [];
             if (data.changedFiles && Object.keys(data.changedFiles).length) {
-                const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
+                const changedMeanwhile = await staleGuard(sentSnap, omitted, withLiveFiles(listWorkspaceFiles, agentReadFile, Object.keys(data.changedFiles)));
                 for (const [name, content] of Object.entries(data.changedFiles as Record<string, string | null>)) {
                     if (changedMeanwhile(name)) { writeErrors.push(`${name}: ${content === null ? 'not deleted' : 'not written'}, the file changed while the code ran; kept the newer version`); continue; }
                     if (content === null) {

@@ -35,6 +35,27 @@ afterEach(() => { W.fetch = realFetch; localStorage.removeItem('fg_sandbox_provi
 const run = () => W.executeToolAsync('execute_code', { language: 'bash', code: 'echo go' }, null);
 
 describe('execute_code with the Local provider', () => {
+    // codex R438/R439: the run did not receive the attached Local Folder's files, and a change made to one meanwhile was not noticed.
+    it('sends the Local Folder\'s live files, and keeps a folder file the user edited while the run worked', async () => {
+        const live = { 'local/src/app.py': 'v1', 'local/notes.txt': 'n1' };
+        W.agentListFiles = async () => Object.keys(live).map(name => ({ name, isLocal: true }));
+        W.agentReadFile = async (n) => { if (!(n in live)) throw new Error('File not found: ' + n); return live[n]; };
+        W.fetch = async (url, init) => {
+            if (String(url).endsWith('/api/execute')) {
+                sentBody = JSON.parse(init.body);
+                live['local/src/app.py'] = 'edited by the user meanwhile';
+                return { ok: true, status: 200, json: async () => ({ stdout: '', stderr: '', exit_code: 0, files_written: { 'local/src/app.py': 'run output', 'local/notes.txt': 'n2' } }) };
+            }
+            return realFetch(url, init);
+        };
+        const r = await run();
+        expect(sentBody.files['local/src/app.py']).toBe('v1');
+        expect(sentBody.files['local/notes.txt']).toBe('n1');
+        expect(written.has('local/src/app.py')).toBe(false);
+        expect(written.get('local/notes.txt')).toBe('n2');
+        expect(r.stderr).toMatch(/local\/src\/app\.py.*changed while/);
+    });
+
     it('sends empty files, and leaves out only the ones that are too large', async () => {
         answer = { stdout: '', stderr: '', exit_code: 0, files_written: {} };
         await run();

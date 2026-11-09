@@ -56,6 +56,34 @@ export async function staleGuard(snap: Map<string, string>, omitted: Set<string>
     return (path: string) => !omitted.has(path) && (snap.has(path) !== now.has(path) || (snap.has(path) && snap.get(path) !== now.get(path)));
 }
 
+/** The attached Local Folder's live files, for a run's input and its stale-write baseline (codex R438 to R440). The listing marks them `isLocal` with a
+ *  `local/` name. A text file within `maxChars` goes into the run (`put`) and into `snap`, so the guard knows what the run saw; it replaces an imported
+ *  snapshot record of the same name, including that record's "too large" mark. A file the run cannot see (too large, or not text) is `omitted`, so the
+ *  run may not replace it. `skip` leaves out folders such as logs to keep a start fast. */
+export async function addLiveFolderInput(o: {
+    list: () => Promise<any[] | null | undefined>; read: (name: string) => Promise<unknown>; maxChars: number;
+    put: (name: string, content: string) => void; snap: Map<string, string>; omitted: Set<string>; skip?: RegExp;
+}): Promise<void> {
+    for (const f of (await o.list()) || []) {
+        if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
+        let c: unknown;
+        try { c = await o.read(f.name); } catch { continue; }
+        if (typeof c === 'string' && c.length <= o.maxChars) { o.put(f.name, c); o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
+        else o.omitted.add(f.name);
+    }
+}
+/** A listing for `staleGuard` that also holds the current content of the `local/` files the run changed: the guard compares the baseline with this. */
+export function withLiveFiles(list: () => Promise<any[] | null | undefined>, read: (name: string) => Promise<unknown>, changed: Iterable<string>): () => Promise<any[]> {
+    const names = [...changed].filter(n => n.startsWith('local/'));
+    return async () => {
+        const recs = [...((await list()) || [])];
+        for (const name of names) {
+            try { const c = await read(name); if (typeof c === 'string') { const i = recs.findIndex(r => r?.name === name); if (i >= 0) recs.splice(i, 1); recs.push({ name, content: c }); } } catch {}
+        }
+        return recs;
+    };
+}
+
 /** What a run did to files it wrote that are now empty or much smaller, for the tool result; null when nothing shrank like that.
  *  Self-analysis 2026-10-29: Python's open(path, 'w') empties the file at once, a write that then failed left model-caps.ts at 0 bytes
  *  (P6), a regex rewrite cut 590 lines out of tools.ts (P2); the result said only files_written, and the agent searched the emptied file

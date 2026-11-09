@@ -14,7 +14,7 @@ import { checkWriteAllowed, isWriteAllowActive } from './write-allow.js';
 import { isCredentialPath, credentialFilesIn, noteSecrets, secretEgressReason } from './secret-egress.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, shrinkNote, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch } from './exec-limits.js';
+import { omittedFileWriteMessage, shrinkNote, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch, addLiveFolderInput, withLiveFiles } from './exec-limits.js';
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
@@ -2910,12 +2910,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     if (rec.content.length > EXEC_FILE_MAX_CHARS) { omitted.add(rec.name); continue; }
                     files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content } : rec.content;
                 }
-                for (const f of await agentListFiles()) {
-                    if (!f.isLocal || f.name in files) continue;
-                    const c = await agentReadFile(f.name).catch(() => null);
-                    if (typeof c !== 'string') continue;
-                    if (c.length <= EXEC_FILE_MAX_CHARS) files[f.name] = c; else omitted.add(f.name);
-                }
+                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted });
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
             // storage or the dev server) with fs/path over this copy of the files, at /workspace
@@ -2931,7 +2926,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 return { stdout: '', stderr: `JS sandbox: ${m}${/timed out/.test(m) ? ' (an endless loop, or work that needs longer: run it as a background bash/Python job instead)' : ''}`, exit_code: 1 };
             }
             finally { if (_notice) clearTimeout(_notice); }
-            const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
+            const changedMeanwhile = await staleGuard(sentSnap, omitted, withLiveFiles(listWorkspaceFiles, agentReadFile, [...(run.deleted ?? []), ...Object.keys(run.written ?? {})]));
             const write_errors = [];
             const deletedOk: string[] = [];
             for (const path of (run.deleted ?? []) as string[]) {
@@ -3002,6 +2997,8 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                         if (rec.content.length > 1_000_000) { omitted.add(rec.name); continue; }
                         files[rec.name] = rec.encoding === 'base64' && rec.content ? `\x00BIN\x00${rec.content}` : rec.content;
                     }
+                    // The attached Local Folder's files too: the prompt says `local/` paths are on disk, so the shell has to see them (codex R438).
+                    await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: 1_000_000, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, skip: /^local\/logs\// });
                 } catch {}
                 const resp = await fetch('/api/execute', {
                     method:  'POST',
@@ -3015,7 +3012,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const writeErrors: string[] = [];
                 // The run worked on the snapshot sent above. A file the user saved (or another tool changed) while it ran holds a
                 // newer revision: applying the run's write or deletion would replace it with output derived from the old one.
-                const changedMeanwhile = await staleGuard(sentSnap, omitted, listWorkspaceFiles);
+                const changedMeanwhile = await staleGuard(sentSnap, omitted, withLiveFiles(listWorkspaceFiles, agentReadFile, [...(execResult.files_deleted ?? []), ...Object.keys(execResult.files_written ?? {})]));
                 // Files the run removed or renamed away
                 for (const path of (execResult.files_deleted ?? []) as string[]) {
                     if (changedMeanwhile(path)) { writeErrors.push(`delete ${path}: the file changed while the command ran; kept the newer version`); continue; }
