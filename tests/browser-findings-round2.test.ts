@@ -17,6 +17,8 @@ describe('project import validation', () => {
         expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: 'a', content: 5 }] })).toThrow();
         expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: [] })).toThrow();
         expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: 'a', content: 'x' }], chatData: {} })).not.toThrow();
+        expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: '../outside.txt', content: 'x' }] })).toThrow(/leaves the workspace/);   // codex R820
+        expect(() => validateProjectData({ fg_project: 1, workspace: [{ name: 'a/../b.txt', content: 'x' }] })).toThrow(/leaves the workspace/);
         // a chat list or history that is not text must not read as "no chats" and wipe the current ones (codex R538, R539)
         expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: { fg_chat_list: { id: 'a' } } })).toThrow(/chat list is not text/);
         expect(() => validateProjectData({ fg_project: 1, workspace: [], chatData: { fg_chat_list: '[]', fg_chat_c1_oh: 5 } })).toThrow(/history of chat "c1" is not text/);

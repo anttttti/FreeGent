@@ -95,3 +95,17 @@ describe('writes through a workspace adapter reload what the agent reads (case 0
         } finally { setWorkspaceAdapter(null as any); }
     });
 });
+
+describe('deleting an instruction file in the browser workspace reloads what the agent reads (codex R911)', () => {
+    it('AGENTS.md', async () => {
+        await import('fake-indexeddb/auto');
+        const { agentWriteFile, agentDeleteFile } = await import('../workspace.ts');
+        const loadAgentsContext = vi.fn();
+        Object.assign(globalThis, { loadAgentsContext }); Object.assign(W, { loadAgentsContext });
+        await agentWriteFile('AGENTS.md', 'be brief');
+        loadAgentsContext.mockClear();
+        await agentDeleteFile('AGENTS.md');
+        expect(loadAgentsContext).toHaveBeenCalledTimes(1);
+    });
+});
+

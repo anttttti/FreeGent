@@ -65,6 +65,13 @@ describe('npm install', () => {
         const x = await run('npx foo-cli-r277 hello');
         expect(x.out).toContain('foo ran hello');
     });
+    it('a global install writes the stub with the global package directory, not ./node_modules (codex R100-05)', async () => {
+        pkgMeta('glob-cli-r100', { '1.0.0': { bin: { globcli: './cli.js' }, script: "console.log('g')" } });
+        const r = await run('npm install -g glob-cli-r100');
+        expect(r.code).toBe(0);
+        const stub = await run('cat /usr/local/bin/globcli');
+        expect(stub.out.trim()).toMatch(/\/usr\/local\/lib\/node_modules\/glob-cli-r100\/cli\.js$/);
+    });
     it('npx with an explicit version does not run another installed version (R276)', async () => {
         pkgMeta('ver-r276', { '1.0.0': { bin: { ver: './cli.js' }, script: "console.log('v1')" }, '2.0.0': { bin: { ver: './cli.js' }, script: "console.log('v2')" } });
         await run('npm install ver-r276@1.0.0');

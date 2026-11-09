@@ -2,6 +2,8 @@
 // Never imported by browser code. Injected via window.setWorkspaceAdapter() in the headless runner.
 import { readFile, writeFile, mkdir, unlink, readdir, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { scrubEnv } from './secret-env.js';
 import { join, dirname, resolve } from 'node:path';
 import type { WorkspaceAdapter } from './workspace.js';
 import { listFiles } from './workspace-scan.js';
@@ -255,7 +257,9 @@ export class NodeFsAdapter implements WorkspaceAdapter {
         const abs = this._resolve(path);
         if (_OFFICE_RE.test(abs)) {
             const text = await new Promise<string>((res) => {
-                execFile('python3', ['-c', _officeExtractPy('sys.argv[1]'), abs], { maxBuffer: 10_000_000 },
+                // Reading a document must not run the workspace's code or hand it the credentials: -I ignores the working directory and PYTHON* variables
+                // (a workspace zipfile.py was imported and ran with the keys), a scrubbed environment keeps the keys out, a neutral cwd is the second guard (E036).
+                execFile('python3', ['-I', '-c', _officeExtractPy('sys.argv[1]'), abs], { maxBuffer: 10_000_000, env: scrubEnv(process.env) as any, cwd: tmpdir() },
                     (err, stdout) => res(err ? '' : stdout));
             });
             if (_usableOfficeText(text)) return text;

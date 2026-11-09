@@ -669,7 +669,7 @@ async function createGlobalBinSymlinks(
         // Then a bin stub: the file holds the script's absolute path, which the shell runs with node.
         try { await ctx.fs.symlink(targetPath, symlinkPath); }
         catch {
-          await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(`node_modules/${pkg.name}/${cleanBinPath}`, ctx.cwd));
+          await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(targetPath, ctx.cwd));   // targetPath is where this global install put the package: /usr/local/lib/node_modules, not ./node_modules (codex R100-05)
           try { await ctx.fs.chmod(symlinkPath, 0o755); } catch { /* no modes here */ }
         }
         binCount++;

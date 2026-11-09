@@ -11,6 +11,7 @@
 //     checkpoint reports "too large";
 //   - at most two scans at once, so parallel workers cost two scans, not one each.
 import { spawn } from 'node:child_process';
+import { scrubEnv } from './secret-env.js';
 import { readdir, lstat } from 'node:fs/promises';
 import { readFileSync, statSync } from 'node:fs';
 import { join, resolve, relative, sep } from 'node:path';
@@ -41,7 +42,9 @@ function _git(cwd: string, args: string[], maxEntries: number, deadlineMs: numbe
         let child;
         try {
             // GIT_OPTIONAL_LOCKS=0: a status must not take index.lock and make the agent's own `git add` fail.
-            child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } });
+            // An observation helper is a data reader too: no filesystem-monitor program named by the repository's config (the policy of dev-api.ts hardenGitArgs), and no
+            // credentials in its environment (the command it observes runs without them; overnight exploration E035).
+            child = spawn('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...scrubEnv(process.env), GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } });
         } catch { resolveRun({ ok: false, out: '', truncated: false }); return; }
         const stop = () => { truncated = true; try { child.kill('SIGKILL'); } catch {} };
         const timer = setTimeout(stop, deadlineMs);

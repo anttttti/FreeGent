@@ -813,7 +813,7 @@ const _silentWav=(function(){
 const _blobs={};
 /* assets the page already carries as an element's src (tagged data-fg-asset): read from there, snapshotted as the
    elements are parsed so a script removing one later does not lose them */
-const _D={};
+const _D=Object.create(null);   /* a path such as constructor must not find an inherited function (codex R740) */
 function _snap(){document.querySelectorAll('[data-fg-asset]').forEach(function(el){const k=el.getAttribute('data-fg-asset'),v=el.getAttribute('src');if(k&&v&&!_D[k])_D[k]=v;});}
 try{new MutationObserver(_snap).observe(document,{childList:true,subtree:true});}catch(e){}   /* catches an element a script removes while the page is still parsing */
 _ael.call(document,'DOMContentLoaded',_snap);
@@ -990,7 +990,7 @@ function run(d){
   String(d.text).split('').forEach(function(ch){var o={key:ch,code:code(ch),bubbles:true,cancelable:true};el.dispatchEvent(new KeyboardEvent('keydown',o));el.dispatchEvent(new KeyboardEvent('keypress',o));cur+=ch;set(cur);
    try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:ch,inputType:'insertText'}))}catch(e){el.dispatchEvent(new Event('input',{bubbles:true}))}el.dispatchEvent(new KeyboardEvent('keyup',o))});
   el.dispatchEvent(new Event('change',{bubbles:true}));return{ok:true,value:String(ed?el.textContent:el.value).slice(0,200)}}
- if(d.cmd==='key'){var tg=document.activeElement||document.body;tg.dispatchEvent(new KeyboardEvent(d.kind,{key:d.key,code:code(d.key),bubbles:true,cancelable:true}));return{ok:true}}
+ if(d.cmd==='key'){var tg=document.activeElement||document.body;var ko={key:d.key,code:code(d.key),bubbles:true,cancelable:true};tg.dispatchEvent(new KeyboardEvent(d.kind,ko));if(d.kind==='keydown'&&(d.key==='Enter'||d.key.length===1))tg.dispatchEvent(new KeyboardEvent('keypress',ko));return{ok:true}}
  if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,4000)}}
  if(d.cmd==='stats'){return{frames:FR,ms:Date.now()-T0}}
  return{error:'unknown command'}}

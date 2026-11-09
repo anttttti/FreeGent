@@ -54,7 +54,7 @@ let _cryptoKey: CryptoKey | null = null;        // non-extractable; set while un
 let _enabled = false;
 let _damaged = false;                           // a vault entry exists but cannot be read
 let _salt: string | null = null;                // identifies the current vault
-let _vaultGen = 0, _lockGen = 0, _seq = 0, _credVersion = 0;
+let _vaultGen = 0, _lockGen = 0, _seq = 0, _credVersion = 0, _remoteSeq = 0;   // _remoteSeq numbers the cross-tab decrypts: only the latest installs its values
 let _writeChain: Promise<void> = Promise.resolve();
 let _saving = 0;
 let _saveError: string | null = null;
@@ -420,9 +420,10 @@ export function keyVaultValues(): string[] { return [..._mem.values()].filter(Bo
                     return;
                 }
                 if (!_cryptoKey) return;
-                const key = _cryptoKey, vg = _vaultGen, lg = _lockGen;
+                const key = _cryptoKey, vg = _vaultGen, lg = _lockGen, seq = ++_remoteSeq;
                 _decrypt(key, blob).then(values => {
                     if (vg !== _vaultGen || lg !== _lockGen || _cryptoKey !== key) return;   // locked or replaced meanwhile
+                    if (seq !== _remoteSeq) return;   // a later storage event started its decrypt after this one: that result is the current credential (codex R100-04)
                     const changed = _install(values);
                     if (changed.length) _announce(changed, 'remote');
                 }).catch(() => { if (vg === _vaultGen && lg === _lockGen) lockKeyVault(); });   // not our key any more

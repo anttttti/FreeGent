@@ -32,10 +32,15 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
     }
 
     async _open() {
-        await mkdir(dirname(this._dbPath), { recursive: true });
-        this._db = new DatabaseSync(this._dbPath);
-        this._db.exec('PRAGMA journal_mode = WAL');
-        this._db.exec(SESSION_SCHEMA_SQL);
+        // Owner-only when this creates the directory: the store holds whole conversations (codex R881).
+        await mkdir(dirname(this._dbPath), { recursive: true, mode: 0o700 });
+        const db = new DatabaseSync(this._dbPath);
+        try {
+            db.exec('PRAGMA foreign_keys = ON');   // the schema's ON DELETE CASCADE needs it; Node's default depends on its version (codex R884)
+            db.exec('PRAGMA journal_mode = WAL');
+            db.exec(SESSION_SCHEMA_SQL);
+        } catch (e) { try { db.close(); } catch {} throw e; }   // a handle whose setup failed is not a usable store (codex R882)
+        this._db = db;
     }
 
     async _ensure() { if (!this._db) await this._ready; return this._db; }

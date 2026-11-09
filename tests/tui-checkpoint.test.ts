@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, readdirSync, symlinkSync, linkSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { takeSnapshot, restoreSnapshot, dropSnapshot, MAX_FILE_BYTES } from '../tui-checkpoint.ts';
@@ -93,3 +93,26 @@ describe('codex R13-001: rewind never removes a file that was already there', ()
         expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe('archive/\n');
     });
 });
+
+describe('rewind never writes through a link the turn put in place (overnight exploration E037, E039)', () => {
+    it('a symlink, a hard link and a linked parent folder leave the outside file alone', async () => {
+        const root = tmp('fg-ws-'), store = tmp('fg-ck-'), outside = tmp('fg-out-');
+        writeFileSync(join(root, 'a.txt'), 'ORIGINAL-A'); writeFileSync(join(root, 'b.txt'), 'ORIGINAL-B');
+        mkdirSync(join(root, 'dir')); writeFileSync(join(root, 'dir', 'c.txt'), 'ORIGINAL-C');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
+        // the turn replaces each by a link to a file outside the workspace
+        writeFileSync(join(outside, 'target-a'), 'OUT-A'); writeFileSync(join(outside, 'target-b'), 'OUT-B'); mkdirSync(join(outside, 'dir')); writeFileSync(join(outside, 'dir', 'c.txt'), 'OUT-C');
+        rmSync(join(root, 'a.txt')); symlinkSync(join(outside, 'target-a'), join(root, 'a.txt'));
+        rmSync(join(root, 'b.txt')); linkSync(join(outside, 'target-b'), join(root, 'b.txt'));
+        rmSync(join(root, 'dir'), { recursive: true }); symlinkSync(join(outside, 'dir'), join(root, 'dir'));
+        const r = await restoreSnapshot(root, snap);
+        expect(readFileSync(join(outside, 'target-a'), 'utf8')).toBe('OUT-A');
+        expect(readFileSync(join(outside, 'target-b'), 'utf8')).toBe('OUT-B');
+        expect(readFileSync(join(outside, 'dir', 'c.txt'), 'utf8')).toBe('OUT-C');
+        expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ORIGINAL-A');   // the workspace file itself is back, as a regular file
+        expect(lstatSync(join(root, 'a.txt')).isSymbolicLink()).toBe(false);
+        expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('ORIGINAL-B');
+        expect(r.skippedOutside).toEqual([join('dir', 'c.txt')]);
+    });
+});
+

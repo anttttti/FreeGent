@@ -253,6 +253,14 @@ describe('dev API over HTTP', () => {
         expect(r.status).toBe(403);
     });
 
+    it('honours a per-call timeout_s, clamped by the server, and names the limit it used (overnight exploration E032)', async () => {
+        const r = await api('/api/execute', { method: 'POST', body: JSON.stringify({ language: 'bash', code: 'sleep 5; echo done', timeout_s: 1 }) });
+        const out = await r.json();
+        expect(out.exit_code).toBe(124);
+        expect(out.stdout).not.toContain('done');
+        expect(out.stderr).toMatch(/timed out after 1s/);
+    });
+
     it('runs commands without credentials in the environment', async () => {
         process.env.FG_TEST_SECRET_API_KEY = 'must-not-leak';
         try {

@@ -424,7 +424,7 @@ export function taskChangesData(task: string): boolean {
 // setup.sh was removed). Allowed only when the user's request asks for that operation; "leave the working tree clean",
 // a negated or explained mention ("do not run git clean"), or a dry run ("git clean -n") does not count, and permission
 // for one operation is not permission for another (hermes N2; codex Review657/667/671/694/695/742-744/747).
-type _GitOp = 'clean' | 'reset' | 'discard' | 'stash' | 'rm' | 'branch' | 'push';
+type _GitOp = 'clean' | 'reset' | 'discard' | 'stash' | 'rm' | 'branch' | 'push' | 'tag';
 const _GIT_OP_REASON: Record<_GitOp, string> = {
     clean: 'git clean -f deletes untracked files that git cannot restore',
     reset: 'git reset --hard discards uncommitted changes that git cannot restore',
@@ -433,6 +433,7 @@ const _GIT_OP_REASON: Record<_GitOp, string> = {
     rm: 'git rm -f deletes modified files whose changes git cannot restore',
     branch: 'git branch -D deletes a branch whose unmerged commits git may not keep',
     push: 'a forced or deleting git push rewrites remote history that git cannot restore here',
+    tag: 'git tag -d deletes a tag, the only name a release commit may have, which git cannot restore',
 };
 const _DISCARD_WORDS = String.raw`\b(?:discard|throw\s+away|blow\s+away|nuke|wipe|hard[\s-]reset)\b`;
 const _GIT_ASK: Record<_GitOp, RegExp> = {
@@ -443,6 +444,7 @@ const _GIT_ASK: Record<_GitOp, RegExp> = {
     rm: /\bgit\s+rm\b/gi,
     branch: /\bgit\s+branch\s+(?:-D|-d|--delete)\b|\b(?:delete|remove|drop)\b[^.\n]{0,40}\bbranch(?:es)?\b/gi,
     push: /\bgit\s+push\b[^.\n]*?(?:--force|\s-f\b|--delete|--mirror)|\bforce[\s-]push\w*/gi,
+    tag: /\bgit\s+tag\s+(?:-d|--delete)\b|\b(?:delete|remove|drop)\b[^.\n]{0,40}\btags?\b/gi,
 };
 // Words that turn a mention in the request into something other than permission, when they come earlier in its clause.
 const _NOT_ASKED_RE = /\b(?:not|never|don'?t|no|without|avoid|explain\w*|describe\w*|what\s+(?:does|would|is)|how\s+does|why)\b/i;
@@ -476,6 +478,7 @@ function _gitOp(argv: string[]): _GitOp | null {
         case 'switch': return has(/^-f$|^--force$|^--discard-changes$/) ? 'discard' : null;
         case 'stash': return words[0] === 'drop' || words[0] === 'clear' ? 'stash' : null;
         case 'rm': return !dry && !has(/^--cached$/) && has(/^--force$|^-[a-zA-Z]*f/) ? 'rm' : null;
+        case 'tag': return has(/^-d$|^--delete$/) ? 'tag' : null;
         case 'branch': return has(/^-D$/) || (has(/^-d$|^--delete$/) && has(/^-f$|^--force$/)) ? 'branch' : null;
         case 'push': return has(/^--force(?:-with-lease)?(?:=|$)|^-f$|^--delete$|^-d$|^--mirror$/) || words.slice(1).some(w => /^[+:]/.test(w)) ? 'push' : null;
         default: return null;

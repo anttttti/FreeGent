@@ -148,3 +148,19 @@ describe('a workspace folder that an enclosing repository ignores', () => {
         expect((await listFiles(d, { maxEntries: 1000 })).via).toBe('git');
     });
 });
+
+describe('the scan helper does not run repository-configured programs (overnight exploration E035)', () => {
+    it('a core.fsmonitor hook is not executed by the status scan, and changes are still found', async () => {
+        const d = repo();
+        const marker = join(d, '..', `fsmon-ran-${Date.now()}`);
+        writeFileSync(join(d, 'hook.sh'), `#!/bin/sh\necho "$OPENAI_API_KEY" > ${marker}\nexit 0\n`, { mode: 0o755 });
+        git(d, 'config', 'core.fsmonitor', join(d, 'hook.sh'));
+        process.env.OPENAI_API_KEY = 'sk-synthetic-scan-key';
+        try {
+            expect(await written(d, () => { writeFileSync(join(d, 'b.txt'), 'changed'); })).toEqual(['b.txt']);
+            const { existsSync } = await import('node:fs');
+            expect(existsSync(marker)).toBe(false);
+        } finally { delete process.env.OPENAI_API_KEY; }
+    });
+});
+

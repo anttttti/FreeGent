@@ -26,6 +26,8 @@ function _resolvePort(): number {
     const eqArg = process.argv.find(a => a.startsWith('--port='));
     const fromCli = next && !next.startsWith('-') ? parseInt(next, 10) : eqArg ? parseInt(eqArg.split('=')[1], 10) : NaN;
     const port = Number.isFinite(fromCli) ? fromCli : parseInt(process.env.FG_PORT ?? '5000', 10);
+    // Port 0 would bind an ephemeral port, but the API's allowed origins are built from this number before the server reports the real one (codex R873).
+    if (port === 0) throw new Error('FG_PORT / --port 0 is not supported: choose a fixed port.');
     return port;
 }
 const PORT = _resolvePort();

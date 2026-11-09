@@ -17,6 +17,7 @@
 //   as the user; see the approval defaults in config.ts.
 
 import { execFile, spawn, spawnSync } from 'node:child_process';
+import { execTimeoutMs } from './exec-limits.js';
 import { mkdtemp, rm, writeFile, mkdir, readdir, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { configDir, loadDotenv } from './dotenv.js';
@@ -798,19 +799,20 @@ export function createDevApi(opts: DevApiOptions) {
             }
 
             let stdout = '', stderr = '', exitCode = 0;
+            const limitMs = body.timeout_s != null ? execTimeoutMs(body.timeout_s) : EXECUTE_TIMEOUT_MS;   // clamped here: a browser-supplied number is not trusted
             try {
                 const env: Record<string, string> = { ...scrubEnv(process.env), HOME: tmpDir };
                 const [bin, binArgs] = execIsolation() === 'bwrap'
                     ? ['bwrap', [...bwrapArgs(tmpDir, env.PATH ?? '', homedir()), '--', cmd[0], ...cmd[1]]]
                     : cmd;
-                const running = spawnCapture(bin, binArgs, { cwd: tmpDir, timeout: EXECUTE_TIMEOUT_MS, env, maxBuffer: 10 * 1024 * 1024 });
+                const running = spawnCapture(bin, binArgs, { cwd: tmpDir, timeout: limitMs, env, maxBuffer: 10 * 1024 * 1024 });
                 // The browser went away (Stop, closed tab): end the command, and what it started, instead of letting it run on.
                 res.on('close', () => { if (!res.writableEnded) running.killTree(); });
                 const r = await running.result;
                 stdout = r.stdout; stderr = r.stderr;
             } catch (err: any) {
                 stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
-                const failure = execFailure(err);
+                const failure = execFailure(err, limitMs);
                 exitCode = failure.exit_code;
                 if (failure.note) stderr = stderr ? `${stderr}\n${failure.note}` : failure.note;
             }
@@ -1068,11 +1070,11 @@ function outputAsText(bytes: Buffer): string | null {
 // code 'ETIMEDOUT', which the handler used to test, so a timed-out command came back as a plain
 // exit 1 — and output past maxBuffer rejects with a string code.
 export const EXECUTE_TIMEOUT_MS = 120_000;   // same limit as native-exec.ts
-export function execFailure(err: any): { exit_code: number; note: string } {
+export function execFailure(err: any, limitMs: number = EXECUTE_TIMEOUT_MS): { exit_code: number; note: string } {
     if (err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
         return { exit_code: 1, note: 'Stopped: the command printed more than 10 MB. Redirect its output to a file and read part of it.' };
     if (err?.killed && err?.signal)
-        return { exit_code: 124, note: `Command timed out after ${EXECUTE_TIMEOUT_MS / 1000}s. Run long jobs in the background, or in smaller steps.` };
+        return { exit_code: 124, note: `Command timed out after ${Math.round(limitMs / 1000)}s. Run long jobs in the background, or in smaller steps.` };
     if (typeof err?.code === 'number') return { exit_code: err.code, note: '' };
     if (err?.signal) return { exit_code: 1, note: `Ended by signal ${err.signal}.` };
     return { exit_code: 1, note: typeof err?.code === 'string' ? `Could not run: ${err.code}` : '' };

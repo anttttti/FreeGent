@@ -717,3 +717,46 @@ describe('codex campaign 6 MCP findings (cases 026-031)', () => {
     });
 });
 
+
+describe('MCP URL spellings and echoed query credentials (codex R721, R722)', () => {
+    it('an equivalent spelling of an added URL is a duplicate', async () => {
+        mockServer(standardHandler);
+        await W.addMcpServer({ name: 'one', url: 'https://spell.example.com/mcp' });
+        await expect(W.addMcpServer({ name: 'two', url: 'HTTPS://SPELL.EXAMPLE.COM:443/mcp' })).rejects.toThrow(/already added/);
+    });
+    it('a query credential echoed by a failing server is not in the error', async () => {
+        W.fetch.mockReset();
+        W.fetch.mockImplementation(async () => new Response('bad request for key=sk-query-secret-123456', { status: 400 }));
+        const err = await W.addMcpServer({ name: 'q', url: 'https://q.example.com/mcp?key=sk-query-secret-123456' }).catch((e: any) => e);
+        expect(String(err?.message)).not.toContain('sk-query-secret-123456');
+    });
+});
+
+describe('MCP metadata that echoes the credential (codex R749)', () => {
+    it('instructions and tool descriptions are redacted before they are stored', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18', instructions: 'Use the key TOPSECRET-header-value-123 in all calls.' } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 't', description: 'Auth is TOPSECRET-header-value-123.' }] } };
+            return { result: {} };
+        });
+        const s = await W.addMcpServer({ name: 'echo', url: 'https://echo.example.com/mcp', headers: { 'X-Api-Key': 'TOPSECRET-header-value-123' } });
+        // the entry holds the header itself (it is the credential the server is called with); what must be clean is the text the model reads
+        expect(String(s.instructions ?? '')).not.toContain('TOPSECRET-header-value-123');
+        expect(JSON.stringify(s.tools)).not.toContain('TOPSECRET-header-value-123');
+    });
+});
+
+describe('short MCP credentials (codex R775)', () => {
+    it('a 6-character key with a digit echoed in a tool result is redacted', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18' } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 'echo', annotations: { readOnlyHint: true } }] } };
+            if (msg.method === 'tools/call') return { result: { content: [{ type: 'text', text: 'you sent ab12cd as the key' }] } };
+            return { result: {} };
+        });
+        const s = await W.addMcpServer({ name: 'short', url: 'https://short.example.com/mcp', headers: { 'X-Key': 'ab12cd' }, enabledTools: ['echo'] });
+        const r = await W.executeMcpTool(W.mcpToolName(s.id, 'echo'), {});
+        expect(JSON.stringify(r)).not.toContain('ab12cd');
+    });
+});
+

@@ -76,6 +76,14 @@ describe('a check that ran no test', () => {
         expect(run([[edit], [mk('python -m pytest -k nothing', 5, 'no tests ran')]])).toBe('unverified');
         expect(run([[edit], [mk('pytest tests/', 127, '')]])).toBe('unverified');
     });
+    it('wrapper scripts and bundler are recognised as checks (codex R947, R951)', () => {
+        for (const cmd of ['bundle exec rspec', './mvnw test', './gradlew test', './mvnw -q test'])
+            expect(run([[edit], [mk(cmd, 0, 'ok')]]), cmd).toBe('verified');
+    });
+    it('go test with no test files is not a pass (codex R941)', () => {
+        expect(run([[edit], [mk('go test ./...', 0, '?   \texample.com/app\t[no test files]')]])).toBe('unverified');
+        expect(run([[edit], [mk('go test ./...', 0, 'ok  \texample.com/app\t0.012s')]])).toBe('verified');
+    });
     it('"Ran 0 tests" with exit 0 is not a pass', () => {
         expect(run([[edit], [mk('python -m unittest discover', 0, 'Ran 0 tests in 0.000s\n\nOK')]])).toBe('unverified');
     });

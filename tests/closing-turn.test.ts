@@ -77,6 +77,10 @@ describe('runTurn per-turn budget and excluded tools', () => {
         expect(text).toMatch(/^BLOCKED:/m);
         const notes = historyOf(s).filter((m: any) => m.role === 'user' && /steps left in this turn/.test(String(m.content)));
         expect(notes).toHaveLength(1);
+        // explorations 2026-11-09 [history-order]: the note sat between a tool call and its result, which strict endpoints answer with HTTP 400.
+        const h = historyOf(s);
+        const i = h.indexOf(notes[0]);
+        expect(h[i - 1].role).toBe('tool');
     });
 
     it('interactive chat gets the softer note, then the pause message', async () => {

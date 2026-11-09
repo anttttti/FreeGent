@@ -22,6 +22,18 @@ const _looksRandom = (v: string) => v.length >= 16 && /[A-Za-z]/.test(v) && /\d/
 export function secretValues(text: string): string[] {
     const out = new Set<string>();
     const add = (v: string | undefined) => { const t = String(v ?? '').trim().replace(/^(['"])(.*)\1$/, '$2').trim(); if (t.length >= 6) out.add(t); };
+    // A JSON document (credentials.json, an auth file) is read as JSON: the line reader below attached quotes, commas and braces to a compact or pretty value, so the clean
+    // value the model later sent did not match (codex R100-03). Values under secret-named keys and long random-looking strings are collected, at any depth.
+    try {
+        const root = JSON.parse(String(text ?? ''));
+        const walk = (node: unknown, key: string, depth: number) => {
+            if (depth > 8) return;
+            if (typeof node === 'string') { if ((_SECRET_KEY_RE.test(key) && node.length >= 6) || _looksRandom(node)) add(node); }
+            else if (Array.isArray(node)) for (const x of node) walk(x, key, depth + 1);
+            else if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, k, depth + 1);
+        };
+        if (root && typeof root === 'object') { walk(root, '', 0); return [...out]; }   // the line reader would add the same values with the JSON punctuation attached
+    } catch { /* not JSON: the line reader */ }
     for (const line of String(text ?? '').split(/\r?\n/)) {
         if (/^\s*#/.test(line)) continue;
         if (/^[A-Za-z0-9+/=]{40,}$/.test(line.trim())) { add(line); continue; }   // PEM body

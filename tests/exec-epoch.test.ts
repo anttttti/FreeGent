@@ -19,6 +19,12 @@ describe('stale-run guard across project replacement', () => {
         expect(stale('a.txt')).toBe(true);
         expect(stale('new.txt')).toBe(true);
     });
+    it('refuses every path when the current listing cannot be read (overnight exploration E023)', async () => {
+        const snap = snapshotWorkspace(recs);
+        const stale = await staleGuard(snap, new Set(), async () => { throw new Error('NotAllowedError'); });
+        expect(stale('a.txt')).toBe(true);
+        expect(stale('new.txt')).toBe(true);
+    });
     it('keeps its epoch in shared storage', () => {
         const before = Number(localStorage.getItem(WORKSPACE_EPOCH_KEY) || 0);
         bumpWorkspaceEpoch();

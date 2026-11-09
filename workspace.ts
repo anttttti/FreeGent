@@ -418,9 +418,10 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
     const localHashes = Object.create(null);
     const localDelta  = [];
     const localUnread: string[] = [];
+    let localIncomplete = false;   // the folder could not be listed: this snapshot says nothing about which files exist, so a restore to it deletes none (codex R100-02)
     if (fsaHandle) {
         try {
-            const names = (await listFsaFiles()).filter(n => !n.endsWith('/'));
+            const names = (await listFsaFiles(null, '', 0, true)).filter(n => !n.endsWith('/'));
             await Promise.all(names.map(async name => {
                 try {
                     const { content, encoding } = await _readFsaRecord(name);
@@ -433,11 +434,11 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
             for (const name of Object.keys(prevLocalH)) {
                 if (!localHashes[name]) localDelta.push({ name, content: null, op: 'delete' });
             }
-        } catch {}
+        } catch { localIncomplete = true; }
     }
 
     const record: any = { id: `${chatId}/${ckptId}`, chatId, ckptId, ts, idbDelta, localDelta, idbHashes, localHashes,
-        ...(fsaHandle ? { localRoot: fsaHandle, localFolder: fsaHandle.name, localUnread } : {}) };
+        ...(fsaHandle ? { localRoot: fsaHandle, localFolder: fsaHandle.name, localUnread, ...(localIncomplete ? { localIncomplete: true } : {}) } : {}) };
     return new Promise<void>((resolve, reject) => {
         const req = db.transaction(CKPT_STORE, 'readwrite').objectStore(CKPT_STORE).put(record);
         req.onsuccess = () => resolve();
@@ -487,7 +488,7 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
             ? await target.localRoot.isSameEntry(fsaHandle).catch(() => false)
             : target.localFolder === fsaHandle.name;
         if (!same) localFolderMismatch = true;
-        else {
+        else if (!target.localIncomplete) {
             const unread = new Set<string>(target.localUnread ?? []);
             for (const n of await listFsaFiles().catch(() => [] as string[]))
                 if (!n.endsWith('/') && !(n in localState) && !unread.has(n)) localDeletes.push(n);
@@ -1779,7 +1780,8 @@ export async function agentDeleteFile(path, opts?: WriteOpts) {
     if (inFolder) { await deleteFsaFile(rel); _stillCurrent(generation, 'delete', path, opts); }
     await deleteWorkspaceFile(path);
     await renderFileList();
-    if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
+    // The same reload a write does (AGENTS.md, roles/, skills/, rules/): a deleted instruction file stayed in force until a reload (codex R911, R396).
+    _reloadAfterWorkspaceChange(path);
 }
 
 /** Returns the file's last-modified timestamp (ms since epoch), or null if the file is not found.
@@ -2973,6 +2975,8 @@ export async function renderFileList() {
     idbHdr.append(idbTitle, uploadBtn, uploadFolderBtn, attachBtn, downloadBtn);
     // The Local Folder column is minimized by default so the Workspace gets the whole width; the preference is remembered.
     let localMin = true; try { localMin = localStorage.getItem('fg_local_col_min') !== '0'; } catch {}
+    // Rows that are not on screen are not selected: a Delete over a selection the person cannot see removed live folder files (codex R741).
+    if (localMin) for (const n of [...selectedFiles]) if (n.startsWith('local/')) selectedFiles.delete(n);
     const setLocalMin = (v: boolean) => { try { localStorage.setItem('fg_local_col_min', v ? '1' : '0'); } catch {} void renderFileList(); };
     if (localMin) {
         const showLocalBtn = document.createElement('button');
@@ -3662,6 +3666,8 @@ export function validateProjectData(data: any): void {
     for (const [i, f] of (data.workspace || []).entries()) {
         if (!f || typeof f !== 'object') throw new Error(`Workspace entry ${i + 1} is not a file.`);
         if (typeof f.name !== 'string' || !f.name.trim()) throw new Error(`Workspace entry ${i + 1} has no file name.`);
+        // A name with a `..` segment cannot be addressed by any file operation (they canonicalise it): the record would sit in the store unreadable (codex R820).
+        if (/(?:^|\/)\.\.(?:\/|$)/.test(f.name)) throw new Error(`Workspace file "${f.name}" has a path that leaves the workspace.`);
         if (typeof f.content !== 'string') throw new Error(`Workspace file "${f.name}" has no text content.`);
         if (f.encoding != null && f.encoding !== 'base64') throw new Error(`Workspace file "${f.name}" has an unknown encoding.`);
     }

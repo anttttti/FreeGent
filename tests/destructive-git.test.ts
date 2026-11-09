@@ -67,6 +67,7 @@ describe('destructiveGitReason: forms and operations the first version missed (h
         'git rm -f notes.txt',                     // Review743
         'git rm -rf src',
         'git branch -D feature',                   // Review744
+        'git tag -d v1.0',                         // Review746
         'git branch -d -f feature',
         'git push --force origin main',            // Review747
         'git push origin +main',

@@ -212,6 +212,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // clearMainAgentRole() sets the director object; restoreRoleForChat() then switches
     // to a non-director role only when one was explicitly saved for this chat.
     if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
+    // The custom roles first: a chat whose saved role lives in roles/*.md found only the built-ins here and fell back to the Director (codex R791).
+    await loadRoles();
     if (activeChatId) {
         const endLoad = beginChatLoad(activeChatId);   // no Send, and no save of the still-empty history, until the chat is restored
         try {
@@ -235,7 +237,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const _pinput = document.getElementById('project-name-input') as HTMLInputElement | null;
     if (_pinput && _pname) _pinput.value = _pname;
     loadSkills();
-    loadRoles();
     setupSkillAutocomplete();
 
     updateChatNameBar();
@@ -559,8 +560,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (id) localStorage.removeItem(chatKey.draft(id));
     }
 
-    // Restore draft for the current chat on page load
-    _restoreDraft(activeChatId);
+    // Restore draft for the current chat on page load, unless the user already typed (explorations 2026-11-09 [type-before-init]: the restore wiped it;
+    // what was typed is saved as the draft by the debounce).
+    if (!(input?.innerText ?? input?.textContent ?? '').trim()) _restoreDraft(activeChatId);
     (window as any).checkInterruptedRun?.();   // Autopilot was running when this tab reloaded
     // The tab died while a tool call ran (check_page says the most): logged (Developer key), with the chat it happened in.
     const _crash = takePageCheckCrash();

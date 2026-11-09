@@ -8,6 +8,9 @@ describe('a model that refuses images', () => {
     it('is recognised from the server wording', () => {
         expect(IMAGE_REFUSAL_RE.test('HTTP 400: At most 0 image(s) may be provided in one prompt. (parameter=image)')).toBe(true);
         expect(IMAGE_REFUSAL_RE.test('HTTP 400: maximum context length is 30000 tokens')).toBe(false);
+        // explorations 2026-11-09 [image-refusals]: two of the three wordings in the logs were not matched
+        expect(IMAGE_REFUSAL_RE.test('This model accepts text input only. Remove image, audio and file content')).toBe(true);
+        expect(IMAGE_REFUSAL_RE.test('This API supports text input only. This conversation contains an image')).toBe(true);
     });
     it('is remembered, expires after ten minutes, and is cleared when the model list changes', () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-17T00:00:00Z'));

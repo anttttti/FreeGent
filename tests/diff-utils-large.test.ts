@@ -22,3 +22,13 @@ describe('tryMerge on a very long file', () => {
         expect(tryMerge(base, 'A\nb\nc', 'a\nb\nC')).toEqual({ merged: 'A\nb\nC', conflicts: false });
     });
 });
+
+describe('tryMerge with two insertions at the same place (opencode cleanup discovery 2026-11-09 §3)', () => {
+    const base = 'a\nb\n';
+    it('identical insertions collapse to one, different ones conflict, one-sided ones merge as before', () => {
+        expect(tryMerge(base, 'a\nimport x\nb\n', 'a\nimport x\nb\n')).toEqual({ merged: 'a\nimport x\nb\n', conflicts: false });
+        expect(tryMerge(base, 'a\nimport x\nb\n', 'a\nimport y\nb\n').conflicts).toBe(true);
+        expect(tryMerge(base, 'a\nimport x\nb\n', base)).toEqual({ merged: 'a\nimport x\nb\n', conflicts: false });
+        expect(tryMerge('a\nb\nc\n', 'a\nX\nb\nc\n', 'a\nb\nY\nc\n')).toEqual({ merged: 'a\nX\nb\nY\nc\n', conflicts: false });   // different places
+    });
+});

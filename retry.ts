@@ -109,7 +109,7 @@ export const MIN_USEFUL_OUTPUT = 1024;
 
 // The server says it takes no images (vLLM --language-model-only: "At most 0 image(s) may be provided"). Re-sending the same request
 // gets the same answer; the caller resends without the image instead.
-export const IMAGE_REFUSAL_RE = /(?:at most 0 image|image input is not supported|(?:does not|doesn't) (?:accept|support) (?:image|vision|multimodal)|no endpoints found that support image)/i;
+export const IMAGE_REFUSAL_RE = /(?:at most 0 image|image input is not supported|(?:does not|doesn't) (?:accept|support) (?:image|vision|multimodal)|no endpoints found that support image|accepts? text input only|text input only\. This conversation contains an image)/i;
 
 // The server names one of the thinking controls FreeGent sent as a parameter it does not accept (NVIDIA NIM, z-ai/glm-5.3: "HTTP 400: Validation:
 // Unsupported parameter(s): `reasoning_budget`"). The same request gets the same answer; the caller remembers the model and resends without them.

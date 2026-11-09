@@ -6,6 +6,11 @@ import { _inPlaceTargets, _readInPlaceTargets, _annotateUnchangedInPlace } from 
 import { setWorkspaceAdapter } from '../workspace.ts';
 
 describe('_inPlaceTargets', () => {
+    it('relative targets after a cd are not tracked (they are another directory\'s files) (codex R844)', () => {
+        expect(_inPlaceTargets(`cd sub && sed -i 's/a/b/' file.py`)).toEqual([]);
+        expect(_inPlaceTargets(`cd sub && sed -i 's/a/b/' /abs/file.py`)).toEqual(['/abs/file.py']);
+        expect(_inPlaceTargets(`sed -i 's/a/b/' file.py`)).toEqual(['file.py']);
+    });
     it('finds the file operand of the astropy sed command', () => {
         const code = String.raw`sed -i 's/cright[-right.shape\[0\]:,-right.shape\[1\]:] = 1/cright[-right.shape[0]:, -right.shape[1]:] = right/' astropy/modeling/separable.py`;
         expect(_inPlaceTargets(code)).toEqual(['astropy/modeling/separable.py']);

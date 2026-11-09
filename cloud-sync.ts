@@ -103,8 +103,10 @@ export class CloudSyncClient {
         const j = await (await this.call('GET', `/${project}/manifest`)).json();
         const files = j?.manifest?.files;
         if (files && typeof files === 'object') for (const [path, f] of Object.entries(files as Record<string, any>)) {
-            if (!isSafeSyncPath(path)) throw new CloudError(422, `The cloud project lists a file path that is not allowed: ${JSON.stringify(path).slice(0, 80)}`);
+            if (!isSafeSyncPath(path) || path.startsWith('local/')) throw new CloudError(422, `The cloud project lists a file path that is not allowed: ${JSON.stringify(path).slice(0, 80)}`);
             if (!f || typeof f.h !== 'string' || !/^[0-9a-f]{64}$/.test(f.h)) throw new CloudError(422, `The cloud project lists ${JSON.stringify(path).slice(0, 80)} without a SHA-256`);
+            // The size is only a claim, but the pull's byte cap starts from it: a missing, negative or non-numeric one is a damaged manifest (codex R818).
+            if (typeof f.s !== 'number' || !Number.isFinite(f.s) || f.s < 0) throw new CloudError(422, `The cloud project lists ${JSON.stringify(path).slice(0, 80)} with an invalid size`);
         }
         return j;
     }

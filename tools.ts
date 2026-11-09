@@ -450,7 +450,7 @@ let _ivLlmChecks = 0;
 const _ivVerdicts = new Map<string, string | null>();   // call → reason it was blocked, or null when allowed
 
 /** A new user turn starts: nothing external has been read yet, and earlier verdicts do not carry over. */
-export function resetIntentTaint(): void { _ivExternalSeen = false; _ivLlmChecks = 0; _ivVerdicts.clear(); }
+export function resetIntentTaint(): void { _ivExternalSeen = false; _ivLlmChecks = 0; _ivVerdicts.clear(); _lostPathWrite = null; }
 (window as any).resetIntentTaint = resetIntentTaint;
 
 const _INTENT_CHECKS = [{
@@ -470,8 +470,11 @@ async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; re
     if (getIntentValidation() !== 'llm' || !_ivExternalSeen) return null;
     const intent = String(_currentUserIntent ?? '').trim();
     if (!intent || typeof validateOutput !== 'function' || typeof callLLMComplete !== 'function') return null;
-    const callText = `${name}(${JSON.stringify(args ?? {}).slice(0, 1200)})`;
-    if (_ivVerdicts.has(callText)) { const r = _ivVerdicts.get(callText); return r ? { level: 'block', reason: r } : null; }
+    const fullArgs = JSON.stringify(args ?? {});
+    const callText = `${name}(${fullArgs.slice(0, 1200)})`;
+    // The verdict cache is keyed by the whole call: two long calls that share their first 1,200 characters are not the same call (codex R894).
+    const cacheKey = `${name}(${fullArgs})`;
+    if (_ivVerdicts.has(cacheKey)) { const r = _ivVerdicts.get(cacheKey); return r ? { level: 'block', reason: r } : null; }
     if (_ivLlmChecks >= _IV_LLM_MAX_PER_TURN) return null;
     _ivLlmChecks++;
     // A lighter model when one is set; two attempts at most, so a rate-limited judge cannot hold up the turn.
@@ -481,7 +484,7 @@ async function _ivLlmCheck(name: string, args: any): Promise<{ level: string; re
     try { hit = await validateOutput(callText, _INTENT_CHECKS, { llm, ctx: { intent }, maxTokens: 200, budget: 1500 }); }
     catch { hit = null; }
     const reason = hit ? `The model that screens tool calls judged that ${name} does not follow from your request (${hit.payload && hit.payload !== callText ? hit.payload : 'no reason given'})` : null;
-    _ivVerdicts.set(callText, reason);
+    _ivVerdicts.set(cacheKey, reason);
     return reason ? { level: 'block', reason } : null;
 }
 
@@ -875,6 +878,9 @@ async function _handleRunGit(args: any) {
             return { error: `run_git: ${detail || `HTTP ${resp.status}`}` };
         }
         const gitResult = await resp.json();
+        // `git remote -v` prints the remote URL as it is configured, and that can carry a token (https://user:token@host/…): the model must not see it (codex R748).
+        const hideUserinfo = (v: any) => typeof v === 'string' ? v.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@') : v;
+        if (gitResult && typeof gitResult === 'object') for (const k of ['stdout', 'stderr', 'output']) if (typeof gitResult[k] === 'string') gitResult[k] = hideUserinfo(gitResult[k]);
         return gitResult;
     } catch (e) { return { error: `run_git: ${e.message}` }; }
 }
@@ -1368,11 +1374,11 @@ async function _syntaxCheck(path, text: string | null = null, { staged = false }
     if (!ext) return null;
     // Experiment syntax_watch: shell scripts too, and a worker's staged text (not on disk) through a temporary copy.
     const _watch = runtime.experiment('syntax_watch');
-    if (runtime.hasNativeExec && _watch && ['py', 'js', 'mjs', 'cjs', 'jsx', 'sh', 'bash'].includes(ext)
+    if (runtime.hasNativeExec && _watch && ['py', 'js', 'mjs', 'cjs', 'sh', 'bash'].includes(ext)
             && (!staged || (typeof text === 'string' && text.length <= 400_000))) {
         return _nativeSyntaxCheck(path, ext, staged ? text : null);
     }
-    if (runtime.hasNativeExec && !staged && ['py', 'js', 'mjs', 'cjs', 'jsx'].includes(ext)) {
+    if (runtime.hasNativeExec && !staged && ['py', 'js', 'mjs', 'cjs'].includes(ext)) {
         let r = null;
         // A leading dash would be read as an option by node and python.
         const qp = _shSingleQuote(path.startsWith('-') ? `./${path}` : path);
@@ -1457,7 +1463,8 @@ async function _escapedLineBreakFix(args: { path: string; content: string }): Pr
     const n = escapedLineBreaks(args.path, args.content);
     if (!n) return {};
     const fixed = unescapeOnce(args.content);
-    if (syntaxCheckable(args.path) && !(await checkSyntax(args.path, fixed).catch(() => 'unchecked'))) {
+    // A template literal (`…`, String.raw) keeps its \n as written and stays valid after unescaping, so "it parses" proves nothing there: warn, do not rewrite (opencode 2026-10-27 §2).
+    if (!args.content.includes('`') && syntaxCheckable(args.path) && !(await checkSyntax(args.path, fixed).catch(() => 'unchecked'))) {
         args.content = fixed;
         return { escape_fixed: `The content arrived as one line holding ${n} escaped line breaks (\\n). It was unescaped and written as ${fixed.split('\n').length} lines. In "content", a line break is the JSON escape \\n, never \\\\n.` };
     }
@@ -1717,18 +1724,25 @@ async function _handleReadFile(args, context) {
     }
 }
 
+// A write_file that lost its path is refused with its content kept for the rest of the turn: the model re-sent the whole body (5-12k characters each, 15 times in one run) just
+// to add the path. A second call that names the path and no content writes what was kept (benchmark analysis v0.97 §6.1).
+let _lostPathWrite: string | null = null;
 async function _handleWriteFile(args, context) {
     args = { ...args,
         path:    _normToolPath(args.path    ?? args.filename ?? args.file ?? args.filepath ?? ''),
         content: args.content ?? args.text     ?? args.body ?? args.data    ?? '',
     };
     args.path = await _rootRelativeToolPath(args.path);
+    if (args.path && args.content === '' && _lostPathWrite !== null && !context) { args.content = _lostPathWrite; _lostPathWrite = null; }
     if (!args.path) {
         // v0.66: 47 calls had content and no path, 24 of them with a `language` argument — code
         // meant to be run, sent to the wrong tool. The bare message got the same call re-sent.
         const meantToRun = args.language != null || args.code != null || args.command != null;
         if (_pathLostToQuote(args.content)) return { error: _PATH_LOST_MSG('write_file', '{"path": "src/app.py", "content": "…"}') };
+        const kept = !context && !meantToRun && typeof args.content === 'string' && args.content.length >= 200;
+        if (kept) _lostPathWrite = args.content;
         return { error: 'write_file: "path" is required — the file to write, e.g. {"path": "src/app.py", "content": "…"}.'
+            + (kept ? ` Your content (${args.content.length} characters) was kept: call write_file again with only {"path": "<file>"} and it is written from what you just sent.` : '')
             + (meantToRun ? ' To run code instead of saving it, call execute_code with "code" and "language".' : ''),
             note: `Received keys: ${Object.keys(args).filter(k => k !== 'path' && args[k] != null && args[k] !== '').join(', ') || 'none'}` };
     }
@@ -1838,7 +1852,7 @@ const _RANGE_ECHO_MAX_LINES = 60;   // the most lines of the given range a faile
 // The parse error of `text` as the file at `path` (Python, JavaScript or shell natively, else what syntax-check.ts covers), or null.
 async function _parseError(path: string, text: string): Promise<string | null> {
     const ext = (path.match(/\.([^./\\]+)$/) ?? [])[1]?.toLowerCase() ?? '';
-    if (runtime.hasNativeExec && ['py', 'js', 'mjs', 'cjs', 'jsx', 'sh', 'bash'].includes(ext) && text.length <= 400_000)
+    if (runtime.hasNativeExec && ['py', 'js', 'mjs', 'cjs', 'sh', 'bash'].includes(ext) && text.length <= 400_000)
         return _nativeSyntaxCheck(path, ext, text).catch(() => null);
     return syntaxCheckable(path) ? checkSyntax(path, text).catch(() => null) : null;
 }
@@ -2700,7 +2714,9 @@ export function _inPlaceTargets(code: string): string[] {
             if (/^[\w./~+-]+$/.test(u) && (/\.[A-Za-z0-9]+$/.test(u) || u.includes('/'))) out.add(u);
         }
     }
-    return [...out].slice(0, _INPLACE_MAX_FILES);
+    // After a `cd` a relative operand names a file in another directory: it would be compared with the same-named file at the workspace root and a real edit reported as "no change" (codex R844).
+    const moved = /(?:^|[;&|\n(]\s*)cd\s/.test(code);
+    return [...out].filter(u => !moved || u.startsWith('/')).slice(0, _INPLACE_MAX_FILES);
 }
 
 // Candidate workspace paths for a shell path: as given, and without the WASM sandbox's
@@ -2909,7 +2925,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const _notice = onProgress ? setTimeout(() => {
                 try { onProgress(`JS is still running after ${JS_SANDBOX_NOTICE_MS / 1000} s — press Stop to cancel it (it is ended automatically after ${JS_SANDBOX_TIMEOUT_MS / 1000} s)`); } catch {}
             }, JS_SANDBOX_NOTICE_MS) : null;
-            try { run = await sandboxCall('js', { code: args.code, files }, JS_SANDBOX_TIMEOUT_MS, undefined, activeAbortController?.signal); }
+            try { run = await sandboxCall('js', { code: args.code, files }, args.timeout_s != null ? Math.min(JS_SANDBOX_TIMEOUT_MS, execTimeoutMs(args.timeout_s)) : JS_SANDBOX_TIMEOUT_MS, undefined, activeAbortController?.signal); }   // a tighter limit is honoured, the 60 s ceiling stays (E032)
             catch (e) {
                 const m = String(e.message ?? e);
                 return { stdout: '', stderr: `JS sandbox: ${m}${/timed out/.test(m) ? ' (an endless loop, or work that needs longer: run it as a background bash/Python job instead)' : ''}`, exit_code: 1 };
@@ -2990,7 +3006,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const resp = await fetch('/api/execute', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ language: args.language, code: args.code, files }),
+                    body:    JSON.stringify({ language: args.language, code: args.code, files, ...(args.timeout_s != null ? { timeout_s: args.timeout_s } : {}) }),   // the per-call limit was dropped here (E032)
                     signal:  activeAbortController?.signal,
                 });
                 if (!resp.ok) return { error: `Local sandbox HTTP ${resp.status}` };
@@ -3266,6 +3282,8 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
             if (!check.quiet) _ivLog(name, args, check).catch(() => {});   // quiet: a refusal that is not an injection attempt (destructive git)
             return { error: `[Intent validation — ${check.level === 'block' ? 'BLOCKED' : 'FLAGGED'}] ${check.reason}. If this is intentional, make the request explicit in your message.` };
         }
+        // Stop pressed while the judge was running aborted the judge, which reads as "no verdict" and let the call through: a stopped turn runs nothing (codex R902).
+        if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
     }
 
     // Stop during the intent judge aborts its request, which reads as "no verdict": the call must not run on that (codex R902).

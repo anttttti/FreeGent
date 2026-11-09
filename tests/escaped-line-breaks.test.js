@@ -40,6 +40,12 @@ describe('write_file', () => {
         expect(files.get('say.js')).toBe(src);
         expect(r.escape_fixed).toBeUndefined();
     });
+    it('a one-line template literal (String.raw) keeps its \\n: warned, not rewritten (opencode 2026-10-27 §2)', async () => {
+        const src = 'const pattern = String.raw`a\\nb\\nc\\nd`;';
+        const r = await W.executeToolAsync('write_file', { path: 'raw.js', content: src }, null);
+        expect(files.get('raw.js')).toBe(src);
+        expect(r.escape_fixed).toBeUndefined();
+    });
     it('a type that cannot be parsed here is written as sent, with a warning', async () => {
         const py = '# word counter\\nimport re\\ndef words(t):\\n    return re.findall(r"\\w+", t)\\n';
         const r = await W.executeToolAsync('write_file', { path: 'wordcount.py', content: py }, null);

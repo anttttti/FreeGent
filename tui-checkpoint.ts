@@ -8,7 +8,7 @@
 //
 // Asynchronous and bounded by workspace-scan.ts (git's file list in a repository, a budgeted walk elsewhere): a checkpoint is taken
 // before every message, and the old synchronous walk held the screen for as long as the tree was big.
-import { mkdir, lstat, copyFile, rm, readFile, rmdir, stat } from 'node:fs/promises';
+import { mkdir, lstat, copyFile, rm, readFile, rmdir, stat, realpath } from 'node:fs/promises';
 import { join, dirname, sep } from 'node:path';
 import { listFiles } from './workspace-scan.js';
 
@@ -75,6 +75,8 @@ export interface RestoreResult {
     kept?: number;
     /** The ignore files changed since the copy: a file the turn created and the new rules hide could not be found. */
     ignoreRulesChanged?: boolean;
+    /** Files whose destination now sits behind a link that leaves the workspace: not written (the copy would have overwritten a file outside it). */
+    skippedOutside?: string[];
 }
 
 /** Put the workspace back as it was when `snap` was taken. Throws if the snapshot is not usable. */
@@ -120,6 +122,14 @@ export async function restoreSnapshot(root: string, snap: Snapshot): Promise<Res
         } catch {}
         if (same) continue;
         await mkdir(dirname(to), { recursive: true });
+        // The copy goes into the workspace, not through a link the turn put in its place: a symlink or hard link at the path would send the write to a file
+        // outside it, and so would a linked parent directory (overnight exploration E037, E039).
+        try {
+            const rootReal = await realpath(root), parentReal = await realpath(dirname(to));
+            if (parentReal !== rootReal && !parentReal.startsWith(rootReal + sep)) { (result.skippedOutside ??= []).push(rel); continue; }
+            const lt = await lstat(to).catch(() => null);
+            if (lt && (lt.isSymbolicLink() || (lt.isFile() && lt.nlink > 1))) await rm(to);   // replace the link itself, never write through it
+        } catch { (result.skippedOutside ??= []).push(rel); continue; }
         await copyFile(from, to);
         result.restored.push(rel);
     }

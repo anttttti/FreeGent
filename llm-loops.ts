@@ -2189,13 +2189,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             if (!_s.workflowMode) return await _stepBudgetStopMessage(_loopMax);
             return await _gracefulSynthesis('step budget exhausted', textContent);
         }
+        let _stepsLeftNudge: string | null = null;
         if (_stepCount === _stepsLeftWarnAt) {
             const _left = _loopMax - _stepCount;
             // Autonomous runs (benchmarks, Cowork runner) end at the limit, so finish. Interactive chat
             // only pauses — the user can continue — so reach a clean stopping point rather than wrap up.
-            _emitNudge('steps_left', _nudge(_s.workflowMode
+            _stepsLeftNudge = (_s.workflowMode
                 ? `${_left} steps left in this turn. Finish now: if you changed code, check that the change is applied (read the changed lines back, or git diff where git works) and end with COMPLETED; if the task asks for an answer, give it. Do not start new exploration.`
-                : `${_left} steps left in this turn before it pauses. Reach a clean stopping point: finish the change you are making, don't start new ones, and leave files in a working state. The user can continue from there.`));
+                : `${_left} steps left in this turn before it pauses. Reach a clean stopping point: finish the change you are making, don't start new ones, and leave files in a working state. The user can continue from there.`); // stored after this step's tool results, not between a call and its result (strict endpoints answer HTTP 400)
         }
 
         // Cap per-turn tool calls — see _MAX_CALLS_PER_TURN comment above.
@@ -2433,7 +2434,10 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         // Track successful file edits — feeds the completion gate ('edit' condition).
         // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
-        if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
+        if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch' || r.name === 'append_file') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
+            _editsThisRun = true;
+        // What workers committed is an edit of this run too (codex R786, R787).
+        if (!_editsThisRun && results.some(r => r.name === 'run_workers' && !r.result?.error && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !String(p).startsWith('fg-tasks/')))))
             _editsThisRun = true;
         // Also set _editsThisRun when execute_code writes workspace files (Director-role benchmarks
         // have no write_file, so the gate only fires if bash/python wrote files — detected via
@@ -2483,6 +2487,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // after tool execution — tool results are already in history above, so the
         // assistant tool_calls → role:'tool' pairing is intact.
         if (_callsOverflowNudge)               _emitNudge('calls_overflow', _nudge(_callsOverflowNudge));
+        if (_stepsLeftNudge)                   _emitNudge('steps_left', _nudge(_stepsLeftNudge));
         if (_cycleNudge)                       _emitNudge('dup_cycle', _nudge(_cycleNudge));
         // stuck_detected: 3 consecutive identical full-result signatures — the model is in a
         // genuine loop with no new information. Nudge only: the nudge offers answering or BLOCKED,

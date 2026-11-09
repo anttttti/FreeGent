@@ -135,3 +135,16 @@ describe('brokenFileReport (the completion gate\'s check)', () => {
         expect(r[0]).toMatch(/^src\/bad\.js:1:\d+: SyntaxError/);
     });
 });
+
+describe('a .jsx write with a native toolchain (opencode 2026-10-27 §1)', () => {
+    it('is not run through node --check, which rejects the extension and cannot read JSX', async () => {
+        const cmds = [];
+        W.nativeExec = async (_lang, code) => { cmds.push(code); return { exit_code: 1, stdout: 'TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".jsx"' }; };
+        try {
+            const res = await W.executeToolAsync('write_file', { path: 'src/App.jsx', content: 'export const A = () => <div>hi</div>;\n' }, null);
+            expect(res.success).toBe(true);
+            expect(res.syntax_error).toBeUndefined();
+            expect(cmds.some(c => /node --check/.test(c) && /App\.jsx/.test(c))).toBe(false);
+        } finally { delete W.nativeExec; }
+    });
+});

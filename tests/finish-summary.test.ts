@@ -43,6 +43,15 @@ describe('deletions, worker edits and task containers (codex Review936, 937, 939
             expect((await checkChangedFiles(root, ['old.ts']))[0].problem).toBe('no longer exists');
         } finally { rmSync(root, { recursive: true, force: true }); }
     });
+    it('a broken .mts or .cts file is reported as a syntax error, like .ts (codex R855)', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fg-fin-'));
+        try {
+            writeFileSync(join(root, 'bad.mts'), 'export const x = ;\n');
+            writeFileSync(join(root, 'bad.cts'), 'const y = (;\n');
+            const files = await checkChangedFiles(root, ['bad.mts', 'bad.cts']);
+            expect(files.map(f => f.problem)).toEqual([expect.stringMatching(/^syntax error/), expect.stringMatching(/^syntax error/)]);
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
     it('the files run_workers applied are the run\'s edits', () => {
         const st = newVerification();
         noteStep(st, { toolCalls: [call('run_workers', { agents: [] }, { status: 'complete', applied: ['src/w.ts', 'scratch_tmp.py'], conflictsResolved: ['src/both.ts'] })] });

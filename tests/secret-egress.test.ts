@@ -28,6 +28,20 @@ describe('which files and values', () => {
     });
 });
 
+describe('JSON credential files (codex R100-03)', () => {
+    const SECRET = 'sk-live-4f9a8b7c6d5e';
+    it.each([
+        ['compact', `{"api_key":"${SECRET}","region":"nz"}`],
+        ['pretty', `{\n  "region": "nz",\n  "api_key": "${SECRET}",\n  "n": 3\n}`],
+        ['nested', `{"providers":[{"name":"x","auth":{"token":"${SECRET}"}}]}`],
+    ])('the clean value is collected from %s JSON, and ports or names are not', (_n, text) => {
+        const vals = secretValues(text);
+        expect(vals).toContain(SECRET);
+        expect(vals).not.toContain('nz');
+        expect(vals.every(v => !/[{}",]/.test(v))).toBe(true);
+    });
+});
+
 describe('secretEgressReason', () => {
     it('finds a value in plain, URL-encoded and base64 form unless the request names the file', () => {
         noteSecrets('.env', ENV);

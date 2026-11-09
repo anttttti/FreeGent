@@ -33,7 +33,8 @@ import './model-caps.js';
 import './ast.js';
 import './history-util.js';
 import './fetch-blacklist.js';
-import { parseFetchAllow, setFetchAllow } from './fetch-allow.js';
+import { runtime } from './runtime.js';
+import { parseFetchAllow, setFetchAllow, checkFetchAllowed } from './fetch-allow.js';
 import { parseWriteAllow, setWriteAllow } from './write-allow.js';
 import { createNativeExec } from './native-exec.js';
 import './search-providers.js';
@@ -428,6 +429,8 @@ async function _setupOnce(opts: Record<string, any> = {}): Promise<void> {
         for (const server of mcpServers) {
             if (!server || typeof server.url !== 'string' || !server.name)
                 throw new Error('MCP server requires name and URL');
+            // --fetch-allow lists the origins the agent may reach: an MCP server is one more outbound destination (codex R715).
+            if (fetchAllow) { const why = checkFetchAllowed(server.url); if (why) throw new Error(`--mcp-config: "${server.name}" is outside --fetch-allow: ${why}`); }
             const entry = await dom.window.addMcpServer(server);
             // Omitted enabledTools means enable all discovered tools for this task;
             // an explicit empty array means none. Never silently broaden an allowlist.
@@ -857,6 +860,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     // Wait for the event log before exiting (it used to be dropped: exit ran before the write), but
     // not for long: the sender follows SIGTERM with SIGKILL.
     const _sigtermHandler = () => {
+        try { runtime.killNative(); } catch {}   // commands are detached process groups: without this they outlive the run (codex R875)
         _flushFinalHistory();
         const _exit = () => process.exit(1);
         const _t = setTimeout(_exit, 2000);

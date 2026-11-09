@@ -63,6 +63,21 @@ describe('check_page capture script', () => {
         expect(m).not.toBeNull();
         expect(() => new Function(m![1])).not.toThrow();
     });
+
+    // explorations 2026-11-09 [check-page-keys]: the key step sent keydown and keyup only, so a page that handles Enter in keypress looked broken.
+    it('a key step also sends keypress for Enter and printable keys, and not for arrows', async () => {
+        const { _CHECK_CAPTURE } = await import('../tabs.ts');
+        const code = _CHECK_CAPTURE.match(/^<script>([\s\S]*)<\/script>$/)![1];
+        (window as any).requestAnimationFrame = () => 0;
+        new Function(code)();
+        const seen: string[] = [];
+        for (const t of ['keydown', 'keypress', 'keyup']) document.addEventListener(t, e => seen.push(t + ':' + (e as KeyboardEvent).key));
+        const send = async (key: string, kind: string) => {
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'fg-check-cmd', id: 1, cmd: 'key', kind, key }, source: window.parent }));
+        };
+        await send('Enter', 'keydown'); await send('Enter', 'keyup'); await send('ArrowRight', 'keydown');
+        expect(seen).toEqual(['keydown:Enter', 'keypress:Enter', 'keyup:Enter', 'keydown:ArrowRight']);
+    });
 });
 
 describe('page references resolve from the page\'s folder', () => {

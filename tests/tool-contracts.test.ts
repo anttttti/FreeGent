@@ -93,6 +93,20 @@ describe('write_file', () => {
         expect(await stored('r.txt')).toBe('one two\n');
     });
 
+    // benchmark analysis v0.97 §6.1: the same 1,700-token body was re-sent fifteen times just to add the path.
+    it('keeps the content of a path-less write and writes it when the path alone arrives', async () => {
+        const body = 'line of text\n'.repeat(40);
+        const r = await tool('write_file', { content: body });
+        expect(r.error).toMatch(/"path" is required/);
+        expect(r.error).toMatch(/was kept.*only \{"path"/);
+        const w = await tool('write_file', { path: 'kept.txt' });
+        expect(w.error).toBeUndefined();
+        expect(await stored('kept.txt')).toBe(body);
+        // used once: a second path-only call writes an empty file as before, not the old content
+        const again = await tool('write_file', { path: 'kept2.txt' });
+        expect(await stored('kept2.txt')).not.toBe(body);
+    });
+
     // v0.66: 24 of 47 pathless write_file calls carried `language` — code meant to be run.
     it('points a pathless call that carries a language to execute_code', async () => {
         const r = await tool('write_file', { content: 'print(1)', language: 'python' });

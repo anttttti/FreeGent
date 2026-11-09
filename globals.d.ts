@@ -448,7 +448,6 @@ declare global {
     var REFUSAL_LIMIT: any;
     var REFUSAL_COOLDOWN_MS: any;
     var _switchToFreeModel: any;
-    var applyMemoryUpdates: any;
     var compactHistory: any;
     var fmtDelay: any;
     var getCooldownRemaining: any;

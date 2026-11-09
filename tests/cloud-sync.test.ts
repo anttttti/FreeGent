@@ -76,6 +76,20 @@ describe('/sync on the Worker', () => {
         expect(Object.keys((await client.getManifest('proj')).manifest.files)).toEqual(['a.txt', 'b.txt']);
         expect(await client.projects()).toEqual(['proj']);
     });
+    it('refuses a manifest that lists a path under the reserved local/ namespace (codex R793)', async () => {
+        const { client } = setup();
+        const data = bytes('x'), h = await sha256Hex(data);
+        await client.putBlob('lp', h, data);
+        await client.putManifest('lp', { files: { 'local/src/config.json': { h, s: 1 } } }, null);
+        await expect(client.getManifest('lp')).rejects.toMatchObject({ status: 422 });
+    });
+    it('refuses a manifest entry whose size is negative or not a number (codex R818)', async () => {
+        const { client } = setup();
+        const data = bytes('x'), h = await sha256Hex(data);
+        await client.putBlob('sz', h, data);
+        await client.putManifest('sz', { files: { 'a.txt': { h, s: -5 } } }, null);
+        await expect(client.getManifest('sz')).rejects.toMatchObject({ status: 422 });
+    });
     it('rejects bad project names and manifests without hashes; gc drops unused blobs; remove clears the project', async () => {
         const { client } = setup();
         await expect(client.getManifest('..')).rejects.toBeInstanceOf(CloudError);

@@ -23,7 +23,7 @@ async function problemWith(abs: string): Promise<string | null> {
     const ext = extname(abs).toLowerCase();
     let text: string; try { text = readFileSync(abs, 'utf8'); } catch { return null; }
     if (ext === '.json') { try { JSON.parse(text); } catch (e: any) { return `invalid JSON (${String(e?.message ?? e).slice(0, 80)})`; } return null; }
-    if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
+    if (['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
         const ts = await _typescript();
         if (!ts) return null;
         try {

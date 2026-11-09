@@ -51,7 +51,8 @@ export function snapshotWorkspace(recs: Iterable<{ name?: string; content?: unkn
 export async function staleGuard(snap: Map<string, string>, omitted: Set<string>, list: () => Promise<any[] | null | undefined>): Promise<(path: string) => boolean> {
     if (_snapEpoch.has(snap) && _snapEpoch.get(snap) !== _epochNow()) return () => true;
     let now: Map<string, string>;
-    try { now = snapshotWorkspace((await list()) || []); } catch { return () => false; }
+    // A listing that fails says nothing about what changed meanwhile: not knowing is not "unchanged", and a writeback that proceeds would replace or delete newer files (E023).
+    try { now = snapshotWorkspace((await list()) || []); } catch { return () => true; }
     return (path: string) => !omitted.has(path) && (snap.has(path) !== now.has(path) || (snap.has(path) && snap.get(path) !== now.get(path)));
 }
 

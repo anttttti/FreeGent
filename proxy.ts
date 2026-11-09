@@ -79,7 +79,7 @@ export function installPrivacyGuard(): void {
             if (level !== 'routed') {
                 const url = typeof input === 'string' ? input : input?.url ?? String(input);
                 const pageOrigin = window.location.origin;
-                const manual = (() => { try { return new URL(localStorage.getItem('fg_search_proxy') || '').origin; } catch { return ''; } })();
+                const manual = (() => { try { const v = (localStorage.getItem('fg_search_proxy') || '').trim(); return v ? new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`).origin : ''; } catch { return ''; } })();   // a bare host is normalised to https:// where the setting is read (codex R764)
                 const ctx = { pageOrigin, workerOrigins: [DEFAULT_CF_WORKER, manual].filter(Boolean) };
                 const refuse = (why: string) => { const e = new Error(why); e.name = 'PrivacyBlockedError'; return Promise.reject(e); };
                 const check = (body: unknown) => privacyBlockReason(proxiedTarget(url, body, pageOrigin) ?? url, level, ctx);

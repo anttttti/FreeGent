@@ -108,7 +108,9 @@ export function tryMerge(base: string, sideA: string, sideB: string): { merged: 
         } else {
             // Only treat as a true conflict if any A and B hunks overlap in base lines.
             // Adjacent edits (one ends where another begins) are not real conflicts.
-            const baseOverlap = groupA.some(a => groupB.some(b => a.bs < b.be && b.bs < a.be));
+            // Two insertions at the same place also compete for it: they are zero-width, so the range test alone called them apart and both were written (the same
+            // `import` twice with no conflict, or two different lines in an order nobody chose). Identical ones collapse below; different ones conflict.
+            const baseOverlap = groupA.some(a => groupB.some(b => (a.bs < b.be && b.bs < a.be) || (a.bs === b.bs && a.be === a.bs && b.be === b.bs)));
             if (!baseOverlap) {
                 const allHunks = [...groupA, ...groupB].sort((x, y) => x.bs - y.bs);
                 pushAll(out, applyMergeHunks(bLines, allHunks, bi, spanEnd));

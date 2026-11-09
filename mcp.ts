@@ -461,14 +461,16 @@ const _MAX_TOOL_PAGES = 20;
 async function _listTools(server: { url: string; headers?: Record<string, string> }): Promise<{ tools: McpToolInfo[]; instructions: string; incomplete: boolean }> {
     _conn(server).ready = false;     // fresh handshake: headers may have changed
     const init = await _ensureSession(server);
-    const instructions = typeof init?.instructions === 'string' ? init.instructions.trim().slice(0, _MAX_INSTRUCTIONS_STORED) : '';
+    // A server can echo the credential it was sent in its instructions or tool descriptions; both go into the model's prompt (codex R749).
+    const _clean = (v: unknown): any => typeof v === 'string' ? redactMcpSecrets(v, server.headers) : v;
+    const instructions = typeof init?.instructions === 'string' ? _clean(init.instructions.trim().slice(0, _MAX_INSTRUCTIONS_STORED)) : '';
     const tools: McpToolInfo[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < _MAX_TOOL_PAGES; page++) {
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
         for (const t of r?.tools || []) {
             if (t && typeof t.name === 'string')
-                tools.push({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations });
+                tools.push({ name: t.name, description: _clean(t.description), inputSchema: t.inputSchema, annotations: t.annotations });
         }
         cursor = r?.nextCursor;
         if (!cursor) break;
@@ -505,18 +507,22 @@ async function addMcpServer(opts: { name: string; url: string; headers?: Record<
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('URL must be http(s)');
     if (u.protocol === 'http:' && !plainHttpAllowed(u.hostname))
         throw new Error('Use https:// for a server on the public internet (plain http is allowed only for localhost and private-network addresses)');
-    if (getMcpServers().some(s => s.url === url) || _adding.has(url)) throw new Error('This server is already added');
+    // One endpoint however it is spelled (`HTTPS://Host:443/mcp` and `https://host/mcp`): compared as the URL fetch will use (codex R722).
+    const _norm = (x: string) => { try { return new URL(x).href; } catch { return x; } };
+    const href = u.href;
+    if (getMcpServers().some(s => _norm(s.url) === href) || [..._adding].some(a => _norm(a) === href)) throw new Error('This server is already added');
     const name = String(opts.name || '').trim() || u.hostname;
     const headers = opts.headers && Object.keys(opts.headers).length ? opts.headers : undefined;
     let tools, instructions;
     _adding.add(url);
     try { ({ tools, instructions } = await _listTools({ url, headers })); }
     // The setup error can quote the response body, and a server may echo the submitted key there (codex R207).
-    catch (e) { throw new Error(redactMcpSecrets(String((e as any)?.message ?? e), headers)); }
+    // A credential in the query (?key=…) can be echoed too (codex R721).
+    catch (e) { throw new Error(redactMcpSecrets(String((e as any)?.message ?? e), { ...(headers ?? {}), ...Object.fromEntries([...u.searchParams.values()].map((v, i) => [`q${i}`, v])) })); }
     finally { _adding.delete(url); }
     // The list as it is now, not as it was before discovery: a server removed or added meanwhile stays removed or added (codex R206).
     const list = getMcpServers();
-    if (list.some(s => s.url === url)) throw new Error('This server is already added');
+    if (list.some(s => _norm(s.url) === href)) throw new Error('This server is already added');
     const entry: McpServer = {
         id: _uniqueId(opts.id || name, list), name, url, headers, enabled: true,
         enabledTools: (opts.enabledTools || []).filter(n => tools.some(t => t.name === n)),
@@ -765,7 +771,13 @@ function mcpToolRisk(name: string): 'read' | 'write' | 'destructive' {
 // model, logs or the UI — a server that echoes the request (e.g. in an error message) must not
 // hand the key to the LLM. Rules live in secrets.ts.
 function redactMcpSecrets(text: string, headers?: Record<string, string>): string {
-    return redactText(text, [...Object.values(headers ?? {}), ...storedCredentialValues()]);
+    let out = redactText(text, [...Object.values(headers ?? {}), ...storedCredentialValues()]);
+    // redactText leaves values under 8 characters alone (they would mangle ordinary text). A short header value that holds a digit is a key, not a word: it goes too (codex R775).
+    for (const v of Object.values(headers ?? {})) {
+        const t = String(v).replace(/^(?:Bearer|Basic|Token)\s+/i, '').trim();
+        if (t.length >= 4 && t.length < 8 && /\d/.test(t)) out = out.split(t).join('[redacted]');
+    }
+    return out;
 }
 
 async function executeMcpTool(name: string, args: any): Promise<any> {

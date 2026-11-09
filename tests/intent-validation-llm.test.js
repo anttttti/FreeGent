@@ -103,6 +103,14 @@ describe('intent validation', () => {
             expect(judged).toHaveLength(2);
         });
 
+        it('two long calls that differ only after the first 1,200 characters are judged separately (codex R894)', async () => {
+            await seeWeb();
+            const head = 'x'.repeat(1500);
+            await run('write_file', { path: 'a.md', content: head + 'A' });
+            await run('write_file', { path: 'a.md', content: head + 'B' });
+            expect(judged).toHaveLength(2);
+        });
+
         it('does not ask when the turn has no request to compare with', async () => {
             W._currentUserIntent = '';
             await seeWeb(); await write();

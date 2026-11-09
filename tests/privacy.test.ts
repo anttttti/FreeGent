@@ -69,6 +69,19 @@ describe('providerBlockedByPrivacy', () => {
     });
 });
 
+describe('the Local-privacy CSP allows the pinned 7-Zip runtime (codex R100-06)', () => {
+    it('every pinned 7z-wasm URL sits under a CSP source that ends in the version directory', async () => {
+        const { readFileSync } = await import('node:fs');
+        const pins = readFileSync(`${process.cwd()}/shiro/wasi-artifact-pins.ts`, 'utf8');
+        const urls = [...pins.matchAll(/"url": "(https:\/\/cdn\.jsdelivr\.net\/npm\/7z-wasm@[^"]+)"/g)].map(m => m[1]);
+        expect(urls.length).toBeGreaterThan(0);
+        const csp = sandboxCspMeta('local', 'https://app.test');
+        const sources = csp.match(/https:\/\/cdn\.jsdelivr\.net\/[^\s;]+/g) ?? [];
+        for (const u of urls) expect(sources.some(src => src.endsWith('/') && u.startsWith(src)), u).toBe(true);   // CSP: a path source is a prefix only with a trailing slash
+        expect(sources.some(src => src === 'https://cdn.jsdelivr.net/npm/7z-wasm@')).toBe(false);
+    });
+});
+
 describe('sandboxCspMeta / parsePrivacyLevel', () => {
     it('only the local level adds a CSP', () => {
         expect(sandboxCspMeta('routed')).toBe('');
