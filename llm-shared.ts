@@ -149,8 +149,9 @@ export function _capTailToolResults(tail: any[], budget: number): any[] {
 }
 
 async function loadAgentsContext() {
+    // The workspace's AGENTS.md first, then the attached Local Folder's (codex R394).
     try { agentsContext = await agentReadFile('AGENTS.md'); }
-    catch { agentsContext = ''; }
+    catch { try { agentsContext = await agentReadFile('local/AGENTS.md'); } catch { agentsContext = ''; } }
     setPendingAgentsContextInject(true);
 }
 

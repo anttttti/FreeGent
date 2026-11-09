@@ -989,6 +989,13 @@ export async function loadSkills() {
             // Normalise paths relative to workspace root so patterns match
             skillFiles = skillFiles.map(f => ({ ...f, name: `skills/${f.name}` }));
             ruleFiles  = ruleFiles.map(f => ({ ...f, name: `rules/${f.name}` }));
+            // The attached Local Folder's own skills/ and rules/ count too; a file the workspace has under the same name wins (codex R395).
+            // An adapter that treats `local/` as an alias of the root (the TUI) lists the same files again: they are skipped by name.
+            for (const [dir, into] of [['skills', skillFiles], ['rules', ruleFiles]] as const) {
+                const have = new Set(into.map(f => f.name));
+                const local: Array<{ name: string }> = await agentListFilesInDir(`local/${dir}`).catch((e: any) => { if (!_absent(e)) complete = false; return []; });
+                for (const f of local) if (!have.has(`${dir}/${f.name}`)) into.push({ ...f, name: `local/${dir}/${f.name}` });
+            }
         } else {
             const files = await agentListFiles();
             skillFiles = files.filter(f =>

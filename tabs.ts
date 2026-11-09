@@ -1332,7 +1332,7 @@ let _artifactChanged = new Set<string>();   // files written since the last rebu
 function scheduleArtifactRefresh(changedName = '') {
     if (!fileTabs.size) return;
     // Notes and task files do not change a page, unless an open page links one of them (a script under memory/ or a stylesheet) (codex R437).
-    if ((/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName))
+    if ((/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName.replace(/^local\//, '')))
         && ![...fileTabs.values()].some(ft => ft.isPreview && ft.deps?.has(changedName))) return;
     _artifactChanged.add(changedName);
     clearTimeout(_artifactRefreshTimer);
@@ -1432,7 +1432,7 @@ function refreshOpenFileTab(name: string) {
 }
 
 function notifyLocalFileChanged(fullPath, content) {
-    scheduleArtifactRefresh(fullPath.replace(/^local\//, ''));
+    scheduleArtifactRefresh(fullPath);   // a preview of a Local Folder page is keyed by its local/ path, so the notice keeps it (codex R406)
     const ft = fileTabs.get(fullPath);
     if (!ft) return;
     if (ft.editor) {

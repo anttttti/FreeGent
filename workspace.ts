@@ -124,6 +124,7 @@ async function pollFsaChanges() {
         let taskFileChanged  = false;
         let skillFileChanged = false;
         let roleFileChanged  = false;
+        let agentsFileChanged = false;
         await Promise.all(changed.map(async ({ name, mtime }) => {
             try {
                 const content = await readFsaFile(name);
@@ -132,12 +133,14 @@ async function pollFsaChanges() {
                 if (isTaskPath(name))  taskFileChanged  = true;
                 if (name.startsWith('skills/') || name.startsWith('rules/')) skillFileChanged = true;
                 if (name.startsWith('roles/'))  roleFileChanged  = true;
+                if (name === 'AGENTS.md') agentsFileChanged = true;
             } catch (e) { console.warn('[FSA] could not read the changed file, will try again:', name, e); }   // not acknowledged: the next poll sees the change again
         }));
 
         if (taskFileChanged)  refreshTasks?.();
         if (skillFileChanged) loadSkills?.();
         if (roleFileChanged)  loadRoles?.();
+        if (agentsFileChanged) loadAgentsContext?.();
     } catch {}
 }
 
@@ -271,6 +274,13 @@ async function applyWorkspaceBatch(writes: Array<{ name: string; content: string
             for (const n of deletes) { try { scheduleArtifactRefresh?.(n); } catch {} }
             for (const w of writes) { try { scheduleArtifactRefresh?.(w.name); } catch {} try { (window as any).refreshOpenFileTab?.(w.name); } catch {} }
             try { (window as any).invalidateWorkspacePaths?.(); } catch {}
+            // A batch (project merge, checkpoint restore) can change AGENTS.md, roles, skills or rules; one reload per kind (codex R397).
+            const kinds = new Set<string>();
+            for (const n of [...deletes, ...writes.map(w => w.name)]) { const p = n.replace(/^local\//, ''); kinds.add(p === 'AGENTS.md' ? 'a' : p.startsWith('roles/') ? 'r' : p.startsWith('skills/') || p.startsWith('rules/') ? 's' : ''); }
+            if (opts.clearAll) ['a', 'r', 's'].forEach(k => kinds.add(k));
+            if (kinds.has('a')) loadAgentsContext?.();
+            if (kinds.has('r')) loadRoles?.();
+            if (kinds.has('s')) loadSkills?.();
             if (opts.clearAll || deletes.some(n => n.startsWith('local/')) || writes.some(w => w.name.startsWith('local/'))) _resyncImportedLocal().then(() => resolve());
             else resolve();
         };
@@ -1702,6 +1712,11 @@ function _scheduleFileListRender() {
 function _reloadAfterWorkspaceChange(path: string): void {
     const p = String(path).replace(/^\.?\/+/, '');
     try { (window as any).invalidateWorkspacePaths?.(); } catch {}   // the skill-trigger path index is cached for 30 s: a file the adapter just made or removed must show in it (codex R443)
+    _reloadSetupFor(p);
+}
+// The project's own setup lives in the workspace or in the Local Folder under `local/`: a write to either root reloads it (codex R395, R396).
+export function _reloadSetupFor(path: string): void {
+    const p = String(path).replace(/^local\//, '');
     if (p === 'AGENTS.md')       loadAgentsContext?.();
     if (p.startsWith('roles/'))  loadRoles?.();
     if (p.startsWith('skills/') || p.startsWith('rules/')) loadSkills?.();
@@ -1757,9 +1772,7 @@ export async function agentWriteFile(path, content, encoding = null, opts?: Writ
     }
     _scheduleFileListRender();
     if (typeof content === 'string' && !encoding) (window as any).notifyAgentFileWritten?.(path, content);   // open editor tabs
-    if (path === 'AGENTS.md')       loadAgentsContext?.();
-    if (path.startsWith('roles/'))  loadRoles?.();
-    if (path.startsWith('skills/') || path.startsWith('rules/')) loadSkills?.();
+    _reloadSetupFor(path);
     // Keep the Kanban board in sync when the AI writes a task file directly.
     // The FSA sync loop handles live-synced folders; IDB writes (no FSA) need this call.
     if (isTaskPath(path)) refreshTasks?.();
