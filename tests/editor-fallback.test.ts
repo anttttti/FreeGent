@@ -52,3 +52,30 @@ describe('Edit button on a page preview', () => {
         await vi.waitFor(() => expect(document.querySelector('.file-panel .file-save-btn')).not.toBeNull());
     });
 });
+
+describe('languages loaded on demand', () => {
+    it('maps the extra file types to their packs, and leaves the built-in ones alone', async () => {
+        const { _lazyLanguageOf } = await import('../editor.ts');
+        expect(_lazyLanguageOf('a/config.yml')).toEqual({ pkg: 'lang-yaml', fn: 'yaml' });
+        expect(_lazyLanguageOf('q.SQL')).toEqual({ pkg: 'lang-sql', fn: 'sql' });
+        expect(_lazyLanguageOf('main.cpp')).toEqual({ pkg: 'lang-cpp', fn: 'cpp' });
+        expect(_lazyLanguageOf('main.rs')).toEqual({ pkg: 'lang-rust', fn: 'rust' });
+        expect(_lazyLanguageOf('run.sh')).toEqual({ legacy: 'shell', fn: 'shell' });
+        expect(_lazyLanguageOf('app.js')).toBeNull(); expect(_lazyLanguageOf('README')).toBeNull();
+    });
+
+    it('loads a pack once, wraps a legacy mode in StreamLanguage, and returns null (then retries) when the pack cannot be had', async () => {
+        const { _loadLazyLanguage } = await import('../editor.ts');
+        const urls: string[] = [];
+        const ok = async (u: string) => { urls.push(u); return u.includes('lang-go') ? { go: () => 'GO' } : u.includes('legacy-modes') ? { shell: 'SHELL-MODE' } : { StreamLanguage: { define: (m: any) => 'STREAM:' + m } }; };
+        expect(await _loadLazyLanguage({ pkg: 'lang-go', fn: 'go' }, ok)).toBe('GO');
+        expect(await _loadLazyLanguage({ pkg: 'lang-go', fn: 'go' }, ok)).toBe('GO');
+        expect(urls.filter(u => u.includes('lang-go'))).toHaveLength(1);
+        expect(await _loadLazyLanguage({ legacy: 'shell', fn: 'shell' }, ok)).toBe('STREAM:SHELL-MODE');
+        let tries = 0;
+        const bad = async () => { tries++; throw new Error('offline'); };
+        expect(await _loadLazyLanguage({ pkg: 'lang-yaml', fn: 'yaml' }, bad)).toBeNull();
+        expect(await _loadLazyLanguage({ pkg: 'lang-yaml', fn: 'yaml' }, bad)).toBeNull();
+        expect(tries).toBe(2);
+    });
+});

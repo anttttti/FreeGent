@@ -61,6 +61,42 @@ function _pickLanguage(filename, mods) {
     return null;
 }
 
+// Languages with no pack in the first download: each one is fetched when a file of that type is opened (the setup would otherwise grow by eight
+// downloads, each a way for the editor to fail to load). A pack that fails to load leaves the file editable without colours.
+const _ESM = 'https://esm.sh';
+const _LANG_DEPS = '?deps=@codemirror/state@6,@codemirror/view@6,@codemirror/language@6,@lezer/highlight@1';
+type LazyLang = { pkg: string; fn: string } | { legacy: string; fn: string };
+const _LAZY_BY_EXT: Record<string, LazyLang> = {
+    yaml: { pkg: 'lang-yaml', fn: 'yaml' }, yml: { pkg: 'lang-yaml', fn: 'yaml' },
+    sql: { pkg: 'lang-sql', fn: 'sql' },
+    xml: { pkg: 'lang-xml', fn: 'xml' }, svg: { pkg: 'lang-xml', fn: 'xml' }, xsl: { pkg: 'lang-xml', fn: 'xml' }, xsd: { pkg: 'lang-xml', fn: 'xml' },
+    c: { pkg: 'lang-cpp', fn: 'cpp' }, h: { pkg: 'lang-cpp', fn: 'cpp' }, cc: { pkg: 'lang-cpp', fn: 'cpp' }, cpp: { pkg: 'lang-cpp', fn: 'cpp' },
+    cxx: { pkg: 'lang-cpp', fn: 'cpp' }, hpp: { pkg: 'lang-cpp', fn: 'cpp' }, hh: { pkg: 'lang-cpp', fn: 'cpp' },
+    java: { pkg: 'lang-java', fn: 'java' },
+    go: { pkg: 'lang-go', fn: 'go' },
+    rs: { pkg: 'lang-rust', fn: 'rust' },
+    sh: { legacy: 'shell', fn: 'shell' }, bash: { legacy: 'shell', fn: 'shell' }, zsh: { legacy: 'shell', fn: 'shell' },
+};
+export const _lazyLanguageOf = (filename: string): LazyLang | null => _LAZY_BY_EXT[(filename.split('.').pop() || '').toLowerCase()] ?? null;
+
+const _lazyCache = new Map<string, Promise<any>>();
+/** The language extension for a lazily loaded type, or null when its pack cannot be had. `importer` is the module loader (replaced in tests). */
+export async function _loadLazyLanguage(spec: LazyLang, importer: (url: string) => Promise<any> = u => import(/* @vite-ignore */ u)): Promise<any> {
+    const key = 'pkg' in spec ? spec.pkg : spec.legacy;
+    let p = _lazyCache.get(key);
+    if (!p) {
+        p = (async () => {
+            if ('pkg' in spec) return (await importer(`${_ESM}/@codemirror/${spec.pkg}@6${_LANG_DEPS}`))[spec.fn]();
+            // Legacy (stream) modes are wrapped by the language package that the editor itself uses.
+            const [lang, mode] = await Promise.all([importer(`${_ESM}/@codemirror/language@6${_LANG_DEPS}`), importer(`${_ESM}/@codemirror/legacy-modes@6/mode/${spec.legacy}${_LANG_DEPS}`)]);
+            return lang.StreamLanguage.define(mode[spec.fn]);
+        })();
+        _lazyCache.set(key, p);
+        p.catch(() => _lazyCache.delete(key));   // a failure is tried again next time
+    }
+    try { return await p; } catch { return null; }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 // Where the editor library cannot load (an old browser, a blocked CDN) the file is still editable: a text box with the little of the EditorView
@@ -107,7 +143,8 @@ async function createEditor(container, filename, content, { onSave, onChange, re
 
     const { EditorView, EditorState, basicSetup } = mods;
     if (!EditorView) throw new Error('EditorView not loaded — check CDN/network');
-    const lang = _pickLanguage(filename, mods);
+    let lang = _pickLanguage(filename, mods);
+    if (!lang) { const spec = _lazyLanguageOf(filename); if (spec) lang = await _loadLazyLanguage(spec); }
 
     const extensions = [
         basicSetup,
