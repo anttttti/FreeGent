@@ -57,7 +57,7 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `Alt+H` | Help |
 | `Ctrl+A` / `Ctrl+E` | Move to the start / end of the input line (also `Home` / `End`) |
 | `Ctrl+U` | Delete from the cursor back to the start of the line |
-| `Ctrl+X` then `Ctrl+S` | Send the input line as a steer message, interrupting the current turn |
+| `Ctrl+X` then `Ctrl+S` | Steer now: send the first waiting message (or, with none waiting, the text in the input line) into the running work |
 
 ## Slash commands
 
@@ -73,6 +73,8 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | `/role [name]` | Open the role panel, or switch role |
 | `/set <key> [value]` | Set a setting by its key, shown next to each value in `/settings` (`/set` alone opens the panel; without a value the setting returns to its default). Other keys the WebUI stores also work, e.g. `fg_thinking_level` |
 | `/project`, `/tasks`, `/agent`, `/settings`, `/help` | Open that panel |
+| `/skills` | List the skills you can run with `/<name>`, with their descriptions |
+| `/<skill> [text]` | Run a skill: its guidance is added to that turn |
 | `/queue N`, `/steer N`, `/cancel N` | Change the Nth queued message: wait its turn, interrupt the current turn, or remove it |
 
 Code execution in the TUI runs on your machine, in the project directory; see [Code execution](../code-execution/local.md#headless-runs) and [Security](https://github.com/anttttti/FreeGent/blob/main/SECURITY.md).

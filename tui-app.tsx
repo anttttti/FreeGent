@@ -1593,7 +1593,13 @@ async function handleSlash(cmd: string) {
             Store.setActivePanel('settings');
             break;
         }
-        case '/skills':   Store.setActivePanel('model'); break;  // model panel lists skills context
+        case '/skills': {   // the skills `/<skill>` can run, with their descriptions
+            const list = [...((dom.window as any).skillsRegistry?.values?.() ?? [])] as any[];
+            Store.addNotice(list.length
+                ? `_Skills: run one with \`/<name> [text]\`._\n${list.map(k => `- \`/${k.name}\` — ${k.description ?? ''}`).join('\n')}`
+                : '_No skills are loaded._');
+            break;
+        }
         case '/settings': Store.setActivePanel('settings'); break;
         case '/help':     Store.setActivePanel('help'); break;
         // Queue management: /steer N  /queue N  /cancel N  (1-based index)
