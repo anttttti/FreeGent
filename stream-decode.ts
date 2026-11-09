@@ -402,7 +402,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
     for (const tc of tool_calls) {
         const rawName = tc.function.name || '';
         // Strip trailing XML/Qwen artifacts: ___function, </function>, </function_calls>, etc.
-        const cleanName = rawName.replace(/\s*\)?\s*<\/function[^>]*>$/, ')').replace(/\s*___function[^(]*$/, '');
+        const cleanName = rawName.replace(/\s*(?:\)\s*)?<\/function[^>]*>$/, ')').replace(/\s*___function[^(]*$/, '');
         // If the name contains embedded args like `tool_name(key=val, ...)`, extract them.
         const parenIdx = cleanName.indexOf('(');
         if (parenIdx !== -1) {
