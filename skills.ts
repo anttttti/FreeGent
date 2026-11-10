@@ -167,7 +167,9 @@ Return this exact format:
 [List anything specifically searched for that was not found, so the main agent does not search again.]
 \`\`\`
 
-After the worker returns, use its findings to proceed with the task. Do not follow up with read_file or search_workspace in the main loop for the same files.`
+After the worker returns, use its findings to proceed with the task. Do not follow up with read_file or search_workspace in the main loop for the same files.`,
+        // Experiment short_guidance (skill-guidance.ts): the text given when the repeat trigger fires.
+        reactive: () => `You are locating code by grepping and reading files in the main loop, which fills your context with material you will not need again. Delegate the search: spawn one worker via \`run_workers\` with the task "Find all code and files relevant to: [task description, with the names and paths you already know]. Search broadly and read what you find. Report each relevant location as path:line-range, one sentence on why it matters, and the exact code excerpt; then list what you searched for and did not find." Then work from its report — do not read or search the same files again yourself.`
     },
     {
         name: 'task-setup',
@@ -246,6 +248,13 @@ Max 2 replan attempts.${has('update_task_status') ? ' If still failing → updat
             parts.push(`**General**: The core's after-fail rule applies — a failed tool is not a stopping condition. If you cannot proceed, state BLOCKED with the exact blocker.`);
             return parts.join('\n\n');
         },
+        // Experiment short_guidance (skill-guidance.ts): only the paragraph for what set it off.
+        reactive: (cause: string) => {
+            const has = (t: string) => typeof isToolActive !== 'function' || isToolActive(t);
+            if (cause === 'replace_miss') return `**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If it still fails, use one short, distinctive line as old_string, or make the change with a short execute_code script. Do not rewrite the whole file with write_file for a small change.`;
+            if (cause === 'repeat') return `**Same tool repeated** without progress: you may be in a loop. Stop repeating the same approach. Re-read the task, check what information you already have, and try a fundamentally different tactic.${has('run_workers') ? ' If stuck, delegate to a worker for a fresh perspective via run_workers([{id:"fresh-perspective", task:"<current task and what was tried>", role:"director"}]).' : ''}`;
+            return `**A tool call failed**: that is not a stopping condition. Read the error, then correct the call or reach the same result another way. If you cannot proceed, state BLOCKED with the exact blocker.`;
+        },
     },
 ];
 
@@ -253,54 +262,35 @@ Max 2 replan attempts.${has('update_task_status') ? ' If still failing → updat
 // Rules with a body_fn field compute their body dynamically at injection time (see buildTriggeredGuidance).
 // Analogous to .cursor/rules or .claude/rules in other tools.
 // image skill bodies — the generate_image parts only when that tool is enabled.
-const _IMAGE_BODY = `## Image Generation & Visual Output
-
-### Displaying images inline
-The chat renders visual output directly. Three paths depending on the task:
-
-**Data visualization (charts, plots, graphs)** — use \`execute_code\` with matplotlib, seaborn, or plotly. Any image file your Python code writes (e.g. \`plt.savefig("chart.png")\`, \`fig.write_image("chart.svg")\`) is **automatically displayed inline** in the tool output — no extra encoding needed. After the code runs, the tool result contains \`[IMAGE:filename]\` in stdout — copy that exact marker into your chat reply to embed it (e.g. write \`[IMAGE:chart.png]\`). **Never write \`![alt](filename)\`** — a bare workspace filename is not a URL and will show as a broken image. **Never \`print("[IMAGE:filename]")\` from inside the Python code** — the marker is added automatically by the tool infrastructure; printing it yourself results in a broken image because the image won't be in the display store.
-
-**SVG diagrams / illustrations** — generate SVG code and paste the raw \`<svg>...</svg>\` XML directly in your reply. The chat renders it inline. Do NOT base64-encode SVGs — write the XML directly.
-
-**AI-generated raster images (photos, artwork)** — call \`generate_image\`, then embed the result with \`[IMAGE:key]\` where key is from the tool's \`display\` field.
-
-**Never** compute or fabricate base64 image data — only use \`[IMAGE:key]\` markers with keys from tool results or files your code actually wrote.
-
-### Tool: generate_image (requires HuggingFace token in Settings)
-
-\`\`\`
+const _IMG_CHARTS = `**Data visualization (charts, plots, graphs)** — use \`execute_code\` with matplotlib, seaborn, or plotly. Any image file your Python code writes (e.g. \`plt.savefig("chart.png")\`, \`fig.write_image("chart.svg")\`) is **automatically displayed inline** in the tool output — no extra encoding needed. After the code runs, the tool result contains \`[IMAGE:filename]\` in stdout — copy that exact marker into your chat reply to embed it (e.g. write \`[IMAGE:chart.png]\`). **Never write \`![alt](filename)\`** — a bare workspace filename is not a URL and will show as a broken image. **Never \`print("[IMAGE:filename]")\` from inside the Python code** — the marker is added automatically by the tool infrastructure; printing it yourself results in a broken image because the image won't be in the display store.`;
+const _IMG_SVG = `**SVG diagrams / illustrations** — generate SVG code and paste the raw \`<svg>...</svg>\` XML directly in your reply. The chat renders it inline. Do NOT base64-encode SVGs — write the XML directly.`;
+const _IMG_NEVER = `**Never** compute or fabricate base64 image data — only use \`[IMAGE:key]\` markers with keys from tool results or files your code actually wrote.`;
+const _imageHead = (paths: string) => `## Image Generation & Visual Output\n\n### Displaying images inline\nThe chat renders visual output directly. ${paths} paths depending on the task:`;
+const _IMAGE_BODY = [
+    _imageHead('Three'), _IMG_CHARTS, _IMG_SVG,
+    `**AI-generated raster images (photos, artwork)** — call \`generate_image\`, then embed the result with \`[IMAGE:key]\` where key is from the tool's \`display\` field.`,
+    _IMG_NEVER,
+    `### Tool: generate_image (requires HuggingFace token in Settings)`,
+    `\`\`\`
 generate_image({
   prompt: "a photorealistic sunset over snow-capped mountains, golden hour, dramatic clouds",
   filename: "sunset.png",              // optional — saved to workspace
   negative_prompt: "blurry, low quality, watermark"  // optional, SDXL only
 })
-\`\`\`
-
-Tries **stabilityai/stable-diffusion-xl-base-1.0** first, falls back to **black-forest-labs/FLUX.1-schnell**. Returns \`{ success, path, model, prompt, display }\`.
-
-### Prompting tips
+\`\`\``,
+    `Tries **stabilityai/stable-diffusion-xl-base-1.0** first, falls back to **black-forest-labs/FLUX.1-schnell**. Returns \`{ success, path, model, prompt, display }\`.`,
+    `### Prompting tips
 - Be specific: subject, style, lighting, mood, medium ("oil painting", "photorealistic", "watercolor", "pixel art")
 - For SDXL use \`negative_prompt\` to exclude: "blurry, low quality, watermark, text, deformed"
-- FLUX.1-schnell handles natural-language prompts well; SDXL benefits from comma-separated style tags
-
-### Workflow
+- FLUX.1-schnell handles natural-language prompts well; SDXL benefits from comma-separated style tags`,
+    `### Workflow
 1. **Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply
 2. **Photo/realistic image request:** call \`generate_image\`, then write \`[IMAGE:key]\` in your reply
 3. If the HuggingFace token is missing, tell the user to add it in **Settings → Credentials → HuggingFace Key**
-4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`;
-const _IMAGE_BODY_NO_GEN = `## Image Generation & Visual Output
-
-### Displaying images inline
-The chat renders visual output directly. Two paths depending on the task:
-
-**Data visualization (charts, plots, graphs)** — use \`execute_code\` with matplotlib, seaborn, or plotly. Any image file your Python code writes (e.g. \`plt.savefig("chart.png")\`, \`fig.write_image("chart.svg")\`) is **automatically displayed inline** in the tool output — no extra encoding needed. After the code runs, the tool result contains \`[IMAGE:filename]\` in stdout — copy that exact marker into your chat reply to embed it (e.g. write \`[IMAGE:chart.png]\`). **Never write \`![alt](filename)\`** — a bare workspace filename is not a URL and will show as a broken image. **Never \`print("[IMAGE:filename]")\` from inside the Python code** — the marker is added automatically by the tool infrastructure; printing it yourself results in a broken image because the image won't be in the display store.
-
-**SVG diagrams / illustrations** — generate SVG code and paste the raw \`<svg>...</svg>\` XML directly in your reply. The chat renders it inline. Do NOT base64-encode SVGs — write the XML directly.
-
-**Never** compute or fabricate base64 image data — only use \`[IMAGE:key]\` markers with keys from tool results or files your code actually wrote.
-
-### Workflow
-**Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply.`;
+4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`,
+].join('\n\n');
+const _IMAGE_BODY_NO_GEN = [_imageHead('Two'), _IMG_CHARTS, _IMG_SVG, _IMG_NEVER, `### Workflow
+**Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply.`].join('\n\n');
 
 const BUILTIN_RULES = [
     {
@@ -431,19 +421,24 @@ or ask for a readable text or image version when those tools cannot process it.`
         trigger: 'search, look at, what does, how does, where is, list files, codebase, workspace, source code, repository',
         trigger_on_filetype: '.js, .py, .ts, .go, .rs, .java, .cpp, .c, .rb, .php, .cs, .swift, .kt, .vue, .jsx, .tsx',
         trigger_on_turn: 'first',
-        body: `## Working in the codebase
+        body: '',
+        // repo_map is opt-in and was never called in 361 user logs, yet this rule told every run to start with it: named only when it is on.
+        body_fn: () => {
+            const rm = typeof isToolActive !== 'function' || isToolActive('repo_map');
+            return `## Working in the codebase
 0. **Code-first.** When a question is about what this project does, has, or lacks — read workspace files before consulting external sources. Verify with search_workspace or read_file first. External research anchors wrong assumptions.
-1. **Orient once.** Use **repo_map** for code tasks (file structure + symbols), or **list_files** for doc/data tasks. Never call either again if already in context. **"local/foo" and "foo" are the same file — never read twice.**
+1. **Orient once.** ${rm ? 'Use **repo_map** for code tasks (file structure + symbols), or **list_files** for doc/data tasks.' : 'Use **list_files** (and **search_workspace** for code) to see what is there.'} Never call either again if already in context. **"local/foo" and "foo" are the same file — never read twice.**
 2. **File search hard stops:**
    - NEVER use execute_code to list or search. Use list_files or search_workspace — faster, no sandbox startup.
    - NEVER grep or read files sequentially. "The grep was truncated, let me read the file" — forbidden.
    - NEVER re-read a file already in context.
-   - In a new session: treat all files as unknown. Start with \`repo_map\` or \`search_workspace\` — never open a file speculatively without a grep hit.
+   - In a new session: treat all files as unknown. Start with ${rm ? '\`repo_map\` or ' : ''}\`search_workspace\` — never open a file speculatively without a grep hit.
    - NEVER read a whole file to find a function. Use line-range read_file or search_workspace.
-   - CORRECT PATTERN: \`run_workers\` with one worker — (1) repo_map + search_workspace in parallel, (2) read freely, (3) return excerpts with file:line. One call; nothing else.
+   - CORRECT PATTERN: \`run_workers\` with one worker — (1) ${rm ? 'repo_map + search_workspace in parallel' : 'search_workspace'}, (2) read freely, (3) return excerpts with file:line. One call; nothing else.
 3. **Before writing a new file:** read one similar existing file first and match it — import style, naming, error handling, type-annotation depth. Do not invent a house style.
 4. **Write complete code.** No pseudocode and no \`TODO: implement\` stubs. If the real logic is not yet known, write a stub that returns a typed placeholder and say so — never leave a comment where code belongs.
-For code execution, deletions, or multi-file refactors use a **coder** worker.`
+For code execution, deletions, or multi-file refactors use a **coder** worker.`;
+        },
     },
     {
         name: 'debug-strategy',
@@ -479,7 +474,10 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`
         trigger_on_completion: 'triggered',
         body: `**Code fix definition of done:** If an edit was needed: (1) confirm it is applied — read the changed lines back with read_file (or, if \`git\` works in this shell and the project is a repository, \`git diff --stat\` shows the change; if git is missing, do not retry it), (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. If the investigation concluded no change was required, say so in your answer together with the findings the task asked for (the answer is the deliverable; do not shorten it to the conclusion) and end with COMPLETED. Do not continue exploring once all affected locations are verified fixed, or a no-change conclusion is confirmed — that is budget waste, not diligence. Re-check the original task statement before finishing — your own test cases are not the spec.
 
-**If the package cannot be imported** (missing build artifacts, uncompiled C extensions, missing optional dependencies): (1) try importing only the specific changed module(s) directly — \`import sys; sys.path.insert(0, '/workspace'); from package.module import TargetClass\` — and test that; (2) if even that fails after one attempt, declare \`BLOCKED: <import error>\` — do not try to rebuild the package, patch build guards, or install missing dependencies; (3) never run tests against an installed package as a substitute for verifying the workspace source — installed versions may have different APIs and do not test your patch.`
+**If the package cannot be imported** (missing build artifacts, uncompiled C extensions, missing optional dependencies): (1) try importing only the specific changed module(s) directly — \`import sys; sys.path.insert(0, '/workspace'); from package.module import TargetClass\` — and test that; (2) if even that fails after one attempt, declare \`BLOCKED: <import error>\` — do not try to rebuild the package, patch build guards, or install missing dependencies; (3) never run tests against an installed package as a substitute for verifying the workspace source — installed versions may have different APIs and do not test your patch.`,
+        // Experiment short_guidance (skill-guidance.ts): the text given after the first successful edit. The whole body is still
+        // given at the start of a turn whose message matches \`trigger\`, and at the completion gate.
+        reactive: () => `**Code fix definition of done:** (1) the edit is applied — read the changed lines back with read_file (or \`git diff --stat\`, if git works here), (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. Stop exploring once every affected location is verified. Re-check the original task statement before finishing — your own test cases are not the spec. If the package cannot be imported, import and test only the changed module from the workspace source; never test an installed copy instead.`
     },
     {
         name: 'ops-verify',
@@ -745,11 +743,8 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
                 '**PATH persistence:** each execute_code call runs in a fresh shell — `export PATH=...` in one call does NOT carry over to the next. To persist a new PATH entry: append it to `~/.bashrc` (`echo \'export PATH=$PATH:/new/dir\' >> ~/.bashrc`) and source it at the start of subsequent calls (`source ~/.bashrc && ...`), or use the full absolute path in every call.',
                 '**Verifying background services:** use `pgrep` or `curl` in a separate `execute_code` call — the spawning call and any external test runner use independent shells.',
             );
-            bashRules.push(hasWasm
-                // Each call runs in a fresh browser shell (exec-sandbox/bash-run.ts, since 2026-10-02); this line still said the shell
-                // kept variables and cd until the page reloaded, against the execute_code description in the same prompt.
-                ? '**State across calls:** each call starts in a fresh browser shell in `/workspace`: variables, functions, aliases, `cd` and `export` do not carry over to the next call; files do (the workspace and `/tmp`). Write important results to workspace files so they survive compaction and reloads.'
-                : '**State across calls:** installed tools, environment variables, and shell state reset between calls. Write important paths and results to workspace files immediately so they survive compaction and session restarts.');
+            // That each call starts fresh (variables, cd, exports) is said once, in the execute_code tool description; only the advice is here.
+            bashRules.push('**Persist results:** write important paths and results to workspace files immediately so they survive compaction and session restarts.');
             parts.push(`### Rules\n${bashRules.map(r => `- ${r}`).join('\n')}`);
             return parts.join('\n\n');
         },

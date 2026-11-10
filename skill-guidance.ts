@@ -278,9 +278,14 @@ export function reactiveSkillGuidance(toolResults: any): string {
     const _role  = mainAgentRole?.name?.toLowerCase() ?? null;
     const _eligible = s => s && !fired.has(s.name) &&
         !_skillExcludedForRole(s, _role) && !_skillUnavailable(s) && !_skillExcludedForMode(s);
-    const _emit = s => {
-        const body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
+    // cause: what set the skill off — the tool name (trigger_on_tool), the failure class (trigger_on_failure) or 'repeat'.
+    const _emit = (s, cause: string) => {
+        let body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) return; // body_fn may return '' when tools/env conditions aren't met
+        // Experiment short_guidance: a built-in skill's short text for this cause instead of its whole body. The three largest
+        // (search, failure-recovery, code-fix-done) were 89% of reactive_guidance text in the user logs of 2026-11-10, and 73% of the
+        // failure-recovery fires there followed a plain read_file step, with edit, shell and worker advice attached.
+        if (runtime.experiment('short_guidance') && typeof s.reactive === 'function') body = s.reactive(cause) || body;
         parts.push(`### ${s.name}\n${body}`);
         fired.add(s.name);
     };
@@ -296,7 +301,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
                 if (arrowIdx < 0) return true;
                 return _matchNeedle(spec.slice(arrowIdx + 2), result);
             });
-            if (hit) _emit(s);
+            if (hit) _emit(s, name);
         }
         const failType = _classifyToolFailure(name, result);
         if (!failType) continue;
@@ -313,7 +318,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
                 // already reached from earlier errors.
                 return m[1] === failType && prevCount < threshold && counts[failType] >= threshold;
             });
-            if (hit) _emit(s);
+            if (hit) _emit(s, failType);
         }
     }
 
@@ -343,7 +348,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
             const count = hist.filter(n => n === tool).length;
             return count >= threshold;
         });
-        if (hit) _emit(s);
+        if (hit) _emit(s, 'repeat');
     }
     if (!parts.length) return '';
     return `~~~guidance\nReactive guidance triggered by recent tool activity — apply it now before continuing.\n\n${parts.join('\n\n')}\n~~~`;

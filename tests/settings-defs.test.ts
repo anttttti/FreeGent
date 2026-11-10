@@ -44,3 +44,9 @@ describe('storage-key registry', () => {
         expect([...used].filter(k => !registered.has(k) && !allowed.has(k))).toEqual([]);
     });
 });
+
+describe('labels', () => {
+    it('the TUI panel and the profile table word a setting the same way', () => {
+        for (const f of keyedFields(SETTINGS_DEF)) if ('label' in f && f.key in SETTINGS) expect(f.label, f.key).toBe(SETTINGS[f.key].label);
+    });
+});

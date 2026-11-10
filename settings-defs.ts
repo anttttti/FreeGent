@@ -23,14 +23,14 @@ export const SETTINGS: Record<string, SettingDef> = {
     fg_search_provider: { label: 'Search provider', section: 'Search' },
     fg_sandbox_provider: { label: 'Sandbox provider', section: 'Code' },
     fg_agent_tool_result_truncation: { label: 'Tool result truncation', section: 'Agent' },
-    fg_agent_max_tool_result: { label: 'Max result chars', section: 'Agent' },
+    fg_agent_max_tool_result: { label: 'Max result size — workers (chars)', section: 'Agent' },
     fg_agent_proactive_compact: { label: 'Proactive compaction', section: 'Agent' },
     fg_agent_compact_at: { label: 'Compact at (%)', section: 'Agent' },
     fg_agent_compact_tokens: { label: 'Compact at (tokens)', section: 'Agent' },
-    fg_agent_max_rounds: { label: 'Max rounds', section: 'Agent', min: 1, max: 500, step: 1, int: true },
+    fg_agent_max_rounds: { label: 'Max steps / turn', section: 'Agent', min: 1, max: 500, step: 1, int: true },
     fg_rate_limit_cooldown_min: { label: 'Rate-limit cooldown', section: 'Models' },
-    fg_agent_lean_workers: { label: 'Lean workers', section: 'Agent' },
-    fg_agent_worker_history: { label: 'Shared-prefix workers', section: 'Agent' },
+    fg_agent_lean_workers: { label: 'Lean worker context', section: 'Agent' },
+    fg_agent_worker_history: { label: 'Director workers fork the full context', section: 'Agent' },
     fg_active_skills: { label: 'Always-on skills/rules', section: 'Skills', list: true },
     fg_builtin_skills: { label: 'Built-in skills', section: 'Skills', list: true },
     fg_builtin_rules: { label: 'Built-in rules', section: 'Skills', list: true },
@@ -54,7 +54,7 @@ export const SETTINGS: Record<string, SettingDef> = {
     fg_agent_ledger: { label: 'Task/Progress Ledger', section: 'Agent' },
     fg_agent_review_logs: { label: 'Review message logs', section: 'Agent' },
     fg_intent_validation: { label: 'Intent validation', section: 'Agent' },
-    fg_director_max_tool_result: { label: 'Director max tool result', section: 'Agent' },
+    fg_director_max_tool_result: { label: 'Max result size — main agent (chars)', section: 'Agent' },
     fg_tool_approval: { label: 'Tool approval', section: 'Agent' },
     fg_git_enabled: { label: 'Git access', section: 'Code' },
     fg_ast_enabled: { label: 'AST code queries', section: 'Code' },
@@ -65,6 +65,9 @@ export const SETTINGS: Record<string, SettingDef> = {
     fg_presence_penalty: { label: 'Presence penalty', section: 'Models', min: -2, max: 2, step: 0.1 },
     fg_repetition_penalty: { label: 'Repetition penalty', section: 'Models', min: 0, max: 2, step: 0.05 },
 };
+
+/** The label of a setting, as the Settings panel, the profile diff and the TUI show it. */
+export const labelOf = (key: string): string => SETTINGS[key]?.label ?? key;
 
 /** min / max / step of a numeric setting, for an input or a panel field. */
 export function rangeOf(key: string): { min?: number; max?: number; step?: number } {

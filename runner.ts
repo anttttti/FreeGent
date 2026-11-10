@@ -198,15 +198,6 @@ function runnerSteer(text: string) {
     }
 }
 
-// Toggle: stop if running, start if idle.
-function runnerToggle() {
-    if (_runnerRunning) {
-        runnerStop();
-        if (typeof agentStreaming !== 'undefined' && agentStreaming) stopNow?.();
-    } else {
-        runnerStart();
-    }
-}
 
 function runnerRestart() {
     const all = _runnerAll;
@@ -995,4 +986,4 @@ function getRunnerPauseReason(): string | null { return _runnerRunning && _runne
 function getRunnerUserAnswers(title: string): { question: string; answer: string }[] {
     return _runnerUserNotes.filter(n => n.task === title).map(n => ({ question: n.question, answer: n.answer }));
 }
-Object.assign(window, { getRunnerUserAnswers, getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerToggle, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });
+Object.assign(window, { getRunnerUserAnswers, getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

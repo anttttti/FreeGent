@@ -340,20 +340,6 @@ function _patchLastAssistantArgs(s: AgentSession, step: number, edits: Map<strin
     } catch (_e) { console.warn('[session-event] tool-call args surface replace failed:', _e); }
 }
 
-function _patchOAIWriteArgs(assistantMsg: any, diffs: Map<string, string>): void {
-    // diffs: Map<tool_call_id, diffString>
-    if (!assistantMsg?.tool_calls?.length || !diffs.size) return;
-    for (const tc of assistantMsg.tool_calls) {
-        const d = diffs.get(tc.id);
-        if (!d) continue;
-        try {
-            const args = JSON.parse(tc.function.arguments);
-            args.content = d;
-            args._contentCompressed = true;
-            tc.function.arguments = JSON.stringify(args);
-        } catch {}
-    }
-}
 
 // 'percent' mode: fraction of the model's context window (requires proactive compact enabled).
 // 'tokens'  mode: fixed token count regardless of context window size.
@@ -2842,7 +2828,7 @@ function _stripThinking(text: string): string {
 // headless: in JSDOM, module free-variable reads resolve through globalThis, which the
 // bootstrap windowProxy forwards here. (Detectors → detectors.ts, history hygiene →
 // history.ts, tool repair → tool-call-repair.ts — each bridges its own exports.)
-Object.assign(window, { runTurn, callLLM, callOAI, getLastMainRequest, getTurnStopInfo, _runToolCalls, _validateStepOutput, _saveAnswer, _patchOAIWriteArgs, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
+Object.assign(window, { runTurn, callLLM, callOAI, getLastMainRequest, getTurnStopInfo, _runToolCalls, _validateStepOutput, _saveAnswer, _stripThinking, clearSessionFallback, clearReplaceState, applyKeywordToolFilter });
 
 // §7: named ES module exports alongside window bridge (harness adapter / headless import paths).
 // Note: clearSessionFallback and clearReplaceState are already exported via export function above.

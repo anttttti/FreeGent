@@ -68,4 +68,27 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
             expect(call()).toContain('test-empty-compare');
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
+
+    it('short_guidance gives failure-recovery only the paragraph for its cause; without it the whole body', async () => {
+        const prev = process.env.FG_EXPERIMENTS;
+        await import('../skills.ts');   // the built-ins are not loaded by setup.js
+        const fr = W.BUILTIN_SKILLS.find((s: any) => s.name === 'failure-recovery');
+        const twoErrors = () => {
+            W._reactiveFired.clear();
+            for (const k of Object.keys(W._failureCounts)) delete W._failureCounts[k];
+            W.skillsRegistry.set(fr.name, fr);
+            const r = { name: 'read_file', args: { path: 'a.txt' }, result: { error: 'not found' } };
+            return W.reactiveSkillGuidance([r, r]);
+        };
+        try {
+            delete process.env.FG_EXPERIMENTS;
+            const full = twoErrors();
+            expect(full).toContain('**General**');
+            process.env.FG_EXPERIMENTS = 'short_guidance';
+            const short = twoErrors();
+            expect(short).toContain('### failure-recovery\n**A tool call failed**');
+            expect(short).not.toContain('**Same tool repeated**');
+            expect(short.length).toBeLessThan(full.length / 2);
+        } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
+    });
 });

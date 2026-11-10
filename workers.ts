@@ -44,7 +44,8 @@ or
 STATUS: partial — <what was done / what remains>
 `;
 
-const _roleConciseBlock = getAgentConcisePrompts()
+// Read per call, as the worker prompts are: the setting takes effect without a reload.
+const _roleConciseBlock = () => getAgentConcisePrompts()
     ? '\n\n## Conciseness\nUse the user\'s requested output format; otherwise complete with one sentence stating the outcome. Then COMPLETED. No Goal/Approach/Changes/Outcome blocks, no recap of what code already printed, no preamble before tool calls. The work speaks for itself.\nRespond in compressed, telegraphic style — facts, findings, file paths, decisions. No preamble, no summary wrap-up, no pleasantries.\n'
     : '';
 
@@ -294,7 +295,7 @@ After a tool succeeds: do not second-guess. Move to the next step — no re-chec
 
 After a tool fails: retry with a fix (corrected args, exact text re-read from the file, smaller step), run a diagnostic, or state plainly what failed. A failed tool is not a stopping condition — only DONE or BLOCKED is.
 ${availableToolsSection}
-${_roleConciseBlock}`;
+${_roleConciseBlock()}`;
         },
     },
     {

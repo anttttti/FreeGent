@@ -258,9 +258,7 @@ export function getEndpointContextTokens(ep: { provider?: string; model?: string
 export function getOAIContextTokens()   { const n = parseInt(ls('fg_openai_context',  '50000'), 10); return Number.isFinite(n) && n > 0 ? n : 50000; }
 function getGroqKey()        { return ls('fg_groq_key'); }
 function getNvidiaKey()      { return ls('fg_nvidia_key'); }
-function getNvidiaModel()    { return ls(KEYS.NVIDIA_MODEL, 'nvidia/nemotron-3-super-120b-a12b'); }
 function getOpenRouterKey()  { return ls('fg_openrouter_key'); }
-function getOpenRouterModel(){ return ls('fg_openrouter_model', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free'); }
 function getTokenHarborKey() { return ls('fg_tokenharbor_key'); }
 function getKiloKey()        { return ls('fg_kilo_key'); }
 function getVercelKey()      { return ls('fg_vercel_key'); }
@@ -436,7 +434,6 @@ function getAgentLedger()             { return ls('fg_agent_ledger', 'true') !==
 function getAgentReviewLogs()         { return ls('fg_agent_review_logs', 'false') !== 'false'; }
 // (entity memory removed)
 function getIntentValidation() { return ls(KEYS.INTENT_VALIDATION, 'heuristic'); } // 'off' | 'heuristic'
-function setIntentValidation(value) { localStorage.setItem(KEYS.INTENT_VALIDATION, value); }
 // 'off' | 'high' | 'all'. Unset, it follows the sandbox: code that runs on the host unisolated
 // (the 'local' provider → /api/execute without bubblewrap, as the user) asks first; browser
 // sandboxes and an isolated /api/execute don't. __FG_SERVER_INFO comes from the dev server.
@@ -563,12 +560,6 @@ const MODEL_CATALOG = [
     { provider:'requesty', model:'mistral/leanstral-1-5', label:'Leanstral 1.5 (Requesty)', released:'2026-05', contextK:262, params:null, media:['text'], tools:true, thinking:true, note:'Lean 4 proof-engineering model (domain-specific); EU-hosted; 256K context. Requesty $0 route; API key required (works on a $0 balance). The org can have only about 2 requests in flight at $0 balance (limit = balance x 5).' },
 ];
 
-function getEnabledModels() {
-    const raw = ls(KEYS.ENABLED_MODELS, '');
-    if (!raw) return MODEL_CATALOG.map(m => `${m.provider}|${m.model}`);
-    try { return JSON.parse(raw); } catch { return MODEL_CATALOG.map(m => `${m.provider}|${m.model}`); }
-}
-function saveEnabledModels(arr) { localStorage.setItem(KEYS.ENABLED_MODELS, JSON.stringify(arr)); }
 
 // ── Custom user-defined models ─────────────────────────────────────────────
 function getCustomModels() {
@@ -1155,22 +1146,6 @@ function getEffectiveUtilityModel() {
 function getAllModelsForMedia(mediaType) {
     return getAllModels().filter(m => (m.media || ['text']).includes(mediaType));
 }
-function buildModelCatalogText(enabledOnly = true) {
-    const mainList = getMainModelList();
-    const models  = enabledOnly
-        ? getAllModels().filter(m => mainList.includes(`${m.provider}|${m.model}`))
-        : getAllModels();
-    const ORDER = ['google', 'groq', 'nvidia', 'openrouter', 'nous', 'tokenharbor', 'kilo', 'vercel', 'moonmath', 'requesty', 'custom'];
-    const grouped = {};
-    for (const m of models) {
-        if (!grouped[m.provider]) grouped[m.provider] = [];
-        grouped[m.provider].push(m);
-    }
-    return ORDER.filter(p => grouped[p])
-        .map(p => `**${p.toUpperCase()}**\n` + grouped[p].map(m =>
-            `- ${m.label} (${m.provider}|${m.model}): released ${m.released}, ${m.contextK}K ctx, media: ${m.media.join('/')}, tools: ${m.tools ? 'yes' : 'no'}, thinking: ${m.thinking ? 'yes' : 'no'}. ${m.note}`
-        ).join('\n')).join('\n\n');
-}
 
 function getActiveModel() {
     const list = getActiveMainModelList();
@@ -1452,7 +1427,7 @@ Object.assign(window, {
     getGeminiKey, getGeminiModel,
     getOAIUrl, getOAIKey, getOAIModel, getOAIContextTokens, getEndpointContextTokens,
     getGroqKey,
-    getNvidiaKey, getNvidiaModel, getOpenRouterKey, getOpenRouterModel, getTokenHarborKey, getKiloKey, getVercelKey, getMoonmathKey, getRequestyKey, getNousKey,
+    getNvidiaKey, getOpenRouterKey, getTokenHarborKey, getKiloKey, getVercelKey, getMoonmathKey, getRequestyKey, getNousKey,
     getSearchProvider, getThinkingLevel, thinkingLevelBudget, getTemperature,
     getTopP, getTopK, getMinP, getPresencePenalty, getRepetitionPenalty, getSamplingParams,
     getTavilyKey, getHFKey, getSearchProxy, getEffectiveProxy, getLocalApiProxy,
@@ -1465,13 +1440,13 @@ Object.assign(window, {
     getAgentWorkerReduce, getAgentRoleModelRouting,
     getEndpointRotation, getSingleRequestPerEndpoint, getRotationStepN, getAgentMaxDelegationDepth,
     getAgentLedger, getAgentReviewLogs,
-    getIntentValidation, setIntentValidation, getToolApproval,
+    getIntentValidation, getToolApproval,
     getRunnerMaxConsecutiveFails, getRateLimitCooldownMs,
     getRunnerQa, getGitEnabled, getAstEnabled,
     getQaEnabled, getQaTestRunner, getQaAcceptanceReview, getQaRegressionGuard, getQaReworkLimit,
     getShowNudges,
     getEditReviewEnabled, getWorkerThinkingBudget, getPreserveThinking,
-    getEnabledModels, saveEnabledModels, getCustomModels, saveCustomModels, fillMissingReleased, rememberModelCreated,
+    getCustomModels, saveCustomModels, fillMissingReleased, rememberModelCreated,
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
@@ -1480,7 +1455,7 @@ Object.assign(window, {
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel, getEffectiveWorkerModel,
     getUtilityModel, saveUtilityModel, isUtilityDisabled, getEffectiveUtilityModel, usableModelChoice, modelChoiceUsable, textModelChoices,
-    buildModelCatalogText, getActiveModel, estimateTokens,
+    getActiveModel, estimateTokens,
     getContextThreshold, isContextSizeKnown, getContextUsage, updateModelLabel, updateTokenLabel,
     updatePyodideStatusEl, startPyodide, autoloadPyodideIfEnabled, parseFrontmatter,
     loadServerKeys, isServerKeyPlaceholder,

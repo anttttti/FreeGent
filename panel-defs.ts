@@ -11,7 +11,7 @@
 // so any value written by the WebUI is immediately visible to the TUI and
 // vice-versa.
 
-import { rangeOf } from './settings-defs.js';
+import { rangeOf, labelOf } from './settings-defs.js';
 
 // ── Field types ───────────────────────────────────────────────────────────────
 
@@ -117,7 +117,7 @@ export const SETTINGS_DEF: PanelDef = {
                     ],
                 },
                 { kind: 'number', key: 'fg_agent_compact_tokens', label: 'Compact at (tokens)',   placeholder: '0 = off' },
-                { kind: 'number', key: 'fg_agent_max_rounds',     label: 'Max steps / turn',      placeholder: '100', ...rangeOf('fg_agent_max_rounds') },
+                { kind: 'number', key: 'fg_agent_max_rounds',     label: labelOf('fg_agent_max_rounds'),      placeholder: '100', ...rangeOf('fg_agent_max_rounds') },
                 {
                     kind: 'select', key: 'fg_intent_validation', label: 'Intent validation',
                     options: [
@@ -157,15 +157,15 @@ export const SETTINGS_DEF: PanelDef = {
                   description: 'Compact history before hitting the hard context limit.' },
                 { kind: 'toggle', key: 'fg_agent_tool_result_truncation', label: 'Tool result truncation',
                   description: 'Cap tool results stored in history to avoid context bloat.' },
-                { kind: 'number', key: 'fg_agent_max_tool_result',    label: 'Max result size — workers (chars)',    placeholder: '100000'  },
-                { kind: 'number', key: 'fg_director_max_tool_result', label: 'Max result size — main agent (chars)', placeholder: '100000' },
+                { kind: 'number', key: 'fg_agent_max_tool_result',    label: labelOf('fg_agent_max_tool_result'),    placeholder: '100000'  },
+                { kind: 'number', key: 'fg_director_max_tool_result', label: labelOf('fg_director_max_tool_result'), placeholder: '100000' },
             ],
         },
         {
             title: 'Workers',
             fields: [
-                { kind: 'toggle', key: 'fg_agent_lean_workers',     label: 'Lean worker context' },
-                { kind: 'toggle', key: 'fg_agent_worker_history',   label: 'Director workers fork the full context' },
+                { kind: 'toggle', key: 'fg_agent_lean_workers',     label: labelOf('fg_agent_lean_workers') },
+                { kind: 'toggle', key: 'fg_agent_worker_history',   label: labelOf('fg_agent_worker_history') },
                 { kind: 'toggle', key: 'fg_agent_worker_reduce',    label: 'Worker output reduce' },
                 { kind: 'toggle', key: 'fg_agent_role_model_routing', label: 'Role model routing' },
                 {

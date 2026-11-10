@@ -76,7 +76,6 @@ declare global {
     var runnerStartTask: (path: string) => void;
     var runnerAbort: () => void;
     var runnerSteer: (text: string) => void;
-    var runnerToggle: () => void;
     var initRunner: () => void;
     var isRunnerRunning: () => boolean;
     var getRunnerChatId: () => string | null;
@@ -109,7 +108,6 @@ declare global {
     var scrollBottom: any;
     // ── bridged by chat-state.ts ──
     var autoNameChat: any;
-    var closeChatsDropdown: any;
     var deleteCurrentChat: any;
     var focusChatSearch: any;
     var _filterChatsDropdown: any;
@@ -162,7 +160,6 @@ declare global {
     var rememberImage: (key: string, value: any) => void;
     var activeSkills: any;
     var agentsContext: any;
-    var buildModelCatalogText: any;
     var chatsDropdownOpen: any;
     var disabledRoles: any;
     var enabledTools: any;
@@ -209,7 +206,6 @@ declare global {
     var getDirectorMaxToolResult: any;
     var getEditReviewEnabled: any;
     var getEffectiveProxy: any;
-    var getEnabledModels: any;
     var getEndpointRotation: any;
     var getSingleRequestPerEndpoint: any;
     var getGeminiKey: any;
@@ -225,7 +221,6 @@ declare global {
     var getMediaCapableSpec: any;
     var getMinP: any;
     var getNvidiaKey: any;
-    var getNvidiaModel: any;
     var getOAIKey: any;
     var getTokenHarborKey: any;
     var getKiloKey: any;
@@ -238,7 +233,6 @@ declare global {
     var getOAIModel: any;
     var getOAIUrl: any;
     var getOpenRouterKey: any;
-    var getOpenRouterModel: any;
     var getPausedMainModels: any;
     var getPresencePenalty: any;
     var getProvider: any;
@@ -287,7 +281,6 @@ declare global {
     var saveCustomModels: any;
     var fillMissingReleased: any;
     var rememberModelCreated: any;
-    var saveEnabledModels: any;
     var saveImageModel: any;
     var saveMainModelList: any;
     var resetMainModelList: any;
@@ -298,7 +291,6 @@ declare global {
     var hideBuiltinModel: (key: string) => void;
     var unhideBuiltinModel: (key: string) => void;
     var setDisabledTools: any;
-    var setIntentValidation: any;
     var setRoleBody: any;
     var skillsRegistry: any;
     var startPyodide: any;
@@ -401,7 +393,6 @@ declare global {
     var callLLM: (ep: any, payload: any, onChunk: (text: string, kind: string) => void, opts?: { onRequest?: (p: any) => void }) => Promise<any>;
     var _invalidateReadDedup: any;
     var _normPath: any;
-    var _patchOAIWriteArgs: any;
     var _runToolCalls: any;
     var _validateStepOutput: any;
     var _saveAnswer: any;

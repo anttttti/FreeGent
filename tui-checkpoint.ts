@@ -8,6 +8,7 @@
 //
 // Asynchronous and bounded by workspace-scan.ts (git's file list in a repository, a budgeted walk elsewhere): a checkpoint is taken
 // before every message, and the old synchronous walk held the screen for as long as the tree was big.
+import { SKIP_DIRS } from './skip-dirs.js';
 import { mkdir, lstat, copyFile, rm, readFile, rmdir, stat, realpath } from 'node:fs/promises';
 import { join, dirname, sep } from 'node:path';
 import { listFiles } from './workspace-scan.js';
@@ -17,7 +18,6 @@ const BORN_AFTER_MARGIN_MS = 10;   // file times come from a coarse kernel clock
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 // Folders never copied or touched: version control, dependencies, caches and build output.
-const SKIP_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache', '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next', 'target']);
 // The list may hold some files that are not copied (symlinks, files over the size limit); past this it is not a workspace to snapshot.
 const LIST_LIMIT = MAX_FILES * 2;
 // Finding the files a turn created needs the whole list, not a snapshot's worth: a generous bound, still a bound.

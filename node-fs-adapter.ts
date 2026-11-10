@@ -1,5 +1,6 @@
 // node-fs-adapter.js — NodeFsAdapter: filesystem backend for agent workspace ops (Node.js only).
 // Never imported by browser code. Injected via window.setWorkspaceAdapter() in the headless runner.
+import { SKIP_DIRS } from './skip-dirs.js';
 import { readFile, writeFile, mkdir, unlink, readdir, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,7 @@ import type { WorkspaceAdapter } from './workspace.js';
 import { listFiles } from './workspace-scan.js';
 
 const _LOCAL = 'local/';
-const _SKIP  = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__']);
+const _SKIP = SKIP_DIRS;
 // Dot-entries are not listed (tool state, caches, credentials: .git, .venv, .ssh, .env), with these
 // exceptions, which are part of a project and which an agent is asked to edit. Hiding them too left
 // CI workflows and ignore files invisible to list_files and to the check for what a worker's code

@@ -14,8 +14,10 @@ describe('browser bash guidance', () => {
     it('says each call starts fresh, as the browser shell does', async () => {
         const body = W.BUILTIN_RULES.find((r: any) => r.name === 'bash').body_fn() as string;
         expect(body).toMatch(/### Environment \(browser shell\)/);
-        expect(body).toMatch(/each call starts in a fresh browser shell in `\/workspace`/);
         expect(body).not.toMatch(/keeps functions, variables|applies to later calls/);
+        // Said once, in the tool description the model is sent beside this guidance (the rule body used to repeat it, and the two drifted).
+        const spec = W.buildOAITools(false, new Set(['execute_code'])).find((t: any) => t.function.name === 'execute_code');
+        expect(spec.function.description).toMatch(/Each call starts fresh in the workspace: variables, cd, exports and imports do not carry over/);
         await runBash('x=1; cd /tmp; echo kept > /tmp/fg-guidance.txt');
         const r = await runBash('echo "[$x]"; pwd; cat /tmp/fg-guidance.txt');
         expect(r.stdout).toBe('[]\n/workspace\nkept\n');

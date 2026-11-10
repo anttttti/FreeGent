@@ -1,6 +1,7 @@
 // workspace.js — FreeGent file workspace
 // IndexedDB storage + optional File System Access API
 
+import { BROWSER_FOLDER_SKIP_DIRS } from './skip-dirs.js';
 import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName, previewKindOfName } from './mime.js';
 import { pptxSlides, odfText, docxText, fixXlsxCharRefs } from './office-text.js';
@@ -357,12 +358,9 @@ async function clearFsaHandle() {
 
 // ── Checkpoint workspace snapshots ────────────────────────────────────────
 
-function _ckptHash(s) {
-    if (s == null) return '';
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-    return `${s.length}:${h >>> 0}`;
-}
+// A checkpoint tells a changed file from an unchanged one by this hash. The 32-bit hash it used (`length:h`) gave the same value for
+// `x = Aa;` and `x = BB;`, so an edit of that kind was never checkpointed. The first checkpoint after the change lists every file once as modified.
+function _ckptHash(s) { return s == null ? '' : hashContent(s); }
 
 async function _getCkptsForChat(chatId) {
     await ensureDB();
@@ -676,16 +674,8 @@ async function updateFsaBadge() {
     const nameEl  = document.getElementById('fsa-name');
     if (!badge) return;
     if (fsaHandle) {
-        if (nameEl) {
-            // Try to get the full path (or best available name)
-            try {
-                const path = await getFullPath(fsaHandle);
-                nameEl.textContent = path || 'Local Folder';
-            } catch (e) {
-                console.warn('[FSA] Could not get path:', e);
-                nameEl.textContent = fsaHandle.name || 'Local Folder';
-            }
-        }
+        // A picked folder's path is not exposed by the browser: its name is all there is.
+        if (nameEl) nameEl.textContent = fsaHandle.name || 'Local Folder';
         badge.style.display = '';
         badge.title = 'Click to close';
         badge.onclick = () => {
@@ -696,71 +686,6 @@ async function updateFsaBadge() {
     }
 }
 
-async function getFullPath(handle) {
-    if (!handle) return null;
-    try {
-        const pathAttempts = [];
-
-        if (handle.name) {
-            pathAttempts.push(`name: ${handle.name}`);
-        }
-
-        try {
-            if (typeof handle.resolve === 'function') {
-                try {
-                    if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
-                        const storageRoot = await navigator.storage.getDirectory();
-                        const relativePath = await handle.resolve(storageRoot);
-                        if (relativePath && relativePath.length > 0) {
-                            pathAttempts.push(`storage resolved: /${relativePath.join('/')}`);
-                        }
-                    }
-                } catch (e) {}
-            }
-        } catch (e) {}
-
-        if (handle.webkitRelativePath) {
-            pathAttempts.push(`webkit: ${handle.webkitRelativePath}`);
-        }
-
-        try {
-            if (typeof handle.getParent === 'function') {
-                const parent = await handle.getParent();
-                if (parent && parent.name) {
-                    pathAttempts.push(`parent: ${parent.name} > ${handle.name}`);
-                }
-            }
-        } catch (e) {}
-
-        try {
-            if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
-                const opfsRoot = await navigator.storage.getDirectory();
-                if (handle.isSameEntry && (await handle.isSameEntry(opfsRoot))) {
-                    pathAttempts.push('OPFS: Private Storage');
-                }
-            }
-        } catch (e) {}
-
-        if (pathAttempts.length > 0) {
-            const best = pathAttempts.find(p => p.includes('resolved:') || p.includes('parent:')) || pathAttempts[0];
-            return best.replace(/^[a-z]+:\s*/, '').trim();
-        }
-
-        return handle.name || 'Local Folder';
-    } catch (e) {
-        console.warn('[FSA] Error getting path:', e);
-        return handle.name || 'Local Folder';
-    }
-}
-
-const FSA_SKIP = new Set([
-    'node_modules', '.git', '.svn', '.hg',
-    'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit', '.vite',
-    '__pycache__', '.venv', 'venv', '.tox',
-    '.npm', '.pnp', '.yarn',
-    '.DS_Store',
-]);
-
 // `strict`: a listing that fails throws instead of coming back short; the folder poll must not read a failed listing as an empty folder.
 async function listFsaFiles(dirHandle = null, prefix = '', depth = 0, strict = false) {
     const dir = dirHandle || fsaHandle;
@@ -770,7 +695,7 @@ async function listFsaFiles(dirHandle = null, prefix = '', depth = 0, strict = f
         for await (const [name, handle] of dir.entries()) {
             if (handle.kind === 'file') {
                 files.push(prefix + name);
-            } else if (handle.kind === 'directory' && depth < 4 && !FSA_SKIP.has(name)) {
+            } else if (handle.kind === 'directory' && depth < 4 && !BROWSER_FOLDER_SKIP_DIRS.has(name)) {
                 const sub = await listFsaFiles(handle, prefix + name + '/', depth + 1, strict);
                 if (sub.length) files.push(...sub);
                 else files.push(prefix + name + '/'); // empty directory sentinel
@@ -924,7 +849,7 @@ async function _hashBothSides(): Promise<{ workspace: Record<string, string>; lo
             const r = c.value, name: string = r.name;
             const isLocal = name.startsWith('local/'), path = isLocal ? name.slice(6) : name;
             const segs = path.split('/');
-            if (!path.endsWith('/') && !segs.some(sg => UPLOAD_SKIP_DIRS.has(sg) || sg.startsWith('.')))
+            if (!path.endsWith('/') && !segs.some(sg => BROWSER_FOLDER_SKIP_DIRS.has(sg) || sg.startsWith('.')))
                 (isLocal ? local : workspace)[path] = hashContent((r.encoding || '') + '|' + (r.content || ''));
             c.continue();
         };
@@ -1224,7 +1149,7 @@ async function _mergeProjectFiles(data: any): Promise<void> {
     const incoming: Record<string, any> = {}, incomingHash: Record<string, string> = {};
     for (const f of data.workspace || []) {
         const segs = String(f.name).split('/');
-        if (String(f.name).startsWith('local/') || String(f.name).endsWith('/') || segs.some((sg: string) => UPLOAD_SKIP_DIRS.has(sg) || sg.startsWith('.'))) continue;
+        if (String(f.name).startsWith('local/') || String(f.name).endsWith('/') || segs.some((sg: string) => BROWSER_FOLDER_SKIP_DIRS.has(sg) || sg.startsWith('.'))) continue;
         incoming[f.name] = f; incomingHash[f.name] = hashContent((f.encoding || '') + '|' + (f.content || ''));
     }
     const { workspace } = await _hashBothSides();
@@ -1311,7 +1236,7 @@ function _bytesToRec(bytes: Uint8Array, asBase64: boolean): { content: string; e
 async function _cloudHashWorkspace(slug: string): Promise<{ files: Record<string, CloudFile>; hashes: Record<string, string> }> {
     const cacheRec: any = await _syncTx('readonly', st => st.get(`hcache:${slug}`));
     const cache: Record<string, [number, number, string]> = cacheRec?.files || {};
-    const names = (await listWorkspaceFileNames()).filter(n => !n.startsWith('local/') && !n.endsWith('/') && !n.split('/').some(sg => UPLOAD_SKIP_DIRS.has(sg)));
+    const names = (await listWorkspaceFileNames()).filter(n => !n.startsWith('local/') && !n.endsWith('/') && !n.split('/').some(sg => BROWSER_FOLDER_SKIP_DIRS.has(sg)));
     const files: Record<string, CloudFile> = {}, hashes: Record<string, string> = {}, next: Record<string, [number, number, string]> = {};
     let i = 0;
     for (const name of names) {
@@ -3126,12 +3051,6 @@ async function confirmDeleteFile(name) {
     }
 }
 
-// Directories to skip when importing via webkitdirectory (mirrors FSA_SKIP).
-const UPLOAD_SKIP_DIRS = new Set([
-    'node_modules', '.git', '.svn', '.hg', 'dist', 'build', '.next', '.nuxt',
-    '__pycache__', '.venv', 'venv', 'env', 'vendor', 'target', 'bower_components',
-    '.cache', '.parcel-cache', 'coverage', '.nyc_output',
-]);
 const UPLOAD_MAX_FILES  = 500;
 const UPLOAD_READ_MS    = 20_000; // per file: an online-only iCloud file may never arrive
 const UPLOAD_MAX_BYTES  = 10 * 1024 * 1024; // 10 MB per file
@@ -3165,7 +3084,7 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             const rel  = f.webkitRelativePath || f.name;
             const segs = rel.split('/');
             // Any directory segment in the skip-list → drop the file.
-            if (segs.slice(0, -1).some(s => UPLOAD_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
+            if (segs.slice(0, -1).some(s => BROWSER_FOLDER_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
             if (/^\..+\.icloud$/.test(f.name)) { stubs++; return false; }
             if (f.size > UPLOAD_MAX_BYTES) {
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);

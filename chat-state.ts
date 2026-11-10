@@ -954,7 +954,6 @@ function toggleChatsDropdown() {
     activateTab?.('chats');
 }
 
-function closeChatsDropdown() {}
 
 // Tell the user why a chat click did nothing; the guards below used to return in silence, which on
 // a tablet looked like the other chats were dead.
@@ -1282,7 +1281,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, chatViewerShowQuestion, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, chatViewerShowQuestion, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.
