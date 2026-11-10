@@ -260,9 +260,8 @@ describe('oaiEndpoint', () => {
     });
 
     it('returns Groq URL for groq provider', () => {
-        localStorage.setItem('fg_provider', 'groq');
+        localStorage.setItem('fg_main_models', JSON.stringify(['groq|openai/gpt-oss-20b']));
         localStorage.setItem('fg_groq_key', 'gsk-abc');
-        localStorage.setItem('fg_groq_model', 'openai/gpt-oss-20b');
         const ep = W.oaiEndpoint();
         expect(ep.url).toBe('https://api.groq.com/openai/v1/chat/completions');
         expect(ep.key).toBe('gsk-abc');
@@ -294,15 +293,6 @@ describe('getActiveModel', () => {
         localStorage.setItem('fg_gemini_key', 'AIza-test');
         localStorage.setItem('fg_main_models', JSON.stringify(['google|gemma-4-31b-it']));
         expect(W.getActiveModel()).toBe('gemma-4-31b-it');
-    });
-
-    it('returns groq model for groq provider (via legacy fg_provider migration path)', () => {
-        // Setting fg_provider without fg_main_models triggers the migration path that
-        // builds ['groq|{fg_groq_model}'] from per-provider localStorage keys.
-        localStorage.setItem('fg_provider', 'groq');
-        localStorage.setItem('fg_groq_key', 'gsk-test');
-        localStorage.setItem('fg_groq_model', 'openai/gpt-oss-20b');
-        expect(W.getActiveModel()).toBe('openai/gpt-oss-20b');
     });
 
     it('returns groq model when groq is in main list', () => {

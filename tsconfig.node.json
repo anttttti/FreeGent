@@ -12,6 +12,7 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "moduleDetection": "force",
+    "jsx": "react-jsx",
     "skipLibCheck": true
   },
   "include": [
@@ -26,6 +27,8 @@
     "native-exec.ts",
     "workspace-scan.ts",
     "safe-log.ts",
+    "fg-tui.tsx",
+    "tui-app.tsx",
     "tui-env.ts",
     "loop-watch.ts",
     "mouse-input.ts",

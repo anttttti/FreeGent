@@ -6,9 +6,8 @@ import { chatKey } from './storage-keys.js';
 // Write calls are fire-and-forget: a broken adapter must never break the primary
 // localStorage-backed behavior. Read calls (sessionLoadChatList, sessionLoadHistory) are
 // async and return null/[] when no adapter is injected, letting callers fall back to
-// localStorage. In the browser, BrowserSqliteAdapter is injected by initBrowserSqlite()
-// (browser-sqlite-adapter.ts); in Node/headless, NodeSqliteAdapter is injected by the
-// headless runner.
+// localStorage. In the browser the IndexedDB adapter (idb-session-adapter.ts) is injected; in Node/headless,
+// NodeSqliteAdapter is injected by the headless runner.
 //
 // With no adapter injected (setSessionStore never called), write functions are no-ops and
 // read functions return empty results — behavior is unchanged from before this file existed.
@@ -21,9 +20,6 @@ export interface SessionStoreAdapter {
     compactHistory(chatId: string, preHistory: any[], postHistory: any[]): Promise<void>;
     saveRawMessage(chatId: string, entry: any): Promise<void>;
     logTurn(record: any): Promise<void>;
-    createWorkerRun(id: string, chatId: string | null): Promise<void>;
-    finishWorkerRun(id: string, status: string): Promise<void>;
-    recordWorkerAgent(runId: string, agent: any): Promise<void>;
     loadChatList(): Promise<Array<{id: string; name: string; createdAt: number; lastAt: number}>>;
     loadHistory(chatId: string): Promise<any[] | null>;
     // Optional (IDBSessionAdapter). An adapter that reads raw captures / turn logs back
@@ -162,12 +158,6 @@ async function sessionLoadCheckpointAttachments(id: string): Promise<{ images: a
 }
 function sessionDeleteCheckpointAttachments(ids: string[]) { if (ids.length) _safeCall('deleteCheckpointAttachments', ids); }
 
-// ── Worker runs (net-new — no legacy behavior to preserve) ────────────────────
-
-export function sessionCreateWorkerRun(id, chatId)      { _safeCall('createWorkerRun', id, chatId); }
-export function sessionFinishWorkerRun(id, status)       { _safeCall('finishWorkerRun', id, status); }
-export function sessionRecordWorkerAgent(runId, agent)   { _safeCall('recordWorkerAgent', runId, agent); }
-
 // ── Raw captures (net-new) ─────────────────────────────────────────────────────
 // Audit log for content that would otherwise be silently lost — fn-tag tool-call text before
 // parseFnTagCalls strips it (llm-loops.js), tool results before truncateResultForHistory
@@ -285,7 +275,6 @@ Object.assign(window, {
     sessionHas, sessionMigrateLocalStorage,
     sessionLogTurn, sessionLoadTurnLog, sessionPruneTurnLogFrom,
     sessionSaveCheckpointAttachments, sessionLoadCheckpointAttachments, sessionDeleteCheckpointAttachments,
-    sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent,
     sessionSaveRawMessage, sessionLoadRawMessages, sessionPruneRawFrom,
     sessionLoadChatList, sessionLoadHistory, sessionLoadHistoryStrict,
 });

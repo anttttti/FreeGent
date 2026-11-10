@@ -105,12 +105,13 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-/** base64 → bytes, tolerating interior '=' from legacy chunked encoding (atob alone stops there). */
+/** base64 → bytes, tolerating interior '=' from legacy chunked encoding (atob alone stops there). Each run of '=' ends one independently encoded
+ *  chunk, so chunks are decoded apart: dropping the padding and decoding the rest as one string shifts every byte after a chunk that had unused bits. */
 export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const s = b64.replace(/=/g, '');
-  const raw = atob(s + '='.repeat((4 - s.length % 4) % 4));
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  const parts = b64.split(/=+/).filter(Boolean).map(p => atob(p + '='.repeat((4 - p.length % 4) % 4)));
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const raw of parts) for (let i = 0; i < raw.length; i++) out[o++] = raw.charCodeAt(i);
   return out;
 }
 

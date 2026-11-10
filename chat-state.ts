@@ -38,20 +38,6 @@ function updateChatMetaLastAt(id) {
     if (entry) { entry.lastAt = Date.now(); saveChatList(list); }
 }
 
-function migrateOldStorage() {
-    if (getChatList().length > 0) return;
-    const hasOld = localStorage.getItem(KEYS.LEGACY_GH) || localStorage.getItem(KEYS.LEGACY_OH) || localStorage.getItem(KEYS.LEGACY_MSGS);
-    if (!hasOld) return;
-    const id  = 'chat_' + Date.now();
-    const now = Date.now();
-    localStorage.setItem(chatKey.gh(id),   localStorage.getItem(KEYS.LEGACY_GH)   || '[]');
-    localStorage.setItem(chatKey.oh(id),   localStorage.getItem(KEYS.LEGACY_OH)   || '[]');
-    localStorage.setItem(chatKey.msgs(id), localStorage.getItem(KEYS.LEGACY_MSGS) || '');
-    saveChatList([{ id, name: 'Previous Chat', createdAt: now, lastAt: now }]);
-    localStorage.setItem(KEYS.ACTIVE_CHAT, id);
-    [KEYS.LEGACY_GH, KEYS.LEGACY_OH, KEYS.LEGACY_MSGS].forEach(k => localStorage.removeItem(k));
-}
-
 // ── Chat HTML persistence — server > IndexedDB > localStorage ─────────────
 // Chat HTML snapshots are stored browser-side only: localStorage (synchronous, always current)
 // and IndexedDB (durable, survives localStorage clear, no hard size limit).
@@ -1296,7 +1282,7 @@ async function searchMessages(query: string): Promise<any[]> {
 // ── Window bridge ─────────────────────────────────────────────────────────
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, migrateOldStorage, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, chatViewerShowQuestion, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
+Object.assign(window, { reloadChatIfChangedElsewhere, chatChangedElsewhere, getChatList, saveChatList, clearChatStorage, evictOldChatCaches, updateChatMetaLastAt, saveHistory, loadChatHistory, restoreChatMessages, renderHistoryFallback, updateChatNameBar, setChatName, startInlineRenameCurrentChat, deleteCurrentChat, toggleChatsDropdown, closeChatsDropdown, renderChatsDropdown, switchToChat, closeChatViewer, refreshChatViewer, chatViewerShowQuestion, isChatLoading, beginChatLoad, whenChatReady, chatLoadSeq, autoNameChat, focusChatSearch, _filterChatsDropdown, searchMessages, updateRailRecentChats });
 
 // Attach the inline-rename click handler programmatically so it works even if
 // the inline onclick fires before the window bridge is seen by the browser.

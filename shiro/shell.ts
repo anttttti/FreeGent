@@ -1,7 +1,5 @@
 import { FileSystem, withCreationMask } from './filesystem';
 import type { CommandRegistry, CommandContext } from './commands/index';
-import type { ShiroTerminal } from './terminal';
-import { recordCommand } from './favicon';
 import { isAvailableAsPackage, resolvePackageCommand, writePackageStubs, runPackageCommand } from './wasi-packages';
 import { ereToJs } from './utils/posix-regex';
 import { byteChar, normalizeBytes, textToBytes } from './utils/bytes';
@@ -38,12 +36,6 @@ interface BackgroundJob {
   exitCode: number;
   abortController?: AbortController;
 }
-
-// Env var names whose values should be masked in terminal output
-const SECRET_ENV_KEYS = [
-  'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY',
-  'API_KEY', 'SECRET_KEY', 'ACCESS_TOKEN', 'AUTH_TOKEN',
-];
 
 interface CompletionSpec {
   options?: string[];
@@ -138,7 +130,6 @@ export class Shell {
   /** File writes of built-in output under > / >> (see execute), in order. */
   private redirectWrites: Promise<void> = Promise.resolve();
   private nextJobId = 1;
-  private terminal?: ShiroTerminal;
 
   constructor(fs: FileSystem, commands: CommandRegistry) {
     this.fs = withCreationMask(fs,() => this.umask);
@@ -150,52 +141,11 @@ export class Shell {
       PATH: '/usr/local/bin:/usr/bin:/bin',
       PWD: '/home/user',
       TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      FORCE_COLOR: '3',
+      // Output is captured for a model: colour codes are tokens with no meaning.
+      NO_COLOR: '1',
     };
-    // Load history async (don't block construction)
-    this.loadHistory();
   }
 
-  private historyFile = '/home/user/.bash_history';
-  private maxHistorySize = 1000;
-
-  /** Load command history from ~/.bash_history */
-  async loadHistory(): Promise<void> {
-    try {
-      const raw = await this.fs.readFile(this.historyFile);
-      const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
-      this.history = content.split('\n')
-        .map((line: string) => line.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''))
-        .filter((line: string) => line.trim());
-      // Keep only the most recent entries
-      if (this.history.length > this.maxHistorySize) {
-        this.history = this.history.slice(-this.maxHistorySize);
-      }
-    } catch {
-      // File doesn't exist yet, that's fine
-      this.history = [];
-    }
-  }
-
-  /** Save command history to ~/.bash_history */
-  async saveHistory(): Promise<void> {
-    try {
-      // Keep only the most recent entries
-      const toSave = this.history.slice(-this.maxHistorySize);
-      await this.fs.writeFile(this.historyFile, toSave.join('\n') + '\n');
-    } catch (err) {
-      // Silently fail - history is nice to have but not critical
-    }
-  }
-
-  /**
-   * Set the terminal reference for interactive commands like vi.
-   */
-  setTerminal(terminal: ShiroTerminal): void {
-    this.terminal = terminal;
-    this.shoptopts.add('expand_aliases');
-  }
 
   /**
    * Create a child shell that shares fs/commands but has its own cwd/env.
@@ -244,20 +194,6 @@ export class Shell {
     return child;
   }
 
-  /**
-   * Replace secret env values in text with '***'.
-   * Used by terminals to mask tokens in output.
-   */
-  maskSecrets(text: string): string {
-    for (const key of SECRET_ENV_KEYS) {
-      const val = this.env[key];
-      if (val && val.length >= 8 && text.includes(val)) {
-        text = text.replaceAll(val, '***');
-      }
-    }
-    return text;
-  }
-
   // Execute a command string and return { stdout, stderr, exitCode }
   /** Runs input and returns its output as plain text (\n line endings, not the terminal's \r\n). */
   async exec(input: string, remote: boolean = false): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -273,7 +209,7 @@ export class Shell {
     if (this.executeDepth === 0 && this.traps.has('EXIT')) {
       const exitCmd = this.traps.get('EXIT')!;
       this.traps.delete('EXIT');
-      await this.execute(exitCmd, (s) => { stdout += s; }, (s) => { stderr += s; }, false, undefined, true);
+      await this.execute(exitCmd, (s) => { stdout += s; }, (s) => { stderr += s; }, false, true);
     }
     return { stdout: stdout.replace(/\r\n/g, '\n'), stderr: stderr.replace(/\r\n/g, '\n'), exitCode };
   }
@@ -305,7 +241,6 @@ export class Shell {
     };
     this.backgroundJobs.set(jobId, job);
     // A non-interactive shell prints nothing for `cmd &` (bash prints job numbers only interactively).
-    if (this.terminal) writeStdout(`[${jobId}] started\n`);
     return 0;
   }
 
@@ -316,7 +251,7 @@ export class Shell {
     const saved = this.env['__PIPE_STDIN'];
     this.env['__PIPE_STDIN'] = stdin;
     try {
-      const exitCode = await this.execute('', s => { stdout += s; }, s => { stderr += s; }, false, undefined, true, { argv, skipFunctions, pathOverride });
+      const exitCode = await this.execute('', s => { stdout += s; }, s => { stderr += s; }, false, true, { argv, skipFunctions, pathOverride });
       return { stdout:stdout.replace(/\r\n/g, '\n'), stderr:stderr.replace(/\r\n/g, '\n'), exitCode };
     } finally {
       if (saved === undefined) delete this.env['__PIPE_STDIN']; else this.env['__PIPE_STDIN'] = saved;
@@ -328,7 +263,6 @@ export class Shell {
     writeStdout: (s: string) => void,
     writeStderr?: (s: string) => void,
     remote: boolean = false,
-    terminalOverride?: any,
     skipHistory: boolean = false,
     invocation?: { argv: string[]; skipFunctions: boolean; pathOverride?:string },
   ): Promise<number> {
@@ -351,7 +285,6 @@ export class Shell {
     }
 
     // Record command for title display
-    recordCommand(trimmed, remote);
 
     // Check for background execution (&)
     if (trimmed.endsWith('&') && !trimmed.endsWith('&&')) {
@@ -375,7 +308,7 @@ export class Shell {
         if (!stmt.trim()) { if (isTopLevel) this.currentLine = lineOffset + si + 1; continue; }
         this.currentLine = lineOffset + si + 1;
         this.env['LINENO'] = String(this.currentLine);
-        lastExit = await this.execute(stmt, writeStdout, writeStderr, remote, terminalOverride, true);
+        lastExit = await this.execute(stmt, writeStdout, writeStderr, remote, true);
         // errexit: abort on non-zero exit code
         if (this.options.has('errexit') && lastExit !== 0) break;
       }
@@ -383,7 +316,7 @@ export class Shell {
       if (isTopLevel && this.traps.has('EXIT')) {
         const exitCmd = this.traps.get('EXIT')!;
         this.traps.delete('EXIT'); // prevent re-entry
-        await this.execute(exitCmd, writeStdout, writeStderr, false, terminalOverride, true);
+        await this.execute(exitCmd, writeStdout, writeStderr, false, true);
       }
       this.lastExitCode = lastExit;
       this.env['?'] = String(lastExit);
@@ -403,7 +336,6 @@ export class Shell {
       const sanitized = trimmed.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
       if (sanitized.trim()) {
         this.history.push(sanitized);
-        this.saveHistory(); // Persist to disk (async, don't await)
       }
     }
 
@@ -687,7 +619,7 @@ export class Shell {
         if (!invocation && this.shoptopts.has('expand_aliases') && this.aliases.has(cmdName)) {
           const aliasValue = this.aliases.get(cmdName)!;
           const fullCmd = aliasValue + (cmdArgs.length > 0 ? ' ' + cmdArgs.join(' ') : '');
-          exitCode = await this.execute(fullCmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
+          exitCode = await this.execute(fullCmd, writeStdout, stderrWriter, false, true);
           this.lastExitCode = exitCode;
           this.env['?'] = String(exitCode);
           lastOutput = '';
@@ -1339,7 +1271,7 @@ export class Shell {
               cmd = cmd.replace(substitution.pat, substitution.rep);
             }
             writeStdout(cmd + '\r\n');
-            exitCode = await this.execute(cmd, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
+            exitCode = await this.execute(cmd, writeStdout, stderrWriter, false, true);
           } else {
             // Default: fc with no flags — in bash opens editor, here just list last 16
             let first = hist.length - 16, last = hist.length - 1;
@@ -1802,7 +1734,7 @@ export class Shell {
               if (suppliedArgs) setArgs(cmdArgs.slice(1));
               this.currentLine = 1;
               try {
-                exitCode = await this.execute(content, writeStdout, stderrWriter, false, terminalOverride || this.terminal, true);
+                exitCode = await this.execute(content, writeStdout, stderrWriter, false, true);
               } finally {
                 if (suppliedArgs) setArgs(savedArgs);
                 this.currentLine = savedLine;
@@ -2198,7 +2130,6 @@ export class Shell {
           stdout: '',
           stderr: '',
           shell: this,
-          terminal: terminalOverride || this.terminal,
         };
 
         // Shell functions (and hoisted groups) first. Their output is captured like a command's,
@@ -2220,7 +2151,7 @@ export class Shell {
           if (feedsStdin) this.env['__PIPE_STDIN'] = stdin;
           try {
             if (fn.group === 'brace') {
-              exitCode = await this.execute(fn.body, capOut, capErr, false, terminalOverride || this.terminal, true);
+              exitCode = await this.execute(fn.body, capOut, capErr, false, true);
             } else if (fn.group === 'subshell') {
               const r = await this.fork().exec(fn.body);
               fout = r.stdout; ferr = r.stderr; exitCode = r.exitCode;
@@ -5558,39 +5489,6 @@ export class Shell {
       }
     }
 
-    // Check for #!x86-pkg stub — load from x86 ELF package cache
-    if (content.startsWith('#!x86-pkg ')) {
-      const parts = content.split('\n')[0].substring('#!x86-pkg '.length).trim().split(/\s+/);
-      const pkgName = parts[0];
-      const appletName = parts[1]; // undefined if not a multi-call binary
-      try {
-        const { getX86Binary } = await import('./x86-packages');
-        const elfData = await getX86Binary(pkgName, (msg) => {
-          this.onProgress?.(msg);
-        });
-        const { executeElfFromBytes } = await import('./x86/runtime');
-        const argv0 = appletName || pkgName;
-        return executeElfFromBytes(elfData, argv0, args, {
-          fs: this.fs, cwd: this.cwd, args, env: this.env,
-          // into ctx like every other command, so that pipes and redirects see the output
-          stdin: ctx.stdin || '', writeStdout: t => { ctx.stdout += t; }, writeStderr: t => { ctx.stderr += t; },
-        });
-      } catch (e: any) {
-        writeStderr(`shiro: ${pkgName}: ${e.message}\r\n`);
-        return 1;
-      }
-    }
-
-    // Detect ELF binaries → run in x86-64 emulator
-    if (content.charCodeAt(0) === 0x7f && content.charCodeAt(1) === 0x45 /* E */ &&
-        content.charCodeAt(2) === 0x4c /* L */ && content.charCodeAt(3) === 0x46 /* F */) {
-      const { executeElf } = await import('./x86/runtime');
-      return executeElf(resolvedPath, args, {
-        fs: this.fs, cwd: this.cwd, args, env: this.env,
-        stdin: ctx.stdin || '', writeStdout: t => { ctx.stdout += t; }, writeStderr: t => { ctx.stderr += t; },
-      });
-    }
-
     // Reject other binary files (Mach-O, etc.) that can't be interpreted
     if (content.charCodeAt(0) === 0x7f || content.includes('\0')) {
       writeStderr(`shiro: ${resolvedPath}: cannot execute binary file\n`);
@@ -5774,7 +5672,6 @@ export class Shell {
       stdout: '',
       stderr: '',
       shell: ctx.shell,
-      terminal: ctx.terminal,
     };
 
     const exitCode = await nodeCmd.exec(nodeCtx);
@@ -5833,21 +5730,21 @@ export class Shell {
       // If depth is 0, we have a complete statement — execute it
       if (depth <= 0) {
         depth = 0;
-        exitCode = await this.execute(buffer, writeStdout, writeStderr, false, ctx.terminal, true);
+        exitCode = await this.execute(buffer, writeStdout, writeStderr, false, true);
         buffer = '';
       }
     }
 
     // Execute any remaining buffer
     if (buffer.trim()) {
-      exitCode = await this.execute(buffer, writeStdout, writeStderr, false, ctx.terminal, true);
+      exitCode = await this.execute(buffer, writeStdout, writeStderr, false, true);
     }
 
     // Fire EXIT trap at end of script
     if (this.traps.has('EXIT')) {
       const exitCmd = this.traps.get('EXIT')!;
       this.traps.delete('EXIT'); // prevent re-entry
-      await this.execute(exitCmd, writeStdout, writeStderr, false, ctx.terminal, true);
+      await this.execute(exitCmd, writeStdout, writeStderr, false, true);
     }
 
     // Restore positional parameters

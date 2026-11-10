@@ -5,7 +5,6 @@
  * or provide browser-specific functionality.
  */
 import type { Command } from './index';
-import { getAssociation } from '../file-associations';
 import { sha1sum, sha256sum, sha384sum, sha512sum } from './hashsum';
 
 const rmCmd: Command = {
@@ -95,7 +94,7 @@ const hostnameCmd: Command = {
   },
 };
 
-// Reports the userland the shell presents — Linux on x86-64, the ABI its static-binary emulator runs —
+// Reports the userland the shell presents — Linux on x86-64 —
 // not the host it happens to run in. Scripts branch on `uname -s` (Linux vs Darwin) and `uname -m`;
 // "Shiro"/"wasm" matched none of their cases, and real bash prints Linux/x86_64 (coverage-uname-*).
 const unameCmd: Command = {
@@ -241,21 +240,6 @@ const openCmd: Command = {
     for (const target of targets) {
       // URL?
       if (/^https?:\/\//.test(target)) {
-        // Intercept OAuth URLs — rewrite redirect_uri for manual code flow
-        // and show clickable links instead of opening a window that won't work
-        if (target.includes('claude.ai/oauth/')) {
-          const fixedUrl = target.replace(
-            /redirect_uri=http%3A%2F%2Flocalhost%3A\d+%2F[^&]*/,
-            'redirect_uri=' + encodeURIComponent('https://platform.claude.com/oauth/code/callback')
-          );
-          if (ctx.terminal) {
-            const openBtn = `\x1b]8;;${fixedUrl}\x07\x1b[1;36m[ Open in Browser ]\x1b[0m\x1b]8;;\x07`;
-            ctx.terminal.writeOutput(`\r\n  ${openBtn}\r\n`);
-          } else {
-            if (typeof window !== 'undefined') window.open(fixedUrl, '_blank');
-          }
-          continue;
-        }
         if (typeof window !== 'undefined') window.open(target, '_blank');
         continue;
       }
@@ -267,7 +251,7 @@ const openCmd: Command = {
         return 1;
       }
 
-      const cmd = app || getAssociation(target);
+      const cmd = app;
       if (!cmd) {
         ctx.stderr += `open: no browser handler for '${target}'; select native execution\n`;
         return 2;

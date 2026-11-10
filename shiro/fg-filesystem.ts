@@ -35,6 +35,13 @@ const dec = new TextDecoder('utf-8', { ignoreBOM: true });
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /** A workspace record's bytes: base64 decoded, or the text as UTF-8. */
+/** What stat keeps to notice a file changed: length and a 32-bit FNV-1a, not the content itself (it kept every statted file's full text for the life of the filesystem, day exploration D003). */
+function _digest(s: string): string {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return s.length + ':' + (h >>> 0).toString(36);
+}
+
 function _recordBytes(rec: { content?: string; encoding?: string | null }): Uint8Array {
     return rec.encoding === 'base64' ? base64ToBytes(rec.content ?? '') : textToBytes(rec.content ?? '');
 }
@@ -124,7 +131,7 @@ export class FWFileSystem extends FileSystem {
             // files, returning the wrong size and potentially throwing for non-doc binaries).
             const rec = await readWorkspaceFile(wsPath);
             if (rec !== null && rec !== undefined) {
-                return this.fileStat(path,'file',_recordBytes(rec).byteLength,(rec.encoding ?? '') + ':' + (rec.content ?? ''));
+                return this.fileStat(path,'file',_recordBytes(rec).byteLength,_digest((rec.encoding ?? '') + ':' + (rec.content ?? '')));
             }
             // Not a file — check if it is an implicit directory (has child entries)
             const prefix = wsPath + '/';

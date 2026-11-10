@@ -21,6 +21,12 @@ describe('plain text editor fallback', () => {
         ta.setSelectionRange(0, 0);
         ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true }));
         expect(ta.value.startsWith('\tfrom disk')).toBe(true);
+        // a way out by keyboard (day exploration D011): Shift+Tab, and Escape then Tab, are left to the browser
+        const key = (init: KeyboardEventInit) => { const ev = new KeyboardEvent('keydown', { cancelable: true, ...init }); ta.dispatchEvent(ev); return ev.defaultPrevented; };
+        expect(key({ key: 'Tab', shiftKey: true })).toBe(false);
+        key({ key: 'Escape' });
+        expect(key({ key: 'Tab' })).toBe(false);
+        expect(key({ key: 'Tab' })).toBe(true);
         ed.destroy();
         expect(box.querySelector('textarea')).toBeNull();
     });

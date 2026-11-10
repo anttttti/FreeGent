@@ -13,7 +13,6 @@ export interface NodeEnv {
   // Output buffers
   stdoutBuf: string[];
   stderrBuf: string[];
-  streamedToTerminal: boolean;
 
   // File system cache (sync-first pattern)
   fileCache: Map<string, string>;
@@ -28,7 +27,6 @@ export interface NodeEnv {
   // Process lifecycle
   exitCode: number;
   exitCalled: boolean;
-  isInteractiveMode: boolean;
   scriptTimeoutId: any;
   processEvents: Record<string, Function[]>;
   deferredExitResolve: ((code: number) => void) | null;
@@ -37,9 +35,6 @@ export interface NodeEnv {
   FakeBuffer: any;
   fakeProcess: any;
   fakeConsole: any;
-
-  // Stdin passthrough ownership
-  ownsStdinPassthrough: boolean;
 
   // Sync operation watchdog
   syncOpCount: number;
@@ -56,13 +51,9 @@ export interface SharedState {
   exitCalled: boolean;
   /** process.exit() has run its 'exit' handlers: nothing the script prints after this point is output (Node runs no more code). */
   exitDone?: boolean;
-  streamedToTerminal: boolean;
-  isInteractiveMode: boolean;
   scriptTimeoutId: any;
-  ownsStdinPassthrough: boolean;
   deferredExitResolve: ((code: number) => void) | null;
   fakeProcess: any;  // set after createFakeProcess() returns
-  portDetected?: boolean;
 }
 
 /** Sync FS operation watchdog limit */

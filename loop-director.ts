@@ -1,4 +1,4 @@
-// loop-director.ts — Director multi-turn loop (§3 of agentharness_migration.md).
+// loop-director.ts — Director multi-turn loop.
 //
 // Extracted from headless-runner.ts so external loop code owns the continuation
 // policy and the harness only executes single turns.

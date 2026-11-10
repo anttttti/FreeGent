@@ -9,6 +9,7 @@ import { buildOAITools } from './tool-schemas.js';
 import { estimateTokens, getOAIContextTokens, getEndpointContextTokens, getSamplingParams, getActiveMainModelList, getMainModelList, getLocalApiProxy, getAgentProactiveCompact, getAgentCompactAt, getAgentCompactTokens } from './config.js';
 import { sessionCompactHistory } from './session-store.js';
 import { combineSignals } from './abort.js';
+import { isFileWriteTool } from './tool-effects.js';
 // llm-shared.js — FreeGent: context compaction (and the AGENTS.md loader).
 // Depends on: config.js, state.js, payload-builder.js, retry.js, model-router.js.
 // All top-level consts/lets are module-private; public API exposed via window bridge below.
@@ -104,7 +105,7 @@ function _harnessFacts(hist: any[]): string {
         const r = results.get(tc.id) ?? '';
         // "Authoritative" must mean written. A call is a write only when its recorded result does not say it failed; an attempt that failed is listed as that, so a
         // model resuming after the compaction does not take an edit that never applied for a done one (codex R3-001).
-        if (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file'].includes(name) && a.path) {
+        if (isFileWriteTool(name) && a.path) {
             if (_writeResultFailed(r)) failed.set(a.path, r.replace(/^\[[^\]]*\]\n/, '').replace(/\s+/g, ' ').slice(0, 100));
             else { written.add(a.path); failed.delete(a.path); }
         }

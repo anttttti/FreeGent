@@ -18,18 +18,10 @@
 // The engine performs no fail action: it returns {name, check, payload, band} and the
 // call site applies its own action (nudge, drop, re-ask, status override, recovery).
 
-// Canonical agent tool-name list — the single source for pseudo-call regexes here
-// and in llm-loops.js (_toolNamesRe). Previously hand-copied lists that could silently drift.
-// model-caps.ts _FORMAT_D_TOOLS_RE and _FORMAT_F_TOOL_NAMES must stay in sync with this list.
-export const AGENT_TOOL_NAMES = [
-    'execute_code', 'write_file', 'read_file', 'replace_in_file', 'apply_patch',
-    'list_files', 'search_workspace', 'repo_map', 'append_file', 'delete_file', 'undo_write',
-    'run_workers', 'update_task_status', 'fetch_url', 'web_search',
-    'run_git', 'ast_query', 'generate_image', 'deep_research',
-    'context7_docs', 'academic_search', 'package_search', 'check_page',
-    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
-    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
-];
+import { ALL_TOOL_NAMES } from './tool-effects.js';
+// The canonical tool-name list (tool-effects.ts), the single source for the pseudo-call regexes here, in llm-loops.ts (_toolNamesRe) and in model-caps.ts.
+export const AGENT_TOOL_NAMES = ALL_TOOL_NAMES;
+
 const _PAYLOAD_TOOLNAMES = AGENT_TOOL_NAMES.join('|');
 
 // Shared pass-band pattern: output that reports a result — findings or report phrasing, list or

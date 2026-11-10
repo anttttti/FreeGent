@@ -25,6 +25,7 @@
 
 // Alias keys models use for execute_code's code/language parameters, in priority order.
 // executeToolAsync applies the same lists at dispatch — keep them here only.
+import { PATH_ARG_TOOLS } from './tool-effects.js';
 export const EXEC_CODE_ALIASES = [
     'code', 'script', 'program', 'source', 'text', 'content', 'command', 'bash',
     'task', 'args', 'arguments', 'argument', 'commands', 'cmd', 'shell_command',
@@ -43,7 +44,7 @@ const _VALID_LANGS = new Set(['bash', 'python', 'javascript', 'sql']);
 export function _repairJsonArgs(s: string): string | null {
     const t = s.trim().replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     if (t === s.trim()) return null;
-    try { JSON.parse(t); return t; } catch { return null; }
+    try { const v = JSON.parse(t); return v && typeof v === 'object' && !Array.isArray(v) ? t : null; } catch { return null; }   // a fenced array or null is as bad as a plain one
 }
 
 // Malformed JSON arguments on raw OAI tool_calls: fence-wrapped args are repaired in
@@ -431,8 +432,7 @@ export function _repairArgEnvelope(normCalls: any[]): void {
 
 // Other names models give the `path` argument of file tools (GLM: read_file file_name=…).
 // Only tools whose path parameter is `path` — generate_image's own `filename` must stay.
-const _PATH_TOOLS = new Set(['read_file', 'write_file', 'append_file', 'replace_in_file', 'apply_patch',
-    'delete_file', 'undo_write', 'update_task_status', 'list_files', 'ast_query', 'check_page']);
+const _PATH_TOOLS = PATH_ARG_TOOLS;
 const _PATH_ALIASES = ['file_path', 'filepath', 'file_name', 'filename', 'file'];
 export function _repairPathArg(normCalls: any[]): void {
     for (const nc of normCalls) {

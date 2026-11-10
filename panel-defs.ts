@@ -11,6 +11,8 @@
 // so any value written by the WebUI is immediately visible to the TUI and
 // vice-versa.
 
+import { rangeOf } from './settings-defs.js';
+
 // ── Field types ───────────────────────────────────────────────────────────────
 
 interface NumberField {
@@ -97,9 +99,9 @@ export const SETTINGS_DEF: PanelDef = {
             title: 'Sampling',
             hint:  'Override LLM sampling parameters. Leave empty to use the provider default.',
             fields: [
-                { kind: 'number', key: 'fg_temperature', label: 'Temperature', placeholder: 'default', min: 0, max: 2,   step: 0.05 },
-                { kind: 'number', key: 'fg_top_p',       label: 'Top P',       placeholder: 'default', min: 0, max: 1,   step: 0.05 },
-                { kind: 'number', key: 'fg_top_k',       label: 'Top K',       placeholder: 'default', min: 0, max: 200, step: 1    },
+                { kind: 'number', key: 'fg_temperature', label: 'Temperature', placeholder: 'default', ...rangeOf('fg_temperature') },
+                { kind: 'number', key: 'fg_top_p',       label: 'Top P',       placeholder: 'default', ...rangeOf('fg_top_p') },
+                { kind: 'number', key: 'fg_top_k',       label: 'Top K',       placeholder: 'default', ...rangeOf('fg_top_k') },
             ],
         },
         {
@@ -115,7 +117,7 @@ export const SETTINGS_DEF: PanelDef = {
                     ],
                 },
                 { kind: 'number', key: 'fg_agent_compact_tokens', label: 'Compact at (tokens)',   placeholder: '0 = off' },
-                { kind: 'number', key: 'fg_agent_max_rounds',     label: 'Max steps / turn',      placeholder: '100', min: 1, max: 500, step: 1 },
+                { kind: 'number', key: 'fg_agent_max_rounds',     label: 'Max steps / turn',      placeholder: '100', ...rangeOf('fg_agent_max_rounds') },
                 {
                     kind: 'select', key: 'fg_intent_validation', label: 'Intent validation',
                     options: [

@@ -133,7 +133,6 @@ declare global {
     var getChatList: any;
     var evictOldChatCaches: any;
     var loadChatHistory: any;
-    var migrateOldStorage: any;
     var renderChatsDropdown: any;
     var renderHistoryFallback: any;
     var restoreChatMessages: any;
@@ -566,9 +565,6 @@ declare global {
     var sessionSaveHistory: any;
     var sessionCompactHistory: any;
     var sessionLogTurn: any;
-    var sessionCreateWorkerRun: any;
-    var sessionFinishWorkerRun: any;
-    var sessionRecordWorkerAgent: any;
     var sessionSaveRawMessage: any;
     var sessionLoadRawMessages: any;
     var sessionPruneRawFrom: any;

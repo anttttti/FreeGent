@@ -48,6 +48,20 @@ describe('bytesToText / textToBytes', () => {
     });
 });
 
+describe('FWFileSystem stat (day exploration D003)', () => {
+    it('keeps no copy of the file text, and still sees a same-length edit', async () => {
+        files.clear();
+        const fs: any = new FWFileSystem();
+        files.set('big.png', { content: 'A'.repeat(100_000), encoding: null });
+        const a = await fs.stat('/workspace/big.png');
+        const kept = [...fs.metadata.values()].map((m: any) => String(m.source ?? '').length);
+        expect(Math.max(...kept)).toBeLessThan(50);
+        await new Promise(r => setTimeout(r, 5));
+        files.set('big.png', { content: 'A'.repeat(99_999) + 'B', encoding: null });
+        expect((await fs.stat('/workspace/big.png')).mtime.getTime()).toBeGreaterThan(a.mtime.getTime());
+    });
+});
+
 describe('FWFileSystem keeps workspace bytes', () => {
     beforeEach(() => files.clear());
 

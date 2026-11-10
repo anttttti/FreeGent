@@ -5,7 +5,7 @@
 
 const _DB_NAME    = 'fg-session';
 // v2: chatId index on turn_log, checkpoint_attachments store.
-const _DB_VERSION = 2;
+const _DB_VERSION = 3;
 
 function _req<T>(r: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -237,28 +237,6 @@ export class IDBSessionAdapter {
         await _commit(tx);
     }
 
-    // ── Worker runs ────────────────────────────────────────────────────────────
-
-    async createWorkerRun(id: string, chatId: string | null) {
-        const tx = this._db.transaction('worker_runs', 'readwrite');
-        tx.objectStore('worker_runs').put({ id, chatId: chatId ?? null, startedAt: Date.now(), status: 'running' });
-        await _commit(tx);
-    }
-
-    async finishWorkerRun(id: string, status: string | null) {
-        const ex: any = await _req(this._db.transaction('worker_runs', 'readonly').objectStore('worker_runs').get(id));
-        if (!ex) return;
-        const tx = this._db.transaction('worker_runs', 'readwrite');
-        tx.objectStore('worker_runs').put({ ...ex, status: status ?? 'complete', finishedAt: Date.now() });
-        await _commit(tx);
-    }
-
-    async recordWorkerAgent(runId: string, agent: any) {
-        const tx = this._db.transaction('worker_agents', 'readwrite');
-        tx.objectStore('worker_agents').add({ runId, ...agent });
-        await _commit(tx);
-    }
-
     // ── Read methods ───────────────────────────────────────────────────────────
 
     async loadChatList(): Promise<{id: string; name: string; createdAt: number; lastAt: number}[]> {
@@ -299,12 +277,8 @@ export async function openIDBSession(idb: IDBFactory = indexedDB, dbName = _DB_N
                 d.createObjectStore('turn_log', { autoIncrement: true });
             const turnLog = tx.objectStore('turn_log');
             if (!turnLog.indexNames.contains('chatId')) turnLog.createIndex('chatId', 'chatId');
-            if (!d.objectStoreNames.contains('worker_runs'))
-                d.createObjectStore('worker_runs', { keyPath: 'id' });
-            if (!d.objectStoreNames.contains('worker_agents')) {
-                const s = d.createObjectStore('worker_agents', { autoIncrement: true });
-                s.createIndex('runId', 'runId');
-            }
+            // Worker run tables were written and never read, and outlived their chat: dropped in v3.
+            for (const old of ['worker_runs', 'worker_agents']) if (d.objectStoreNames.contains(old)) d.deleteObjectStore(old);
             if (!d.objectStoreNames.contains('raw_messages')) {
                 const s = d.createObjectStore('raw_messages', { autoIncrement: true });
                 s.createIndex('chatId', 'chatId');

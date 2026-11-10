@@ -3,106 +3,11 @@ import { patchPrefs } from './prefs.js';
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
 import { escapeHtml } from './html-escape.js';
 import { isCredentialKey } from './profile-keys.js';
+import { SETTINGS } from './settings-defs.js';
 
-// Settings captured in a profile — everything except API credentials (keys are never captured)
-const PROFILE_KEYS = [
-    'fg_openai_url', 'fg_openai_context',
-    'fg_search_provider',
-    'fg_sandbox_provider',
-    'fg_agent_tool_result_truncation',
-    'fg_agent_max_tool_result',
-    'fg_agent_proactive_compact',
-    'fg_agent_compact_at',
-    'fg_agent_compact_tokens',
-    'fg_agent_max_rounds',
-    'fg_rate_limit_cooldown_min',
-    'fg_agent_lean_workers',
-    'fg_agent_worker_history',
-    'fg_active_skills',
-    'fg_builtin_skills',
-    'fg_builtin_rules',
-    'fg_skill_triggers',
-    'fg_agent_prompt_template',
-    'fg_agent_concise_prompts',
-    'fg_agent_worker_reduce',
-    'fg_agent_role_model_routing',
-    'fg_endpoint_rotation',
-    'fg_single_request_per_endpoint',
-    'fg_worker_thinking_budget',
-    'fg_preserve_thinking',
-    'fg_agent_max_delegation_depth',
-    'fg_qa_enabled',
-    'fg_qa_acceptance_review',
-    'fg_qa_test_runner',
-    'fg_qa_regression_guard',
-    'fg_qa_rework_limit',
-    'fg_agent_loop_qa',
-    'fg_agent_loop_max_consecutive_failures',
-    'fg_agent_ledger',
-    'fg_agent_review_logs',
-    // (entity memory removed)
-    'fg_intent_validation',
-    'fg_director_max_tool_result',
-    'fg_tool_approval',
-    'fg_git_enabled',
-    'fg_ast_enabled',
-    'fg_temperature',
-    'fg_top_p',
-    'fg_top_k',
-    'fg_min_p',
-    'fg_presence_penalty',
-    'fg_repetition_penalty',
-];
-
-const PROFILE_KEY_META = {
-    fg_openai_url:                  { label: 'OpenAI-compat URL',     section: 'Models'  },
-    fg_openai_context:              { label: 'OpenAI-compat context', section: 'Models'  },
-    fg_endpoint_rotation:           { label: 'Endpoint rotation',     section: 'Models'  },
-    fg_single_request_per_endpoint: { label: 'One request per endpoint', section: 'Models' },
-    fg_rate_limit_cooldown_min:     { label: 'Rate-limit cooldown',   section: 'Models'  },
-    fg_search_provider:             { label: 'Search provider',       section: 'Search'  },
-    fg_sandbox_provider:            { label: 'Sandbox provider',      section: 'Code'    },
-    fg_agent_tool_result_truncation:{ label: 'Tool result truncation',section: 'Agent'   },
-    fg_agent_max_tool_result:       { label: 'Max result chars',      section: 'Agent'   },
-    fg_agent_proactive_compact:     { label: 'Proactive compaction',  section: 'Agent'   },
-    fg_agent_compact_at:            { label: 'Compact at (%)',        section: 'Agent'   },
-    fg_agent_compact_tokens:        { label: 'Compact at (tokens)',   section: 'Agent'   },
-    fg_agent_max_rounds:            { label: 'Max rounds',            section: 'Agent'   },
-    fg_agent_lean_workers:          { label: 'Lean workers',          section: 'Agent'   },
-    fg_agent_worker_history:        { label: 'Shared-prefix workers', section: 'Agent'   },
-    fg_active_skills:               { label: 'Always-on skills/rules', section: 'Skills',  isList: true },
-    fg_builtin_skills:              { label: 'Built-in skills',        section: 'Skills',  isList: true },
-    fg_builtin_rules:               { label: 'Built-in rules',         section: 'Skills',  isList: true },
-    fg_skill_triggers:              { label: 'Skill/rule overrides',   section: 'Skills' },
-    fg_agent_prompt_template:       { label: 'Prompt template',       section: 'Agent'   },
-    fg_agent_concise_prompts:       { label: 'Concise prompts',       section: 'Agent'   },
-    fg_agent_worker_reduce:         { label: 'Worker output reduce',   section: 'Agent'   },
-    fg_agent_role_model_routing:       { label: 'Role model routing',       section: 'Agent'   },
-    fg_worker_thinking_budget:         { label: 'Worker thinking budget',   section: 'Agent'   },
-    fg_preserve_thinking:              { label: 'Preserve thinking (vLLM)', section: 'Agent'   },
-    fg_agent_max_delegation_depth:     { label: 'Max delegation depth',     section: 'Agent'   },
-    fg_qa_enabled:             { label: 'QA gates enabled',        section: 'Agent' },
-    fg_qa_acceptance_review:   { label: 'Acceptance review',        section: 'Agent' },
-    fg_qa_test_runner:         { label: 'QA test runner',           section: 'Agent' },
-    fg_qa_regression_guard:    { label: 'Regression guard',         section: 'Agent' },
-    fg_qa_rework_limit:        { label: 'QA rework limit',          section: 'Agent' },
-    fg_agent_loop_qa:                       { label: 'Runner QA gates',        section: 'Agent' },
-    fg_agent_loop_max_consecutive_failures: { label: 'Runner failure limit',   section: 'Agent' },
-    fg_agent_ledger:                       { label: 'Task/Progress Ledger',       section: 'Agent' },
-    fg_agent_review_logs:                  { label: 'Review message logs',        section: 'Agent' },
-    // (entity memory removed)
-    fg_intent_validation:               { label: 'Intent validation',         section: 'Agent',   isSelect: true },
-    fg_director_max_tool_result:        { label: 'Director max tool result',  section: 'Agent',   isNumber: true },
-    fg_tool_approval:                   { label: 'Tool approval',             section: 'Agent',   isSelect: true },
-    fg_git_enabled:                     { label: 'Git access',                 section: 'Code'    },
-    fg_ast_enabled:                     { label: 'AST code queries',           section: 'Code'    },
-    fg_top_p:                           { label: 'Top P',                     section: 'Models'  },
-    fg_top_k:                           { label: 'Top K',                     section: 'Models'  },
-    fg_min_p:                           { label: 'Min P',                     section: 'Models'  },
-    fg_presence_penalty:                { label: 'Presence penalty',          section: 'Models'  },
-    fg_temperature:                     { label: 'Temperature',               section: 'Models'  },
-    fg_repetition_penalty:              { label: 'Repetition penalty',        section: 'Models'  },
-};
+// Settings captured in a profile (everything except API credentials), with their labels and sections: settings-defs.ts.
+const PROFILE_KEYS = Object.keys(SETTINGS);
+const PROFILE_KEY_META = SETTINGS;
 
 const BUILTIN_PROFILES = [
     {
@@ -242,8 +147,8 @@ function computeProfileDiff(targetSettings) {
         const target  = key in targetSettings ? targetSettings[key] : null;
         if (current === target) continue;
 
-        const entry: any = { key, label: meta.label, section: meta.section, isList: !!meta.isList };
-        if (meta.isList) {
+        const entry: any = { key, label: meta.label, section: meta.section, isList: !!meta.list };
+        if (meta.list) {
             try {
                 const fromArr = JSON.parse(current || '[]');
                 const toArr   = JSON.parse(target  || '[]');
@@ -314,7 +219,7 @@ function profileApply(settings) {
     const refused: string[] = [];
     for (const key of PROFILE_KEYS) {
         if (!(key in settings)) { patch[key] = null; continue; }
-        if ((PROFILE_KEY_META as any)[key]?.isList && settings[key] != null && settings[key] !== '') {
+        if (PROFILE_KEY_META[key]?.list && settings[key] != null && settings[key] !== '') {
             let ok = false; try { ok = Array.isArray(JSON.parse(String(settings[key]))); } catch {}
             if (!ok) { refused.push(key); continue; }
         }

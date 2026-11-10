@@ -3,6 +3,7 @@ import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
 import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
+import { rangeOf } from './settings-defs.js';
 import { specBlockedByPrivacy, samplingRangeError, pyodideStatus } from './config.js';
 import { resetSandbox } from './exec-sandbox-host.js';
 import { clearAllCooldowns } from './model-router.js';
@@ -648,6 +649,11 @@ function populateSamplingSettings() {
     const set = (id, lsKey, getter) => {
         const el = (document.getElementById(id) as HTMLInputElement);
         if (!el) return;
+        // min / max / step come from settings-defs.ts, the one place a setting's range is written.
+        const { min, max, step } = rangeOf(lsKey);
+        if (min != null) el.min = String(min);
+        if (max != null) el.max = String(max);
+        if (step != null) el.step = String(step);
         const saved = localStorage.getItem(lsKey);
         el.value = saved !== null ? saved : (typeof getter === 'function' ? String(getter() ?? '') : '');
     };

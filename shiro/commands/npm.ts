@@ -795,7 +795,7 @@ async function npmRun(ctx: CommandContext): Promise<number> {
   const exitCode = await ctx.shell.execute(script,
     (s) => ctx.stdout += s,
     (s) => ctx.stderr += s,
-    false, undefined, true
+    false, true
   );
 
   return exitCode;
@@ -825,7 +825,7 @@ async function npmRunScript(ctx: CommandContext, scriptName: string, defaultScri
       return await ctx.shell.execute(defaultScript,
         (s) => ctx.stdout += s,
         (s) => ctx.stderr += s,
-        false, undefined, true
+        false, true
       );
     }
     ctx.stderr += `npm: missing script: ${scriptName}\n`;
@@ -842,7 +842,7 @@ async function npmRunScript(ctx: CommandContext, scriptName: string, defaultScri
   return await ctx.shell.execute(script,
     (s) => ctx.stdout += s,
     (s) => ctx.stderr += s,
-    false, undefined, true
+    false, true
   );
 }
 

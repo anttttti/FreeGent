@@ -7,7 +7,7 @@ import { storedCredentialValues } from './stored-credentials.js';
 import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
 import { runtime } from './runtime.js';
-import { MAY_WRITE_TOOLS, isFileWriteTool } from './tool-effects.js';
+import { MAY_WRITE_TOOLS, CONTENT_ARG_TOOLS, isFileWriteTool } from './tool-effects.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
 import { checkFetchAllowed, isFetchAllowActive } from './fetch-allow.js';
 import { checkWriteAllowed, isWriteAllowActive } from './write-allow.js';
@@ -55,7 +55,7 @@ function _rmStripComments(content, lang) {
     return content;
 }
 
-function _rmSymbols(filename, content, lang) {
+function _rmSymbols(content, lang) {
     content = _rmStripComments(content, lang);
     const nodes = [];
     const add = (name, type) => nodes.push({ label: name, type });
@@ -1104,7 +1104,7 @@ async function _handleRepoMap(args: any) {
         const lines = [];
         for (const f of toScan) {
             const content = await agentReadFile(f.name).catch(() => '');
-            const symbols = _rmSymbols(f.name, content, _rmLang(f.name));
+            const symbols = _rmSymbols(content, _rmLang(f.name));
             if (!symbols.length) continue;
             const classes = symbols.filter(s => s.type === 'class').map(s => `[${s.label}]`);
             const fns     = symbols.filter(s => s.type === 'function').map(s => s.label + '()');
@@ -1413,7 +1413,10 @@ async function _nativeSyntaxCheck(path: string, ext: string, text: string | null
     const r = await runtime.nativeExec('bash', cmd).catch(() => null);
     if (!r || r.exit_code === 0) return null;
     let msg = (r.stdout || r.stderr || '').trim();
-    if (text != null) msg = msg.split(/\/tmp\/[^\s"':]*\//).join(path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '');
+    if (text != null) {
+        const _base = (path.split('/').pop() || `file.${ext}`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        msg = msg.replace(new RegExp('/[^\\s"\':]*/' + _base, 'g'), path);
+    }
     return msg.split('\n').slice(0, 5).join('\n') || null;
 }
 
@@ -2431,18 +2434,20 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
         // For plain page fetches, inject the browser headers that a real navigation sends.
         // FreeGent runs inside the browser so the TLS fingerprint is already genuine Chrome/
         // Firefox — these headers complete the picture for sites doing HTTP-level bot detection.
-        // Caller-supplied headers always win (spread order: defaults first, reqHdrs on top).
-        if (isPlain) Object.assign(reqHdrs, {
-            'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Sec-Fetch-Dest':  'document',
-            'Sec-Fetch-Mode':  'navigate',
-            'Sec-Fetch-Site':  'none',
-            'Sec-Fetch-User':  '?1',
-            'Upgrade-Insecure-Requests': '1',
-            ...reqHdrs,   // caller overrides sit on top
-        });
+        // Caller-supplied headers always win, in any letter case.
+        if (isPlain) {
+            const given = new Set(Object.keys(reqHdrs).map(k => k.toLowerCase()));   // a header is the caller's whatever its letter case (fetch would merge "accept" with "Accept")
+            for (const [k, v] of Object.entries({
+                'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Sec-Fetch-Dest':  'document',
+                'Sec-Fetch-Mode':  'navigate',
+                'Sec-Fetch-Site':  'none',
+                'Sec-Fetch-User':  '?1',
+                'Upgrade-Insecure-Requests': '1',
+            })) if (!given.has(k.toLowerCase())) reqHdrs[k] = v;
+        }
         const _fetchSignal  = combineSignals(activeAbortController?.signal, 30_000)!;
         let resp;
         if (isPlain && proxy && !_sandboxed) {
@@ -3323,7 +3328,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     }
 
     // SWE-bench test-file gate (benchmark policy, see isTestEditProtected) — must precede write-tool dispatch.
-    if ((name === 'write_file' || name === 'replace_in_file' || name === 'append_file' || name === 'apply_patch') &&
+    if (CONTENT_ARG_TOOLS.has(name) &&
         isTestEditProtected(args.path))
         return _testEditRefusal(args.path);
 

@@ -264,7 +264,7 @@ export const pythonCmd: Command = {
     const cmd = parseCommandLine(ctx.args);
     // No program on the command line: the program is stdin when something is piped in.
     if (cmd.kind === 'none' && ctx.stdin) cmd.kind = 'stdin';
-    if (cmd.kind === 'none' && !ctx.terminal) {
+    if (cmd.kind === 'none') {
       ctx.stderr = 'python: interactive mode requires a terminal\n';
       return 1;
     }
@@ -278,7 +278,6 @@ export const pythonCmd: Command = {
       return 1;
     }
     return withRuntimeLock(py,async () => {
-    if (cmd.kind === 'none') return repl(py, ctx);
 
     let target = cmd.target;
     let filename = '<string>';
@@ -339,99 +338,6 @@ export const pythonCmd: Command = {
   },
 };
 
-
-function repl(py: any, ctx: CommandContext): Promise<number> {
-  const term = ctx.terminal!;
-  const version = py.runPython('import sys; sys.version');
-  term.writeOutput(`Python ${version} (Pyodide)\r\nType "exit()" to quit.\r\n`);
-
-  return new Promise<number>((resolve) => {
-    let line = '';
-    const prompt = '>>> ';
-    term.writeOutput(prompt);
-
-    term.enterRawMode((key: string) => {
-      if (key === '\r' || key === '\n') {
-        term.writeOutput('\r\n');
-        const input = line.trim();
-        line = '';
-
-        if (input === 'exit()' || input === 'quit()') {
-          term.exitRawMode();
-          resolve(0);
-          return;
-        }
-
-        if (input) {
-          try {
-            py.runPython(`
-import sys, io
-_shiro_out = io.StringIO()
-_shiro_err = io.StringIO()
-sys.stdout = _shiro_out
-sys.stderr = _shiro_err
-`);
-            // Use exec for statements, eval for expressions.
-            // Capture any runtime exception in evalError so the traceback can
-            // be shown after the normal stdout/stderr buffer drain below.
-            let evalError: string | null = null;
-            try {
-              py.runPython(`
-try:
-  _r = eval(${JSON.stringify(input)})
-  if _r is not None:
-      print(repr(_r))
-except SyntaxError:
-  exec(${JSON.stringify(input)})
-`);
-            } catch (evalErr: any) {
-              // Pyodide raises Python exceptions as JS errors; the traceback is
-              // in .message.  We handle SystemExit specially.
-              const msg: string = evalErr?.message ?? String(evalErr);
-              if (evalErr?.type === 'SystemExit' || /^SystemExit/.test(msg)) {
-                const m = msg.match(/SystemExit:\s*(-?\d+)/);
-                const code = m ? parseInt(m[1], 10) : 0;
-                py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-                term.exitRawMode();
-                resolve(code);
-                return;
-              }
-              evalError = msg;
-            }
-            const stdout = py.runPython('_shiro_out.getvalue()');
-            const stderr = py.runPython('_shiro_err.getvalue()');
-            py.runPython('sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__');
-            if (stdout) term.writeOutput(stdout.replace(/\n/g, '\r\n'));
-            if (stderr) term.writeOutput(stderr.replace(/\n/g, '\r\n'));
-            if (evalError) term.writeOutput(evalError.replace(/\n/g, '\r\n') + '\r\n');
-          } catch (err: any) {
-            term.writeOutput((err?.message ?? String(err)).replace(/\n/g, '\r\n') + '\r\n');
-          }
-        }
-
-        term.writeOutput(prompt);
-      } else if (key === '\x7f' || key === '\b') {
-        if (line.length > 0) {
-          line = line.slice(0, -1);
-          term.writeOutput('\b \b');
-        }
-      } else if (key === '\x03') {
-        // Ctrl+C
-        term.writeOutput('^C\r\n');
-        line = '';
-        term.writeOutput(prompt);
-      } else if (key === '\x04') {
-        // Ctrl+D
-        term.writeOutput('\r\n');
-        term.exitRawMode();
-        resolve(0);
-      } else if (key.charCodeAt(0) >= 32) {
-        line += key;
-        term.writeOutput(key);
-      }
-    });
-  });
-}
 
 export const python3Cmd: Command = {
   ...pythonCmd,

@@ -29,6 +29,11 @@ describe('_repairToolCallArgs — OAI tool_calls arguments', () => {
         expect(calls[0].function.arguments).toBe('{"path":"a.txt"}');
         expect(bad).toEqual(['write_file']);
     });
+    it('treats a fenced non-object root like a plain one: {} and flagged (day exploration D005)', () => {
+        const calls = ['[1]', 'null', '"x"', '7'].map(a => tc('read_file', '```json\n' + a + '\n```'));
+        expect(_repairToolCallArgs(calls)).toEqual(['read_file', 'read_file', 'read_file', 'read_file']);
+        expect(calls.every(c => c.function.arguments === '{}')).toBe(true);
+    });
     it('leaves a JSON object untouched and makes empty arguments {}, unflagged', () => {
         const calls = [tc('read_file', '{"path":"a"}'), tc('list_files', ''), tc('run_tests', '  ')];
         expect(_repairToolCallArgs(calls)).toEqual([]);

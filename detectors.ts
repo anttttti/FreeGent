@@ -360,23 +360,6 @@ export function isQuestionOnlyTask(task: string): boolean {
     if (!t || t.length > 1500) return false;
     return !_ACTION_RE.test(t);
 }
-// What a task that says "move" needs and a copy does not give: the source gone. AgentBench OS 30 (v0.99): `cp` of the file, the original left
-// where it was, graded failed. Returns the sources of `cp` commands that nothing later moved or removed; the caller checks they still exist.
-const _MOVE_RE = /\bmov(?:e|ed|ing)\b/i, _COPY_RE = /\bcop(?:y|ied|ies|ying)\b/i;
-const _unq = (w: string) => w.replace(/^(['"])(.*)\1$/, '$2');
-export function copiedNotMoved(task: string, commands: string[]): string[] {
-    // "before copying" describes the move's own steps; only a request to copy ("copy X to Y") makes a cp the answer.
-    if (!_MOVE_RE.test(task) || _COPY_RE.test(task.replace(/\b(?:before|after|while|without|instead of)\s+cop\w+/gi, ''))) return [];
-    const sources = new Set<string>();
-    for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
-        const cp = /^\s*(?:sudo\s+)?cp\s+((?:-\S+\s+)*)(\S+)\s+(\S+)\s*$/.exec(line);
-        if (cp && !/-\w*[rR]/.test(cp[1]) && !/[*?$`]/.test(cp[2])) sources.add(_unq(cp[2]));
-        const gone = /^\s*(?:sudo\s+)?(?:mv|rm|unlink)\s+(?:-\S+\s+)*(.+)$/.exec(line);
-        if (gone) for (const w of gone[1].split(/\s+/)) sources.delete(_unq(w));
-    }
-    return [...sources];
-}
-
 // Users and groups a command line created when the task did not ask for any, and the sudoers.d files written for them: the agent's test
 // fixtures. AgentBench OS 40 and 41 (v0.99) created a `testuser` and a sudoers.d file to try a sudo fix, and left them in the system the
 // grader reads. A sudoers.d file of its own, for no created user, is a fix and not reported (v0.99 run 4, task 40).
@@ -623,16 +606,6 @@ export function failureSignature(result: any): string {
 // re-running will not change it, and in SWE the error usually comes from the environment (v0.57
 // Verified xarray-4094: 13 identical pandas-2 `TypeError`s from the old xarray under test, stopped
 // at step 36 with no edit; v0.56 had resolved it). Worth one directed nudge before the stop.
-const SAME_ERROR_GRACE_MIN = 4;
-export function sameErrorStreak(sigs: string[], n = SAME_ERROR_GRACE_MIN): string | null {
-    if (sigs.length < n) return null;
-    const last = sigs.slice(-n);
-    return last[0] && last.every(s => s === last[0]) ? last[0] : null;
-}
-export function sameErrorNudge(sig: string, n: number): string {
-    return `The same error has now repeated ${n} times: "${sig}". Running it again will not change it. If it comes from the environment (a library version, a missing service or build step), stop trying to reproduce or fix the environment: make the change by reading the code, then finish. Otherwise try a different approach. The run stops if the failures continue.`;
-}
-
 // Backslashes doubled by the model's own escaping: a full rewrite of an existing file in which `\d`, `\n`, `\s` ... became
 // `\\d`, `\\n`, `\\s`. self-analysis W7r2 regenerated storage-usage.ts that way (the regex `(\d+)` turned into `(\\d+)`, three
 // `\n` in a tooltip into `\\n`) and broke an existing test; the file still parsed, so no syntax check could see it. Counted as growth

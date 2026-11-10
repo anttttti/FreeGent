@@ -187,7 +187,8 @@ describe('proxy deadlines', () => {
     it('the POST transport returns a decoded body when the server compresses anyway', async () => {
         const zlib = await import('node:zlib');
         const json = JSON.stringify({ ok: true, text: 'hello '.repeat(20) });
-        for (const [enc, pack] of [['gzip', zlib.gzipSync], ['br', zlib.brotliCompressSync], ['deflate', zlib.deflateSync]] as const) {
+        const both = (b: Buffer) => zlib.brotliCompressSync(zlib.gzipSync(b));   // "gzip, br": gzip first, then Brotli (day exploration, N001 residual)
+        for (const [enc, pack] of [['gzip', zlib.gzipSync], ['br', zlib.brotliCompressSync], ['deflate', zlib.deflateSync], ['gzip, br', both]] as const) {
             const { srv, port } = await listen((_req, res) => { res.writeHead(200, { 'content-encoding': enc, 'content-type': 'application/json' }); res.end(pack(json)); });
             try {
                 const r = await pinnedFetch(1, 3000)(`http://127.0.0.1:${port}/x`, { method: 'POST', body: '{}' });

@@ -2,6 +2,7 @@
 // Depends on: config.js, tools.js, llm-shared.js, state.js.
 // Note: setMainAgentRole(name) here takes a role-NAME string and resolves it through rolesRegistry;
 // state.js's setMainAgentRoleObject(role) is the raw setter for direct-assignment sites.
+import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 import { splitFrontmatter, parseFmLines } from './frontmatter.js';
 import { isTaskPath, keepTaskFrontMatter } from './task-status.js';
 import { collectRanAsBash, recordCallsAsBash, summarizeRecentToolCalls } from './step-shared.js';
@@ -28,7 +29,7 @@ import { toolLabel } from './tools.js';
 import { activeTools } from './tool-schemas.js';
 import { agentReadFile, agentWriteFile, agentDeleteFile, agentListFiles, agentFileMtime, renderFileList, workspaceName } from './workspace.js';
 import { workspaceEpoch } from './exec-limits.js';
-import { sessionSetChatRole, sessionCreateWorkerRun, sessionFinishWorkerRun, sessionRecordWorkerAgent } from './session-store.js';
+import { sessionSetChatRole } from './session-store.js';
 import { convoLogTurn, metricsNote } from './convo-log.js';
 import { registry } from './session-registry.js';
 
@@ -172,7 +173,7 @@ ${toolSection}`;
             // The Director's own write tools: enabled AND inside its ceiling. Headless runs enable all three
             // edit tools for the coder workers, so enabledTools alone listed tools the Director cannot call.
             const _dirCeiling = rolesRegistry.get('director')?.tools;
-            const writeTools = (['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'undo_write'] as const)
+            const writeTools = WORKSPACE_WRITE_TOOLS
                 .filter(t => _has(t) && (!_dirCeiling || _dirCeiling.has(t)));
             const hasExec    = _has('execute_code');
             const hasGit     = _has('run_git') && getGitEnabled() && getSandboxProvider() === 'local';
@@ -1715,12 +1716,6 @@ async function executeWorkers(args: any): Promise<any> {
         }
     }
 
-    // Net-new: persist this run and each agent's outcome to the session-store adapter
-    // (SQLite in daemon/headless mode) so background-agent runs become durable/queryable.
-    // No-op when no adapter is injected — zero behavior change otherwise.
-    const runId = 'wrun_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    sessionCreateWorkerRun?.(runId, activeChatId ?? null);
-
     // Request that forked workers inherit: the calling worker's own last request for nested
     // run_workers calls, otherwise the main agent's last request.
     const forkBase: ForkBase | null = args._parentRequest
@@ -1733,7 +1728,6 @@ async function executeWorkers(args: any): Promise<any> {
         // codeBinary: binary files the worker's own code wrote. They are on disk already, so they are reported, not applied.
         const context = { snapshot, staging, binary, depth, codeBinary: new Set<string>() } as any;
         const handle  = handles[i];
-        const _agentStart = Date.now();
         handle.setPrompt(agent.task);
         // If a rotation endpoint was pre-assigned, mark it busy for the duration.
         const rotationSpec = workerAssignedSpecs.get(i) ?? null;
@@ -1767,12 +1761,6 @@ async function executeWorkers(args: any): Promise<any> {
                 }
                 if (rotationSpec) _busyEndpointSpecs.delete(rotationSpec);
                 const _agentStatus = isFailed ? 'blocked' : status;
-                sessionRecordWorkerAgent?.(runId, {
-                    id: agent.id, role: agent.role, model: agent.model || rotationSpec || null, task: agent.task,
-                    output: output || '', error: isFailed ? output : null, status: _agentStatus, note,
-                    startedAt: _agentStart, finishedAt: Date.now(),
-                    staged: [...staging].map(([path, content]) => ({ path, content })),
-                });
                 return { id: agent.id, output: output || '', staging, binary, codeBinary: [...context.codeBinary] as string[], error: isFailed ? output : null, status: _agentStatus, note, toolCalls: _wCalls };
             } catch (e) {
                 lastError = e;
@@ -1802,11 +1790,6 @@ async function executeWorkers(args: any): Promise<any> {
         const _errMsg = _unrestored.length ? `${_errMsg0}\n[The worker's code had changed these files and they could not be restored: ${_unrestored.slice(0, 10).join(', ')}${_unrestored.length > 10 ? ', …' : ''}]` : _errMsg0;
         handle.setOutput(`Error: ${_errMsg}`);
         handle.abort();
-        sessionRecordWorkerAgent?.(runId, {
-            id: agent.id, role: agent.role, model: agent.model || rotationSpec || null, task: agent.task,
-            output: '', error: _errMsg, status: 'blocked', note: _errMsg,
-            startedAt: _agentStart, finishedAt: Date.now(), staged: [],
-        });
         return { id: agent.id, output: '', staging: new Map(), binary: new Map<string, string>(), codeBinary: [...context.codeBinary] as string[], error: _errMsg, status: 'blocked', note: _errMsg, toolCalls: [] };
     }));
 
@@ -2026,8 +2009,6 @@ async function executeWorkers(args: any): Promise<any> {
         blocked,
         ...outputField,
     };
-
-    sessionFinishWorkerRun?.(runId, runStatus);
 
     return result;
 }

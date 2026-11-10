@@ -57,7 +57,7 @@ Return ONLY the JSON object.`;
     return _drJson(resp, 'object');
 }
 
-async function _drQueries(state) {
+export async function _drQueries(state) {
     const roundInstruction = state.round === 1
         ? 'This is the first round — cover the main sub-questions broadly.'
         : `Target ONLY what the report is still missing. Known gaps: ${state.gaps || '(reassess from the report)'}. Do not repeat earlier queries: ${[...state.pastQueries].slice(-12).join('; ')}`;
@@ -76,19 +76,21 @@ Generate ${_DR_QUERIES_PER_ROUND} focused search queries.
 Return ONLY a JSON array of query strings.`;
     const resp = await callLLMComplete(prompt, { maxTokens: 1024, label: 'research:queries' }).catch(() => null);
     const arr = _drJson(resp, 'array');
-    return Array.isArray(arr) ? arr.filter(q => typeof q === 'string' && q.trim()).slice(0, _DR_QUERIES_PER_ROUND) : [];
+    return Array.isArray(arr) ? [...new Set(arr.filter(q => typeof q === 'string' && q.trim()).map(q => q.trim()))].slice(0, _DR_QUERIES_PER_ROUND) : [];   // a repeated query is no second vote
 }
 
 // Run all queries in parallel; return deduped results [{title,url,snippet,hits}] ranked by
 // how many distinct queries surfaced the URL (cross-query hits = likely central source).
-async function _drSearch(queries, visited) {
+export async function _drSearch(queries, visited) {
     const settled = await Promise.all(queries.map(q =>
         executeToolAsync('web_search', { query: q }).catch(e => ({ error: e.message }))
     ));
     const byUrl = new Map();
     for (const res of settled) {
+        const seen = new Set();   // one query counts a URL once, however many rows repeat it
         for (const r of (res?.results || [])) {
-            if (!r.url || visited.has(r.url)) continue;
+            if (!r.url || visited.has(r.url) || seen.has(r.url)) continue;
+            seen.add(r.url);
             const cur = byUrl.get(r.url);
             if (cur) cur.hits++;
             else byUrl.set(r.url, { title: r.title || '', url: r.url, snippet: (r.snippet || r.summary || '').slice(0, 300), hits: 1 });

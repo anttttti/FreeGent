@@ -28,3 +28,17 @@ describe('deep research synthesis keeps the LAST GAPS line (codex R491)', () => 
         expect(state.report).not.toContain('2025 figures');
     });
 });
+
+// Day exploration D010: a repeated query, or a repeated row inside one result list, counted as support from another query.
+describe('deep research ranking counts distinct queries', () => {
+    it('drops repeated queries, and counts a URL once per query', async () => {
+        const { _drQueries, _drSearch } = await import('../deep-research.ts');
+        (globalThis as any).callLLMComplete = async () => '["a b", " a b ", "c", 7, "c"]';
+        expect(await _drQueries({ question: 'q', round: 1, pastQueries: new Set() })).toEqual(['a b', 'c']);
+        const row = (url: string) => ({ url, title: url });
+        (globalThis as any).executeToolAsync = async (_t: string, { query }: any) =>
+            ({ results: query === 'one' ? [row('x'), row('x'), row('x'), row('y')] : [row('y')] });
+        const r = await _drSearch(['one', 'two'], new Set());
+        expect(r.map((x: any) => [x.url, x.hits])).toEqual([['y', 2], ['x', 1]]);
+    });
+});

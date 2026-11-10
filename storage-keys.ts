@@ -18,7 +18,6 @@ export const KEYS = {
     SKILL_TRIGGERS:     'fg_skill_triggers',
     DISABLED_ROLES:     'fg_disabled_roles',
     DISABLED_TOOLS:           'fg_disabled_tools',
-    ENABLED_TOOLS:            'fg_enabled_tools',         // legacy; migrated to DISABLED_TOOLS on first load
     DISABLED_TOOLS_COWORK:    'fg_disabled_tools_cowork', // separate disabled set for cowork mode
     MCP_SERVERS:              'fg_mcp_servers',           // MCP server entries (mcp.ts); hold auth headers — never in profiles
 
@@ -90,7 +89,6 @@ export const KEYS = {
     AGENT_MAX_DELEGATION_DEPTH:         'fg_agent_max_delegation_depth',
     AGENT_LEDGER:                       'fg_agent_ledger',
     AGENT_REVIEW_LOGS:                  'fg_agent_review_logs',
-    AGENT_MAX_REPLANS:                  'fg_agent_max_replans',
     INTENT_VALIDATION:                  'fg_intent_validation',
     TOOL_APPROVAL:                      'fg_tool_approval',
     RUNNER_MAX_CONSECUTIVE_FAILS:'fg_agent_loop_max_consecutive_failures',
@@ -139,9 +137,44 @@ export const KEYS = {
     RETRY_FIXED_MS:     'fg_retry_fixed_ms',
 
     // Legacy global history keys (pre-multi-chat, migrated on first load)
-    LEGACY_GH:          'fg_gh',
-    LEGACY_OH:          'fg_oh',
-    LEGACY_MSGS:        'fg_msgs',
+
+    // ── Keys that were only raw strings in their modules, now in the registry ─────────
+    AGENT_SCRIPT_STEERING:      'fg_agent_script_steering',
+    ANALYTICS:                  'fg_analytics',
+    APINEX_OBSERVED_RPM:        'fg_apinex_observed_rpm',
+    CACHE_CAPABLE:              'fg_cache_capable',
+    CHAT_AUTOCONTINUE:          'fg_chat_autocontinue',
+    CHECK_ISOLATION:            'fg_check_isolation',
+    CHECK_PAGE_CRASHED:         'fg_check_page_crashed',
+    CHECK_PAGE_RUNNING:         'fg_check_page_running',
+    CHECK_SILENT_BLOCKED:       'fg_check_silent_blocked',
+    DARK_MODE:                  'fg_dark_mode',
+    DEV_KEY:                    'fg_dev_key',
+    FETCH_BLACKLIST:            'fg_fetch_blacklist',
+    GEO_LOOKUP:                 'fg_geo_lookup',
+    KEY_VAULT:                  'fg_key_vault',
+    KILO_KEY:                   'fg_kilo_key',
+    LOCAL_COL_MIN:              'fg_local_col_min',
+    LOCALSYNC_BASE:             'fg_localsync_base',
+    LOCALSYNC_FOLDER:           'fg_localsync_folder',
+    LOCALSYNC_IMPORTED:         'fg_localsync_imported',
+    MODEL_CREATED:              'fg_model_created',
+    MSGS_STORE:                 'fg_msgs_store',
+    NOUS_KEY:                   'fg_nous_key',
+    OPENROUTER_OAUTH:           'fg_openrouter_oauth',
+    PROJECT_EPOCH:              'fg_project_epoch',
+    QA_TESTS:                   'fg_qa_tests',
+    RUNNER_ACTIVE:              'fg_runner_active',
+    RUNNER_AUTORESUME:          'fg_runner_autoresume',
+    SERVER_TOKEN:               'fg_server_token',
+    SUPPRESSED_REMOVES:         'fg_suppressed_removes',
+    SUPPRESSED_REMOVES_V2:      'fg_suppressed_removes_v2',
+    TOOL_CRASHES:               'fg_tool_crashes',
+    TOOLBAR_COLLAPSED:          'fg_toolbar_collapsed',
+    TOOLS_RUNNING:              'fg_tools_running',
+    TURN_SOUND:                 'fg_turn_sound',
+    VERCEL_KEY:                 'fg_vercel_key',
+    WS_SORT:                    'fg_ws_sort',
 } as const;
 
 // ── Dynamic key builders (per-chat, per-checkpoint, per-role) ─────────────────

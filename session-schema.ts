@@ -1,4 +1,4 @@
-// session-schema.js — canonical SQLite DDL for chat/message/turn-log/worker persistence.
+// session-schema.js — canonical SQLite DDL for chat/message/turn-log persistence.
 // Imported by both node-sqlite-adapter.ts (native node:sqlite) and, later, the browser
 // WASM+OPFS adapter — defining the schema once here is what actually guarantees a
 // session database is portable between the two, not just an assertion.
@@ -137,37 +137,10 @@ CREATE TRIGGER IF NOT EXISTS turn_log_au AFTER UPDATE ON turn_log BEGIN
   VALUES (new.id, new.response, new.prompt, new.name, new.last_user_message, new.system_prompt_snippet, new.tool_calls);
 END;
 
--- chat_id is not a foreign key for the same reason as turn_log.chat_id above.
-CREATE TABLE IF NOT EXISTS worker_runs (
-  id           TEXT PRIMARY KEY,
-  chat_id      TEXT,
-  started_at   INTEGER NOT NULL,
-  finished_at  INTEGER,
-  status       TEXT NOT NULL DEFAULT 'running'
-);
-
-CREATE TABLE IF NOT EXISTS worker_agents (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id        TEXT NOT NULL REFERENCES worker_runs(id) ON DELETE CASCADE,
-  agent_id      TEXT NOT NULL,
-  role          TEXT,
-  model         TEXT,
-  task          TEXT NOT NULL,
-  output        TEXT,
-  error         TEXT,
-  status        TEXT,
-  note          TEXT,
-  started_at    INTEGER,
-  finished_at   INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_worker_agents_run ON worker_agents(run_id);
-
-CREATE TABLE IF NOT EXISTS worker_staged_files (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  worker_agent_id  INTEGER NOT NULL REFERENCES worker_agents(id) ON DELETE CASCADE,
-  path             TEXT NOT NULL,
-  content          TEXT
-);
+-- Worker run tables were written and never read: dropped from databases made before.
+DROP TABLE IF EXISTS worker_staged_files;
+DROP TABLE IF EXISTS worker_agents;
+DROP TABLE IF EXISTS worker_runs;
 `;
 
 // Window bridge for classic scripts and the headless runner (ESM migration convention).

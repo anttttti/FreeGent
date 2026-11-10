@@ -20,6 +20,14 @@ describe('Word text', () => {
     });
 });
 
+describe('Word text with prefix-like words in it (day exploration D008)', () => {
+    it('leaves the document\'s own words alone', async () => {
+        const text = 'Use q:item and wp1:item & keep w:item a:item';
+        const xml = (px: string) => zipFiles([{ name: 'word/document.xml', data: enc(`<${px}:document xmlns:${px}="${W}"><${px}:body><${px}:p><${px}:r><${px}:t title="${px}:x a ${px}:y">${text}</${px}:t></${px}:r></${px}:p></${px}:body></${px}:document>`) }]);
+        for (const px of ['q', 'wp1']) expect(docxText(await xml(px))).toBe(text);
+    });
+});
+
 const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';

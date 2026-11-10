@@ -337,10 +337,10 @@ function StepView({ step, turn, width }: { step: Store.StepState; turn: Store.Tu
 }
 
 function SectionContent({ step, section, width }: { step: Store.StepState; section: Store.StepSection; width: number }) {
-    const raw = section === 'Output'   ? _cleanOutput(step.output)
+    const raw = stripControls(section === 'Output'   ? _cleanOutput(step.output)   // model and tool text: no terminal control strings (N028)
               : section === 'Thinking' ? step.thinking
               : section === 'Prompt'   ? step.prompt ?? ''
-              :                          step.request ?? '';
+              :                          step.request ?? '');
 
     // scrollOffset 0 = anchored to bottom (newest); +N = N lines above bottom.
     const [scrollOffset, setScrollOffset] = useState(0);
@@ -497,7 +497,7 @@ function EventLog({ height, width, entries, scrollOffset }: { height: number; wi
                     const rows = isLast && tailRows != null ? _rowsOf(_userRows, item.text, width, '> ').slice(-tailRows) : null;
                     return (
                         <Box key={item.id}>
-                            <Text color="cyan" bold>{rows ? rows.join('\n') : `> ${item.text}`}</Text>
+                            <Text color="cyan" bold>{rows ? rows.join('\n') : stripControls(`> ${item.text}`)}</Text>
                         </Box>
                     );
                 }

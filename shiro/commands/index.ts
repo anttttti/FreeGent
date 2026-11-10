@@ -1,19 +1,6 @@
 import type { FileSystem } from '../filesystem';
 import type { Shell } from '../shell';
 
-interface TerminalLike {
-  writeOutput(text: string): void;
-  enterStdinPassthrough(cb: (data: string) => void, forceExitCb?: () => void): void;
-  exitStdinPassthrough(): void;
-  enterRawMode(cb: (key: string) => void): void;
-  exitRawMode(): void;
-  isRawMode(): boolean;
-  onResize(cb: (cols: number, rows: number) => void): () => void;
-  getSize(): { rows: number; cols: number };
-  getBufferContent?(): string;
-  term: any; // xterm.js Terminal instance
-}
-
 export interface CommandContext {
   args: string[];
   fs: FileSystem;
@@ -23,7 +10,6 @@ export interface CommandContext {
   stdout: string;
   stderr: string;
   shell: Shell;
-  terminal?: TerminalLike;
 }
 
 export interface Command {

@@ -6,6 +6,7 @@
 //   'fn-tag'  — <function=name>{"arg":"val"}</function> inline in content
 //   'none'    — model doesn't support tool calling; send no schema
 import { KEYS } from './storage-keys.js';
+import { ALL_TOOL_NAMES } from './tool-effects.js';
 
 const _TOOL_FORMATS = {
     // NVIDIA NIM — Nemotron models: thinking-focused, no function calling
@@ -88,15 +89,9 @@ export function getModelToolFormat(provider: any, model: any): any {
 }
 
 // Built-in tool names the text formats D, F, G-b and H accept (those carry the name as the tag
-// or call itself, so an unrestricted match would grab arbitrary XML/prose). Keep in sync with
-// AGENT_TOOL_NAMES in step-validator.ts. The enabled MCP tools (mcp__<server>__<tool>) are
-// added per call — see _knownToolNames().
-const _BUILTIN_TEXT_TOOL_NAMES = [
-    'list_files','read_file','write_file','replace_in_file','apply_patch','append_file',
-    'undo_write','delete_file','execute_code','search_workspace','repo_map','web_search','fetch_url',
-    'update_task_status','run_workers','run_git','ast_query','generate_image','deep_research',
-    'context7_docs','academic_search','package_search',
-];
+// or call itself, so an unrestricted match would grab arbitrary XML/prose): the tool table in tool-effects.ts.
+// The enabled MCP tools (mcp__<server>__<tool>) are added per call — see _knownToolNames().
+const _BUILTIN_TEXT_TOOL_NAMES = ALL_TOOL_NAMES;
 
 export function _knownToolNames(): Set<string> {
     const mcp = typeof mcpToolNames === 'function' ? mcpToolNames() : [];

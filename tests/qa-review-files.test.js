@@ -143,6 +143,21 @@ describe('acceptance review input', () => {
     });
 });
 
+describe('dependency gate', () => {
+    // Day exploration D015: a prerequisite file that could not be read was left out of the list, so its task counted as done or missing.
+    it('refuses to decide while a task file cannot be read', async () => {
+        files['fg-tasks/005-a.md'] = '---\nid: 005\ntitle: A\nstatus: done\n---\n# A\n';
+        files['fg-tasks/005-b.md'] = '---\nid: 005\ntitle: B\nstatus: in-progress\n---\n# B\n';
+        files['fg-tasks/002-core.md'] = task.replace('id: 002', 'id: 002\ndepends: 005').replace('in-review', 'todo');
+        const read = W.agentReadFile;
+        W.agentReadFile = async (p) => { if (p === 'fg-tasks/005-b.md') throw new Error('NotAllowedError'); return read(p); };
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        const r = await W.transitionTask('fg-tasks/002-core.md', 'in-progress');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/Cannot check the dependencies \(#005\).*NotAllowedError/);
+    });
+});
+
 describe('completeness gate message', () => {
     it('names the unchecked steps and the task file', async () => {
         files['fg-tasks/003-t.md'] = '---\nid: 003\ntitle: T\nstatus: in-progress\n---\n# T\n- [x] done one\n- [ ] tapping a block breaks it\n- [ ] hotbar selection changes\n';

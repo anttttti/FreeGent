@@ -1,6 +1,5 @@
 import type { CommandContext } from '../commands/index';
-import { getShiroOrigin } from '../utils/shiro-origin';
-import { DEFAULT_CLAUDE_THEME, ensureClaudeBootstrap } from '../claude-config';
+import { skippedSizes } from './file-cache';
 
 // Every `node` run copies the files around it into strings. A game project with hundreds of images and saved pages made that
 // step run for 20-40 s and then took the tab down, even for `node -e "console.log('hi')"` (uploaded logs 2026-11-09, 40 crash
@@ -44,7 +43,8 @@ export async function preloadDir(
           _spend(fileCache, (content as string).length);
           fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());
         } else {
-          fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());   // not read, but existsSync still finds it
+          fileMtimes.set(fp, st.mtime?.getTime?.() || Date.now());   // not read, but exists, stat and readdir still find it
+          skippedSizes(fileMtimes).set(fp, st.size ?? 0);
         }
       } catch { /* skip */ }
     }
@@ -126,31 +126,6 @@ export async function preloadEnvironment(
     } catch {}
   }
 
-  const isClaudeCodeScript = scriptPath?.includes('claude-code');
-  if (isClaudeCodeScript) {
-    // Create essential directories
-    try { await ctx.fs.mkdir(homeDir + '/.claude', { recursive: true }); } catch {}
-    try { await ctx.fs.mkdir(homeDir + '/.claude/projects', { recursive: true }); } catch {}
-    try { await ctx.fs.mkdir(homeDir + '/.claude/statsig', { recursive: true }); } catch {}
-    try { await ctx.fs.mkdir(homeDir + '/.config', { recursive: true }); } catch {}
-
-    try {
-      await ensureClaudeBootstrap(ctx.fs, {
-        homeDir,
-        projectPath: ctx.cwd,
-        theme: isClaudeCodeScript ? DEFAULT_CLAUDE_THEME : undefined,
-        completeOnboarding: Boolean(isClaudeCodeScript),
-        trustProject: Boolean(isClaudeCodeScript),
-        completeProjectOnboarding: Boolean(isClaudeCodeScript),
-        acceptBypassPermissions: Boolean(isClaudeCodeScript),
-      });
-    } catch {}
-    try { await ctx.fs.stat(homeDir + '/.claude/statsig/cache.json'); } catch {
-      try { await ctx.fs.writeFile(homeDir + '/.claude/statsig/cache.json', '{}'); } catch {}
-    }
-
-  }
-
   // Pre-load files from common locations
   const preloadDirs = [ctx.cwd];
   if (homeDir !== ctx.cwd) preloadDirs.push(homeDir);
@@ -182,48 +157,6 @@ export async function preloadEnvironment(
         const content = await ctx.fs.readFile(fp, 'utf8');
         fileCache.set(fp, content as string);
       } catch { /* file doesn't exist yet, that's OK */ }
-    }
-  }
-
-  // Pre-flight OAuth token refresh for Claude Code CLI
-  if (isClaudeCodeScript) {
-    const credsPath = homeDir + '/.claude/.credentials.json';
-    const credsStr = fileCache.get(credsPath);
-    if (credsStr) {
-      try {
-        const creds = JSON.parse(credsStr);
-        const oauth = creds.claudeAiOauth;
-        if (oauth?.refreshToken && oauth.expiresAt && (oauth.expiresAt - Date.now() < 300000)) {
-          console.log(`[node] OAuth token expires in ${Math.round((oauth.expiresAt - Date.now()) / 1000)}s, refreshing...`);
-          const proxyOrigin = typeof window !== 'undefined' ? getShiroOrigin() : '';
-          const tokenUrl = proxyOrigin + '/api/platform/v1/oauth/token';
-          const body = new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: oauth.refreshToken,
-            client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-          });
-          const resp = await fetch(tokenUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body.toString(),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            oauth.accessToken = data.access_token;
-            oauth.refreshToken = data.refresh_token || oauth.refreshToken;
-            oauth.expiresAt = Date.now() + (data.expires_in || 28800) * 1000;
-            if (data.scope) oauth.scopes = data.scope.split(' ');
-            const newCredsStr = JSON.stringify(creds);
-            fileCache.set(credsPath, newCredsStr);
-            await ctx.fs.writeFile(credsPath, newCredsStr);
-            console.log(`[node] OAuth token refreshed, expires in ${data.expires_in || 28800}s`);
-          } else {
-            console.warn(`[node] OAuth token refresh failed: ${resp.status} ${await resp.text().catch(() => '')}`);
-          }
-        }
-      } catch (e: any) {
-        console.warn(`[node] OAuth token refresh error: ${e.message}`);
-      }
     }
   }
 

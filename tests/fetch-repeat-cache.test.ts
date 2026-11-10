@@ -37,3 +37,20 @@ describe('repeat cache and fetch_url methods', () => {
         } finally { W.fetch = origFetch; }
     });
 });
+
+// Day exploration D006: a caller's "accept" arrived merged with the default "Accept" because the defaults were keyed by one letter case only.
+describe('fetch_url page headers', () => {
+    it('a caller header replaces the browser default whatever its letter case', async () => {
+        const origFetch = W.fetch; const seen: any[] = []; const wasHeadless = W._fgHeadless; W._fgHeadless = true;   // no proxy: the headers go straight to fetch
+        W.fetch = vi.fn(async (_u: any, init?: any) => { seen.push(init?.headers ?? {}); return new Response('<p>ok</p>', { status: 200, headers: { 'content-type': 'text/html' } }); });
+        try {
+            const run = (headers: any, n: number) => W._runToolCalls([{ name: 'fetch_url', args: { url: `https://example.org/page${n}`, headers } }], null, { forWorker: false, repeatCache: new Map() });
+            await run({}, 1); await run({ accept: 'application/json', 'ACCEPT-LANGUAGE': 'fi' }, 2);
+            expect(Object.keys(seen[0])).toContain('Accept');
+            const h2 = Object.fromEntries(Object.entries(seen[1]).map(([k, v]) => [k.toLowerCase(), v]));
+            expect(Object.keys(seen[1]).filter(k => k.toLowerCase() === 'accept')).toHaveLength(1);
+            expect(h2.accept).toBe('application/json'); expect(h2['accept-language']).toBe('fi');
+            expect(h2['sec-fetch-mode']).toBe('navigate');
+        } finally { W.fetch = origFetch; W._fgHeadless = wasHeadless; }
+    });
+});

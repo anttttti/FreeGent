@@ -5,7 +5,6 @@
  */
 
 import type { CommandContext } from '../commands/index';
-import { iframeServer } from '../iframe-server';
 import { sha1sync, fnvHash } from '../commands/jseval/crypto';
 import { sha256 as sha256sync } from '../commands/checksums';
 import { ProcessExitError } from '../commands/jseval/utils';
@@ -19,7 +18,6 @@ import { createFileCache } from './file-cache';
 import { preloadEnvironment } from './preload';
 import { createAutoStubFactory } from './auto-stub';
 import { createRequireFunction } from './require';
-import { createExpressFactory } from './shims/express';
 import { createSqliteShim } from './shims/sqlite';
 import { createPathModule } from './modules/path';
 import { createOsModule } from './modules/os';
@@ -34,7 +32,6 @@ import { createHttpModule, createHttpsModule, createHttp2Module } from './module
 import { createNetModule, createTlsModule } from './modules/net-tls';
 import { createMiscModule } from './modules/misc';
 import { createAppShim } from './shims/app-shims';
-import { getShiroOrigin } from '../utils/shiro-origin';
 
 
 // `x.location = …` or a bare `location = …` (not ==, not a property of something else like obj.location).
@@ -83,7 +80,6 @@ export async function executeNodeScript(
     } else {
       const errStr = msg || 'Unknown error';
       _nodeStderrBuf?.push(`UnhandledPromiseRejection: ${errStr}`);
-      if (ctx.terminal) ctx.terminal.writeOutput(`\x1b[31mUnhandledPromiseRejection: ${errStr}\x1b[0m\r\n`);
       event.preventDefault();
     }
   };
@@ -96,7 +92,6 @@ export async function executeNodeScript(
     _fetchesInFlight++;
     return _rawFetch(...a).finally(() => { _fetchesInFlight--; });
   }) as typeof fetch;
-  const _origXHR = typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : undefined;
   const _prevST = globalThis.setTimeout;
   const _prevCT = globalThis.clearTimeout;
 
@@ -104,10 +99,7 @@ export async function executeNodeScript(
   const _st: SharedState = {
     exitCode: 0,
     exitCalled: false,
-    streamedToTerminal: false,
-    isInteractiveMode: false,
     scriptTimeoutId: null,
-    ownsStdinPassthrough: false,
     deferredExitResolve: null,
     fakeProcess: null,
   };
@@ -173,9 +165,9 @@ export async function executeNodeScript(
         case 'crypto':
         case 'node:crypto': return createCryptoModule({ sha256sync, sha1sync, fnvHash, FakeBuffer });
         case 'http':
-        case 'node:http': return createHttpModule({ ctx, iframeServer: iframeServer as any, fakeConsole, getBuiltinModule });
+        case 'node:http': return createHttpModule({ ctx, fakeConsole, getBuiltinModule });
         case 'https':
-        case 'node:https': return createHttpsModule({ ctx, iframeServer: iframeServer as any, fakeConsole, getBuiltinModule });
+        case 'node:https': return createHttpsModule({ ctx, fakeConsole, getBuiltinModule });
         case 'net':
         case 'node:net': return createNetModule();
         case 'tls':
@@ -194,13 +186,11 @@ export async function executeNodeScript(
     const { createAutoStub } = createAutoStubFactory();
 
     // Express shim factory
-    const expressFactory = createExpressFactory({ ctx, iframeServer: iframeServer as any, fakeConsole, pendingPromises });
 
     // Require function (module resolver + loader)
     const requireModule = createRequireFunction({
       ctx, fileCache, fileMtimes, moduleCache, pendingPromises, processEvents,
       getBuiltinModule, fakeConsole, fakeProcess, FakeBuffer,
-      createExpressShim: expressFactory,
       createSqliteShim: () => createSqliteShim({ ctx }),
       createAutoStub,
     });
@@ -271,154 +261,7 @@ export async function executeNodeScript(
       window.addEventListener('unhandledrejection', suppressRejection);
     }
 
-    // CORS proxy setup
-    const corsProxyOrigin = typeof window !== 'undefined' ? getShiroOrigin() : '';
-    const corsProxyMap: [string, string][] = [
-      ['https://api.anthropic.com/', '/api/anthropic/'],
-      ['https://platform.claude.com/', '/api/platform/'],
-      ['https://mcp-proxy.anthropic.com/', '/api/mcp-proxy/'],
-    ];
-    const rewriteUrl = (u: string): string => {
-      for (const [prefix, proxy] of corsProxyMap) {
-        if (u.startsWith(prefix)) return corsProxyOrigin + proxy + u.slice(prefix.length);
-      }
-      return u;
-    };
-    const blockedUrls = [
-      'datadoghq.com', 'sentry.io', '/api/event_logging',
-      'claude_code_first_token_date', 'claude_code_grove',
-    ];
-    const isBlocked = (u: string) => blockedUrls.some(b => u.includes(b));
-
     globalThis.fetch = _origFetch;
-    if (corsProxyOrigin) {
-      globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-        let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-        if (isBlocked(url)) return Promise.resolve(new Response('{}', { status: 200 }));
-        // Route localhost/127.0.0.1 requests through virtual iframe servers
-        const localhostMatch = url.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/);
-        if (localhostMatch) {
-          const port = parseInt(localhostMatch[1] || '80');
-          const path = localhostMatch[2] || '/';
-          if (iframeServer.isPortInUse(port)) {
-            return iframeServer.fetch(port, path, {
-              method: init?.method || 'GET',
-              headers: (init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers))
-                ? init.headers as Record<string, string> : {},
-              body: typeof init?.body === 'string' ? init.body : null,
-            }).then(vResp => new Response(
-              typeof vResp.body === 'string' ? vResp.body
-                : vResp.body instanceof Uint8Array ? new TextDecoder().decode(vResp.body)
-                : JSON.stringify(vResp.body ?? ''),
-              { status: vResp.status || 200, statusText: vResp.statusText || 'OK', headers: vResp.headers || {} },
-            ));
-          }
-        }
-        const rewritten = rewriteUrl(url);
-        if (rewritten !== url) {
-          if (typeof input === 'string') input = rewritten;
-          else if (input instanceof URL) input = new URL(rewritten);
-          else input = new Request(rewritten, input);
-        }
-        // Track SSE stream lifecycle for /v1/messages
-        const isMessages = url.includes('/v1/messages');
-        if (isMessages) {
-          const t0 = Date.now();
-          return _origFetch(input, init).then(resp => {
-            const ct = resp.headers.get('content-type') || '';
-            const isSSE = ct.includes('text/event-stream');
-            console.log(`[fetch] /v1/messages ${resp.status} ${ct.split(';')[0]} (${Date.now() - t0}ms)`);
-            if (isSSE && resp.body) {
-              const origBody = resp.body;
-              const reader = origBody.getReader();
-              let totalBytes = 0;
-              const wrappedStream = new ReadableStream({
-                async pull(controller) {
-                  const { done, value } = await reader.read();
-                  if (done) {
-                    console.log(`[fetch] SSE stream ended (${totalBytes} bytes, ${Date.now() - t0}ms total)`);
-                    controller.close();
-                    return;
-                  }
-                  totalBytes += value.byteLength;
-                  controller.enqueue(value);
-                },
-                cancel() { reader.cancel(); }
-              });
-              return new Response(wrappedStream, {
-                status: resp.status,
-                statusText: resp.statusText,
-                headers: resp.headers,
-              });
-            }
-            return resp;
-          });
-        }
-        return _origFetch(input, init);
-      };
-      // Patch XMLHttpRequest prototype
-      if (_origXHR && !(XMLHttpRequest.prototype as any)._shiroProxied) {
-        const unsafeHeaders = new Set(['user-agent','host','content-length','connection','accept-encoding','accept-charset','referer','origin','cookie','te','upgrade','via','transfer-encoding','proxy-authorization','proxy-connection','sec-fetch-dest','sec-fetch-mode','sec-fetch-site','sec-fetch-user']);
-        const origOpen = XMLHttpRequest.prototype.open;
-        const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-        const origSend = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.open = function(this: XMLHttpRequest, method: string, url: string | URL, ...rest: any[]) {
-          const u = typeof url === 'string' ? url : url.toString();
-          if (isBlocked(u)) { (this as any)._blocked = true; return; }
-          const lhm = u.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/);
-          if (lhm && iframeServer.isPortInUse(parseInt(lhm[1] || '80'))) {
-            (this as any)._localhost = { port: parseInt(lhm[1] || '80'), path: lhm[2] || '/', method };
-            return;
-          }
-          return origOpen.call(this, method, rewriteUrl(u), ...(rest as [boolean, string?, string?]));
-        } as any;
-        XMLHttpRequest.prototype.setRequestHeader = function(this: XMLHttpRequest, name: string, value: string) {
-          if ((this as any)._blocked) return;
-          if (unsafeHeaders.has(name.toLowerCase())) return;
-          return origSetHeader.call(this, name, value);
-        };
-        XMLHttpRequest.prototype.send = function(this: XMLHttpRequest, body?: any) {
-          if ((this as any)._blocked || (this as any)._localhost) {
-            const isLocalhost = !!(this as any)._localhost;
-            const respondWith = (status: number, statusText: string, responseText: string) => {
-              Object.defineProperty(this, 'status', { value: status });
-              Object.defineProperty(this, 'statusText', { value: statusText });
-              Object.defineProperty(this, 'responseText', { value: responseText });
-              Object.defineProperty(this, 'response', { value: responseText });
-              Object.defineProperty(this, 'readyState', { value: 4 });
-              Object.defineProperty(this, 'responseURL', { value: '' });
-              setTimeout(() => {
-                const rsEvt = new Event('readystatechange');
-                if (typeof (this as any).onreadystatechange === 'function') (this as any).onreadystatechange(rsEvt);
-                try { this.dispatchEvent(rsEvt); } catch {}
-                const loadEvt = new ProgressEvent('load');
-                if (typeof (this as any).onload === 'function') (this as any).onload(loadEvt);
-                try { this.dispatchEvent(loadEvt); } catch {}
-                const endEvt = new ProgressEvent('loadend');
-                if (typeof (this as any).onloadend === 'function') (this as any).onloadend(endEvt);
-                try { this.dispatchEvent(endEvt); } catch {}
-              }, 0);
-            };
-            if (isLocalhost) {
-              const { port, path, method } = (this as any)._localhost;
-              iframeServer.fetch(port, path, { method, body: typeof body === 'string' ? body : null })
-                .then(vResp => {
-                  const text = typeof vResp.body === 'string' ? vResp.body
-                    : vResp.body instanceof Uint8Array ? new TextDecoder().decode(vResp.body)
-                    : JSON.stringify(vResp.body ?? '');
-                  respondWith(vResp.status || 200, vResp.statusText || 'OK', text);
-                })
-                .catch(() => respondWith(500, 'Internal Server Error', ''));
-            } else {
-              respondWith(200, 'OK', '{}');
-            }
-            return;
-          }
-          return origSend.call(this, body);
-        };
-        (XMLHttpRequest.prototype as any)._shiroProxied = true;
-      }
-    }
 
     // Polyfill setImmediate/clearImmediate
     const _origSetImmediate = (globalThis as any).setImmediate;
@@ -504,7 +347,7 @@ export async function executeNodeScript(
     }
 
     // Wait for pending timers (max 5s)
-    if (_activeTimers > 0 && _timersDone && !_st.isInteractiveMode) {
+    if (_activeTimers > 0 && _timersDone) {
       try {
         await Promise.race([_timersDone, new Promise((_, rej) => _prevST(() => rej('timer-wait-timeout'), 5000))]);
       } catch { /* timeout is fine */ }
@@ -515,24 +358,17 @@ export async function executeNodeScript(
 
     // Deferred exit wait
     const hasFinishedOutput = _st.exitCalled || scriptTimedOut
-      || stdoutBuf.length > 0 || stderrBuf.length > 0 || _st.streamedToTerminal
+      || stdoutBuf.length > 0 || stderrBuf.length > 0
       || printResult;
-    if (_st.isInteractiveMode || !hasFinishedOutput) {
-      const DEFERRED_TIMEOUT = _st.isInteractiveMode ? 86400000 : code.length > 500000 ? 300000 : 10000;
+    if (!hasFinishedOutput) {
+      const DEFERRED_TIMEOUT = code.length > 500000 ? 300000 : 10000;
       const deferredTimeout = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new ProcessExitError(124)), DEFERRED_TIMEOUT);
       });
-      let freshExitPromise = deferredExitPromise;
-      if (_st.exitCalled && _st.isInteractiveMode) {
-        freshExitPromise = new Promise<number>(resolve => {
-          _st.deferredExitResolve = resolve;
-        });
-        _st.exitCalled = false;
-      }
       // A script with nothing left to run is done, as Node exits once its event loop is empty: no
       // requests in flight, timers or pending writes. (Waiting the full timeout made every silent
       // script take 10 s and exit with 124.)
-      const idle = _st.isInteractiveMode ? new Promise<never>(() => {}) : (async () => {
+      const idle = (async () => {
         for (let quiet = 0; quiet < 3;) {
           await new Promise(r => _prevST(r, 20));
           if (pendingPromises.length) await Promise.all(pendingPromises.splice(0));
@@ -541,7 +377,7 @@ export async function executeNodeScript(
         return _st.exitCalled ? _st.exitCode : 0;
       })();
       try {
-        const waitCode = await Promise.race([freshExitPromise, deferredTimeout, idle]);
+        const waitCode = await Promise.race([deferredExitPromise, deferredTimeout, idle]);
         _st.exitCode = waitCode;
       } catch (e: any) {
         if (e instanceof ProcessExitError) {
@@ -553,10 +389,10 @@ export async function executeNodeScript(
     // Flush output
     // The buffers hold raw chunks (console lines end in their newline; process.stdout.write
     // chunks are as written).
-    if (stdoutBuf.length > 0 && !_st.streamedToTerminal) {
+    if (stdoutBuf.length > 0) {
       ctx.stdout += stdoutBuf.join('');
     }
-    if (stderrBuf.length > 0 && !_st.streamedToTerminal) {
+    if (stderrBuf.length > 0) {
       ctx.stderr += stderrBuf.join('');
     }
 
@@ -565,7 +401,6 @@ export async function executeNodeScript(
     }
 
     // Clean up
-    if (ctx.terminal && _st.ownsStdinPassthrough) ctx.terminal.exitStdinPassthrough();
     if (typeof window !== 'undefined') {
       setTimeout(() => window.removeEventListener('unhandledrejection', suppressRejection), 1000);
     }
@@ -577,7 +412,6 @@ export async function executeNodeScript(
     return _st.exitCode;
   } catch (e: any) {
     // Clean up on error
-    if (ctx.terminal && _st.ownsStdinPassthrough) ctx.terminal.exitStdinPassthrough();
     if (typeof window !== 'undefined') {
       setTimeout(() => window.removeEventListener('unhandledrejection', suppressRejection), 1000);
     }

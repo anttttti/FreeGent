@@ -21,6 +21,7 @@ import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 import { softStopPending, activeAbortController } from './state.js';
 import { asTransportError } from './retry.js';
+import { CONTENT_ARG_TOOLS } from './tool-effects.js';
 
 // 90 s between any SSE bytes — safe for even the slowest streaming models (chunks arrive
 // every few seconds at most). Short enough that a browser-killed connection (tab hidden,
@@ -219,7 +220,6 @@ const _DEGEN_TAIL = 2000;
 // Tools whose arguments are file content: a generated CSV, fixture or padding is legitimately
 // periodic, so these are only checked once the payload is far past a normal step. A real runaway
 // still reaches this length well before the output cap.
-const CONTENT_ARG_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch']);
 const DEGENERATE_MIN_CHARS_CONTENT = 20000;
 export function _degenerateTail(s: string, minChars = DEGENERATE_MIN_CHARS): string | null {
     if (s.length < minChars) return null;

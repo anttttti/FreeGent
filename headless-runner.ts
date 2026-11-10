@@ -532,8 +532,7 @@ async function _setupOnce(opts: Record<string, any> = {}): Promise<void> {
     setReplyChannelHint(replyChannelHint);
 
     // Session persistence: wire NodeSqliteAdapter so chat history, turn logs, and
-    // compaction lineage are persisted to SQLite — same behaviour as the browser's
-    // BrowserSqliteAdapter injected by initBrowserSqlite().
+    // compaction lineage are persisted to SQLite.
     _t('setup:before_sqlite');
     try {
         const adapter = new NodeSqliteAdapter(sessionDbPath);

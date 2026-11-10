@@ -40,7 +40,7 @@ describe('IDBSessionAdapter — schema', () => {
     it('creates all object stores on open', async () => {
         const adapter = await makeAdapter();
         const names = Array.from((adapter as any)._db.objectStoreNames).sort();
-        expect(names).toEqual(['chats', 'checkpoint_attachments', 'history', 'raw_messages', 'turn_log', 'worker_agents', 'worker_runs']);
+        expect(names).toEqual(['chats', 'checkpoint_attachments', 'history', 'raw_messages', 'turn_log']);
     });
 });
 
@@ -245,30 +245,6 @@ describe('IDBSessionAdapter — turn_log', () => {
         expect(rows[1].type).toBe('validation');
         expect(rows[1].name).toBe('missing_state_line');
         expect(rows[1].prompt).toBe('Does this end with a state line?');
-    });
-});
-
-// ── Worker runs ───────────────────────────────────────────────────────────────
-
-describe('IDBSessionAdapter — worker runs', () => {
-    it('worker run lifecycle: create → record agent → finish', async () => {
-        const a = await makeAdapter();
-        await a.createWorkerRun('r1', 'c1');
-        await a.recordWorkerAgent('r1', { id: 'w1', role: 'coder', model: 'gpt', task: 'do X', output: 'done', status: 'complete' });
-        await a.finishWorkerRun('r1', 'complete');
-
-        const runs = await getAll(a, 'worker_runs');
-        expect(runs[0].status).toBe('complete');
-        expect(runs[0].finishedAt).toBeTypeOf('number');
-
-        const agents = await getByIndex(a, 'worker_agents', 'runId', 'r1');
-        expect(agents).toHaveLength(1);
-        expect(agents[0].id).toBe('w1');
-    });
-
-    it('finishWorkerRun is a no-op for an unknown run id', async () => {
-        const a = await makeAdapter();
-        await expect(a.finishWorkerRun('nonexistent', 'complete')).resolves.not.toThrow();
     });
 });
 

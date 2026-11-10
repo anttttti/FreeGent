@@ -7,6 +7,15 @@
  * browser environment.
  */
 
+/** Size of each file the preload listed but did not read (a binary, or past the content budget), kept beside `fileMtimes`: those files exist for
+ *  existsSync, statSync and readdirSync without their bytes being loaded (day exploration D002). */
+const _skipped = new WeakMap<Map<string, number>, Map<string, number>>();
+export function skippedSizes(fileMtimes: Map<string, number>): Map<string, number> {
+  let m = _skipped.get(fileMtimes);
+  if (!m) _skipped.set(fileMtimes, m = new Map());
+  return m;
+}
+
 /** Sync FS operation watchdog limit */
 const SYNC_OP_LIMIT = 50_000;
 

@@ -7,10 +7,6 @@ import type { CommandContext } from '../../commands/index';
 
 export interface HttpDeps {
   ctx: CommandContext;
-  iframeServer: {
-    serve: (port: number, handler: (req: any) => Promise<any>, label: string) => () => void;
-    createIframe: (port: number, container: any, opts: { height: string }) => Promise<any>;
-  };
   fakeConsole: { log: (...args: any[]) => void; warn: (...args: any[]) => void };
   getBuiltinModule: (name: string) => any;
 }
@@ -24,13 +20,11 @@ export function createHttpsModule(deps: HttpDeps): any {
 }
 
 function _createHttpOrHttpsModule(deps: HttpDeps, isHttps: boolean): any {
-  const { ctx, iframeServer, fakeConsole, getBuiltinModule } = deps;
+  const { ctx, fakeConsole, getBuiltinModule } = deps;
 
   // HTTP server shim using Shiro's virtual server
   const createServer = (handler?: (req: any, res: any) => void) => {
     let requestHandler = handler;
-    let cleanupFn: (() => void) | null = null;
-    let listeningPort: number | null = null;
 
     const server: any = {
       _events: {} as Record<string, Function[]>,
@@ -73,148 +67,13 @@ function _createHttpOrHttpsModule(deps: HttpDeps, isHttps: boolean): any {
       setTimeout() { return this; },
       maxConnections: Infinity,
       connections: 0,
-      listen(port: number, hostOrCallback?: string | (() => void), callback?: () => void) {
-        const cb = typeof hostOrCallback === 'function' ? hostOrCallback : callback;
-        // Port 0 means "pick a random available port"
-        if (port === 0) port = 30000 + Math.floor(Math.random() * 10000);
-        listeningPort = port;
-
-        // Use iframe-based server for visibility
-        const handler = async (vReq: any) => {
-          return new Promise<any>((resolve) => {
-            // Build Node-like request object
-            const req: any = {
-              method: vReq.method,
-              url: vReq.path + (Object.keys(vReq.query || {}).length ? '?' + new URLSearchParams(vReq.query).toString() : ''),
-              headers: vReq.headers || {},
-              query: vReq.query || {},
-              body: vReq.body,
-              on(event: string, handler: Function) {
-                if (event === 'data' && vReq.body) {
-                  setTimeout(() => handler(vReq.body), 0);
-                }
-                if (event === 'end') {
-                  setTimeout(() => handler(), 0);
-                }
-                return this;
-              },
-            };
-
-            // Build Node-like response object
-            let statusCode = 200;
-            let responseHeaders: Record<string, string> = {};
-            let responseBody = '';
-
-            const res: any = {
-              statusCode: 200,
-              setHeader(name: string, value: string) {
-                responseHeaders[name.toLowerCase()] = value;
-              },
-              getHeader(name: string) {
-                return responseHeaders[name.toLowerCase()];
-              },
-              writeHead(code: number, headers?: Record<string, string>) {
-                statusCode = code;
-                if (headers) {
-                  for (const [k, v] of Object.entries(headers)) {
-                    responseHeaders[k.toLowerCase()] = v;
-                  }
-                }
-                return this;
-              },
-              write(chunk: string) {
-                responseBody += chunk;
-                return true;
-              },
-              end(data?: string) {
-                if (data) responseBody += data;
-                resolve({
-                  status: statusCode,
-                  headers: responseHeaders,
-                  body: responseBody,
-                });
-              },
-              // Express-style helpers
-              status(code: number) {
-                statusCode = code;
-                return this;
-              },
-              json(data: any) {
-                responseHeaders['content-type'] = 'application/json';
-                this.end(JSON.stringify(data));
-              },
-              send(data: any) {
-                if (typeof data === 'object') {
-                  this.json(data);
-                } else {
-                  this.end(String(data));
-                }
-              },
-            };
-
-            // Call the request handler
-            if (requestHandler) {
-              try {
-                requestHandler(req, res);
-              } catch (err: any) {
-                resolve({
-                  status: 500,
-                  body: `Server error: ${err.message}`,
-                });
-              }
-            } else {
-              resolve({ status: 404, body: 'No handler' });
-            }
-          });
-        };
-
-        // Register with iframe server
-        const proto = isHttps ? 'https' : 'http';
-        cleanupFn = iframeServer.serve(port, handler, `${proto}:${port}`);
-        fakeConsole.log(`Server listening on port ${port}`);
-
-        // Open split-view preview pane
-        try {
-          if (typeof document !== 'undefined') {
-            import('../../split-view').then(({ createSplitView }) => {
-              createSplitView({ port, direction: 'right', title: `Server :${port}` });
-              fakeConsole.log('Browser window opened');
-            }).catch((err: Error) => fakeConsole.warn('Could not open browser:', err.message));
-          }
-        } catch {}
-
-        server.listening = true;
-        // Fire callback async (like real Node.js nextTick)
-        setTimeout(() => {
-          server.emit('listening');
-          cb?.();
-        }, 0);
-
-        return this;
+      listen(): never {
+        const e: any = new Error('listen EACCES: this sandbox cannot accept connections; a server cannot be started here');
+        e.code = 'EACCES';
+        throw e;
       },
-      close(cb?: () => void) {
-        server.listening = false;
-        if (cleanupFn) {
-          cleanupFn();
-          cleanupFn = null;
-        }
-        if (listeningPort) {
-          fakeConsole.log(`Server on port ${listeningPort} closed`);
-          listeningPort = null;
-        }
-        // Close split-view pane
-        try {
-          if (typeof document !== 'undefined') {
-            import('../../split-view').then(({ closeSplitView }) => closeSplitView()).catch(() => {});
-          }
-        } catch {}
-        server.emit('close');
-        cb?.();
-        return this;
-      },
-      address() {
-        return listeningPort ? { port: listeningPort, address: '0.0.0.0' } : null;
-      },
+      close(cb?: () => void) { cb?.(); return this; },
+      address() { return null; },
       closeAllConnections() { /* no-op stub */ },
       closeIdleConnections() { /* no-op stub */ },
       getConnections(cb?: Function) { cb?.(null, 0); },

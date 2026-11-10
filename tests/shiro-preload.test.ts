@@ -37,3 +37,28 @@ describe('node preload', () => {
         expect(reads.length).toBe(3);   // 48M characters
     });
 });
+
+// Day exploration D002: a file the preload listed without reading was found by existsSync but not by statSync, lstatSync or readdirSync.
+describe('files listed without being read', () => {
+    it('are seen by existsSync, statSync, lstatSync and readdirSync, with their size, and give way to a write', async () => {
+        const { createFileCache } = await import('../shiro/node-compat/file-cache');
+        const { createFsModule } = await import('../shiro/node-compat/modules/fs');
+        const { createFakeBuffer } = await import('../shiro/node-compat/buffer');
+        const reads: string[] = [];
+        const ctx = fakeCtx({ '/w/a.txt': 'hello', '/w/icon.png': 'x'.repeat(40) }, reads);
+        Object.assign(ctx.fs, { resolvePath: (p: string) => p, readCached: () => undefined, readdirCached: () => undefined, mkdir: async () => {}, writeFile: async () => {} });
+        ctx.cwd = '/w';
+        const { fileCache, fileMtimes } = createFileCache();
+        await preloadDir(ctx as any, fileCache, fileMtimes, '/w', 0, 3);
+        const fsm: any = createFsModule({ ctx, fileCache, fileMtimes, pendingPromises: [], tickSyncOps() {}, FakeBuffer: createFakeBuffer(), getBuiltinModule: () => ({}), homeDir: '/home' } as any);
+        expect(reads).not.toContain('/w/icon.png');
+        expect(fsm.existsSync('/w/icon.png')).toBe(true);
+        expect(fsm.statSync('/w/icon.png')).toMatchObject({ size: 40 });
+        expect(fsm.statSync('/w/icon.png').isFile()).toBe(true);
+        expect(fsm.lstatSync('/w/icon.png').size).toBe(40);
+        expect(fsm.readdirSync('/w')).toEqual(['a.txt', 'icon.png']);
+        expect(fsm.readdirSync('/w', { recursive: true })).toEqual(['a.txt', 'icon.png']);
+        fsm.writeFileSync('/w/icon.png', 'abc');
+        expect(fsm.statSync('/w/icon.png').size).toBe(3);
+    });
+});

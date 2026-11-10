@@ -12,7 +12,7 @@ export const rgCmd: Command = {
   async exec(ctx: CommandContext) {
     let ignoreCase = false;
     let invertMatch = false;
-    let lineNumbers = !!ctx.terminal;
+    let lineNumbers = false;
     let countOnly = false;
     let filesOnly = false;
     let listFiles = false; // --files mode (Glob tool)

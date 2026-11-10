@@ -17,9 +17,6 @@ describe('session-store with no adapter injected', () => {
             window.sessionSetChatRole('c1', 'coder');
             window.sessionSaveHistory('c1', [{ role: 'user', content: 'hi' }]);
             window.sessionLogTurn({ chatId: 'c1', model: 'x' });
-            window.sessionCreateWorkerRun('r1', 'c1');
-            window.sessionFinishWorkerRun('r1', 'complete');
-            window.sessionRecordWorkerAgent('r1', { id: 'a1', task: 't' });
         }).not.toThrow();
     });
 });
@@ -35,7 +32,7 @@ describe('NodeSqliteAdapter', () => {
         const adapter = new NodeSqliteAdapter(':memory:');
         await (adapter as any)._ensure();
         expect(tables(adapter)).toEqual(expect.arrayContaining([
-            'chats', 'messages', 'turn_log', 'worker_runs', 'worker_agents', 'worker_staged_files', 'schema_meta',
+            'chats', 'messages', 'turn_log', 'schema_meta',
         ]));
     });
 
@@ -172,25 +169,10 @@ describe('NodeSqliteAdapter', () => {
         expect(rows[1].prompt).toBe('Does this end with a state line?');
     });
 
-    it('worker run lifecycle: create → record agents with staged files → finish', async () => {
+    it('drops the worker tables an older database holds', async () => {
         const adapter = new NodeSqliteAdapter(':memory:');
-        await adapter.createWorkerRun('r1', 'c1');
-        await adapter.recordWorkerAgent('r1', {
-            id: 'w1', role: 'coder', model: 'gpt', task: 'do X', output: 'done', status: 'complete',
-            staged: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }],
-        });
-        await adapter.finishWorkerRun('r1', 'complete');
-
-        const run = (adapter as any)._db.prepare('SELECT * FROM worker_runs WHERE id = ?').get('r1');
-        expect(run.status).toBe('complete');
-        expect(run.finished_at).not.toBeNull();
-
-        const agents = (adapter as any)._db.prepare('SELECT * FROM worker_agents WHERE run_id = ?').all('r1');
-        expect(agents).toHaveLength(1);
-        expect(agents[0].agent_id).toBe('w1');
-
-        const staged = (adapter as any)._db.prepare('SELECT * FROM worker_staged_files WHERE worker_agent_id = ?').all(agents[0].id);
-        expect(staged.map(s => s.path).sort()).toEqual(['a.txt', 'b.txt']);
+        await (adapter as any)._ensure();
+        expect(tables(adapter)).not.toContain('worker_runs');
     });
 
     it('deleting a chat cascades to its messages', async () => {
@@ -225,16 +207,13 @@ describe('NodeSqliteAdapter', () => {
 });
 
 describe('session-store wrappers with a NodeSqliteAdapter injected', () => {
-    it('routes chat/message/turn-log/worker calls through to the adapter', async () => {
+    it('routes chat/message/turn-log calls through to the adapter', async () => {
         const adapter = new NodeSqliteAdapter(':memory:');
         window.setSessionStore(adapter);
 
         window.sessionSyncChatList([{ id: 'c1', name: 'Chat', createdAt: 1, lastAt: 1 }]);
         window.sessionSaveHistory('c1', [{ role: 'user', content: 'hi' }]);
         window.sessionLogTurn({ chatId: 'c1', model: 'gpt' });
-        window.sessionCreateWorkerRun('r1', 'c1');
-        window.sessionRecordWorkerAgent('r1', { id: 'w1', task: 't', status: 'complete' });
-        window.sessionFinishWorkerRun('r1', 'complete');
 
         // These are fire-and-forget (not awaited by the wrappers) — every one of them awaits
         // the same shared _ready promise as its first step, so awaiting it here (after they've
@@ -245,8 +224,6 @@ describe('session-store wrappers with a NodeSqliteAdapter injected', () => {
         expect((adapter as any)._db.prepare('SELECT * FROM chats').all()).toHaveLength(1);
         expect((adapter as any)._db.prepare('SELECT * FROM messages').all()).toHaveLength(1);
         expect((adapter as any)._db.prepare('SELECT * FROM turn_log').all()).toHaveLength(1);
-        expect((adapter as any)._db.prepare('SELECT * FROM worker_runs').all()).toHaveLength(1);
-        expect((adapter as any)._db.prepare('SELECT * FROM worker_agents').all()).toHaveLength(1);
     });
 
     it('sessionCompactHistory routes through to compactHistory, sealing a recoverable generation', async () => {

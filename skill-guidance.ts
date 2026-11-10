@@ -4,6 +4,7 @@
 //             state.js (currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts).
 import { runtime } from './runtime.js';
 import { currentTurnSkills, mainAgentRole, _reactiveFired, _failureCounts, _toolCallHistory, setReactiveFired } from './state.js';
+import { CONTENT_ARG_TOOLS } from './tool-effects.js';
 
 // R5 — single role-exclusion predicate. roleName is lowercased or null.
 export function _skillExcludedForRole(skill, roleName) {
@@ -264,9 +265,8 @@ function _touchedPath(r: any): string {
 // so the code-fix definition of done must not interrupt the implementation after it (uploads review
 // 2026-10-14: fired after writing fg-tasks/current.md, and after the first of several edits).
 const _BOOKKEEPING_WRITE_RE = /^(?:\.\/)?(?:local\/)?(?:fg-tasks|memory|logs)\//;
-const _WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'append_file']);
 export function _isBookkeepingWrite(name: string, args: any, result: any): boolean {
-    if (!_WRITE_TOOLS.has(name)) return false;
+    if (!CONTENT_ARG_TOOLS.has(name)) return false;
     return _BOOKKEEPING_WRITE_RE.test(String(args?.path ?? result?.path ?? ''));
 }
 

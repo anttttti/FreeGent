@@ -108,9 +108,13 @@ export function _plainEditor(container, content, { onSave, onChange }: { onSave?
     ta.spellcheck = false;
     ta.setAttribute('autocapitalize', 'off'); ta.setAttribute('autocomplete', 'off'); ta.setAttribute('autocorrect', 'off'); ta.setAttribute('wrap', 'off');
     ta.addEventListener('input', () => onChange?.(ta.value));
+    let release = false;   // Escape, then Tab, moves on to the next control; Shift+Tab always does
+    ta.addEventListener('blur', () => { release = false; });
     ta.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { release = true; return; }
+        if (e.key === 'Tab' && release) { release = false; return; }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); onSave?.(ta.value); }
-        else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {   // a tab character, as in the editor, not a jump to the next control
+        else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {   // a tab character, as in the editor, not a jump to the next control
             e.preventDefault();
             const a = ta.selectionStart, b = ta.selectionEnd;
             ta.setRangeText('\t', a, b, 'end'); onChange?.(ta.value);

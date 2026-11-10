@@ -1,7 +1,6 @@
 import type { CommandContext } from '../commands/index';
 import type { SharedState } from './types';
 import { ProcessExitError } from '../commands/jseval/utils';
-import { getShiroOrigin } from '../utils/shiro-origin';
 import { bytesToText } from '../utils/bytes';
 
 /**
@@ -21,29 +20,7 @@ export function createFakeProcess(
   const processEnv: Record<string, string> = {
     ...ctx.env,
     MCP_CONNECTION_NONBLOCKING: '1',
-    // Route API calls through CORS proxy when in browser
-    ...(typeof window !== 'undefined' && !ctx.env['ANTHROPIC_BASE_URL'] ? {
-      ANTHROPIC_BASE_URL: `${getShiroOrigin()}/api/anthropic`,
-    } : {}),
   };
-
-  if (scriptPath?.includes('claude-code')) {
-    // Claude Code is substantially more stable in Shiro when its planner and tool use
-    // stay in a single foreground lane instead of spinning background tasks/workers.
-    const claudeDefaults: Record<string, string> = {
-      DISABLE_INSTALLATION_CHECKS: '1',
-      CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: '1',
-      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
-      CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY: '1',
-      CLAUDE_CODE_PLAN_V2_AGENT_COUNT: '1',
-      CLAUDE_CODE_PLAN_V2_EXPLORE_AGENT_COUNT: '1',
-    };
-    for (const [key, value] of Object.entries(claudeDefaults)) {
-      if (!(key in processEnv)) {
-        processEnv[key] = value;
-      }
-    }
-  }
 
   const fp: any = {
     env: processEnv,
@@ -171,68 +148,28 @@ function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState
   const stdoutEvents: Record<string, Function[]> = {};
   const stdoutObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
-      let str = typeof s === 'string' ? s : bytesToText(s);
-      // Detect OAuth URL in Claude Code login flow and append a clickable link
-      // Fix redirect_uri from localhost to manual code flow
-      const oauthMatch = str.match(/(https:\/\/claude\.ai\/oauth\/authorize\S+)/);
-      if (oauthMatch && ctx.terminal) {
-        const fixedUrl = oauthMatch[1].replace(
-          /redirect_uri=http%3A%2F%2Flocalhost%3A\d+%2F[^&]*/,
-          'redirect_uri=' + encodeURIComponent('https://platform.claude.com/oauth/code/callback')
-        );
-        str += `\r\n\r\n  \x1b]8;;${fixedUrl}\x07\x1b[1;36m[ Click here to sign in ]\x1b[0m\x1b]8;;\x07\r\n`;
-      }
+      const str = typeof s === "string" ? s : bytesToText(s);
       if (_st.exitDone) return true;
       stdoutBuf.push(str);
-      // Stream to terminal in real-time if available
-      if (ctx.terminal) {
-        _st.streamedToTerminal = true;
-        if (str.includes('\x1b[')) {
-          ctx.terminal.writeOutput(str);
-        } else {
-          ctx.terminal.writeOutput(str.replace(/\r?\n/g, '\r\n'));
-        }
-      }
-      // Auto-detect port from stdout messages like "listening on port 3000"
-      if (!_st.portDetected && ctx.terminal) {
-        const portMatch = str.match(/(?:listening|running|started|ready)\s+(?:on|at)\s+(?:https?:\/\/[^:]+:|port\s*)(\d{2,5})/i);
-        if (portMatch) {
-          const port = parseInt(portMatch[1]);
-          if (port > 0 && port < 65536) {
-            _st.portDetected = true;
-            import('../split-view').then(({ createSplitView }) => {
-              createSplitView({ port, direction: 'right', title: `Server :${port}` });
-            }).catch(() => {});
-          }
-        }
-      }
       const callback = typeof encodingOrCb === 'function' ? encodingOrCb : cb;
       if (callback) queueMicrotask(() => (callback as Function)());
       return true;
     },
-    isTTY: !!ctx.terminal,
-    get columns() { return ctx.terminal ? ctx.terminal.getSize().cols : 80; },
-    get rows() { return ctx.terminal ? ctx.terminal.getSize().rows : 24; },
-    on: (ev: string, fn: Function) => {
-      (stdoutEvents[ev] ??= []).push(fn);
-      if (ev === 'resize' && ctx.terminal) {
-        const cleanup = ctx.terminal.onResize(() => fn());
-        (stdoutObj._resizeCleanups ??= []).push(cleanup);
-      }
-      return stdoutObj;
-    },
+    isTTY: false,
+    columns: 80,
+    rows: 24,
+    on: (ev: string, fn: Function) => { (stdoutEvents[ev] ??= []).push(fn); return stdoutObj; },
     once: (ev: string, fn: Function) => { (stdoutEvents[ev] ??= []).push(fn); return stdoutObj; },
     off: (ev: string, fn: Function) => { stdoutEvents[ev] = (stdoutEvents[ev] || []).filter(f => f !== fn); return stdoutObj; },
     removeListener: (ev: string, fn: Function) => stdoutObj.off(ev, fn),
     removeAllListeners: (ev?: string) => {
       if (ev) delete stdoutEvents[ev]; else Object.keys(stdoutEvents).forEach(k => delete stdoutEvents[k]);
-      if (!ev || ev === 'resize') { (stdoutObj._resizeCleanups || []).forEach((c: Function) => c()); stdoutObj._resizeCleanups = []; }
       return stdoutObj;
     },
     emit: (ev: string, ...args: any[]) => { (stdoutEvents[ev] || []).forEach(f => f(...args)); return false; },
     end: () => {},
-    getColorDepth: () => ctx.terminal ? 24 : 1,
-    hasColors: (count?: number) => ctx.terminal ? (count ? count <= 16777216 : true) : false,
+    getColorDepth: () => 1,
+    hasColors: () => false,
     cursorTo: (x: number, y?: number | Function, cb?: Function) => {
       let seq = `\x1b[${x + 1}G`;
       if (typeof y === 'number') seq = `\x1b[${y + 1};${x + 1}H`;
@@ -259,7 +196,7 @@ function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState
     clearScreenDown: (cb?: Function) => { stdoutObj.write('\x1b[J'); if (cb) cb(); return true; },
     writable: true,
     fd: 1,
-    getWindowSize: () => [ctx.terminal ? ctx.terminal.getSize().cols : 80, ctx.terminal ? ctx.terminal.getSize().rows : 24],
+    getWindowSize: () => [80, 24],
     listeners: (ev: string) => [...(stdoutEvents[ev] || [])],
     listenerCount: (ev: string) => (stdoutEvents[ev] || []).length,
     eventNames: () => Object.keys(stdoutEvents),
@@ -278,21 +215,13 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
       const str = typeof s === 'string' ? s : bytesToText(s);
       if (_st.exitDone) return true;
       stderrBuf.push(str);
-      if (ctx.terminal) {
-        _st.streamedToTerminal = true;
-        if (str.includes('\x1b[')) {
-          ctx.terminal.writeOutput(str);
-        } else {
-          ctx.terminal.writeOutput(str.replace(/\r?\n/g, '\r\n'));
-        }
-      }
       const callback = typeof encodingOrCb === 'function' ? encodingOrCb : cb;
       if (callback) queueMicrotask(() => (callback as Function)());
       return true;
     },
-    isTTY: !!ctx.terminal,
-    get columns() { return ctx.terminal ? ctx.terminal.getSize().cols : 80; },
-    get rows() { return ctx.terminal ? ctx.terminal.getSize().rows : 24; },
+    isTTY: false,
+    columns: 80,
+    rows: 24,
     on: (ev: string, fn: Function) => { (stderrEvts[ev] ??= []).push(fn); return stderrObj; },
     once: (ev: string, fn: Function) => { (stderrEvts[ev] ??= []).push(fn); return stderrObj; },
     off: (ev: string, fn: Function) => { stderrEvts[ev] = (stderrEvts[ev] || []).filter(f => f !== fn); return stderrObj; },
@@ -300,15 +229,15 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
     removeAllListeners: (ev?: string) => { if (ev) delete stderrEvts[ev]; else Object.keys(stderrEvts).forEach(k => delete stderrEvts[k]); return stderrObj; },
     emit: (ev: string, ...args: any[]) => { (stderrEvts[ev] || []).forEach(f => f(...args)); return false; },
     end: () => {},
-    getColorDepth: () => ctx.terminal ? 24 : 1,
-    hasColors: (count?: number) => ctx.terminal ? (count ? count <= 16777216 : true) : false,
+    getColorDepth: () => 1,
+    hasColors: () => false,
     cursorTo: (x: number, y?: number, cb?: Function) => { if (cb) cb(); return true; },
     clearLine: (dir: number, cb?: Function) => { if (cb) cb(); return true; },
     moveCursor: (dx: number, dy: number, cb?: Function) => { if (cb) cb(); return true; },
     clearScreenDown: (cb?: Function) => { if (cb) cb(); return true; },
     writable: true,
     fd: 2,
-    getWindowSize: () => [ctx.terminal ? ctx.terminal.getSize().cols : 80, ctx.terminal ? ctx.terminal.getSize().rows : 24],
+    getWindowSize: () => [80, 24],
     listeners: (ev: string) => [...(stderrEvts[ev] || [])],
     listenerCount: (ev: string) => (stderrEvts[ev] || []).length,
     setMaxListeners: () => stderrObj,
@@ -323,11 +252,11 @@ function createStdin(ctx: CommandContext, _st: SharedState, processEvents: Recor
   let stdinRawMode = false;
   const stdinReadBuffer: string[] = [];
   const stdinObj: any = {
-    isTTY: !!ctx.terminal,
+    isTTY: false,
     fd: 0,
     on: (event: string, fn: Function) => {
       (stdinEvents[event] ??= []).push(fn);
-      if (!ctx.terminal && event === 'end' && !stdinEnded) {
+      if (event === 'end' && !stdinEnded) {
         stdinEnded = true;
         queueMicrotask(() => {
           if (ctx.stdin) {
@@ -358,70 +287,22 @@ function createStdin(ctx: CommandContext, _st: SharedState, processEvents: Recor
       return stdinObj;
     },
     emit: (event: string, ...args: any[]) => { (stdinEvents[event] || []).forEach(f => f(...args)); return false; },
-    resume: () => {
-      if (ctx.terminal && !stdinEnded) {
-        const forceExit = () => {
-          if (!_st.exitCalled) { _st.exitCode = 130; _st.exitCalled = true; }
-          _st.deferredExitResolve?.(_st.exitCode);
-        };
-        ctx.terminal.enterStdinPassthrough((data: string) => {
-          if (data.includes('\x03')) {
-            try { (processEvents['SIGINT'] || []).forEach(fn => fn('SIGINT')); } catch (_) {}
-          }
-          stdinReadBuffer.push(data);
-          (stdinEvents['data'] || []).forEach(f => f(data));
-          (stdinEvents['readable'] || []).forEach(f => f());
-        }, forceExit);
-      }
-      return stdinObj;
-    },
+    resume: () => stdinObj,
     pause: () => stdinObj,
     read: (_size?: number) => {
       if (stdinReadBuffer.length === 0) return null;
       return stdinReadBuffer.shift()!;
     },
-    setRawMode: (mode: boolean) => {
-      stdinRawMode = mode;
-      if (mode && ctx.terminal && !stdinEnded) {
-        _st.isInteractiveMode = true;
-        _st.ownsStdinPassthrough = true;
-        if (_st.scriptTimeoutId) { clearTimeout(_st.scriptTimeoutId); _st.scriptTimeoutId = null; }
-        const forceExit = () => {
-          if (!_st.exitCalled) { _st.exitCode = 130; _st.exitCalled = true; }
-          _st.deferredExitResolve?.(_st.exitCode);
-        };
-        ctx.terminal.enterStdinPassthrough((data: string) => {
-          if (data.includes('\x03')) {
-            try { (processEvents['SIGINT'] || []).forEach(fn => fn('SIGINT')); } catch (_) {}
-          }
-          stdinReadBuffer.push(data);
-          (stdinEvents['data'] || []).forEach(f => f(data));
-          (stdinEvents['readable'] || []).forEach(f => f());
-        }, forceExit);
-      } else if (!mode && ctx.terminal) {
-        ctx.terminal.exitStdinPassthrough();
-        if (_st.isInteractiveMode) {
-          setTimeout(() => {
-            if (!_st.exitCalled) {
-              _st.exitCode = 0;
-              _st.exitCalled = true;
-              _st.deferredExitResolve?.(0);
-            }
-          }, 500);
-        }
-      }
-      return stdinObj;
-    },
+    setRawMode: (mode: boolean) => { stdinRawMode = mode; return stdinObj; },
     get isRaw() { return stdinRawMode; },
     setEncoding: () => stdinObj,
     destroy: () => {
-      if (ctx.terminal) ctx.terminal.exitStdinPassthrough();
       stdinEnded = true;
       return stdinObj;
     },
     pipe: () => stdinObj,
     unpipe: () => stdinObj,
-    readable: !!ctx.terminal,
+    readable: false,
     ref: () => stdinObj,
     unref: () => stdinObj,
     listeners: (event: string) => [...(stdinEvents[event] || [])],

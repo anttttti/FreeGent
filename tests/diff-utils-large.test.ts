@@ -32,3 +32,17 @@ describe('tryMerge with two insertions at the same place (opencode cleanup disco
         expect(tryMerge('a\nb\nc\n', 'a\nX\nb\nc\n', 'a\nb\nY\nc\n')).toEqual({ merged: 'a\nX\nb\nY\nc\n', conflicts: false });   // different places
     });
 });
+
+// Day exploration D007: an insertion where the other side replaces or deletes the line at the same position gave back the old line, in one argument order.
+describe('tryMerge with an insertion at the start of the other side\'s replacement', () => {
+    const base = 'a\nb\nc';
+    const cases: Array<[string, string, string]> = [
+        ['replace + insert', 'a\nB\nc', 'a\nnew\nb\nc'],
+        ['delete + insert', 'a\nc', 'a\nnew\nb\nc'],
+    ];
+    for (const [name, one, other] of cases) it(`${name} merges the same in both orders`, async () => {
+        const { tryMerge } = await import('../diff-utils.ts');
+        const want = name.startsWith('replace') ? 'a\nnew\nB\nc' : 'a\nnew\nc';
+        for (const [x, y] of [[one, other], [other, one]]) expect(tryMerge(base, x, y)).toEqual({ merged: want, conflicts: false });
+    });
+});

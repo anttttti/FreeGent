@@ -16,8 +16,9 @@ export type Verification = 'no_change' | 'unverified' | 'verified' | 'failed_ver
 
 import { shellWrites } from './shell-writes.js';
 import { isTaskPath } from './task-status.js';
+import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 
-const WRITE_TOOLS = new Set(['write_file', 'replace_in_file', 'apply_patch', 'append_file', 'undo_write', 'delete_file']);
+const WRITE_TOOLS = new Set(WORKSPACE_WRITE_TOOLS);
 // Test runners, compilers and syntax checks. A script that merely ran is not a check.
 const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|(?:mvn|mvnw)\s+(?:-\S+\s+)*test|(?:gradle|gradlew)\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
 // Collection and import failures of the environment, not of the code under test.

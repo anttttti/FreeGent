@@ -267,20 +267,9 @@ class ProcProvider implements VirtualFSProvider {
   writeFile(): boolean { return false; }
 }
 
-/** /var/log virtual provider — reads from ServiceManager's log buffer */
-let _serviceManagerModule: { serviceManager: { getSyslog(): string } } | null = null;
-
+/** /var/log virtual provider — there are no services, so the log is empty */
 class VarLogProvider implements VirtualFSProvider {
-  private getSyslog(): string {
-    // Access cached module or read from window global
-    if (_serviceManagerModule) return _serviceManagerModule.serviceManager.getSyslog();
-    if (typeof window !== 'undefined' && (window as any).__serviceManager?.getSyslog) {
-      return (window as any).__serviceManager.getSyslog();
-    }
-    // Trigger lazy load for next time
-    import('./service-manager').then(m => { _serviceManagerModule = m; }).catch(() => {});
-    return '';
-  }
+  private getSyslog(): string { return ''; }
 
   handles(path: string): boolean {
     return path === '/var/log' || path === '/var/log/syslog' || path === '/var/log/journal';

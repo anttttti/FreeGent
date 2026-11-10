@@ -15,7 +15,7 @@ describe('guardOff', () => {
         expect(runtime.guardOff('no_edit_complete')).toBe(false);
         process.env.FG_DISABLE_GUARDS = 'review';
         expect(REVIEW_GUARDS.every(n => runtime.guardOff(n))).toBe(true);
-        expect(runtime.guardOff('scratch_only_edits')).toBe(false);   // older guards stay
+        expect(runtime.guardOff('broken_syntax')).toBe(false);   // older guards stay
     });
     it('really disables a completion gate, a probe rule and the call normalisation', async () => {
         const c: any = { text: 'Done.\nCOMPLETED', step: 3, loopMax: 20, softStopPending: false, ps: {}, workflowMode: true,

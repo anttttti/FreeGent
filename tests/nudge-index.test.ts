@@ -8,7 +8,7 @@ describe('nudge index', () => {
     const items = collectNudges();
     it('finds the nudges of the main loop, the worker loop and the completion gates', () => {
         const names = items.map((i: any) => i.name);
-        for (const n of ['tool_failure', 'stuck_detected', 'rewrite_loop', 'worker_stuck', 'scratch_only_edits', 'invented_data']) expect(names, n).toContain(n);
+        for (const n of ['tool_failure', 'stuck_detected', 'rewrite_loop', 'worker_stuck', 'broken_syntax', 'invented_data']) expect(names, n).toContain(n);
         expect(items.find((i: any) => i.name === 'invented_data').kind).toBe('gate');
     });
     it('every name is described and listed in docs/harness/nudges.md, and the doc lists no name that is gone', () => {

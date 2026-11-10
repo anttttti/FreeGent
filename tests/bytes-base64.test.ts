@@ -13,6 +13,15 @@ describe('shared base64 helpers', () => {
     });
 });
 
+describe('base64ToBytes, legacy chunks (day exploration D014)', () => {
+    it('decodes each padded chunk apart, so bytes after a short chunk keep their place', () => {
+        const chunk = (a: number[]) => btoa(String.fromCharCode(...a));
+        const legacy = chunk([1, 2, 3, 4, 5]) + chunk([6, 7, 8, 9]) + chunk([10, 11, 12]);   // 'AQIDBAU=' 'BgcICQ==' 'CgsM'
+        expect(legacy).toContain('=B');
+        expect(Array.from(base64ToBytes(legacy))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    });
+});
+
 describe('pyodide output encoding uses the shared text/binary rule', () => {
     it('text stays text; NUL or invalid UTF-8 becomes tagged base64; images are tagged', () => {
         expect(encodeOutputFile('a.txt', new TextEncoder().encode('héllo'))).toBe('héllo');

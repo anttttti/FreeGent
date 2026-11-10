@@ -7,6 +7,10 @@
  * This module is self-contained — no dependencies on NodeEnv or closure variables.
  */
 
+// utf16le, ucs2 and their dashed spellings are advertised by isEncoding, so they must really be two bytes per code unit (day exploration D012: they wrote UTF-8).
+const isUtf16 = (e?: string) => /^(utf-?16le|ucs-?2)$/i.test(e ?? '');
+const utf16Bytes = (s: string) => { const b = new Uint8Array(s.length * 2); for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); b[2 * i] = c & 255; b[2 * i + 1] = c >> 8; } return b; };
+
 export function createFakeBuffer(): any {
   function FakeBuffer(arg?: any, encodingOrOffset?: any, _length?: any): any {
     if (typeof arg === 'number') {
@@ -35,23 +39,24 @@ export function createFakeBuffer(): any {
       for (let i = 0; i < slice.length; i++) str += String.fromCharCode(slice[i]);
       return str;
     }
+    if (isUtf16(encoding)) { let str = ''; for (let i = 0; i + 1 < slice.length; i += 2) str += String.fromCharCode(slice[i] | (slice[i + 1] << 8)); return str; }
     return new TextDecoder().decode(slice);
   };
   FakeBuffer.prototype.write = function(str: string, offset?: number, length?: number, _encoding?: string) {
-    const bytes = new TextEncoder().encode(str);
+    const bytes = isUtf16(_encoding) ? utf16Bytes(str) : new TextEncoder().encode(str);
     const off = offset ?? 0;
     const len = Math.min(length ?? bytes.length, bytes.length, this.length - off);
     for (let i = 0; i < len; i++) this[off + i] = bytes[i];
     return len;
   };
   FakeBuffer.prototype.copy = function(target: Uint8Array, targetStart?: number, sourceStart?: number, sourceEnd?: number) {
-    const tStart = targetStart ?? 0;
-    const sStart = sourceStart ?? 0;
-    const sEnd = sourceEnd ?? this.length;
-    for (let i = 0; i < sEnd - sStart && tStart + i < target.length; i++) {
-      target[tStart + i] = this[sStart + i];
-    }
-    return Math.min(sEnd - sStart, target.length - tStart);
+    const tStart = Math.max(0, targetStart ?? 0);
+    const sStart = Math.max(0, sourceStart ?? 0);
+    const sEnd = Math.min(sourceEnd ?? this.length, this.length);
+    const n = Math.max(0, Math.min(sEnd - sStart, target.length - tStart));
+    // One set() from a view: it moves the bytes as if through a temporary, so overlapping ranges of one buffer copy correctly (a forward loop smeared them).
+    if (n) target.set(this.subarray(sStart, sStart + n), tStart);
+    return n;
   };
   FakeBuffer.prototype.trim = function() { return this.toString().trim(); };
   FakeBuffer.prototype.trimEnd = function() { return this.toString().trimEnd(); };
@@ -107,6 +112,8 @@ export function createFakeBuffer(): any {
       } else if (encoding === 'latin1' || encoding === 'binary' || encoding === 'ascii') {
         bytes = new Uint8Array(input.length);
         for (let i = 0; i < input.length; i++) bytes[i] = input.charCodeAt(i) & 0xff;
+      } else if (isUtf16(encoding)) {
+        bytes = utf16Bytes(input);
       } else {
         bytes = new TextEncoder().encode(input);
       }
@@ -146,7 +153,7 @@ export function createFakeBuffer(): any {
     const total = totalLength ?? list.reduce((n: number, b: Uint8Array) => n + b.length, 0);
     const result = new Uint8Array(total);
     let offset = 0;
-    for (const buf of list) { result.set(buf, offset); offset += buf.length; }
+    for (const buf of list) { if (offset >= total) break; result.set(buf.length > total - offset ? buf.subarray(0, total - offset) : buf, offset); offset += buf.length; }
     Object.setPrototypeOf(result, FakeBuffer.prototype);
     return result;
   };

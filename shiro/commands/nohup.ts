@@ -20,24 +20,10 @@ export const nohup: Command = {
       return 125;
     }
 
-    const toFile = !!ctx.terminal;
     let out = '', err = '';
     const code = await runSubcommand(ctx, args, s => { out += s; }, s => { err += s; })
       .catch((e: any) => { err += `nohup: ${e?.message ?? e}\n`; return 126; });
 
-    if (toFile) {
-      const path = ctx.fs.resolvePath('nohup.out', ctx.cwd);
-      try {
-        let existing = '';
-        try { existing = await ctx.fs.readFile(path) as any; if (typeof existing !== 'string') existing = new TextDecoder().decode(existing as any); } catch { /* new file */ }
-        await ctx.fs.writeFile(path, existing + out);
-        ctx.stderr += "nohup: ignoring input and appending output to 'nohup.out'\n";
-        out = '';
-      } catch (e: any) {
-        ctx.stderr += `nohup: cannot create nohup.out: ${e.message}\n`;
-        return 125;
-      }
-    }
     ctx.stdout += out;
     ctx.stderr += err;
     return code;

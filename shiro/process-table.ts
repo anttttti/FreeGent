@@ -2,8 +2,6 @@
  * Process Table - global registry for windowed processes.
  */
 
-import type { WindowTerminal } from './window-terminal';
-import type { ServerWindow } from './server-window';
 
 interface ShiroProcess {
   pid: number;
@@ -11,8 +9,6 @@ interface ShiroProcess {
   status: 'running' | 'exited' | 'killed';
   exitCode: number;
   startTime: number;
-  windowTerminal: WindowTerminal | null;
-  serverWindow: ServerWindow | null;
   promise: Promise<number>;
   kill: () => void;
   abortController: AbortController | null;
@@ -30,8 +26,6 @@ class ProcessTable {
       status: 'running',
       exitCode: 0,
       startTime: Date.now(),
-      windowTerminal: null,
-      serverWindow: null,
       promise: Promise.resolve(0), // replaced by spawn
       kill: () => {}, // replaced by spawn
       abortController: null,

@@ -19,7 +19,6 @@ export interface RequireDeps {
   fakeConsole: any;
   fakeProcess: any;
   FakeBuffer: any;
-  createExpressShim: () => any;
   createSqliteShim: () => any;
   createAutoStub: (modPath: string, target: any) => any;
 }
@@ -27,7 +26,7 @@ export interface RequireDeps {
 export function createRequireFunction(deps: RequireDeps): (modPath: string, fromDir: string) => any {
   const { ctx, fileCache, fileMtimes, moduleCache, pendingPromises, processEvents,
     getBuiltinModule, fakeConsole, fakeProcess, FakeBuffer,
-    createExpressShim, createSqliteShim, createAutoStub } = deps;
+    createSqliteShim, createAutoStub } = deps;
 
   function requireModule(modPath: string, fromDir: string): any {
     const result = _requireModule(modPath, fromDir);
@@ -49,12 +48,6 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
   }
 
   function _requireModule(modPath: string, fromDir: string): any {
-    // Check for Express shim — return the factory function itself
-    // (users do: const express = require('express'); const app = express();)
-    if (modPath === 'express') {
-      return createExpressShim;
-    }
-
     // Check for better-sqlite3 shim
     if (modPath === 'better-sqlite3') {
       return createSqliteShim();

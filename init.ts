@@ -188,13 +188,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Guard against module-timing races: if critical globals are missing on first load
     // (can happen when module scripts execute asynchronously), wait one tick and retry.
-    const _critFns = ['migrateOldStorage', 'getChatList', 'setActiveChatId', 'createNewChat'];
+    const _critFns = ['getChatList', 'setActiveChatId', 'createNewChat'];
     const _missing = _critFns.filter(fn => typeof (window as any)[fn] !== 'function');
     if (_missing.length) {
         await new Promise((r: any) => setTimeout(r, 50));
     }
-
-    if (typeof migrateOldStorage === 'function') migrateOldStorage();
 
     // Init active chat
     const list = typeof getChatList === 'function' ? getChatList() : [];

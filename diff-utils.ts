@@ -112,7 +112,7 @@ export function tryMerge(base: string, sideA: string, sideB: string): { merged: 
             // `import` twice with no conflict, or two different lines in an order nobody chose). Identical ones collapse below; different ones conflict.
             const baseOverlap = groupA.some(a => groupB.some(b => (a.bs < b.be && b.bs < a.be) || (a.bs === b.bs && a.be === a.bs && b.be === b.bs)));
             if (!baseOverlap) {
-                const allHunks = [...groupA, ...groupB].sort((x, y) => x.bs - y.bs);
+                const allHunks = [...groupA, ...groupB].sort((x, y) => x.bs - y.bs || +(x.be > x.bs) - +(y.be > y.bs));   // at one start an insertion goes first, or the cursor rewinds onto the old line it was replacing
                 pushAll(out, applyMergeHunks(bLines, allHunks, bi, spanEnd));
             } else {
                 const wantA = applyMergeHunks(bLines, groupA, bi, spanEnd);

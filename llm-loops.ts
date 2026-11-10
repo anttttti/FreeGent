@@ -1,8 +1,8 @@
 import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
-import { MAY_WRITE_TOOLS } from './tool-effects.js';
+import { MAY_WRITE_TOOLS, CONTENT_ARG_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, withoutNegatedClauses, shellWritePaths, noteAgentFiles, failStreakKind, failureSignature, sameErrorStreak, sameErrorNudge, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
+import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, withoutNegatedClauses, shellWritePaths, noteAgentFiles, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
 export { isScratchPath };
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
@@ -23,10 +23,9 @@ import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
 import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, openSyntaxErrors, isEmptyArgRefusal } from './tools.js';
-import { newVerification, isCheckCommand, noteStep as noteVerification, verdict as verificationVerdict } from './verification.js';
+import { newVerification, noteStep as noteVerification } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates } from './completion-gates.js';
-import { autoCheckEdited } from './qa.js';
 import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
@@ -569,7 +568,7 @@ export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     ledger.set(path, e);
 }
 
-async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, replNudge = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => number) | null }): Promise<Array<{name: string; args: any; result: any}>> {
+async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => number) | null }): Promise<Array<{name: string; args: any; result: any}>> {
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
         : null;
@@ -1241,7 +1240,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // Every nudge must land in THIS turn's history, which is `_s`'s event log — not the default
     // chat's (headless runs have their own session; the model saw none of their nudges from
     // 8028033 until emitNudge was bound here). The log is the only sink: emitNudge is told to
-    // leave history alone and the nudge is appended below. See docs/dead-code-audit-2026-07-25.md §4.5.
+    // leave history alone and the nudge is appended below.
     let _reminderSeq: number | undefined;   // the event of the last completion reminder pushed (identity, not position; see spliceReminder)
     const _emitNudge = (name: string, entry: any, opts: any = {}) => {
         emitNudge(name, entry, { suppressHistory: true, ...opts });
@@ -1289,9 +1288,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // turn: a module-level flag was consumed by a concurrent worker's request and, when a turn ended
     // between setting and sending, leaked a forced tool call into the next turn (review 2026-10-14).
     let _forceToolCall = !!forceToolCall;
-    const _failSigs: string[] = [];   // error signature of each failure in the current streak
-    let _sameErrorGraceUsed = false;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _garbledState = { count: 0 }, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0, _last400Key = '';
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0, _last400Key = '';
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -1522,24 +1519,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             _forceToolCall = true;
             return { do: 'continue' };
         }
-        // Quality gate before turn-state checks
-        const qc = _checkTextResponse(textContent, step, _loopMax, _garbledState);
-        if (qc) {
-            // Surface-replace the last assistant event with truncated content.
-            _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: qc.truncated, ...(m?.tool_calls?.length ? { tool_calls: m.tool_calls } : {}) }), 'truncation');
-            // Re-inject original task so the agent doesn't lose context on
-            // generation collapse (no fg-tasks/current.md in headless/Docker).
-            // Skipped after compaction: the pinned [TASK …] anchor already keeps it in view.
-            const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim());
-            if (_firstUser && !_firstUser.content.startsWith('[TASK')) {
-                const _taskSnippet = _originalTask(_histR(_s));
-                if (_taskSnippet) qc.nudge += `\n\nOriginal task:\n${_taskSnippet}`;
-            }
-            _emitNudge('quality_check', nudge(qc.nudge));
-            if (qc.action === 'bail')
-                return { do: 'return', value: await _gracefulSynthesis('persistent garbled output after 3 consecutive attempts', textContent) };
-            return { do: 'continue' };
-        }
         // Generic step-output validation, pre-state phase: deterministic gates first,
         // minimal LLM yes/no for what regexes can't decide (see _STEP_CHECKS).
         const _task = _originalTask(_histR(_s));
@@ -1574,13 +1553,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (_isComplete(textContent)) {
             const _firstUser = _histR(_s).find((m: any) => m.role === 'user' && typeof m.content === 'string');
             const _gate = await runCompletionGates({
-                text: textContent, step, loopMax: _loopMax, softStopPending, ps, workflowMode: !!_s.workflowMode,
+                text: textContent, step, loopMax: _loopMax, softStopPending, ps,
                 editedPaths: _editedPaths, shellWrites: _shellWrites, editsThisRun: !!_editsThisRun, editEvents: _editEvents,
-                verdict: verificationVerdict(_verif), stateChanged: _stateChanged,
+                stateChanged: _stateChanged,
                 reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
-                isScratchPath, envConfigEdits, brokenFiles: brokenFileReport, autoCheck: autoCheckEdited, shellCommands: _shellCmds,
+                isScratchPath, brokenFiles: brokenFileReport, shellCommands: _shellCmds,
                 planning: typeof getMode === 'function' && getMode() === 'cowork' && (() => { const calls = _histR(_s).flatMap((m: any) => m.tool_calls || []); return calls.some((t: any) => t.function?.name === 'write_file' && /fg-tasks\/\d+-/.test(String(t.function?.arguments))); })(),
                 noCriteria: async () => { const out: string[] = []; for (const f of await agentListFiles().catch(() => [])) { const p = f.name; if (/^fg-tasks\/\d+-/.test(p)) { try { if (!/^## Acceptance Criteria[ \t]*$/im.test(await agentReadFile(p))) out.push(p); } catch {} } } return out; },
                 taskText: async () => { try { let t = ''; for (const f of await agentListFiles()) if (/^fg-tasks\/\d+-/.test(f.name)) t += (await agentReadFile(f.name)).toLowerCase() + '\n'; return t; } catch { return ''; } },
@@ -1938,11 +1917,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                             // A plain-text answer has no calls to split across (a code-only task has no tools at all).
                             : 'Write the answer again as one complete, much shorter reply: only what was asked for, with no step-by-step reasoning and no comments inside code.'}`));
                 }
-                // Stalled mid-response: typically a very large tool call (a whole app in one
-                // write_file) that the provider buffers until done. Ask for smaller pieces.
-                if (e.streamStalled) {
-                    _emitNudge('output_stalled', _nudge('Your last response stalled mid-generation and was discarded — nothing was executed, and any tool call you were writing was lost. This usually means a single tool call was too large. Make the next call now, keeping it small: split a large file into several smaller files (e.g. index.html, style.css, game.js split by feature), each well under 300 lines — or, if append_file is available, write the first part and append the rest in further calls.'));
-                }
                 // withRetry already backed off (retry.ts EMPTY_REPLY_ATTEMPTS, same delays as any transient
                 // failure). A whole round that still ends empty twice means the endpoint is not answering.
                 if (!e.outputCapHit && !e.streamStalled && ++_emptyStreak >= _MAX_EMPTY_STREAK)
@@ -2054,7 +2028,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         const { usage, _maxTokens, ...msg } = message as any;
         _lastMaxTokensSent = _maxTokens ?? 0;
         // Capture raw content for hallucinated-call detection before _stripThinking removes it.
-        const _rawMsgContent = typeof msg.content === 'string' ? msg.content : '';
         if (typeof msg.content === 'string') msg.content = _stripThinking(msg.content) || null;
         // Event log append: the sole write of the assistant message (a fn-tag model's request
         // projection drops tool_calls, see fnTagMessages).
@@ -2089,66 +2062,32 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
 
         let calls = message.tool_calls || [];
 
-        // Detect hallucinated self-completed tool calls (model writes the call AND fabricates the
-        // result as text, bypassing actual tool execution). _stripThinking removed the block from
-        // history; emit a targeted nudge so the model uses native function calling instead.
-        if (!calls.length && /<tool_call>[\s\S]*?<tool_name>/i.test(_rawMsgContent)) {
-            sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: _rawMsgContent, kind: 'hallucinated_tool_call' });
-            _emitNudge('bad_tool_format', _nudge('You output a tool call containing a fabricated result — the tool was NOT actually executed and the result you wrote was invented. Use native function calling: emit a proper tool call via the JSON schema. Do NOT write tool calls as XML text or include any <result> block.'));
-        }
-
-        // XML pseudo-call repair: model emitted <search_workspace>{…} style text instead of
-        // proper tool_calls (primed by angle-bracket context injection). Parse and execute as
-        // real calls; log with kind:'xml_pseudo_call_repaired' for corpus analysis.
-        if (!calls.length) {
-            const _xmlCalls = _repairXmlPseudoCalls(textContent, AGENT_TOOL_NAMES) ?? _repairLongcatPseudoCalls(textContent, AGENT_TOOL_NAMES);
-            if (_xmlCalls) {
-                const _synCalls = _xmlCalls.map((c, i) => ({
-                    id: `xml_${step}_${i}`, type: 'function' as const,
-                    function: { name: c.name, arguments: JSON.stringify(c.args) },
-                }));
-                sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'xml_pseudo_call_repaired', tool_calls: _synCalls });
-                thinkTask.append(`\n[repair: xml_pseudo_call → ${_xmlCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: m?.content ?? null, tool_calls: _synCalls }), 'xml-repair');
-                calls = _synCalls;
-            }
-        }
-
-        // Bracket pseudo-call repair: model emitted [[{"name":"…","parameters":{…}}]] style
-        // text instead of proper tool_calls (nemotron-3-ultra-free and similar models that
-        // don't reliably use native function calling). Parse and execute as real calls;
-        // log with kind:'bracket_pseudo_call_repaired' for corpus analysis.
-        if (!calls.length) {
-            const _brCalls = _repairBracketPseudoCalls(textContent, AGENT_TOOL_NAMES);
-            if (_brCalls) {
-                const _synCalls = _brCalls.map((c, i) => ({
-                    id: `bracket_${step}_${i}`, type: 'function' as const,
-                    function: { name: c.name, arguments: JSON.stringify(c.args) },
-                }));
-                sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'bracket_pseudo_call_repaired', tool_calls: _synCalls });
-                thinkTask.append(`\n[repair: bracket_pseudo_call → ${_brCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: m?.content ?? null, tool_calls: _synCalls }), 'bracket-repair');
-                calls = _synCalls;
-            }
-        }
-
-        // Inline pseudo-call repair: the whole reply is `read_file("x")` or
-        // {"tool":"read_file","path":"x"} (glm5.3-flash ended turns with these as the answer,
-        // 2026-09-29). The text is only the call, so history keeps the real call without it —
-        // the model then sees itself using native calls.
-        if (!calls.length) {
-            const _order = Object.fromEntries((activeTools?.() ?? []).map((t: any) => [t.name, Object.keys(t.parameters?.properties ?? {})]));
-            const _inCalls = _repairInlinePseudoCalls(textContent, AGENT_TOOL_NAMES, _order);
-            if (_inCalls) {
-                const _synCalls = _inCalls.map((c, i) => ({
-                    id: `inline_${step}_${i}`, type: 'function' as const,
-                    function: { name: c.name, arguments: JSON.stringify(c.args) },
-                }));
-                sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: 'inline_pseudo_call_repaired', tool_calls: _synCalls });
-                thinkTask.append(`\n[repair: inline_pseudo_call → ${_inCalls.map(c => c.name).join(', ')}]\n`, 'warn');
-                _replaceLastAssistantSurface(_s, step, () => ({ role: 'assistant', content: null, tool_calls: _synCalls }), 'inline-repair');
-                calls = _synCalls;
-            }
+        // Pseudo-call repair: the model wrote its call as text instead of a native tool call. Parse it and run it as a real call, logged as
+        // kind:'<name>_pseudo_call_repaired' for corpus analysis.
+        //  xml: <search_workspace>{…} text (primed by angle-bracket context injection).
+        //  bracket: [[{"name":"…","parameters":{…}}]] (models that do not reliably use native function calling).
+        //  inline: the whole reply is `read_file("x")` or {"tool":"read_file","path":"x"} (glm5.3-flash, 2026-09-29); the text is only the call, so
+        //  history keeps the real call without it and the model then sees itself using native calls.
+        const _repairs: Array<[string, () => Array<{ name: string; args: any }> | null | undefined, boolean]> = [
+            ['xml', () => _repairXmlPseudoCalls(textContent, AGENT_TOOL_NAMES) ?? _repairLongcatPseudoCalls(textContent, AGENT_TOOL_NAMES), true],
+            ['bracket', () => _repairBracketPseudoCalls(textContent, AGENT_TOOL_NAMES), true],
+            ['inline', () => {
+                const order = Object.fromEntries((activeTools?.() ?? []).map((t: any) => [t.name, Object.keys(t.parameters?.properties ?? {})]));
+                return _repairInlinePseudoCalls(textContent, AGENT_TOOL_NAMES, order);
+            }, false],
+        ];
+        for (const [kind, find, keepContent] of _repairs) {
+            if (calls.length) break;
+            const found = find();
+            if (!found) continue;
+            const _synCalls = found.map((c, i) => ({
+                id: `${kind}_${step}_${i}`, type: 'function' as const,
+                function: { name: c.name, arguments: JSON.stringify(c.args) },
+            }));
+            sessionSaveRawMessage?.(activeChatId, { role: 'assistant', content: textContent, kind: `${kind}_pseudo_call_repaired`, tool_calls: _synCalls });
+            thinkTask.append(`\n[repair: ${kind}_pseudo_call → ${found.map(c => c.name).join(', ')}]\n`, 'warn');
+            _replaceLastAssistantSurface(_s, step, m => ({ role: 'assistant', content: keepContent ? (m?.content ?? null) : null, tool_calls: _synCalls }), `${kind}-repair`);
+            calls = _synCalls;
         }
 
         // Log no-tool-call turns; tool-call turns are logged after _exec with results.
@@ -2200,7 +2139,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
 
         // Cap per-turn tool calls — see _MAX_CALLS_PER_TURN comment above.
-        let _callsOverflowNudge: string | null = null;
         if (calls.length > _MAX_CALLS_PER_TURN) {
             _overflowStreak++;
             if (_overflowStreak >= 3) {
@@ -2208,7 +2146,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // rather than looping indefinitely (mirrors the step-budget exhaustion path).
                 return await _gracefulSynthesis('repeated tool-call overflow', textContent);
             }
-            _callsOverflowNudge = `Your response included ${calls.length} tool calls; only the first ${_MAX_CALLS_PER_TURN} ran. Do not assume the remaining ${calls.length - _MAX_CALLS_PER_TURN} executed — they did not. In your next response issue ONLY the next batch of calls (≤${_MAX_CALLS_PER_TURN}); do not restate completed work or plan ahead.`;
             calls.length = _MAX_CALLS_PER_TURN;
             // The assistant message in the history still lists every call the model made. Only the first ones get results, so
             // the rest would be calls with no result in the next request, which a checking endpoint rejects (HTTP 400 on each
@@ -2266,7 +2203,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 repeatCache: _repeatCache,
                 onRepeat: (name) => _repeatedNames.push(name),
                 replFails: _s._replaceFailures,
-                replNudge: _s._replaceNudgeSent,
             }));
         // Stopped while the tools ran: nothing of this step may reach the history (the next turn may already be running).
         if (_myAbort?.signal.aborted) { toolTasks?.forEach?.((t: any) => t?.abort?.()); return '*(break)*'; }   // a soft stop (pause after the step) still records the step
@@ -2295,8 +2231,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
         _noteEmptyArgSteps(ep, _refused ? [] : _exec, (fb) => { activeEndpoint = fb; _sessionFallback = fb; });   // a repeat refusal is neutral
         const _failedThisStep = consecutiveToolFails > _prevToolFails;
-        if (consecutiveToolFails === 0) _failSigs.length = 0;
-        for (const r of _exec) if (failStreakKind(r.name, r.result, _READ_ONLY_TOOLS, r.args) === 'fail') _failSigs.push(failureSignature(r.result));
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
             promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
@@ -2310,16 +2244,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         _noteStopAttempts(_exec);   // before any stop below, so the step that ends the run is included
         _updateLogBadge?.();
         // Checked after the log row, so the step that ends the run is in the step log.
-        // Same error every time: one directed nudge and 5 more attempts before the stop (once per turn).
-        let _sameErrorNudge: string | null = null;
-        if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS && !_sameErrorGraceUsed) {
-            const _sig = sameErrorStreak(_failSigs);
-            if (_sig) {
-                _sameErrorGraceUsed = true;
-                _sameErrorNudge = sameErrorNudge(_sig, consecutiveToolFails);
-                consecutiveToolFails = _MAX_CONSEC_TOOL_FAILS - 5;
-            }
-        }
         if (consecutiveToolFails >= _MAX_CONSEC_TOOL_FAILS) return await _gracefulSynthesis(`${_MAX_CONSEC_TOOL_FAILS} consecutive tool failures with no progress`, textContent);
         const results = _exec.map((r, i) => ({ tc: calls[i], name: r.name, args: r.args, result: r.result }));
         _noteStopOutputs(results);
@@ -2434,7 +2358,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
         // Track successful file edits — feeds the completion gate ('edit' condition).
         // Exclude fg-tasks/ writes (e.g. fg-tasks/current.md setup) — those aren't code edits.
-        if (results.some(r => (r.name === 'write_file' || r.name === 'replace_in_file' || r.name === 'apply_patch' || r.name === 'append_file') && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
+        if (results.some(r => CONTENT_ARG_TOOLS.has(r.name) && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
             _editsThisRun = true;
         // What workers committed is an edit of this run too (codex R786, R787).
         if (!_editsThisRun && results.some(r => r.name === 'run_workers' && !r.result?.error && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !String(p).startsWith('fg-tasks/')))))
@@ -2486,7 +2410,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Phase contract: this is the ONLY place user-role guidance may be appended
         // after tool execution — tool results are already in history above, so the
         // assistant tool_calls → role:'tool' pairing is intact.
-        if (_callsOverflowNudge)               _emitNudge('calls_overflow', _nudge(_callsOverflowNudge));
         if (_stepsLeftNudge)                   _emitNudge('steps_left', _nudge(_stepsLeftNudge));
         if (_cycleNudge)                       _emitNudge('dup_cycle', _nudge(_cycleNudge));
         // stuck_detected: 3 consecutive identical full-result signatures — the model is in a
@@ -2495,7 +2418,6 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // and leave repeating the call as the only move. The repeat guard ends real loops.
         // Do NOT _gracefulSynthesis here: for SWE tasks !_editsThisRun is true throughout the
         // entire exploration phase, so early termination kills tasks that would have recovered.
-        if (_sameErrorNudge)                  _emitNudge('same_error', _nudge(_sameErrorNudge));
         else if (stuckNudge)                  _emitNudge('stuck_detected', _nudge(stuckNudge));
         else if (envFailNudge)                _emitNudge('env_failure', _nudge(envFailNudge));
         else if (consecutiveToolFails >= 5 && _failedThisStep) _emitNudge('tool_failures', _nudge('Multiple consecutive tool calls are failing. Diagnose the root cause before retrying, or end with BLOCKED: if you cannot proceed.'));

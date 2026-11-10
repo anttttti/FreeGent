@@ -131,19 +131,6 @@ html, body {
 .rail-divider { width: 28px; height: 1px; background: var(--border); margin: 4px 0; flex-shrink: 0; }
 .left-rail.expanded .rail-divider { width: calc(100% - 4px); margin: 4px 2px; }
 
-.agent-tab-toggle {
-    position: absolute; top: 3px; right: 3px;
-    width: 13px; height: 13px;
-    background: none; border: none;
-    color: var(--muted);
-    cursor: pointer; font-size: 7px;
-    display: flex; align-items: center; justify-content: center;
-    border-radius: 3px; padding: 0;
-    transition: color 0.12s;
-}
-.agent-tab-toggle:hover { color: var(--text); background: var(--surface2); }
-.agent-tab-toggle.agent-tab-stop { color: #ef5350; }
-
 /* ── Rail sidebar (chat history) ── */
 .rail-sidebar {
     width: 0; overflow: hidden;
@@ -154,20 +141,6 @@ html, body {
     display: flex; flex-direction: column;
 }
 .rail-sidebar.open { width: 270px; border-right-width: 1px; }
-
-.rail-sidebar-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px 8px;
-    font-size: 13px; font-weight: 600; color: var(--text);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0; white-space: nowrap;
-}
-.rail-sidebar-close {
-    background: none; border: none; color: var(--muted); cursor: pointer;
-    display: flex; align-items: center; padding: 3px; border-radius: 4px;
-    transition: color 0.1s, background 0.1s;
-}
-.rail-sidebar-close:hover { color: var(--text); background: var(--surface2); }
 
 /* ── File tabs (inside content, hidden when empty) ── */
 #tab-bar {
@@ -235,26 +208,7 @@ html, body {
     z-index: 5;
     min-width: 24px; min-height: 24px;   /* a mouse target: the bare glyph was 13x14 px */
 }
-
-/* Background agent indicator */
-.bg-agents-indicator {
-    display: none; font-size: 12px; color: var(--accent); margin-left: 4px;
-    animation: bg-spin 1.2s linear infinite; cursor: default;
-}
 @keyframes bg-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-.chat-toolbar-btn {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    color: var(--muted);
-    font-size: 12px;
-    padding: 3px 9px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.15s;
-}
-.chat-toolbar-btn:hover { background: #f0f0f0; color: var(--text); }
 
 .toolbar-divider {
     width: 1px; height: 18px;
@@ -689,7 +643,6 @@ html, body {
 .picker-model-item:hover { background: var(--surface2); }
 .picker-model-item.picker-active { font-weight: 600; color: var(--accent); }
 .picker-model-item:focus-visible { background: var(--surface2); outline: 2px solid var(--accent); outline-offset: -2px; }
-.picker-model-provider { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .picker-all-link { color: var(--accent); font-size: 12px; border-top: 1px solid var(--border); }
 .picker-note { padding: 8px 14px; font-size: 12px; color: var(--muted); max-width: 320px; white-space: normal; }
 
@@ -974,7 +927,6 @@ html, body {
 .ws-btn:hover { border-color: var(--border); background: #f0f0f0; }
 .ws-btn-del:hover { color: #d32f2f; border-color: #ffcdd2; background: #fff5f5; }
 .ws-btn-play:hover { color: #2e7d32; border-color: #c8e6c9; background: #f1f8e9; }
-.ws-badge { font-size: 10px; background: #e8f0fe; color: var(--accent); border-radius: 3px; padding: 1px 5px; }
 .ws-trash-zone { margin: 4px 8px 6px; padding: 5px 12px; border: 1px dashed #ddd; border-radius: 5px; font-size: 11px; color: #bbb; text-align: center; cursor: default; transition: all 0.15s; flex-shrink: 0; }
 .ws-trash-zone.drag-over { border-color: #d32f2f; background: #fff5f5; color: #d32f2f; }
 .ws-rubber-band { position: fixed; background: rgba(74,124,247,0.08); border: 1px solid rgba(74,124,247,0.4); pointer-events: none; z-index: 9999; display: none; }
@@ -1015,8 +967,6 @@ html, body {
 /* ── Settings panel ── */
 .settings-panel-scroll { flex: 1; overflow-y: auto; padding: 24px; }
 .settings-panel-inner { max-width: 720px; }
-.settings-panel-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; color: var(--text); }
-.settings-panel-subtitle { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 
 .settings-tabs { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
 .settings-tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 6px 14px; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer; transition: all 0.15s; }
@@ -1036,8 +986,6 @@ html, body {
     border-radius: 6px; padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.15); opacity: 0; visibility: hidden; transition: opacity 0.1s; pointer-events: none; }
 .guest-access-status:hover::after, .guest-access-status:focus-visible::after { opacity: 1; visibility: visible; }
 .guest-access-status.guest-access-on { color: #2e9e5b; border-color: currentColor; }
-.provider-radios { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.provider-radio-label { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
 .settings-input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; color: var(--text); background: var(--input-bg); outline: none; font-family: inherit; transition: border-color 0.15s; margin-bottom: 8px; }
 .settings-input:focus { border-color: var(--accent); }
 .settings-input-label { font-size: 12px; color: var(--muted); margin-bottom: 3px; display: block; }
@@ -1054,18 +1002,9 @@ html, body {
 .agent-hint { margin-left: 20px; margin-top: 0; }
 .btn-save { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 20px; font-size: 13px; cursor: pointer; font-weight: 600; }
 .btn-save:hover { background: var(--accent-dark); }
-
-/* ── Model checklist ── */
-.model-checklist-group { margin-bottom: 14px; }
-.model-checklist-header { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
-.model-checklist-item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 2px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
-.model-checklist-item:last-child { border-bottom: none; }
-.model-checklist-item input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; cursor: pointer; }
 .model-item-info { flex: 1; min-width: 0; }
 .model-item-name { font-size: 13px; color: var(--text); font-weight: 500; }
 .model-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.model-cap-badge { display: inline-block; font-size: 10px; background: #e8f0fe; color: var(--accent); border-radius: 3px; padding: 1px 5px; margin-right: 2px; }
-.model-cap-badge-think { background: #fff3e0; color: #e65100; }
 
 /* ── Tools two-column checklist ── */
 .tools-checklist-header,
@@ -1076,10 +1015,6 @@ html, body {
 .tools-checklist-col-hdr { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; text-align: center; }
 .tools-checklist-cell   { display: flex; justify-content: center; align-items: center; padding: 2px 0; }
 .tools-checklist-cell input[type="checkbox"] { cursor: pointer; }
-
-/* ── Skills ── */
-.skills-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); flex-shrink: 0; }
-.skills-toolbar-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .skills-list { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 .skills-empty { color: var(--muted); font-size: 13px; line-height: 1.6; padding: 8px 0; }
 .skills-empty code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
@@ -1091,9 +1026,6 @@ html, body {
 .skill-toggle { font-size: 11px; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
 .skill-toggle-on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .skill-toggle:hover:not(.skill-toggle-on) { border-color: var(--accent); color: var(--accent); }
-
-/* ── Skill editor (Settings → Skills checklist) ── */
-.skill-checklist-item { cursor: default; align-items: flex-start; }
 .skill-trigger-wrap { margin-top: 6px; }
 .skill-trigger-edit-btn { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .skill-trigger-edit-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -1223,41 +1155,6 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #aaa; }
-
-/* ── v86 Terminal tab ── */
-.v86-terminal-wrap { display: flex; flex-direction: column; height: 100%; background: #0d1117; }
-
-.v86-terminal-topbar {
-    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
-    background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; flex-wrap: wrap;
-}
-.v86-terminal-title  { font-size: 13px; font-weight: 600; color: #e6edf3; }
-.v86-terminal-status-badge { font-size: 11px; color: #7c8086; }
-.v86-terminal-actions { margin-left: auto; display: flex; gap: 5px; flex-wrap: wrap; }
-.v86-terminal-actions .ws-action-btn {
-    background: #21262d; border-color: #30363d; color: #c9d1d9; font-size: 11px;
-}
-.v86-terminal-actions .ws-action-btn:hover { background: #30363d; color: #fff; border-color: #58a6ff; }
-
-.v86-terminal-output {
-    flex: 1; overflow-y: auto; padding: 10px 14px; margin: 0;
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    font-size: 12px; line-height: 1.55; color: #e6edf3;
-    background: #0d1117; white-space: pre-wrap; word-break: break-all;
-    min-height: 0;
-}
-
-.v86-terminal-input-row {
-    display: flex; align-items: center; gap: 6px; padding: 6px 10px;
-    background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0;
-}
-.v86-terminal-caret { color: #58a6ff; font-size: 13px; flex-shrink: 0; }
-.v86-terminal-input {
-    flex: 1; background: transparent; border: none; outline: none;
-    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
-    color: #e6edf3; caret-color: #58a6ff;
-}
-.v86-terminal-input::placeholder { color: #484f58; }
 
 /* ── Tasks toolbar: agent controls ─────────────────────────────────────────── */
 .tasks-toolbar-sep { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; margin: 0 4px; }
@@ -1403,14 +1300,6 @@ html, body {
     font-size: 12px;
 }
 .model-cooldown-popup.visible { display: block; }
-.mcp-section {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: var(--muted);
-    padding: 4px 8px 2px;
-    letter-spacing: 0.04em;
-}
 .mcp-row {
     display: flex;
     justify-content: space-between;
@@ -1461,7 +1350,6 @@ html, body {
 .hdr-model-display-wrap:hover { background: var(--hover); }
 .hdr-model-icon { opacity: 0.5; font-size: 11px; }
 .hdr-model-text { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-.hdr-worker-text { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 .hdr-model-cooling { color: #e07b39 !important; }
 .hdr-model-display-wrap.hdr-model-warming { background: rgba(220,180,0,0.22) !important; border-color: rgba(200,160,0,0.5) !important; }
 @keyframes hdr-warmup-fade {
@@ -1543,10 +1431,6 @@ html, body {
 .model-combo-option:hover, .model-combo-option.combo-kbd { background: var(--accent); color: #fff; }
 /* Inline-add mode: label + button side-by-side, no overflow clipping on the row */
 .model-combo-option-add { display: flex; align-items: center; gap: 6px; overflow: visible; padding: 3px 6px 3px 10px; }
-.model-combo-option-add .model-combo-option-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-combo-add-btn { flex-shrink: 0; padding: 1px 8px; font-size: 11px; border: 1px solid currentColor; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; opacity: 0.7; }
-.model-combo-option-add:hover .model-combo-add-btn,
-.model-combo-option-add.combo-kbd .model-combo-add-btn { opacity: 1; }
 .model-combo-option mark { background: transparent; color: inherit; font-weight: 700; text-decoration: underline; }
 .model-combo-sep { height: 1px; background: var(--border); margin: 2px 0; }
 .model-combo-empty { padding: 6px 10px; font-size: 12px; color: var(--muted); font-style: italic; }
@@ -1681,7 +1565,7 @@ html, body {
     pointer-events: none;
 }
 .chat-drop-overlay.active { display: flex; }
-.tool-output-img, .chat-media-img {
+.chat-media-img {
     display: block; max-width: 100%; max-height: 400px; border-radius: 6px;
     border: 1px solid var(--border); margin: 6px 0; object-fit: contain;
 }
@@ -1752,17 +1636,11 @@ html, body {
     .left-rail.mobile-open.expanded .rail-expand-btn { display: flex; }
 
     /* Main content fills remaining space */
-    .main-content, .tab-content { flex: 1; min-width: 0; }
+    .tab-content { flex: 1; min-width: 0; }
 
     /* Chat panel adjustments */
     .chat-panel { flex-direction: column; }
     .chat-messages { padding: 48px 10px 10px; } /* space for hamburger when rail is closed */
-
-    /* Input composer */
-    .chat-input-bar {
-        position: sticky; bottom: 0;
-        padding-bottom: env(safe-area-inset-bottom, 8px);
-    }
 
     /* ── Mobile chat input — textarea full-width on top, buttons below ── */
     .chat-input-area {
@@ -1930,9 +1808,6 @@ select:focus:not(:focus-visible) { outline: none; }
     --shadow:     0 2px 8px rgba(0,0,0,0.4);
     /* aliases auto-follow their referenced vars */
 }
-
-/* Targeted overrides for elements with hardcoded light colours */
-[data-theme="dark"] .chat-toolbar-btn:hover          { background: var(--surface2); }
 [data-theme="dark"] .chat-act-btn                    { color: var(--muted); }
 [data-theme="dark"] .chat-act-btn:hover              { background: rgba(74,124,247,0.15); border-color: var(--accent); }
 
@@ -1959,11 +1834,6 @@ select:focus:not(:focus-visible) { outline: none; }
 [data-theme="dark"] .fg-sdiff-del-cell               { background: rgba(220,50,47,0.18); }
 [data-theme="dark"] .fg-sdiff-ins,
 [data-theme="dark"] .fg-sdiff-ins-cell               { background: rgba(46,160,67,0.18); }
-
-/* Settings / config tabs */
-[data-theme="dark"] .model-cap-badge                              { background: rgba(74,124,247,0.2); }
-[data-theme="dark"] .model-cap-badge-think                        { background: rgba(230,81,0,0.2); color: #f59342; }
-[data-theme="dark"] .model-checklist-item                         { border-bottom-color: var(--border); }
 [data-theme="dark"] .skill-card-active                            { background: rgba(74,124,247,0.12); }
 [data-theme="dark"] .skill-ac-item:hover,
 [data-theme="dark"] .skill-ac-item.selected                       { background: var(--surface2); }
@@ -2080,9 +1950,6 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 @media (max-width: 340px), (max-height: 340px) {
     #chat-welcome { top: calc(50% - 170px); }
 }
-
-/* Narrow screens: a select sized to its widest option ran past a 280 px panel; Windows high-contrast mode drew no focus cue on the composer. */
-.settings-row select.settings-input, .settings-row input.settings-input { max-width: 100%; }
 @media (forced-colors: active) {
     #agent-input:focus, #agent-input:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }

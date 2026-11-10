@@ -432,13 +432,16 @@ export function pinnedFetch(serverPort: number, idleMs = POST_IDLE_MS): typeof f
                 const nullBody = status === 204 || status === 205 || status === 304;
                 // Like native fetch, hand over the decoded body: a server that ignores the identity request and compresses anyway
                 // otherwise reaches the page as raw bytes with no Content-Encoding (explorations 2026-11-10 N001).
-                const enc = String(res.headers['content-encoding'] ?? '').trim().toLowerCase();
-                const unzip = enc === 'gzip' || enc === 'x-gzip' ? createGunzip() : enc === 'br' ? createBrotliDecompress() : enc === 'deflate' ? createInflate() : null;
+                // A list ("gzip, br") was applied left to right, so it is undone right to left; one coding this cannot undo leaves the body and header as sent.
+                const codings = String(res.headers['content-encoding'] ?? '').toLowerCase().split(',').map(c => c.trim()).filter(c => c && c !== 'identity');
+                const maker = (c: string) => c === 'gzip' || c === 'x-gzip' ? createGunzip : c === 'br' ? createBrotliDecompress : c === 'deflate' ? createInflate : null;
+                const unzips = codings.length && codings.every(maker) ? codings.reverse().map(c => maker(c)!()) : [];
                 let body: Readable = res;
-                if (unzip && !nullBody) {
-                    res.pipe(unzip); res.on('error', e => unzip.destroy(e)); unzip.on('error', () => { /* reported to the reader below */ });
+                if (unzips.length && !nullBody) {
+                    let prev: Readable = res;
+                    for (const u of unzips) { prev.pipe(u); prev.on('error', e => u.destroy(e)); u.on('error', () => { /* reported to the reader below */ }); prev = u; }
                     h.delete('content-encoding'); h.delete('content-length');
-                    body = unzip;
+                    body = prev;
                 }
                 resolve(new Response(nullBody ? null : (Readable.toWeb(body) as any), { status, headers: h }));
             });

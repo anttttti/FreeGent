@@ -1,5 +1,5 @@
 // types.ts — shared public types for the FreeGent harness adapter interface.
-// §4 of agentharness_migration.md
+// Types of the Director loop (loop-director.ts)
 
 /** Signal returned by runAgentTurn() / generate() describing why the turn ended. */
 export type FinishSignal =

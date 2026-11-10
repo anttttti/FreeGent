@@ -85,7 +85,7 @@ export const ls: Command = {
 
     // Not writing to a terminal (a pipe, a file, the agent's execute_code): one name per line,
     // like GNU ls.
-    if (!ctx.terminal) onePerLine = true;
+    onePerLine = true;
 
     const { flags, positional } = parseArgs(processedArgs);
     const paths = positional.length > 0 ? positional : ["."];
@@ -131,7 +131,7 @@ export const ls: Command = {
       } else if (onePerLine) {
         for (const entry of filtered) {
           const name = colorize(entry.name, entry, useColor);
-          const suffix = classify ? typeIndicator(entry) : (entry.type === 'dir' && ctx.terminal ? '/' : '');
+          const suffix = classify ? typeIndicator(entry) : '';
           results.push(name + suffix);
         }
       } else {

@@ -21,12 +21,11 @@ export function createFakeConsole(
   const out = (s: string) => {
     if (_st.exitDone) return;
     stdoutBuf.push(s);
-    if (ctx.terminal) { _st.streamedToTerminal = true; ctx.terminal.writeOutput(s.replace(/\n/g, '\r\n')); }
   };
   const err = (s: string) => { if (!_st.exitDone) stderrBuf.push(s); };
   const fakeConsole: any = {
     ...nodeConsole(out, err),
-    clear: () => { if (ctx.terminal) ctx.terminal.writeOutput('\x1b[2J\x1b[H'); },
+    clear: () => {},
   };
 
   // Console constructor — Node.js API: new console.Console(stdout, stderr)

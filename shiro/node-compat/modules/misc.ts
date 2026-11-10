@@ -77,14 +77,14 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
 
     case 'tty':
     case 'node:tty': return {
-      isatty: (fd?: number) => !!ctx.terminal,
-      ReadStream: class ReadStream { constructor() {} setRawMode() { return this; } isTTY = !!ctx.terminal; },
+      isatty: (fd?: number) => false,
+      ReadStream: class ReadStream { constructor() {} setRawMode() { return this; } isTTY = false; },
       WriteStream: class WriteStream {
-        isTTY = !!ctx.terminal;
-        get columns() { return ctx.terminal ? ctx.terminal.getSize().cols : 80; }
-        get rows() { return ctx.terminal ? ctx.terminal.getSize().rows : 24; }
-        getColorDepth() { return ctx.terminal ? 24 : 1; }
-        hasColors(count?: number) { return ctx.terminal ? (count ? count <= 16777216 : true) : false; }
+        isTTY = false;
+        get columns() { return 80; }
+        get rows() { return 24; }
+        getColorDepth() { return 1; }
+        hasColors() { return false; }
         getWindowSize() { return [this.columns, this.rows]; }
         cursorTo() {}
         moveCursor() {}

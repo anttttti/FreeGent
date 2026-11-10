@@ -10,7 +10,7 @@ import { chatSession, clearChatHistory, setChatHistory, getChatHistory } from '.
 // A2: per-session state. createSession() gives a fresh isolated session; defaultSession
 // proxies the module-level globals so all existing call sites work without changes.
 //
-// Session event log fields (see docs/session-event-log-migration.md):
+// Session event log fields:
 //   _session:  the Session whose event log is this agent's history; set by registry.create() in
 //              headless-runner / workers. For defaultSession it is the active chat's Session
 //              (chat-history.ts), which also holds the chat between turns.

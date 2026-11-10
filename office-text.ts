@@ -74,7 +74,11 @@ function canonicalPrefixes(xml: string): string {
     for (const m of xml.matchAll(/xmlns:([A-Za-z_][\w.-]*)="([^"]*)"/g)) {
         for (const [canon, uris] of Object.entries(OOXML_NS)) if (uris.includes(m[2]) && m[1] !== canon) renames.push([m[1], canon]);
     }
-    for (const [alias] of renames) xml = xml.replace(new RegExp(`(<\\/?|\\s)${alias}:(?=[\\w.-])`, 'g'), `$1\u0001${alias}\u0001:`);
+    // Only inside tags, and outside their quoted values: a literal "q:item" in the text (or an attribute value) is the document's own words.
+    for (const [alias] of renames) {
+        const name = new RegExp(`("[^"]*"|'[^']*')|(<\\/?|\\s)${alias}:(?=[\\w.-])`, 'g');
+        xml = xml.replace(/<[^!?](?:[^>"']|"[^"]*"|'[^']*')*>/g, tag => tag.replace(name, (m, quoted, pre) => quoted ?? `${pre}\u0001${alias}\u0001:`));
+    }
     for (const [alias, canon] of renames) xml = xml.split(`\u0001${alias}\u0001:`).join(`${canon}:`);
     return xml;
 }

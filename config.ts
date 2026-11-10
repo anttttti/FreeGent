@@ -10,6 +10,8 @@ import { resolveProxy, getDevKey } from './proxy.js';
 import { getPrivacyLevel, providerBlockedByPrivacy } from './privacy.js';
 import { isStaticHost } from './static-hosts.js';
 import { parseFrontmatter } from './frontmatter.js';
+import { ALL_TOOL_NAMES, OPT_IN_TOOLS } from './tool-effects.js';
+import { SETTINGS } from './settings-defs.js';
 import { setPref } from './prefs.js';
 export { KEYS } from './storage-keys.js';
 
@@ -56,63 +58,15 @@ function setRoleBodyFn(name, code) {
     if (code !== null && code !== undefined) localStorage.setItem(roleBodyFnKey(name), code);
     else localStorage.removeItem(roleBodyFnKey(name));
 }
-// Order: default-on tools first (shown checked on fresh install), opt-in tools after.
-export const ALL_TOOL_NAMES = [
-    // Default-on
-    'list_files', 'read_file', 'search_workspace',
-    'execute_code',
-    'web_search', 'fetch_url',
-    'run_workers',
-    'generate_image',
-    'check_page',
-    // Opt-in: filesystem writes
-    'write_file', 'replace_in_file', 'apply_patch', 'append_file', 'delete_file', 'undo_write',
-    // Opt-in: specialist
-    'deep_research', 'academic_search', 'package_search', 'context7_docs',
-    'repo_map', 'run_git', 'ast_query',
-    'update_task_status',
-    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
-    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
-];
-
-// Tools disabled by default — enabled only by explicit user action in Settings → Tools.
-// NOT added by roles, LLM classifier, or skill triggers — activeTools() bypasses
-// those gates for this set: when enabled they are always present; when disabled, never.
-//   • Filesystem write/edit tools: agent uses execute_code (bash) for file I/O by default.
-//     read_file and search_workspace are NOT opt-in — they provide deduplication and
-//     compaction-survival benefits that execute_code (cat/grep) cannot replicate.
-//   • Heavy/specialist tools: opt-in only; too expensive or narrow for default use.
-export const OPT_IN_TOOLS = new Set([
-    // Filesystem write/edit tools — replaced by bash by default.
-    // list_files is NOT opt-in: all roles include it in their ceiling.
-    'write_file', 'undo_write',
-    'replace_in_file', 'apply_patch', 'delete_file', 'append_file',
-    // Specialist / narrow tools — off by default; enable when needed.
-    'deep_research', 'repo_map',
-    'academic_search',   // academic literature — niche; use web_search for general queries
-    'package_search',    // registry lookup — rarely needed; packages found via web_search
-    'context7_docs',     // library docs via remote MCP service
-    'run_git',           // git operations — only useful with local sandbox + git enabled
-    'ast_query',         // AST code structure — only useful with AST enabled
-    // Task-status tool — useful only when the tasks skill is active; off by default
-    // so agents don't wastefully call it on tasks that aren't managed via the skill.
-    'update_task_status',
-    'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
-    'browser_select', 'browser_scroll', 'browser_back', 'browser_tabs', 'browser_done',
-]);
+// The built-in tool list, its Settings order and the opt-in set (default off; NOT added by roles, the classifier or skill triggers: activeTools() bypasses
+// those gates for them, so enabled they are always present and disabled never) are rows of tool-effects.ts.
+export { ALL_TOOL_NAMES, OPT_IN_TOOLS };
 
 // Persist DISABLED tools rather than enabled ones, so tools shipped in a later version
-// default to on instead of staying invisible until the user re-checks them. (A saved
-// fg_enabled_tools from an older build is migrated to the new key on first load.)
+// default to on instead of staying invisible until the user re-checks them.
 export const enabledTools = (() => {
     const disabled = _storedJson(KEYS.DISABLED_TOOLS, null, true);
     if (disabled) return new Set(ALL_TOOL_NAMES.filter(t => !disabled.includes(t)));
-    const legacyEnabled = _storedJson(KEYS.ENABLED_TOOLS, null, true);
-    if (legacyEnabled) {
-        const legacyDisabled = ALL_TOOL_NAMES.filter(t => !legacyEnabled.includes(t));
-        localStorage.setItem(KEYS.DISABLED_TOOLS, JSON.stringify(legacyDisabled));
-        return new Set(ALL_TOOL_NAMES.filter(t => !legacyDisabled.includes(t)));
-    }
     // Fresh install (no saved prefs): opt-in tools disabled by default.
     return new Set(ALL_TOOL_NAMES.filter(t => !OPT_IN_TOOLS.has(t)));
 })();
@@ -326,18 +280,11 @@ function _sampling(key: string): string | null {
 // The accepted range of each sampling field. The Settings inputs declare it, but they save on change, outside a form, so the browser never
 // enforced it, and a profile or import can set any value: a temperature of 3 or a top_p of 2 was saved and sent, and a strict server refused
 // every request (codex R255). A stored value outside its range is left out of the request (the server's default applies), as an empty one is.
-const SAMPLING_RANGES: Record<string, { min: number; max: number; int?: boolean }> = {
-    fg_temperature:        { min: 0,  max: 2 },
-    fg_top_p:              { min: 0,  max: 1 },
-    fg_top_k:              { min: -1, max: 1_000_000, int: true },   // -1: off (vLLM)
-    fg_min_p:              { min: 0,  max: 1 },
-    fg_presence_penalty:   { min: -2, max: 2 },
-    fg_repetition_penalty: { min: 0,  max: 2 },
-};
+const SAMPLING_KEYS = ['fg_temperature', 'fg_top_p', 'fg_top_k', 'fg_min_p', 'fg_presence_penalty', 'fg_repetition_penalty'];   // ranges: settings-defs.ts (-1 on fg_top_k is off for vLLM)
 /** Why `value` is not a valid setting for sampling field `key`, or null when it is (an empty value is valid: it means "not sent"). */
 export function samplingRangeError(key: string, value: string): string | null {
-    const r = SAMPLING_RANGES[key];
-    if (!r || value.trim() === '') return null;
+    const r = SAMPLING_KEYS.includes(key) ? SETTINGS[key] : null;
+    if (!r || r.min == null || r.max == null || value.trim() === '') return null;
     const n = Number(value);
     if (!Number.isFinite(n)) return 'not a number';
     if (r.int && !Number.isInteger(n)) return 'must be a whole number';
@@ -902,26 +849,7 @@ export function getMainModelList() {
             }
         } catch {}
     }
-    // Migrate from legacy per-provider settings
-    // Guard: only fall back to per-provider model when the key was actually stored.
-    // A fresh localStorage has no PROVIDER key; ls() would return its 'google' default
-    // and trap new devices into a single Gemini model instead of _DEFAULT_MAIN_MODELS.
-    const p = localStorage.getItem(KEYS.PROVIDER);
-    if (!p) return [..._DEFAULT_MAIN_MODELS];
-    let legacy: string | null = null;
-    if (p === 'google')      legacy = `google|${ls('fg_gemini_model', 'gemini-3.5-flash-lite')}`;
-    else if (p === 'nvidia')      legacy = `nvidia|${ls(KEYS.NVIDIA_MODEL, 'nvidia/nemotron-3-super-120b-a12b')}`;
-    else if (p === 'openrouter')  legacy = `openrouter|${ls('fg_openrouter_model', 'nvidia/nemotron-3-ultra-550b-a55b:free')}`;
-    else if (p === 'groq')        legacy = `groq|${ls(KEYS.GROQ_MODEL, 'openai/gpt-oss-120b')}`;
-    if (legacy === null) return [..._DEFAULT_MAIN_MODELS];
-    // The same retirement rule as the saved list: a model the provider withdrew is not carried over from the old per-provider setting, and the
-    // list that results is stored, so the migration is made once and not repeated on every read.
-    if (isBlacklistedModel(legacy)) {
-        const migrated = [..._DEFAULT_MAIN_MODELS].filter(spec => !isBlacklistedModel(spec));
-        try { localStorage.setItem(KEYS.MAIN_MODELS, JSON.stringify(migrated)); } catch {}
-        return migrated;
-    }
-    return [legacy];
+    return [..._DEFAULT_MAIN_MODELS];
 }
 function saveMainModelList(arr) {
     const deduped = [...new Set((arr || []).filter(x => typeof x === 'string' && x.length > 0))];

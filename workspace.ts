@@ -2556,7 +2556,8 @@ function buildFileTree(localFiles) {
     return root;
 }
 
-function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
+// One renderer for the Local and the browser-storage tree; `o` holds what differs (copy label, shift-click anchor, row actions, tooltip fields).
+function _renderTreeRows(parentEl, node, depth, pathPrefix, fileOrder, o) {
     for (const _e of _wsOrder(node, pathPrefix)) {
         if (_e.kind === 'dir') {
             const dirName = _e.name, subtree = _e.node;
@@ -2582,10 +2583,10 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
                 else collapsedDirs.add(fullPath);
                 renderFileList();
             };
-            _makeDirRow(dirRow, subtree, 'Copy to workspace');
+            _makeDirRow(dirRow, subtree, o.copyLabel);
 
             parentEl.appendChild(dirRow);
-            if (!isCollapsed) renderTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
+            if (!isCollapsed) _renderTreeRows(parentEl, subtree, depth + 1, fullPath + '/', fileOrder, o);
         } else {
             const f = _e.f;
             const basename = f.name.split('/').pop();
@@ -2605,8 +2606,8 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
 
             row.addEventListener('click', e => {
                 if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-                if (e.shiftKey && _localClickAnchorName !== null) {
-                    const anchorIdx = fileOrder.indexOf(_localClickAnchorName);
+                if (e.shiftKey && o.anchor.get() !== null) {
+                    const anchorIdx = fileOrder.indexOf(o.anchor.get());
                     const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
                     const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
                     for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
@@ -2616,7 +2617,7 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
                     selectedFiles.clear();
                     selectedFiles.add(f.name);
                 }
-                _localClickAnchorName = f.name;
+                o.anchor.set(f.name);
                 updateSelectionUI();
             });
             row.addEventListener('dblclick', e => {
@@ -2624,23 +2625,37 @@ function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) {
                 openFileTab(f.name);
             });
 
-            const actions = document.createElement('div');
-            actions.className = 'workspace-file-actions';
-
-            actions.appendChild(_openButton(f.name));
-
-            const del = document.createElement('button');
-            del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
-            del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
-            actions.appendChild(del);
-
+            const actions = o.actions(f);
             makeDraggable(row, f.name);
-            _attachFileTooltip(row, { name: f.name });
+            _attachFileTooltip(row, o.tip(f));
             row.append(nameEl, ..._wsInfoCols(f.size, f.lastModified), actions);
             parentEl.appendChild(row);
         }
     }
 }
+
+const _localTree = {
+    copyLabel: 'Copy to workspace',
+    anchor: { get: () => _localClickAnchorName, set: (n) => { _localClickAnchorName = n; } },
+    actions: (f) => {
+        const actions = document.createElement('div');
+        actions.className = 'workspace-file-actions';
+        actions.appendChild(_openButton(f.name));
+        const del = document.createElement('button');
+        del.className = 'ws-btn ws-btn-del'; del.title = 'Delete'; del.textContent = '×';
+        del.onclick = e => { e.stopPropagation(); confirmDeleteFile(f.name); };
+        actions.appendChild(del);
+        return actions;
+    },
+    tip: (f) => ({ name: f.name }),
+};
+const _idbTree = {
+    copyLabel: 'Copy to local',
+    anchor: { get: () => _idbClickAnchorName, set: (n) => { _idbClickAnchorName = n; } },
+    actions: (f) => buildFileActions(f.name),
+    tip: (f) => ({ name: f.name, size: f.size, lastModified: f.lastModified }),
+};
+function renderTree(parentEl, node, depth, pathPrefix, fileOrder = []) { _renderTreeRows(parentEl, node, depth, pathPrefix, fileOrder, _localTree); }
 
 // Opening a file was double-click only: nothing on the row said so, a keyboard could not do it, and a
 // double tap on a phone zooms. The same action as a button.
@@ -2826,82 +2841,7 @@ function buildIdbFileTree(idbFiles) {
     return root;
 }
 
-function renderIdbTree(parentEl, node, depth, pathPrefix, fileOrder) {
-    for (const _e of _wsOrder(node, pathPrefix)) {
-        if (_e.kind === 'dir') {
-            const dirName = _e.name, subtree = _e.node;
-            const fullPath    = pathPrefix + dirName;
-            const isCollapsed = collapsedDirs.has(fullPath);
-
-            const dirRow = document.createElement('div');
-            dirRow.className = 'workspace-dir-row';
-            dirRow.style.paddingLeft = (20 + depth * 16) + 'px';
-
-            const toggle = document.createElement('span');
-            toggle.className = 'ws-dir-toggle';
-            toggle.textContent = isCollapsed ? '▶' : '▼';
-
-            const nameEl = document.createElement('span');
-            nameEl.className = 'ws-dir-name';
-            nameEl.textContent = dirName;
-
-            const _agg = _wsAgg(subtree);
-            dirRow.append(toggle, nameEl, ..._wsInfoCols(_agg.size, _agg.lastModified));
-            dirRow.onclick = () => {
-                if (collapsedDirs.has(fullPath)) collapsedDirs.delete(fullPath);
-                else collapsedDirs.add(fullPath);
-                renderFileList();
-            };
-            _makeDirRow(dirRow, subtree, 'Copy to local');
-
-            parentEl.appendChild(dirRow);
-            if (!isCollapsed) renderIdbTree(parentEl, subtree, depth + 1, fullPath + '/', fileOrder);
-        } else {
-            const f = _e.f;
-            const basename = f.name.split('/').pop();
-            fileOrder.push(f.name);
-            const idx = fileOrder.length - 1;
-
-            const row = document.createElement('div');
-            row.className = 'workspace-file-row' + (selectedFiles.has(f.name) ? ' ws-selected' : '');
-            row.style.paddingLeft = (20 + depth * 16) + 'px';
-            row.dataset.filename = f.name;
-            makeDraggable(row, f.name);
-
-            row.addEventListener('click', e => {
-                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-                if (e.shiftKey && _idbClickAnchorName !== null) {
-                    const anchorIdx = fileOrder.indexOf(_idbClickAnchorName);
-                    const lo = Math.min(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                    const hi = Math.max(idx, anchorIdx !== -1 ? anchorIdx : idx);
-                    for (let j = lo; j <= hi; j++) selectedFiles.add(fileOrder[j]);
-                } else if (e.ctrlKey || e.metaKey) {
-                    selectedFiles.has(f.name) ? selectedFiles.delete(f.name) : selectedFiles.add(f.name);
-                } else {
-                    selectedFiles.clear();
-                    selectedFiles.add(f.name);
-                }
-                _idbClickAnchorName = f.name;
-                updateSelectionUI();
-            });
-            row.addEventListener('dblclick', e => {
-                if ((e.target as HTMLElement).closest('.workspace-file-actions')) return;
-                openFileTab(f.name);
-            });
-
-            const nameEl = document.createElement('span');
-            nameEl.className = 'workspace-file-name';
-            nameEl.textContent = basename;
-            nameEl.dataset.fullname = f.name;
-            nameEl.title = f.name;
-
-            const actions = buildFileActions(f.name);
-            _attachFileTooltip(row, { name: f.name, size: f.size, lastModified: f.lastModified });
-            row.append(nameEl, ..._wsInfoCols(f.size, f.lastModified), actions);
-            parentEl.appendChild(row);
-        }
-    }
-}
+function renderIdbTree(parentEl, node, depth, pathPrefix, fileOrder) { _renderTreeRows(parentEl, node, depth, pathPrefix, fileOrder, _idbTree); }
 
 export async function renderFileList() {
     // Headless (TUI / bench): no browser UI to update — skip the full workspace

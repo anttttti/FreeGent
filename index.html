@@ -484,27 +484,27 @@
                         <table style="border-collapse:collapse">
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Temperature</span></td>
-                                <td><input class="settings-input" id="smp-temperature" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_temperature',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-temperature" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_temperature',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top P</span></td>
-                                <td><input class="settings-input" id="smp-top-p" type="number" min="0" max="1" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_p',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-top-p" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Top K</span></td>
-                                <td><input class="settings-input" id="smp-top-k" type="number" min="0" max="100" step="1" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_k',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-top-k" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_top_k',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Min P</span></td>
-                                <td><input class="settings-input" id="smp-min-p" type="number" min="0" max="1" step="0.01" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_min_p',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-min-p" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_min_p',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Presence penalty</span></td>
-                                <td><input class="settings-input" id="smp-presence-penalty" type="number" min="-2" max="2" step="0.1" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_presence_penalty',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-presence-penalty" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_presence_penalty',this.value,this)"></td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 12px 2px 0;white-space:nowrap"><span class="settings-hint">Repetition penalty</span></td>
-                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" min="0" max="2" step="0.05" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_repetition_penalty',this.value,this)"></td>
+                                <td><input class="settings-input" id="smp-repetition-penalty" type="number" style="width:80px" placeholder="default" onchange="saveSamplingSetting('fg_repetition_penalty',this.value,this)"></td>
                             </tr>
                         </table>
                         <p class="settings-hint" style="margin-top:6px;margin-bottom:0">A value you set is sent to <b>custom endpoints</b> (vLLM / Ollama / LM Studio); Temperature is sent to every provider. Fields are empty by default, so each model runs with its own provider's defaults.</p>

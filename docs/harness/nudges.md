@@ -7,35 +7,26 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | name | kind | defined in | when |
 |---|---|---|---|
 | `bad_args` | nudge | `llm-loops.ts` | the arguments of a tool call were not valid JSON or arrived damaged (call markers of the model itself inside the argument names) |
-| `bad_tool_format` | nudge | `llm-loops.ts` | the model wrote a tool call together with a fabricated result |
 | `blocked_untried_fix` | gate | `bench-policy.ts` | benchmark policy: BLOCKED declared before a fix was tried |
 | `broken_syntax` | gate | `completion-gates.ts` | gate: COMPLETED while a file changed this turn (by the agent or a worker) no longer parses; names the error |
 | `broken_tool_call` | nudge | `llm-loops.ts` | a tool call written as text (markup in the message), so nothing ran |
-| `calls_overflow` | nudge | `llm-loops.ts` | more than 20 tool calls in one response: only the first 20 ran |
 | `completion_gate` | nudge | `llm-loops.ts` | first COMPLETED after edits: the completion checklist (and, in benchmark runs, the graded-test bounce) |
 | `dup_cycle` | nudge | `llm-loops.ts` | the same sequence of calls repeating in a cycle |
 | `empty_code` | nudge | `llm-loops.ts` | execute_code called with no code argument |
-| `env_config_edits` | gate | `completion-gates.ts` | gate: test or packaging configuration edited, or a new top-level package added, instead of fixing the code |
-| `planned_tasks_missing` | gate | `completion-gates.ts` | gate: the COMPLETED reply names tasks (Task 002:, fg-tasks/002-…) that have no file on the board |
 | `env_failure` | nudge | `llm-loops.ts` | execute_code failing repeatedly with the same error (3) or in total (8); also two inline python3 -c syntax failures in a row |
-| `failed_check_complete` | gate | `completion-gates.ts` | gate: COMPLETED while the last test/compile check after the last change failed |
 | `invented_data` | gate | `completion-gates.ts` | gate: the work created stand-in data or files nobody supplied |
-| `missing_check_complete` | gate | `completion-gates.ts` | gate: COMPLETED after a change whose own tests or page load (run by the harness) fail |
-| `test_fixtures_left` | gate | `completion-gates.ts` | gate: users, groups or sudoers.d files the run created to test with, which the task did not ask for |
 | `no_change_fix` | gate | `bench-policy.ts` | benchmark policy: a "fix" that changed nothing |
 | `no_edit_complete` | gate | `bench-policy.ts` | benchmark policy: COMPLETED on a task that needs an edit, with no edit made |
 | `output_cut_off` | nudge | `llm-loops.ts` | the response was cut off by the output cap or ended in a degenerate repeated tail |
-| `output_stalled` | nudge | `llm-loops.ts` | generation stalled mid-response and was discarded; nothing ran |
-| `quality_check` | nudge | `llm-loops.ts` | runaway or low-quality response (repeated characters, long loops) |
+| `planned_tasks_missing` | gate | `completion-gates.ts` | gate: the COMPLETED reply names tasks (Task 002:, fg-tasks/002-…) that have no file on the board |
 | `reactive_guidance` | nudge | `llm-loops.ts` | a skill whose trigger matched the situation this step; forces a tool call |
 | `replace_fail` | nudge | `llm-loops.ts` | repeated replace_in_file failures on the same file |
 | `rewrite_loop` | nudge | `llm-loops.ts` | the same file written in full 4, 8, 12 ... times with no passing check between |
-| `same_error` | nudge | `llm-loops.ts` | the same error repeated several times in a row |
-| `scratch_only_edits` | gate | `completion-gates.ts` | gate: COMPLETED but only scratch/repro files were changed |
 | `step_validation` | nudge | `llm-loops.ts` | a step output check (pseudo tool call, missing state line, ...) failed |
 | `steps_left` | nudge | `llm-loops.ts` | few steps left in the turn |
 | `stuck_detected` | nudge | `llm-loops.ts` | three identical full results in a row |
 | `syntax_watch` | nudge | `llm-loops.ts` | experiment syntax_watch: a file the model changed has not parsed for 2 steps (again after 6); lists every file that does not parse |
+| `test_fixtures_left` | gate | `completion-gates.ts` | gate: users, groups or sudoers.d files the run created to test with, which the task did not ask for |
 | `tool_failure` | nudge | `llm-loops.ts` | two to four consecutive tool errors |
 | `tool_failures` | nudge | `llm-loops.ts` | five or more consecutive failing tool calls |
 | `tool_repeat` | nudge | `llm-loops.ts` | a tool call repeated within the turn: cached results are returned |

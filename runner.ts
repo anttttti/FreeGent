@@ -859,7 +859,6 @@ function _updateRunnerUI() {
     const resumeBtn   = document.getElementById('runner-resume-btn');
     const restartBtn  = document.getElementById('runner-restart-btn');
     const stopBtn     = document.getElementById('runner-stop-btn');
-    const statusEl    = document.getElementById('runner-status');
     const inputBar    = document.getElementById('runner-input-bar');
     const interruptBar = document.getElementById('runner-interrupt-bar');
 

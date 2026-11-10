@@ -59,10 +59,9 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
         const db = await this._ensure();
         db.prepare('DELETE FROM chats WHERE id = ?').run(id);
         this._saved.delete(id);   // the incremental-save row cache of a deleted chat would otherwise live as long as the adapter (codex R631)
-        // chat_id is not a foreign key on these two (see session-schema.ts): without this the turn log (and its FTS rows, through the delete trigger) and the worker
-        // runs of a deleted chat stayed behind, which the IndexedDB adapter does not do (codex R608, R609).
+        // chat_id is not a foreign key here (see session-schema.ts): without this the turn log (and its FTS rows, through the delete trigger)
+        // of a deleted chat stayed behind (codex R608, R609).
         db.prepare('DELETE FROM turn_log WHERE chat_id = ?').run(id);
-        db.prepare('DELETE FROM worker_runs WHERE chat_id = ?').run(id);
     }
 
     async setChatRole(id: any, role: any) {
@@ -208,35 +207,6 @@ export class NodeSqliteAdapter implements SessionStoreAdapter {
             record?.lastUserMessage ?? null,
             record?.loopDetected ? 1 : 0,
         );
-    }
-
-    async createWorkerRun(id: any, chatId: any) {
-        const db = await this._ensure();
-        db.prepare('INSERT INTO worker_runs(id, chat_id, started_at, status) VALUES (?, ?, ?, ?)')
-            .run(id, chatId ?? null, Date.now(), 'running');
-    }
-
-    async finishWorkerRun(id: any, status: any) {
-        const db = await this._ensure();
-        db.prepare('UPDATE worker_runs SET status = ?, finished_at = ? WHERE id = ?')
-            .run(status ?? 'complete', Date.now(), id);
-    }
-
-    async recordWorkerAgent(runId: any, agent: any) {
-        const db = await this._ensure();
-        const result = db.prepare(`
-            INSERT INTO worker_agents(run_id, agent_id, role, model, task, output, error, status, note, started_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-            runId, agent?.id ?? agent?.agentId ?? 'unknown', agent?.role ?? null, agent?.model ?? null,
-            agent?.task ?? '', agent?.output ?? null, agent?.error ?? null, agent?.status ?? null,
-            agent?.note ?? null, agent?.startedAt ?? Date.now(), agent?.finishedAt ?? Date.now(),
-        );
-        const workerAgentId = result.lastInsertRowid;
-        if (agent?.staged?.length) {
-            const stmt = db.prepare('INSERT INTO worker_staged_files(worker_agent_id, path, content) VALUES (?, ?, ?)');
-            for (const f of agent.staged) stmt.run(workerAgentId, f.path, f.content ?? null);
-        }
     }
 
     async close() {
