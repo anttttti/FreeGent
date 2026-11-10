@@ -13,8 +13,8 @@ export function createNetModule(): any {
     once(ev: string, fn: Function) { return this.on(ev, fn); }
     off() { return this; }
     emit(ev: string, ...args: any[]) { (this._events[ev] || []).forEach(f => f(...args)); }
-    write(data: any, encoding?: any, cb?: Function) { if (typeof encoding === 'function') cb = encoding; cb?.(); return true; }
-    end(data?: any, encoding?: any, cb?: Function) { if (typeof data === 'function') cb = data; cb?.(); this.destroyed = true; }
+    write(_data: any, encoding?: any, cb?: Function) { if (typeof encoding === 'function') cb = encoding; cb?.(); return true; }
+    end(data?: any, _encoding?: any, cb?: Function) { if (typeof data === 'function') cb = data; cb?.(); this.destroyed = true; }
     destroy() { this.destroyed = true; return this; }
     setEncoding() { return this; }
     setKeepAlive() { return this; }
@@ -53,12 +53,12 @@ export function createNetModule(): any {
       if (typeof opts === 'function') { handler = opts; }
       return new FakeServer();
     },
-    createConnection: (opts?: any, cb?: Function) => {
+    createConnection: (_opts?: any, cb?: Function) => {
       const sock = new FakeSocket();
       if (cb) setTimeout(() => cb(), 0);
       return sock;
     },
-    connect: (opts?: any, cb?: Function) => {
+    connect: (_opts?: any, cb?: Function) => {
       const sock = new FakeSocket();
       if (cb) setTimeout(() => cb(), 0);
       return sock;

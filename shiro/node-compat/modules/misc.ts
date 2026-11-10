@@ -18,8 +18,8 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
     case 'buffer':
     case 'node:buffer': return {
       Buffer: FakeBuffer,
-      Blob: typeof globalThis.Blob !== 'undefined' ? globalThis.Blob : class Blob { constructor(parts?: any[], opts?: any) {} text() { return Promise.resolve(''); } arrayBuffer() { return Promise.resolve(new ArrayBuffer(0)); } },
-      File: typeof globalThis.File !== 'undefined' ? globalThis.File : class File { name = ''; constructor(parts: any[], name: string, opts?: any) { this.name = name; } },
+      Blob: typeof globalThis.Blob !== 'undefined' ? globalThis.Blob : class Blob { constructor(_parts?: any[], _opts?: any) {} text() { return Promise.resolve(''); } arrayBuffer() { return Promise.resolve(new ArrayBuffer(0)); } },
+      File: typeof globalThis.File !== 'undefined' ? globalThis.File : class File { name = ''; constructor(_parts: any[], name: string, _opts?: any) { this.name = name; } },
       btoa: typeof globalThis.btoa !== 'undefined' ? globalThis.btoa : (s: string) => s,
       atob: typeof globalThis.atob !== 'undefined' ? globalThis.atob : (s: string) => s,
       constants: { MAX_LENGTH: 2147483647, MAX_STRING_LENGTH: 536870888 },
@@ -77,7 +77,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
 
     case 'tty':
     case 'node:tty': return {
-      isatty: (fd?: number) => false,
+      isatty: (_fd?: number) => false,
       ReadStream: class ReadStream { constructor() {} setRawMode() { return this; } isTTY = false; },
       WriteStream: class WriteStream {
         isTTY = false;
@@ -137,24 +137,24 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
     case 'dns':
     case 'node:dns': {
       const dnsModule: any = {
-        lookup: (hostname: string, opts: any, cb?: Function) => {
+        lookup: (_hostname: string, opts: any, cb?: Function) => {
           if (typeof opts === 'function') { cb = opts; opts = {}; }
           cb?.(null, '127.0.0.1', 4);
         },
-        resolve: (hostname: string, rrtype: any, cb?: Function) => {
+        resolve: (_hostname: string, rrtype: any, cb?: Function) => {
           if (typeof rrtype === 'function') { cb = rrtype; rrtype = 'A'; }
           cb?.(null, ['127.0.0.1']);
         },
-        resolve4: (hostname: string, cb: Function) => cb(null, ['127.0.0.1']),
-        resolve6: (hostname: string, cb: Function) => cb(null, ['::1']),
+        resolve4: (_hostname: string, cb: Function) => cb(null, ['127.0.0.1']),
+        resolve6: (_hostname: string, cb: Function) => cb(null, ['::1']),
         setServers: () => {},
         getServers: () => ['8.8.8.8'],
       };
       dnsModule.promises = {
-        lookup: async (hostname: string) => ({ address: '127.0.0.1', family: 4 }),
-        resolve: async (hostname: string) => ['127.0.0.1'],
-        resolve4: async (hostname: string) => ['127.0.0.1'],
-        resolve6: async (hostname: string) => ['::1'],
+        lookup: async (_hostname: string) => ({ address: '127.0.0.1', family: 4 }),
+        resolve: async (_hostname: string) => ['127.0.0.1'],
+        resolve4: async (_hostname: string) => ['127.0.0.1'],
+        resolve6: async (_hostname: string) => ['::1'],
       };
       return dnsModule;
     }
@@ -173,7 +173,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
         clearMeasures: () => {},
       },
       PerformanceObserver: class PerformanceObserver {
-        constructor(cb: Function) {}
+        constructor(_cb: Function) {}
         observe() {}
         disconnect() {}
       },
@@ -431,7 +431,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
         if (cb) cb();
         return true;
       },
-      createInterface: (opts: any) => {
+      createInterface: (_opts: any) => {
         const events: Record<string, Function[]> = {};
         const iface: any = {
           on: (ev: string, fn: Function) => { (events[ev] ??= []).push(fn); return iface; },
@@ -440,7 +440,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
           removeListener: (ev: string, fn: Function) => iface.off(ev, fn),
           removeAllListeners: () => { Object.keys(events).forEach(k => delete events[k]); return iface; },
           close: () => { (events['close'] || []).forEach(f => f()); },
-          question: (q: string, cb: Function) => cb(''),
+          question: (_q: string, cb: Function) => cb(''),
           write: () => {},
           setPrompt: () => {},
           prompt: () => {},
@@ -533,7 +533,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
     case 'readline/promises':
     case 'node:readline/promises': {
       const rlp: any = {
-        createInterface: (opts: any) => {
+        createInterface: (_opts: any) => {
           const events: Record<string, Function[]> = {};
           const iface: any = {
             on: (ev: string, fn: Function) => { (events[ev] ??= []).push(fn); return iface; },
@@ -551,7 +551,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
 
     case 'diagnostics_channel':
     case 'node:diagnostics_channel': return {
-      channel: (name: string) => ({ subscribe: () => {}, unsubscribe: () => {}, hasSubscribers: false }),
+      channel: (_name: string) => ({ subscribe: () => {}, unsubscribe: () => {}, hasSubscribers: false }),
       hasSubscribers: () => false,
       subscribe: () => {},
       unsubscribe: () => {},
@@ -636,7 +636,7 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
           this._code = code;
           this._options = options || {};
         }
-        runInThisContext(options?: any): any {
+        runInThisContext(_options?: any): any {
           return new Function(this._code)();
         }
         runInNewContext(sandbox?: any, options?: any): any {

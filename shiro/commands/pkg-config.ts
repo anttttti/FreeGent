@@ -153,7 +153,7 @@ export const pkgConfig: Command = {
     const order: Pc[] = [];
     const visiting = new Set<string>();
     let failed = false;
-    const visit = async (r: { name: string; op?: string; ver?: string }, top: boolean, priv: boolean): Promise<void> => {
+    const visit = async (r: { name: string; op?: string; ver?: string }, _top: boolean, priv: boolean): Promise<void> => {
       const pc = await load(r.name);
       if (!pc) {
         failed = true;

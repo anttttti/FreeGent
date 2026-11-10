@@ -358,7 +358,7 @@ export const patch: Command = {
           }
         }
       }
-      fp.hunks.forEach((h, idx) => {
+      fp.hunks.forEach((_h, idx) => {
         const r = res.results[idx];
         if (r.ok) {
           if (r.offset !== 0 || r.fuzz) {

@@ -103,7 +103,7 @@ function _createHttpOrHttpsModule(deps: HttpDeps, isHttps: boolean): any {
     freeSockets: any = {};
     constructor(opts?: any) { if (opts) this.options = opts; }
     destroy() {}
-    createConnection(opts: any, cb: Function) { cb(null, new (getBuiltinModule('net') as any).Socket()); }
+    createConnection(_opts: any, cb: Function) { cb(null, new (getBuiltinModule('net') as any).Socket()); }
   }
 
   // ClientRequest — uses browser fetch to make real HTTP requests

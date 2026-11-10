@@ -777,7 +777,7 @@ export function createFsModule(deps: FsDeps): any {
       fdInfo.offset = p2 + n;
       cb?.(null, n, buf);
     },
-    write: (fd: number, buf: any, off: number, len: number, pos: any, cb?: any) => {
+    write: (fd: number, buf: any, off: number, len: number, _pos: any, cb?: any) => {
       const fdInfo = (globalThis as any).__shiroFds?.[fd];
       if (fdInfo) {
         const existing = fileCache.get(fdInfo.path) || '';
@@ -843,7 +843,7 @@ export function createFsModule(deps: FsDeps): any {
       removePathFromCaches(resolved, !!opts?.recursive);
       queueMicrotask(() => callback?.(null));
     },
-    opendir: (p: string, optsOrCb?: any, cb?: any) => {
+    opendir: (_p: string, optsOrCb?: any, cb?: any) => {
       const callback = typeof optsOrCb === 'function' ? optsOrCb : cb;
       callback?.(null, { read: (readCb: any) => { readCb(null, null); }, close: (closeCb: any) => { closeCb?.(null); } });
     },
@@ -852,7 +852,7 @@ export function createFsModule(deps: FsDeps): any {
         .then((exists: boolean) => cb?.(exists))
         .catch(() => cb?.(false));
     },
-    watch: (filename: string, options?: any, listener?: Function) => {
+    watch: (_filename: string, _options?: any, _listener?: Function) => {
       // Return a stub FSWatcher
       const watcher: any = {
         close() {},
@@ -864,11 +864,11 @@ export function createFsModule(deps: FsDeps): any {
       };
       return watcher;
     },
-    watchFile: (filename: string, options?: any, listener?: Function) => {
+    watchFile: (_filename: string, options?: any, listener?: Function) => {
       // No-op — real watching is not supported in browser environment
       if (typeof options === 'function') listener = options;
     },
-    unwatchFile: (filename: string, listener?: Function) => {
+    unwatchFile: (_filename: string, _listener?: Function) => {
       // No-op
     },
     // Async promises API

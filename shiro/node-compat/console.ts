@@ -11,7 +11,7 @@ const getStringWidth: (s: string) => number = (nodeInspect as any).getStringWidt
  * to terminal. Arguments are formatted by Node's own util.format / util.inspect.
  */
 export function createFakeConsole(
-  ctx: CommandContext,
+  _ctx: CommandContext,
   stdoutBuf: string[],
   stderrBuf: string[],
   _st: SharedState,

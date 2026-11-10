@@ -83,7 +83,7 @@ export function createStreamModule(): any {
     if (cb) setTimeout(() => cb(null), 0);
     return args[args.length - 1]; // Return last stream
   };
-  streamModule.finished = (stream: any, opts: any, cb?: Function) => {
+  streamModule.finished = (_stream: any, opts: any, cb?: Function) => {
     const callback = typeof opts === 'function' ? opts : cb;
     if (callback) setTimeout(() => callback(null), 0);
     return () => {}; // cleanup function

@@ -1319,7 +1319,7 @@ export class WasiRT {
     return WASI_ESUCCESS;
   }
 
-  private clock_res_get(clockId: number, resPtr: number): number {
+  private clock_res_get(_clockId: number, resPtr: number): number {
     const view = this.getView();
     // 1ms resolution
     view.setBigUint64(resPtr, 1_000_000n, true);

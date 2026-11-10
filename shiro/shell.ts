@@ -232,7 +232,7 @@ export class Shell {
           job.exitCode = code;
           return code;
         },
-        (err) => {
+        (_err) => {
           job.status = 'failed';
           job.exitCode = 1;
           return 1;
@@ -5613,7 +5613,7 @@ export class Shell {
     filePath: string,
     args: string[],
     ctx: CommandContext,
-    writeStdout: (s: string) => void,
+    _writeStdout: (s: string) => void,
     writeStderr: (s: string) => void,
   ): Promise<number> {
     try {
@@ -5650,7 +5650,7 @@ export class Shell {
    */
   private async executeNodeScript(
     filePath: string,
-    content: string,
+    _content: string,
     args: string[],
     ctx: CommandContext,
     writeStdout: (s: string) => void,
@@ -5686,7 +5686,7 @@ export class Shell {
   async executeShellScript(
     content: string,
     args: string[],
-    ctx: CommandContext,
+    _ctx: CommandContext,
     writeStdout: (s: string) => void,
     writeStderr: (s: string) => void,
   ): Promise<number> {

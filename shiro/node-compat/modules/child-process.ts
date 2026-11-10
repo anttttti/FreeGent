@@ -264,7 +264,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
           else resolve(result);
         }).catch(reject);
         return new Proxy(str, {
-          get(target, prop) {
+          get(_target, prop) {
             if (prop === 'then') return str.then;
             if (!done && (typeof prop === 'string' || prop === Symbol.toPrimitive)) throw notFinished('execSync', cmd);
             const val = (result as any)[prop];
@@ -549,7 +549,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
           (events['exit'] || []).forEach(fn => fn(r.exitCode, null));
           _resolveChild?.({ stdout: r.stdout || '', stderr: r.stderr || '', exitCode: r.exitCode });
         });
-      }).catch((err) => {
+      }).catch((_err) => {
         (events['error'] || []).forEach(fn => fn(new Error(`spawn ${cmd} failed`)));
         (events['close'] || []).forEach(fn => fn(1, null));
         _resolveChild?.({ stdout: '', stderr: '', exitCode: 1 });
@@ -589,7 +589,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
   };
   // Add util.promisify.custom for exec/execFile to return { stdout, stderr }
   const customSym = Symbol.for('nodejs.util.promisify.custom');
-  cpModule.exec[customSym] = (cmd: string, opts?: any) => {
+  cpModule.exec[customSym] = (cmd: string, _opts?: any) => {
     const p = execAsync(cmd).then(r => {
       if (r.exitCode !== 0) throw Object.assign(new Error(`Command failed: ${cmd}`), { code: r.exitCode, stdout: r.stdout, stderr: r.stderr });
       return { stdout: r.stdout, stderr: r.stderr };
@@ -597,7 +597,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
     pendingPromises.push(p.catch(() => {}));
     return p;
   };
-  cpModule.execFile[customSym] = (file: string, args?: string[], opts?: any) => {
+  cpModule.execFile[customSym] = (file: string, args?: string[], _opts?: any) => {
     let cmd: string;
     if (isShellBin(file) && args) {
       cmd = extractShellArgs(args);

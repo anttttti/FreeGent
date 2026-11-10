@@ -8,7 +8,7 @@ function load(src: string, fromDir = '/workspace') {
     const req = createRequireFunction({
         ctx: { cwd: '/workspace', env: {}, fs: { resolvePath: (p: string, from: string) => (p.startsWith('/') ? p : `${from}/${p.replace(/^\.\//, '')}`) } } as any, fileCache, fileMtimes: new Map(), moduleCache: new Map(), pendingPromises: [],
         processEvents: {}, getBuiltinModule: () => null, fakeConsole: console, fakeProcess: { env: {}, cwd: () => '/workspace' },
-        FakeBuffer: Buffer, createExpressShim: () => ({}), createSqliteShim: () => ({}), createAutoStub: (_p: string, t: any) => t,
+        FakeBuffer: Buffer, createAutoStub: (_p: string, t: any) => t,
     });
     try { req('./src/render.js', fromDir); return null; } catch (e: any) { return e; }
 }

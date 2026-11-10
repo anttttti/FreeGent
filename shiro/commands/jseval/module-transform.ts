@@ -88,16 +88,16 @@ export function transformTS(src: string): string {
   let s = safe;
 
   // Strip interface/type/enum/declare blocks
-  s = s.replace(/\b(export\s+)?interface\s+[\w$<>,\s]+\{/g, (match) => {
+  s = s.replace(/\b(export\s+)?interface\s+[\w$<>,\s]+\{/g, (_match) => {
     return '___STRIP_BLOCK___' + '{';
   });
-  s = s.replace(/\b(export\s+)?type\s+([\w$]+)\s*(<[^>]*>)?\s*=\s*/g, (match) => {
+  s = s.replace(/\b(export\s+)?type\s+([\w$]+)\s*(<[^>]*>)?\s*=\s*/g, (_match) => {
     return '___STRIP_STATEMENT___';
   });
   s = s.replace(/\b(export\s+)?(const\s+)?enum\s+[\w$]+\s*\{/g, () => {
     return '___STRIP_BLOCK___' + '{';
   });
-  s = s.replace(/\bdeclare\s+(module|const|function|class|var|let|type|interface|enum|namespace|global)\b[^{;]*/g, (match) => {
+  s = s.replace(/\bdeclare\s+(module|const|function|class|var|let|type|interface|enum|namespace|global)\b[^{;]*/g, (_match) => {
     return '___STRIP_DECL___';
   });
 
@@ -145,7 +145,7 @@ export function transformTS(src: string): string {
   }
 
   // Strip inline `type` keyword from imports: import { type Foo, Bar } → import { Bar }
-  s = s.replace(/\{\s*type\s+[\w$]+\s*,/g, (m) => '{');
+  s = s.replace(/\{\s*type\s+[\w$]+\s*,/g, (_m) => '{');
   s = s.replace(/,\s*type\s+[\w$]+\s*([,}])/g, '$1');
   s = s.replace(/\{\s*type\s+[\w$]+\s*\}/g, '{}');
 
@@ -157,7 +157,7 @@ export function transformTS(src: string): string {
   // Strip parameter type annotations: (x: number, y: string) → (x, y)
   // Also handles destructured params: ({ a, b }: Props) → ({ a, b })
   // Must not strip ternary colons or object literal colons
-  s = s.replace(/(\((?:[^()]*|\([^()]*\))*\))\s*:\s*[\w$<>\[\]|&?.\s]+(?=\s*[{=>,)])/g, (match, params) => {
+  s = s.replace(/(\((?:[^()]*|\([^()]*\))*\))\s*:\s*[\w$<>\[\]|&?.\s]+(?=\s*[{=>,)])/g, (_match, params) => {
     // Strip annotations from inside the param list
     return stripParamAnnotations(params);
   });

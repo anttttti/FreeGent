@@ -35,7 +35,7 @@ export function createAutoStubFactory(): { createAutoStub: (modPath: string, tar
         };
         // Make it callable as a function too
         let _stubCallCount = 0;
-        const stub: any = function(...args: any[]) {
+        const stub: any = function(..._args: any[]) {
           _stubCallCount++;
           if (_stubCallCount > 50) return undefined; // Safety bail for infinite recursion
           // For sync functions that return values, return sensible defaults

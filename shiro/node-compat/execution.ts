@@ -18,7 +18,6 @@ import { createFileCache } from './file-cache';
 import { preloadEnvironment } from './preload';
 import { createAutoStubFactory } from './auto-stub';
 import { createRequireFunction } from './require';
-import { createSqliteShim } from './shims/sqlite';
 import { createPathModule } from './modules/path';
 import { createOsModule } from './modules/os';
 import { createEventsModule } from './modules/events';
@@ -191,7 +190,6 @@ export async function executeNodeScript(
     const requireModule = createRequireFunction({
       ctx, fileCache, fileMtimes, moduleCache, pendingPromises, processEvents,
       getBuiltinModule, fakeConsole, fakeProcess, FakeBuffer,
-      createSqliteShim: () => createSqliteShim({ ctx }),
       createAutoStub,
     });
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;

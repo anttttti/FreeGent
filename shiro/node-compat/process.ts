@@ -10,12 +10,12 @@ import { bytesToText } from '../utils/bytes';
 export function createFakeProcess(
   ctx: CommandContext,
   fileArgs: string[],
-  scriptPath: string,
+  _scriptPath: string,
   stdoutBuf: string[],
   stderrBuf: string[],
   _st: SharedState,
   processEvents: Record<string, Function[]>,
-  pendingPromises: Promise<any>[],
+  _pendingPromises: Promise<any>[],
 ): any {
   const processEnv: Record<string, string> = {
     ...ctx.env,
@@ -144,7 +144,7 @@ export function createFakeProcess(
 }
 
 /** Create process.stdout stream */
-function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState): any {
+function createStdout(_ctx: CommandContext, stdoutBuf: string[], _st: SharedState): any {
   const stdoutEvents: Record<string, Function[]> = {};
   const stdoutObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
@@ -208,7 +208,7 @@ function createStdout(ctx: CommandContext, stdoutBuf: string[], _st: SharedState
 }
 
 /** Create process.stderr stream */
-function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState): any {
+function createStderr(_ctx: CommandContext, stderrBuf: string[], _st: SharedState): any {
   const stderrEvts: Record<string, Function[]> = {};
   const stderrObj: any = {
     write: (s: string | Uint8Array, encodingOrCb?: string | Function, cb?: Function) => {
@@ -231,9 +231,9 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
     end: () => {},
     getColorDepth: () => 1,
     hasColors: () => false,
-    cursorTo: (x: number, y?: number, cb?: Function) => { if (cb) cb(); return true; },
-    clearLine: (dir: number, cb?: Function) => { if (cb) cb(); return true; },
-    moveCursor: (dx: number, dy: number, cb?: Function) => { if (cb) cb(); return true; },
+    cursorTo: (_x: number, _y?: number, cb?: Function) => { if (cb) cb(); return true; },
+    clearLine: (_dir: number, cb?: Function) => { if (cb) cb(); return true; },
+    moveCursor: (_dx: number, _dy: number, cb?: Function) => { if (cb) cb(); return true; },
     clearScreenDown: (cb?: Function) => { if (cb) cb(); return true; },
     writable: true,
     fd: 2,
@@ -246,7 +246,7 @@ function createStderr(ctx: CommandContext, stderrBuf: string[], _st: SharedState
 }
 
 /** Create process.stdin stream */
-function createStdin(ctx: CommandContext, _st: SharedState, processEvents: Record<string, Function[]>): any {
+function createStdin(ctx: CommandContext, _st: SharedState, _processEvents: Record<string, Function[]>): any {
   const stdinEvents: Record<string, Function[]> = {};
   let stdinEnded = false;
   let stdinRawMode = false;
