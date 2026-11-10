@@ -389,11 +389,11 @@ describe('CF Worker guest quota', () => {
     let ON: any;
     beforeEach(() => { ON = { ...TS, ...KEYS, FG_GUEST_QUOTA: '1', FG_RATE_LIMITER: limiter(true), FG_GUEST_COUNTER: counterNamespace() }; });
     const IP = '203.0.113.9';
-    const call = (url: string, opts: { session?: string; auth?: string; dev?: boolean } = {}) => new Request('https://fg-proxy.example.workers.dev/', {
+    const call = (url: string, opts: { session?: string; auth?: string; dev?: boolean; model?: string } = {}) => new Request('https://fg-proxy.example.workers.dev/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'CF-Connecting-IP': IP,
             ...(opts.session ? { 'X-FG-Session': opts.session } : {}), ...(opts.dev ? { 'X-FG-Dev-Key': 'pw' } : {}) },
-        body: JSON.stringify({ url, headers: opts.auth ? { Authorization: opts.auth } : {}, body: JSON.stringify({ model: 'm', messages: [] }) }),
+        body: JSON.stringify({ url, headers: opts.auth ? { Authorization: opts.auth } : {}, body: JSON.stringify({ model: opts.model ?? 'm:free', messages: [] }) }),
     });
     const keys = (dev = false) => new Request('https://fg-proxy.example.workers.dev/keys', { headers: { Origin: ORIGIN, 'CF-Connecting-IP': IP, ...(dev ? { 'X-FG-Dev-Key': 'pw' } : {}) } });
     const GROQ = 'https://api.groq.com/openai/v1/chat/completions';
@@ -472,6 +472,14 @@ describe('CF Worker guest quota', () => {
         for (let i = 0; i < 3; i++) expect((await worker.fetch(call(GROQ, { dev: true }), env)).status).toBe(200);
         await worker.fetch(call(GROQ, { dev: true, auth: 'Bearer mine' }), env);
         expect(sent()[1].headers.Authorization).toBe('Bearer mine');
+    });
+
+    it('a guest reaches chat completions on free models only, not other paths or paid models', async () => {
+        const s = await session();
+        expect((await worker.fetch(call(OR, { session: s, model: 'openai/gpt-4o' }), ON)).status).toBe(403);
+        expect((await worker.fetch(call('https://api.groq.com/openai/v1/files', { session: s }), ON)).status).toBe(403);
+        expect((await worker.fetch(call(OR, { session: s, model: 'meta/x:free' }), ON)).status).toBe(200);
+        expect((await worker.fetch(call(OR, { dev: true, model: 'openai/gpt-4o' }), ON)).status).toBe(200);
     });
 
     it('providers outside the guest list never get a Worker key for guests', async () => {

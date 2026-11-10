@@ -416,7 +416,7 @@ async function _reviewFileEdit(path, oldContent, newContent) {
 }
 
 
-const _IV_HIGH_RISK = new Set(['fetch_url', 'execute_code', 'write_file', 'delete_file', 'run_git']);
+const _IV_HIGH_RISK = new Set(['fetch_url', 'execute_code', 'write_file', 'delete_file', 'run_git', 'apply_patch']);
 
 // No plain `new task:` here: it is everyday text ("Initialize a new task: …", a quoted skill description) and blocked an agent's own script (self-analysis P3, 2026-11-05); `your new task` stays.
 const _IV_INJECTION_PATTERNS = [
@@ -494,12 +494,16 @@ const _IV_DETECTOR_TASK_RE = /_IV_INJECTION_PATTERNS|injection-patterns|findInje
 const _IV_LOCAL_TOOLS = new Set(['write_file', 'append_file', 'replace_in_file', 'apply_patch', 'execute_code']);
 
 // Every tool that writes a file by path: replace_in_file and append_file reach `.env` as well as write_file does (codex R827).
-const _IV_PATH_TOOLS = new Set(['write_file', 'delete_file', 'append_file', 'replace_in_file']);
+const _IV_PATH_TOOLS = new Set(['write_file', 'delete_file', 'append_file', 'replace_in_file', 'apply_patch', 'undo_write']);
 function _ivPathCheck(name: string, args: any): { level: string; reason: string; quiet?: boolean } | null {
     if (!_IV_PATH_TOOLS.has(name)) return null;
-    const path = String(args?.path || '');
-    if (_IV_PATH_TRAVERSAL_RE.test(path)) return { level: 'block', reason: `Path traversal in ${name}: ${path}` };
-    if (_IV_SENSITIVE_PATH.test(path)) return { level: 'block', reason: `Sensitive path in ${name}: ${path}` };
+    // apply_patch writes the paths in its diff headers as well as args.path.
+    const patch = name === 'apply_patch' ? String(args?.patch ?? args?.diff ?? args?.content ?? '') : '';
+    const paths = [String(args?.path || ''), ...[...patch.matchAll(/^(?:---|\+\+\+) (?:[ab]\/)?(\S+)/gm)].map(m => m[1]).filter(p => p !== '/dev/null')];
+    for (const path of paths) {
+        if (_IV_PATH_TRAVERSAL_RE.test(path)) return { level: 'block', reason: `Path traversal in ${name}: ${path}` };
+        if (_IV_SENSITIVE_PATH.test(path)) return { level: 'block', reason: `Sensitive path in ${name}: ${path}` };
+    }
     return null;
 }
 

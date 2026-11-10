@@ -9,28 +9,10 @@ export type FinishSignal =
     | 'stopped'   // user / abort signal stopped the turn mid-flight
     | 'error';    // the turn threw; its prompt was rolled back — callers must not continue it
 
-type StepRecord = {
-    type: 'tool-call';
-    toolName: string;
-    args: unknown;
-    result: unknown;
-} | {
-    type: 'text';
-    text: string;
-};
-
-type TurnUsage = {
-    inputTokens:  number;
-    outputTokens: number;
-    totalTokens:  number;
-};
-
 /** Structured result returned by runAgentTurn() (§4) and generate() (§6). */
 export type TurnResult = {
     text:         string;
     finishSignal: FinishSignal;
     /** The loop's forced-stop reason for this turn (null when it ended normally), and whether the turn changed files. */
     stop?:        { reason: string | null; edited: boolean };
-    usage:        TurnUsage;
-    steps:        StepRecord[];
 };

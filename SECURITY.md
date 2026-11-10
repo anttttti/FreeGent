@@ -76,6 +76,10 @@ FreeGent has four parts, and they have different exposure:
 
 ## Known limitations
 
+- The secret-egress guard (`secret-egress.ts`) remembers values read from credential files and refuses to send them out through
+  `fetch_url`, the search tools, `browser_*` and `mcp__*`. It does not look at `execute_code` (`cat .env` then `curl`, or a script's
+  own request), and values that reached the context another way (workspace search hits, `grep -r`) are not remembered. It is request
+  policy, not containment.
 - API keys typed into Settings live in `localStorage` in plain text. Agent code can't reach them
   (it runs in the exec sandbox), but a script injected into the page itself could, and so can
   anyone using the browser profile (developer tools; the masked fields only stop someone reading

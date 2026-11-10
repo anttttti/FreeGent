@@ -1903,7 +1903,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
     // Cancelled (Escape, Stop) or abandoned (another chat) while preparing: nothing was written, nothing is sent.
     if (prepLease && !prepLease.valid()) {
         setTimeout(() => _processQueue(), 0);
-        return { text: '', finishSignal: 'stopped', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, steps: [] } as any;
+        return { text: '', finishSignal: 'stopped' } as any;
     }
     endPreparation(prep);
 
@@ -1992,8 +1992,6 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
         text:         finalText,
         finishSignal: _finishSignal,
         ...(_stop ? { stop: _stop } : {}),
-        usage:        { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, // tokens tracked in runTurn; future §4 extension
-        steps:        [],  // tool steps tracked in runTurn; future §4 extension
     };
 }
 

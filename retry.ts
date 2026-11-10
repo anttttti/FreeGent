@@ -89,6 +89,15 @@ export const FINISH_TOKEN_CAP = new Set(['length', 'MAX_TOKENS', 'max_tokens', '
 export const FINISH_FILTERED  = new Set(['content_filter', 'SAFETY', 'filtered', 'RECITATION']);
 export const FINISH_ERROR     = new Set(['error', 'abort']);
 
+// A response that ended at the token cap, was filtered, errored, or carries a tool call whose JSON was closed after the cap cut it
+// (streamed vLLM reports finish_reason "tool_calls" then, so only the token count shows it): its calls must not run.
+export function responseCutOff(msg: any): string | null {
+    const fr = msg?.finish_reason as string | null | undefined;
+    if (fr != null && (FINISH_TOKEN_CAP.has(fr) || FINISH_FILTERED.has(fr) || FINISH_ERROR.has(fr))) return `finish_reason:${fr}`;
+    if (msg?.tool_calls?.length && msg._maxTokens > 0 && (msg.usage?.completion_tokens ?? 0) >= msg._maxTokens * 0.98) return `tool_call_cut_off:${msg.usage?.completion_tokens}`;
+    return null;
+}
+
 export function isTransient(e) {
     const msg = e.message || '';
     // Permanent configuration errors — model ID or endpoint wrong, retrying won't help

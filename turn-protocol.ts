@@ -79,7 +79,7 @@ export function _isComplete(text: string): boolean {
     // _TERMINAL_RE requires a leading newline or start-of-string before the token, which doesn't
     // match when the token is glued to the answer on the same line. End-of-string position is
     // unambiguous — a model that writes X at the very end of its response intends to terminate.
-    if (/\b(?:COMPLETED|DONE|TASK COMPLETE|TERMINATE)[.!]?\s*$/i.test(text)) return true;
+    if (/\b(?:COMPLETED|DONE|TASK COMPLETE|TERMINATE)[.!]?\s*$/.test(text)) return true;
     // Acknowledgment-prefix pattern: model writes "COMPLETED. [summary]" — COMPLETED at the
     // start of the response followed by a short explanation. Treat the response as complete.
     if (/^\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}\s+\S/i.test(text)) return true;
@@ -137,7 +137,7 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
     //   old length>40 rule returned ps.saved here, which in multi-bounce chains was the
     //   bounced middle response — v0.12 AgentBench captured verbose garbage while the
     //   model's actual final message was the correct bare value (OS-12, DB-16).
-    if (ps.finalCheck > 0 && /\bCOMPLETED\b/.test(textContent)) {
+    if (ps.finalCheck > 0 && /\bCOMPLETED\b/.test(textContent) && _isComplete(textContent)) {
         setLastTurnDoneToken(true);
         const newText = _stripTerminal(textContent).trim();
         const _isBareAck = !newText ||

@@ -18,7 +18,7 @@ a module — use the setter.
 
 **Domain modules**: any concern used by more than one loop/caller has a
 single-owner module — payload-builder, detectors, turn-protocol, tool-call-repair,
-history, model-router, stream-decode, retry, history-convert, step-validator,
+history, model-router, stream-decode, retry, step-validator,
 nudge-emitter. Per-turn state (rotation counters, seen-maps, protocol counters) is owned
 by the loop and injected as a parameter object; domain modules hold no per-turn state.
 
@@ -47,7 +47,7 @@ after touching bridges or load order.
 - **No raw `fetch(...)` to LLM APIs** — use `callLLMComplete` or the streaming loops (see below).
 - **`buildSystemPrompt()` runs on every LLM request** — keep it cheap; don't cache its output.
 - **All history uses OAI format.** The chat's history is a Session event log (`chat-history.ts`); `getChatHistory()` projects it to `{role: 'user'|'assistant'|'tool', content}` messages, and that plain array is also the persisted and exported format (the export key is still `openaiHistory`). Gemini requests are converted from OAI format at call time; fn-tag models get a text-tag projection per request (`fnTagMessages`). Workers get their own local history (`localOH`); they never touch the chat's.
-- **Tool results go through `truncateResultForHistory()` before history storage** (`llm-loops.js`). Add a truncation case there for any new tool that can return large results.
+- **Tool results go through `truncateResultForHistory()` before history storage** (`llm-loops.ts`). Add a truncation case there for any new tool that can return large results.
 
 ## Key global mutable state (state.ts)
 
@@ -65,7 +65,7 @@ a `globalThis` bridge (unused since all files are modules). Highlights:
 
 ## LLM call architecture
 
-### One-shot text completions — `callLLMComplete` (workers.js)
+### One-shot text completions — `callLLMComplete` (workers.ts)
 
 **Background LLM calls go through `callLLMComplete`** (the one exception is `compactHistory` in `llm-shared.ts`, which sends the main loop's own request so the endpoint's prefix cache is reused, with its own retry handler)**.** It handles provider routing, retry logic via `withRetry` + `_makeOAIRetryHandler`, model fallback, proxy support, and stepbox UI visibility.
 
@@ -82,7 +82,7 @@ Convenience wrappers (both delegate to `callLLMComplete`):
 - `callMainModelText(prompt, opts)` — active main model; used by qa.js, chat-state.js.
 - `callWorkerModelText(prompt, opts, handle)` — resolves `getWorkerModel()` first.
 
-### Streaming agentic loops (llm-loops.js) — the only exception
+### Streaming agentic loops (llm-loops.ts) — the only exception
 
 These manage their own streaming fetch because token-by-token display and mid-stream tool-call parsing require it:
 - `runTurn(endpoint, placeholder, {forWorker, toolFilterOverride})` — the unified main agent
@@ -117,7 +117,7 @@ Framework messages injected mid-conversation use role to carry the signal where 
 
 `getThinkingLevel()` → `'off'|'low'|'medium'|'high'` (stored in `fg_thinking_level`). `thinkingLevelBudget(provider)` maps to provider-specific token budget numbers. Use these; do not add new per-provider thinking flags.
 
-## Worker architecture (workers.js)
+## Worker architecture (workers.ts)
 
 - `executeWorkers(args)` — spawns parallel `runWorkerTurn` calls, applies staged file writes, resolves conflicts, optionally synthesises outputs.
 - `resolveFileConflicts(conflicts, snapshot, handle)` — LLM-assisted 3-way merge. Pass the outer stepbox handle to avoid a redundant sub-step.
@@ -179,9 +179,9 @@ Everything after the frontmatter is the skill body — injected verbatim into th
 | Set | Contents | When populated |
 |---|---|---|
 | `activeSkills` | Always-on skills toggled on by the user | Persisted in `fg_active_skills`; loaded at startup |
-| `currentTurnSkills` | `activeSkills` ∪ keyword-triggered matches | Rebuilt at start of each turn in `agent-core.js` |
+| `currentTurnSkills` | `activeSkills` ∪ keyword-triggered matches | Rebuilt at start of each turn in `turn-context.ts` (`applyTurnTriggers`) |
 
-**Trigger matching** (`agent-core.js`): five passes run at the start of each turn, in order:
+**Trigger matching** (`turn-context.ts` (`applyTurnTriggers`)): five passes run at the start of each turn, in order:
 1. **keyword (`trigger`)** — whole-word (`\b…\b`) match against the lower-cased user message
 2. **filetype (`trigger_on_filetype`)** — checks message text for the extension string AND (unless `:msg` suffix) checks workspace file extensions from the DOM (`.workspace-file-row[data-filename]`). Multi-part extensions like `.test.js` are matched against both the last and second-to-last dot segments.
 3. **lifecycle (`trigger_on_event`)** — `session-start` fires on the first message of a session; `task-start` fires when `_isTaskCompletionRequest()` returns true.
@@ -201,7 +201,7 @@ Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a ma
 2. Add `name` to `Skills` tab in the UI to make it toggleable (it auto-appears via `loadSkills()`)
 3. If the skill needs a tool that doesn't exist yet: follow **Add a tool** first
 4. If activation should require a setting flag: add a `requires: fg_<key>` line and ensure the key is set in `settings-ui.js`
-5. Test: send a message containing one of the trigger terms and confirm `currentTurnSkills` includes the name (add a `console.log` in `agent-core.js` or check the system prompt via browser devtools)
+5. Test: send a message containing one of the trigger terms and confirm `currentTurnSkills` includes the name (check the system prompt via browser devtools)
 
 ## Key files
 

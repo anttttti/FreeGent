@@ -38,6 +38,19 @@ describe('repeat cache and fetch_url methods', () => {
     });
 });
 
+describe('fetch_url polling', () => {
+    it('an identical GET is fetched again each time', async () => {
+        const origFetch = W.fetch; let n = 0;
+        W.fetch = vi.fn(async () => new Response(JSON.stringify({ n: ++n }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        try {
+            const cache = new Map();
+            const run = () => W._runToolCalls([{ name: 'fetch_url', args: { url: 'https://api.example.com/job' } }], null, { forWorker: false, repeatCache: cache });
+            await run(); const last = await run();
+            expect(JSON.stringify(last[0].result)).toContain('"n":2');
+        } finally { W.fetch = origFetch; }
+    });
+});
+
 // Day exploration D006: a caller's "accept" arrived merged with the default "Accept" because the defaults were keyed by one letter case only.
 describe('fetch_url page headers', () => {
     it('a caller header replaces the browser default whatever its letter case', async () => {

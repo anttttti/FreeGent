@@ -14,9 +14,9 @@ import { NULL_TASK_HANDLE } from './render-adapter.js';
 import { _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, REPEAT_REFUSALS_BEFORE_STOP } from './detectors.js';
 import { validateOutput } from './step-validator.js';
 import { emitNudge } from './nudge-emitter.js';
-import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, parseContextOverflow, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR } from './retry.js';
+import { sleepInterruptible, withRetry, _makeOAIRetryHandler, isModelGone, parseContextOverflow, FINISH_TOKEN_CAP, FINISH_FILTERED, FINISH_ERROR, responseCutOff } from './retry.js';
 import { getCooldownRemaining, oaiEndpoint, recordSuccess, specToEndpoint, modelFriendlyName, resolveWorkerModelSpec, _nextRotationSpec, singleRequestPerEndpoint } from './model-router.js';
-import { _normPath, truncateResultForHistory } from './history.js';
+import { _normPath, truncateResultForHistory, repairHistoryArray } from './history.js';
 import { isRealUserMessage, stripInjected } from './history-util.js';
 import { repairAllToolCalls } from './tool-call-repair.js';
 import { buildSystemPrompt, _buildWorkspaceDesc, _buildEnvContext, resolveRoleBody } from './system-prompt.js';
@@ -1039,6 +1039,9 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                                 // Drop the older half of what can go, at least 1 message.
                                 const drop = removable.slice(0, Math.max(1, Math.floor(removable.length / 2)));
                                 for (const i of drop.reverse()) localOH.splice(i, 1);
+                                // A cut between a tool call and its results leaves orphans, which strict providers answer with HTTP 400.
+                                const _kept = repairHistoryArray(localOH);
+                                localOH.splice(0, localOH.length, ..._kept);
                                 // What the model was told it had read is gone with those messages: a later identical read must return the content, not "Already read".
                                 localSeenRF.clear(); localSeenLF.clear();
                                 workerMaxTokens = null;
@@ -1058,6 +1061,12 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 recordSuccess(endpoint ?? oaiEndpoint());
             } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
 
+            // Cut off at the token cap (or filtered, or a tool call closed after the cap): nothing of it runs, as in the main loop.
+            const _cut = responseCutOff(message);
+            if (_cut) {
+                localOH.push({ role: 'user', content: `<nudge>Your last response was cut off (${_cut}) and discarded — nothing was executed. Make the next call shorter: write a large file in parts (write_file, then append_file).</nudge>` });
+                continue;
+            }
             const { usage, _maxTokens, ...msg } = message as any;   // _maxTokens: callOAI's note for truncation checks, not part of the message
             // stream-decode stopped a repeating output early: its tool arguments are cut off, so
             // nothing of it runs or enters history.

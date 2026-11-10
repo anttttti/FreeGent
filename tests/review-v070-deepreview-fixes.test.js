@@ -426,8 +426,6 @@ describe('R2. fetch_url: data after "#" and responses marked no-store', () => {
             const read = 'https://api.example.com/api/execute?tool=get_rows', write = 'https://api.example.com/api/execute?tool=update_row';   // /api/: fetched directly, not through the page proxy
             expect(JSON.stringify((await run(read))[0].result)).toContain('"rows":1');
             await run(write);
-            await run(write);                                                    // identical repeat: not sent twice
-            expect(seen.filter(u => u.includes('update_row')).length).toBe(1);
             expect(JSON.stringify((await run(read))[0].result)).toContain('"rows":2');   // fresh, not the cached 1
         } finally { W.fetch = origFetch; }
     });

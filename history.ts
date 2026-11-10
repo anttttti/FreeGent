@@ -579,15 +579,12 @@ export function repairHistoryArray(hist: any[]): any[] {
         } else { repaired.push(m); i++; }
     }
     hist = repaired;
-    // Strip <think>/<thinking> tags from stored tool results so they don't leak
-    // into the API request or prime the model to emit similar tags in its output.
+    // Strip <think>/<thinking> tags from the model's own stored replies so they don't prime it to emit similar tags.
+    // Tool results are data (a file, a page) and stay as read.
     // (_stripThinking lives in llm-shared; guard for bare test environments.)
     if (typeof _stripThinking === 'function') {
         for (let i = 0; i < hist.length; i++) {
             const m = hist[i];
-            if (m?.role === 'tool' && typeof m.content === 'string' && /<think/i.test(m.content)) {
-                hist[i] = { ...m, content: _stripThinking(m.content) };
-            }
             if (m?.role === 'assistant' && typeof m.content === 'string' && /<think/i.test(m.content)) {
                 hist[i] = { ...m, content: _stripThinking(m.content) };
             }

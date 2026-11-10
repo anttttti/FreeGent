@@ -349,7 +349,9 @@ async function _relaySession(request, env) {
 async function _sync(request, env, url) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (!env || !env.FG_SYNC || !(env.FG_DEV_KEY || env.FG_PASS)) return _err(503, 'Project sync is not enabled on this Worker');
-    const parts = url.pathname.split('/').filter(Boolean).slice(1).map(decodeURIComponent);   // after "sync"
+    let parts;
+    try { parts = url.pathname.split('/').filter(Boolean).slice(1).map(decodeURIComponent); }   // after "sync"
+    catch { return _err(400, 'Malformed path'); }
     if (parts[0] === 'auth' && parts.length === 1) {
         if (request.method !== 'POST') return _err(405, 'POST only');
         if (!(await _unlocked(request, env))) return _err(401, 'Developer key required');
@@ -579,6 +581,15 @@ export default {
                     const limit = _guestDaily(env);
                     if (await _guestCount(request, env) > limit)
                         return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
+                    // The operator's key buys chat completions and the model list, on the free tier only.
+                    const gp = new URL(target).pathname.replace(/\/+$/, '');
+                    if (!((method === 'POST' && gp.endsWith('/chat/completions')) || (method === 'GET' && gp.endsWith('/models'))))
+                        return _err(403, 'Guest access covers chat completions and the model list only: add your own key in Settings → Credentials');
+                    if (hostname.endsWith('openrouter.ai') && method === 'POST') {
+                        let gm = ''; try { gm = String(JSON.parse(typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody))?.model ?? ''); } catch {}
+                        if (!gm.endsWith(':free') && gm !== 'openrouter/free')
+                            return _err(403, 'Guest access covers free models only (a name ending in :free): add your own key in Settings → Credentials');
+                    }
                     guest = true;
                 }
                 const envKey = isEmpty && (unlocked || guest) ? PROVIDER_KEY_MAP[hostname] : null;

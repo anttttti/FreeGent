@@ -568,6 +568,8 @@ export function _recordRead(ledger: _ReadLedger, args: any, result: any): void {
     ledger.set(path, e);
 }
 
+const _isFetchRead = (name: string, args: any) => name === 'fetch_url' && /^(GET|HEAD)$/i.test(String(args?.method ?? 'GET'));
+
 async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTasks: any[] | null, { forWorker, context = null as any, onStart = null as ((name: string, args: any, i: number) => void) | null, onTaskDone = null as (() => void) | null, onResult = null as ((name: string, args: any, result: any) => void) | null, onRepeat = null as ((name: string) => void) | null, repeatCache = null as Map<string, any> | null, replFails = null as Map<string, number> | null, blockedTools = null as Set<string> | null, pausedTools = null as Set<string> | null, onPause = null as ((name: string) => number) | null }): Promise<Array<{name: string; args: any; result: any}>> {
     const _ledger: _ReadLedger | null = repeatCache
         ? (_readLedgers.get(repeatCache) ?? (_readLedgers.set(repeatCache, new Map()), _readLedgers.get(repeatCache)!))
@@ -644,7 +646,9 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
         }
         if (repeatCache) {
             const key = `${name}|${JSON.stringify(args)}`;
-            const hit = repeatCache.get(key);
+            // A fetch_url GET is never served from the cache: a URL polled for a build, job or file changes between calls.
+            // An identical POST stays cached (a duplicate send is not executed twice).
+            const hit = _isFetchRead(name, args) ? undefined : repeatCache.get(key);
             if (hit) {
                 task?.setOutput(JSON.stringify(hit, null, 2));
                 task?.complete();
@@ -703,7 +707,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // A response marked no-store counts the same way whatever its method: the server says not
             // to reuse it (a gateway that runs operations from a GET URL marks them so).
             if (name === 'fetch_url' && (!/^(GET|HEAD)$/i.test(String(args?.method ?? 'GET')) || fetchSaidNoStore(result))) repeatCache.clear();
-            if (!result?.error) {
+            if (!result?.error && !_isFetchRead(name, args)) {
                 // Only cache successful results. Error results are retryable — caching them
                 // would fire a spurious 'tool_repeat' nudge on retry and hand the model the
                 // same failure instead of letting it try again (e.g. 'context budget exhausted').
