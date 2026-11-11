@@ -23,7 +23,8 @@ const WRITE_TOOLS = new Set(WORKSPACE_WRITE_TOOLS);
 const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|(?:mvn|mvnw)\s+(?:-\S+\s+)*test|(?:gradle|gradlew)\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
 // Collection and import failures of the environment, not of the code under test.
 const ENV_BROKEN_RE = /ModuleNotFoundError|ImportError|cannot import name|No module named|ERROR collecting|INTERNALERROR|conftest\.py.*(?:Error|error)|was removed in the NumPy|has no attribute '(?:Mapping|MutableMapping|Iterable|Callable|unicode_)'/;
-const SCRATCH_RE = /(?:^|\/)(?:tmp|temp|scratch|repro\w*|reproduc\w*|debug\w*|_probe\w*)(?:[_./-]|$)|\.(?:tmp|bak|orig|pyc)$|__pycache__|\.pytest_cache/i;
+// `tmp` and `scratch` name scratch anywhere in a path; the vaguer `temp`, `repro*`, `debug*`, `_probe*` only as the first component (`repro.py`, `./debug_x.py`), so a project's src/debug/ or tests/temp_parser.py is not discarded (codex R975).
+const SCRATCH_RE = /(?:^|\/)(?:tmp|scratch)(?:[_./-]|$)|^\.?\/?(?:temp|repro\w*|reproduc\w*|debug\w*|_probe\w*)(?:[_./-]|$)|\.(?:tmp|bak|orig|pyc)$|__pycache__|\.pytest_cache/i;
 
 // `deleted`: paths whose last change was a deletion (delete_file, or undo_write removing a file it had created), so a missing file is the
 // intended result, not a broken one (codex Review936).
@@ -53,25 +54,32 @@ function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?:
             const files = r.files_written.filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
             return { changed: files.length > 0, files };
         }
+        // The browser Local Sandbox reports what a command deleted (files_deleted): a change, and a deletion on purpose (codex R1124).
+        if (Array.isArray(r.files_deleted) && r.files_deleted.length) {
+            const files = r.files_deleted.filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
+            if (files.length) return { changed: true, files, deleted: true };
+        }
         // Task containers do not report files_written: read the command (redirects, tee, in-place
         // edits, patch / git apply). v0.70: 3 of the resolved SWE patches were made this way.
-        if (r.exit_code !== 0 && r.exit_code != null) return none;
+        // A command that failed may still have written what it redirected before it failed (`printf x > f; false`); a patch that failed was not applied (codex R974).
+        const failed = r.exit_code !== 0 && r.exit_code != null;
         const code = String(call.args?.code ?? '');
         const lang = String(call.args?.language ?? 'bash');
         if (lang === 'bash' || lang === 'sh' || lang === 'shell') {
             const w = shellWrites(code);
             const files = w.paths.filter(p => !SCRATCH_RE.test(p));
             // A patch applied from /tmp still changed the workspace: its own path says nothing.
-            if (w.patched || files.length) return { changed: true, files };
+            if ((w.patched && !failed) || files.length) return { changed: true, files };
         }
-        const m = code.match(/open\(\s*['"]([^'"]+)['"]\s*,\s*['"][wa]/);
+        // Every mode that can write: w, a, x, and the "+" forms of r (`r+` edits an existing file; codex R969).
+        const m = code.match(/open\(\s*['"]([^'"]+)['"]\s*,\s*['"](?:[wax]|r\+)/);
         if (m && !SCRATCH_RE.test(m[1])) return { changed: true, files: [m[1]] };
     }
     return none;
 }
 // A runner that started and ran no test: pytest's "collected 0 items" / "no tests ran" (exit 4 usage error, 5 no
 // tests), unittest's "Ran 0 tests", Django's "Found 0 test(s)", a runner that is not installed (126/127).
-const NO_TESTS_RE = /collected 0 items|\bno tests ran\b|no tests collected|ERROR: (?:file or directory )?not found|\bRan 0 tests\b|Found 0 test\(s\)|\[no test files\]|no test files|testing: warning: no tests to run|command not found|: not found$/m;
+const NO_TESTS_RE = /collected 0 items|\bno tests ran\b|no tests collected|ERROR: (?:file or directory )?not found|\bRan 0 tests\b|Found 0 test\(s\)|\[no test files\]|no test files|testing: warning: no tests to run|No tests found, exiting with code 0|No test files found|command not found|: not found$/m;
 // A check is a command that RUNS a runner, not code that merely contains its name: a quoted pytest command that is printed, a grep for "pytest", a file called
 // docs/pytest.txt are data (codex R78). Quoted strings, comments and heredoc bodies are blanked; the code is cut into simple commands; each is looked at from its
 // first word on, after the wrappers that only start another command (cd, env assignments, time, timeout, sudo, python -m, uv run, npx, docker exec, bash -c).
@@ -84,6 +92,7 @@ export function isCheckCommand(code: string): boolean {
          .replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#.*$/gm, '');
     for (const seg of t.split(/&&|\|\||;|\n|\||\(|\)/)) {
         const c = seg.trim().replace(/^[!{]\s*/, '').replace(/^\.\/(?=(?:mvnw|gradlew)\b)/, '');
+        if (c && /\b(?:vitest|jest)\s+(?:list\b|(?:\S+\s+)*--(?:listTests|list)\b)/.test(c)) continue;   // test discovery runs nothing (codex R977)
         if (c && CHECK_AT_START_RE.test(c)) return true;
     }
     return false;

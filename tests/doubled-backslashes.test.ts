@@ -58,3 +58,16 @@ describe('over-escaped regular expression literals in a new file', () => {
         expect((await w('out/notes.md', 'const m = h.match(/^(\\\\d+)$/);\n')).escape_warning).toBeUndefined();
     });
 });
+
+describe('write_file of a JSON file (R1094)', () => {
+    it('no over-escaping warning: a regex in JSON needs its backslashes doubled', async () => {
+        const files = new Map<string, string>([['c.json', '{"patterns":[]}']]);
+        W.mainAgentRole = null;
+        W.agentWriteFile = async (p: string, c: string) => { files.set(p, c); };
+        W.agentReadFile = async (p: string) => files.get(p);
+        W.agentListFiles = async () => [...files.keys()].map(name => ({ name }));
+        const r = await W.executeToolAsync('write_file', { path: 'c.json', content: '{"patterns":["\\d+","\\s+"]}' }, null);
+        expect(r.success).toBe(true);
+        expect(r.escape_warning).toBeUndefined();
+    });
+});

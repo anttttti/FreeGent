@@ -653,9 +653,16 @@ export function noteRewrites(st: RewriteState, results: Array<{ name: string; ar
     let msg: string | null = null;
     for (const r of results) {
         if (r.result?.error) continue;
-        const path = String(r.args?.path ?? r.result?.path ?? '');
+        // One key per file, whatever the spelling (`./a.ts`, `a.ts`, `/workspace/a.ts`, `a//b.ts`; codex R1122).
+        const path = String(r.args?.path ?? r.result?.path ?? '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(?:\.\/)+/, '').replace(/^\/?workspace\//, '');
         if (r.name === 'replace_in_file' && path) st.delete(path);
-        else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && isCheckCommand(String(r.args?.code ?? ''))) st.clear();
+        else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && isCheckCommand(String(r.args?.code ?? ''))) {
+            // A check that names files checks those: `node --check scripts/healthy.js` says nothing about src/broken.ts (codex R978). One that names none (`pytest`, `npm test`) covers the project.
+            const code = String(r.args?.code ?? '');
+            const named = [...st.keys()].filter(p => code.includes(p) || code.includes(p.split('/').pop()!));
+            if (named.length) for (const p of named) st.delete(p);
+            else if (!/[\w./-]+\.[A-Za-z]{1,5}\b/.test(code.replace(/\b(?:node|tsc|npm|npx)\b/g, ''))) st.clear();
+        }
         else if (r.name === 'write_file' && path) {
             const n = (st.get(path) ?? 0) + 1;
             st.set(path, n);

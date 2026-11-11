@@ -27,4 +27,17 @@ describe('noteRewrites', () => {
         noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'npx vitest run' }, result: { exit_code: 0 } }]);
         expect(noteRewrites(st, [w('a.ts')])).toBeNull();     // would have been the 4th
     });
+    it('a passing check that names another file does not start the count over (R978)', () => {
+        const st = newRewriteState();
+        for (let i = 0; i < 3; i++) noteRewrites(st, [w('src/broken.ts')]);
+        noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check scripts/healthy.js' }, result: { exit_code: 0 } }]);
+        expect(noteRewrites(st, [w('src/broken.ts')])).toMatch(/src\/broken\.ts in full 4 times/);
+        noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check src/broken.ts' }, result: { exit_code: 0 } }]);
+        expect(noteRewrites(st, [w('src/broken.ts')])).toBeNull();
+    });
+    it('equivalent spellings of one path are one file (R1122)', () => {
+        const st = newRewriteState(); let hit: string | null = null;
+        for (const p of ['a.ts', './a.ts', '/workspace/a.ts', 'a.ts']) hit = noteRewrites(st, [w(p)]);
+        expect(hit).toMatch(/a\.ts in full 4 times/);
+    });
 });

@@ -54,10 +54,8 @@ export function collectNudges(root = ROOT) {
     const found = new Map();
     const add = (name, kind, file) => { if (!found.has(name)) found.set(name, { name, kind, file }); };
     for (const f of EMITTERS) {
-        for (const line of readFileSync(join(root, f), 'utf8').split('\n')) {
-            const m = /\b_?emitNudge\(\s*'([a-z_0-9]+)'/.exec(line);
-            if (m) add(m[1], 'nudge', f);
-        }
+        // Over the whole text, not line by line: a call formatted `_emitNudge(\n  'name', …)` is a nudge too (codex R1095).
+        for (const m of readFileSync(join(root, f), 'utf8').matchAll(/\b_?emitNudge\(\s*'([a-z_0-9]+)'/g)) add(m[1], 'nudge', f);
     }
     for (const f of GATE_FILES) {
         const p = join(root, f);

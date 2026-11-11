@@ -1060,7 +1060,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 _workerInputThisRun += Number(_u?.prompt_tokens) || 0;
                 console.log(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);
                 recordSuccess(endpoint ?? oaiEndpoint());
-            } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); throw e; }
+            } catch (e) { console.error(`[worker:${_wRole}:step${step}] callOAI threw: ${e.message}`); _wSessionClose({ kind: 'error', message: String(e?.message ?? e).slice(0, 200) }); throw e; }   // the retry in executeWorkers starts a session of its own (codex R1188)
 
             // Cut off at the token cap (or filtered, or a tool call closed after the cap): nothing of it runs, as in the main loop.
             const _cut = responseCutOff(message);

@@ -1849,7 +1849,8 @@ async function _handleWriteFile(args, context) {
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
         const synErr = await _syntaxCheck(args.path, args.content);
         const wfResult: any = { success: true, path: args.path, bytes: _byteLen(args.content), ...imgDisplay };
-        const doubled = existed ? doubledBackslashGrowth(previous, args.content) : 0;
+        // Not in JSON: there every backslash of a regex has to be doubled, so "\\d+" is correct (codex R1094).
+        const doubled = existed && !/\.jsonc?$/i.test(String(args.path)) ? doubledBackslashGrowth(previous, args.content) : 0;
         const badRegex = /\.(?:[cm]?js|[jt]sx?)$/i.test(String(args.path)) ? overEscapedRegexLiterals(args.content) : 0;
         if (badRegex && !(doubled >= 2)) wfResult.escape_warning = `${badRegex} regular expression literal${badRegex === 1 ? '' : 's'} in this file ha${badRegex === 1 ? 's' : 've'} doubled backslashes (/(\\\\d+)/ matches a backslash and a "d", not a number). If you meant a digit, a dot or a space, the text was over-escaped: write \\d, \\., \\s with a single backslash, run the file, and check one known case before you trust a result.`;
         if (doubled >= 2) wfResult.escape_warning = `This write added ${doubled} doubled backslashes (a \\d or \\n where the previous version of the file had \d or \n). If you meant a regex escape or a newline inside a string, the text was over-escaped: read the file back and fix those places.`;
@@ -3229,7 +3230,9 @@ export async function executeToolAsync(name, args, context = null, onProgress?: 
         const leak = secretEgressReason(name, _argStrings(args).join('\n'), String(_currentUserIntent ?? ''));
         if (leak) return { error: leak };
     }
-    const result = noteEmptyArgs(name, args, await _executeToolAsyncInner(name, args, context, onProgress));
+    const inner = await _executeToolAsyncInner(name, args, context, onProgress);
+    // Workers run in parallel and each has its own arguments: their empty calls are not the main agent's streak (codex R1092).
+    const result = context ? inner : noteEmptyArgs(name, args, inner);
     _noteCredentialReads(name, args, result);
     return result;
 }

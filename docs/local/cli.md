@@ -56,7 +56,7 @@ with `--api-url` and `--api-key`.
 | `--main-role` | the Director | Role of the main agent. Also `FREEGENT_MAIN_ROLE`. An unknown name prints `unknown role "x" — using Director` and the run goes on as the Director |
 | `--max-rounds` | the setting `fg_agent_max_rounds` (100) | Step limit of the turn, 1 to 500. Also `FREEGENT_MAX_ROUNDS`. Unset or 0 leaves the saved setting alone |
 | `--reply-channel-hint` | | For runners whose counterpart is reached through a tool, not chat output: text shown to the model when it answers in chat instead. Also `FREEGENT_REPLY_CHANNEL_HINT` |
-| `--thinking-level` | `off` | `off`, `low`, `medium`, `high` |
+| `--thinking-level` | the model's own (no thinking control is sent) | `off`, `low`, `medium`, `high` |
 | `--temperature` | the provider's default | 0 to 2; a value outside it is refused |
 | `--timeout` | 1800000 | Abort after this many ms (also for `--prompt`) |
 | `--context-window` | none | Total token budget; enables per-step clamping |

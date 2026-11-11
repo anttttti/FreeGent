@@ -200,6 +200,7 @@ function _configureHeadless(provider: any, model: any, apiKey: any, apiUrl: any,
     if (preserveThinking != null) _ls.setItem('fg_preserve_thinking', preserveThinking ? 'true' : 'false');
     if (retryMode)               _ls.setItem('fg_retry_mode',        retryMode);
     if (retryFixedMs > 0)    _ls.setItem('fg_retry_fixed_ms', String(retryFixedMs));
+    else if (retryMode === 'fixed') _ls.setItem('fg_retry_fixed_ms', '120000');   // the documented default, not a profile's leftover (codex R1178)
 
     if (!model) return; // no model override — leave existing config
 
@@ -562,6 +563,8 @@ async function _setupOnce(opts: Record<string, any> = {}): Promise<void> {
         //   default         — new interactive session, unique per launch
         // Random suffix: concurrent benchmark containers share workspaceRoot (/workspace) and can
         // start in the same millisecond; identical IDs made their event logs share one file.
+        // An explicit session id from another workspace would restore that conversation while the tools work in this one; the picker already filters by this prefix (codex R1185).
+        if (resumeSessionId && !resumeSessionId.startsWith(_wsPrefix)) throw new Error(`session ${resumeSessionId.slice(0, 40)} does not belong to this workspace (${workspaceRoot}); resume it from its own directory`);
         const chatId = resumeSessionId || `${_wsPrefix}${Date.now().toString(36).padStart(9, '0')}${randomBytes(3).toString('hex')}`;
         const chatName = resumeSessionId
             ? undefined  // don't overwrite existing name of a resumed session
@@ -756,7 +759,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
     if (typeof task !== 'string' || task.trim().length < 8)
         return { output: '', error: `empty or trivial task input (${JSON.stringify(String(task ?? '').slice(0, 60))}) — refusing to start the agent`, metrics: { elapsed_s: 0, steps: 0, input_tokens: 0, output_tokens: 0, compactions: 0, discarded_generations: 0, discarded_output_tokens: 0, worker_steps: 0, worker_input_tokens: 0, worker_output_tokens: 0, aux_requests: 0, aux_input_tokens: 0, aux_output_tokens: 0, failed_requests: 0 } };
     const { timeoutMs, workspaceRoot, logFile: _runLog } = _parseOpts(opts);
-    await setup(opts);
+    const _runStart = Date.now();
+    await setup(opts);   // cold setup (and MCP discovery) is part of the run's time (codex R979)
     // Per-chat state of earlier tasks in this process (worker budget, lookalike-refusal counts, replace
     // failures) must not carry over: a second run() would inherit the first one's spent worker budget.
     try { ((globalThis as any).clearReplaceState ?? (dom.window as any).clearReplaceState)?.(); } catch { /* best effort */ }
@@ -831,7 +835,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
             session.softStopPending = true;
             (session as any).stopCause = 'the run time limit was reached';
             try { dom.window.stopNow?.(); } catch {}
-        }, timeoutMs)
+        }, Math.max(1, timeoutMs - (Date.now() - _runStart)))
         : null;
 
     // create an event-log session for this task run and set it active.
@@ -905,6 +909,8 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         if (process.env.FG_DEBUG_STACK) console.error('[debug stack]', e.stack);
         error = e?.message || String(e);
     } finally {
+        // The deadline ends with the agent: a slow persistence or flush after it finished must not mark a completed run as timed out (codex R980).
+        if (_abortTimer != null) clearTimeout(_abortTimer);
         _metrics.elapsed_s = (Date.now() - _t0) / 1000;
         setMetricsWriter(null);
         process.off('SIGTERM', _sigtermHandler);
@@ -912,7 +918,6 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
         await _persisting;
         // flush any buffered event-log writes before the task result is returned.
         await registry.flush().catch(e => console.warn('[headless] event-log flush failed:', e?.message));
-        if (_abortTimer != null) clearTimeout(_abortTimer);
         dom.window.createResponsePlaceholder = origCreatePH;
         globalThis.createResponsePlaceholder = origCreatePH;
     }

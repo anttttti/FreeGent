@@ -241,6 +241,7 @@ function _matchNeedle(needle, result) {
         if (op === '>=') return a >= v;
         if (op === '<=') return a <= v;
     }
+    if (!n) return false;   // `tool=>` with nothing after it matched every result (codex R1172)
     try { return JSON.stringify(result ?? '').includes(n); } catch { return String(result ?? '').includes(n); }   // a BigInt or a cycle must not end the turn
 }
 
@@ -345,6 +346,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
             if (!m) return false;
             const tool = m[1];
             const threshold = parseInt(m[2], 10);
+            if (!(threshold >= 1)) return false;   // `x0` matched before any call was made (codex R1173)
             const count = hist.filter(n => n === tool).length;
             return count >= threshold;
         });

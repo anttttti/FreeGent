@@ -1589,6 +1589,9 @@ async function handleSlash(cmd: string) {
             if (field?.kind === 'select' && val && !field.options.some(o => o.value === val)) {
                 say(`_\`${key}\` takes one of: ${field.options.map(o => o.value || '(default)').join(', ')}._`); break;
             }
+            if (field?.kind === 'toggle' && val && val !== 'true' && val !== 'false') {   // `off` was stored, shown as off, and ran as on (codex R1160)
+                say(`_\`${key}\` takes true or false._`); break;
+            }
             if (field?.kind === 'number' && val) {
                 const why = numberFieldError(field, val);
                 if (why) { say(`_\`${key}\` ${why}${field.min != null && field.max != null ? ` (${field.min}–${field.max})` : ''}; the setting is unchanged._`); break; }

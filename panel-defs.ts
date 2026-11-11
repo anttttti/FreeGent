@@ -55,7 +55,7 @@ interface HintField    { kind: 'hint';    text: string }
 export function numberFieldError(field: { min?: number; max?: number; step?: number; label?: string }, value: string): string | null {
     const n = Number(value);
     if (value.trim() === '' || !Number.isFinite(n)) return 'is not a number';
-    if (field.step === 1 && !Number.isInteger(n)) return 'must be a whole number';   // 1.5 steps was stored, shown as 1.5 and run as 1 (codex R1158)
+    if (field.step === 1 && !/^\s*[+-]?\d+\s*$/.test(value)) return 'must be a whole number';   // 1.5 and 1e2 were stored as typed and read as 1 (codex R1158, R1161)   // 1.5 steps was stored, shown as 1.5 and run as 1 (codex R1158)
     if (field.min != null && n < field.min) return `must be at least ${field.min}`;
     if (field.max != null && n > field.max) return `must be at most ${field.max}`;
     return null;

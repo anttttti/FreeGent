@@ -98,7 +98,7 @@ Options:
                             to show the model when it answers in chat instead (benchmark runners)
   --mcp-config <path>       JSON array of per-run MCP servers; replaces saved servers
   --temperature   <n>       Sampling temperature 0–2 (default: the provider's own)
-  --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
+  --thinking-level <level>  Thinking budget: off|low|medium|high (default: the model's own)
   --retry-mode <mode>       Retry delay mode: exponential (default) | fixed
   --retry-fixed-ms <ms>     Fixed retry delay in ms when --retry-mode fixed (default: 120000)
   --main-role <name>        Role of the main agent (default: the Director)

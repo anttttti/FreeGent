@@ -24,6 +24,14 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
         expect(guidance).toContain('test-quoted-skill');
     });
 
+    it('an empty needle or a zero repeat threshold matches nothing (R1172, R1173)', () => {
+        W.skillsRegistry.set('empty-needle', { name: 'empty-needle', trigger_on_tool: 'execute_code=>', body: 'x' });
+        W.skillsRegistry.set('zero-repeat', { name: 'zero-repeat', trigger_on_repeat: 'read_file x0', body: 'y' });
+        const g = W.reactiveSkillGuidance([{ name: 'execute_code', args: {}, result: { stdout: 'anything', exit_code: 0 } }]);
+        expect(g).not.toContain('empty-needle');
+        expect(g).not.toContain('zero-repeat');
+    });
+
     it('matches string comparison when value is enclosed in quotes', () => {
         W.skillsRegistry.set('test-status-skill', {
             name: 'test-status-skill',

@@ -29,4 +29,9 @@ describe('empty-argument streak', () => {
         const other = await run('search_workspace', {});
         expect(other.error).not.toContain('EMPTY');
     });
+    it('a worker\'s empty calls are not the main agent\'s streak (R1092)', async () => {
+        const ctx = () => ({ snapshot: new Map(), staging: new Map(), depth: 0 });
+        for (let i = 0; i < 4; i++) expect((await W.executeToolAsync('read_file', {}, ctx())).error).not.toContain('EMPTY');
+        expect((await run('read_file', {})).error).not.toContain('EMPTY');   // the main agent's first
+    });
 });

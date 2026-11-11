@@ -7,7 +7,7 @@
 // Written after the self-analysis runs T03/T14 (hand-made brace matching ranked nested pseudo-functions above the real longest function and
 // reported indexes into a comment-stripped line list) and T02 (a scanner that did not read .tsx files called a live function dead).
 // Scope: *.ts, *.tsx, *.js, *.mjs under --dir, without node_modules, dist, notes, logs, tmp, the directories this checkout keeps out of git, tests (tests only count as users for `exports`).
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { localIgnoredDirs } from './local-ignored-dirs.mjs';
@@ -21,7 +21,10 @@ const dir = resolve(String(flag('--dir', '.')));
 function walk(d, out = []) {
     for (const e of readdirSync(d)) {
         if (SKIP.has(e) || e.startsWith('code-review-artifacts')) continue;
-        const p = join(d, e), st = statSync(p);
+        const p = join(d, e), l = lstatSync(p);
+        // A symlinked directory is not entered (a cycle recursed until the command failed, an outside link read files outside --dir; codex R1107); a linked file is read.
+        if (l.isSymbolicLink() && statSync(p).isDirectory()) continue;
+        const st = l.isSymbolicLink() ? statSync(p) : l;
         if (st.isDirectory()) walk(p, out); else if (/\.(ts|tsx|js|mjs)$/.test(e) && !e.endsWith('.d.ts')) out.push(p);
     }
     return out;

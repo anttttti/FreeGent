@@ -96,4 +96,29 @@ describe('a check that ran no test', () => {
         noteStep(st, { toolCalls: [mk('pytest nope.py', 4, 'collected 0 items')] });
         expect(verdict(st)).toBe('verified');
     });
+
+    // codex R969, R972, R974, R975
+    const code = (c: string, result: any = { exit_code: 0, stdout: '' }) => ({ name: 'execute_code', args: { code: c }, result });
+    it('a Python r+ open is a write', () => {
+        expect(run([[code("python3 -c \"open('src/a.py', 'r+').write('x')\"")]])).toBe('unverified');
+        expect(run([[code("python3 -c \"open('src/a.py', 'r').read()\"")]])).toBe('no_change');
+    });
+    it('a failed command that redirected into a file before failing is a change; a failed patch is not', () => {
+        expect(run([[code("printf x > src/a.py; false", { exit_code: 1, stdout: '' })]])).toBe('unverified');
+        expect(run([[code('git apply fix.patch', { exit_code: 1, stdout: '' })]])).toBe('no_change');
+    });
+    it('files the Local Sandbox reports deleted are a change, deleted on purpose (R1124)', () => {
+        expect(run([[code('rm src/old.py', { exit_code: 0, stdout: '', files_deleted: ['src/old.py'] })]])).toBe('unverified');
+    });
+    it('vitest list and jest --listTests discover tests, they do not run them (R977)', () => {
+        for (const c of ['npx vitest list', 'npx jest --listTests']) expect(run([[edit], [code(c, { exit_code: 0, stdout: 'tests/a.test.ts' })]]), c).toBe('unverified');
+    });
+    it('Jest with no tests found is not a check', () => {
+        const none = code('npx jest --passWithNoTests', { exit_code: 0, stdout: 'No tests found, exiting with code 0' });
+        expect(run([[edit], [none]])).toBe('unverified');
+    });
+    it('src/debug/ and tests/temp_parser.py are project files, not scratch', () => {
+        expect(run([[{ name: 'write_file', args: { path: 'src/debug/config.ts' }, result: { success: true } }]])).toBe('unverified');
+        expect(run([[{ name: 'write_file', args: { path: 'tests/temp_parser.py' }, result: { success: true } }]])).toBe('unverified');
+    });
 });
