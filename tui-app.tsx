@@ -1535,9 +1535,14 @@ async function runExport(workspaceRoot: string): Promise<void> {
         }
     }
 
-    const filename = `chat-export-${dateStr}-${timeStr}.md`;
-    const outPath  = join(workspaceRoot, filename);
-    await writeFile(outPath, lines.join('\n'), 'utf8');
+    // Exclusive create ('wx'): an existing file, or a symlink at the name (which a plain write follows to its target outside the workspace), is never overwritten;
+    // the next free "-2", "-3" … name is used instead (codex R1083).
+    let filename = '';
+    for (let n = 1; ; n++) {
+        filename = `chat-export-${dateStr}-${timeStr}${n > 1 ? `-${n}` : ''}.md`;
+        try { await writeFile(join(workspaceRoot, filename), lines.join('\n'), { encoding: 'utf8', flag: 'wx' }); break; }
+        catch (e: any) { if (e?.code !== 'EEXIST' || n >= 50) throw e; }
+    }
 
     Store.addNotice(`Exported to \`${filename}\``);
 }

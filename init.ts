@@ -295,36 +295,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     applyToolbarDefault?.();
 
-    // ── Mobile hamburger button ────────────────────────────────────────────
-    // Injected by JS so it only appears when the @media query hides the rail.
-    if (!document.getElementById('mobile-menu-btn')) {
-        const mBtn = document.createElement('button');
-        mBtn.id = 'mobile-menu-btn'; mBtn.textContent = '☰'; mBtn.title = 'Open menu';
-
-        // Start in minimized state — icon strip visible, hamburger hidden
-        const _initRail = document.querySelector('.left-rail') as HTMLElement | null;
-        if (_initRail) {
-            _initRail.classList.add('mobile-open');
-            mBtn.style.display = 'none';
-        }
-
-        mBtn.onclick = () => {
-            const rail = document.querySelector('.left-rail') as HTMLElement | null;
-            if (!rail) return;
-            // Open as full expanded overlay; hide the hamburger
-            rail.classList.add('mobile-open', 'expanded');
-            mBtn.style.display = 'none';
-            // Tap outside the overlay → collapse to minimized icon strip
-            const onOutside = (ev: MouseEvent) => {
-                if (!rail.contains(ev.target as Node)) {
-                    rail.classList.remove('expanded');
-                    document.removeEventListener('click', onOutside, true);
-                }
-            };
-            setTimeout(() => document.addEventListener('click', onOutside, true), 0);
-        };
-        document.body.appendChild(mBtn);
-    }
+    // On a phone the rail starts as the icon strip (the left-rail is hidden by CSS until it has `mobile-open`). It once had a hamburger to bring it back from a fully
+    // closed state, but nothing closed the rail any more, so the button could never appear (exploration G03).
+    document.querySelector('.left-rail')?.classList.add('mobile-open');
 
     // ── Populate recent chats in the rail and expand it on desktop ───────────
     updateRailRecentChats?.();

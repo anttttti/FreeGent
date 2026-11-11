@@ -48,7 +48,7 @@ function activateTab(key) {
     // Hide the sidebar entirely when a preview tab (artifact iframe, image, PDF, …) is active.
     document.body.classList.toggle('preview-mode', !!(ft?.isPreview));
     // On a phone the expanded rail is an overlay: choosing a destination leaves it, otherwise it stayed over the new panel
-    // (opencode report 51; closeMobileRail() had no caller).
+    // (opencode report 51).
     if (window.innerWidth <= 700) document.getElementById('left-rail')?.classList.remove('expanded');
     if (key === 'settings') { populateSettingsForm(); switchSettingsTab('credentials'); renderProfilesTab(); }   // Credentials is the first tab
     if (key === 'tasks')    { refreshTasks(); initRunner?.(); }
@@ -1471,15 +1471,6 @@ function toggleRailExpanded() {
     if (btn) btn.title = rail.classList.contains('expanded') ? 'Shrink sidebar' : 'Expand sidebar';
 }
 
-function closeMobileRail() {
-    const rail = document.getElementById('left-rail');
-    if (!rail) return;
-    rail.classList.remove('mobile-open', 'expanded');
-    // Restore hamburger button
-    const mBtn = document.getElementById('mobile-menu-btn') as HTMLButtonElement | null;
-    if (mBtn) mBtn.style.display = '';
-}
-
 function toggleChatToolbar() {
     const toolbar = document.querySelector('.chat-toolbar') as HTMLElement | null;
     const btn = document.getElementById('toolbar-toggle-btn');
@@ -1521,4 +1512,4 @@ function expandChatToolbar() {
 }
 
 // Window bridge for classic scripts and inline handlers (ESM migration).
-Object.assign(window, { applyToolbarDefault, activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, refreshOpenFileTab, closeAllFileTabs, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, closeMobileRail, toggleChatToolbar, expandChatToolbar });
+Object.assign(window, { applyToolbarDefault, activateTab, openFileTab, closeFileTab, openArtifactTab, runPageCheck, scheduleArtifactRefresh, refreshOpenFileTab, closeAllFileTabs, notifyLocalFileChanged, notifyAgentFileWritten, toggleRailExpanded, toggleChatToolbar, expandChatToolbar });

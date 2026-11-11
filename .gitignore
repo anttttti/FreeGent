@@ -40,3 +40,4 @@ __pycache__/
 
 # VitePress
 docs/.vitepress/cache/
+fg-current-profile.json

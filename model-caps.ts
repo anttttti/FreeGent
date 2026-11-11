@@ -285,7 +285,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
 
     // Format A — <tool_call><function=name><parameter=k>v</parameter>...</function></tool_call>
     cleaned = cleaned.replace(
-        /<tool_call>\s*<function=(\w+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g,
+        /<tool_call>\s*<function=([\w-]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g,
         (_, name, body) => {
             pushCall(name, JSON.stringify(_paramTagArgs(body)));
             return '';
@@ -359,7 +359,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     // </function> (a model mixing two dialects: v0.96.50 replace_in_file, whose body was left in the text while the call went out
     // with empty arguments). The body is taken by brace matching, then any run of stray closing tags is dropped with it.
     {
-        const re = /<function=(\w+)>\s*(?=\{)/g;
+        const re = /<function=([\w-]+)>\s*(?=\{)/g;
         let m: RegExpExecArray | null;
         let out = '', last = 0;
         while ((m = re.exec(cleaned)) !== null) {
@@ -382,7 +382,7 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
 
     // Format B — <function=name>{"k":"v"}</function> or bare <function=name />
     cleaned = cleaned.replace(
-        /<function=(\w+)>([\s\S]*?)<\/function>|<function=(\w+)\s*\/?>/g,
+        /<function=([\w-]+)>([\s\S]*?)<\/function>|<function=([\w-]+)\s*\/?>/g,
         (_, name1, args, name2) => {
             const name = name1 || name2;
             let parsedArgs = '{}';

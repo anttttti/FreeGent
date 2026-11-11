@@ -1,3 +1,4 @@
+import { KEYS } from './storage-keys.js';
 import { escapeHtml, jsArg } from './html-escape.js';
 import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
@@ -461,8 +462,32 @@ function saveSettings() {
     updateActiveModelDisplay();
 }
 
+// Keys saved by an older build for a provider that has no field any more (Cerebras, Mistral, OpenCode: 2026-09). They are still redacted and never sent, but nothing in Settings showed
+// them; list them here with a Remove (exploration G07). Only `fg_<name>_key` names that the current registry does not know: tokens such as the server token are not listed.
+export function renderOrphanKeys() {
+    const box = document.getElementById('orphan-keys');
+    if (!box) return;
+    const known = new Set<string>(Object.values(KEYS) as string[]);
+    const names: string[] = [];
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i) || ''; if (/^fg_[a-z0-9]+_key$/.test(k) && !known.has(k)) names.push(k); } } catch {}
+    box.style.display = names.length ? '' : 'none';
+    box.textContent = '';
+    if (!names.length) return;
+    const label = document.createElement('span'); label.className = 'settings-label'; label.textContent = 'Other saved keys'; box.appendChild(label);
+    const hint = document.createElement('p'); hint.className = 'settings-hint';
+    hint.textContent = 'Saved by an earlier version for a provider FreeGent no longer has. Nothing uses them.'; box.appendChild(hint);
+    for (const k of names.sort()) {
+        const row = document.createElement('div'); row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0';
+        const name = document.createElement('code'); name.textContent = k;
+        const btn = document.createElement('button'); btn.className = 'settings-btn'; btn.textContent = 'Remove';
+        btn.onclick = () => { try { localStorage.removeItem(k); } catch {} renderOrphanKeys(); };
+        row.append(name, btn); box.appendChild(row);
+    }
+}
+
 function populateSettingsForm() {
     window._settingsPopulating = true;
+    renderOrphanKeys();
     (window as any).renderGuestAccess?.();
     const ver = document.getElementById('settings-version') as HTMLAnchorElement | null;
     if (ver) { ver.textContent = FG_VERSION; ver.href = FG_VERSION_URL; }

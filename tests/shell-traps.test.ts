@@ -10,6 +10,12 @@ beforeAll(async () => { await import('../tools.ts'); });
 const names = ['read_file', 'write_file', 'search_workspace', 'execute_code'];
 
 describe('pseudoToolInShell', () => {
+    it('finds MCP tool names with a hyphen or upper case (codex R1052, R1123)', () => {
+        const mcp = ['mcp__docs__get-item', 'mcp__docs__GetItem'];
+        expect(pseudoToolInShell('mcp__docs__get-item({"id": 1})', mcp)).toBe('mcp__docs__get-item');
+        expect(pseudoToolInShell('mcp__docs__GetItem{"id": 1}', mcp)).toBe('mcp__docs__GetItem');
+        expect(pseudoToolInShell('my-func({"id": 1})', mcp)).toBeNull();   // not a tool name
+    });
     it('finds a tool call typed as a command, in brace, paren and keyword forms', () => {
         expect(pseudoToolInShell('read_file{path: "a.ts"}', names)).toBe('read_file');
         expect(pseudoToolInShell('  search_workspace(pattern="x", path=".")', names)).toBe('search_workspace');

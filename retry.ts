@@ -188,6 +188,9 @@ export function retryDelay(attempt, e) {
     const mode    = (typeof localStorage !== 'undefined' ? localStorage.getItem(KEYS.RETRY_MODE) : null) || 'exponential';
     const fixedMs = parseInt(typeof localStorage !== 'undefined' ? localStorage.getItem(KEYS.RETRY_FIXED_MS) : null) || 120_000;
     if (mode === 'fixed') return fixedMs;
+    // The settings panel's choices: fixed-30s, fixed-2m, fixed-5m (they fell through to exponential while the panel showed the fixed delay; codex R1156).
+    const f = /^fixed-(\d+)(s|m)$/.exec(mode);
+    if (f) return Number(f[1]) * (f[2] === 'm' ? 60_000 : 1000);
     const base = /HTTP 429|HTTP 413|rate.?limit|too many requests|request too large|quota|insufficient balance/i.test(e.message || '') ? 8_000 : 1_500;
     return Math.min(base * Math.pow(2, attempt), MAX_BACKOFF_MS);
 }

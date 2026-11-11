@@ -674,8 +674,9 @@ export function noteRewrites(st: RewriteState, results: Array<{ name: string; ar
 export function pseudoToolInShell(code: string, toolNames: Iterable<string>): string | null {
     const first = String(code ?? '').split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
     if (!first) return null;
-    const m = /^([a-z][a-z0-9_]*)[ \t]*([{(])/.exec(first);
-    if (!m || (m[2] === '(' && /^[a-z][a-z0-9_]*[ \t]*\(\s*\)/.test(first))) return null;
+    // MCP tool names keep hyphens and upper case (`mcp__docs__get-item`, `mcp__docs__GetItem`); only a name in the tool list is returned (codex R1052, R1123).
+    const m = /^([A-Za-z][\w-]*)[ \t]*([{(])/.exec(first);
+    if (!m || (m[2] === '(' && /^[A-Za-z][\w-]*[ \t]*\(\s*\)/.test(first))) return null;
     for (const n of toolNames) if (n === m[1]) return n;
     return null;
 }

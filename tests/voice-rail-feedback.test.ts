@@ -15,7 +15,7 @@ describe('D1 rail is in its final mobile state in the static HTML', () => {
     });
     it('toggleRailExpanded has a single branch', () => {
         const s = src('tabs.ts');
-        const body = s.slice(s.indexOf('function toggleRailExpanded'), s.indexOf('function closeMobileRail'));
+        const body = s.slice(s.indexOf('function toggleRailExpanded'), s.indexOf('function toggleChatToolbar'));
         expect(body.match(/classList\.toggle\('expanded'\)/g)?.length).toBe(1);
     });
 });

@@ -560,6 +560,12 @@ describe('text-format tool calls with MCP names', () => {
         expect(names('<mcp__docs__search><query>react hooks</query></mcp__docs__search>'))
             .toEqual([['mcp__docs__search', { query: 'react hooks' }]]);
     });
+    it('the <function=name> forms accept hyphenated MCP names (codex R1053)', () => {
+        expect(names('<function=mcp__docs__resolve-library-id>{"libraryName":"react"}</function>'))
+            .toEqual([['mcp__docs__resolve-library-id', { libraryName: 'react' }]]);
+        expect(names('<tool_call><function=mcp__docs__resolve-library-id><parameter=libraryName>react</parameter></function></tool_call>'))
+            .toEqual([['mcp__docs__resolve-library-id', { libraryName: 'react' }]]);
+    });
     it('Format F (attributes), including hyphenated names', () => {
         expect(names('<mcp__docs__resolve-library-id libraryName="react"/>'))
             .toEqual([['mcp__docs__resolve-library-id', { libraryName: 'react' }]]);

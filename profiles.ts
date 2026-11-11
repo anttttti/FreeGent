@@ -2,7 +2,8 @@ import { patchPrefs } from './prefs.js';
 // profiles.js — FreeGent settings profiles
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
 import { escapeHtml } from './html-escape.js';
-import { isCredentialKey } from './profile-keys.js';
+import { credentialFreeSettings, stripModelKeys } from './profile-keys.js';
+export { stripModelKeys };
 import { SETTINGS } from './settings-defs.js';
 
 // Settings captured in a profile (everything except API credentials), with their labels and sections: settings-defs.ts.
@@ -100,34 +101,6 @@ Write complete, working implementations — no stubs or placeholders.`,
 
 let _previewedId: string | null = null;
 
-
-// fg_custom_models holds each model's API key beside its settings. Profiles are shared files and are
-// documented as credential-free, so the keys are dropped from every profile and put back on apply.
-// A value that is not a JSON list of models (truncated, another shape) is dropped, not passed on: it can still hold a key (codex R199).
-export function stripModelKeys(json: string | null | undefined): string | null | undefined {
-    if (json == null) return json;
-    try {
-        const arr = typeof json === 'string' ? JSON.parse(json) : null;
-        if (!Array.isArray(arr)) return undefined;
-        return JSON.stringify(arr.map((m: any) => {
-            if (!m || typeof m !== 'object') return m;
-            const { key: _k, apiKey: _a, ...rest } = m;
-            return rest;
-        }));
-    } catch { return undefined; }
-}
-
-// One sanitizer for every way a profile is stored or written out: an imported file or a profile saved before keys were dropped can carry scalar keys
-// (fg_openai_key, fg_tavily_key), which were stored as given and exported again (codex R140).
-function credentialFreeSettings(settings: Record<string, any>): Record<string, any> {
-    const clean: Record<string, any> = {};
-    for (const [k, v] of Object.entries(settings ?? {})) if (!isCredentialKey(k)) clean[k] = v;
-    if ('fg_custom_models' in clean) {
-        const models = stripModelKeys(clean.fg_custom_models);
-        if (models === undefined) delete clean.fg_custom_models; else clean.fg_custom_models = models;
-    }
-    return clean;
-}
 
 function captureCurrentProfile() {
     const p = {};

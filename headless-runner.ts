@@ -8,12 +8,12 @@
 // Never imported by browser code — Node.js only.
 
 import { dom, virtualConsole } from './bootstrap-jsdom.js';
-import { isCredentialKey } from './profile-keys.js';
+import { credentialFreeSettings } from './profile-keys.js';
 import { KEYS } from './storage-keys.js';
 import { newVerification, noteStep, verdict } from './verification.js';
 import { checkChangedFiles, type ChangedFile } from './finish-summary.js';
 import { appendLedger } from './request-ledger.js';
-import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, renameSync, chmodSync } from 'node:fs';
 import { logAppend, defaultLogPath } from './safe-log.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -242,16 +242,20 @@ function loadProfile(): void {
 }
 
 export function saveProfile(): void {
-    const settings: Record<string, string> = {};
+    const all: Record<string, string> = {};
     for (let i = 0; i < _ls.length; i++) {
         const k = _ls.key(i)!;
-        if (!k.startsWith('fg_') || isCredentialKey(k)) continue;
+        if (!k.startsWith('fg_')) continue;
         if (k === 'fg_agent_compact_tokens' && _autoCompactTokens !== null && _ls.getItem(k) === _autoCompactTokens) continue;
-        settings[k] = _ls.getItem(k)!;
+        all[k] = _ls.getItem(k)!;
     }
+    // The same sanitizer as the WebUI's profiles: no credential keys, no MCP auth headers, no custom-model keys, no URL with a password in it.
+    const settings = credentialFreeSettings(all);
     try {
+        // Owner-only: the file sits in the module directory, where the umask would make it group-readable (codex R1074). mode applies to a new file; chmod covers an old one.
         writeFileSync(PROFILE_PATH,
-            JSON.stringify({ name: 'current', version: 1, savedAt: new Date().toISOString(), settings }, null, 2));
+            JSON.stringify({ name: 'current', version: 1, savedAt: new Date().toISOString(), settings }, null, 2), { mode: 0o600 });
+        try { chmodSync(PROFILE_PATH, 0o600); } catch { /* not ours to change */ }
     } catch { /* read-only fs or permissions — ignore */ }
 }
 

@@ -722,7 +722,6 @@ html, body {
 .seq-step { display: grid; grid-template-columns: auto 1fr; gap: 2px 0; align-content: start; }
 .seq-step-system { display: flex; align-items: center; padding: 3px 10px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; background: #f0f0f0; border: 1px solid #d8d8d8; color: #888; font-style: italic; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: default; }
 .seq-task { position: relative; display: flex; flex-direction: column; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; cursor: pointer; min-width: 70px; max-width: 220px; border: 1px solid transparent; transition: all 0.15s; user-select: none; }
-.seq-task-id { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--faint); font-weight: 600; line-height: 1; }
 .seq-task > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seq-running { background: #fff8e1; border-color: #f9a825; animation: seq-pulse 1.2s ease-in-out infinite; }
 @keyframes seq-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
@@ -1593,17 +1592,8 @@ html, body {
 @media (max-width: 700px) {
     /* body stays flex-direction:row — rail and content sit side by side */
 
-    /* Closed: rail hidden, hamburger visible */
+    /* Closed: rail hidden until init gives it mobile-open */
     .left-rail { display: none; }
-
-    /* Hamburger — CSS shows it; JS hides it (inline style) when rail is open */
-    #mobile-menu-btn {
-        display: flex; position: fixed; top: 8px; left: 8px; z-index: 200;
-        width: 40px; height: 40px; border-radius: 8px;
-        align-items: center; justify-content: center;
-        background: var(--sidebar-bg); border: 1px solid var(--border);
-        font-size: 18px; cursor: pointer;
-    }
 
     /* Minimized: icon-only strip in document flow on the left */
     .left-rail.mobile-open {
@@ -1639,8 +1629,6 @@ html, body {
     .tab-content { flex: 1; min-width: 0; }
 
     /* Chat panel adjustments */
-    .chat-panel { flex-direction: column; }
-    .chat-messages { padding: 48px 10px 10px; } /* space for hamburger when rail is closed */
 
     /* ── Mobile chat input — textarea full-width on top, buttons below ── */
     .chat-input-area {
@@ -1681,14 +1669,9 @@ html, body {
     }
 }
 
-/* Hide hamburger on desktop; the @media block above shows it on mobile */
-@media (min-width: 701px) {
-    #mobile-menu-btn { display: none; }
-}
 
 /* Preview mode — asset tab is active, give it the full viewport */
 body.preview-mode .left-rail   { display: none !important; }
-body.preview-mode #mobile-menu-btn { display: none !important; }
 
 /* ── Focus rings — visible keyboard navigation ── */
 :focus-visible {

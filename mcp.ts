@@ -282,10 +282,11 @@ let _rpcId = 1;
 
 async function _ensureSession(server: { url: string; headers?: Record<string, string> }): Promise<any> {
     const c = _conn(server);
-    if (c.ready) return null;
     // Workers call in parallel: callers that arrive during the handshake wait for it instead of
     // sending their own `initialize`, which would replace the session id under the first call.
+    // Checked before `ready`: that is set after the initialize reply, while `notifications/initialized` is still in flight, and a call sent in between breaks servers that enforce the order (codex R1054).
     if (c.init) { await c.init; return null; }
+    if (c.ready) return null;
     c.init = (async () => {
         c.sessionId = null; c.protocolVersion = null;
         const result = await _rpc(server, 'initialize', {

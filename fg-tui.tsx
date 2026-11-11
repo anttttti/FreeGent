@@ -7,7 +7,7 @@
 // bootstrap-jsdom MUST be the first import: it sets globalThis.window = dom.window
 // before any other module body runs. headless-runner re-exports dom for us.
 import './tui-env.js';
-import { detectProviderEnv } from './dotenv.js';
+import { detectProviderEnv, loadDotenv } from './dotenv.js';
 import { setup, dom, saveProfile, listWorkspaceSessions, resumeSession } from './headless-runner.js';
 import { isCacheCapable, oaiEndpoint, _markFlatCooldown } from './model-router.js';
 export { listWorkspaceSessions, resumeSession };
@@ -80,6 +80,7 @@ const _flag = (name: string, fallback = '') => {
 // Auto-detect provider and API key from standard env var names when
 // FREEWORKER_PROVIDER / FREEWORKER_API_KEY are not explicitly set.
 // Priority: CLI flag > FREEWORKER_* env > standard key names in .env.
+loadDotenv();   // before detection: setup() loads it too, but by then the provider and key below were already chosen without the .env keys (codex R1080)
 const _detected = detectProviderEnv(process.env, _flag('--provider'));
 
 // --resume detection: flag may be bare (no value → resume most recent) or carry an ID.

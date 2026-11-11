@@ -52,9 +52,10 @@ interface HintField    { kind: 'hint';    text: string }
 
 /** Why `value` is not acceptable for a number field (not a number, below min, above max), or null. The panels and /set share it
  *  so a value the panel would refuse cannot be set from the command line (TUI report case 036: /set fg_temperature 3.5 was sent as is). */
-export function numberFieldError(field: { min?: number; max?: number; label?: string }, value: string): string | null {
+export function numberFieldError(field: { min?: number; max?: number; step?: number; label?: string }, value: string): string | null {
     const n = Number(value);
     if (value.trim() === '' || !Number.isFinite(n)) return 'is not a number';
+    if (field.step === 1 && !Number.isInteger(n)) return 'must be a whole number';   // 1.5 steps was stored, shown as 1.5 and run as 1 (codex R1158)
     if (field.min != null && n < field.min) return `must be at least ${field.min}`;
     if (field.max != null && n > field.max) return `must be at most ${field.max}`;
     return null;

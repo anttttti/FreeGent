@@ -107,7 +107,7 @@
         var _noop = function(){};
         // toggleDarkMode is also exposed at module level in init.ts, but stub here as
         // belt-and-suspenders in case the module hasn't executed yet on first click.
-        'activateTab toggleRailExpanded closeMobileRail newChat expandChatToolbar toggleChatsDropdown toggleChatToolbar handleSendButton agentSend stopAfterStep retryLastTurn showModelCooldownPopup hideModelCooldownPopup toggleDarkMode togglePrivacyMenu pickPrivacyLevel setMode'
+        'activateTab toggleRailExpanded newChat expandChatToolbar toggleChatsDropdown toggleChatToolbar handleSendButton agentSend stopAfterStep retryLastTurn showModelCooldownPopup hideModelCooldownPopup toggleDarkMode togglePrivacyMenu pickPrivacyLevel setMode'
             .split(' ').forEach(function(n){ if (!window[n]) window[n] = _noop; });
     })();
     </script>
@@ -441,6 +441,7 @@
                         <input class="settings-input" id="stackexchange-key" type="password" placeholder="key=...">
                         <p class="settings-hint">Upgrades Stack Overflow search from 300/day to 10,000/day.</p>
                     </div>
+                    <div class="settings-section" id="orphan-keys" style="display:none"></div>
                 </div>
 
                 <div class="settings-tab-panel" data-tab="model">
