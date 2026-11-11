@@ -17,6 +17,8 @@ describe('destructiveGitReason', () => {
         'git checkout -f main',
         'git switch --discard-changes main',
         'git -C sub clean -f',
+        'git --work-tree . reset --hard',      // the option's value is the next word, not the subcommand
+        'git --git-dir .git clean -fd',
         'sudo git clean -ffdx',
         'echo start\ngit add -A\ngit reset --hard origin/main',
     ])('blocks %j when the request did not ask for it', (code) => {

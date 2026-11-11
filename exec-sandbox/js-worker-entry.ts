@@ -17,6 +17,7 @@ installWorkerFetch();
 self.onmessage = async ({ data }: MessageEvent) => {
     if (handleNetReply(data)) return;
     if (data?.type === 'run') {
+        self.postMessage({ type: 'started' });   // after this, an error event is the program's, not a worker that could not start
         try { self.postMessage({ type: 'result', result: await runJs(String(data.code ?? ''), data.files ?? {}) }); }
         catch (e: any) { self.postMessage({ type: 'error', message: String(e?.message ?? e) }); }
     }

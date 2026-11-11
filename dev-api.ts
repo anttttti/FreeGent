@@ -1166,12 +1166,14 @@ export function injectClientScript(html: string, script: string): string {
 }
 
 // URLs to open from other devices when the server is LAN-bound.
-export function lanUrls(port: number, https: boolean): string[] {
+export function lanUrls(port: number, https: boolean, token = ''): string[] {
     const proto = https ? 'https' : 'http';
     const ips = Object.values(networkInterfaces()).flat()
         .filter((i): i is NonNullable<typeof i> => !!i && !i.internal && i.family === 'IPv4')
         .map(i => i.address);
-    return [`${proto}://localhost:${port}/`, ...ips.map(ip => `${proto}://${ip}:${port}/`)];
+    // The token rides in the fragment (never sent to a server); the page script keeps it and strips it from the address bar. SECURITY.md: a LAN-bound server does not embed it.
+    const frag = token ? `#fg_token=${token}` : '';
+    return [`${proto}://localhost:${port}/${frag}`, ...ips.map(ip => `${proto}://${ip}:${port}/${frag}`)];
 }
 
 // ── Exec sandbox bundle ───────────────────────────────────────────────────────

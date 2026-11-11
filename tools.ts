@@ -237,8 +237,8 @@ const _READ_INLINE_MAX  = 50_000;
 // list_files result cap — prevents the tool from overwhelming context on huge trees.
 const _LIST_FILES_CAP   = 500;
 
-// search_workspace: hard cap on total returned matches; also the max display chars per match line.
-const _SEARCH_MAX_MATCHES    = 500;
+// search_workspace: hard cap on total returned matches; also the max display chars per match line (a `max_matches` argument was read but declared nowhere and sent by no logged call).
+const _SEARCH_MAX_MATCHES    = 100;
 const _SEARCH_LINE_DISPLAY   = 500;
 
 // Which tools the caller can actually invoke: a worker's per-step allowlist, else the main role's
@@ -947,6 +947,7 @@ async function _handleAppendFile(args: any, context: any) {
         path:    await _rootRelativeToolPath(_normToolPath(args.path ?? args.filename ?? args.file ?? '')),
         content: args.content ?? args.text ?? args.body ?? args.data ?? '',
     };
+    if (!args.path) return { error: 'append_file: "path" is required — the file to append to, e.g. {"path": "notes.md", "content": "…"}.' };
     const doAppend = async (read: () => Promise<string>, write: (c: string) => Promise<void>) => {
         // Only a file that is not there is created by an append; one that exists and cannot be read is not "empty" (writing the fragment alone would replace it, codex R119).
         let existing = '';
@@ -1126,9 +1127,9 @@ async function _handleSearchWorkspace(args: any) {
         const pattern      = args.pattern || '';
         const isRegex      = !!args.is_regex;
         const caseSensitive = args.is_regex ? (args.case_sensitive !== false) : !!args.case_sensitive;
-        const pathFilter   = (args.path_filter || '').toLowerCase().split('|').map(s => s.trim()).filter(Boolean);
+        const pathFilter   = (args.path_filter ?? args.path ?? '').toString().toLowerCase().split('|').map(s => s.trim()).filter(Boolean);
         const ctxLines     = Math.min(Math.max(0, args.context_lines || 0), 50);
-        const maxMatches   = Math.min(args.max_matches || 100, _SEARCH_MAX_MATCHES);
+        const maxMatches   = _SEARCH_MAX_MATCHES;
         // scope: 'both' (default) matches filenames AND contents; 'contents' is a plain grep;
         // 'names' matches filenames only. Case-insensitive per args.case_sensitive.
         const scope = String(args.scope ?? 'both').toLowerCase();
@@ -1632,6 +1633,12 @@ async function _handleReadFile(args, context) {
     };
     args.start_line = _lineNo(args.start_line);
     args.end_line   = _lineNo(args.end_line);
+    // offset/limit is the read convention of other harnesses; both were ignored and the whole file came back (F03: 20 KB per such call).
+    if (args.start_line === undefined && args.end_line === undefined && args.offset != null) {
+        args.start_line = _lineNo(args.offset) ?? 1;
+        const lim = _lineNo(args.limit);
+        if (lim) args.end_line = args.start_line + lim - 1;
+    }
     const _sliceLines = (text, start, end) => {
         if (!start && !end && text.length > _READ_INLINE_MAX) {
             const lines = text.split('\n');
@@ -2201,6 +2208,8 @@ async function _handleApplyPatch(args, context) {
         // Try exact, then with fuzz, then auto-correct line offsets
         let result = jsdiff.applyPatch(original, patch);
         if (result === false) result = jsdiff.applyPatch(original, patch, { fuzzFactor: 2 });
+        // diff 9 returns the file unchanged for a patch it cannot read (prose, no @@ line) where diff 7 threw: "applied" must mean a hunk changed something.
+        if (result === original) return { error: `apply_patch: the patch contains no hunk that changes "${args.path}" (a hunk starts with "@@ -<line>,<count> +<line>,<count> @@"). Nothing was changed.` };
         if (result !== false) {
             await write(result);
             const note = countFixes.length ? `Recomputed hunk counts: ${countFixes.join('; ')}` : undefined;

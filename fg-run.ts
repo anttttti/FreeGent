@@ -83,7 +83,7 @@ Options:
   --no-log              Disable LLM turn logging
   --sidecar-dir     <path>  Redirect fg-tasks/ and memory/ writes here (keeps workspace git tree clean)
   --context-window  <n>     Total token budget (input+output); enables per-step clamping (default: none)
-  --compaction-limit <n>    Compact history when estimated tokens exceed this (default: 20000)
+  --compaction-limit <n>    Compact history when estimated tokens exceed this (default: 80000)
   --disable-tools <list>    Comma-separated tool names to disable (e.g. fetch_url,web_search)
   --enable-tools <list>     Comma-separated tools to enable and add to the director's
                             headless tool set (e.g. fetch_url)
@@ -97,7 +97,7 @@ Options:
   --reply-channel-hint <t>  The task's counterpart is reached through a tool, not chat output: text
                             to show the model when it answers in chat instead (benchmark runners)
   --mcp-config <path>       JSON array of per-run MCP servers; replaces saved servers
-  --temperature   <n>       Sampling temperature 0–2 (default: 0.2)
+  --temperature   <n>       Sampling temperature 0–2 (default: the provider's own)
   --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
   --retry-mode <mode>       Retry delay mode: exponential (default) | fixed
   --retry-fixed-ms <ms>     Fixed retry delay in ms when --retry-mode fixed (default: 120000)

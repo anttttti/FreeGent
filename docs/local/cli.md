@@ -57,10 +57,10 @@ with `--api-url` and `--api-key`.
 | `--max-rounds` | the setting `fg_agent_max_rounds` (100) | Step limit of the turn, 1 to 500. Also `FREEGENT_MAX_ROUNDS`. Unset or 0 leaves the saved setting alone |
 | `--reply-channel-hint` | | For runners whose counterpart is reached through a tool, not chat output: text shown to the model when it answers in chat instead. Also `FREEGENT_REPLY_CHANNEL_HINT` |
 | `--thinking-level` | `off` | `off`, `low`, `medium`, `high` |
-| `--temperature` | `0.2` | 0 to 2; a value outside it is refused |
+| `--temperature` | the provider's default | 0 to 2; a value outside it is refused |
 | `--timeout` | 1800000 | Abort after this many ms (also for `--prompt`) |
 | `--context-window` | none | Total token budget; enables per-step clamping |
-| `--compaction-limit` | 20000 | Compact when the estimated history passes this many tokens |
+| `--compaction-limit` | 80000 | Compact when the estimated history passes this many tokens |
 | `--retry-mode`, `--retry-fixed-ms` | `exponential`, 120000 | Retry delay style |
 | `--disable-tools`, `--enable-tools` | | Comma-separated tool names |
 | `--fetch-allow` | | Restrict `fetch_url` to these origins and disable other outbound tools (a request policy, not containment) |
@@ -68,7 +68,7 @@ with `--api-url` and `--api-key`.
 | `--browser-url` | | Text-only Playwright bridge for the `browser_*` tools |
 | `--mcp-config` | | JSON array of MCP servers for this run; replaces saved ones |
 | `--sidecar-dir` | | Write `fg-tasks/` and `memory/` here instead of the workspace |
-| `--log`, `--no-log` | `/tmp/fg-agent.log` | JSONL turn log |
+| `--log`, `--no-log` | `~/.freegent/fg-agent.log` | JSONL turn log |
 
 QA gates are off by default in headless runs, unlike in the browser.
 

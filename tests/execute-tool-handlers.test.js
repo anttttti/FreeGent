@@ -258,6 +258,14 @@ describe('search_workspace — _handleSearchWorkspace', () => {
         expect(res.matches.some(m => m.includes('a.ts'))).toBe(true);
     });
 
+    it('takes `path` for path_filter (other harnesses name it so; it was ignored and the whole workspace searched)', async () => {
+        files.set('src/a.js', 'needle');
+        files.set('src/b.js', 'needle');
+        const res = await W.executeToolAsync('search_workspace', { pattern: 'needle', path: 'src/a.js' }, null);
+        expect(res.matches.every(m => m.includes('a.js'))).toBe(true);
+        expect(res.match_count).toBe(1);
+    });
+
     it('returns no-matches when nothing matches', async () => {
         files.set('a.ts', 'nothing here');
         const res = await W.executeToolAsync('search_workspace', { pattern: 'xyzzy_notfound' }, null);

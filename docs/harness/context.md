@@ -9,7 +9,7 @@ History is compacted when it passes a threshold, or when a turn is cut off by th
 - **Threshold:** set in **Settings → Agent → Context Management** as a percentage of the window or as a token count. The first threshold reached triggers compaction.
 - **What compaction does:** your original task is pinned so it is never lost, the most recent messages are kept, and a model-written summary replaces everything in between. The summary request sends the same prefix as the main request, so providers with prefix caching can reuse it, and it starts on the model you are already using unless that one is cooling down. On a local model a long history can take a few minutes to summarise.
 - **Cut-off replies:** if the output limit ends a reply mid-way, that reply is discarded, the history is compacted and the turn retried.
-- **Manually:** `/compact` in the TUI. In the CLI, `--compaction-limit` (default 20000 estimated tokens) and `--context-window` set the thresholds.
+- **Manually:** `/compact` in the TUI. In the CLI, `--compaction-limit` (default 80000 estimated tokens) and `--context-window` set the thresholds.
 
 The chat toolbar shows context token usage as `4.2k / 128k`, yellow at 70% and red at 90%.
 

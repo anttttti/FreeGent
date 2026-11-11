@@ -4,7 +4,7 @@
 import { createServer, type Server } from 'node:http';
 import {
     substituteServerKeys, ProxyRefusal, isSelfTarget, guardedFetch, gitArgsRefusal,
-    createDevApi, buildClientScript, serverKeys, serverKeyStatus, placeholderFor, classifyAddress, publicGet, pinnedFetch,
+    createDevApi, buildClientScript, lanUrls, serverKeys, serverKeyStatus, placeholderFor, classifyAddress, publicGet, pinnedFetch,
 } from '../dev-api.ts';
 import { scrubEnv } from '../secret-env.ts';
 
@@ -62,6 +62,15 @@ describe('substituteServerKeys', () => {
         const r = substituteServerKeys('http://localhost:8000/v1/chat/completions', { Authorization: 'Bearer sk-user' }, '{}', KEYS);
         expect(r.used).toBe(false);
         expect(r.headers.Authorization).toBe('Bearer sk-user');
+    });
+});
+
+describe('lanUrls', () => {
+    it('carries the token in the fragment of every printed URL (a LAN-bound page does not embed it)', () => {
+        const urls = lanUrls(5173, false, 'tok_abc');
+        expect(urls[0]).toBe('http://localhost:5173/#fg_token=tok_abc');
+        expect(urls.every(u => u.endsWith('#fg_token=tok_abc'))).toBe(true);
+        expect(lanUrls(5173, true)[0]).toBe('https://localhost:5173/');
     });
 });
 

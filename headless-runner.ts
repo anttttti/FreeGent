@@ -262,6 +262,7 @@ let _sessionAdapter: NodeSqliteAdapter | null = null;
 let _workspacePrefix = '';   // 16-char hex prefix for the active workspace
 
 // ── Shared opts parsing ───────────────────────────────────────────────────────
+// An option the CLI did not get arrives as '' or 0, which must fall through to the environment like undefined (a `??` kept the empty default over FREEGENT_WRITE_ALLOW, R1090/R1117).
 function _parseOpts(opts: any) {
     const e = process.env;
     return {
@@ -273,26 +274,26 @@ function _parseOpts(opts: any) {
         timeoutMs       : opts.timeoutMs       ?? (parseInt(e.FREEGENT_TIMEOUT_MS ?? '') || 30 * 60 * 1000),
         // null is an explicit "no log" (--no-log); only undefined falls back to the environment and the default.
         logFile         : opts.logFile === null ? null : (opts.logFile ?? e.FREEGENT_LOG_FILE ?? defaultLogPath('fg-agent.log')),
-        sidecarDir      : opts.sidecarDir      ?? e.FREEGENT_SIDECAR_DIR ?? '',
-        contextWindow   : opts.contextWindow   ?? (parseInt(e.FREEGENT_CONTEXT_WINDOW  ?? '') || 0),
-        compactionLimit : opts.compactionLimit ?? (parseInt(e.FREEGENT_COMPACTION_LIMIT ?? '') || 0),
-        disabledTools   : opts.disabledTools   ?? e.FREEGENT_DISABLED_TOOLS ?? '',
-        mainRole        : opts.mainRole        ?? e.FREEGENT_MAIN_ROLE       ?? '',
+        sidecarDir      : opts.sidecarDir      || e.FREEGENT_SIDECAR_DIR || '',
+        contextWindow   : opts.contextWindow   || (parseInt(e.FREEGENT_CONTEXT_WINDOW  ?? '') || 0),
+        compactionLimit : opts.compactionLimit || (parseInt(e.FREEGENT_COMPACTION_LIMIT ?? '') || 0),
+        disabledTools   : opts.disabledTools   || e.FREEGENT_DISABLED_TOOLS || '',
+        mainRole        : opts.mainRole        || e.FREEGENT_MAIN_ROLE || '',
         workflowMode    : opts.workflowMode    ?? e.FREEGENT_WORKFLOW_MODE === '1',
         resumeSessionId : opts.resumeSessionId ?? '',
         sessionDbPath   : opts.sessionDbPath   ?? e.FREEGENT_SESSION_DB ?? join(homedir(), '.freegent', 'sessions.db'),
         temperature     : opts.temperature     ?? (e.FREEGENT_TEMPERATURE != null ? parseFloat(e.FREEGENT_TEMPERATURE) : null),
-        thinkingLevel   : opts.thinkingLevel   ?? e.FREEGENT_THINKING_LEVEL  ?? '',
+        thinkingLevel   : opts.thinkingLevel   || e.FREEGENT_THINKING_LEVEL || '',
         preserveThinking: opts.preserveThinking ?? (e.FREEGENT_PRESERVE_THINKING != null ? e.FREEGENT_PRESERVE_THINKING !== '0' : null),
-        retryMode       : opts.retryMode       ?? e.FREEGENT_RETRY_MODE       ?? '',
-        retryFixedMs    : opts.retryFixedMs    ?? (parseInt(e.FREEGENT_RETRY_FIXED_MS ?? '') || 0),
-        maxRounds: opts.maxRounds ?? (parseInt(e.FREEGENT_MAX_ROUNDS ?? '') || 0),
+        retryMode       : opts.retryMode       || e.FREEGENT_RETRY_MODE || '',
+        retryFixedMs    : opts.retryFixedMs    || (parseInt(e.FREEGENT_RETRY_FIXED_MS ?? '') || 0),
+        maxRounds: opts.maxRounds || (parseInt(e.FREEGENT_MAX_ROUNDS ?? '') || 0),
         harness:   opts.harness   ?? e.FREEGENT_HARNESS ?? 'freegent',
-        fetchAllow:      opts.fetchAllow      ?? e.FREEGENT_FETCH_ALLOW      ?? '',
-        writeAllow:      opts.writeAllow      ?? e.FREEGENT_WRITE_ALLOW      ?? '',
-        enableTools:     opts.enableTools     ?? e.FREEGENT_ENABLE_TOOLS     ?? '',
+        fetchAllow:      opts.fetchAllow      || e.FREEGENT_FETCH_ALLOW || '',
+        writeAllow:      opts.writeAllow      || e.FREEGENT_WRITE_ALLOW || '',
+        enableTools:     opts.enableTools     || e.FREEGENT_ENABLE_TOOLS || '',
         browserUrl: opts.browserUrl ?? '',
-        replyChannelHint: opts.replyChannelHint ?? e.FREEGENT_REPLY_CHANNEL_HINT ?? '',
+        replyChannelHint: opts.replyChannelHint || e.FREEGENT_REPLY_CHANNEL_HINT || '',
         mcpServers: opts.mcpServers ?? null,
     };
 }

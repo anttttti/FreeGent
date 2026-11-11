@@ -22,6 +22,14 @@ describe('shell crypto', () => {
         const buf = new Uint8Array([1, 2, 3]); const h = c.createHash('sha256'); h.update(buf); buf.fill(9);
         expect(h.digest('hex')).toBe(nodeHash('sha256').update(new Uint8Array([1, 2, 3])).digest('hex'));
     });
+    it('timingSafeEqual compares the bytes of any buffer source, as node does (O013)', () => {
+        const dv = (...b: number[]) => new DataView(new Uint8Array(b).buffer);
+        expect(c.timingSafeEqual(dv(1, 2), dv(1, 3))).toBe(false);
+        expect(c.timingSafeEqual(new Uint8Array([1, 2]).buffer, new Uint8Array([1, 2]).buffer)).toBe(true);
+        expect(c.timingSafeEqual(new Float32Array([1.1]), new Float32Array([1.9]))).toBe(false);
+        expect(() => c.timingSafeEqual(dv(1), dv(1, 2))).toThrow(RangeError);
+        expect(() => c.timingSafeEqual('ab' as any, 'ab' as any)).toThrow(TypeError);
+    });
     it('randomBytes may exceed 64 KiB, and randomFillSync fills only the range asked for', () => {
         expect(c.randomBytes(200_000).length).toBe(200_000);
         const b = new Uint8Array(200_000); c.randomFillSync(b, 100, 70_000);

@@ -254,11 +254,6 @@ const _TOKEN_FILL_RATIO = 0.98;
 // degenerate "reasoning in code comments" tool calls run for ~107 s each before being cut off.
 const _STEP_OUTPUT_CAP = 8192;
 
-// Tail chars kept from a file-read result for the per-file snippet map (used in step diffs).
-const _FILE_SNIP_TAIL = 500;
-// …and for the file read last before a compaction (see the post-compaction file block).
-const _FILE_SNIP_LAST = 4000;
-
 // Max entries in _repeatCache before oldest entries are evicted (FIFO). Each entry can
 // hold a full read_file result (up to _READ_INLINE_MAX chars), so cap at 150 entries
 // to bound peak memory at ~7.5 MB for large reads.
@@ -1431,41 +1426,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // After compaction the model has lost context — re-reading files it previously
         // read is legitimate, not a repeat. Clear the cache so tool_repeat doesn't fire
         // for calls the model genuinely needs to redo.
-        // Inject last-read content for each file so the model can verify fix state
-        // without re-reading (prevents the post-compaction re-read cascade).
-        const _fileSnips = new Map<string, { label: string; snippet: string }>();
-        for (const [key, val] of _repeatCache) {
-            if (!key.startsWith('read_file|') || typeof val?.content !== 'string' || !val.path) continue;
-            const sl = val.start_line != null ? val.start_line : '';
-            const el = val.end_line   != null ? val.end_line   : '';
-            const label = sl !== '' ? `${val.path} (lines ${sl}–${el})` : val.path as string;
-            _fileSnips.delete(val.path);   // keep insertion order = read order; the last is the newest
-            _fileSnips.set(val.path, { label, snippet: val.content as string });
-        }
-        if (_fileSnips.size) {
-            // The file read last — usually the one being worked on — keeps more: a 500-char tail under a
-            // "lines 101–250" label read as the whole range, and v0.60 sympy-18189 re-requested lines
-            // 130–150 45 times after compaction. Each label says how much is shown.
-            const _snips = [..._fileSnips.values()];
-            const body = _snips.map(({ label, snippet }, i) => {
-                const max = i === _snips.length - 1 ? _FILE_SNIP_LAST : _FILE_SNIP_TAIL;
-                if (snippet.length <= max) return `${label}:\n${snippet}`;
-                return `${label} — only its last ${max} characters are shown:\n${snippet.slice(-max)}`;
-            }).join('\n\n');
-            const _flsContent = `[Files read before compaction — last-read content retained so you can verify fix state without re-reading:\n\n${body}]`;
-            _addUserMessage(_s, _flsContent);
-        }
-        // Mark all files from _repeatCache as 'pruned' in _seenReadFiles before
-        // clearing the cache. After compaction the history no longer contains those
-        // read results, so the 'full' state would cause truncateResultForHistory to
-        // return stubs claiming the content is still in history — it isn't.
-        // 'pruned' lets the dedup gate serve real content on the next re-read.
-        for (const [key, val] of _repeatCache) {
-            if (!key.startsWith('read_file|') || !val?.path) continue;
-            const pNorm = _normPath(val.path);
-            for (const k of _seenReadFiles.keys())
-                if (k.startsWith(pNorm + ':')) _seenReadFiles.set(k, 'pruned');
-        }
+        // (The block that re-injected the last-read file contents here iterated _repeatCache after it was cleared at the top of this function, so it never ran after 05a4b1a (deep review F03); removed.)
         _repeatCache.clear();
         // The overlapping-read ledger is keyed by this same Map object, so clear() alone kept it:
         // v0.56 refused 19 reads (6 SWE tasks) of lines whose only copy had been compacted away.
@@ -2447,13 +2408,13 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                         _emptyFsNudged = true;
                         let lsOut: string;
                         try {
-                            const lsResult = await executeToolAsync('execute_code', { language: 'bash', code: `ls -la "${result.path}"` }, null);
+                            const lsResult = await executeToolAsync('execute_code', { language: 'bash', code: `ls -la '${String(result.path).replace(/'/g, `'\\''`)}'` }, null);   // single-quoted: $(…), backticks and " in a path are not interpreted (deep review F10)
                             lsOut = typeof lsResult?.output === 'string' ? lsResult.output
                                   : typeof lsResult?.stdout === 'string' ? lsResult.stdout
                                   : JSON.stringify(lsResult);
                         } catch (e) { lsOut = `(error: ${(e as Error).message})`; }
                         const _lsContent = `No results from "ls", results from "ls -la":\n${lsOut}`;
-                        _addUserMessage(_s, _lsContent);
+                        _addUserMessage(_s, `<nudge>${_lsContent}</nudge>`);   // a nudge, so the stop summary does not read it as the user's message
                         break;
                     }
                 }

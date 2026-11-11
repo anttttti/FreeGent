@@ -14,7 +14,9 @@ FreeGent has four parts, and they have different exposure:
   - Every `/api/*` request needs a per-install token (`~/.config/freegent/server-token`). On a
     localhost-bound server the token is embedded in the page. On a LAN-bound server
     (`npm run dev:lan`) it isn't: the server prints URLs that carry it (`#fg_token=…`), and each
-    device keeps it after opening one.
+    device keeps it after opening one. The token guards the API, not the page's static files: the
+    server refuses the files this checkout keeps out of git (`notes/`, `results/`, `.claude/`, …),
+    but it serves the rest of the checkout, so keep nothing private there when using `dev:lan`.
   - **Keys in `~/.config/freegent/credentials` (or `.env`) never reach the browser.** The page
     gets placeholders; `/api/proxy` substitutes the real key only for HTTPS requests to that
     provider's one API host (`KEY_HOSTS` in `dev-api.ts`, exact match). No endpoint returns key

@@ -92,10 +92,17 @@ export function createCryptoModule(deps: CryptoDeps): any {
       fillRandom(u, offset, offset + (size ?? u.length - offset));
       return buf;
     },
-    timingSafeEqual: (a: Uint8Array, b: Uint8Array) => {
-      if (a.length !== b.length) throw new RangeError('Input buffers must have the same byte length');
+    // Compares the bytes of any ArrayBuffer, view or Buffer, as node does; element-wise it called two DataViews or Float32Array([1.1])/([1.9]) equal (exploration O013).
+    timingSafeEqual: (a: ArrayBufferLike | ArrayBufferView, b: ArrayBufferLike | ArrayBufferView) => {
+      const bytes = (v: any, n: string) => {
+        if (v instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && v instanceof SharedArrayBuffer)) return new Uint8Array(v);
+        if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+        throw new TypeError(`The "${n}" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.`);
+      };
+      const x = bytes(a, 'buf1'), y = bytes(b, 'buf2');
+      if (x.length !== y.length) throw new RangeError('Input buffers must have the same byte length');
       let result = 0;
-      for (let i = 0; i < a.length; i++) result |= a[i] ^ b[i];
+      for (let i = 0; i < x.length; i++) result |= x[i] ^ y[i];
       return result === 0;
     },
     getHashes: () => ['sha1', 'sha256', 'sha384', 'sha512', 'md5'],

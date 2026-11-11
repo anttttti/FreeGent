@@ -6,7 +6,9 @@
 const _HEAD = /<head(?:\s[^>]*)?>/i;
 const _PRELUDE = /^(?:﻿)?(?:\s|<!--[\s\S]*?-->)*(?:<!doctype[^>]*>)?(?:\s|<!--[\s\S]*?-->)*(?:<html(?:\s[^>]*)?>)?/i;
 export function injectIntoHead(html: string, markup: string): string {
-    if (_HEAD.test(html)) return html.replace(_HEAD, m => m + markup);
+    // A `<head>` inside a comment is text: the policy went into the comment and the page ran without it (exploration O019). Search a copy with the comments blanked.
+    const head = _HEAD.exec(html.replace(/<!--[\s\S]*?-->/g, c => ' '.repeat(c.length)));
+    if (head) return html.slice(0, head.index + head[0].length) + markup + html.slice(head.index + head[0].length);
     const prelude = html.match(_PRELUDE)?.[0] ?? '';
     return prelude + markup + html.slice(prelude.length);
 }

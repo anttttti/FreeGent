@@ -79,11 +79,10 @@ export default defineConfig(() => {
   const keys = serverKeys();
   const token = loadOrCreateToken(join(configDir(), 'server-token'));
   const devApi = createDevApi({ bind: BIND, port: PORT, allowedOrigins, token, keys });
-  // The token is embedded in the page HTML so any browser that loads the page can use the API
-  // without a token URL. /api/execute and /api/git are loopback-only regardless, so a LAN device
-  // with the token can only reach /api/proxy — an acceptable exposure on a trusted LAN.
+  // Localhost-bound: the token is embedded in the page HTML. Network-bound: it is not (SECURITY.md); the printed URLs carry it
+  // as #fg_token=…, so only a device given one can use /api/proxy and the owner's keys (explorations 2026-11-10 E30).
   const isolation = execIsolation();
-  const clientScript = buildClientScript(token, serverKeyStatus(keys),
+  const clientScript = buildClientScript(BIND === '127.0.0.1' ? token : null, serverKeyStatus(keys),
     { execIsolated: isolation === 'bwrap' });
 
   function hmrStubAndWellKnown(req: IncomingMessage, res: ServerResponse, next: () => void) {
@@ -120,7 +119,7 @@ export default defineConfig(() => {
     if (BIND === '127.0.0.1') return;
     server.httpServer?.once('listening', () => setTimeout(() => {
       console.log('\n  FreeGent: open one of these URLs on each device:');
-      for (const u of lanUrls(PORT, https)) console.log(`    ${u}`);
+      for (const u of lanUrls(PORT, https, token)) console.log(`    ${u}`);
       console.log('');
     }, 50));
   }
@@ -278,6 +277,8 @@ export default defineConfig(() => {
           key: readFileSync(FG_KEY!),
         },
       } : {}),
+      // The token guards /api/*, not the static files: Vite served every file of the checkout, including what git ignores (review notes, results, .claude/, the TUI's profile), to any device on a LAN-bound server (explorations 2026-11-10 E27). Setting `deny` replaces Vite's defaults, so those are repeated; the private folders are anchored at the checkout (a bare `**/work/**` would also match the checkout's own parent folder).
+      fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', ...['.claude', ...localIgnoredDirs()].map(d => `${process.cwd()}/${d}/**`), `${process.cwd()}/fg-current-profile.json`] },
       watch: {
         // Directories this checkout keeps out of git (scratch areas, notes, results, sibling repositories) can hold thousands of files: watching them exhausts inotify and the server dies
         ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/test-results/**', ...localIgnoredDirs().map(d => `**/${d}/**`)],

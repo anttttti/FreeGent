@@ -89,8 +89,10 @@ function runJsInWorker(code: string, files: Record<string, any>): Promise<any> {
         const url = URL.createObjectURL(new Blob([__JS_WORKER_SRC__], { type: 'text/javascript' }));
         let w: Worker;
         try { w = new Worker(url); } catch { URL.revokeObjectURL(url); reject(Object.assign(new Error('no worker'), { noWorker: true })); return; }
+        let started = false;
         const done = () => { URL.revokeObjectURL(url); try { w.terminate(); } catch { /* a stub without terminate */ } };
         w.onmessage = ({ data }) => {
+            if (data?.type === 'started') { started = true; return; }
             if (data?.type === 'net') {
                 pageFetch(String(data.url ?? '')).then(
                     value => w.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
@@ -100,7 +102,7 @@ function runJsInWorker(code: string, files: Record<string, any>): Promise<any> {
             if (data?.type === 'result') { done(); resolve(data.result); }
             else if (data?.type === 'error') { done(); reject(new Error(data.message)); }
         };
-        w.onerror = (ev: any) => { done(); reject(Object.assign(new Error(String(ev?.message ?? 'worker error')), { noWorker: /syntax|worker/i.test(String(ev?.message ?? '')) })); };
+        w.onerror = (ev: any) => { done(); reject(Object.assign(new Error(String(ev?.message ?? 'worker error')), { noWorker: !started && /syntax|worker/i.test(String(ev?.message ?? '')) })); };   // once the program runs, the words in its own error must not rerun it on this thread (exploration O011)
         try { w.postMessage({ type: 'run', code, files }); }
         catch { done(); reject(Object.assign(new Error('no worker'), { noWorker: true })); }
     });

@@ -19,6 +19,11 @@ describe('injectIntoHead', () => {
         expect(injectIntoHead('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"></head><body><header>h</header>', 'S'))
             .toBe('<!DOCTYPE html><html lang="en"><head>S<meta charset="utf-8"></head><body><header>h</header>');
     });
+    it('ignores a <head> inside a comment, so the policy lands in the real head (O019)', () => {
+        expect(injectIntoHead('<!doctype html><!-- <head> --><html><head><title>t</title></head>', 'S'))
+            .toBe('<!doctype html><!-- <head> --><html><head>S<title>t</title></head>');
+        expect(injectIntoHead('<!-- <HEAD> --><p>x', 'S')).toBe('<!-- <HEAD> -->S<p>x');
+    });
     it('keeps a BOM, comments before the doctype, and a bare fragment', () => {
         expect(injectIntoHead('﻿<!-- c --><!DOCTYPE html><p>x', 'S')).toBe('﻿<!-- c --><!DOCTYPE html>S<p>x');
         expect(injectIntoHead('<p>fragment</p>', 'S')).toBe('S<p>fragment</p>');

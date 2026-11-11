@@ -146,6 +146,12 @@ describe('read_file', () => {
         expect(r).toMatchObject({ path: 'long.txt', start_line: 60, end_line: 140, total_lines: 200, lines_returned: 81 });
     });
 
+    it('reads offset/limit as a range (both were ignored and the whole file came back)', async () => {
+        await W.agentWriteFile('long.txt', lines200);
+        const r = await tool('read_file', { path: 'long.txt', offset: 60, limit: 81 });
+        expect(lineSpan(r.content)).toEqual(['L60', 'L140', 81]);
+    });
+
     it('an empty result counts no returned lines (codex 411/412)', async () => {
         await W.agentWriteFile('empty.txt', '');
         expect(await tool('read_file', { path: 'empty.txt' })).toMatchObject({ content: '', length: 0, lines_returned: 0 });

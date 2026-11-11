@@ -445,7 +445,7 @@ function _userAsked(op: _GitOp, userText: string): boolean {
 // The operation an argv (after `git`) performs, if it is one of the above.
 function _gitOp(argv: string[]): _GitOp | null {
     let i = 0;
-    while (i < argv.length && argv[i].startsWith('-')) i += /^-[Cc]$/.test(argv[i]) ? 2 : 1;   // -C dir, -c k=v, --no-pager, --git-dir=…
+    while (i < argv.length && argv[i].startsWith('-')) i += /^-[Cc]$|^--(?:git-dir|work-tree|namespace|super-prefix|config-env)$/.test(argv[i]) ? 2 : 1;   // -C dir, -c k=v, --git-dir DIR (a value in the next word), --no-pager, --git-dir=…
     const sub = argv[i], rest = argv.slice(i + 1);
     const flags = rest.filter(t => t.startsWith('-') && t !== '--'), words = rest.filter(t => !t.startsWith('-'));
     const has = (re: RegExp) => flags.some(f => re.test(f));
