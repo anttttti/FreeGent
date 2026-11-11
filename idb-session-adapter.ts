@@ -57,6 +57,7 @@ let _outdatedTold = false;
 function _tellOutdated() {
     if (_outdatedTold) return;
     _outdatedTold = true;
+    (window as any).__fgTabOutdated = true;   // agentSend refuses new turns while it is set
     console.warn('[idb-session] the database was upgraded by a newer FreeGent build in another tab; this tab can no longer save its history');
     try {
         const b = document.createElement('div');

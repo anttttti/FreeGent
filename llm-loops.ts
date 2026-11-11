@@ -653,7 +653,12 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // The same command on the same files that already took the tab down once is not run again (it would cost another reload and the task's place in the chat).
             let _same: { sig: string; ws: number; scripts: string[] } | undefined;
             if (!runtime.hasNativeExec && (name === 'execute_code' || name === 'run_workers')) {
-                try { _same = { sig: toolSig(name, args), scripts: name === 'execute_code' && String(args?.language ?? 'bash') === 'bash' ? commandScripts(args?.code) : [], ws: ((await agentListFiles()) || []).reduce((m: number, f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name) ? Math.max(m, Number(f.lastModified) || 0) : m, 0) }; } catch {}   // a loop, not a spread: 131,072 files threw RangeError and the guard was skipped (exploration D032)
+                // The newest file time stands for the state of the workspace. A listing that fails is -1, not "no guard": the same call then still matches a crash recorded
+                // under -1 (a failed comparison cannot show that files changed), and the record carries an identity (exploration D032). A loop, not Math.max(...spread):
+                // 131,072 files threw RangeError and the guard was skipped.
+                let ws = -1;
+                try { ws = ((await agentListFiles()) || []).reduce((m: number, f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name) ? Math.max(m, Number(f.lastModified) || 0) : m, 0); } catch {}
+                try { _same = { sig: toolSig(name, args), scripts: name === 'execute_code' && String(args?.language ?? 'bash') === 'bash' ? commandScripts(args?.code) : [], ws }; } catch {}
             }
             const _crashedAlready = _same && sameCallCrashed(_same.sig, _same.ws, _same.scripts);
             const _mark = runtime.hasNativeExec || _crashedAlready ? 0 : beginToolCall(name, _crashLabel(name, args), activeChatId ?? null, _same);

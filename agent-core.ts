@@ -1260,6 +1260,8 @@ export function attachmentTextBlocks(files: { name: string; content: string; wor
 }
 
 async function agentSend(container: HTMLElement | null = null): Promise<void> {
+    // A newer build upgraded the session database in another tab: this tab cannot save, so a turn here would be lost on reload (idb-session-adapter.ts, exploration G02).
+    if ((window as any).__fgTabOutdated) { appendMessage('model', '<em>FreeGent was updated in another tab, so this tab can no longer save. Reload it to continue; your message is still in the box.</em>', container); return; }
     // Busy turns still accept queued text. Only preparation (file reads, intent,
     // workspace context) is serialized so a double tap cannot start two turns.
     if (agentStreaming || _turnPreparing()) return _agentSendReady(container);

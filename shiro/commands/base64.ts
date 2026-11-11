@@ -18,20 +18,27 @@ export function b64encode(bytes: Uint8Array): string {
 /**
  * Decodes as GNU base64 -d does: as a stream, every whole byte up to the first character outside
  * the alphabet (or a missing end of padding) comes out, then the input is "invalid" (ok = false).
- * Padding ends the data; whitespace (newlines) is skipped.
+ * Padding ends a quantum of four (the next one starts afresh); newlines are skipped.
  */
+// GNU decoding is per quantum of four: XXXX, XXX= or XX==, and the next quantum starts afresh (so `QQ==Qg==` is AB). Padding anywhere else, a fourth "=" or a missing one at the end
+// is invalid input; what decoded before it is kept. A CR is not skipped here: -i drops it with the rest of the garbage (exploration O008).
 function b64decodeStream(text: string): { bytes: Uint8Array; ok: boolean } {
   const out: number[] = [];
-  let acc = 0, bits = 0, chars = 0, ok = true, padded = false;
+  let acc = 0, bits = 0, n = 0, pads = 0, ok = true;
   for (const ch of text) {
-    if (ch === '\n' || ch === '\r') continue;
-    if (ch === '=') { padded = true; chars++; continue; }
-    const v = ALPHA.indexOf(ch);
-    if (v < 0 || padded) { ok = false; break; }
-    acc = ((acc << 6) | v) & 0xffffff; bits += 6; chars++;
-    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+    if (ch === '\n') continue;
+    if (ch === '=') {
+      if (n < 2) { ok = false; break; }
+      pads++; n++;
+    } else {
+      const v = ALPHA.indexOf(ch);
+      if (v < 0 || pads) { ok = false; break; }
+      acc = ((acc << 6) | v) & 0xffffff; bits += 6; n++;
+      if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+    }
+    if (n === 4) { n = 0; pads = 0; acc = 0; bits = 0; }
   }
-  if (ok && chars % 4 !== 0) ok = false;   // unpadded or truncated: what decoded is kept
+  if (ok && n !== 0) ok = false;   // unpadded or truncated: what decoded is kept
   return { bytes: Uint8Array.from(out), ok };
 }
 

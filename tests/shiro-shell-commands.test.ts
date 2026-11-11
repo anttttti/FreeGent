@@ -450,4 +450,25 @@ describe('argv dispatch and capability failures', () => {
         expect((await run('sort -c k1.txt')).code).toBe(0);
         expect((await run('join k1.txt k2.txt')).out).toBe('\u{10000} b y\n');
     });
+
+    it('base64 -d decodes quantum by quantum like GNU: concatenated streams pass, misplaced padding fails with the prefix kept (O008)', async () => {
+        const b = async (input: string, flags = '-d') => { const r = await run(`printf '${input}' | base64 ${flags}`); return [r.out, r.code]; };
+        expect(await b('QQ==Qg==')).toEqual(['AB', 0]);
+        expect(await b('QUI=QQ==')).toEqual(['ABA', 0]);
+        for (const bad of ['Q===', '====', 'QQ======']) expect((await b(bad))[1], bad).toBe(1);
+        expect(await b('QUJD====')).toEqual(['ABC', 1]);
+        expect(await b('QQ==\\r\\n')).toEqual(['A', 1]);   // strict: CR is not skipped; -i is
+        expect(await b('QQ==\\r\\n', '-di')).toEqual(['A', 0]);
+    });
+
+    it('iconv refuses malformed input with status 1 and the converted prefix, -c skips it, incomplete stays an error, explicit UTF-16 keeps the BOM (O007)', async () => {
+        const ic = async (bytes: string, args: string) => { const r = await run(`printf '${bytes}' | iconv ${args}`); return [r.out, r.code]; };
+        expect(await ic('A\\377B', '-f UTF-8 -t UTF-8')).toEqual(['A', 1]);
+        expect(await ic('A\\377B', '-f UTF-8 -t UTF-8 -c')).toEqual(['AB', 0]);
+        expect(await ic('A\\303', '-f UTF-8 -t UTF-8 -c')).toEqual(['A', 1]);   // an incomplete character at the end is an error even with -c
+        expect(await ic('A\\351B', '-f ASCII -t UTF-8')).toEqual(['A', 1]);
+        expect(await ic('A\\000B', '-f UTF-16LE -t UTF-8')).toEqual(['A', 1]);   // odd length: incomplete
+        expect(await ic('\\377\\376A\\000', '-f UTF-16LE -t UTF-8')).toEqual(['\uFEFFA', 0]);
+        expect(await ic('\\377\\376A\\000', '-f UTF-16 -t UTF-8')).toEqual(['A', 0]);   // auto-detected BOM is consumed
+    });
 });

@@ -41,6 +41,67 @@ function decode(bytes: Uint8Array, from: string): string {
   return new TextDecoder(from.toLowerCase()).decode(bytes);   // throws RangeError when unknown
 }
 
+type Decoded = { text: string; err?: 'illegal' | 'incomplete'; at: number };
+
+/** Decodes with the checks iconv makes: the text before the first illegal sequence, and where that is. -c skips illegal sequences (an incomplete one at the end is still an
+ *  error, as in glibc). Only UTF-8, ASCII, UTF-16 and UTF-32 are checked; the single-byte encodings come through `decode` (exploration O007: the byte carrier of bytesToText
+ *  let a malformed UTF-8 byte through as a success). */
+function decodeChecked(bytes: Uint8Array, from: string, discard: boolean): Decoded | null {
+  const isU8 = UTF8.has(from), isAscii = ASCII.has(from), m16 = /^UTF-16(LE|BE)?$/.exec(from), m32 = /^UTF-32(LE|BE)?$/.exec(from);
+  if (!isU8 && !isAscii && !m16 && !m32) return null;
+  let text = '', i = 0;
+  const strict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  if (isU8 || isAscii) {
+    while (i < bytes.length) {
+      const b = bytes[i];
+      if (b < 0x80) { text += String.fromCharCode(b); i++; continue; }
+      const len = isAscii ? 0 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+      if (len && i + len <= bytes.length) {
+        try { text += strict.decode(bytes.subarray(i, i + len)); i += len; continue; } catch { /* illegal */ }
+      } else if (len) {
+        // The bytes left are the start of a character: incomplete when each is a plausible continuation, else illegal.
+        let ok = true; for (let k = i + 1; k < bytes.length; k++) if ((bytes[k] & 0xc0) !== 0x80) ok = false;
+        if (ok) return { text, err: 'incomplete', at: i };
+      }
+      if (!discard) return { text, err: 'illegal', at: i };
+      i++;
+    }
+    return { text, at: i };
+  }
+  if (m16) {
+    let le = from !== 'UTF-16BE';
+    if (from === 'UTF-16' && bytes.length >= 2) {            // the BOM decides, little endian without one
+      if (bytes[0] === 0xff && bytes[1] === 0xfe) i = 2; else if (bytes[0] === 0xfe && bytes[1] === 0xff) { le = false; i = 2; }
+    }
+    const unit = (k: number) => le ? bytes[k] | (bytes[k + 1] << 8) : (bytes[k] << 8) | bytes[k + 1];   // an explicit UTF-16LE/BE keeps a leading U+FEFF
+    while (i < bytes.length) {
+      if (i + 2 > bytes.length) return { text, err: 'incomplete', at: i };
+      const u = unit(i);
+      if (u >= 0xd800 && u <= 0xdbff) {
+        if (i + 4 > bytes.length) return { text, err: 'incomplete', at: i };
+        const u2 = unit(i + 2);
+        if (u2 >= 0xdc00 && u2 <= 0xdfff) { text += String.fromCharCode(u, u2); i += 4; continue; }
+      } else if (u < 0xdc00 || u > 0xdfff) { text += String.fromCharCode(u); i += 2; continue; }
+      if (!discard) return { text, err: 'illegal', at: i };
+      i += 2;
+    }
+    return { text, at: i };
+  }
+  let le = from !== 'UTF-32BE';
+  if (from === 'UTF-32' && bytes.length >= 4) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe && bytes[2] === 0 && bytes[3] === 0) i = 4;
+    else if (bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0xfe && bytes[3] === 0xff) { le = false; i = 4; }
+  }
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  while (i < bytes.length) {
+    if (i + 4 > bytes.length) return { text, err: 'incomplete', at: i };
+    const c = dv.getUint32(i, le);
+    if (c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff)) { if (!discard) return { text, err: 'illegal', at: i }; i += 4; continue; }
+    text += String.fromCodePoint(c); i += 4;
+  }
+  return { text, at: i };
+}
+
 /** The encoded bytes, or the index of the first character the target can't represent. */
 function encode(text: string, to: string, discard: boolean, translit = false): Uint8Array | number {
   if (UTF8.has(to)) return textToBytes(text);
@@ -122,8 +183,19 @@ export const iconvCmd: Command = {
     }
     let result: Uint8Array | number;
     try {
-      const text = inputs.map(b => decode(b, from)).join('');
+      let text = '', srcErr: { err: 'illegal' | 'incomplete'; at: number } | null = null, before = 0;
+      for (const b of inputs) {
+        const d = decodeChecked(b, from, discard);
+        text += d ? d.text : decode(b, from);
+        if (d?.err) { srcErr = { err: d.err, at: before + d.at }; break; }   // the conversion stops at the first bad sequence, what came before is written
+        before += b.length;
+      }
       result = encode(text, to, discard, /\/\/TRANSLIT/i.test(toRaw));
+      if (srcErr && typeof result !== 'number') {
+        ctx.stderr += srcErr.err === 'incomplete' ? 'iconv: incomplete character or shift sequence at end of buffer\n' : `iconv: illegal input sequence at position ${srcErr.at}\n`;
+        await emit(result);
+        return 1;
+      }
       if (typeof result === 'number') {
         const prefix = text.slice(0,result);
         const sourceBytes = encode(prefix,from,false);

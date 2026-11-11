@@ -66,6 +66,14 @@ describe('browser chat flow on the Session-backed history', () => {
         expect(getChatHistory()[2].tool_call_id).toBe('t1');
     });
 
+    it('an outdated tab (a newer build upgraded the database) sends nothing and says why (G02)', async () => {
+        W.fetch = makeReplayFetch([{ content: 'never\nCOMPLETED' }]);
+        W.__fgTabOutdated = true;
+        try { await say('hello'); } finally { delete W.__fgTabOutdated; }
+        expect(roles()).toEqual([]);
+        expect(document.body.textContent).toMatch(/updated in another tab/);
+    });
+
     it('a second message continues the same Session; saving writes the plain array', async () => {
         W.fetch = makeReplayFetch([{ content: 'first\nCOMPLETED' }, { content: 'second\nCOMPLETED' }]);
         await say('one');
