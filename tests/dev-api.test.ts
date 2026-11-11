@@ -140,6 +140,14 @@ describe('gitArgsRefusal', () => {
             expect(gitArgsRefusal(a), JSON.stringify(a)).not.toBeNull();
     });
 
+    it('refuses abbreviated long options and the write-to-path forms that git accepts (review 2026-11-11 F01)', () => {
+        for (const a of [['rebase', '--exe', 'touch X', 'HEAD~1'], ['grep', '--open-files-in-p=touch X', 'a'], ['ls-remote', '--upload-pa=touch X;', '.'],
+                         ['fetch', '--upload-pa', 'sh'], ['clone', '--upload-pac=sh', 'r'], ['diff', '--outpu=/tmp/x'], ['diff', '--ext-d'],
+                         ['archive', '-o', '/tmp/a.tar', 'HEAD'], ['archive', '-o/tmp/a.tar', 'HEAD'], ['format-patch', '-o', '/tmp/p', 'HEAD~1'],
+                         ['format-patch', '--output-directory=/tmp/p', 'HEAD~1'], ['bundle', 'create', '/tmp/b', 'HEAD']])
+            expect(gitArgsRefusal(a), JSON.stringify(a)).not.toBeNull();
+    });
+
     it('refuses reading or operating outside the project repository', () => {
         for (const a of [['diff', '--no-index', '/dev/null', '/home/u/.config/freegent/credentials'],
                          ['grep', '--no-index', 'KEY', '/home/u'], ['-C', '/home/u/.ssh', 'status'],
@@ -150,7 +158,8 @@ describe('gitArgsRefusal', () => {
     it('allows everyday commands, including ones that share short flags', () => {
         for (const a of [['status'], ['switch', '-c', 'feature'], ['add', '-u'], ['cherry-pick', '-x', 'abc'],
                          ['checkout', '-t', 'origin/x'], ['commit', '-m', 'msg'], ['commit', '-c', 'HEAD'],
-                         ['--no-pager', 'log', '-1'], ['clone', 'https://github.com/a/b']])
+                         ['--no-pager', 'log', '-1'], ['clone', 'https://github.com/a/b'], ['log', '--oneline'], ['diff', '--stat'], ['diff', '--text'],
+                         ['rebase', '--onto', 'main', 'a'], ['log', '--no-merges'], ['bundle', 'verify', 'x'], ['format-patch', '-1']])
             expect(gitArgsRefusal(a)).toBeNull();
     });
 });

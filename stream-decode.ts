@@ -243,6 +243,7 @@ const _RUNAWAY_URL_RE = /"url"\s*:\s*"[^"]{2000}/;
 export async function streamOAICompat(resp: any, onChunk: any) {
     // Null prototype, and an index that is a non-negative integer: a chunk with index "__proto__" reached Object.prototype (codex R334).
     const tcMap: Record<string, any> = Object.create(null);
+    const tcRoute: Record<number, number> = Object.create(null);   // an index a server reused for another call -> the entry that call got
     let degenerate: string | null = null;
     let _checkedAt = 0;   // output length (text + tool arguments) at the last degenerate check
     const _grown = () => content.length + Object.values(tcMap).reduce((n: number, tc: any) => n + tc.function.arguments.length, 0);
@@ -345,7 +346,16 @@ export async function streamOAICompat(resp: any, onChunk: any) {
         }
         if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
-                const _n = Number(tc.index ?? 0), idx = Number.isSafeInteger(_n) && _n >= 0 ? _n : 0;
+                const _n = Number(tc.index ?? 0);
+                let idx = Number.isSafeInteger(_n) && _n >= 0 ? _n : 0;
+                // Some servers stream every parallel call with index 0 (or none): a new id at an index that already holds another id is a new call, and later
+                // fragments for that index go to it (review 2026-11-11 F03). One call carries its id once or repeats the same one.
+                idx = tcRoute[idx] ?? idx;
+                if (tc.id && tcMap[idx]?.id && tcMap[idx].id !== tc.id) {
+                    const orig = Number.isSafeInteger(_n) && _n >= 0 ? _n : 0;
+                    idx = Math.max(-1, ...Object.keys(tcMap).map(Number)) + 1;
+                    tcRoute[orig] = idx;
+                }
                 if (!tcMap[idx]) tcMap[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
                 if (tc.id)                  tcMap[idx].id                    = tc.id;
                 if (tc.function?.name)      tcMap[idx].function.name      += tc.function.name;

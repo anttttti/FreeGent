@@ -14,6 +14,12 @@ export function credentialFilesIn(code: string): string[] {
     return [...String(code ?? '').matchAll(/[\w./~\\-]+/g)].map(m => m[0]).filter(isCredentialPath);
 }
 
+// Words of a key name (`KEYCLOAK_REALM`, `authToken`) that make its value a secret; `auth`, `session`, `private` alone only name a purpose.
+const _STRONG_KEY_WORDS = new Set(['key', 'keys', 'token', 'tokens', 'secret', 'secrets', 'password', 'passwd', 'pass', 'pwd', 'passphrase', 'credential', 'credentials', 'signature', 'cookie', 'dsn', 'webhook', 'apikey']);
+const _strongKey = (k: string) => k.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).some(w => _STRONG_KEY_WORDS.has(w));
+// A value that names a place or a choice, not a credential: under a key that only names a purpose (AUTH_PROVIDER=github, SESSION_DRIVER=database) a lower-case word; under any key a plain
+// URL without user info or query, or a lower-case host name (NEXTAUTH_URL, TOKEN_ENDPOINT). Real secrets keep a digit or mixed case, or sit under a strong key (review 2026-11-11 F02).
+const _isPlace = (v: string, key: string) => /^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/i.test(v) || (!_strongKey(key) && (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(v) || /^[a-z]+$/.test(v)));
 const _SECRET_KEY_RE = /key|token|secret|pass(?:word|wd)?|pwd|auth|credential|private|session|cookie|signature|dsn|webhook/i;   // not `_url`: a base URL is configuration, its password (userinfo) is taken apart below (exploration E03)
 const _random = (v: string) => v.length >= 16 && /[A-Za-z]/.test(v) && /\d/.test(v) && !/\s/.test(v);
 // A plain http(s) URL (no user info, no query) is a place, not a secret: judge its path segments (a webhook path has a random one), not its host name.
@@ -33,7 +39,7 @@ export function secretValues(text: string): string[] {
         const root = JSON.parse(String(text ?? ''));
         const walk = (node: unknown, key: string, depth: number) => {
             if (depth > 8) return;
-            if (typeof node === 'string') { if ((_SECRET_KEY_RE.test(key) && node.length >= 6) || _looksRandom(node)) add(node); }
+            if (typeof node === 'string') { if ((_SECRET_KEY_RE.test(key) && node.length >= 6 && !_isPlace(node, key)) || _looksRandom(node)) add(node); }
             else if (Array.isArray(node)) for (const x of node) walk(x, key, depth + 1);
             else if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, k, depth + 1);
         };
@@ -50,7 +56,7 @@ export function secretValues(text: string): string[] {
         const [, key, value] = kv;
         const v = value.replace(/^(['"])(.*)\1$/, '$2').replace(/\s+#.*$/, '').trim();
         if (/^(?:true|false|null|none|yes|no|\d+)$/i.test(v)) continue;
-        if ((_SECRET_KEY_RE.test(key) && v.length >= 6) || _looksRandom(v)) add(v);
+        if ((_SECRET_KEY_RE.test(key) && v.length >= 6 && !_isPlace(v, key)) || _looksRandom(v)) add(v);
     }
     return [...out];
 }

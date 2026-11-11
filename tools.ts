@@ -3073,6 +3073,14 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     const shrunk = shrinkNote(writtenPaths.map(p => ({ path: p, before: _len(files[p]), after: _len((execResult.files_written as any)[p]) ?? 0 })), !!execResult.exit_code);
                     execResult = { ...execResult, files_written: writtenPaths, ...(shrunk ? { note: execResult.note ? `${execResult.note} ${shrunk}` : shrunk } : {}) };
                 }
+                // The server copies back at most 64 MB of files: say which were left behind rather than let the run look as if they were never written (review 2026-11-11 F07).
+                const _skipped = (execResult as any).files_skipped;
+                if (Array.isArray(_skipped) && _skipped.length) {
+                    const names = _skipped.slice(0, 5).map((f: any) => `${f?.path} (${f?.size} bytes)`).join(', ');
+                    const msg = `${_skipped.length} file${_skipped.length === 1 ? '' : 's'} the command wrote ${_skipped.length === 1 ? 'was' : 'were'} not copied back to the workspace (the 64 MB limit): ${names}${_skipped.length > 5 ? ', …' : ''}. Write less, or delete build output before the command ends.`;
+                    const { files_skipped: _fs, ...rest } = execResult as any;
+                    execResult = { ...rest, note: rest.note ? `${rest.note} ${msg}` : msg };
+                }
                 if (deletedPaths.length) execResult = { ...execResult, files_deleted: deletedPaths } as any;
                 else if (execResult.files_deleted) { const { files_deleted: _d, ...rest } = execResult; execResult = rest; }
                 if (writeErrors.length) {

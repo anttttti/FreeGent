@@ -38,11 +38,14 @@ export function hashContent(s: string): string {
  * `merges` holds the result of a three-way text merge per conflicting path: a clean one becomes the default for that file,
  * one with overlapping edits is offered but not chosen (it would put conflict markers into both sides).
  */
+// Own properties only: `constructor`, `toString` … are not files (review 2026-11-11 F09; MIME lookups had the same slip).
+const own = (o: Record<string, string>, k: string): string | undefined => Object.hasOwn(o, k) ? o[k] : undefined;
+
 export function planSync(workspace: Record<string, string>, local: Record<string, string>, base: Record<string, string> = {}, merges: Record<string, { conflicts: boolean }> = {}): SyncItem[] {
     const out: SyncItem[] = [];
     const paths = new Set([...Object.keys(workspace), ...Object.keys(local)]);
     for (const path of [...paths].sort()) {
-        const w = workspace[path], l = local[path], b = base[path];
+        const w = own(workspace, path), l = own(local, path), b = own(base, path);
         if (w !== undefined && l !== undefined) {
             if (w === l) continue;
             if (b === w) out.push({ path, kind: 'changed-in-local', action: 'to-workspace', choices: ['to-workspace', 'to-local', 'skip'] });
@@ -76,13 +79,14 @@ export function keepBothName(path: string, taken: (name: string) => boolean, tag
 export function nextBase(workspace: Record<string, string>, local: Record<string, string>, prev: Record<string, string> = {}): Record<string, string> {
     const base: Record<string, string> = {};
     for (const p of new Set([...Object.keys(workspace), ...Object.keys(local)])) {
-        if (workspace[p] !== undefined && workspace[p] === local[p]) base[p] = workspace[p];
-        else if (prev[p] !== undefined) base[p] = prev[p];
+        const w = own(workspace, p);
+        if (w !== undefined && w === own(local, p)) base[p] = w;
+        else if (own(prev, p) !== undefined) base[p] = own(prev, p)!;
     }
     return base;
 }
 
 /** Local paths that differ from the folder as imported (new or edited): what has to travel back to the folder. */
 export function changedSinceImport(local: Record<string, string>, imported: Record<string, string>): string[] {
-    return Object.keys(local).filter(p => imported[p] !== local[p]).sort();
+    return Object.keys(local).filter(p => own(imported, p) !== own(local, p)).sort();
 }

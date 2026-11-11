@@ -578,10 +578,8 @@ export default {
                 if (isEmpty && !unlocked && GUEST_HOSTS.has(hostname) && env && env[PROVIDER_KEY_MAP[hostname]]) {
                     if (!_guestQuotaOn(env)) return _guestRefusal('off', GUEST_OFF);
                     if (!(await _relaySessionOk(request, env))) return _sessionRequired(env);
-                    const limit = _guestDaily(env);
-                    if (await _guestCount(request, env) > limit)
-                        return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
-                    // The operator's key buys chat completions and the model list, on the free tier only.
+                    // The operator's key buys chat completions and the model list. Only OpenRouter is held to free models below: a Groq, Kilo or TokenHarbor key
+                    // configured for guests must itself be a free-tier key (review 2026-11-11 F05).
                     const gp = new URL(target).pathname.replace(/\/+$/, '');
                     if (!((method === 'POST' && gp.endsWith('/chat/completions')) || (method === 'GET' && gp.endsWith('/models'))))
                         return _err(403, 'Guest access covers chat completions and the model list only: add your own key in Settings → Credentials');
@@ -590,6 +588,10 @@ export default {
                         if (!gm.endsWith(':free') && gm !== 'openrouter/free')
                             return _err(403, 'Guest access covers free models only (a name ending in :free): add your own key in Settings → Credentials');
                     }
+                    // Counted after the checks, so a refused request does not use up the visitor's day.
+                    const limit = _guestDaily(env);
+                    if (await _guestCount(request, env) > limit)
+                        return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
                     guest = true;
                 }
                 const envKey = isEmpty && (unlocked || guest) ? PROVIDER_KEY_MAP[hostname] : null;
@@ -609,6 +611,8 @@ export default {
                     try {
                         const j = JSON.parse(outBody);
                         if (j && typeof j === 'object' && !Array.isArray(j)) {
+                            // `model` is checked above; OpenRouter's fallback list, routing and plugins could still reach a paid model or a billed plugin with the operator's key.
+                            delete j.models; delete j.plugins; delete j.route; delete j.provider;
                             j.user = 'fg-guest-' + (request.headers.get('X-FG-Session') || '').split('.')[1].slice(0, 16);
                             outBody = JSON.stringify(j);
                         }
@@ -631,6 +635,8 @@ export default {
             // Forward upstream response, adding CORS headers.
             // Pass body as a stream so SSE / chunked LLM responses are not buffered.
             const respHeaders = new Headers(upstream.headers);
+            // The page trusts X-FG-* from this Worker (guest quota, proxy refusal, session challenge) and never wants an upstream cookie: a fetched site supplies neither.
+            for (const k of [...respHeaders.keys()]) if (k.startsWith('x-fg-') || k === 'set-cookie' || k === 'set-cookie2') respHeaders.delete(k);
             for (const [k, v] of Object.entries(CORS)) respHeaders.set(k, v);
             return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 

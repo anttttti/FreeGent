@@ -37,6 +37,15 @@ describe('CF Worker', () => {
         expect(exposed).toContain('x-ratelimit-reset');
     });
 
+    it('an upstream reply cannot carry X-FG-* control headers or cookies to the page (review 2026-11-11 F04)', async () => {
+        upstream.mockResolvedValue(new Response('hi', { status: 200, headers: { 'x-fg-guest': 'limit', 'X-FG-Proxy-Error': '1', 'set-cookie': 'a=b', 'x-other': 'kept' } }));
+        const r = await worker.fetch(get('https://example.com/'), OPEN);
+        expect(r.headers.get('x-fg-guest')).toBeNull();
+        expect(r.headers.get('x-fg-proxy-error')).toBeNull();
+        expect(r.headers.get('set-cookie')).toBeNull();
+        expect(r.headers.get('x-other')).toBe('kept');
+    });
+
     it('routes MoonMath with its Worker key and rejects lookalike hosts', async () => {
         const env = { MOONMATH_API_KEY: 'synthetic-moonmath-key', FG_DEV_KEY: 'pw', FG_RATE_LIMITER: limiter(true) };
         const url = 'https://zro.moonmath.ai/v1/chat/completions';
@@ -480,6 +489,17 @@ describe('CF Worker guest quota', () => {
         expect((await worker.fetch(call('https://api.groq.com/openai/v1/files', { session: s }), ON)).status).toBe(403);
         expect((await worker.fetch(call(OR, { session: s, model: 'meta/x:free' }), ON)).status).toBe(200);
         expect((await worker.fetch(call(OR, { dev: true, model: 'openai/gpt-4o' }), ON)).status).toBe(200);
+    });
+
+    it('a guest OpenRouter body loses the fallback list, routing and plugins (review 2026-11-11 F05)', async () => {
+        const s = await session();
+        const req = new Request('https://fg-proxy.example.workers.dev/', { method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'CF-Connecting-IP': IP, 'X-FG-Session': s },
+            body: JSON.stringify({ url: OR, headers: {}, body: JSON.stringify({ model: 'm:free', models: ['openai/gpt-4o'], plugins: [{ id: 'web' }], route: 'fallback', provider: { order: ['x'] }, messages: [] }) }) });
+        expect((await worker.fetch(req, ON)).status).toBe(200);
+        const body = JSON.parse(sent()[1].body);
+        expect(body).toMatchObject({ model: 'm:free', messages: [] });
+        for (const k of ['models', 'plugins', 'route', 'provider']) expect(body, k).not.toHaveProperty(k);
     });
 
     it('providers outside the guest list never get a Worker key for guests', async () => {

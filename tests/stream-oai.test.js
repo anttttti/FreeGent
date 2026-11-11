@@ -202,3 +202,24 @@ describe('streamOAICompat — mid-stream stall', () => {
         } finally { vi.useRealTimers(); }
     });
 });
+
+describe('parallel tool calls that share an index (review 2026-11-11 F03)', () => {
+    const call = (id, name, args, extra = {}) => ({ choices: [{ delta: { tool_calls: [{ ...extra, id, function: { name, arguments: args } }] } }] });
+    const frag = (args, extra = {}) => ({ choices: [{ delta: { tool_calls: [{ ...extra, function: { arguments: args } }] } }] });
+    const calls = (m) => m.tool_calls.map(c => [c.id, c.function.name, JSON.parse(c.function.arguments)]);
+
+    it.each([['index 0 on both', { index: 0 }], ['no index', {}]])('two complete calls with %s stay two calls', async (_n, extra) => {
+        const { msg } = await run([call('call_a', 'read_file', '{"path":"a.txt"}', extra), call('call_b', 'read_file', '{"path":"b.txt"}', extra)]);
+        expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }], ['call_b', 'read_file', { path: 'b.txt' }]]);
+    });
+
+    it('later argument fragments of the second call (no id) go to the second call', async () => {
+        const { msg } = await run([call('call_a', 'read_file', '{"path":"a.txt"}', { index: 0 }), call('call_b', 'read_file', '{"path":', { index: 0 }), frag('"b.txt"}', { index: 0 })]);
+        expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }], ['call_b', 'read_file', { path: 'b.txt' }]]);
+    });
+
+    it('one call whose id is repeated on every fragment is still one call', async () => {
+        const { msg } = await run([call('call_a', 'read_file', '{"path":', { index: 0 }), call('call_a', '', '"a.txt"}', { index: 0 })]);
+        expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }]]);
+    });
+});

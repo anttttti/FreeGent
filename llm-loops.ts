@@ -30,6 +30,7 @@ import { agentReadFile, agentFileMtime } from './workspace.js';
 import { convoLogTurn, _updateLogBadge } from './convo-log.js';
 import { sessionSaveRawMessage } from './session-store.js';
 import { registry } from './session-registry.js';
+import { resetSecrets } from './secret-egress.js';
 import { beginToolCall, endToolCall, toolSig, sameCallCrashed, commandScripts } from './page-check-guard.js';
 import { compactSurface, type Session } from './session.js';
 import { type SurfaceIntent } from './session-event.js';
@@ -224,6 +225,7 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
     _s._replaceFailures  = new Map();
     _s._replaceNudgeSent = new Map();
     resetLookalikeRefusals();
+    resetSecrets();   // values read from a credential file in an earlier chat must not block this one's calls (review 2026-11-11 F02)
     (globalThis as any).resetWorkerBudget?.();
 }
 

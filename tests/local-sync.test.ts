@@ -69,3 +69,11 @@ describe('merge planning', () => {
         expect(keepBothName('d/a.txt', () => false, 'imported')).toBe('d/a (imported).txt');
     });
 });
+
+describe('files named like Object.prototype members (review 2026-11-11 F09)', () => {
+    it('are ordinary files: new in local, not changed', () => {
+        const plan = planSync({}, { constructor: 'abc', toString: 'x', 'a.txt': 'h1' });
+        expect(plan.map(i => [i.path, i.kind])).toEqual([['a.txt', 'new-in-local'], ['constructor', 'new-in-local'], ['toString', 'new-in-local']]);
+        expect(changedSinceImport({ constructor: 'a' }, {})).toEqual(['constructor']);
+    });
+});

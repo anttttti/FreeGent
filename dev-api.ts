@@ -628,6 +628,20 @@ const _GIT_SUB_EXEC: Record<string, RegExp> = {
 //   Anywhere: writing output to a path, reading paths outside the repository, or turning back on the programs hardenGitArgs turns off (an
 //   --ext-diff or --textconv after its --no-… wins, and grep --textconv runs the filters too: antigravity AG-01).
 const _GIT_ANY_REFUSED = /^(--output|--no-index|--ext-diff|--textconv)(=|$)/;
+//   Git accepts any unambiguous prefix of a long option (`rebase --exe "cmd"`, `grep --open-files-in-p=cmd`, `ls-remote --upload-pa=cmd` ran the program), so the refused names are
+//   also matched as prefixes; the ambiguous ones git rejects itself. `--text` is a real option of its own and is not a prefix of --textconv here. Short write-to-path forms too (F01 of the 2026-11-11 review).
+const _GIT_SUB_LONG: Record<string, string[]> = {
+    clone: ['upload-pack', 'config', 'template'], init: ['template'], fetch: ['upload-pack'], pull: ['upload-pack'], 'ls-remote': ['upload-pack'],
+    archive: ['exec', 'remote'], push: ['receive-pack', 'exec'], grep: ['open-files-in-pager'], rebase: ['exec'],
+};
+const _GIT_ANY_LONG = ['output', 'no-index', 'ext-diff', 'textconv'];
+const _GIT_SUB_WRITE_PATH: Record<string, RegExp> = { archive: /^-o/, 'format-patch': /^(-o|--output-directory)/ };
+function _gitAbbreviatedRefused(sub: string, a: string): boolean {
+    if (!a.startsWith('--') || a.length < 5) return false;
+    const name = a.slice(2).split('=')[0];
+    if (name === 'text') return false;
+    return [...(_GIT_SUB_LONG[sub] ?? []), ..._GIT_ANY_LONG].some(l => l.startsWith(name));
+}
 
 /** The subcommand and what follows it, found the way gitArgsRefusal finds it: after the leading options. (The network-bound gate read raw positions, so
  *  `git --no-pager status` was refused as if it were a mutation: hermes C5.) */
@@ -682,7 +696,9 @@ export function gitArgsRefusal(args: string[]): string | null {
     if (sub === 'submodule' && rest.includes('foreach')) return 'git submodule foreach is not available through run_git';
     if (sub === 'bisect' && rest.includes('run')) return 'git bisect run is not available through run_git';
     const re = _GIT_SUB_EXEC[sub];
-    const bad = rest.find(a => (re && re.test(a)) || _GIT_ANY_REFUSED.test(a));
+    if (sub === 'bundle' && rest[0] === 'create') return 'git bundle create is not available through run_git';   // writes to a path of its choosing
+    const wp = _GIT_SUB_WRITE_PATH[sub];
+    const bad = rest.find(a => (re && re.test(a)) || _GIT_ANY_REFUSED.test(a) || (wp && wp.test(a)) || _gitAbbreviatedRefused(sub, a));
     if (bad) return `git ${sub} ${bad.split('=')[0]} is not available through run_git`;
     return null;
 }
@@ -760,7 +776,8 @@ const _SKIP_RESP_HEADERS = new Set([
 
 function _copyRespHeaders(upstream: Response, res: ServerResponse): void {
     upstream.headers.forEach((v, k) => {
-        if (_SKIP_RESP_HEADERS.has(k) || k.startsWith('access-control-')) return;
+        // x-fg-*: the page trusts these (a guest-quota pause, a proxy refusal, a session challenge) when they come from the relay, so a fetched site must not supply them.
+        if (_SKIP_RESP_HEADERS.has(k) || k.startsWith('access-control-') || k.startsWith('x-fg-')) return;
         res.setHeader(k, v);
     });
 }
@@ -834,6 +851,10 @@ export function createDevApi(opts: DevApiOptions) {
             if (res.destroyed || res.writableEnded) return;   // nobody is waiting for the result
             const filesWritten: Record<string, string> = Object.create(null);
             const seen = new Set<string>();   // every file still there after the run, whatever its kind
+            // A run that leaves a node_modules or a clone must not make the reply too big for JSON (the command's own output was lost in a 500): files past this total are listed, not copied
+            // (review 2026-11-11 F07).
+            const FILES_BACK_MAX = 64 * 1024 * 1024; let filesBack = 0;
+            const skipped: { path: string; size: number }[] = [];
             const walk = async (dir: string): Promise<void> => {
                 for (const entry of await readdir(dir, { withFileTypes: true })) {
                     const abs = join(dir, entry.name);
@@ -847,7 +868,10 @@ export function createDevApi(opts: DevApiOptions) {
                     const rel = relative(tmpDir!, abs);
                     try {
                         const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+                        const size = (await fh.stat()).size;
+                        if (filesBack + size > FILES_BACK_MAX) { await fh.close(); if (skipped.length < 100) skipped.push({ path: rel, size }); continue; }
                         const rawBytes = await fh.readFile().finally(() => fh.close());
+                        filesBack += rawBytes.length;
                         // Untouched files are recognised by their bytes. Decoding first replaced the invalid
                         // bytes of a non-UTF-8 file with U+FFFD and then took that for a change.
                         if (sent.get(rel)?.bytes.equals(rawBytes)) continue;
@@ -859,7 +883,7 @@ export function createDevApi(opts: DevApiOptions) {
             await walk(tmpDir);
             // Files the run removed or renamed: the browser must not keep them.
             const filesDeleted = [...sent].filter(([rel]) => !seen.has(rel)).map(([, v]) => v.name);
-            jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten, ...(filesDeleted.length ? { files_deleted: filesDeleted } : {}) });
+            jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten, ...(filesDeleted.length ? { files_deleted: filesDeleted } : {}), ...(skipped.length ? { files_skipped: skipped } : {}) });
         } catch (err: any) {
             jsonErr(res, 500, String(err));
         } finally {
@@ -890,12 +914,18 @@ export function createDevApi(opts: DevApiOptions) {
             ? ['bwrap', [...bwrapArgs(repo, env.PATH ?? '', homedir()), '--setenv', 'HOME', '/tmp', '--', 'git', ...hardenGitArgs(args)]]
             : ['git', hardenGitArgs(args)];
         let stdout = '', stderr = '', returncode = 0;
+        // The same runner as /api/execute: a time limit, no prompt for credentials (a fetch from a host that stops answering used to hang the request for ever), and the
+        // process tree ends when the client leaves (review 2026-11-11 F10).
+        const run = spawnCapture(bin, binArgs, { cwd: repo, env: { ...env, GIT_TERMINAL_PROMPT: '0' }, timeout: EXECUTE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
+        res.on('close', () => { if (!res.writableEnded) run.killTree(); });
         try {
-            const r = await execFileAsync(bin, binArgs, { cwd: repo, maxBuffer: 10 * 1024 * 1024, env });
+            const r = await run.result;
             stdout = r.stdout; stderr = r.stderr;
         } catch (err: any) {
             stdout = err.stdout ?? ''; stderr = err.stderr ?? '';
-            returncode = typeof err.code === 'number' ? err.code : 1;
+            const f = execFailure(err);
+            returncode = f.exit_code;
+            if (f.note) stderr += `${stderr && !stderr.endsWith('\n') ? '\n' : ''}${f.note}\n`;
         }
         jsonSend(res, { stdout, stderr, returncode });
     }
@@ -919,7 +949,7 @@ export function createDevApi(opts: DevApiOptions) {
                 // publicGet passes bytes through undecoded, so Content-Encoding (if the upstream
                 // ignored the identity request) must travel with them.
                 if (k === 'content-encoding' && v) { res.setHeader(k, v as any); continue; }
-                if (v === undefined || _SKIP_RESP_HEADERS.has(k) || k.startsWith('access-control-')) continue;
+                if (v === undefined || _SKIP_RESP_HEADERS.has(k) || k.startsWith('access-control-') || k.startsWith('x-fg-')) continue;
                 res.setHeader(k, v as any);
             }
             res.setHeader('Content-Type', (up.headers['content-type'] as string) ?? 'text/plain');
