@@ -118,8 +118,10 @@ export function installRelaySession(): void {
     window.fetch = async function (input: any, init?: any) {
         const origin = relayOrigin(input, init);
         if (!origin) return inner.call(window, input, init);
+        let used: string | undefined;   // the session this request went out with, to tell a refusal of the current one from a late reply about an older one
         const send = () => {
             const session = _sessions.get(origin);
+            used = session;
             if (!session) return inner.call(window, input, init);
             const headers = new Headers(init?.headers);
             headers.set('X-FG-Session', session);
@@ -129,6 +131,8 @@ export function installRelaySession(): void {
         if (resp.status !== 401 || resp.headers.get('X-FG-Session-Required') !== '1') return resp;
         const siteKey = await resp.clone().json().then((d: any) => String(d?.turnstileSiteKey || ''), () => '');
         if (!siteKey) return resp;
+        // A late refusal of an older (or no) session must not discard the replacement a newer request has since obtained: that cost a second challenge (exploration O010).
+        if (_sessions.get(origin) !== undefined && _sessions.get(origin) !== used) return send();
         _sessions.delete(origin);
         // The caller's own cancellation ends its wait at once; the shared setup goes on for the other fetches waiting on it (codex DR-07).
         try { await _until(_session(origin, siteKey, inner), init?.signal); }

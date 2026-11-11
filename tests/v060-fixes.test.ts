@@ -63,6 +63,19 @@ describe('fetch_url body', () => {
         expect(r.error).toMatch(/cannot carry a body.*"POST"/);
     });
 
+    it('an empty body on a GET or HEAD is sent as no body (fetch throws on any body for them; D016)', async () => {
+        const spy = vi.fn(async () => new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain' } }));
+        vi.stubGlobal('fetch', spy);
+        try {
+            for (const a of [{ method: 'GET', body: '' }, { method: 'HEAD', body: {} }, { body: '{}' }, { body: {} }]) {
+                spy.mockClear();
+                const r = await W.executeToolAsync('fetch_url', { url: 'http://gw.example/x', ...a });
+                expect(r.error, JSON.stringify(a)).toBeUndefined();
+                for (const c of spy.mock.calls) expect((c as any)[1]?.body, JSON.stringify(a)).toBeUndefined();
+            }
+        } finally { vi.unstubAllGlobals(); }
+    });
+
     it('runs as part of repairAllToolCalls', () => {
         const { norm } = repairAllToolCalls([{ function: { name: 'fetch_url', arguments: JSON.stringify({ method: 'POST', url: 'u', data: '{"x":1}' }) } }]);
         expect(norm[0].args.body).toBe('{"x":1}');

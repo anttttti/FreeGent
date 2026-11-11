@@ -257,7 +257,7 @@ export function _checkTextResponse(textContent: string, step: number, maxSteps: 
     };
     else if (textContent.length > 30_000 && (textContent.length > LONG_TEXT_HARD_CAP || _degenerateTail(textContent) !== null)) result = {
         action:    'runaway',
-        truncated: textContent.slice(0, 2000) + `\n[…truncated: response was ${textContent.length.toLocaleString()} chars with no tool calls]`,
+        truncated: textContent.slice(0, 2000) + `\n[…truncated: response was ${textContent.length.toLocaleString('en-US')} chars with no tool calls]`,
         nudge:     'Your last response was very long and repeated itself, with no tool calls. Please call a tool to get the information you need, or give a short final answer.'
     };
     else {

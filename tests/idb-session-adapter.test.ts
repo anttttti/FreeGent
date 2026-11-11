@@ -351,6 +351,37 @@ describe('IDBSessionAdapter — writes resolve on commit', () => {
     });
 });
 
+describe('IDBSessionAdapter — pruning resolves on commit (O012)', () => {
+    it('pruneRawFrom rejects when its transaction aborts after the cursor ran out, and the rows stay', async () => {
+        const adapter = await makeAdapter();
+        await adapter.saveRawMessage('c1', { role: 'assistant', content: 'raw', kind: 'fn_tag_strip' });
+        const db: any = (adapter as any)._db;
+        const realTx = db.transaction.bind(db);
+        db.transaction = (stores: any, mode?: any) => {
+            const tx = realTx(stores, mode);
+            if (mode !== 'readwrite') return tx;
+            const objectStore = tx.objectStore.bind(tx);
+            tx.objectStore = (n: string) => {
+                const st = objectStore(n), index = st.index.bind(st);
+                st.index = (i: string) => {
+                    const ix = index(i), open = ix.openCursor.bind(ix);
+                    ix.openCursor = (...a: any[]) => {
+                        const req = open(...a);
+                        req.addEventListener('success', () => { if (!req.result) tx.abort(); });   // the cursor ran out, the commit has not happened
+                        return req;
+                    };
+                    return ix;
+                };
+                return st;
+            };
+            return tx;
+        };
+        await expect(adapter.pruneRawFrom('c1', 0)).rejects.toBeTruthy();
+        db.transaction = realTx;
+        expect(await getAll(adapter, 'raw_messages')).toHaveLength(1);
+    });
+});
+
 // ── Dead connection ───────────────────────────────────────────────────────────
 
 describe('IDBSessionAdapter — a connection the browser broke', () => {
@@ -361,5 +392,20 @@ describe('IDBSessionAdapter — a connection the browser broke', () => {
         db.transaction = () => { throw new DOMException('An internal error was encountered in the Indexed Database server', 'UnknownError'); };
         expect(await adapter.loadHistory('c1')).toEqual([{ role: 'user', content: 'hi' }]);
         expect((adapter as any)._db).not.toBe(db);
+    });
+});
+
+describe('IDBSessionAdapter — a newer build upgraded the database (G02)', () => {
+    it('tells the user to reload instead of reviving a connection at the older version', async () => {
+        const factory = new IDBFactory();
+        const adapter = await openIDBSession(factory);
+        const db: any = (adapter as any)._db;
+        await new Promise<void>((resolve, reject) => {   // what the newer build's tab does
+            const r = factory.open('fg-session', 99);
+            r.onsuccess = () => { r.result.close(); resolve(); };
+            r.onerror = () => reject(r.error);
+        });
+        expect(document.getElementById('fg-outdated-tab')?.textContent).toMatch(/Reload this tab/);
+        expect((adapter as any)._db).toBe(db);   // not replaced by a failing reopen at version 3
     });
 });

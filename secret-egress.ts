@@ -14,8 +14,13 @@ export function credentialFilesIn(code: string): string[] {
     return [...String(code ?? '').matchAll(/[\w./~\\-]+/g)].map(m => m[0]).filter(isCredentialPath);
 }
 
-const _SECRET_KEY_RE = /key|token|secret|pass(?:word|wd)?|pwd|auth|credential|private|session|cookie|signature|dsn|_url\b|^url$/i;
-const _looksRandom = (v: string) => v.length >= 16 && /[A-Za-z]/.test(v) && /\d/.test(v) && !/\s/.test(v);
+const _SECRET_KEY_RE = /key|token|secret|pass(?:word|wd)?|pwd|auth|credential|private|session|cookie|signature|dsn|webhook/i;   // not `_url`: a base URL is configuration, its password (userinfo) is taken apart below (exploration E03)
+const _random = (v: string) => v.length >= 16 && /[A-Za-z]/.test(v) && /\d/.test(v) && !/\s/.test(v);
+// A plain http(s) URL (no user info, no query) is a place, not a secret: judge its path segments (a webhook path has a random one), not its host name.
+const _looksRandom = (v: string) => {
+    const u = /^https?:\/\/([^\s/?#@]*)((?:\/[^\s?#]*)?)$/i.exec(v);
+    return u ? u[2].split('/').some(_random) : !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(v) && _random(v);   // nor is a lower-case host name
+};
 
 /** The secret-looking values in a credential file's text: values of secret-named keys (6+ characters), long random-looking values,
  *  the password of a URL with credentials, netrc passwords, and the base64 lines of a key block. */
@@ -37,7 +42,7 @@ export function secretValues(text: string): string[] {
     for (const line of String(text ?? '').split(/\r?\n/)) {
         if (/^\s*#/.test(line)) continue;
         if (/^[A-Za-z0-9+/=]{40,}$/.test(line.trim())) { add(line); continue; }   // PEM body
-        for (const m of line.matchAll(/:\/\/[^\s:/@]+:([^\s@/]+)@/g)) add(m[1]);  // scheme://user:PASSWORD@host
+        for (const m of line.matchAll(/:\/\/[^\s:/@]*:([^\s@/]+)@/g)) add(m[1]);  // scheme://user:PASSWORD@host
         for (const m of line.matchAll(/\bpassword\s+(\S+)/gi)) add(m[1]);           // netrc
         // KEY=value first (an .npmrc key holds ':' itself: //registry/:_authToken=…), then key: value.
         const kv = /^\s*(?:export\s+)?([^=\s][^=]*?)\s*=\s*(.+?)\s*$/.exec(line) ?? /^\s*([^:\s][^:]*?)\s*:\s*(.+?)\s*$/.exec(line);

@@ -1,6 +1,6 @@
 # FreeGent Cloudflare Worker
 
-A small proxy that lets the static FreeGent site call model providers, which mostly do not allow direct browser requests. The official instance runs at `proxy.freegent.ai` and is used automatically by `freegent.ai`. **Most users never deploy this.** You need your own copy only if you host FreeGent on another origin, want another provider allowed, or want to run requests on your own provider keys (Worker keys) for your own sessions or as a guest quota. The guide for that is [docs/self-hosting.md](../docs/self-hosting.md); the quick version is below.
+A small proxy that lets the static FreeGent site call model providers, which mostly do not allow direct browser requests. The official instance runs at `proxy.freegent.ai` and is used automatically by `freegent.ai`. **Most users never deploy this.** You need your own copy only if you host FreeGent on another origin, want another provider allowed, or want to run requests on your own provider keys (Worker keys) for your own sessions or as a guest quota. The guide for that is [docs/models/proxy.md](../docs/models/proxy.md); the quick version is below.
 
 ## What it does
 

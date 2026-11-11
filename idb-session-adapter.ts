@@ -27,16 +27,16 @@ function _commit(tx: IDBTransaction): Promise<void> {
 
 // Delete the rows of `store` whose chatId index matches `chatId` and for which `match` is true.
 function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (row: any) => boolean = () => true): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-        const req = db.transaction(store, 'readwrite').objectStore(store).index('chatId').openCursor(IDBKeyRange.only(chatId));
-        req.onsuccess = () => {
-            const c = req.result;
-            if (!c) { resolve(); return; }
-            if (match(c.value)) c.delete();
-            c.continue();
-        };
-        req.onerror = () => reject(req.error);
-    });
+    // Resolves when the transaction COMMITTED, not when the cursor ran out: an abort after the last request still keeps the rows (exploration O012, E024).
+    const tx = db.transaction(store, 'readwrite');
+    const req = tx.objectStore(store).index('chatId').openCursor(IDBKeyRange.only(chatId));
+    req.onsuccess = () => {
+        const c = req.result;
+        if (!c) return;
+        if (match(c.value)) c.delete();
+        c.continue();
+    };
+    return _commit(tx);
 }
 
 // The newest generation of a chat's history, read INSIDE the transaction that then writes (callback style: the transaction stays active). A generation read in
@@ -52,6 +52,20 @@ function _latestGeneration(store: IDBObjectStore, chatId: string, then: (gen: nu
 // call of the next minute failed with it), so it is retried once on a new connection too.
 const _isClosedDbError = (e: any) => e?.name === 'InvalidStateError' || /connection is closing|database.*closed/i.test(String(e?.message ?? ''))
     || (e?.name === 'UnknownError' && /internal error/i.test(String(e?.message ?? '')));
+
+let _outdatedTold = false;
+function _tellOutdated() {
+    if (_outdatedTold) return;
+    _outdatedTold = true;
+    console.warn('[idb-session] the database was upgraded by a newer FreeGent build in another tab; this tab can no longer save its history');
+    try {
+        const b = document.createElement('div');
+        b.id = 'fg-outdated-tab';
+        b.textContent = 'FreeGent was updated in another tab. Reload this tab: until you do, new messages here are not saved.';
+        b.style.cssText = 'position:fixed;left:0;right:0;top:0;padding:10px 14px;background:#a15c00;color:#fff;font:14px/1.3 system-ui,sans-serif;z-index:2147483000;text-align:center';
+        document.body.appendChild(b);
+    } catch {}
+}
 
 export class IDBSessionAdapter {
     private _reopening: Promise<void> | null = null;
@@ -76,7 +90,9 @@ export class IDBSessionAdapter {
 
     private _watch(db: IDBDatabase) {
         db.onclose = () => { if (this._db === db) this.revive(true).catch(() => {}); };
-        db.onversionchange = () => { try { db.close(); } catch {} if (this._db === db) this.revive(true).catch(() => {}); };
+        // A version change means the other way round from a closed connection: a newer build upgraded the database, this tab's code is older than
+        // the data and can never reopen it (VersionError on every call, the session store dead and silent). Say so once and stop reviving (exploration G02).
+        db.onversionchange = () => { try { db.close(); } catch {} if (this._db === db) _tellOutdated(); };
     }
 
     /** Reopen the connection if the browser closed it (or `force`). Safe to call often. */

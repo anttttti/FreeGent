@@ -190,7 +190,13 @@ export function tabDiedInToolCall(): boolean {
 }
 
 /** The signature of a call: its tool and arguments. Two calls with the same one are the same command. */
-export const toolSig = (name: string, args: unknown): string => hashContent(`${name}\u0000${JSON.stringify(args ?? null)}`);
+// Top-level keys in sorted order: `{language, code}` and `{code, language}` are the same command (a weak model's field order must not reopen a call that took the tab down; exploration D031).
+// Signatures recorded before this change used the sent order and match only a call sent in that order, until they age out.
+export const toolSig = (name: string, args: unknown): string => {
+    const a: any = args;
+    const canon = a && typeof a === 'object' && !Array.isArray(a) ? Object.fromEntries(Object.keys(a).sort().map(k => [k, a[k]])) : (args ?? null);
+    return hashContent(`${name}\u0000${JSON.stringify(canon)}`);
+};
 
 /** A recorded tab crash in a call with this signature, made when the workspace was in the same state (`ws`: its newest file time), or null.
  *  The same command on files that have changed since is a new attempt; on files that have not, it is the crash again (kanbanflow logs: the same

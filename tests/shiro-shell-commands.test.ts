@@ -442,4 +442,12 @@ describe('argv dispatch and capability failures', () => {
         await run('saved=value');
         expect((await run("env -i saved=child sh -c 'cd /tmp; echo $saved'; echo $saved; pwd")).out).toBe('child\nvalue\n/workspace\n');
     });
+
+    it('sort and join order keys by UTF-8 bytes, so U+E000 precedes U+10000 as in GNU C locale (O017)', async () => {
+        files.set('k1.txt', { content: '\uE000 a\n\u{10000} b\n', encoding: null });
+        files.set('k2.txt', { content: '\u{10000} y\n', encoding: null });
+        expect((await run('printf "\\xf0\\x90\\x80\\x80\\n\\xee\\x80\\x80\\n" | sort')).out).toBe('\uE000\n\u{10000}\n');
+        expect((await run('sort -c k1.txt')).code).toBe(0);
+        expect((await run('join k1.txt k2.txt')).out).toBe('\u{10000} b y\n');
+    });
 });

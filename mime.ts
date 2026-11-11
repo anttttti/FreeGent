@@ -52,7 +52,8 @@ const bare = (ext: string): string => ext.replace(/^\./, '').toLowerCase();
 
 /** MIME type for an extension ('png' or '.png'); 'application/octet-stream' when unknown. */
 export function mimeOfExt(ext: string): string {
-    return MIME_BY_EXT[bare(ext)] || 'application/octet-stream';
+    const e = bare(ext);   // own keys only: `constructor` and `__proto__` named inherited members, not a MIME type (exploration D038)
+    return Object.hasOwn(MIME_BY_EXT, e) ? MIME_BY_EXT[e] : 'application/octet-stream';
 }
 export function mimeOfName(name: string): string { return mimeOfExt(extOf(name)); }
 
@@ -60,7 +61,7 @@ export function isBinaryExt(name: string): boolean { return BINARY_EXTS.has(bare
 export function isDocExt(name: string): boolean { return DOC_EXTS.has(bare(extOf(name))); }
 
 /** Document kind ('pdf', 'docx', …) for a MIME type, or undefined. */
-export function docKindOfMime(mime: string): string | undefined { return DOC_KIND_BY_MIME[mime]; }
+export function docKindOfMime(mime: string): string | undefined { return Object.hasOwn(DOC_KIND_BY_MIME, mime) ? DOC_KIND_BY_MIME[mime] : undefined; }
 /** Document kind for an extension of a kind extractDocumentText handles ('pdf', 'docx', …), or undefined. */
 export function docKindOfExt(ext: string): string | undefined {
     const k = bare(ext);

@@ -1,5 +1,6 @@
 
 import type { Command, CommandContext } from './index';
+import { bytesOrder } from '../utils/bytes';
 
 // GNU sort in the C locale: byte order; keys (-k) with their own options overriding the global
 // ones; a last-resort whole-line comparison unless -s or -u; -n, -g, -h, -V, -M, -f, -d, -i, -b,
@@ -121,7 +122,7 @@ function verCmp(a: string, b: string): number {
   return 0;
 }
 
-const bytesCmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+const bytesCmp = bytesOrder;
 
 function compareBy(a: string, b: string, o: Opts): number {
   if (o.b) { a = a.replace(/^[ \t]+/, ''); b = b.replace(/^[ \t]+/, ''); }

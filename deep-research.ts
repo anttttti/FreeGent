@@ -17,7 +17,7 @@ const _DR_FINDINGS_MAX      = 36_000;  // ~9k tokens of findings fed into one sy
 
 function _drDateContext() {
     const now = new Date();
-    return `Today's date is ${now.toISOString().slice(0, 10)}. When a query needs a year or refers to "latest"/"current", use ${now.getFullYear()} — never a year inferred from training data.`;
+    return `Today's date is ${now.toLocaleDateString('sv-SE')}. When a query needs a year or refers to "latest"/"current", use ${now.getFullYear()} — never a year inferred from training data.`;
 }
 
 // Tolerant JSON extraction: fenced block first, then first bracket-balanced candidate.

@@ -12,6 +12,11 @@ describe('a call that took the tab down is recognised by its tool, arguments and
         expect(sameCallCrashed(sig, 501)).toBeNull();
         expect(sameCallCrashed(toolSig('execute_code', { language: 'bash', code: 'node test_b.mjs' }), 500)).toBeNull();
     });
+    it('the order of the arguments does not make a call a new one (D031)', () => {
+        rec(toolSig('execute_code', { language: 'bash', code: 'echo x', timeout_s: 30 }), 500);
+        for (const args of [{ code: 'echo x', language: 'bash', timeout_s: 30 }, { timeout_s: 30, code: 'echo x', language: 'bash' }])
+            expect(sameCallCrashed(toolSig('execute_code', args), 500)).toEqual({ at: 1000, seconds: 30 });
+    });
     it('counts the crashes in a task\'s done gate', () => {
         localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:007-x.md → done [gate test-runner]', t: 1 }], beat: 2 }, { calls: [{ name: 'task', label: 'task:007-x.md → done [gate test-runner]', t: 3 }], beat: 4 }]));
         expect(toolCrashCount('007-x.md → done [gate test-runner]')).toBe(2);

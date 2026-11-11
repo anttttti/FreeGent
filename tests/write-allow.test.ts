@@ -53,4 +53,18 @@ describe('the tools obey it', () => {
         expect(ok.error).toBeUndefined();
         expect(files.get('out/report.md')).toBe('hi');
     });
+
+    it('equivalent forms of an allowed file are allowed, and equivalent forms of an outside file are not (O018)', async () => {
+        files.set('src/app.ts', 'ORIGINAL');
+        setWriteAllow(parseWriteAllow('out/'));
+        for (const args of [{ filename: 'out/a.md' }, { file: 'out/a.md' }, { filepath: 'out/a.md' }, { path: '././out/a.md' }, { path: '"out/a.md"' }, { path: '/workspace/out/a.md' }, { path: 'out//a.md' }]) {
+            const r = await run('write_file', { ...args, content: 'hi' });
+            expect(r.error, JSON.stringify(args)).toBeUndefined();
+        }
+        for (const args of [{ filename: 'src/app.ts' }, { path: '"src/app.ts"' }, { path: 'out/../src/app.ts' }, { path: '../src/app.ts' }, { path: '/workspace/src/app.ts' }]) {
+            const r = await run('write_file', { ...args, content: 'X' });
+            expect(r.error, JSON.stringify(args)).toBeTruthy();
+        }
+        expect(files.get('src/app.ts')).toBe('ORIGINAL');
+    });
 });

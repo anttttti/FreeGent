@@ -27,6 +27,14 @@ describe('buildSystemPrompt — shape', () => {
         expect(p.length).toBeGreaterThan(100);
     });
 
+    it('says the local date, not the UTC date (it was a day off for hours of every day)', () => {
+        const tz = process.env.TZ;
+        process.env.TZ = 'Pacific/Auckland';
+        vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-10T22:00:00Z'));   // Wed 11 Nov 11:00 in Auckland
+        try { expect(W.buildSystemPrompt()).toContain('Current date: 2026-11-11'); }
+        finally { vi.useRealTimers(); if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; }
+    });
+
     it('identifies the agent as FreeGent', () => {
         expect(W.buildSystemPrompt()).toContain('FreeGent');
     });

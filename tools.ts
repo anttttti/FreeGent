@@ -2382,6 +2382,15 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
     args = { ...args, url: args.url ?? args.link ?? args.href ?? args.uri ?? '' };
     // Strip [UNAVAILABLE] suffix if the model passes an annotated URL from search results.
     args = { ...args, url: _encodeDataHash(stripUnavailable(args.url)) };
+    // A value with no scheme was resolved against the page and refused as "the FreeGent server itself" (and by the hosted Worker as a private address):
+    // wrong for `example.com/page`, and no help for a workspace path. Say which it is (exploration E04/E23: 22 of 79 logged calls were not a public https URL).
+    if (args.url && !/^[a-z][a-z0-9+.-]*:/i.test(String(args.url).trim())) {
+        const raw = String(args.url).trim();
+        const host = /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)/i.test(raw);
+        const fileLike = /^(?:\.{0,2}\/|~\/)/.test(raw) || !host || (!/[/?#:]/.test(raw) && /\.(?:html?|md|json|txt|js|ts|tsx|css|py|png|jpe?g|gif|svg|csv|pdf|xml|ya?ml)$/i.test(raw));
+        if (fileLike) return { error: `fetch_url needs a full URL starting with https://. "${raw}" looks like a workspace path: use read_file with path "${raw.replace(/^\.\//, '')}".` };
+        args = { ...args, url: 'https://' + raw };
+    }
     // Browser only: refuse the page's own server. Same-origin requests carry the dev server's
     // token (added by the page's fetch wrapper), so a prompt-injected fetch_url could otherwise
     // drive /api/execute or /api/proxy. Loopback names on the same port are the same server.
@@ -2426,12 +2435,13 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
         const reqHdrs = { ...(args.headers || {}) };
         const hasAuth = Object.keys(reqHdrs).some(k => k.toLowerCase() === 'authorization' || k.toLowerCase() === 'x-api-key');
 
-        let body;
+        let body, _autoContentType = false;
         if (args.body !== undefined) {
             if (typeof args.body === 'object') {
                 body = JSON.stringify(args.body);
-                if (!Object.keys(reqHdrs).some(k => k.toLowerCase() === 'content-type'))
-                    reqHdrs['Content-Type'] = 'application/json';
+                if (!Object.keys(reqHdrs).some(k => k.toLowerCase() === 'content-type')) {
+                    reqHdrs['Content-Type'] = 'application/json'; _autoContentType = true;
+                }
             } else {
                 body = String(args.body);
             }
@@ -2439,6 +2449,9 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
 
         if ((method === 'GET' || method === 'HEAD') && body !== undefined && body !== '' && body !== '{}')
             return { error: `fetch_url: a ${method} request cannot carry a body. To send data, set method to "POST" (or PUT/PATCH) and keep it in body; to ask for something, put the values in the URL's query string and drop body.` };
+
+        // The empty forms tolerated above ('', {}, "{}") are no body: fetch itself throws "Request with GET/HEAD method cannot have body" for any body (exploration D016).
+        if (method === 'GET' || method === 'HEAD') { body = undefined; if (_autoContentType) delete reqHdrs['Content-Type']; }
 
         // Use proxy only for plain GET page fetches — not for authenticated or non-GET requests.
         const proxy   = getEffectiveProxy();
@@ -3283,10 +3296,11 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
             }
             targets = [...new Set([writePath, ...plus].filter(p => p != null && p !== ''))];
         } else {
-            targets = [args?.path];
+            targets = [args?.path ?? args?.filename ?? args?.file ?? args?.filepath];   // the names the writers accept
         }
         for (const t of targets.length ? targets : [args?.path]) {
-            const why = checkWriteAllowed(name, t);
+            // Judge the identity the writer will use: its own normalisation (quotes, ./, the workspace root), not the raw string (O018: 11 of 13 equivalent forms of an allowed file were refused).
+            const why = checkWriteAllowed(name, typeof t === 'string' ? _normToolPath(t) : t);
             if (why) return { error: why };
         }
     }

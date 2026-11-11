@@ -140,7 +140,7 @@ export function buildSystemPrompt(): string {
     // Date-only (no time) — placed at the END of the prompt so all preceding static content
     // stays in the vLLM prefix cache. Current time is injected on-demand by the 'datetime' rule
     // when the user's message contains time-related words.
-    const _date = new Date().toISOString().slice(0, 10);
+    const _date = new Date().toLocaleDateString('sv-SE');   // the user's local date (YYYY-MM-DD); toISOString() is the UTC date, a day off for hours of every day (exploration F04)
     const _dateCtx = `\nCurrent date: ${_date}\n`;
     if (!mainAgentRole) return '';
     const _imgM = typeof getImageModel === 'function' ? getImageModel() : '';

@@ -1,5 +1,6 @@
 import type { Command } from './index';
 import { toLines } from './flags';
+import { bytesOrder } from '../utils/bytes';
 
 // GNU join: a merge join of two files sorted on the join field. -1/-2/-j field, -t CHAR (default:
 // blank-separated, leading blanks ignored, output joined with a space), -a N unpaired lines too,
@@ -40,7 +41,7 @@ export const join: Command = {
     const out: string[] = [];
     const sep = tab ?? ' ';
     const key = (r: string[], f: number) => { const k = r[f - 1] ?? ''; return ignoreCase ? k.toLowerCase() : k; };
-    const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+    const cmp = bytesOrder;
     const fmt = (r1: string[] | null, r2: string[] | null): string => {
       const joinVal = r1 ? r1[f1 - 1] ?? '' : r2 ? r2[f2 - 1] ?? '' : '';
       const e = empty ?? '';

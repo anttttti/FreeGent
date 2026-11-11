@@ -49,6 +49,24 @@ describe('relay-session', () => {
         expect(render).toHaveBeenCalledTimes(1);
     });
 
+    it('a late refusal of a request that went out without a session does not discard the session a newer request obtained (O010)', async () => {
+        let release: () => void = () => {};
+        const held = new Promise<void>(r => { release = r; });
+        let first = true;
+        inner.mockImplementation(async (url: string, init?: any) => {
+            if (url === `${WORKER}/session`) return json({ session: 'S1', expires: Date.now() + 1e6 });
+            const ok = new Headers(init?.headers).get('X-FG-Session') === 'S1';
+            if (!ok && first) { first = false; await held; }   // the older request's refusal arrives late
+            return ok ? new Response('page') : askForSession();
+        });
+        const older = window.fetch(PAGE);
+        await new Promise(r => setTimeout(r, 0));
+        expect(await (await window.fetch(PAGE)).text()).toBe('page');   // the newer one acquires the session
+        release();
+        expect(await (await older).text()).toBe('page');
+        expect(render).toHaveBeenCalledTimes(1);
+    });
+
     it('sends no session header before a Worker has asked for one, and passes other requests through untouched', async () => {
         inner.mockImplementation(async () => new Response('ok'));
         await window.fetch(PAGE);

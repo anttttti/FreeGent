@@ -1153,15 +1153,8 @@ function getActiveModel() {
     return ls('fg_openai_model', 'gpt-4o-mini');
 }
 
-const _tokenCache = new WeakMap();
+// (A WeakMap cache keyed by the array was removed: every caller passes a fresh array, it hit 5 times in 1,392 lookups, exploration F05.)
 export function estimateTokens(obj) {
-    if (Array.isArray(obj)) {
-        const cached = _tokenCache.get(obj);
-        if (cached && cached.len === obj.length) return cached.val;
-        const val = Math.ceil(JSON.stringify(obj).length / 4);
-        _tokenCache.set(obj, { len: obj.length, val });
-        return val;
-    }
     return Math.ceil(JSON.stringify(obj).length / 4);
 }
 

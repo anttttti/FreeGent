@@ -114,6 +114,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         };
         child.on('close', async (exitCode, signal) => {
             if (timedOut) return;   // the timeout path is already reporting this run
+            clearTimeout(timer);    // the child is over: the deadline must not report a finished run as timed out while the changed-file scan is still running (exploration O015)
             // Ended by a signal (OOM killer, kill, a crash): never a success.
             _done(await _withChanges({ ..._shaped(), exit_code: exitCode ?? signalExitCode(signal),
                 ...(exitCode == null && signal ? { signal } : {}) }));

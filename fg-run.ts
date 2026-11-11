@@ -101,6 +101,8 @@ Options:
   --thinking-level <level>  Thinking budget: off|low|medium|high (default: off)
   --retry-mode <mode>       Retry delay mode: exponential (default) | fixed
   --retry-fixed-ms <ms>     Fixed retry delay in ms when --retry-mode fixed (default: 120000)
+  --main-role <name>        Role of the main agent (default: the Director)
+  --max-rounds <n>          Step limit of the turn, 1-500 (default: the saved setting, 100)
   --help                    Show this message
 `);
     process.exit(code);

@@ -22,6 +22,17 @@ describe('base64ToBytes, legacy chunks (day exploration D014)', () => {
     });
 });
 
+describe('base64ToBytes, ASCII whitespace (day exploration D029)', () => {
+    it('wrapped lines, CRLF and a trailing newline decode as native atob does; other whitespace is still refused', () => {
+        const bytes = Array.from({ length: 58 }, (_, i) => i * 3 % 256);
+        const flat = btoa(String.fromCharCode(...bytes));
+        for (const wrapped of [flat.replace(/(.{76})/g, '$1\n'), flat.replace(/(.{20})/g, '$1\r\n'), flat + '\n', '\t' + flat])
+            expect(Array.from(base64ToBytes(wrapped))).toEqual(bytes);
+        expect(Array.from(base64ToBytes('AQID\nBA==\n'))).toEqual([1, 2, 3, 4]);
+        expect(() => base64ToBytes('AQID\u00a0BA==')).toThrow();
+    });
+});
+
 describe('pyodide output encoding uses the shared text/binary rule', () => {
     it('text stays text; NUL or invalid UTF-8 becomes tagged base64; images are tagged', () => {
         expect(encodeOutputFile('a.txt', new TextEncoder().encode('héllo'))).toBe('héllo');

@@ -53,4 +53,12 @@ describe('mime', () => {
         expect(MODEL_IMAGE_MIMES.has(mimeOfName('a.heic'))).toBe(false);
         expect(MODEL_IMAGE_MIMES.has(mimeOfName('a.jpg'))).toBe(true);
     });
+
+    it('a name that is also an Object member is an unknown type, not an inherited value (D038)', () => {
+        for (const n of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+            expect(mimeOfExt(n)).toBe('application/octet-stream');
+            expect(docKindOfMime(n)).toBeUndefined();
+            expect(imageMimeOfName('file.' + n)).toBeFalsy();
+        }
+    });
 });

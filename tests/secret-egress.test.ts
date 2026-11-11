@@ -28,6 +28,21 @@ describe('which files and values', () => {
     });
 });
 
+describe('configuration is not a secret (exploration E03/E10)', () => {
+    const ENVC = ['API_BASE_URL=https://api.example.com/v2', 'APP_URL=https://staging-2.example.com', 'OPENAI_BASE_URL=http://localhost:11434/v1',
+        'DATABASE_HOST=db-prod-01.internal.example.com'].join('\n');
+    it('base URLs and host names are not collected, so fetching the app\'s own URL is not refused', () => {
+        expect(secretValues(ENVC)).toEqual([]);
+        noteSecrets('.env', ENVC);
+        expect(secretEgressReason('fetch_url', 'https://api.example.com/v2/users', 'fix the login bug')).toBeNull();
+    });
+    it('what must still be caught: webhook paths, a password in a URL with an empty user name, a DSN', () => {
+        expect(secretValues('NOTIFY=https://hooks.slack.com/services/T0123456/B0123456/Xk3jd9fLq2mP0aZ7')).toHaveLength(1);
+        expect(secretValues('REDIS_URL=redis://:p4ssw0rd99@cache:6379/0')).toContain('p4ssw0rd99');
+        expect(secretValues('SENTRY_DSN=https://abc123def456@o1.ingest.sentry.io/42')).toHaveLength(1);
+    });
+});
+
 describe('JSON credential files (codex R100-03)', () => {
     const SECRET = 'sk-live-4f9a8b7c6d5e';
     it.each([

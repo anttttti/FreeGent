@@ -11,5 +11,5 @@ describe('inflate fallback', () => {
                 expect(Buffer.from(gunzipSync(new Uint8Array(gzipSync(input, { level }))))).toEqual(Buffer.from(input));
             }
         }
-    });
+    }, 30_000);   // 2 s on a fast machine: it was the test that timed out at 5 s on the CI runner (exploration G01)
 });

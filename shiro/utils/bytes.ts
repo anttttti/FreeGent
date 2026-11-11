@@ -9,6 +9,21 @@
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
+/** Order of two strings as their UTF-8 bytes order, i.e. by code point (GNU sort/join in the C locale). JS `<` compares UTF-16 code units, which puts U+10000 (D800 DC00) before U+E000. */
+export function bytesOrder(a: string, b: string): number {
+    if (a === b) return 0;
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+        let x = a.charCodeAt(i), y = b.charCodeAt(i);
+        if (x === y) continue;
+        // Surrogates (astral characters) rank above U+E000..U+FFFF, as their 4-byte UTF-8 form does.
+        x = x >= 0xd800 && x <= 0xdfff ? x + 0x2000 : x >= 0xe000 ? x - 0x800 : x;
+        y = y >= 0xd800 && y <= 0xdfff ? y + 0x2000 : y >= 0xe000 ? y - 0x800 : y;
+        return x < y ? -1 : 1;
+    }
+    return a.length < b.length ? -1 : 1;
+}
+
 export function concatBytes(parts:Uint8Array[]): Uint8Array {
   const all = new Uint8Array(parts.reduce((n,p) => n + p.length,0));
   let offset = 0;
@@ -108,7 +123,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
 /** base64 → bytes, tolerating interior '=' from legacy chunked encoding (atob alone stops there). Each run of '=' ends one independently encoded
  *  chunk, so chunks are decoded apart: dropping the padding and decoding the rest as one string shifts every byte after a chunk that had unused bits. */
 export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const parts = b64.split(/=+/).filter(Boolean).map(p => atob(p + '='.repeat((4 - p.length % 4) % 4)));
+  const parts = b64.split(/=+/).map(p => p.replace(/[\t\n\f\r ]+/g, '')).filter(Boolean).map(p => atob(p + '='.repeat((4 - p.length % 4) % 4)));
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
   for (const raw of parts) for (let i = 0; i < raw.length; i++) out[o++] = raw.charCodeAt(i);

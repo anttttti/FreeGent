@@ -44,6 +44,17 @@ describe('fetch_url and the page\'s own server', () => {
         expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('a value without a scheme is a workspace path (read_file) or a host that gets https://, never "the server itself" (E23)', async () => {
+        W.__FG_SERVER_KEYS = {};
+        for (const url of ['images/photo.jpeg', 'docs/readme.md', './index.html', 'index.html']) {
+            const r = await W.executeToolAsync('fetch_url', { url });
+            expect(r.error, url).toMatch(/use read_file with path "(?:images|docs|index)/);
+        }
+        await W.executeToolAsync('fetch_url', { url: 'example.com/page' });
+        expect(fetchSpy.mock.calls.some(c => decodeURIComponent(String(c[0])).includes('https://example.com/page'))).toBe(true);
+        expect(fetchSpy.mock.calls.every(c => !String(c[0]).startsWith(location.origin + '/example.com'))).toBe(true);
+    });
+
     it('still reaches other local services (local LLMs, mock APIs)', async () => {
         W.__FG_SERVER_KEYS = {};
         const r = await W.executeToolAsync('fetch_url', { url: 'http://localhost:42389/search?q=x' });
