@@ -492,7 +492,11 @@ describe('event log growth is bounded', () => {
         expect(loaded.length).toBeGreaterThan(0);
         expect(loaded.length).toBeLessThan(10);
         expect(loaded.map(e => e.seq)).toEqual([...loaded.keys()]);
-        expect(warn).toHaveBeenCalledTimes(1);
+        // one warning when the cap is hit, one when the file is loaded: the marker line says the tail is missing (review 2026-11-12 H03); the marker is not counted as a torn line
+        const msgs = warn.mock.calls.map(c => String(c[0]));
+        expect(msgs.filter(m => /reached 400 bytes/.test(m))).toHaveLength(1);
+        expect(msgs.filter(m => /was capped; the \d+ events loaded/.test(m))).toHaveLength(1);
+        expect(msgs.some(m => /unreadable line|out-of-sequence/.test(m))).toBe(false);
         warn.mockRestore();
     });
     it('prunes files by age, then oldest first down to the size budget', async () => {

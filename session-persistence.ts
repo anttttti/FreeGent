@@ -167,14 +167,16 @@ export class SessionPersistence {
             throw e;
         }
         const events: SessionEvent[] = [];
-        let torn = 0, outOfOrder = 0;
+        let torn = 0, outOfOrder = 0, capped = false;
         for (const line of text.split('\n')) {
             if (!line.trim()) continue;
             let ev: any;
             try { ev = JSON.parse(line); } catch { torn++; continue; }
+            if (ev && ev.capped === true && ev.seq === undefined) { capped = true; continue; }
             if (!ev || typeof ev !== 'object' || ev.seq !== events.length) { outOfOrder++; continue; }
             events.push(ev as SessionEvent);
         }
+        if (capped) console.warn(`[session-persistence] ${sessionId}: this event log was capped; the ${events.length} events loaded are the start of the session, later ones were not written`);
         if (torn || outOfOrder)
             console.warn(`[session-persistence] ${sessionId}: loaded ${events.length} events; skipped ${torn} unreadable line(s) and ${outOfOrder} repeated or out-of-sequence event(s)`);
         return events;
@@ -223,6 +225,8 @@ export class SessionPersistence {
                             if (size! + bytes > this.limits.maxFileBytes) {
                                 this.capped.add(id);
                                 console.warn(`[session-persistence] ${id}: event log reached ${this.limits.maxFileBytes} bytes; later events are not written`);
+                                // One marker line (not an event) so that load() can say the tail is missing; a resumed session otherwise looked complete (review 2026-11-12 H03).
+                                try { await appendFile(path, (this.dirty.has(id) ? '\n' : '') + JSON.stringify({ capped: true, maxFileBytes: this.limits.maxFileBytes }) + '\n', 'utf8'); } catch { /* the console warning stands */ }
                             } else {
                                 this.dirty.add(id);          // until the append is known to have completed
                                 await appendFile(path, lines, 'utf8');

@@ -41,9 +41,11 @@ function _deleteByChat(db: IDBDatabase, store: string, chatId: string, match: (r
 
 // The newest generation of a chat's history, read INSIDE the transaction that then writes (callback style: the transaction stays active). A generation read in
 // a transaction of its own and written in another let two overlapping operations choose the same generation and overwrite each other (codex R107).
+// Read from the index's primary keys ([chatId, generation]), not getAll: every sealed generation holds a full copy of the chat, and each save deserialised all of them to find one
+// number (review 2026-11-12 H01).
 function _latestGeneration(store: IDBObjectStore, chatId: string, then: (gen: number) => void): void {
-    const req = store.index('chatId').getAll(IDBKeyRange.only(chatId));
-    req.onsuccess = () => { const rs: any[] = req.result || []; then(rs.length ? Math.max(...rs.map((r: any) => r.generation)) : 0); };
+    const req = store.index('chatId').getAllKeys(IDBKeyRange.only(chatId));
+    req.onsuccess = () => { const ks: any[] = req.result || []; then(ks.length ? Math.max(...ks.map((k: any) => Number(k?.[1]) || 0)) : 0); };
 }
 
 // A handle the browser has closed (iOS Safari does this to backgrounded or memory-pressured tabs)
@@ -107,35 +109,28 @@ export class IDBSessionAdapter {
         await this._reopening;
     }
 
-    // Compute current generation from the max generation stored in the history store.
-    // Avoids storing generation on the chat record (which would require read-modify-write on every sync).
-    private async _getGeneration(chatId: string): Promise<number> {
-        const records: any[] = await _req(
-            this._db.transaction('history', 'readonly')
-                    .objectStore('history')
-                    .index('chatId')
-                    .getAll(IDBKeyRange.only(chatId))
-        );
-        return records.length ? Math.max(...records.map((r: any) => r.generation)) : 0;
+    // The current generation: the largest one stored for the chat (not kept on the chat record, which would need a read-modify-write on every sync).
+    private _getGeneration(chatId: string): Promise<number> {
+        return new Promise((resolve, reject) => {
+            const tx = this._db.transaction('history', 'readonly');
+            _latestGeneration(tx.objectStore('history'), chatId, resolve);
+            tx.onerror = () => reject(tx.error);
+        });
     }
 
     // ── Chats ──────────────────────────────────────────────────────────────────
 
     async syncChatList(list: any[]) {
-        // Read first to preserve mainRole/archived that syncChatList doesn't supply.
-        const all: any[] = await _req(this._db.transaction('chats', 'readonly').objectStore('chats').getAll());
-        const byId = new Map(all.map((c: any) => [c.id, c]));
+        // Id, name and dates only. The row once also carried mainRole and archived, read first and written back in a second transaction: nothing read them (the role
+        // is restored from localStorage, archived was only ever 0) and a setChatRole racing the sync lost the role (review 2026-11-12 H02).
         const tx = this._db.transaction('chats', 'readwrite');
         const store = tx.objectStore('chats');
         for (const c of list) {
-            const ex = byId.get(c.id);
             store.put({
                 id:        c.id,
                 name:      c.name      ?? 'New Chat',
                 createdAt: c.createdAt ?? Date.now(),
                 lastAt:    c.lastAt    ?? Date.now(),
-                mainRole:  ex?.mainRole ?? null,
-                archived:  ex?.archived ?? 0,
             });
         }
         await _commit(tx);
@@ -152,19 +147,8 @@ export class IDBSessionAdapter {
         await _commit(tx);
     }
 
-    async setChatRole(id: string, role: string | null) {
-        const ex: any = await _req(this._db.transaction('chats', 'readonly').objectStore('chats').get(id));
-        const tx = this._db.transaction('chats', 'readwrite');
-        tx.objectStore('chats').put({
-            id,
-            name:      ex?.name      ?? 'New Chat',
-            createdAt: ex?.createdAt ?? Date.now(),
-            lastAt:    ex?.lastAt    ?? Date.now(),
-            archived:  ex?.archived  ?? 0,
-            mainRole:  role ?? null,
-        });
-        await _commit(tx);
-    }
+    /** The browser keeps a chat's role in localStorage; the SQLite adapter has the column, this one has no reader for it (review 2026-11-12 H02). */
+    async setChatRole(_id: string, _role: string | null) {}
 
     // ── Messages ───────────────────────────────────────────────────────────────
 
@@ -176,7 +160,7 @@ export class IDBSessionAdapter {
         let chat: any, haveChat = false, gen = 0, haveGen = false;
         const go = () => {
             if (!haveChat || !haveGen) return;
-            if (!chat) tx.objectStore('chats').put({ id: chatId, name: 'New Chat', createdAt: Date.now(), lastAt: Date.now(), mainRole: null, archived: 0 });
+            if (!chat) tx.objectStore('chats').put({ id: chatId, name: 'New Chat', createdAt: Date.now(), lastAt: Date.now() });
             tx.objectStore('history').put({ chatId, generation: gen, history });
         };
         const creq = tx.objectStore('chats').get(chatId);

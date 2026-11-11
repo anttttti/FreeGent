@@ -55,15 +55,14 @@ describe('IDBSessionAdapter — chats', () => {
         expect(rows[0].name).toBe('First');
     });
 
-    it('syncChatList preserves mainRole on re-sync', async () => {
+    it('a re-sync renames the chat; the role is not stored here (the browser keeps it in localStorage), and setChatRole racing a sync cannot lose anything', async () => {
         const a = await makeAdapter();
         await a.syncChatList([{ id: 'c1', name: 'First', createdAt: 100, lastAt: 100 }]);
-        await a.setChatRole('c1', 'coder');
-        await a.syncChatList([{ id: 'c1', name: 'Renamed', createdAt: 100, lastAt: 200 }]);
+        await Promise.all([a.setChatRole('c1', 'coder'), a.syncChatList([{ id: 'c1', name: 'Renamed', createdAt: 100, lastAt: 200 }])]);
         const rows = await getAll(a, 'chats');
-        expect(rows[0].name).toBe('Renamed');
-        expect(rows[0].lastAt).toBe(200);
-        expect(rows[0].mainRole).toBe('coder');
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ name: 'Renamed', lastAt: 200 });
+        expect(rows[0].mainRole).toBeUndefined();
     });
 
     it('deleteChat removes the chat record', async () => {
