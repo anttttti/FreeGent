@@ -17,9 +17,9 @@ export function credentialFilesIn(code: string): string[] {
 // Words of a key name (`KEYCLOAK_REALM`, `authToken`) that make its value a secret; `auth`, `session`, `private` alone only name a purpose.
 const _STRONG_KEY_WORDS = new Set(['key', 'keys', 'token', 'tokens', 'secret', 'secrets', 'password', 'passwd', 'pass', 'pwd', 'passphrase', 'credential', 'credentials', 'signature', 'cookie', 'dsn', 'webhook', 'apikey']);
 const _strongKey = (k: string) => k.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).some(w => _STRONG_KEY_WORDS.has(w));
-// A value that names a place or a choice, not a credential: under a key that only names a purpose (AUTH_PROVIDER=github, SESSION_DRIVER=database) a lower-case word; under any key a plain
+// A value that names a place or a choice, not a credential: under a key that only names a purpose (AUTH_PROVIDER=github, SESSION_DRIVER=database) a short lower-case word (a long one under `PRIVATE`/`AUTH` can be a passphrase); under any key a plain
 // URL without user info or query, or a lower-case host name (NEXTAUTH_URL, TOKEN_ENDPOINT). Real secrets keep a digit or mixed case, or sit under a strong key (review 2026-11-11 F02).
-const _isPlace = (v: string, key: string) => /^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/i.test(v) || (!_strongKey(key) && (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(v) || /^[a-z]+$/.test(v)));
+const _isPlace = (v: string, key: string) => /^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/i.test(v) || (!_strongKey(key) && (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(v) || /^[a-z]{1,12}$/.test(v)));
 const _SECRET_KEY_RE = /key|token|secret|pass(?:word|wd)?|pwd|auth|credential|private|session|cookie|signature|dsn|webhook/i;   // not `_url`: a base URL is configuration, its password (userinfo) is taken apart below (exploration E03)
 const _random = (v: string) => v.length >= 16 && /[A-Za-z]/.test(v) && /\d/.test(v) && !/\s/.test(v);
 // A plain http(s) URL (no user info, no query) is a place, not a secret: judge its path segments (a webhook path has a random one), not its host name.

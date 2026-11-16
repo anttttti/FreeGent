@@ -730,6 +730,12 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'requesty|novita/inclusionai/ling-3.0-tiny', // HTTP 404 provider "Not Found", though listed at $0 (2026-11-01)
     'requesty|nvidia/nemotron-3-super-120b-a12b', // HTTP 404 provider "Not Found", though listed at $0 (2026-11-01)
     'requesty|nvidia/nemotron-3-nano-30b-a3b',   // HTTP 410 provider "Gone", though listed at $0 (2026-11-01)
+    'openrouter|thinkingmachines/inkling-2-small:free', // HTTP 403 "only available on agentic harnesses" (2026-11-15)
+    'openrouter|xingchen-agi/xing4.0-29b-a4b:free', // HTTP 404 "no longer available on OpenRouter: no provider serves this model" (2026-11-15)
+    'kilo|xingchen-agi/xing4.0-29b-a4b:free',    // HTTP 404 "currently unavailable" (2026-11-15)
+    'kilo|recursive/flint-v1.0:free',            // HTTP 404 "currently unavailable" (2026-11-15)
+    'kilo|stealth/cat-jam',                      // HTTP 404 "does not exist" (2026-11-15)
+    'vercel|stealth/cat-jam',                    // HTTP 404 "not found" (2026-11-15)
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models

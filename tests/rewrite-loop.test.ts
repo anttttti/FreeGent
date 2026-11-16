@@ -35,6 +35,13 @@ describe('noteRewrites', () => {
         noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check src/broken.ts' }, result: { exit_code: 0 } }]);
         expect(noteRewrites(st, [w('src/broken.ts')])).toBeNull();
     });
+    it('a check naming data.ts does not clear a.ts (review 2026-11-16 CR-02)', () => {
+        const ok = (code: string) => ({ name: 'execute_code', args: { language: 'bash', code }, result: { exit_code: 0 } });
+        const st = newRewriteState();
+        for (let i = 0; i < 3; i++) noteRewrites(st, [w('a.ts')]);
+        noteRewrites(st, [ok('node --check data.ts')]);
+        expect(noteRewrites(st, [w('a.ts')])).toMatch(/a\.ts in full 4 times/);
+    });
     it('equivalent spellings of one path are one file (R1122)', () => {
         const st = newRewriteState(); let hit: string | null = null;
         for (const p of ['a.ts', './a.ts', '/workspace/a.ts', 'a.ts']) hit = noteRewrites(st, [w(p)]);

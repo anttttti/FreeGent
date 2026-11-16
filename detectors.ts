@@ -102,6 +102,10 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
 // of executed. v0.54: 9 tasks looped like this (e.g. `ps aux | grep postgres` 72 times). Counted in a
 // window, not a streak: v0.55 OS task 38 slipped one variant (`ls -ld`) between runs of `ls -l`,
 // which reset a streak each time. Refusals accumulate over the turn for the same reason.
+/** First line of a tool error, cut to 120 characters, for the tool_failure nudge: a slice of the whole text ended in the middle of replace_in_file's
+ *  "Closest matches" list ("...one of these):\n  L. Fix before declaring COMPLETED"), which the model already has in full in the tool result (uploaded log, v1.0.109). */
+export const errorLine = (e: unknown): string => String(e).split('\n')[0].slice(0, 120);
+
 export const REPEAT_LIMIT = 8;
 export const REPEAT_WINDOW = 12;
 // recentPaths: the same steps keyed by endpoint instead of exact call (see _pathSig).
@@ -659,7 +663,9 @@ export function noteRewrites(st: RewriteState, results: Array<{ name: string; ar
         else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && isCheckCommand(String(r.args?.code ?? ''))) {
             // A check that names files checks those: `node --check scripts/healthy.js` says nothing about src/broken.ts (codex R978). One that names none (`pytest`, `npm test`) covers the project.
             const code = String(r.args?.code ?? '');
-            const named = [...st.keys()].filter(p => code.includes(p) || code.includes(p.split('/').pop()!));
+            // Whole words of the command, never a substring (`a.ts` is not in `data.ts`) (review 2026-11-16 CR-02).
+            const words = code.split(/[\s'"`;&|()<>=]+/).map(w => w.replace(/^(?:\.\/)+/, '').replace(/^\/?workspace\//, ''));
+            const named = [...st.keys()].filter(p => words.some(w => w === p || w.split('/').pop() === p.split('/').pop()));
             if (named.length) for (const p of named) st.delete(p);
             else if (!/[\w./-]+\.[A-Za-z]{1,5}\b/.test(code.replace(/\b(?:node|tsc|npm|npx)\b/g, ''))) st.clear();
         }

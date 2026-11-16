@@ -1772,6 +1772,7 @@ function handleSendButton(): void {
 // job's turn — would interleave with the job's next turn. Keep the text in the input instead.
 function userSend(): void {
     if (preparing() && !_turnPreparing()) return;   // a send already preparing owns the composer; a dequeued turn being prepared lets new text queue behind it (codex 465/466)
+    if ((window as any).__fgTabOutdated) { void agentSend(); return; }   // says why nothing is sent; a steer to a task or goal could not be saved either (review 2026-11-16 CR-03)
     // Steer the task runner: the message goes to the running task's agent after the current step.
     if (aiJob === 'runner' && typeof runnerSteer === 'function') {
         const inp  = document.getElementById('agent-input') as HTMLElement | null;

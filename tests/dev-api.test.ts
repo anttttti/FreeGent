@@ -327,6 +327,15 @@ describe('dev API over HTTP', () => {
             expect(out2.files_written['late.bin']).toBeUndefined();
         });
 
+        it('the 64 MB copy-back budget counts what is sent back, not the untouched files (review 2026-11-16 CR-01)', async () => {
+            const keep = Buffer.alloc(40 * 1024 * 1024, 0x41).toString('base64');
+            const out = await run('head -c 30000000 /dev/zero | tr "\\0" b > zz_new.txt; echo edit > zz_small.txt', { 'a_keep.txt': 'x'.repeat(1), 'b_big.bin': BIN + keep, 'zz_small.txt': 'old' });
+            expect(out.files_written['zz_small.txt']).toBe('edit\n');
+            expect(out.files_written['zz_new.txt']).toHaveLength(30000000);
+            expect(out.files_written['b_big.bin']).toBeUndefined();
+            expect(out.files_skipped).toBeUndefined();
+        });
+
         it('reports removed and renamed files', async () => {
             const out = await run('rm gone.txt; mv from.txt to.txt', { 'gone.txt': 'a', 'from.txt': 'b', 'keep.txt': 'c' });
             expect(out.files_deleted.sort()).toEqual(['from.txt', 'gone.txt']);

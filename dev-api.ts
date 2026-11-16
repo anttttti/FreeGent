@@ -869,12 +869,14 @@ export function createDevApi(opts: DevApiOptions) {
                     try {
                         const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
                         const size = (await fh.stat()).size;
-                        if (filesBack + size > FILES_BACK_MAX) { await fh.close(); if (skipped.length < 100) skipped.push({ path: rel, size }); continue; }
+                        if (size > FILES_BACK_MAX) { await fh.close(); if (skipped.length < 100) skipped.push({ path: rel, size }); continue; }
                         const rawBytes = await fh.readFile().finally(() => fh.close());
-                        filesBack += rawBytes.length;
                         // Untouched files are recognised by their bytes. Decoding first replaced the invalid
                         // bytes of a non-UTF-8 file with U+FFFD and then took that for a change.
                         if (sent.get(rel)?.bytes.equals(rawBytes)) continue;
+                        // Only what travels back counts: a large unchanged workspace must not use up the budget before an edited file is reached (review 2026-11-16 CR-01).
+                        if (filesBack + rawBytes.length > FILES_BACK_MAX) { if (skipped.length < 100) skipped.push({ path: rel, size: rawBytes.length }); continue; }
+                        filesBack += rawBytes.length;
                         const text = outputAsText(rawBytes);
                         filesWritten[rel] = text ?? '\x00BIN\x00' + rawBytes.toString('base64');
                     } catch { /* unreadable */ }

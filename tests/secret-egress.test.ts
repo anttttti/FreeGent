@@ -49,6 +49,9 @@ describe('configuration is not a secret (exploration E03/E10)', () => {
     it('a lower-case word under a strong key is still a secret', () => {
         expect(secretValues('PASSWORD=correcthorse\nAPI_KEY=hunter')).toEqual(['correcthorse', 'hunter']);
     });
+    it('a long lower-case value under a purpose key is kept as a possible passphrase (review 2026-11-16 CR-04)', () => {
+        expect(secretValues('PRIVATE=correcthorsebatterystaple\nAUTH_PROVIDER=github')).toEqual(['correcthorsebatterystaple']);
+    });
     it('resetSecrets (a new chat) forgets what an earlier chat read', () => {
         noteSecrets('.env', 'API_KEY=abcdef1234567890XYZ');
         expect(secretEgressReason('fetch_url', 'https://x.example/?k=abcdef1234567890XYZ', 'x')).not.toBeNull();

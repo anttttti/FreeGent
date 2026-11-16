@@ -2,7 +2,7 @@ import { collectRanAsBash } from './step-shared.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS, CONTENT_ARG_TOOLS } from './tool-effects.js';
 import { activeAbortController, softStopPending, activeChatId, mainAgentRole, workflowMode, type AgentSession, defaultSession, _reactiveFired, currentTurnSkills, setLastTurnDoneToken, setLastTurnBlockedToken } from './state.js';
-import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, withoutNegatedClauses, shellWritePaths, noteAgentFiles, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath } from './detectors.js';
+import { newRewriteState, noteRewrites, _fpTrunc, _updateStuckDetector, _checkTextResponse, _updateEnvFailureDetector, updateFailStreak, isNegativeProbe, withoutNegatedClauses, shellWritePaths, noteAgentFiles, newRepeatGuard, sameOutputMsg, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _repeatRefusalResult, _pathSig, _pathRepeatRefused, _pathRepeatCount, _pathRepeatRefusalResult, _creditProgress, REPEAT_REFUSALS_BEFORE_STOP, REPEAT_WINDOW, isScratchPath, errorLine } from './detectors.js';
 export { isScratchPath };
 import { _BLOCKED_DECLARATION_RE, _isComplete, _handleTurnState, _stripTerminal } from './turn-protocol.js';
 import { validateOutput, AGENT_TOOL_NAMES, RESULT_MARKERS_RE } from './step-validator.js';
@@ -2388,7 +2388,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             // where tool_failures (the escalation path at :1073) already fired.
             if (_errRes.length && consecutiveToolFails >= 2 && consecutiveToolFails < 5) {
                 const _errParts = _errRes.map(r => r.result?.error
-                    ? `${r.name}: ${String(r.result.error).slice(0, 120)}`
+                    ? `${r.name}: ${errorLine(r.result.error)}`
                     : `${r.name}: exit_code=${r.result.exit_code}`);
                 _emitNudge('tool_failure', _nudge(`Tool error(s) — ${_errParts.join('; ')}. Fix before declaring COMPLETED.`));
             }
