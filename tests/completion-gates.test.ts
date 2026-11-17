@@ -1,7 +1,7 @@
 // The one-shot completion gates as a table (completion-gates.ts): each answers once, in a fixed order,
 // from a plain context object.
 import { describe, it, expect } from 'vitest';
-import { runCompletionGates, COMPLETION_GATES, completionDeclared, type GateContext } from '../completion-gates.ts';
+import { runCompletionGates, COMPLETION_GATES, completionDeclared, writesTaskFile, lacksCriteria, type GateContext } from '../completion-gates.ts';
 
 const ctx = (over: Partial<GateContext> = {}): GateContext => ({
     text: 'Done.\nCOMPLETED', step: 3, loopMax: 20, softStopPending: false, ps: {},
@@ -156,6 +156,18 @@ describe('planned_tasks_missing: files the request names that no task covers', (
         expect(hit?.text).toMatch(/fg-tasks\/001-a\.md has no "## Acceptance Criteria"/);
         expect(hit?.text).not.toMatch(/no task covers/);
         expect(await runCompletionGates(c)).toBeNull();
+    });
+    it('a plan written through the shell counts as planning, and a bullet without a checkbox is not a criterion (kanbanflow 2026-11-17)', () => {
+        const call = (name: string, args: any) => ({ function: { name, arguments: JSON.stringify(args) } });
+        expect(writesTaskFile(call('write_file', { path: 'fg-tasks/001-a.md', content: 'x' }))).toBe(true);
+        expect(writesTaskFile(call('execute_code', { code: 'mkdir -p fg-tasks\ncat <<EOF > fg-tasks/001-a.md\n---\nEOF' }))).toBe(true);
+        expect(writesTaskFile(call('execute_code', { code: 'echo x | tee fg-tasks/002-b.md' }))).toBe(true);
+        expect(writesTaskFile(call('execute_code', { code: 'cat fg-tasks/001-a.md' }))).toBe(false);
+        expect(writesTaskFile(call('read_file', { path: 'fg-tasks/001-a.md' }))).toBe(false);
+        expect(lacksCriteria('# A\n## Acceptance Criteria\n- [ ] works\n')).toBe(false);
+        expect(lacksCriteria('# A\n## Acceptance Criteria\n- [x] works\n')).toBe(false);
+        expect(lacksCriteria('# A\n## Acceptance Criteria\n- works\n')).toBe(true);
+        expect(lacksCriteria('# A\n## Execution Plan\n- [ ] works\n')).toBe(true);
     });
     it('is silent when every file is covered, outside the planning turn, or without a board', async () => {
         expect(await runCompletionGates(planning({ taskText: async () => 'calc.js test_calc.mjs index.html' }))).toBeNull();

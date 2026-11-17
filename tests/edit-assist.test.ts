@@ -175,3 +175,44 @@ describe('edit_assist', () => {
         expect((await run('replace_in_file', { path: 'a.py', old_string: '    y = x * 2', new_string: '    y = x * 2' })).error).toMatch(/identical/);
     });
 });
+
+describe('edit_range (experiment)', () => {
+    const LONG = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
+    beforeEach(() => { process.env.FG_EXPERIMENTS = 'edit_range'; });
+
+    it('replaces lines the model has read without old_string, and shows what was removed', async () => {
+        files.set('r.txt', LONG);
+        await run('read_file', { path: 'r.txt' });
+        const r = await run('replace_in_file', { path: 'r.txt', start_line: 3, end_line: 4, new_string: 'three\nfour' });
+        expect(r.success).toBe(true);
+        expect(r.note).toMatch(/^Replaced lines 3–4 \(2 lines\), which were:\nline 3\nline 4\n/);
+        expect(files.get('r.txt')).toBe(LONG.replace('line 3\nline 4', 'three\nfour'));
+    });
+    it('refuses lines it was never shown, lines outside the file, and an empty old_string without a range', async () => {
+        files.set('r.txt', LONG);
+        expect((await run('replace_in_file', { path: 'r.txt', start_line: 3, end_line: 4, new_string: 'x' })).error).toMatch(/you have not read lines 3–4/);
+        await run('read_file', { path: 'r.txt' });
+        expect((await run('replace_in_file', { path: 'r.txt', start_line: 3, end_line: 99, new_string: 'x' })).error).toMatch(/are not in "r\.txt" \(13 lines\)/);
+        expect((await run('replace_in_file', { path: 'r.txt', new_string: 'x' })).error).toMatch(/old_string is empty/);
+        expect(files.get('r.txt')).toBe(LONG);
+    });
+    it('is off by default: the same call is an empty old_string', async () => {
+        delete process.env.FG_EXPERIMENTS;
+        files.set('r.txt', LONG);
+        expect((await run('replace_in_file', { path: 'r.txt', start_line: 3, end_line: 4, new_string: 'x' })).error).toMatch(/old_string is empty/);
+    });
+    it('names the first line of a long old_string that differs, and the smaller way to send it', async () => {
+        files.set('r.txt', LONG);
+        const old = Array.from({ length: 12 }, (_, i) => i === 5 ? 'line six' : `line ${i + 1}`).join('\n');
+        const r = await run('replace_in_file', { path: 'r.txt', old_string: old, new_string: 'x' });
+        expect(r.error).toMatch(/Line 6 of old_string is the first that differs: you sent "line six", the file has "line 6"\. Next time send only the lines that change/);
+    });
+    it('puts the range mode into the tool schema only while the experiment is on', () => {
+        W.enabledTools?.add?.('replace_in_file');
+        const spec = (W.buildOAITools() as any[]).map(t => t.function).find(f => f.name === 'replace_in_file');
+        expect(spec.parameters.required).toEqual(['path', 'new_string']);
+        delete process.env.FG_EXPERIMENTS;
+        const off = (W.buildOAITools() as any[]).map(t => t.function).find(f => f.name === 'replace_in_file');
+        expect(off.parameters.required).toEqual(['path', 'old_string', 'new_string']);
+    });
+});

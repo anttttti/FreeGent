@@ -277,10 +277,16 @@ export function reactiveSkillGuidance(toolResults: any): string {
     const counts = _failureCounts;
     const parts  = [];
     const _role  = mainAgentRole?.name?.toLowerCase() ?? null;
-    const _eligible = s => s && !fired.has(s.name) &&
+    // Experiment short_guidance: a built-in skill with a short text is limited per cause, not per name. Its short paragraph for one cause (a plain tool error)
+    // had used up the skill, and the paragraph for the next cause (the same tool repeated) never came (A/B 2026-11-10: the loop advice reached 41 runs against
+    // 161, runs that ended on repeated calls went from 9 to 21).
+    const _perCause = (s: any) => runtime.experiment('short_guidance') && typeof s?.reactive === 'function';
+    const _eligible = s => s && (_perCause(s) || !fired.has(s.name)) &&
         !_skillExcludedForRole(s, _role) && !_skillUnavailable(s) && !_skillExcludedForMode(s);
     // cause: what set the skill off — the tool name (trigger_on_tool), the failure class (trigger_on_failure) or 'repeat'.
     const _emit = (s, cause: string) => {
+        const _key = `${s.name}\0${cause}`;
+        if (_perCause(s) && fired.has(_key)) return;
         let body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) return; // body_fn may return '' when tools/env conditions aren't met
         // Experiment short_guidance: a built-in skill's short text for this cause instead of its whole body. The three largest
@@ -289,6 +295,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
         if (runtime.experiment('short_guidance') && typeof s.reactive === 'function') body = s.reactive(cause) || body;
         parts.push(`### ${s.name}\n${body}`);
         fired.add(s.name);
+        if (_perCause(s)) fired.add(_key);
     };
 
     for (const { name, result, args } of toolResults) {

@@ -985,6 +985,7 @@ async function _processQueue(): Promise<void> {
     }
     // A dequeued message is being prepared: the next one waits for that turn to finish, as for a streaming one (codex 354).
     if (preparing()) return;
+    if ((window as any).__fgTabOutdated) return;   // as in agentSend: the turn could not be saved; the message stays in the queue panel
     // A background job (Autopilot, /goal, init) owns the chat between its turns: a queued message is not its turn. It waits; the job processes the queue when it lets go (codex R112).
     if (aiJob) return;
     const head = MsgQueue.peek();

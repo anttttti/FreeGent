@@ -6,7 +6,7 @@
 // run already produces:
 //   no_change            nothing in the workspace was changed
 //   unverified           changed, and no check ran after the last change
-//   verified             changed, and a test/compile check run after the last change exited 0
+//   verified             changed, and a test/compile check run after the last change exited 0, and no kind of check that failed since has gone unrepeated
 //   failed_verification  changed, and the last check after the last change failed
 // A check that never ran a test (pytest exit 4/5 "collected 0 items", a command that was not found) is
 // neither: v0.72 Lite had 11 of 17 failed_verification runs whose last "check" was a graded test id that does
@@ -21,6 +21,8 @@ import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 const WRITE_TOOLS = new Set(WORKSPACE_WRITE_TOOLS);
 // Test runners, compilers and syntax checks. A script that merely ran is not a check.
 const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|(?:mvn|mvnw)\s+(?:-\S+\s+)*test|(?:gradle|gradlew)\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
+// A path that is a test, not the code under test: a tests/ or specs/ folder, test_x.py, x_test.go, x.test.ts.
+export const TEST_PATH_RE = /(^|\/)(tests?|testing|specs?)\/|(^|\/)test_|_test\.|\.test\./;
 // Collection and import failures of the environment, not of the code under test.
 const ENV_BROKEN_RE = /ModuleNotFoundError|ImportError|cannot import name|No module named|ERROR collecting|INTERNALERROR|conftest\.py.*(?:Error|error)|was removed in the NumPy|has no attribute '(?:Mapping|MutableMapping|Iterable|Callable|unicode_)'/;
 // `tmp` and `scratch` name scratch anywhere in a path; the vaguer `temp`, `repro*`, `debug*`, `_probe*` only as the first component (`repro.py`, `./debug_x.py`), so a project's src/debug/ or tests/temp_parser.py is not discarded (codex R975).
@@ -28,8 +30,10 @@ const SCRATCH_RE = /(?:^|\/)(?:tmp|scratch)(?:[_./-]|$)|^\.?\/?(?:temp|repro\w*|
 
 // `deleted`: paths whose last change was a deletion (delete_file, or undo_write removing a file it had created), so a missing file is the
 // intended result, not a broken one (codex Review936).
-interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string>; deleted: Set<string> }
-export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set(), deleted: new Set() });
+// `failing`: the kinds of check (tsc, vitest, pytest, a page check) that failed since the last change and have not passed since. A pass of another kind does not clear them.
+interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string>; deleted: Set<string>; failing: Set<string> }
+export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set(), deleted: new Set(), failing: new Set() });
+const _kind = (call: any): string => call?.name === 'check_page' ? 'page' : (CHECK_RE.exec(String(call?.args?.code ?? ''))?.[0] ?? 'check').replace(/\s+/g, ' ');
 
 /** Whether the call changed the workspace (scratch files do not count) and which files it names. */
 function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
@@ -147,11 +151,15 @@ export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | 
     for (const c of record?.toolCalls ?? []) {
         const ch = _changedInfo(c);
         if (ch.changed) {
-            st.edits++; st.changedSinceCheck = true; st.lastCheck = null;
+            st.edits++; st.changedSinceCheck = true; st.lastCheck = null; st.failing.clear();
             for (const f of ch.files) { st.files.add(f); if (ch.deleted) st.deleted.add(f); else st.deleted.delete(f); }
         }
         const k = _check(c);
-        if (k) { st.lastCheck = k; st.changedSinceCheck = false; }
+        if (k) {
+            st.lastCheck = k; st.changedSinceCheck = false;
+            // `tsc` failed on a missing import, then `vitest` on one file passed, and the run was `verified` (refcompare 2026-11-17, R1r2).
+            if (k === 'fail') st.failing.add(_kind(c)); else st.failing.delete(_kind(c));
+        }
     }
     return st;
 }
@@ -159,5 +167,5 @@ export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | 
 export function verdict(st: VerificationState): Verification {
     if (st.edits === 0) return 'no_change';
     if (st.changedSinceCheck || st.lastCheck === null) return 'unverified';
-    return st.lastCheck === 'pass' ? 'verified' : 'failed_verification';
+    return st.lastCheck === 'pass' && !st.failing.size ? 'verified' : 'failed_verification';
 }

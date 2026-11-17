@@ -65,6 +65,8 @@ const CASES: [string, string, string][] = [
     ["heredoc in if", "if true; then\n  cat > gen.txt <<EOF\nline one\nline two\nEOF\nfi\ncat gen.txt", "line one\nline two\n"],
     ["heredoc expands in function", "mk() {\n  cat <<EOF\nname=$1\nsum=$((2 + 3))\nEOF\n}\nmk box", "name=box\nsum=5\n"],
     ["quoted heredoc in for", "for n in 1 2; do\n  cat <<'EOF'\nliteral $n \"q\"\nEOF\ndone", "literal $n \"q\"\nliteral $n \"q\"\n"],
+    // A model closed its heredoc with a code fence instead of EOF (here: END): the body lines ran as commands and the redirect made files with line breaks in their names (kanbanflow 2026-11-17).
+    ["heredoc without its terminator runs to the end of the script", "cat <<EOF\none\nEND\necho not a command", "one\nEND\necho not a command\n"],
     ["here-string then more lines", "read -r w <<< \"hello\"\necho \"$w\"\necho after", "hello\nafter\n"],
     ["prefix assignment scoped", "X=outer\nX=inner sh -c 'echo \"in:$X\"'\necho \"out:$X\"", "in:inner\nout:outer\n"],
     ["blank lines in read loop", "printf 'a\\n\\nb\\n' | while IFS= read -r l; do echo \"[$l]\"; done", "[a]\n[]\n[b]\n"],

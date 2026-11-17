@@ -16,7 +16,7 @@
 // window bridge.
 
 import { shellWrites } from './shell-writes.js';
-import { isCheckCommand } from './verification.js';
+import { isCheckCommand, TEST_PATH_RE } from './verification.js';
 import { runtime } from './runtime.js';
 import { _degenerateTail } from './stream-decode.js';
 
@@ -661,13 +661,13 @@ export function noteRewrites(st: RewriteState, results: Array<{ name: string; ar
         const path = String(r.args?.path ?? r.result?.path ?? '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(?:\.\/)+/, '').replace(/^\/?workspace\//, '');
         if (r.name === 'replace_in_file' && path) st.delete(path);
         else if (r.name === 'execute_code' && (r.result?.exit_code ?? 0) === 0 && isCheckCommand(String(r.args?.code ?? ''))) {
-            // A check that names files checks those: `node --check scripts/healthy.js` says nothing about src/broken.ts (codex R978). One that names none (`pytest`, `npm test`) covers the project.
+            // A check that names files checks those: `node --check scripts/healthy.js` says nothing about src/broken.ts (codex R978). One that names none (`pytest`, `npm test`), or only tests to run (`vitest run tests/x.test.ts`), covers the project.
             const code = String(r.args?.code ?? '');
             // Whole words of the command, never a substring (`a.ts` is not in `data.ts`) (review 2026-11-16 CR-02).
             const words = code.split(/[\s'"`;&|()<>=]+/).map(w => w.replace(/^(?:\.\/)+/, '').replace(/^\/?workspace\//, ''));
             const named = [...st.keys()].filter(p => words.some(w => w === p || w.split('/').pop() === p.split('/').pop()));
             if (named.length) for (const p of named) st.delete(p);
-            else if (!/[\w./-]+\.[A-Za-z]{1,5}\b/.test(code.replace(/\b(?:node|tsc|npm|npx)\b/g, ''))) st.clear();
+            else if (!/[\w./-]+\.[A-Za-z]{1,5}\b/.test(words.filter(w => !TEST_PATH_RE.test(w)).join(' ').replace(/\b(?:node|tsc|npm|npx)\b/g, ''))) st.clear();
         }
         else if (r.name === 'write_file' && path) {
             const n = (st.get(path) ?? 0) + 1;

@@ -13,7 +13,7 @@ import { installTaskPolicy, resetTaskPolicy } from './task-policy.js';
 import { COMPLETION_GATES, completionDeclared } from './completion-gates.js';
 import type { CompletionGate, GateContext } from './completion-gates.js';
 import { _BLOCKED_DECLARATION_RE, _TERMINAL_RE } from './turn-protocol.js';
-import { isCheckCommand } from './verification.js';
+import { isCheckCommand, TEST_PATH_RE } from './verification.js';
 
 const env = (k: string): string | undefined => (globalThis as any).process?.env?.[k];
 export const editRequired = (): boolean => env('FG_EDIT_REQUIRED') === '1';
@@ -192,9 +192,8 @@ const blockedUntried: CompletionGate = {
 // 17/36 failed SWE tasks edited test files; 14 passed a self-modified test and were
 // still rejected. Benchmark policy: on only when the runner sets FG_PROTECT_TESTS=1
 // (protectTests()); every other run, native or browser, may edit its tests.
-const _SWE_TEST_RE = /(^|\/)(tests?|testing|specs?)\/|(^|\/)test_|_test\.|\.test\./;
 export function isTestEditProtected(path: unknown): boolean {
-    return protectTests() && typeof path === 'string' && _SWE_TEST_RE.test(path);
+    return protectTests() && typeof path === 'string' && TEST_PATH_RE.test(path);
 }
 export const testEditRefusal = (path: string) =>
     ({ error: `Editing test files is not reflected in the grade — the grader strips test-file changes before scoring; fix the source code instead (${path}).` });

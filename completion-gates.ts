@@ -102,6 +102,16 @@ const inventedData: CompletionGate = {
 // trivial 001 and said "All tasks complete" with the project unbuilt (kanbanflow 2026-11-08, 3 of 8 planning turns). Once; the second COMPLETED passes.
 // The files the request names (calc.js, test_calc.mjs, index.html) that no task file mentions: a plan that leaves one out ends "All tasks complete"
 // with that file never written (kanbanflow 2026-11-08, WebKit: 4 of 12 runs). Only in the planning turn.
+/** A tool call that writes a numbered task file: write_file of fg-tasks/NNN-…, or a shell command that redirects into one. The plan came out of a shell command in 4 of 16
+ *  chat-planned runs (kanbanflow 2026-11-17) and the board checks below did not run for them. */
+export function writesTaskFile(call: any): boolean {
+    const name = call?.function?.name, args = String(call?.function?.arguments ?? '');
+    if (name === 'write_file') return /fg-tasks\/\d+-/.test(args);
+    return name === 'execute_code' && /(?:>|\btee\b)[^\n]*fg-tasks\/\d+-/.test(args.replace(/\\n/g, '\n'));
+}
+/** A task file whose criteria cannot be checked: no "## Acceptance Criteria" heading, or no "- [ ]" item at all (a plain bullet cannot be ticked). */
+export const lacksCriteria = (text: string): boolean => !/^## Acceptance Criteria[ \t]*$/im.test(text) || !/^\s*[-*]\s*\[[ xX]\]/m.test(text);
+
 async function planCoverage(c: GateContext): Promise<GateHit | null> {
     if (c.ps.planCover || !c.taskText || !c.planning) return null;
     const asked = [...new Set([...c.task.matchAll(/\b([\w./-]+\.(?:js|mjs|ts|py|html|css|json))\b/g)].map(m => m[1].toLowerCase()))].filter(f => !f.startsWith('fg-tasks/'));

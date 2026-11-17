@@ -403,6 +403,11 @@ export function _hasBashOrCode() {
 //   Worker  (forWorker=true):  toolFilterOverride IS the ceiling (the role's tools Set).
 //     Nothing is additive — workers get exactly (toolFilterOverride ∩ enabledTools ∩ conditionalGates).
 //     An explicit empty-Set suppresses all tools (media routing).
+// The schema of replace_in_file with the line-range mode (experiment edit_range): the same tool, old_string optional when start_line and end_line are given.
+const REPLACE_RANGE_SPEC = (spec: any) => ({ ...spec,
+    description: spec.description + ' To change lines you have read, give start_line and end_line and new_string without old_string: those lines are replaced (shorter than retyping them).',
+    parameters: { ...spec.parameters, required: ['path', 'new_string'] } });
+
 export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<string> | null = null, ignoreRole = false): any[] {
     const filter = toolFilterOverride;
     // Resolve ceiling and additive extensions based on call context.
@@ -426,6 +431,8 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
         if (!isToolActive(s.name)) return false;
         return _allows(s.name);
     });
+    // Experiment edit_range: replace_in_file also replaces a range of lines the model has read, without retyping them (old_string optional).
+    if (runtime.experiment('edit_range')) for (let i = 0; i < t.length; i++) if (t[i].name === 'replace_in_file') t[i] = REPLACE_RANGE_SPEC(t[i]);
     // Tools with extra availability conditions (beyond enabledTools) or a runtime-built spec.
     // enabledTools.has(name) is applied automatically for all — no manual list needed.
     // Add new entries here; the gating comes for free.

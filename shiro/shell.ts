@@ -329,6 +329,7 @@ export class Shell {
     const heredoc = invocation ? null : this.parseHeredoc(trimmed);
     const effectiveLine = heredoc ? heredoc.command : trimmed;
     const heredocStdin = heredoc ? heredoc.body : '';
+    if (heredoc?.unterminated) writeStderr(`bash: warning: here-document at line ${this.currentLine} delimited by end-of-file (wanted \`${heredoc.unterminated}')\r\n`);
 
     // Strip control characters from history entries (ink UI can leak ANSI/DEL chars)
     // Only record user-typed commands (not programmatic calls from child_process, spawn, etc.)
@@ -3371,7 +3372,7 @@ export class Shell {
     return false;
   }
 
-  private parseHeredoc(input: string): { command: string; body: string } | null {
+  private parseHeredoc(input: string): { command: string; body: string; unterminated?: string } | null {
     // Match <<DELIM, <<'DELIM', <<"DELIM", or <<-DELIM patterns
     const lines = input.split(/\r?\n/);
     if (lines.length < 2) return null;
@@ -3403,7 +3404,9 @@ export class Shell {
       bodyLines.push(line);
     }
 
-    if (!found) return null;
+    // No terminator: the body runs to the end of the script, as in bash, which also says so. Returning null here ran the body lines as commands, and the
+    // redirect target took the next words with it: `cat <<EOF > fg-tasks/a.md` closed by ```` left an empty file named "fg-tasks/a.md\n---\nid:" (kanbanflow 2026-11-17).
+    if (!found) delimiterIndex = lines.length;
 
     // Capture any commands after the closing delimiter line
     let finalCommand = command;
@@ -3420,7 +3423,7 @@ export class Shell {
     // Add trailing newline (standard heredoc behavior)
     body += '\n';
 
-    return { command: finalCommand, body };
+    return { command: finalCommand, body, ...(found ? {} : { unterminated: delimiter }) };
   }
 
   private parseCompound(line: string): { operator: '' | '&&' | '||' | ';'; command: string }[] {

@@ -1944,7 +1944,8 @@ async function _handleReplaceInFile(args, context) {
     }
     // Experiment edit_assist (edit-assist.ts): close matches, edits already made, repeated boundary lines, the parse guard.
     const _assist = runtime.experiment('edit_assist');
-    if (!args.old_string) {
+    const _rangeMode = !args.old_string && runtime.experiment('edit_range') && Number.isInteger(args.start_line) && Number.isInteger(args.end_line);
+    if (!args.old_string && !_rangeMode) {
         return { error: `replace_in_file: old_string is empty. To REPLACE text, set old_string to the exact lines to find. To INSERT text, include the surrounding lines as old_string and repeat them plus your addition in new_string. Example — insert after a function signature: old_string='def foo():\\n    pass', new_string='def foo():\\n    # new line\\n    pass'. Read the file first to get exact content.` };
     }
     if (!_assist && args.old_string === args.new_string) {
@@ -1955,9 +1956,22 @@ async function _handleReplaceInFile(args, context) {
     if (_hasTruncationMarkers(args.new_string || '')) {
         return { error: `replace_in_file: Truncation placeholder detected in new_string (e.g. "// ... rest of code"). Provide the complete replacement text — no ellipsis or omission placeholders.` };
     }
-    const doReplace = async (read, write): Promise<any> => {
+    let _rangeEcho = '';
+    const _doReplace = async (read, write): Promise<any> => {
         const original = await read();
         const lines = original.split('\n');
+        // Experiment edit_range: the lines start_line..end_line become old_string, so the edit goes through the same path as any other (checkpoint, parse check, notes).
+        // Only lines this chat has been shown: a number taken from memory would replace text the model never saw.
+        if (_rangeMode) {
+            const s0 = args.start_line, e0 = args.end_line;
+            if (s0 < 1 || e0 < s0 || e0 > lines.length) return { error: `replace_in_file: lines ${s0}–${e0} are not in "${args.path}" (${lines.length} lines). Nothing was changed.` };
+            const span = lines.slice(s0 - 1, e0);
+            if (seenShare(String(activeChatId ?? ''), span) < 1) return { error: `replace_in_file: you have not read lines ${s0}–${e0} of "${args.path}" in this chat, so they were not replaced. read_file those lines first (start_line/end_line), then send the range again.` };
+            args = { ...args, old_string: span.join('\n') };
+            // The result shows what was removed, so a wrong range is seen at once.
+            const _shown = span.length > 6 ? [...span.slice(0, 3), `[… ${span.length - 6} more lines …]`, ...span.slice(-3)] : span;
+            _rangeEcho = `Replaced lines ${s0}–${e0} (${span.length} line${span.length === 1 ? '' : 's'}), which were:\n${_shown.join('\n')}\n`;
+        }
         // The same text as old_string and new_string (A/B 2026-10-31: the most common failed edit of the tags arm): when it is in the
         // file, the file already reads as wanted.
         if (_assist && args.old_string === args.new_string) {
@@ -2102,6 +2116,12 @@ async function _handleReplaceInFile(args, context) {
                 const body = region.text.length > 1500 ? region.text.slice(0, 1500) + '\n[…]' : region.text;
                 hint += `\nThe text closest to your old_string is at lines ${region.start}–${region.end}; copy old_string from it exactly:\n${body}`;
             }
+            // Experiment edit_range: for a long old_string, the first line that differs, and the smaller way to send it (R5, R7 2026-11-17: an 18-line old_string for a one-line change, retyped wrongly again after the refusal).
+            const _oldLines = args.old_string.split('\n');
+            if (runtime.experiment('edit_range') && region && _oldLines.length >= 8) {
+                const f = region.text.split('\n'), k = _oldLines.findIndex((l, i) => l.trim() !== (f[i] ?? '').trim());
+                if (k >= 0) hint += `\nLine ${k + 1} of old_string is the first that differs: you sent ${JSON.stringify(_oldLines[k].trim().slice(0, 100))}, the file has ${JSON.stringify((f[k] ?? '(past the end of that region)').trim().slice(0, 100))}. Next time send only the lines that change plus 1–2 lines of context, or give start_line and end_line without old_string.`;
+            }
             return { error: `replace_in_file: old_string not found in "${args.path}"${args.start_line != null || args.end_line != null ? ` within lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}` : ''}.${hint}` };
         }
         const absIdx = searchOffset + idx;
@@ -2134,6 +2154,7 @@ async function _handleReplaceInFile(args, context) {
                 ? `Change applied at line ${_line}: old_string was not in lines ${args.start_line ?? 1}–${args.end_line ?? lines.length}; but occurs exactly once in the file. No need to re-read the file to verify.`
                 : dupNote || 'Change applied. No need to re-read the file to verify.') + decodedNote };
     };
+    const doReplace = async (read, write): Promise<any> => { const out = await _doReplace(read, write); return out?.success && _rangeEcho ? { ...out, note: `${_rangeEcho}${out.note ?? ''}` } : out; };
     if (context) {
         const rif = await doReplace(
             async () => {
@@ -3361,7 +3382,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     if (name === 'list_files')         return _handleListFiles(args, context);
     if (name === 'read_file') {
         const r = await _handleReadFile(args, context);
-        if (runtime.experiment('edit_assist')) noteSeen(String(activeChatId ?? ''), (r as any)?.content);
+        if (runtime.experiment('edit_assist') || runtime.experiment('edit_range')) noteSeen(String(activeChatId ?? ''), (r as any)?.content);
         return r;
     }
 
@@ -3372,7 +3393,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
 
     // Experiment edit_assist: text the model wrote counts as text it has seen (A/B 2026-10-31: flask-5063, astropy-7746 missed a
     // close match because the region held the model's own earlier edit, never read back).
-    if (runtime.experiment('edit_assist') && (name === 'write_file' || name === 'replace_in_file')) {
+    if ((runtime.experiment('edit_assist') || runtime.experiment('edit_range')) && (name === 'write_file' || name === 'replace_in_file')) {
         const r = name === 'write_file' ? await _handleWriteFile(args, context) : await _handleReplaceInFile(args, context);
         if (r && (r as any).success) noteSeen(String(activeChatId ?? ''), name === 'write_file' ? args?.content : args?.new_string);
         return r;

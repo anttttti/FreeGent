@@ -990,7 +990,10 @@ function run(d){
   String(d.text).split('').forEach(function(ch){var o={key:ch,code:code(ch),bubbles:true,cancelable:true};el.dispatchEvent(new KeyboardEvent('keydown',o));el.dispatchEvent(new KeyboardEvent('keypress',o));cur+=ch;set(cur);
    try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:ch,inputType:'insertText'}))}catch(e){el.dispatchEvent(new Event('input',{bubbles:true}))}el.dispatchEvent(new KeyboardEvent('keyup',o))});
   el.dispatchEvent(new Event('change',{bubbles:true}));return{ok:true,value:String(ed?el.textContent:el.value).slice(0,200)}}
- if(d.cmd==='key'){var tg=document.activeElement||document.body;var ko={key:d.key,code:code(d.key),bubbles:true,cancelable:true};tg.dispatchEvent(new KeyboardEvent(d.kind,ko));if(d.kind==='keydown'&&(d.key==='Enter'||d.key.length===1))tg.dispatchEvent(new KeyboardEvent('keypress',ko));return{ok:true}}
+ if(d.cmd==='key'){var tg=document.activeElement||document.body;var ko={key:d.key,code:code(d.key),bubbles:true,cancelable:true};var go=tg.dispatchEvent(new KeyboardEvent(d.kind,ko));if(d.kind==='keydown'&&(d.key==='Enter'||d.key.length===1))go=tg.dispatchEvent(new KeyboardEvent('keypress',ko))&&go;
+  // A scripted key event has no default action: Enter in a form field did not submit the form, so a page that works for a person failed its check (kanbanflow 2026-11-17). Do what the browser does: press the form's submit button, or submit a form that has one field and no button.
+  if(go&&d.kind==='keydown'&&d.key==='Enter'&&tg.tagName==='INPUT'&&tg.form&&!/^(button|submit|reset|checkbox|radio|file|image)$/.test(tg.type)){var sb=tg.form.querySelector('button:not([type]),button[type=submit],input[type=submit],input[type=image]');if(sb){if(!sb.disabled)sb.click()}else if(tg.form.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=reset]):not([type=file])').length===1)tg.form.requestSubmit()}
+  return{ok:true}}
  if(d.cmd==='eval'){return{value:s((0,eval)(d.expr)).slice(0,4000)}}
  if(d.cmd==='stats'){return{frames:FR,ms:Date.now()-T0}}
  return{error:'unknown command'}}
@@ -1166,8 +1169,11 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
             if (!a0 || typeof a0 !== 'object') continue;
             // The model often nests the selector: {"type": {"selector": "#bill", "text": "100"}}, {"click": {"selector": "#go"}}. 22 of 145 chats (kanbanflow 2026-11-08).
             const a: any = { ...a0 };
-            for (const k of ['click', 'type']) if (a[k] && typeof a[k] === 'object' && typeof a[k].selector === 'string') {
-                const o = a[k]; a[k] = o.selector; if (k === 'type') { if (a.text == null) a.text = o.text; if (a.clear == null) a.clear = o.clear; }
+            // The key is not always "selector": {"click": {"CSS selector": "#send"}} copies the words of the tool description (kanbanflow 2026-11-17: 21 such calls in one task, none ran).
+            for (const k of ['click', 'type']) if (a[k] && typeof a[k] === 'object') {
+                const o = a[k], sel = typeof o.selector === 'string' ? o.selector : Object.entries(o).find(([n, v]) => n !== 'text' && typeof v === 'string')?.[1];
+                if (typeof sel !== 'string') continue;
+                a[k] = sel; if (k === 'type') { if (a.text == null) a.text = o.text; if (a.clear == null) a.clear = o.clear; }
             }
             notePageCheck({ stage: `during the action ${JSON.stringify(a).slice(0, 120)}` });
             // One verb per step: {"click": s, "type": "text", "text": "100"} used to run only the click and drop the typing without a word
@@ -1194,6 +1200,10 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
                 const w = _clampMs(a.wait_ms, 0, 5000);
                 await sleep(w);
                 steps.push({ waited_ms: w });
+            } else {
+                // Never dropped without a word: the page then looks as if the click did nothing.
+                const msg = `A step was not understood and was skipped: ${JSON.stringify(a0).slice(0, 100)}. Use {"click": "<CSS selector>"}, {"type": "<CSS selector>", "text": "abc"}, {"key": "Enter"} or {"wait_ms": 500}.`;
+                steps.push({ error: msg }); stepNotes.push(msg);
             }
             await sleep(100);   // let handlers and a frame or two run
         }

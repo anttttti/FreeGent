@@ -10225,7 +10225,7 @@
     "shiro/runtime-filesystem.ts": "a9c64262fefc2999a27659f839fba504fb33cbb2d219a161fe5ad8edc2b0f9f8",
     "shiro/runtime-lock.ts": "ec367fa4c0285a35341e8ae67d1abe3aa970974621ff2538c82704e0ac185cb3",
     "shiro/shell-singleton.ts": "9c486bff6b96797899bac18976f8f813a439d0ee68ee299b42a6605b637848ad",
-    "shiro/shell.ts": "f21bf83bd76076d4b2b78362d8b75b63e4930d19171e3b90a7b898074b86cde6",
+    "shiro/shell.ts": "d787b0511623b7d96c95d632fe06c9e262e320de4d89e1d6e5e7bd6f33df6e86",
     "shiro/utils/archive-path.ts": "8772e3ba2dcb4aaa435f6e9f39d55fa1e4ccc6307e8118aa8339006019d618bb",
     "shiro/utils/bytes.ts": "f422e1d6b6f493c61da19399ea6f6eb7eb72892200247fb5070f7c7c10373700",
     "shiro/utils/dos-stamp.ts": "ba08ec696514adc0484c6ee79393cc6fda6e582915e4630c54007f709170d7fb",

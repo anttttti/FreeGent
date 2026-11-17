@@ -33,7 +33,9 @@ describe('noteRewrites', () => {
         noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check scripts/healthy.js' }, result: { exit_code: 0 } }]);
         expect(noteRewrites(st, [w('src/broken.ts')])).toMatch(/src\/broken\.ts in full 4 times/);
         noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check src/broken.ts' }, result: { exit_code: 0 } }]);
-        expect(noteRewrites(st, [w('src/broken.ts')])).toBeNull();
+        // Asserted at the fourth write after the check: the nudge only fires on multiples of four, so "no nudge at the next write" holds whether or not the count was cleared (refcompare 2026-11-17, RC-04).
+        for (let i = 0; i < 3; i++) expect(noteRewrites(st, [w('src/broken.ts')])).toBeNull();
+        expect(noteRewrites(st, [w('src/broken.ts')])).toMatch(/src\/broken\.ts in full 4 times/);
     });
     it('a check naming data.ts does not clear a.ts (review 2026-11-16 CR-02)', () => {
         const ok = (code: string) => ({ name: 'execute_code', args: { language: 'bash', code }, result: { exit_code: 0 } });
@@ -41,6 +43,15 @@ describe('noteRewrites', () => {
         for (let i = 0; i < 3; i++) noteRewrites(st, [w('a.ts')]);
         noteRewrites(st, [ok('node --check data.ts')]);
         expect(noteRewrites(st, [w('a.ts')])).toMatch(/a\.ts in full 4 times/);
+    });
+    it('a passing run of named test files covers the project, like a run that names none', () => {
+        const ok = (code: string) => ({ name: 'execute_code', args: { language: 'bash', code }, result: { exit_code: 0 } });
+        for (const cmd of ['npx vitest run tests/x.test.ts', 'pytest tests/test_x.py::test_a -q']) {
+            const st = newRewriteState();
+            for (let i = 0; i < 3; i++) noteRewrites(st, [w('src/x.ts')]);
+            noteRewrites(st, [ok(cmd)]);
+            expect(noteRewrites(st, [w('src/x.ts')]), cmd).toBeNull();
+        }
     });
     it('equivalent spellings of one path are one file (R1122)', () => {
         const st = newRewriteState(); let hit: string | null = null;

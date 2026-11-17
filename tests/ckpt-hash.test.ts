@@ -7,4 +7,8 @@ describe('checkpoint content hash', () => {
         expect(hashContent('x = Aa;')).not.toBe(hashContent('x = BB;'));
         expect(hashContent('abc')).toBe(hashContent('abc'));
     });
+    // The sync base (IndexedDB) stores these strings: a changed function makes every file look edited at the next sync (refcompare 2026-11-17, RC-10: a retyped file changed one constant and nothing failed).
+    it('keeps its values, because saved sync bases hold them', () => {
+        expect(['', 'abc', 'x = Aa;'].map(hashContent)).toEqual(['wvjl67o803:0', '1dtlchkfkb1:3', '157hzdoyk26:7']);
+    });
 });

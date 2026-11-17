@@ -97,6 +97,11 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
             expect(short).toContain('### failure-recovery\n**A tool call failed**');
             expect(short).not.toContain('**Same tool repeated**');
             expect(short.length).toBeLessThan(full.length / 2);
+            // The paragraph for the first cause does not use the skill up: the same tool repeated afterwards still gets its own (A/B 2026-11-10: 41 runs against 161 got the loop advice).
+            const ok = { name: 'read_file', args: { path: 'a.txt' }, result: { content: 'x' } };
+            const later = W.reactiveSkillGuidance([ok, ok, ok, ok]);
+            expect(later).toContain('**Same tool repeated**');
+            expect(W.reactiveSkillGuidance([ok, ok, ok, ok])).not.toContain('**Same tool repeated**');   // each cause once
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 });

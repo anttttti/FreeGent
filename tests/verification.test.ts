@@ -14,6 +14,13 @@ describe('verification states', () => {
     it('a change after the check makes it unverified again', () => expect(run([[edit], [pass], [edit]])).toBe('unverified'));
     it('failed_verification: the last check failed', () => expect(run([[edit], [fail]])).toBe('failed_verification'));
     it('fixed after a failure and re-checked: verified', () => expect(run([[edit], [fail], [edit], [pass]])).toBe('verified'));
+    it('a failed check is not cleared by a pass of another kind with no change between (tsc failed, vitest passed)', () => {
+        const tsc = (exit_code: number) => ({ name: 'execute_code', args: { code: 'npx tsc --noEmit' }, result: { exit_code, stdout: exit_code ? 'error TS2304: Cannot find name' : '' } });
+        const vitest = { name: 'execute_code', args: { code: 'npx vitest run tests/a.test.ts' }, result: { exit_code: 0, stdout: 'Tests  3 passed' } };
+        expect(run([[edit], [tsc(2)], [vitest]])).toBe('failed_verification');
+        expect(run([[edit], [tsc(2)], [vitest], [tsc(0)]])).toBe('verified');   // the same kind passing clears it
+        expect(run([[edit], [tsc(2)], [edit], [vitest]])).toBe('verified');      // a change in between starts over, as before
+    });
     it('a scratch file is not the change', () => {
         expect(run([[{ name: 'write_file', args: { path: 'repro_bug.py' }, result: { success: true } }]])).toBe('no_change');
         expect(run([[{ name: 'execute_code', args: { code: 'echo x > /tmp/o' }, result: { exit_code: 0, files_written: ['tmp/o.txt'] } }]])).toBe('no_change');
