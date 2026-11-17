@@ -71,7 +71,7 @@ describe('quota reset times in error messages', () => {
 
 describe('a per-account quota error cools down the provider\'s other free models', () => {
     it('uses the named reset for the model and its free siblings, and leaves paid and other providers alone', () => {
-        const free = ['deepseek-v4.1-flash:free', 'mimo-v2.6-flash:free', 'deepseek-v4-flash:free'];
+        const free = ['deepseek-v4.1-flash:free', 'mimo-v2.6-flash:free', 'mimo-v2.5:free'];
         const err: any = new Error(MSG); err.retryAfterMs = 3_600_000;
         _markCooldown({ provider: 'tokenharbor', model: free[0] }, err.retryAfterMs, err);
         const week = Math.ceil((Date.UTC(2026, 9, 20, 4, 23) - Date.now()) / 1000);
