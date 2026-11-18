@@ -277,10 +277,10 @@ export function reactiveSkillGuidance(toolResults: any): string {
     const counts = _failureCounts;
     const parts  = [];
     const _role  = mainAgentRole?.name?.toLowerCase() ?? null;
-    // Experiment short_guidance: a built-in skill with a short text is limited per cause, not per name. Its short paragraph for one cause (a plain tool error)
+    // A built-in skill with a short text (`reactive`) is limited per cause, not per name. Its short paragraph for one cause (a plain tool error)
     // had used up the skill, and the paragraph for the next cause (the same tool repeated) never came (A/B 2026-11-10: the loop advice reached 41 runs against
-    // 161, runs that ended on repeated calls went from 9 to 21).
-    const _perCause = (s: any) => runtime.experiment('short_guidance') && typeof s?.reactive === 'function';
+    // 161, runs that ended on repeated calls went from 9 to 21). Default since A/B 2026-11-17 (bench/BENCHMARKS.md, "short_guidance").
+    const _perCause = (s: any) => typeof s?.reactive === 'function';
     const _eligible = s => s && (_perCause(s) || !fired.has(s.name)) &&
         !_skillExcludedForRole(s, _role) && !_skillUnavailable(s) && !_skillExcludedForMode(s);
     // cause: what set the skill off — the tool name (trigger_on_tool), the failure class (trigger_on_failure) or 'repeat'.
@@ -289,10 +289,10 @@ export function reactiveSkillGuidance(toolResults: any): string {
         if (_perCause(s) && fired.has(_key)) return;
         let body = typeof s.body_fn === 'function' ? s.body_fn() : s.body;
         if (!body.trim()) return; // body_fn may return '' when tools/env conditions aren't met
-        // Experiment short_guidance: a built-in skill's short text for this cause instead of its whole body. The three largest
+        // A built-in skill's short text for this cause instead of its whole body. The three largest
         // (search, failure-recovery, code-fix-done) were 89% of reactive_guidance text in the user logs of 2026-11-10, and 73% of the
         // failure-recovery fires there followed a plain read_file step, with edit, shell and worker advice attached.
-        if (runtime.experiment('short_guidance') && typeof s.reactive === 'function') body = s.reactive(cause) || body;
+        if (typeof s.reactive === 'function') body = s.reactive(cause) || body;
         parts.push(`### ${s.name}\n${body}`);
         fired.add(s.name);
         if (_perCause(s)) fired.add(_key);
@@ -358,6 +358,19 @@ export function reactiveSkillGuidance(toolResults: any): string {
             return count >= threshold;
         });
         if (hit) _emit(s, 'repeat');
+    }
+    // Experiment parallel_hint: steps that made one read-only call each, in a row. After 3 (and again after 8) the model is reminded that independent
+    // reads and searches go in one reply. Twice at most per run; any other step resets the streak.
+    if (runtime.experiment('parallel_hint')) {
+        const READ_ONLY = ['read_file', 'list_files', 'search_workspace', 'repo_map', 'ast_query'];
+        const single = toolResults.length === 1 && READ_ONLY.includes(toolResults[0].name) && !_classifyToolFailure(toolResults[0].name, toolResults[0].result);
+        counts.__singleReads = single ? (counts.__singleReads || 0) + 1 : 0;
+        const n = counts.__singleReads;
+        const key = n >= 8 ? 'batch-calls\0late' : n >= 3 ? 'batch-calls\0early' : '';
+        if (key && !fired.has(key)) {
+            fired.add(key);
+            parts.push(`### batch-calls\nYou made ${n} read-only calls in a row, one per reply. If the next reads or searches do not depend on each other's results, send them together in one reply (several read_file calls, or several search_workspace patterns); the results come back together and save turns.`);
+        }
     }
     if (!parts.length) return '';
     return `~~~guidance\nReactive guidance triggered by recent tool activity — apply it now before continuing.\n\n${parts.join('\n\n')}\n~~~`;

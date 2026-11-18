@@ -168,7 +168,7 @@ Return this exact format:
 \`\`\`
 
 After the worker returns, use its findings to proceed with the task. Do not follow up with read_file or search_workspace in the main loop for the same files.`,
-        // Experiment short_guidance (skill-guidance.ts): the text given when the repeat trigger fires.
+        // Short text (skill-guidance.ts): the text given when the repeat trigger fires.
         reactive: () => `You are locating code by grepping and reading files in the main loop, which fills your context with material you will not need again. Delegate the search: spawn one worker via \`run_workers\` with the task "Find all code and files relevant to: [task description, with the names and paths you already know]. Search broadly and read what you find. Report each relevant location as path:line-range, one sentence on why it matters, and the exact code excerpt; then list what you searched for and did not find." Then work from its report — do not read or search the same files again yourself.`
     },
     {
@@ -248,7 +248,7 @@ Max 2 replan attempts.${has('update_task_status') ? ' If still failing → updat
             parts.push(`**General**: The core's after-fail rule applies — a failed tool is not a stopping condition. If you cannot proceed, state BLOCKED with the exact blocker.`);
             return parts.join('\n\n');
         },
-        // Experiment short_guidance (skill-guidance.ts): only the paragraph for what set it off.
+        // Short text (skill-guidance.ts): only the paragraph for what set it off.
         reactive: (cause: string) => {
             const has = (t: string) => typeof isToolActive !== 'function' || isToolActive(t);
             if (cause === 'replace_miss') return `**replace_in_file fails** (old_string not found): re-read the file first (read_file), copy the exact current text around the target, then retry. If it still fails, use one short, distinctive line as old_string, or make the change with a short execute_code script. Do not rewrite the whole file with write_file for a small change.`;
@@ -475,7 +475,7 @@ For code execution, deletions, or multi-file refactors use a **coder** worker.`;
         body: `**Code fix definition of done:** If an edit was needed: (1) confirm it is applied — read the changed lines back with read_file (or, if \`git\` works in this shell and the project is a repository, \`git diff --stat\` shows the change; if git is missing, do not retry it), (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. If the investigation concluded no change was required, say so in your answer together with the findings the task asked for (the answer is the deliverable; do not shorten it to the conclusion) and end with COMPLETED. Do not continue exploring once all affected locations are verified fixed, or a no-change conclusion is confirmed — that is budget waste, not diligence. Re-check the original task statement before finishing — your own test cases are not the spec.
 
 **If the package cannot be imported** (missing build artifacts, uncompiled C extensions, missing optional dependencies): (1) try importing only the specific changed module(s) directly — \`import sys; sys.path.insert(0, '/workspace'); from package.module import TargetClass\` — and test that; (2) if even that fails after one attempt, declare \`BLOCKED: <import error>\` — do not try to rebuild the package, patch build guards, or install missing dependencies; (3) never run tests against an installed package as a substitute for verifying the workspace source — installed versions may have different APIs and do not test your patch.`,
-        // Experiment short_guidance (skill-guidance.ts): the text given after the first successful edit. The whole body is still
+        // Short text (skill-guidance.ts): the text given after the first successful edit. The whole body is still
         // given at the start of a turn whose message matches \`trigger\`, and at the completion gate.
         reactive: () => `**Code fix definition of done:** (1) the edit is applied — read the changed lines back with read_file (or \`git diff --stat\`, if git works here), (2) your reproduction or targeted check passes, (3) the nearest existing tests pass. Stop exploring once every affected location is verified. Re-check the original task statement before finishing — your own test cases are not the spec. If the package cannot be imported, import and test only the changed module from the workspace source; never test an installed copy instead.`
     },

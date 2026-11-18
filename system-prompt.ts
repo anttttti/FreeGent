@@ -116,6 +116,28 @@ export function _buildDeviceContext(): string {
  * Saved JS source is the full body_fn.toString() edited and saved via Settings → Roles: its function body is run so it has
  * the window globals (enabledTools, rolesRegistry, isToolActive …) exactly like body_fn does.
  */
+export function parallelHintBlock(workers: boolean): string {
+    return `\n## Batching calls
+Every reply is one turn, and the whole conversation is sent again each turn. Put independent calls in the same reply: they run together and all results come back before your next turn.
+- Batch: read_file for each file you already know you need; search_workspace for several different names (or one pattern with "a|b"); list_files with repo_map${workers ? '; several run_workers agents for subtasks that do not need each other\'s results (up to 8, each task written out in full)' : ''}.
+- Do not batch: a call that needs an earlier result (a path a search found, an edit based on what a read showed), or a check that must see an edit made in the same reply.
+Example: to compare three modules, send three read_file calls in one reply, not three replies.`;
+}
+
+// Experiment lean_change: the smallest complete change (adapted from the "ponytail" lazy-senior-dev prompt, 2026-11-18). Round-two refcompare: the agent's
+// change was a median 4.2 times the reference fix in changed lines (1.2 in runs that passed everything, 4.6 in the others).
+export function leanChangeBlock(): string {
+    return `\n## The smallest complete change
+Before you write, read the task and the code it touches, and list every place the change must reach: callers, tests, fixtures, config, exports. Check what it could break. For a bug fix, search_workspace for every caller of the function you change before you edit, then fix the root cause once, in the shared code.
+Then take the first option that fully works: (1) skip what nobody asked for, and name it in one line; (2) reuse what the codebase already has, the way nearby code does; (3) the standard library or the platform; (4) a dependency already installed, never a new one for a few lines; (5) otherwise the minimum code.
+- Be lazy about the solution, never about the change: finish every part the task needs, including the callers, tests and fixtures your change breaks.
+- No abstraction, wrapper, option, config or "for later" code nobody asked for. Deletion beats addition. Keep the structure and conventions the code already has. Code you move keeps its error handling and validation.
+- The shortest working diff wins once you know everything it must touch. Between options of equal size, take the one that is right on edge cases.
+- New non-trivial logic (a branch, a loop, a parser, money or security) gets one small test or assert-based check. Trivial changes need none.
+- Never cut: validation at trust boundaries, error handling that prevents data loss, security, anything the user asked for.
+Before COMPLETED, add one or two lines: what you skipped or did not check, and any risk the user must know.`;
+}
+
 export function resolveRoleBody(role: any): string {
     const savedFnSrc = typeof getRoleBodyFn === 'function' ? getRoleBodyFn(role.name) : null;
     return (savedFnSrc
@@ -213,7 +235,11 @@ export function buildSystemPrompt(): string {
         : '';
     const _browserCtx = typeof browserPromptGuidance === 'function'
         ? browserPromptGuidance((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n)) : '';
-    return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_tplCtx}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_dateCtx}`;
+    // Experiment parallel_hint: why and how to put independent calls in one reply (the role bodies carry one terse line; local models made
+    // 1 call per step in 22,331 SWE-bench steps, 27% of them read-only).
+    const _batchCtx = runtime.experiment('parallel_hint') ? parallelHintBlock(enabledTools.has('run_workers')) : '';
+    const _leanCtx = runtime.experiment('lean_change') ? leanChangeBlock() : '';
+    return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_tplCtx}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_batchCtx}${_leanCtx}${_dateCtx}`;
 }
 
 // Window bridge for classic scripts.

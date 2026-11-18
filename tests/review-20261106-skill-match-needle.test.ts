@@ -77,7 +77,7 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 
-    it('short_guidance gives failure-recovery only the paragraph for its cause; without it the whole body', async () => {
+    it('failure-recovery gets only the paragraph for its cause, once per cause', async () => {
         const prev = process.env.FG_EXPERIMENTS;
         await import('../skills.ts');   // the built-ins are not loaded by setup.js
         const fr = W.BUILTIN_SKILLS.find((s: any) => s.name === 'failure-recovery');
@@ -90,18 +90,20 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
         };
         try {
             delete process.env.FG_EXPERIMENTS;
-            const full = twoErrors();
+            const full = fr.body_fn ? fr.body_fn() : fr.body;
             expect(full).toContain('**General**');
-            process.env.FG_EXPERIMENTS = 'short_guidance';
             const short = twoErrors();
             expect(short).toContain('### failure-recovery\n**A tool call failed**');
             expect(short).not.toContain('**Same tool repeated**');
             expect(short.length).toBeLessThan(full.length / 2);
+            expect(short).not.toContain('**General**');
             // The paragraph for the first cause does not use the skill up: the same tool repeated afterwards still gets its own (A/B 2026-11-10: 41 runs against 161 got the loop advice).
             const ok = { name: 'read_file', args: { path: 'a.txt' }, result: { content: 'x' } };
-            const later = W.reactiveSkillGuidance([ok, ok, ok, ok]);
+            W.setToolCallHistory([]);
+            const run = Array(10).fill(ok);
+            const later = W.reactiveSkillGuidance(run);
             expect(later).toContain('**Same tool repeated**');
-            expect(W.reactiveSkillGuidance([ok, ok, ok, ok])).not.toContain('**Same tool repeated**');   // each cause once
+            expect(W.reactiveSkillGuidance(run)).not.toContain('**Same tool repeated**');   // each cause once
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 });

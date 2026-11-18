@@ -177,7 +177,7 @@ describe('failure-recovery / debug-strategy triggers', () => {
             expect(out).toContain('### failure-recovery');
             expect(out).not.toContain('replace_in_file fails');
             expect(out).not.toContain('run_workers(');
-            expect(out).toContain('execute_code fails');
+            expect(out).toContain('**A tool call failed**');   // a plain tool error gets only its own short paragraph
         } finally { off.forEach(t => W.enabledTools.add(t)); }
     });
 });
