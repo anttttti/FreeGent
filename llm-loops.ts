@@ -2473,10 +2473,10 @@ async function callLLMUngated(
     if (provider === 'nvidia') headers['Accept'] = 'text/event-stream';
     // OpenRouter identifies apps via HTTP-Referer + X-Title; used for analytics and
     // partner-tier quota allocation.
-    if (provider === 'openrouter') {
+    // Vercel AI Gateway documents the same http-referer + x-title pair.
+    if (provider === 'openrouter' || provider === 'vercel') {
         headers['HTTP-Referer'] = 'https://freegent.app/';
-        headers['X-Title'] = 'FreeGent';
-    }
+        headers['X-Title'] = 'FreeGent';    }
 
     const _effectiveProxy = ep.proxy ? getLocalApiProxy() : '';
 
