@@ -126,7 +126,7 @@ describe('priority arrows move to the top or bottom', () => {
     it('↑ puts the row first and ↓ last', () => {
         localStorage.clear();
         const W = window as any;
-        const [a, b, c] = ['kilo|dots-studio/dots-3-note-preview:free', 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|cohere/north-mini-code:free'];
+        const [a, b, c] = ['kilo|dots-studio/dots-3-note-preview:free', 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free', 'kilo|baidu/ernie-5.5-flash-preview:free'];
         const keys = [a, b, c];
         localStorage.setItem('fg_main_models', JSON.stringify(keys));
         document.body.innerHTML = '<div id="main-model-list"></div>';

@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { showModelUpdateModal } from '../model-update.ts';
 
 const W = window as any;
-const removed = 'openrouter|cohere/north-mini-code:free';
+const removed = 'openrouter|baidu/ernie-5.5-flash-preview:free';
 const kept = 'kilo|dots-studio/dots-3-note-preview:free';
 const paused = 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free';
 const noKey = 'nvidia|nvidia/nemotron-3-ultra-550b-a55b';
