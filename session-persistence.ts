@@ -223,10 +223,11 @@ export class SessionPersistence {
                             const lines = (this.dirty.has(id) ? '\n' : '') + body;
                             const bytes = (globalThis as any).Buffer ? (globalThis as any).Buffer.byteLength(lines) : lines.length;
                             if (size! + bytes > this.limits.maxFileBytes) {
-                                this.capped.add(id);
                                 console.warn(`[session-persistence] ${id}: event log reached ${this.limits.maxFileBytes} bytes; later events are not written`);
                                 // One marker line (not an event) so that load() can say the tail is missing; a resumed session otherwise looked complete (review 2026-11-12 H03).
-                                try { await appendFile(path, (this.dirty.has(id) ? '\n' : '') + JSON.stringify({ capped: true, maxFileBytes: this.limits.maxFileBytes }) + '\n', 'utf8'); } catch { /* the console warning stands */ }
+                                // A failed append rejects and is retried with the batch, like an event write; the session counts as capped only once the marker is there (X004).
+                                await appendFile(path, (this.dirty.has(id) ? '\n' : '') + JSON.stringify({ capped: true, maxFileBytes: this.limits.maxFileBytes }) + '\n', 'utf8');
+                                this.capped.add(id);
                             } else {
                                 this.dirty.add(id);          // until the append is known to have completed
                                 await appendFile(path, lines, 'utf8');

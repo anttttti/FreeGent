@@ -25,14 +25,32 @@ export function parseExpectations(raw: unknown): Expectation[] {
     return out;
 }
 
+// A group that is itself repeated (`+`, `*`, `{n,`) while it holds a repetition or alternation at any depth: `^((a+))+$` is as costly as `(a+)+$`,
+// so the scan carries "holds a repetition" up through plain groups (codex R239, D040).
+function repeatsRepetition(p: string): boolean {
+    const holds: boolean[] = [false];
+    let inClass = false;
+    for (let i = 0; i < p.length; i++) {
+        const c = p[i];
+        if (c === '\\') { i++; continue; }
+        if (inClass) { if (c === ']') inClass = false; continue; }
+        if (c === '[') inClass = true;
+        else if (c === '(') holds.push(false);
+        else if (c === ')' && holds.length > 1) {
+            const inner = holds.pop()!;
+            if (inner && /^\s*(?:[+*]|\{\d*,)/.test(p.slice(i + 1))) return true;
+            if (inner) holds[holds.length - 1] = true;
+        } else if (c === '|' || c === '+' || c === '*' || c === '{') holds[holds.length - 1] = true;
+    }
+    return false;
+}
 // The pattern runs on the app's own thread (the probe value comes back from the sandbox), so one that backtracks without end froze the
 // whole UI (codex R239: `(a+)+$` against a long near-match). Refused: a quantified group that contains a quantifier or an alternation,
 // a back-reference, and patterns over 300 characters. The value is at most 4,000 characters, so what is left runs in bounded time.
-const _NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*(?:[+*}]|\|)(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,)/;
 export function unsafePatternReason(pattern: string): string | null {
     if (pattern.length > 300) return 'longer than 300 characters';
     if (/\\[1-9]|\\k</.test(pattern)) return 'it uses a back-reference';
-    if (_NESTED_QUANTIFIER.test(pattern)) return 'a repeated group contains a repetition or alternation, which can take very long';
+    if (repeatsRepetition(pattern)) return 'a repeated group contains a repetition or alternation, which can take very long';
     return null;
 }
 

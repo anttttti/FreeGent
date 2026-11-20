@@ -114,5 +114,33 @@ describe('rewind never writes through a link the turn put in place (overnight ex
         expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('ORIGINAL-B');
         expect(r.skippedOutside).toEqual([join('dir', 'c.txt')]);
     });
+    it('does not remove a file behind a linked parent that Git still lists as created since the copy (Y024)', async () => {
+        const { execFileSync } = await import('node:child_process');
+        const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+        const root = tmp('fg-ws-'), store = tmp('fg-ck-'), outside = tmp('fg-out-');
+        git(root, 'init', '-q'); writeFileSync(join(root, 'keep.txt'), 'K');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
+        mkdirSync(join(root, 'dir')); writeFileSync(join(root, 'dir', 'new.txt'), 'N'); git(root, 'add', 'dir/new.txt');   // the index keeps listing dir/new.txt
+        rmSync(join(root, 'dir'), { recursive: true }); mkdirSync(join(outside, 'dir'));
+        writeFileSync(join(outside, 'dir', 'new.txt'), 'OUTSIDE'); symlinkSync(join(outside, 'dir'), join(root, 'dir'));   // born after the copy, but not in the workspace
+        const r = await restoreSnapshot(root, snap);
+        expect(readFileSync(join(outside, 'dir', 'new.txt'), 'utf8')).toBe('OUTSIDE');
+        expect(r.removed).toEqual([]);
+        expect(r.skippedOutside).toEqual([join('dir', 'new.txt')]);
+    });
+    it('a Git-listed file that exists but cannot be examined makes the snapshot unusable, not silently incomplete (Y019)', async () => {
+        if (process.getuid?.() === 0) return;   // root reads everything
+        const { execFileSync } = await import('node:child_process');
+        const { chmodSync } = await import('node:fs');
+        const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+        const root = tmp('fg-ws-'), store = tmp('fg-ck-');
+        writeFileSync(join(root, 'a.txt'), 'A'); mkdirSync(join(root, 'locked')); writeFileSync(join(root, 'locked', 'b.txt'), 'B');
+        git(root, 'init', '-q'); git(root, 'add', '-A');
+        chmodSync(join(root, 'locked'), 0o000);   // the index still lists locked/b.txt; examining it fails with EACCES
+        try {
+            const snap = await takeSnapshot(root, store, '1');
+            expect(snap.tooBig).toBe(true);
+            await expect(restoreSnapshot(root, snap)).rejects.toThrow(/could not be read/);
+        } finally { chmodSync(join(root, 'locked'), 0o755); }
+    });
 });
-

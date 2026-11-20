@@ -15,7 +15,8 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
   // spawnSync/execSync/execFileSync are async under the hood but some callers
   // read stdout synchronously. Pre-populate known safe responses so the CLI
   // sees the right answer without awaiting.
-  const getSyncResponse = (cmd: string): { stdout: string; stderr: string; status: number } | null => {
+  const getSyncResponse = (cmd: string, cwd?: unknown): { stdout: string; stderr: string; status: number } | null => {
+    if (cwd) return null;   // pwd, cat and the like answer for the parent's directory
     // Strip shell wrapper: /bin/sh -c "git --version" → git --version
     let trimmed = cmd.trim();
     const shellMatch = trimmed.match(/^\/bin\/(?:sh|bash|zsh)\s+(?:-\w+\s+)*-\w*c\s+["']?(.+?)["']?$/);
@@ -31,18 +32,17 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
     if (trimmed === 'pwd') {
       return { stdout: ctx.cwd + '\n', stderr: '', status: 0 };
     }
-    // echo (only handle simple cases — fall through to async for shell operators)
-    if (/^echo\s/.test(trimmed) || trimmed === 'echo') {
-      const echoArg = trimmed === 'echo' ? '' : trimmed.slice(5);
-      // If the echo args contain shell operators, fall through to async
-      if (/&&|\|\||[;|]/.test(echoArg) && !/^['"].*['"]$/.test(echoArg)) {
-        return null;
-      }
-      // Expand env vars in echo args
-      let expanded = echoArg.replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (_, k: string) => ctx.env[k] || '');
-      // Strip outer quotes (shell would do this)
-      expanded = expanded.replace(/^["']|["']$/g, '');
-      return { stdout: expanded + '\n', stderr: '', status: 0 };
+    // echo: answered here only when the shell would print exactly this (plain words, $NAME, or one quoted string without expansion);
+    // anything else (flags, an apostrophe, `$` inside quotes, operators) goes to the real shell instead of a second quoting parser (D024).
+    if (/^echo(\s|$)/.test(trimmed)) {
+      const arg = trimmed.slice(4).trim();
+      const quoted = /^'([^'\\]*)'$/.exec(arg) ?? /^"([^"$\\`!]*)"$/.exec(arg);
+      if (quoted) return quoted[1].startsWith('-') ? null : { stdout: quoted[1] + '\n', stderr: '', status: 0 };
+      const word = /^(?:[\w@%+=:,./]|\$\{?[A-Za-z_]\w*\}?)(?:[\w@%+=:,./-]|\$\{?[A-Za-z_]\w*\}?)*$/;
+      const words = arg.split(/\s+/).filter(Boolean);
+      if (!words.every(w => word.test(w))) return null;
+      const out = words.map(w => w.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (_, k: string) => ctx.env[k] ?? '')).join(' ').trim().split(/\s+/).filter(Boolean).join(' ');
+      return { stdout: out + '\n', stderr: '', status: 0 };
     }
     // cat <file> — read from fileCache for synchronous access
     const catMatch = trimmed.match(/^cat\s+(.+)$/);
@@ -165,7 +165,9 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
   };
   // execAsync is the underlying impl — returns a Promise
   // Shell natively handles setopt (no-op), eval (builtin), >| (clobber), /dev/null (virtual file)
-  const execAsync = async (cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+  // `cwd`: the child's working directory. A subshell, so the parent shell keeps its own directory for the next command
+  // (a `cd … &&` prefix moved it, and execFile/exec ignored the option: explorations 2026-11-10 D025).
+  const execAsync = async (cmd: string, cwd?: unknown): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
     let normalized = stripShellPrefix(cmd);
     // Strip leading shell flags (-l, -i, -e) that leak through from spawn args
     normalized = normalized.replace(/^(-[a-zA-Z]+\s+)+/, '');
@@ -189,6 +191,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       await Promise.all(pendingPromises.splice(0));
     }
 
+    if (cwd) normalized = `(cd ${shellQuoteArg(String(cwd))} && ${normalized})`;
     let stdout = '';
     let stderr = '';
     const exitCode = await ctx.shell.execute(normalized, (s) => { stdout += s; }, (s) => { stderr += s; }, false, true);
@@ -232,12 +235,8 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       // Buffer and queue the actual execution. Works correctly when the
       // result is used at top-level of an async script (node -e).
       // Handle cwd option
-      let effectiveCmd = cmd;
-      if (opts?.cwd) {
-        effectiveCmd = `cd ${shellQuoteArg(String(opts.cwd))} && ${cmd}`;
-      }
       // Synchronous fast-path for detection commands
-      const syncResponse = getSyncResponse(effectiveCmd);
+      const syncResponse = getSyncResponse(cmd, opts?.cwd);
       if (syncResponse) {
         // Throw on non-zero exit (bash semantics)
         if (syncResponse.status !== 0) {
@@ -256,7 +255,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       let resultCode = 0;
       const wantString = opts?.encoding && opts.encoding !== 'buffer';
       let done = false;
-      const p = execAsync(effectiveCmd).then(r => { result = r.stdout; resultErr = r.stderr; resultCode = r.exitCode; done = true; });
+      const p = execAsync(cmd, opts?.cwd).then(r => { result = r.stdout; resultErr = r.stderr; resultCode = r.exitCode; done = true; });
       if (wantString) {
         const str: any = new String('');
         str.then = (resolve: any, reject: any) => p.then(() => {
@@ -292,16 +291,11 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       } else {
         fullCmd = args ? `${cmd} ${shellQuoteArgs(args)}` : cmd;
       }
-      // Handle cwd option
-      if (opts?.cwd) {
-        const cwdPath = String(opts.cwd);
-        fullCmd = `cd ${shellQuoteArg(cwdPath)} && ${fullCmd}`;
-      }
       const wantString = opts?.encoding && opts.encoding !== 'buffer';
       const wrap = (s: string) => wantString ? s : FakeBuffer.from(s);
       // Synchronous fast-paths for version/detection checks that the CLI reads
       // without awaiting. Without this, stdout is '' when read synchronously.
-      const syncResponse = getSyncResponse(fullCmd);
+      const syncResponse = getSyncResponse(fullCmd, opts?.cwd);
       if (syncResponse) {
         const out = wrap(syncResponse.stdout);
         const err = wrap(syncResponse.stderr);
@@ -318,7 +312,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       let stderr = '';
       let status = 0;
       let done = false;
-      const p = execAsync(fullCmd).then(r => { stdout = r.stdout; stderr = r.stderr; status = r.exitCode; done = true; });
+      const p = execAsync(fullCmd, opts?.cwd).then(r => { stdout = r.stdout; stderr = r.stderr; status = r.exitCode; done = true; });
       pendingPromises.push(p);
       return guarded({
         get stdout() { return wrap(stdout); },
@@ -340,7 +334,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         once: (ev: string, fn: Function) => child.on(ev, fn),
         kill: () => true,
       };
-      const p = execAsync(cmd).then(r => {
+      const p = execAsync(cmd, typeof opts === 'object' ? opts?.cwd : undefined).then(r => {
         if (r.stdout) (childEvents['stdout_data'] || []).forEach(fn => fn(FakeBuffer.from(r.stdout)));
         (childEvents['stdout_end'] || []).forEach(fn => fn());
         if (r.stderr) (childEvents['stderr_data'] || []).forEach(fn => fn(FakeBuffer.from(r.stderr)));
@@ -378,7 +372,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       const cmdP = isClipCmd
         ? new Promise<{ stdout: string; stderr: string; exitCode: number }>(resolve =>
             setTimeout(() => resolve({ stdout: '', stderr: '', exitCode: 0 }), 0))
-        : execAsync(cmd);
+        : execAsync(cmd, typeof opts === 'object' ? opts?.cwd : undefined);
       const p = cmdP.then(r => {
         if (r.stdout) (childEvents['stdout_data'] || []).forEach(fn => fn(FakeBuffer.from(r.stdout)));
         (childEvents['stdout_end'] || []).forEach(fn => fn());
@@ -406,10 +400,6 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         fullCmd = extractShellArgs(args);
       } else {
         fullCmd = args ? `${cmd} ${shellQuoteArgs(args)}` : cmd;
-      }
-      // Handle cwd option
-      if (opts?.cwd) {
-        fullCmd = `cd ${shellQuoteArg(String(opts.cwd))} && ${fullCmd}`;
       }
       // Detect stdio file descriptors — Claude Code's Bash tool opens output files
       // and passes them as stdio[1]/stdio[2]. We detect fd-like objects with .fd property
@@ -511,7 +501,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
       const cmdPromise = isClipboardCmd
         ? new Promise<{ stdout: string; stderr: string; exitCode: number }>(resolve =>
             setTimeout(() => resolve({ stdout: '', stderr: '', exitCode: 0 }), 0))
-        : execAsync(fullCmd);
+        : execAsync(fullCmd, opts?.cwd);
       const p = cmdPromise.then(r => {
         const writePromises: Promise<any>[] = [];
         // Write output to stdio file paths FIRST (before emitting events, because
@@ -567,14 +557,14 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
         fullCmd = args ? `${file} ${shellQuoteArgs(args)}` : file;
       }
       // Synchronous fast-path for detection commands
-      const syncResponse = getSyncResponse(fullCmd);
+      const syncResponse = getSyncResponse(fullCmd, opts?.cwd);
       if (syncResponse) {
         const buf: any = FakeBuffer.from(syncResponse.stdout);
         buf.then = (resolve: any) => resolve(FakeBuffer.from(syncResponse.stdout));
         return buf;
       }
       let result = '', done = false;
-      const p = execAsync(fullCmd).then(r => { result = r.stdout; done = true; });
+      const p = execAsync(fullCmd, opts?.cwd).then(r => { result = r.stdout; done = true; });
       pendingPromises.push(p);
       // Return thenable Buffer so await resolves to actual result
       const buf: any = FakeBuffer.from('');
@@ -589,22 +579,22 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
   };
   // Add util.promisify.custom for exec/execFile to return { stdout, stderr }
   const customSym = Symbol.for('nodejs.util.promisify.custom');
-  cpModule.exec[customSym] = (cmd: string, _opts?: any) => {
-    const p = execAsync(cmd).then(r => {
+  cpModule.exec[customSym] = (cmd: string, opts?: any) => {
+    const p = execAsync(cmd, opts?.cwd).then(r => {
       if (r.exitCode !== 0) throw Object.assign(new Error(`Command failed: ${cmd}`), { code: r.exitCode, stdout: r.stdout, stderr: r.stderr });
       return { stdout: r.stdout, stderr: r.stderr };
     });
     pendingPromises.push(p.catch(() => {}));
     return p;
   };
-  cpModule.execFile[customSym] = (file: string, args?: string[], _opts?: any) => {
+  cpModule.execFile[customSym] = (file: string, args?: string[], opts?: any) => {
     let cmd: string;
     if (isShellBin(file) && args) {
       cmd = extractShellArgs(args);
     } else {
       cmd = `${file} ${shellQuoteArgs(args || [])}`;
     }
-    const p = execAsync(cmd).then(r => {
+    const p = execAsync(cmd, opts?.cwd).then(r => {
       if (r.exitCode !== 0) throw Object.assign(new Error(`Command failed: ${cmd}`), { code: r.exitCode, stdout: r.stdout, stderr: r.stderr });
       return { stdout: r.stdout, stderr: r.stderr };
     });

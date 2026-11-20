@@ -246,3 +246,16 @@ export async function cannotCreate(fs: { exists(p: string): Promise<boolean>; st
   if (!(await fs.stat(parent)).isDirectory()) return 'Not a directory';
   return null;
 }
+
+/** `-t DIR`, `-tDIR`, `--target-directory=DIR`: the directory moves to the end, where the operand parser expects it. */
+export function targetDirectoryLast(args: string[]): string[] {
+  const rest: string[] = []; let dir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-t' || a === '--target-directory') { dir = args[++i]; continue; }
+    if (a.startsWith('--target-directory=')) { dir = a.slice(19); continue; }
+    if (/^-t.+/.test(a) && !a.startsWith('--')) { dir = a.slice(2); continue; }
+    rest.push(a);
+  }
+  return dir === undefined ? args : [...rest, dir];
+}

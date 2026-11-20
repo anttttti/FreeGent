@@ -28,12 +28,13 @@ async function getJson(f: typeof fetch, url: string, headers: Record<string, str
     try {
         const r = await f(url, { ...init, headers: { ...headers, ...(init.headers as any) }, signal: ctl.signal });
         if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
-        return await r.json();
+        return await r.json().catch(() => { throw Object.assign(new Error('not JSON'), { notJson: true }); });
     } finally { clearTimeout(t); }
 }
 
 // Why a request failed, in words a person can act on.
 export function explainDetectError(e: any, url: string, pageProtocol = ''): string {
+    if (e?.notJson) return 'The server answered, but not with a JSON model list at /models. Check the address (it usually ends in /v1).';
     if (e?.status === 401 || e?.status === 403) return `The server refused the request (HTTP ${e.status}): an API key is needed, or the key is wrong.`;
     if (e?.status === 404) return 'Nothing answered at /models. Check the address (it usually ends in /v1).';
     if (e?.status) return `The server answered HTTP ${e.status}.`;
@@ -58,9 +59,11 @@ export async function detectEndpoint(rawUrl: string, key = '', opts: { fetch?: t
     let list: any;
     try { list = await getJson(f, `${v1}/models`, headers, timeoutMs); }
     catch (e: any) { return fail(explainDetectError(e, base, opts.pageProtocol)); }
-    const data: any[] = Array.isArray(list?.data) ? list.data : Array.isArray(list?.models) ? list.models : [];
+    // Rows that are not objects (a null among them) are dropped; a list with no usable id is an answer to report, not a crash in the form (Y006).
+    const data: any[] = (Array.isArray(list?.data) ? list.data : Array.isArray(list?.models) ? list.models : []).filter((m: any) => m && typeof m === 'object');
     if (!data.length) return fail('The server answered, but lists no models (is a model loaded?).');
     const models: DetectedModel[] = data.map(m => ({ id: String(m.id ?? m.name ?? m.model), contextK: kOf(m.max_model_len) })).filter(m => m.id && m.id !== 'undefined');
+    if (!models.length) return fail('The server lists models, but none has an id (the list has no "id" or "name" fields).');
 
     let server = 'OpenAI-compatible';
     let apiFormat: DetectResult['apiFormat'] = 'openai';

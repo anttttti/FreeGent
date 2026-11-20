@@ -2053,7 +2053,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             convoLogTurn({
                 step, model: ep.model, provider: ep.provider ?? getProvider(),
                 promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
-                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens ?? 0,
+                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens,   // absent when the provider sent none: unknown, not zero (Y003)
                 response: textContent, toolCalls: [], loopDetected: false,
                 ..._loggedSystemPrompt(),
                 lastUserMessage: (() => { try { const u = _histR(_s).filter(m => m.role === 'user'); return typeof u[u.length-1]?.content === 'string' ? u[u.length-1].content : JSON.stringify(u[u.length-1]?.content); } catch { return ''; } })(),
@@ -2192,7 +2192,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),
             promptTokens: usage?.prompt_tokens, responseTokens: usage?.completion_tokens,
-                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens ?? 0,
+                cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? (usage as any)?.cached_tokens,   // absent when the provider sent none: unknown, not zero (Y003)
             response: textContent,
             toolCalls: _exec.map(r => ({ name: r.name, args: r.args, result: r.result })),
             loopDetected: _repeatedNames.length > 0 || consecutiveToolFails >= 5,

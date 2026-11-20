@@ -51,3 +51,28 @@ export function extname(p: string): string {
     if (startDot === -1 || end === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) return '';
     return p.slice(startDot, end);
 }
+
+/** Node's posix `path.normalize`: collapses `//`, `.` and `..` (a relative path keeps leading `..`), keeps a trailing separator, "" is ".". */
+export function normalize(p: string): string {
+    if (p.length === 0) return '.';
+    const abs = p[0] === '/';
+    const trailing = p[p.length - 1] === '/';
+    const out: string[] = [];
+    for (const seg of p.split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') {
+            if (out.length && out[out.length - 1] !== '..') out.pop();
+            else if (!abs) out.push('..');
+        } else out.push(seg);
+    }
+    let r = out.join('/');
+    if (!r && !abs) r = '.';
+    if (r && trailing) r += '/';
+    return (abs ? '/' : '') + r;
+}
+
+/** Node's posix `path.join`: the non-empty parts joined with "/" and normalized ("." when nothing is left). */
+export function join(...parts: string[]): string {
+    const joined = parts.filter(s => s.length > 0).join('/');
+    return joined.length === 0 ? '.' : normalize(joined);
+}

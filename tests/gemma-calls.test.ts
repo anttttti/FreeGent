@@ -17,6 +17,17 @@ beforeAll(async () => {
 const Q = '<|"|>';
 const calls = (text: string) => W.parseFnTagCalls(text).tool_calls.map((c: any) => [c.function.name, JSON.parse(c.function.arguments)]);
 
+describe('call-shaped text inside a complete JSON call is data (Y025)', () => {
+    it('Hermes JSON and function-JSON frames keep a literal `call:name{}` in their arguments, and nothing else is parsed out of them', () => {
+        const content = 'notes\ncall:list_files{}\nend';
+        const hermes = `<tool_call>${JSON.stringify({ name: 'write_file', arguments: { path: 'a.txt', content } })}</tool_call>`;
+        const fnjson = `<function=write_file>${JSON.stringify({ path: 'a.txt', content })}</function>`;
+        for (const t of [hermes, fnjson]) expect(calls(t), t).toEqual([['write_file', { path: 'a.txt', content }]]);
+        // outside a frame it is still a call
+        expect(calls(`${hermes}\ncall:list_files{}`).map(c => c[0]).sort()).toEqual(['list_files', 'write_file']);
+    });
+});
+
 describe('parseFnTagCalls Format K (Gemma native)', () => {
     it('execute_code with string args (v0.58 flask-5063)', () => {
         const t = `call:execute_code{code:${Q}python3 -c "import werkzeug; print(werkzeug.__name__)"${Q},language:${Q}bash${Q}}<tool_call|>`;

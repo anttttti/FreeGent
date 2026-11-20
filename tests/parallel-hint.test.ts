@@ -27,11 +27,10 @@ describe('parallel_hint (experiment)', () => {
         W.reactiveSkillGuidance([{ name: 'replace_in_file', args: {}, result: { success: true } }]);
         expect(W.reactiveSkillGuidance([read('g')])).not.toContain('batch-calls');
     });
-    it('the system prompt block names run_workers only when it is available', async () => {
+    it('the system prompt block is a short batching hint', async () => {
         const { parallelHintBlock } = await import('../system-prompt.ts');
-        expect(parallelHintBlock(true)).toContain('run_workers');
-        expect(parallelHintBlock(false)).not.toContain('run_workers');
-        expect(parallelHintBlock(false)).toContain('## Batching calls');
+        expect(parallelHintBlock().length).toBeLessThan(200);
+        expect(parallelHintBlock()).toContain('## Batching calls');
     });
 });
 

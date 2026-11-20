@@ -48,4 +48,33 @@ describe('voice input toggle', () => {
             made[0].onend?.();
         } finally { (window as any).activeChatId = prev; }
     });
+
+    it('a stop event that arrives after the next recording started neither clears its indicator nor takes its audio (Y010, R618)', async () => {
+        localStorage.setItem('fg_voice_stt_list', JSON.stringify(['groq|whisper-large-v3-turbo']));
+        localStorage.setItem('fg_groq_key', 'k');
+        document.body.innerHTML = '<button id="agent-mic-btn"></button>';
+        const recorders: any[] = [];
+        class FakeRecorder {
+            state = 'inactive'; mimeType = 'audio/webm'; ondataavailable: any; onstop: any;
+            constructor() { recorders.push(this); }
+            start() { this.state = 'recording'; }
+            stop() { this.state = 'inactive'; }   // the stop event is delivered later, by the test
+        }
+        (window as any).MediaRecorder = (globalThis as any).MediaRecorder = FakeRecorder;
+        const tracks = () => ({ getTracks: () => [{ stop: vi.fn() }] });
+        (navigator as any).mediaDevices = { getUserMedia: vi.fn(async () => tracks()) };
+        const sent: number[] = [];
+        const fetched = vi.spyOn(globalThis, 'fetch').mockImplementation((async (_u: any, init: any) => { sent.push((init.body.get('file') as Blob).size); return new Response(JSON.stringify({ text: 'x' })); }) as any);
+        const btn = () => document.getElementById('agent-mic-btn')!;
+        await (window as any).toggleVoiceInput();            // recording 1
+        recorders[0].ondataavailable({ data: new Blob(['one']) });
+        await (window as any).toggleVoiceInput();            // stop 1: inactive now, its stop event still to come
+        await (window as any).toggleVoiceInput();            // recording 2 starts first
+        recorders[1].ondataavailable({ data: new Blob(['twotwo']) });
+        await recorders[0].onstop();                          // the old stop event arrives
+        expect(btn().classList.contains('mic-active')).toBe(true);   // recording 2 is still on the indicator
+        expect(sent).toEqual([3]);                            // 'one' only, not recording 2's bytes
+        fetched.mockRestore();
+    });
 });
+

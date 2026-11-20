@@ -42,9 +42,6 @@ export const KEYS = {
     OPENAI_MODEL:       'fg_openai_model',
     OPENAI_URL:         'fg_openai_url',
     OPENAI_CONTEXT:     'fg_openai_context',
-    NVIDIA_MODEL:       'fg_nvidia_model',
-    GROQ_MODEL:         'fg_groq_model',
-    OPENROUTER_MODEL:   'fg_openrouter_model',
     MAIN_MODELS:        'fg_main_models',
     PRIMARY_MODELS:     'fg_primary_models',   // profile-level alias; runtime reads MAIN_MODELS
     PAUSED_MAIN:        'fg_paused_main',
@@ -139,7 +136,6 @@ export const KEYS = {
     // Legacy global history keys (pre-multi-chat, migrated on first load)
 
     // ── Keys that were only raw strings in their modules, now in the registry ─────────
-    AGENT_SCRIPT_STEERING:      'fg_agent_script_steering',
     ANALYTICS:                  'fg_analytics',
     APINEX_OBSERVED_RPM:        'fg_apinex_observed_rpm',
     CACHE_CAPABLE:              'fg_cache_capable',

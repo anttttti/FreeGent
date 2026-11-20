@@ -35,6 +35,7 @@ interface BackgroundJob {
   status: 'running' | 'done' | 'failed';
   exitCode: number;
   abortController?: AbortController;
+  output?: string;     // what the job printed, handed over by `wait` (or at the end of the script)
 }
 
 interface CompletionSpec {
@@ -106,6 +107,9 @@ export class Shell {
   private localVarStack: Map<string, string | undefined>[] = [];
   /** Readonly variable names */
   readonlyVars: Set<string> = new Set();
+  integerVars: Set<string> = new Set();
+  functionDepth = 0;   // > 0 while a function body runs (the ERR trap is not inherited by functions)
+  conditionDepth = 0;   // > 0 while an if/while/until condition runs (ERR and errexit do not apply)   // declare -i: assignments to these are arithmetic
   /** Call stack for BASH_SOURCE/caller: {funcName, source} */
   callStack: { funcName: string; source: string }[] = [];
   /** Bash shopt options: extglob, nocaseglob, nullglob, dotglob, globstar, etc. */
@@ -138,6 +142,7 @@ export class Shell {
       HOME: '/home/user',
       USER: 'user',
       SHELL: '/bin/sh',
+      BASH_VERSION: '5.2.0(1)-release',
       PATH: '/usr/local/bin:/usr/bin:/bin',
       PWD: '/home/user',
       TERM: 'xterm-256color',
@@ -164,6 +169,11 @@ export class Shell {
     const frame = this.localVarStack.pop();
     if (!frame) return;
     for (const [varName, savedValue] of frame) {
+      if (varName.startsWith('\0arr:')) {   // a local array: the caller's array (as JSON) or none
+        const n = varName.slice(5);
+        if (savedValue === undefined) this.arrays.delete(n); else this.arrays.set(n, JSON.parse(savedValue));
+        continue;
+      }
       if (savedValue === undefined) delete this.env[varName];
       else this.env[varName] = savedValue;
     }
@@ -185,6 +195,8 @@ export class Shell {
     child.arrays = new Map(Array.from(this.arrays.entries()).map(([k, v]) => [k, [...v]]));
     child.assocArrays = new Map(Array.from(this.assocArrays.entries()).map(([k, v]) => [k, new Map(v)]));
     child.traps = new Map(this.traps);
+    child.heredocNames = this.heredocNames; child.heredocBodies = this.heredocBodies;   // bodies moved aside for a block run in subshells too
+    for (const sig of ['ERR', 'EXIT', 'DEBUG', 'RETURN']) child.traps.delete(sig);   // a subshell starts without these traps: the parent's EXIT trap ran at the end of every ( … ) and $( … )
     child.aliases = new Map(this.aliases);
     child.namerefs = new Map(this.namerefs);
     child.dirStack = [...this.dirStack];
@@ -199,12 +211,21 @@ export class Shell {
   async exec(input: string, remote: boolean = false): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     let stdout = '';
     let stderr = '';
-    const exitCode = await this.execute(
-      input,
-      (s) => { stdout += s; },
-      (s) => { stderr += s; },
-      remote,
-    );
+    let exitCode: number;
+    try {
+      exitCode = await this.execute(
+        input,
+        (s) => { stdout += s; },
+        (s) => { stderr += s; },
+        remote,
+      );
+    } catch (e) {
+      // A subshell, a pipeline stage or a command substitution is a child shell: `return` ends it with that status
+      // and does not leave the function that contains it.
+      if (e instanceof ReturnSignal) exitCode = e.code; else throw e;
+    }
+    // Jobs that finished by now print what they produced (the script did not wait for them)
+    if (this.executeDepth === 0) for (const job of this.backgroundJobs.values()) if (job.output && job.status !== 'running') { stdout += job.output; job.output = ''; }
     // An EXIT trap runs when the script ends (a multi-line script's already ran in execute).
     if (this.executeDepth === 0 && this.traps.has('EXIT')) {
       const exitCmd = this.traps.get('EXIT')!;
@@ -226,7 +247,7 @@ export class Shell {
       command,
       status: 'running',
       exitCode: 0,
-      promise: this.execute(command, () => {}, stderrWriter).then(
+      promise: this.fork().execute(command, t => { job.output = (job.output ?? '') + t; }, stderrWriter).then(
         (code) => {
           job.status = code === 0 ? 'done' : 'failed';
           job.exitCode = code;
@@ -240,6 +261,7 @@ export class Shell {
       ),
     };
     this.backgroundJobs.set(jobId, job);
+    this.env['!'] = String(jobId);
     // A non-interactive shell prints nothing for `cmd &` (bash prints job numbers only interactively).
     return 0;
   }
@@ -270,7 +292,7 @@ export class Shell {
     const baseWriteStdout = writeStdout;
     // Handle backslash line continuations: \<newline> joins lines; comments go, as in bash
     // (a script starting with "# …" used to run nothing, and "cmd # note" passed "# note" on).
-    const joined = invocation ? '[argv]' : stripComments(line.replace(/\\\n/g, ''));
+    const joined = invocation ? '[argv]' : stripComments(Shell.joinContinuations(line));
     const trimmed = joined.trim();
     if (!trimmed) return 0;
 
@@ -328,7 +350,15 @@ export class Shell {
     // Handle heredocs before anything else
     const heredoc = invocation ? null : this.parseHeredoc(trimmed);
     const effectiveLine = heredoc ? heredoc.command : trimmed;
-    const heredocStdin = heredoc ? heredoc.body : '';
+    let heredocStdin = heredoc ? heredoc.body : '';
+    if (heredoc?.raw) {
+      // As the body of a double-quoted string (the passes quote their results for the tokenizer; here they are undone)
+      let b = '"' + heredocStdin.replace(/\\(?=")/g, '\\\\').replace(/"/g, '\\"') + '"';
+      b = await this.expandCommandSubstitution(b, writeStderr || writeStdout);
+      b = this.expandArithmetic(b);
+      b = this.expandVars(b);
+      heredocStdin = b.slice(1, -1).replace(/\\([\\"$`])/g, '$1');
+    }
     if (heredoc?.unterminated) writeStderr(`bash: warning: here-document at line ${this.currentLine} delimited by end-of-file (wanted \`${heredoc.unterminated}')\r\n`);
 
     // Strip control characters from history entries (ink UI can leak ANSI/DEL chars)
@@ -411,7 +441,11 @@ export class Shell {
         const inner = trimmedCmd.slice(1, -1).trim();
         if (inner) {
           const child = this.fork();
-          const result = await child.exec(inner);
+          // set -e does not apply inside a subshell whose status is tested (left of && / ||, negated, in an if condition)
+          { const ci = compounds.indexOf(compound); const nx = ci + 1 < compounds.length ? compounds[ci + 1].operator : '';
+            if (nx === '&&' || nx === '||' || compound.operator === '&&' || compound.operator === '||' || this.conditionDepth > 0) child.options.delete('errexit'); }
+          // `${x:?}` and the like end the subshell only, not the script around it
+          const result = await child.exec(inner).catch((e: unknown) => ({ stdout: '', stderr: `bash: ${e instanceof Error ? e.message : String(e)}\n`, exitCode: 1 }));
           if (result.stdout) writeStdout(result.stdout.replace(/\n/g, '\r\n'));
           if (result.stderr) stderrWriter(result.stderr.replace(/\n/g, '\r\n'));
           exitCode = result.exitCode;
@@ -433,6 +467,7 @@ export class Shell {
       // Expand braces, arithmetic, command substitution, and environment variables. Heredoc
       // bodies go back in first — not into a control structure, whose parser would split them.
       let expanded = invocation ? '' : this.inlineHeredocs(compound.command);
+      expanded = this.protectAssignmentWords(expanded);
       expanded = await this.expandProcessSubstitutionText(expanded, baseStderrWriter);
       expanded = this.expandBraces(expanded);
       // Command substitution before arithmetic, as in bash: $(( $(cmd) * 2 )).
@@ -465,7 +500,7 @@ export class Shell {
         for (const [stage, segment] of pipeline.entries()) {
           const child = this.fork();
           if (stage < pipeline.length - 1) child.stdoutFile = null;
-          child.env['__PIPE_STDIN'] = lastOutput;
+          child.env['__PIPE_STDIN'] = stage === 0 && heredocStdin ? heredocStdin : lastOutput;   // `cat <<EOF | tr …`: the body is the first stage's input
           const result = await child.exec(segment);
           lastOutput = result.stdout;
           if (result.stderr) stderrWriter(result.stderr.replace(/\n/g, '\r\n'));
@@ -715,7 +750,14 @@ export class Shell {
             lastOutput = '';
             continue;
           }
-          this.env[key] = val;
+          if (/^[A-Za-z_][A-Za-z0-9_]*\+$/.test(key)) {          // NAME+=value appends
+            const name = key.slice(0, -1);
+            if (this.readonlyVars.has(name)) { stderrWriter(`bash: line ${this.currentLine}: ${name}: readonly variable\r\n`); exitCode = 1; this.lastExitCode = 1; this.env['?'] = '1'; continue; }
+            this.env[name] = this.integerVars.has(name) ? String(this.evalArithmetic(this.env[name] || '0') + this.evalArithmetic(val)) : (this.env[name] ?? '') + val;
+            exitCode = this.substitutionStatus ?? 0; this.lastExitCode = exitCode; this.env['?'] = String(exitCode);
+            continue;
+          }
+          this.env[key] = this.integerVars.has(key) ? String(this.evalArithmetic(val)) : val;
           if (key === 'PWD') this.cwd = val;
           // A line of assignments only has the status of its last command substitution, or 0 (bash): `out=$(node t.mjs); rc=$?`
           // read 0 for a failing test, so a test runner wrapped that way saw every failure as a pass.
@@ -847,15 +889,31 @@ export class Shell {
           }
           // declare -A name[=( [k]=v … )] / declare -a name[=( v … )]: arrays, with initial
           // elements read from the segment text so quoting is kept.
-          if (cmdArgs.some(a => /^-[a-zA-Z]*[Aa]/.test(a))) {
+          if (cmdArgs.some(a => /^-[a-zA-Z]*[Aa]/.test(a)) || /(?:^|\s)[A-Za-z_][A-Za-z0-9_]*=\(/.test(segment)) {   // `local a=(x y)` is an array without -a too
             const assoc = cmdArgs.some(a => /^-[a-zA-Z]*A/.test(a));
             const inits = new Map<string, string>();
             for (const m of segment.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=\(([\s\S]*?)\)(?=\s|$)/g)) inits.set(m[1], m[2]);
+            let inParen = false;   // the words of `a=(x y)` after the first are elements, not names
             for (const arg of cmdArgs) {
+              if (inParen) { if (arg.includes(')')) inParen = false; continue; }
               if (arg.startsWith('-')) continue;
+              if (arg.includes('=(') && !arg.includes(')')) inParen = true;
               const name = arg.split('=')[0].replace(/[()\x01]/g, '');
               if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+              if (effectiveCmdName === 'local' && !cmdArgs.some(a => /^-[a-zA-Z]*g/.test(a)) && this.localVarStack.length > 0) {
+                const fr = this.localVarStack[this.localVarStack.length - 1];
+                const key = '\0arr:' + name;
+                if (!fr.has(key)) fr.set(key, this.arrays.has(name) ? JSON.stringify(this.arrays.get(name)) : undefined);
+              }
               const body = inits.get(name);
+              if (body === undefined && arg.includes('=')) {   // a scalar in the same command: `local n=$# a=("$@")`
+                if (effectiveCmdName === 'local' && this.localVarStack.length > 0) {
+                  const fr = this.localVarStack[this.localVarStack.length - 1];
+                  if (!fr.has(name)) fr.set(name, name in this.env ? this.env[name] : undefined);
+                }
+                this.env[name] = arg.slice(arg.indexOf('=') + 1).replace(/\x01/g, '');
+                continue;
+              }
               if (assoc) {
                 const map = body !== undefined ? new Map<string, string>() : (this.assocArrays.get(name) ?? new Map<string, string>());
                 for (const el of body !== undefined ? this.tokenize(body) : []) {
@@ -900,6 +958,7 @@ export class Shell {
             const eqIdx = arg.indexOf('=');
             const varName = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
             let value = eqIdx >= 0 ? arg.slice(eqIdx + 1) : undefined;
+            if (declFlags.includes('i')) this.integerVars.add(varName);
             // Apply type transformations
             if (value !== undefined) {
               if (declFlags.includes('i')) value = String(this.evalArithmetic(value));
@@ -2038,6 +2097,27 @@ export class Shell {
           lastOutput = '';
           continue;
         }
+        if (!_builtinDisabled && effectiveCmdName === 'wait') {
+          // wait [ID…]: wait for background jobs (all of them without arguments), hand over what they printed, status of the last
+          const ids = cmdArgs.length ? cmdArgs.map(a => parseInt(a.replace('%', ''), 10)) : [...this.backgroundJobs.keys()];
+          let waitStatus = 0;
+          for (const id of ids) {
+            const job = this.backgroundJobs.get(id);
+            if (!job) { stderrWriter(`bash: wait: pid ${id} is not a child of this shell\r\n`); waitStatus = 127; continue; }
+            const code = await job.promise;
+            if (cmdArgs.length) waitStatus = code;
+            if (job.output) { writeStdout(job.output.replace(/\r?\n/g, '\r\n')); job.output = ''; }
+          }
+          exitCode = waitStatus; this.lastExitCode = exitCode; this.env['?'] = String(exitCode);
+          lastOutput = '';
+          continue;
+        }
+        if (!_builtinDisabled && effectiveCmdName === 'jobs') {
+          for (const job of this.backgroundJobs.values()) writeStdout(`[${job.id}]+  ${job.status === 'running' ? 'Running' : job.status === 'done' ? 'Done' : 'Exit ' + job.exitCode}                 ${job.command}\r\n`);
+          exitCode = 0; this.lastExitCode = 0; this.env['?'] = '0';
+          lastOutput = '';
+          continue;
+        }
         if (!_builtinDisabled && effectiveCmdName === 'disown') {
           // disown: remove jobs from job table
           if (cmdArgs.length === 0 || cmdArgs.includes('-a')) {
@@ -2154,11 +2234,21 @@ export class Shell {
             if (fn.group === 'brace') {
               exitCode = await this.execute(fn.body, capOut, capErr, false, true);
             } else if (fn.group === 'subshell') {
-              const r = await this.fork().exec(fn.body);
+              const sub = this.fork();
+              // set -e does not apply inside a subshell whose status is tested (left of && / ||, right of one, in an if condition)
+              { const ci = compounds.indexOf(compound); const nx = ci + 1 < compounds.length ? compounds[ci + 1].operator : '';
+                if (nx === '&&' || nx === '||' || compound.operator === '&&' || compound.operator === '||' || negateExit || this.conditionDepth > 0) sub.options.delete('errexit'); }
+              const r = await sub.exec(fn.body);
               fout = r.stdout; ferr = r.stderr; exitCode = r.exitCode;
             } else {
               exitCode = await this.execFunction(effectiveCmdName, cmdArgs, capOut, capErr);
             }
+          } catch (e) {
+            // `return`, `break`, `continue` or `exit` inside the group ends it early: what it printed so far is still output
+            // (`[ -n "$x" ] && { echo "has x"; return; }` printed nothing).
+            if (fout) writeStdout(fout.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+            if (ferr) stderrWriter(ferr.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+            throw e;
           } finally {
             if (feedsStdin) { if (hadPipe) this.env['__PIPE_STDIN'] = savedPipe!; else delete this.env['__PIPE_STDIN']; }
           }
@@ -2240,9 +2330,14 @@ export class Shell {
       this.env['?'] = String(exitCode);
 
       // Fire ERR trap on non-zero exit code
-      if (exitCode !== 0 && this.traps.has('ERR')) {
+      // (not for a failure that is tested: negated, in a && / || list except its last command, or in an if/while condition)
+      const errCompIdx = compounds.indexOf(compound);
+      const errNext = errCompIdx + 1 < compounds.length ? compounds[errCompIdx + 1].operator : '';
+      const errTested = negateExit || this.conditionDepth > 0 || errNext === '&&' || errNext === '||';
+      if (exitCode !== 0 && this.traps.has('ERR') && !errTested && this.functionDepth === 0) {
         const errCmd = this.traps.get('ERR')!;
         await this.execute(errCmd, writeStdout, stderrWriter);
+        this.lastExitCode = exitCode; this.env['?'] = String(exitCode);   // the trap does not change $?
       }
 
       // errexit: abort on non-zero exit from commands NOT in && / || chains
@@ -2424,6 +2519,15 @@ export class Shell {
   }
 
   private expandVars(line: string): string {
+    // "${arr[@]}" / "${!arr[@]}" of an empty or unset array is no word at all (it used to be one empty word:
+    // `for e in "${arr[@]}"` ran once, `set -- "${arr[@]}"` gave $# = 1).
+    if (line.includes('[@]}"')) {
+      line = line.replace(/(^|[\s;(|&=])"\$\{(!?)([A-Za-z_][A-Za-z0-9_]*)\[@\]\}"(?=$|[\s;)|&])/g, (m, pre, _bang, name) => {
+        const assoc = this.assocArrays.get(name);
+        const arr = this.arrays.get(name);
+        return (assoc ? assoc.size === 0 : !arr || arr.length === 0) ? pre : m;
+      });
+    }
     // Walk through the string character by character, respecting quote context.
     // In single quotes: no expansion at all (bash behavior).
     // In double quotes: expand $VAR and ${VAR} but NOT ~ or $?.
@@ -2453,10 +2557,29 @@ export class Shell {
       }
 
       // Expand $? (last exit code)
+      if (ch === '$' && line[i + 1] === '!') { result += this.env['!'] ?? ''; i += 2; continue; }
       if (ch === '$' && line[i + 1] === '?') {
         result += String(this.lastExitCode);
         i += 2;
         continue;
+      }
+
+      // ${@:offset[:length]} and ${*:offset[:length]}: a slice of the positional parameters (offset 0 includes $0, a negative one counts from the end)
+      if (ch === '$' && line[i + 1] === '{' && (line[i + 2] === '@' || line[i + 2] === '*') && line[i + 3] === ':') {
+        const sm = /^\$\{([@*]):\s*(-?\d+)(?::\s*(-?\d+))?\}/.exec(line.slice(i));
+        if (sm) {
+          const params = this.positionalParams();
+          const all = Number(sm[2]) === 0 ? [this.env['0'] || 'bash', ...params] : params;
+          const off = Number(sm[2]);
+          const start = off > 0 ? off - 1 : off === 0 ? 0 : Math.max(0, all.length + off);
+          const end = sm[3] === undefined ? all.length : Number(sm[3]) >= 0 ? start + Number(sm[3]) : all.length + Number(sm[3]);
+          const part = all.slice(start, Math.max(start, end));
+          if (sm[1] === '@' && inDouble) result += part.length ? this.quotedWords(part) : '';
+          else if (inDouble) result += part.join((this.env['IFS'] ?? ' ').slice(0, 1)).replace(/[\\"$`]/g, '\\$&');
+          else result += part.join(' ');
+          i += sm[0].length;
+          continue;
+        }
       }
 
       // Expand $@ and $* (all positional parameters)
@@ -2630,6 +2753,32 @@ export class Shell {
    * ${VAR^^}, ${VAR,,}, ${VAR:-default}, ${VAR:=default}, ${VAR:+alt}, ${VAR:?err}
    */
   private expandParamExpression(inner: string): string | null {
+    // ${1:-x}, ${#1}, ${2%.txt}, ${1^^}, ${1:0:2}: every operator form is written for names, so a positional parameter is
+    // looked at through a temporary name.
+    const positional = inner.match(/^(#?)([1-9]\d*)((?:[:%#/^,\-+=?@].*)?)$/s);
+    if (positional && (positional[1] || positional[3])) {
+      const alias = `__pos${positional[2]}`;
+      const value = this.env[positional[2]];
+      if (value === undefined) delete this.env[alias]; else this.env[alias] = value;
+      try { return this.expandParamExpression(positional[1] + alias + positional[3]); } finally { delete this.env[alias]; }
+    }
+    // ${arr[i]:-x}, ${m[k]-x}, ${arr[0]^^}, ${arr[1]:0:3}, ${m[k]/a/b}: the operator forms on one element, through a temporary name
+    const elementOp = inner.match(/^(#?)([A-Za-z_][A-Za-z0-9_]*)\[([^\]@*]+)\]([:%#/^,\-+=?@].*)$/s);
+    if (elementOp) {
+      const [, hash, name, rawKey, rest] = elementOp;
+      const key = this.expandVars(rawKey).replace(/^(["'])(.*)\1$/, '$2');
+      const assoc = this.assocArrays.get(name);
+      let value: string | undefined;
+      if (assoc) value = assoc.get(key);
+      else {
+        const arr = this.arrays.get(name);
+        let idx = /^-?\d+$/.test(key.trim()) ? parseInt(key, 10) : this.evalArithmetic(key);
+        if (arr && !isNaN(idx)) { if (idx < 0) idx = arr.length + idx; if (idx >= 0 && idx < arr.length) value = arr[idx]; }
+      }
+      const alias = '__elem_' + name;
+      if (value === undefined) delete this.env[alias]; else this.env[alias] = value;
+      try { return this.expandParamExpression(hash + alias + rest); } finally { delete this.env[alias]; }
+    }
     // ${!arr[@]} or ${!arr[*]} — array indices/keys
     const arrKeysMatch = inner.match(/^!([A-Za-z_][A-Za-z0-9_]*)\[[@*]\]$/);
     if (arrKeysMatch) {
@@ -2841,7 +2990,7 @@ export class Shell {
       const val = this.env[repAllMatch[1]] ?? '';
       const pat = repAllMatch[2].replace(/\\\//g, '/');
       const rep = this.expandVars(repAllMatch[3]);
-      const re = new RegExp(this.globToRegex(pat), 'g');
+      const re = new RegExp(this.paramGlob(pat), 'g');
       return val.replace(re, rep);
     }
 
@@ -2851,7 +3000,7 @@ export class Shell {
       const val = this.env[repMatch[1]] ?? '';
       const pat = repMatch[2].replace(/\\\//g, '/');
       const rep = this.expandVars(repMatch[3]);
-      const re = new RegExp(this.globToRegex(pat));
+      const re = new RegExp(this.paramGlob(pat));
       return val.replace(re, rep);
     }
 
@@ -2859,7 +3008,7 @@ export class Shell {
     const rmPrefLong = inner.match(/^([A-Za-z_][A-Za-z0-9_]*)##(.+)$/);
     if (rmPrefLong) {
       const val = this.env[rmPrefLong[1]] ?? '';
-      const reStr = this.globToRegex(rmPrefLong[2]);
+      const reStr = this.paramGlob(rmPrefLong[2]);
       // Greedy: find longest prefix matching the pattern
       for (let len = val.length; len >= 0; len--) {
         const prefix = val.slice(0, len);
@@ -2872,7 +3021,7 @@ export class Shell {
     const rmPrefShort = inner.match(/^([A-Za-z_][A-Za-z0-9_]*)#(.+)$/);
     if (rmPrefShort) {
       const val = this.env[rmPrefShort[1]] ?? '';
-      const reStr = this.globToRegex(rmPrefShort[2]);
+      const reStr = this.paramGlob(rmPrefShort[2]);
       for (let len = 0; len <= val.length; len++) {
         const prefix = val.slice(0, len);
         if (new RegExp('^' + reStr + '$').test(prefix)) return val.slice(len);
@@ -2884,7 +3033,7 @@ export class Shell {
     const rmSufLong = inner.match(/^([A-Za-z_][A-Za-z0-9_]*)%%(.+)$/);
     if (rmSufLong) {
       const val = this.env[rmSufLong[1]] ?? '';
-      const reStr = this.globToRegex(rmSufLong[2]);
+      const reStr = this.paramGlob(rmSufLong[2]);
       for (let start = 0; start <= val.length; start++) {
         const suffix = val.slice(start);
         if (new RegExp('^' + reStr + '$').test(suffix)) return val.slice(0, start);
@@ -2896,7 +3045,7 @@ export class Shell {
     const rmSufShort = inner.match(/^([A-Za-z_][A-Za-z0-9_]*)%(.+)$/);
     if (rmSufShort) {
       const val = this.env[rmSufShort[1]] ?? '';
-      const reStr = this.globToRegex(rmSufShort[2]);
+      const reStr = this.paramGlob(rmSufShort[2]);
       for (let start = val.length; start >= 0; start--) {
         const suffix = val.slice(start);
         if (new RegExp('^' + reStr + '$').test(suffix)) return val.slice(0, start);
@@ -2992,7 +3141,14 @@ export class Shell {
         if (j < pattern.length && pattern[j] === '!') { result += '[^'; j++; }
         else if (j < pattern.length && pattern[j] === '^') { result += '[^'; j++; }
         else { result += '['; }
-        while (j < pattern.length && pattern[j] !== ']') { result += pattern[j]; j++; }
+        // POSIX classes ([:space:]) contain a ']' of their own; a ']' right after the opening is a member
+        const classes: Record<string, string> = { alpha: 'a-zA-Z', digit: '0-9', alnum: 'a-zA-Z0-9', upper: 'A-Z', lower: 'a-z', space: ' \\t\\n\\r\\f\\v', blank: ' \\t', punct: '!-\\/:-@\\[-`{-~', xdigit: '0-9A-Fa-f', cntrl: '\\x00-\\x1f\\x7f', print: ' -~', graph: '!-~' };
+        if (pattern[j] === ']') { result += '\\]'; j++; }
+        while (j < pattern.length && pattern[j] !== ']') {
+          const cls = pattern[j] === '[' && pattern[j + 1] === ':' ? /^\[:([a-z]+):\]/.exec(pattern.slice(j)) : null;
+          if (cls && classes[cls[1]]) { result += classes[cls[1]]; j += cls[0].length; continue; }
+          result += pattern[j] === '\\' ? '\\\\' : pattern[j]; j++;
+        }
         result += ']';
         i = j;
         continue;
@@ -3002,6 +3158,14 @@ export class Shell {
       result += ch;
     }
     return result;
+  }
+
+
+  /** A pattern of ${v#p} ${v%p} ${v/p/r}: quoted parts (also the result of a nested expansion in quotes) are literal. */
+  private paramGlob(pattern: string): string {
+    if (!/["'\\]/.test(pattern)) return this.globToRegex(pattern);
+    const src = this.casePatternRegex(pattern).source;
+    return src.slice(1, -1);
   }
 
   /** Find an unquoted closing parenthesis, shared by nested word constructs. */
@@ -3040,6 +3204,76 @@ export class Shell {
    * True while text has an unclosed command substitution — $( … ) or ` … ` — or, with quotes,
    * an unclosed quote: the statement goes on to the next line. Plain ( … ) groups don't count.
    */
+  /**
+   * `\<newline>` joins two lines, except where it is data: the body of a here-document with a quoted delimiter and a
+   * single-quoted string keep it (a Dockerfile or Makefile written with <<'EOF' lost its continuation lines), and an
+   * even number of backslashes ends the line with a literal one.
+   */
+  static joinContinuations(text: string): string {
+    if (!text.includes('\\\n')) return text;
+    const lines = text.split('\n');
+    const out: string[] = [];
+    let heredoc: { delim: string; quoted: boolean; dash: boolean } | null = null;
+    let sq = false;
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      if (heredoc) {
+        const cmp = heredoc.dash ? line.replace(/^\t+/, '') : line;
+        if (cmp.trim() === heredoc.delim) heredoc = null;
+        else if (!heredoc.quoted) { while (/(^|[^\\])(\\\\)*\\$/.test(line) && i + 1 < lines.length) { line = line.slice(0, -1) + lines[++i]; } }
+        out.push(line);
+        continue;
+      }
+      const m = sq ? null : Shell.findHeredoc(line);
+      for (let k = 0, d = false; k < line.length; k++) {      // single-quote state at the end of the line
+        const c = line[k];
+        if (!sq && c === '\\') { k++; continue; }
+        if (!sq && c === '"') d = !d;
+        else if (c === "'" && !d) sq = !sq;
+      }
+      let cur = line;
+      while (!sq && /(^|[^\\])(\\\\)*\\$/.test(cur) && i + 1 < lines.length) { cur = cur.slice(0, -1) + lines[++i]; }
+      if (m) heredoc = { delim: m[2] ?? m[3] ?? m[4], quoted: m[2] !== undefined || m[3] !== undefined, dash: m[1] === '-' };
+      out.push(cur);
+    }
+    return out.join('\n');
+  }
+
+  /**
+   * The here-document operator of a line, as a match of /(?:^|[^<])<<(?!<)(-?)\s*(?:'x'|"x"|word)/: only a `<<` that is
+   * live, not inside quotes, backticks, `$(( … ))`, `(( … ))` or a `let` expression (`$((1<<3))`, `echo "a << b"`,
+   * `python3 -c 'print(1<<3)'` started a here-document that swallowed the rest of the script).
+   */
+  static findHeredoc(line: string): RegExpMatchArray | null {
+    const dead = new Uint8Array(line.length + 1);
+    let sq = false, dq = false, arith = 0, i = 0;
+    const letLine = /^\s*let\s/.test(line);
+    const cmdArith = /^\s*\(\(/.test(line);
+    while (i < line.length) {
+      const c = line[i];
+      if (!sq && c === '\\') { dead[i] = dead[i + 1] = 1; i += 2; continue; }
+      if (!dq && c === "'") { sq = !sq; dead[i] = 1; i++; continue; }
+      if (!sq && c === '"') { dq = !dq; dead[i] = 1; i++; continue; }
+      if (sq || dq) { dead[i] = 1; i++; continue; }
+      if (c === '$' && line[i + 1] === '(' && line[i + 2] === '(') { arith++; dead[i] = dead[i + 1] = dead[i + 2] = 1; i += 3; continue; }
+      if (arith > 0) {
+        dead[i] = 1;
+        if (c === ')' && line[i + 1] === ')') { arith--; dead[i + 1] = 1; i += 2; continue; }
+        i++; continue;
+      }
+      if (letLine || (cmdArith && i < line.length)) { dead[i] = 1; }
+      i++;
+    }
+    const re = /(?:^|[^<])<<(?!<)(-?)\s*(?:'([^']+)'|"([^"]+)"|(\S+))/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const op = m.index + (m[0].startsWith('<<') ? 0 : 1);
+      if (!dead[op]) return m;
+      re.lastIndex = op + 2;
+    }
+    return null;
+  }
+
   static openConstruct(text: string, quotes = true): boolean {
     let depth = 0, q = '', back = false;
     for (let k = 0; k < text.length; k++) {
@@ -3088,7 +3322,7 @@ export class Shell {
 
       // Check if this line starts a heredoc
       // `<<` starts a heredoc; `<<<` is a here-string on this line only.
-      const heredocMatch = line.match(/(?:^|[^<])<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+      const heredocMatch = ((): RegExpMatchArray | null => { const m = Shell.findHeredoc(line); return m ? Object.assign([m[0], m[2], m[3], m[4]], { index: m.index }) as any : null; })();
       if (heredocMatch) {
         const delimiter = heredocMatch[1] || heredocMatch[2] || heredocMatch[3];
         let block = line;
@@ -3165,8 +3399,12 @@ export class Shell {
         const top = [...stack];
         for (const t of info.tokens) this.applyBlockToken(top, t, OPEN, CLOSE);
         if (!top.length) { out.push(stmt); continue; }
-        // Opens a block: start collecting.
+        // Opens a block: start collecting. A heredoc on the line that opens it (`( cat > f <<EOF` … `EOF` … `)`) becomes a here-string, as inside a block.
         stack = top; parts = [stmt]; joined = info.code; joinable = !stmt.includes('\n'); prev = info;
+        if (stmt.includes('\n')) {
+          const hereString = this.heredocToHereString(stmt);
+          if (hereString) { Object.assign(info, this.lexBlockLine(hereString)); joined = info.code; joinable = true; }
+        }
         continue;
       }
       parts.push(stmt);
@@ -3218,7 +3456,7 @@ export class Shell {
    */
   private heredocToHereString(stmt: string): string | null {
     const lines = stmt.split('\n');
-    const m = lines[0].match(/(?:^|[^<])<<(?!<)(-?)\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+    const m = Shell.findHeredoc(lines[0]);
     if (!m) return null;
     const delim = m[2] ?? m[3] ?? m[4];
     const stripTabs = m[1] === '-';
@@ -3372,23 +3610,26 @@ export class Shell {
     return false;
   }
 
-  private parseHeredoc(input: string): { command: string; body: string; unterminated?: string } | null {
+  private parseHeredoc(input: string): { command: string; body: string; unterminated?: string; raw?: boolean } | null {
     // Match <<DELIM, <<'DELIM', <<"DELIM", or <<-DELIM patterns
     const lines = input.split(/\r?\n/);
     if (lines.length < 2) return null;
 
     // Find <<DELIM on the first line (could be anywhere in the command)
-    const heredocMatch = lines[0].match(/(?:^|[^<])<<(?!<)-?\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+    const heredocMatch = ((): RegExpMatchArray | null => { const m = Shell.findHeredoc(lines[0]); return m ? Object.assign([m[0], m[2], m[3], m[4]], { index: m.index }) as any : null; })();
     if (!heredocMatch) return null;
+    // A line that opens a block (`( cat <<EOF`, `{ cat <<EOF`) keeps its heredoc for groupBlocks, which makes the whole block one command
+    { const open: string[] = []; for (const t of this.lexBlockLine(lines[0].slice(0, heredocMatch.index!)).tokens) this.applyBlockToken(open, t, new Set(['if', 'case', 'for', 'while', 'until', 'select', '{', '(']), { fi: ['if'], esac: ['case'], done: ['for', 'while', 'until', 'select'], '}': ['{'], ')': ['('] }); if (open.length) return null; }
     // A heredoc inside $( … ) belongs to the command in there, not to this one.
     if (Shell.openConstruct(lines[0].slice(0, heredocMatch.index! + (heredocMatch[0].startsWith('<<') ? 0 : 1)), false)) return null;
 
     const delimiter = heredocMatch[1] || heredocMatch[2] || heredocMatch[3];
     const quoted = !!(heredocMatch[1] || heredocMatch[2]);
-    const stripTabs = lines[0].match(/<<-/) !== null;
+    const stripTabs = lines[0].slice(heredocMatch.index! + (heredocMatch[0].startsWith('<<') ? 0 : 1)).startsWith('<<-');
 
     // Remove the <<DELIM token from the command line
-    const command = lines[0].replace(/(^|[^<])<<(?!<)-?\s*(?:'[^']+'|"[^"]+"|\S+)/, '$1').trim();
+    const opAt = heredocMatch.index! + (heredocMatch[0].startsWith('<<') ? 0 : 1);
+    const command = (lines[0].slice(0, opAt) + lines[0].slice(opAt).replace(/^<<-?\s*(?:'[^']+'|"[^"]+"|\S+)/, '')).trim();
 
     // Collect body lines until we find the delimiter on its own line
     const bodyLines: string[] = [];
@@ -3416,14 +3657,11 @@ export class Shell {
     }
 
     let body = bodyLines.join('\n');
-    // If delimiter was not quoted, expand variables
-    if (!quoted) {
-      body = this.expandVars(body);
-    }
     // Add trailing newline (standard heredoc behavior)
     body += '\n';
 
-    return { command: finalCommand, body, ...(found ? {} : { unterminated: delimiter }) };
+    // An unquoted delimiter: the body is expanded (variables, $(…), $((…)), `…`) by the caller, which can await
+    return { command: finalCommand, body, ...(quoted ? {} : { raw: true }), ...(found ? {} : { unterminated: delimiter }) };
   }
 
   private parseCompound(line: string): { operator: '' | '&&' | '||' | ';'; command: string }[] {
@@ -3435,6 +3673,7 @@ export class Shell {
     let depth = 0; // track control structure nesting (do/done, then/fi, {/})
     let braceDepth = 0; // track only { } brace groups (not ${VAR})
     let parenDepth = 0; // track subshell ( ... ) nesting separately
+    const parenStack: ('s' | 'c')[] = []; // every open ( : subshell or $( substitution
     let i = 0;
 
     while (i < line.length) {
@@ -3458,25 +3697,42 @@ export class Shell {
         // Track subshell parenthesized groups: ( ... )
         // Only count '(' at operator positions (after whitespace/;/start), not after $ or word chars
         const prevCh = i > 0 ? line[i - 1] : ' ';
-        if (ch === '(' && !/\w/.test(prevCh) && prevCh !== '$') {
-          parenDepth++;
+        if (ch === '(' && prevCh === '$') {          // $( … ) and $(( … )): its ')' must not close an enclosing ( … ) subshell
+          parenStack.push('c');
           current += ch; i++; continue;
         }
-        if (ch === ')' && parenDepth > 0) {
-          parenDepth--;
+        const fnDef = ch === '(' ? /^\(\s*\)/.exec(line.slice(i)) : null;   // `name()` of a function definition: its parentheses are no subshell
+        if (fnDef) { current += fnDef[0]; i += fnDef[0].length; continue; }
+        if (ch === '(' && !/\w/.test(prevCh)) {
+          parenStack.push('s'); parenDepth++;
+          current += ch; i++; continue;
+        }
+        if (ch === ')' && parenStack.length > 0) {
+          if (parenStack.pop() === 's') parenDepth--;
           current += ch; i++; continue;
         }
 
+        // ${ … } is one word: its '}' must not close an enclosing { … } group or function body
+        if (ch === '$' && line[i + 1] === '{') {
+          let d = 0, j = i + 1;
+          for (; j < line.length; j++) {
+            if (line[j] === '\\') { j++; continue; }
+            if (line[j] === '{') d++;
+            else if (line[j] === '}' && --d === 0) break;
+          }
+          const end = j < line.length ? j + 1 : line.length;
+          current += line.slice(i, end); i = end; continue;
+        }
         // Track {/} brace groups and function bodies
         if (ch === '{') {
           // Only count as depth if preceded by whitespace/; (not in ${VAR})
           const prevBrace = i > 0 ? line[i - 1] : ' ';
-          if (/[\s;)]/.test(prevBrace) || i === 0) { depth++; braceDepth++; }
+          if ((/[\s;)]/.test(prevBrace) || i === 0) && (i + 1 >= line.length || /\s/.test(line[i + 1]))) { depth++; braceDepth++; }   // the word `{`, not the `{1..3}` of a brace expansion
           current += ch; i++; continue;
         }
         if (ch === '}') {
           // Only decrement if we have a matching brace-group { (not ${VAR})
-          if (braceDepth > 0) { depth--; braceDepth--; }
+          if (braceDepth > 0 && (i === 0 || /[\s;]/.test(line[i - 1])) && (i + 1 >= line.length || /[\s;&|)]/.test(line[i + 1]))) { depth--; braceDepth--; }   // the word `}`, not the end of `x{1,2}y`
           current += ch; i++; continue;
         }
 
@@ -3485,7 +3741,7 @@ export class Shell {
         // A keyword only in command position: `echo if` and `type -t done` are plain words.
         const before = current.trimEnd();
         const cmdPos = !before || /[;&|({]$/.test(before) || /(?:^|[\s;])(?:then|do|else|elif|!)$/.test(before);
-        if ((/[\s;]/.test(prevCh) || i === 0) && cmdPos) {
+        if ((/[\s;(]/.test(prevCh) || i === 0) && cmdPos) {   // `(while …` too
           const rest = line.slice(i);
           const wordMatch = rest.match(/^(for|while|until|select|if|case|do|then|done|fi|esac)\b/);
           if (wordMatch) {
@@ -3495,7 +3751,7 @@ export class Shell {
           }
         }
 
-        if (depth <= 0 && parenDepth <= 0) {
+        if (depth <= 0 && parenDepth <= 0 && parenStack.length === 0) {   // not inside `$( … )` either: `x=$(echo a; echo b)` was cut at the `;`
           if (ch === '&' && line[i + 1] === '&') {
             if (current.trim()) result.push({ operator: currentOp, command: current.trim() });
             currentOp = '&&';
@@ -3864,7 +4120,9 @@ export class Shell {
       else result.push(out.split(/[ \t\n]+/).filter(Boolean).map(sq).join(' '));
     };
     const run = async (subCmd: string) => {
-      const r = await this.fork().exec(subCmd);
+      const subShell = this.fork();
+      subShell.options.delete('errexit');   // a command substitution does not inherit set -e (bash without inherit_errexit)
+      const r = await subShell.exec(subCmd);
       this.substitutionStatus = r.exitCode;
       if (r.stderr) stderrWriter(r.stderr.replace(/\n/g, '\r\n'));
       return r.stdout.replace(/\n+$/, '');
@@ -4256,7 +4514,7 @@ export class Shell {
         if (c === "'" || c === '"' || c === '`') { j = skipQuoted(c, j); continue; }
         if (c === '\\') { j += 2; continue; }
         if (c === '$' && (cmd[j + 1] === '(' || cmd[j + 1] === '{')) {
-          j = matchClose(j + 1, cmd[j + 1], cmd[j + 1] === '(' ? ')' : '}'); continue;
+          const e = matchClose(j + 1, cmd[j + 1], cmd[j + 1] === '(' ? ')' : '}'); if (e < 0) return -1; j = e + 1; continue;
         }
         if (c === openCh) depth++;
         else if (c === closeCh) { depth--; if (depth === 0) return j; }
@@ -4341,13 +4599,17 @@ export class Shell {
     const func = this.functions[name];
     if (!func) return 127;
 
-    // Save and set positional parameters
+    // Save and set positional parameters. The caller's $N above the argument count are saved and cleared too:
+    // a function called with fewer arguments than the caller has must not see the caller's.
     const saved: Record<string, string | undefined> = {};
-    for (let i = 0; i <= args.length; i++) saved[String(i)] = this.env[String(i)];
+    let highest = args.length;
+    for (const k of Object.keys(this.env)) if (/^[1-9]\d*$/.test(k)) highest = Math.max(highest, Number(k));
+    for (let i = 0; i <= highest; i++) saved[String(i)] = this.env[String(i)];
     saved['#'] = this.env['#'];
     saved['@'] = this.env['@'];
 
     this.env['0'] = name;
+    for (let i = args.length + 1; i <= highest; i++) delete this.env[String(i)];
     for (let i = 0; i < args.length; i++) this.env[String(i + 1)] = args[i];
     this.env['#'] = String(args.length);
     this.env['@'] = args.join(' ');
@@ -4365,7 +4627,8 @@ export class Shell {
     // Execute body — catch ReturnSignal for `return [N]`
     let exitCode = 0;
     try {
-      exitCode = await this.execute(func.body, writeStdout, writeStderr);
+      this.functionDepth++;
+      try { exitCode = await this.execute(func.body, writeStdout, writeStderr); } finally { this.functionDepth--; }
     } catch (e) {
       if (e instanceof ReturnSignal) {
         exitCode = e.code;
@@ -4785,6 +5048,13 @@ export class Shell {
   private async evalCondition(
     condition: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
   ): Promise<number> {
+    this.conditionDepth++;
+    try { return await this.evalConditionInner(condition, writeStdout, writeStderr); } finally { this.conditionDepth--; }
+  }
+
+  private async evalConditionInner(
+    condition: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
+  ): Promise<number> {
     const trimmed = condition.trim();
     // [[ ... ]] syntax (bash double-bracket test)
     if (trimmed.startsWith('[[') && this.doubleBracketEnd(trimmed, 0) === trimmed.length) {
@@ -4917,7 +5187,7 @@ export class Shell {
     input: string, writeStdout: (s: string) => void, writeStderr: (s: string) => void
   ): Promise<number> {
     // Normalize to semicolons for easier parsing
-    const joined = input.replace(/\r?\n/g, '; ').replace(/;\s*;/g, ';');
+    const joined = input.replace(/\r?\n/g, '; ').replace(/;\s+;/g, ';');   // not ';;': a case inside the body needs its arm terminators
 
     // Parse if/elif/else/fi with depth tracking for nested if blocks
     interface IfBranch { condition: string; body: string; }
@@ -5001,8 +5271,7 @@ export class Shell {
       if (tok.word === 'for' || tok.word === 'while' || tok.word === 'until' || tok.word === 'select') {
         if (tok.pos > 0) depth++; // nested loop (skip the outermost keyword)
       } else if (tok.word === 'do') {
-        if (depth === 0) { doPos = tok.pos; }
-        else depth--; // absorb do for the nested loop
+        if (depth === 0 && doPos < 0) { doPos = tok.pos; }
       } else if (tok.word === 'done') {
         if (doPos >= 0 && depth === 0) { donePos = tok.pos; break; }
         else if (depth > 0) depth--; // nested done
@@ -5040,11 +5309,11 @@ export class Shell {
       if (inSQ || inDQ) { i++; continue; }
       // Check word boundary
       const prevCh = i > 0 ? input[i - 1] : ' ';
-      if (/[\s;]/.test(prevCh) || i === 0) {
+      if (/[\s;(|&]/.test(prevCh) || i === 0) {   // `(while …; done)` and `x=$(for …)` start with a keyword after `(`
         for (const kw of keywords) {
           if (input.slice(i, i + kw.length) === kw) {
             const after = input[i + kw.length];
-            if (after === undefined || /[\s;]/.test(after)) {
+            if (after === undefined || /[\s;)|&]/.test(after)) {
               results.push({ word: kw, pos: i });
               i += kw.length;
               break;
@@ -5201,7 +5470,7 @@ export class Shell {
 
     // Display menu
     for (let idx = 0; idx < items.length; idx++) {
-      writeStdout(`${idx + 1}) ${items[idx]}\r\n`);
+      writeStderr(`${idx + 1}) ${items[idx]}\r\n`);   // the menu goes to stderr, as in bash
     }
 
     // Read selection from stdin (__PIPE_STDIN or REPLY)
@@ -5338,8 +5607,7 @@ export class Shell {
         for (const p of patterns) {
           if (p === '*') { matched = true; break; }
           if (word === p) { matched = true; break; }
-          const re = new RegExp('^' + this.globToRegex(p) + '$');
-          if (re.test(word)) { matched = true; break; }
+          if (this.casePatternRegex(p).test(word)) { matched = true; break; }
         }
       }
       if (matched) {
@@ -5353,6 +5621,101 @@ export class Shell {
       fallthrough = false;
     }
     return 0;
+  }
+
+
+  /**
+   * A case pattern as a regex: quotes and backslashes make the characters literal, `$var` is expanded
+   * (not inside single quotes), and the unquoted rest is a glob (*, ?, [...]).
+   */
+  private casePatternRegex(pattern: string): RegExp {
+    const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+    let re = '', glob = '', i = 0;
+    const flush = () => { if (glob) { re += this.globToRegex(glob); glob = ''; } };
+    while (i < pattern.length) {
+      const c = pattern[i];
+      if (c === "'") {
+        const j = pattern.indexOf("'", i + 1);
+        flush(); re += esc(pattern.slice(i + 1, j < 0 ? pattern.length : j)); i = j < 0 ? pattern.length : j + 1; continue;
+      }
+      if (c === '"') {
+        let j = i + 1, lit = '';
+        while (j < pattern.length && pattern[j] !== '"') { if (pattern[j] === '\\' && j + 1 < pattern.length) { lit += pattern[j + 1]; j += 2; } else lit += pattern[j++]; }
+        flush(); re += esc(this.expandVars(lit)); i = j + 1; continue;
+      }
+      if (c === '\\' && i + 1 < pattern.length) { flush(); re += esc(pattern[i + 1]); i += 2; continue; }
+      if (c === '$') {            // an unquoted expansion: its value is itself a pattern
+        let j = i + 1;
+        if (pattern[j] === '{') { let d = 0; for (; j < pattern.length; j++) { if (pattern[j] === '{') d++; else if (pattern[j] === '}' && --d === 0) { j++; break; } } }
+        else while (j < pattern.length && /\w/.test(pattern[j])) j++;
+        glob += this.expandVars(pattern.slice(i, j)); i = j; continue;
+      }
+      glob += c; i++;
+    }
+    flush();
+    return new RegExp('^' + re + '$');
+  }
+
+
+  /**
+   * The value of an assignment word (NAME=value before the command, and after export/local/declare/readonly/typeset) is not
+   * split into words: `y="one two"; a=$y` sets a to "one two". The text is expanded before it is tokenized, so its unquoted
+   * expansions are put in double quotes here.
+   */
+  private protectAssignmentWords(cmd: string): string {
+    const n = cmd.length;
+    let i = 0, out = '', declaration = false;
+    const scanWord = (from: number): number => {           // end of the word that starts at `from`
+      let j = from;
+      while (j < n && !/\s/.test(cmd[j])) {
+        const c = cmd[j];
+        if (c === '\\') { j += 2; continue; }
+        if (c === "'") { const e = cmd.indexOf("'", j + 1); j = e < 0 ? n : e + 1; continue; }
+        if (c === '"') { j++; while (j < n && cmd[j] !== '"') j += cmd[j] === '\\' ? 2 : 1; j++; continue; }
+        if (c === '`') { const e = cmd.indexOf('`', j + 1); j = e < 0 ? n : e + 1; continue; }
+        if (c === '$' && (cmd[j + 1] === '(' || cmd[j + 1] === '{')) {
+          const open = cmd[j + 1], close = open === '(' ? ')' : '}';
+          let d = 0; j++;
+          for (; j < n; j++) { if (cmd[j] === open) d++; else if (cmd[j] === close && --d === 0) { j++; break; } }
+          continue;
+        }
+        if (c === ';' || c === '|' || c === '&' || c === '<' || c === '>' || c === '(' || c === ')') break;
+        j++;
+      }
+      return j;
+    };
+    const quoteValue = (v: string): string => {
+      let r = '', k = 0;
+      while (k < v.length) {
+        const c = v[k];
+        if (c === '\\') { r += v.slice(k, k + 2); k += 2; continue; }
+        if (c === "'") { const e = v.indexOf("'", k + 1); const end = e < 0 ? v.length : e + 1; r += v.slice(k, end); k = end; continue; }
+        if (c === '"') { let e = k + 1; while (e < v.length && v[e] !== '"') e += v[e] === '\\' ? 2 : 1; r += v.slice(k, e + 1); k = e + 1; continue; }
+        if (c === '`') { const e = v.indexOf('`', k + 1); const end = e < 0 ? v.length : e + 1; r += '"' + v.slice(k, end) + '"'; k = end; continue; }
+        if (c === '$' && k + 1 < v.length && /[({A-Za-z0-9_@*#?$!-]/.test(v[k + 1])) {
+          let e = k + 1;
+          if (v[e] === '(' || v[e] === '{') {
+            const open = v[e], close = open === '(' ? ')' : '}'; let d = 0;
+            for (; e < v.length; e++) { if (v[e] === open) d++; else if (v[e] === close && --d === 0) { e++; break; } }
+          } else if (/[A-Za-z_]/.test(v[e])) { while (e < v.length && /\w/.test(v[e])) e++; }
+          else e++;
+          r += '"' + v.slice(k, e) + '"'; k = e; continue;
+        }
+        r += c; k++;
+      }
+      return r;
+    };
+    while (i < n) {
+      if (/\s/.test(cmd[i])) { out += cmd[i]; i++; continue; }
+      const end = scanWord(i);
+      const word = cmd.slice(i, end);
+      const m = word.match(/^([A-Za-z_][A-Za-z0-9_]*\+?=)(?!\()([\s\S]*)$/);
+      if (m) { out += m[1] + (m[2].includes('$') || m[2].includes('`') ? quoteValue(m[2]) : m[2]); i = end; continue; }
+      if (!declaration && /^(export|local|declare|typeset|readonly)$/.test(word)) { declaration = true; out += word; i = end; continue; }
+      if (declaration && word.startsWith('-')) { out += word; i = end; continue; }
+      out += cmd.slice(i); break;                          // the command itself: the rest is left alone
+    }
+    return out;
   }
 
   // ─── PATH EXECUTION ─────────────────────────────────────────────────────────

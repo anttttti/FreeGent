@@ -35,6 +35,12 @@ describe('detectEndpoint', () => {
         expect((await detectEndpoint('http://h/v1', '', { fetch: (async () => json({}, 401)) as any })).error).toMatch(/key/);
         expect((await detectEndpoint('http://h/v1', '', { fetch: (async () => json({ data: [] })) as any })).error).toMatch(/no models/);
         expect((await detectEndpoint('nonsense', '', {})).error).toMatch(/http/);
+        // Y006: rows that are not objects, ids that are missing and a body that is not JSON are answers to explain, not exceptions in the form.
+        expect((await detectEndpoint('http://h/v1', '', { fetch: (async () => json({ data: [null] })) as any })).error).toMatch(/no models/);
+        expect((await detectEndpoint('http://h/v1', '', { fetch: (async () => json({ data: [{}, {}] })) as any })).error).toMatch(/none has an id/);
+        expect(await detectEndpoint('http://h/v1', '', { fetch: server({ '/v1/models': { data: [{ id: 'm', max_model_len: 4096 }, null] } }) })).toMatchObject({ ok: true, models: [{ id: 'm', contextK: 4 }] });
+        const notJson = (async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } })) as any;
+        expect((await detectEndpoint('https://h/v1', '', { fetch: notJson })).error).toMatch(/not with a JSON model list/);
         expect(explainDetectError(new TypeError('x'), 'http://192.168.1.5:8000/v1', 'https:')).toMatch(/mixed content/);
         expect(explainDetectError(new TypeError('x'), 'http://localhost:8000/v1', 'https:')).toMatch(/CORS/);
         expect(explainDetectError(new TypeError('x'), 'https://10.0.0.5:8000/v1', 'https:')).toMatch(/no TLS/);

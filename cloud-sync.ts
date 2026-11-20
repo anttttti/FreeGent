@@ -70,6 +70,7 @@ export class CloudError extends Error {
 export class CloudSyncClient {
     private token = '';
     private tokenExp = 0;
+    private auth: Promise<void> | null = null;   // the exchange in flight, shared: each upload worker starting its own spent a Developer-key check per worker (X002)
     private base: string;
     private devKey: string;
     private doFetch: typeof fetch;
@@ -92,10 +93,12 @@ export class CloudSyncClient {
         return r;
     }
 
-    private async ensureToken(): Promise<void> {
-        if (this.token && this.tokenExp - Date.now() > 60_000) return;
-        const j = await (await this.call('POST', '/auth')).json();
-        this.token = j.token; this.tokenExp = j.expires;
+    private ensureToken(): Promise<void> {
+        if (this.token && this.tokenExp - Date.now() > 60_000) return Promise.resolve();
+        return this.auth ??= (async () => {
+            try { const j = await (await this.call('POST', '/auth')).json(); this.token = j.token; this.tokenExp = j.expires; }
+            finally { this.auth = null; }   // a failed exchange is tried again by the next call
+        })();
     }
 
     async projects(): Promise<string[]> { return (await (await this.call('GET', '/projects')).json()).projects; }

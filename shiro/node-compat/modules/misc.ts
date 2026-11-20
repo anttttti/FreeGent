@@ -1,4 +1,5 @@
 import type { CommandContext } from '../../commands/index';
+import { deepEqual } from './deep-equal';
 
 export interface MiscDeps {
   ctx: CommandContext;
@@ -30,28 +31,27 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
     };
 
     case 'querystring':
-    case 'node:querystring': return {
-      parse: (str: string) => {
-        const obj: Record<string, string> = {};
-        for (const pair of str.split('&')) {
-          const [k, v] = pair.split('=');
-          if (k) obj[decodeURIComponent(k)] = v ? decodeURIComponent(v) : '';
+    case 'node:querystring': {
+      const dec = (x: string) => { try { return decodeURIComponent(x.replace(/\+/g, ' ')); } catch { return x; } };
+      const enc = (v: any) => encodeURIComponent(typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'bigint' || typeof v === 'boolean' ? String(v) : '');
+      const parse = (str: string, sep = '&', eq = '=') => {
+        const obj: Record<string, any> = Object.create(null);
+        for (const pair of str.split(sep)) {
+          if (!pair) continue;
+          const at = pair.indexOf(eq);
+          const k = dec(at < 0 ? pair : pair.slice(0, at)), v = at < 0 ? '' : dec(pair.slice(at + eq.length));
+          if (k in obj) obj[k] = Array.isArray(obj[k]) ? [...obj[k], v] : [obj[k], v]; else obj[k] = v;
         }
         return obj;
-      },
-      stringify: (obj: Record<string, any>) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&'),
-      encode: (obj: Record<string, any>) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&'),
-      decode: (str: string) => {
-        const obj: Record<string, string> = {};
-        for (const pair of str.split('&')) {
-          const [k, v] = pair.split('=');
-          if (k) obj[decodeURIComponent(k)] = v ? decodeURIComponent(v) : '';
-        }
-        return obj;
-      },
+      };
+      const stringify = (obj: Record<string, any>, sep = '&', eq = '=') => obj && typeof obj === 'object'
+        ? Object.keys(obj).map(k => (Array.isArray(obj[k]) ? obj[k].map((v: any) => `${enc(k)}${eq}${enc(v)}`).join(sep) : `${enc(k)}${eq}${enc(obj[k])}`)).filter(Boolean).join(sep) : '';
+      return {
+        parse, decode: parse, stringify, encode: stringify,
       escape: encodeURIComponent,
       unescape: decodeURIComponent,
-    };
+      };
+    }
 
     case 'string_decoder':
     case 'node:string_decoder': {
@@ -568,17 +568,56 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
 
     case 'assert':
     case 'node:assert': {
-      const assert: any = (value: any, msg?: string) => { if (!value) throw new Error(msg || 'Assertion failed'); };
-      assert.ok = assert;
-      assert.equal = (a: any, b: any, msg?: string) => { if (a != b) throw new Error(msg || `${a} != ${b}`); };
-      assert.strictEqual = (a: any, b: any, msg?: string) => { if (a !== b) throw new Error(msg || `${a} !== ${b}`); };
-      assert.deepEqual = assert.deepStrictEqual = (a: any, b: any, msg?: string) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(msg || 'Deep equal failed'); };
-      assert.notEqual = (a: any, b: any, msg?: string) => { if (a == b) throw new Error(msg || `${a} == ${b}`); };
-      assert.notStrictEqual = (a: any, b: any, msg?: string) => { if (a === b) throw new Error(msg || `${a} === ${b}`); };
-      assert.throws = (fn: Function, msg?: any) => { try { fn(); throw new Error(typeof msg === 'string' ? msg : 'Expected throw'); } catch(e) { /* ok */ } };
-      assert.doesNotThrow = (fn: Function) => { fn(); };
-      assert.fail = (msg?: string) => { throw new Error(msg || 'Assert.fail'); };
-      assert.AssertionError = class extends Error {};
+      const inspect = (v: any) => (getBuiltinModule('util') as any).inspect(v);
+      class AssertionError extends Error {
+        code = 'ERR_ASSERTION'; actual: any; expected: any; operator: string; generatedMessage: boolean;
+        constructor(o: { message?: string | Error; actual?: any; expected?: any; operator?: string }, generated = '') {
+          super(typeof o.message === 'string' ? o.message : generated);
+          this.name = 'AssertionError'; this.actual = o.actual; this.expected = o.expected; this.operator = o.operator ?? '';
+          this.generatedMessage = typeof o.message !== 'string';
+        }
+      }
+      // A message that is an Error is thrown as it is; a string becomes the message.
+      const fail = (msg: any, actual: any, expected: any, operator: string, generated: string): never => {
+        if (msg instanceof Error) throw msg;
+        throw new AssertionError({ message: msg, actual, expected, operator }, generated);
+      };
+      const assert: any = (value: any, msg?: any) => { if (!value) fail(msg, value, true, '==', 'The expression evaluated to a falsy value:\n\n  assert(' + inspect(value) + ')\n'); };
+      assert.ok = (value: any, msg?: any) => { if (!value) fail(msg, value, true, '==', 'The expression evaluated to a falsy value:\n\n  assert.ok(' + inspect(value) + ')\n'); };
+      assert.equal = (a: any, b: any, msg?: any) => { if (!(a == b || (a !== a && b !== b))) fail(msg, a, b, '==', `${inspect(a)} == ${inspect(b)}`); };
+      assert.strictEqual = (a: any, b: any, msg?: any) => { if (!Object.is(a, b)) fail(msg, a, b, 'strictEqual', `Expected values to be strictly equal:\n\n${inspect(a)} !== ${inspect(b)}\n`); };
+      assert.deepEqual = (a: any, b: any, msg?: any) => { if (!deepEqual(a, b, false)) fail(msg, a, b, 'deepEqual', `Expected values to be loosely deep-equal:\n\n${inspect(a)}\n\nshould loosely deep-equal\n\n${inspect(b)}`); };
+      assert.deepStrictEqual = (a: any, b: any, msg?: any) => { if (!deepEqual(a, b, true)) fail(msg, a, b, 'deepStrictEqual', `Expected values to be strictly deep-equal:\n${inspect(a)}\n\nshould equal\n\n${inspect(b)}`); };
+      assert.notEqual = (a: any, b: any, msg?: any) => { if (a == b) fail(msg, a, b, '!=', `${inspect(a)} != ${inspect(b)}`); };
+      assert.notStrictEqual = (a: any, b: any, msg?: any) => { if (Object.is(a, b)) fail(msg, a, b, 'notStrictEqual', `Expected "actual" to be strictly unequal to: ${inspect(b)}`); };
+      assert.notDeepStrictEqual = (a: any, b: any, msg?: any) => { if (deepEqual(a, b, true)) fail(msg, a, b, 'notDeepStrictEqual', `Expected "actual" not to be strictly deep-equal to: ${inspect(b)}`); };
+      assert.notDeepEqual = (a: any, b: any, msg?: any) => { if (deepEqual(a, b, false)) fail(msg, a, b, 'notDeepEqual', `Expected "actual" not to be loosely deep-equal to: ${inspect(b)}`); };
+      // throws(fn[, expected][, message]): expected is a class, a RegExp tested against the error, a validation function or an object of properties
+      assert.throws = (fn: Function, expected?: any, msg?: any) => {
+        let threw = false, err: any;
+        try { fn(); } catch (e) { threw = true; err = e; }
+        if (typeof expected === 'string') { msg = expected; expected = undefined; }
+        if (!threw) fail(msg, undefined, expected, 'throws', 'Missing expected exception.');
+        if (expected === undefined) return;
+        const ok = expected instanceof RegExp ? expected.test(String(err))
+          : typeof expected === 'function' ? (expected.prototype !== undefined && err instanceof expected) || (!(expected.prototype instanceof Error) && expected !== Error && expected.call({}, err) === true)
+          : Object.keys(expected).every(k => expected[k] instanceof RegExp ? expected[k].test(err?.[k]) : deepEqual(err?.[k], expected[k], true));
+        if (!ok) throw err;
+      };
+      assert.doesNotThrow = (fn: Function, _e?: any, msg?: any) => { try { fn(); } catch (e: any) { fail(typeof _e === 'string' ? _e : msg, e, undefined, 'doesNotThrow', `Got unwanted exception.\nActual message: "${e?.message}"`); } };
+      assert.rejects = async (p: any, expected?: any, msg?: any) => {
+        let threw = false, err: any;
+        try { await (typeof p === 'function' ? p() : p); } catch (e) { threw = true; err = e; }
+        if (!threw) fail(typeof expected === 'string' ? expected : msg, undefined, expected, 'rejects', 'Missing expected rejection.');
+        if (expected && typeof expected !== 'string') assert.throws(() => { throw err; }, expected);
+      };
+      assert.doesNotReject = async (p: any) => { await (typeof p === 'function' ? p() : p); };
+      assert.match = (s: any, re: RegExp, msg?: any) => { if (typeof s !== 'string' || !re.test(s)) fail(msg, s, re, 'match', `The input did not match the regular expression ${inspect(re)}. Input:\n\n${inspect(s)}\n`); };
+      assert.doesNotMatch = (s: any, re: RegExp, msg?: any) => { if (typeof s === 'string' && re.test(s)) fail(msg, s, re, 'doesNotMatch', `The input was expected to not match the regular expression ${inspect(re)}. Input:\n\n${inspect(s)}\n`); };
+      assert.ifError = (v: any) => { if (v !== null && v !== undefined) throw v instanceof Error ? v : new AssertionError({ message: 'ifError got unwanted exception: ' + inspect(v), actual: v, operator: 'ifError' }); };
+      assert.fail = (msg?: any) => fail(msg, undefined, undefined, 'fail', 'Failed');
+      assert.AssertionError = AssertionError;
+      assert.strict = assert;
       return assert;
     }
 

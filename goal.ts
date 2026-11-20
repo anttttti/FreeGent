@@ -232,9 +232,14 @@ export function startGoal(text: string, host: GoalHost, opts: StartOptions = {})
 /** What a resume hands back: `done` settles when the loop ends. (A bare promise of a promise would be flattened by `await` and wait for the whole loop.) */
 export interface GoalHandle { done: Promise<GoalRecord> }
 /** `/goal resume`. Null (with a line shown) when there is nothing to resume. */
+let _resuming: { stopped: boolean } | null = null;   // a resume still reading the saved goal: Stop in that gap was lost, and the loop started after it (Y014)
 export async function resumeGoal(host: GoalHost, opts: StartOptions = {}): Promise<GoalHandle | null> {
-    if (_run) { host.notify('A goal is already running.'); return null; }
-    const rec = parseGoal(await host.read().catch(() => null));
+    if (_run || _resuming) { host.notify('A goal is already running.'); return null; }
+    const pending = _resuming = { stopped: false };
+    let text: string | null;
+    try { text = await host.read().catch(() => null); } finally { _resuming = null; }
+    if (pending.stopped) { host.notify('Goal not resumed: stopped. /goal resume starts it again.'); return null; }
+    const rec = parseGoal(text);
     if (!rec) { host.notify('No goal to resume. /goal <what you want done> sets one.'); return null; }
     if (rec.status === 'done') { host.notify(`That goal was already met: ${rec.text}`); return null; }
     // Resuming a goal that ran out of turns gives it a fresh allowance, counted from where it stopped.
@@ -243,6 +248,7 @@ export async function resumeGoal(host: GoalHost, opts: StartOptions = {}): Promi
 }
 /** Stops after the turn in progress (stopNow, if the front end calls it, ends that turn too). */
 export function stopGoal(note = 'stopped'): boolean {
+    if (!_run && _resuming) { _resuming.stopped = true; return true; }
     if (!_run) return false;
     _run.stop = true; _run.stopNote = note; _run.wake?.();
     return true;
@@ -291,4 +297,4 @@ export function parseGoalCommand(arg: string): { op: 'start' | 'resume' | 'statu
 }
 
 /** Test hook: forget a run left by a test. */
-export function _resetGoalForTest(): void { _run = null; }
+export function _resetGoalForTest(): void { _run = null; _resuming = null; }

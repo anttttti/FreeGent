@@ -174,12 +174,15 @@ function parseArchive(buf: Uint8Array): Entry[] {
     if (typeflag === 'K') { longLink = field(body(), 0, size); skip(); continue; }
     if (typeflag === 'x' || typeflag === 'g') {
       if (typeflag === 'x') {
-        const text = dec.decode(body());
-        for (let i = 0; i < text.length;) {            // "<len> key=value\n" records
-          const sp = text.indexOf(' ', i);
-          const len = parseInt(text.slice(i, sp), 10);
-          if (!(len > 0)) break;
-          const rec = text.slice(sp + 1, i + len - 1);
+        // "<len> key=value\n" records, where <len> counts BYTES of the whole record: walk the bytes, decode each record (a multibyte value used to
+        // shift every later record when the length indexed UTF-16 units: W007).
+        const bytes = body();
+        for (let i = 0; i < bytes.length;) {
+          const sp = bytes.indexOf(0x20, i);
+          if (sp < 0) break;
+          const len = parseInt(dec.decode(bytes.subarray(i, sp)), 10);
+          if (!(len > 0) || i + len > bytes.length) break;
+          const rec = dec.decode(bytes.subarray(sp + 1, i + len - 1));
           const eq = rec.indexOf('=');
           if (eq > 0) pax[rec.slice(0, eq)] = rec.slice(eq + 1);
           i += len;

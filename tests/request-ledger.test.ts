@@ -17,7 +17,8 @@ describe('ledgerLine', () => {
     it('ignores records that are not requests and omits fields the server did not report', () => {
         expect(ledgerLine({ type: 'history_snapshot' }, t)).toBeNull();
         expect(ledgerLine(null, t)).toBeNull();
-        expect(ledgerLine({ step: 1, promptTokens: 10, cachedTokens: 0 }, t)).not.toHaveProperty('cachedTokens');
+        expect(ledgerLine({ step: 1, promptTokens: 10 }, t)).not.toHaveProperty('cachedTokens');
+        expect(ledgerLine({ step: 1, promptTokens: 10, cachedTokens: 0 }, t)).toHaveProperty('cachedTokens', 0);   // reported zero is not unreported (Y003)
     });
 });
 

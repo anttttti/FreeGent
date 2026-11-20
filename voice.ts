@@ -2,7 +2,6 @@
 import { KEYS, voiceApivKey } from './storage-keys.js';
 
 let _mediaRecorder: MediaRecorder | null = null;
-let _audioChunks: Blob[]   = [];
 let _speechRec: any        = null;    // the running Web Speech recognizer, so the mic button can stop it (codex R342)
 let _micPending            = false;   // waiting for the microphone permission prompt
 let _micCancelled          = false;   // the button was pressed again during that wait
@@ -107,28 +106,30 @@ async function _startMediaRecorder(key, provider, model) {
     finally { _micPending = false; }
     if (_micCancelled) { _micCancelled = false; stream.getTracks().forEach(t => t.stop()); return; }   // stopped while the permission prompt was open
 
-    _audioChunks = [];
     const owner = _activeChat();   // the chat the recording was made in (codex R481)
-    try { _mediaRecorder = new MediaRecorder(stream); }
+    // This recording's own recorder and chunks: a stop event can arrive after the next recording has started, and must neither read its chunks
+    // nor clear its indicator (explorations Y010, R618).
+    let rec: MediaRecorder;
+    const chunks: Blob[] = [];
+    try { rec = _mediaRecorder = new MediaRecorder(stream); }
     catch (e) {
         stream.getTracks().forEach(t => t.stop()); // release the mic — otherwise it stays hot
         console.error('[voice] MediaRecorder init failed:', e);
         _micNotice('This browser cannot record audio.');
         return;
     }
-    _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
-    _mediaRecorder.onstop = async () => {
+    rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    rec.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        _setMicState(false);
+        if (_mediaRecorder === rec) _setMicState(false);
         // The browser picks the container (WebM, or MP4 on Safari): say what it is, not always WebM (codex R484).
-        const mime = _mediaRecorder?.mimeType || 'audio/webm';
-        const blob = new Blob(_audioChunks, { type: mime });
-        _audioChunks = [];   // the recording is in the Blob now; do not keep a second copy until the next one (codex R485)
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        chunks.length = 0;   // the recording is in the Blob now; do not keep a second copy (codex R485)
         const text = await _apiTranscribe(blob, key, provider, model);
         if (text) _insertVoiceText(text, owner);
         else _micNotice('Transcription failed — nothing was inserted.');
     };
-    _mediaRecorder.start();
+    rec.start();
     _setMicState(true);
 }
 

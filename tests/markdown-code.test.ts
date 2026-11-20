@@ -22,6 +22,12 @@ describe('code stays literal (377/379/381)', () => {
         expect(html).toContain('&lt;svg width="10">');
         expect(html).toContain('&lt;svg>&lt;g/>&lt;/svg>');
     });
+    it('a literal code-slot marker in the text stays literal and does not pull in a snippet (Z016)', () => {
+        const html = W.renderMarkdown('Typed %%FWCODE0%% and %%FWCODE7%% here.\n\n```js\nSNIPPET\n```');
+        expect(html).toContain('%%FWCODE0%%');
+        expect(html).toContain('%%FWCODE7%%');
+        expect(html.match(/SNIPPET/g)).toHaveLength(1);   // the real fence only, not also at the literal marker
+    });
     it('SVG outside code is still an image slot', () => {
         expect(W.renderMarkdown('Look: <svg width="10"><circle r="4"/></svg>')).toContain('md-img-slot');
     });

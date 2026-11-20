@@ -24,6 +24,15 @@ describe('injectIntoHead', () => {
             .toBe('<!doctype html><!-- <head> --><html><head>S<title>t</title></head>');
         expect(injectIntoHead('<!-- <HEAD> --><p>x', 'S')).toBe('<!-- <HEAD> -->S<p>x');
     });
+    it('finds the head the browser finds: not in template, textarea or script text, not in a quoted attribute; a `>` inside a quoted attribute of the head is part of the tag (X008)', () => {
+        const real = '<head><title>t</title></head><body>b</body>';
+        for (const decoy of ['<template><head></template>', '<textarea><head></textarea>', '<script>var s = "<head>";</script>', '<div title="<head>"></div>'])
+            expect(injectIntoHead(`<!doctype html><html>${decoy}${real}`, 'S')).toBe(`<!doctype html><html>${decoy}<head>S<title>t</title></head><body>b</body>`);
+        expect(injectIntoHead('<html><head data-x="a > b"><title>t</title></head>', 'S')).toBe('<html><head data-x="a > b">S<title>t</title></head>');
+        // The policy lands in the live head: the parsed document has the meta in its head.
+        const doc = new DOMParser().parseFromString(injectIntoHead('<!doctype html><template><head></template><head><title>t</title></head><body>b</body>', '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">'), 'text/html');
+        expect(doc.head.querySelector('meta[http-equiv]')).not.toBeNull();
+    });
     it('keeps a BOM, comments before the doctype, and a bare fragment', () => {
         expect(injectIntoHead('﻿<!-- c --><!DOCTYPE html><p>x', 'S')).toBe('﻿<!-- c --><!DOCTYPE html>S<p>x');
         expect(injectIntoHead('<p>fragment</p>', 'S')).toBe('S<p>fragment</p>');

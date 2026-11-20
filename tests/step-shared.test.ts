@@ -42,4 +42,9 @@ describe('summarizeRecentToolCalls', () => {
         expect(out[3]).toBe('- read_file({"path":"f6"}) → result 6');
         expect(summarizeRecentToolCalls([])).toBe('');
     });
+    it('pairs a call with the result that follows its own reply when an id is reused in a later reply (Z012)', () => {
+        const call = (name: string) => ({ role: 'assistant', tool_calls: [{ id: 'call_0', function: { name, arguments: '{}' } }] });
+        const out = summarizeRecentToolCalls([call('read_file'), { role: 'tool', tool_call_id: 'call_0', content: 'first' }, call('list_files'), { role: 'tool', tool_call_id: 'call_0', content: 'second' }] as any[]);
+        expect(out).toBe('- read_file({}) → first\n- list_files({}) → second');
+    });
 });

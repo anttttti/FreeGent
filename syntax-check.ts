@@ -20,7 +20,7 @@ function loadAcorn(): Promise<any> {
 }
 
 // JSON with comments by convention: a strict parse would flag every comment.
-const JSONC_RE = /(^|\/)(tsconfig[^/]*|jsconfig[^/]*|\.eslintrc|devcontainer|settings|launch|tasks|extensions)\.json$|(^|\/)\.vscode\//i;
+export const JSONC_RE = /(^|\/)(tsconfig[^/]*|jsconfig[^/]*|\.eslintrc|devcontainer|settings|launch|tasks|extensions)\.json$|(^|\/)\.vscode\//i;
 
 type Loc = { line: number; column: number } | null;   // 1-based line, 0-based column
 

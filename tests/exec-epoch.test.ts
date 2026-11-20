@@ -30,4 +30,12 @@ describe('stale-run guard across project replacement', () => {
         bumpWorkspaceEpoch();
         expect(Number(localStorage.getItem(WORKSPACE_EPOCH_KEY))).toBeGreaterThan(before);
     });
+    it('still advances for this tab when the write of the new epoch fails (full storage), so a late write is refused (N010)', async () => {
+        const snap = snapshotWorkspace(recs);
+        const real = Storage.prototype.setItem;
+        Storage.prototype.setItem = () => { throw new DOMException('full', 'QuotaExceededError'); };
+        try { bumpWorkspaceEpoch(); } finally { Storage.prototype.setItem = real; }
+        const stale = await staleGuard(snap, new Set(), async () => recs);
+        expect(stale('new.txt')).toBe(true);
+    });
 });

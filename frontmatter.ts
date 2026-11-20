@@ -1,7 +1,7 @@
 // The one place that reads and writes `---` front matter (tasks, skills, rules, QA status). Reading and writing used to be
 // scattered over config.ts, tasks.ts, qa.ts, skills.ts and workers.ts, each with its own quote handling and its own regex
 // (codex report 8, cases 207-209). Values go through yaml-scalar.ts both ways.
-import { fmQuote, fmUnquote } from './yaml-scalar.js';
+import { fmQuote, fmQuoteText, fmUnquote } from './yaml-scalar.js';
 
 const FM_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/;
 
@@ -38,7 +38,8 @@ export function parseFrontmatter(content: string): Record<string, string> {
     return s ? parseFmLines(s.lines) : {};
 }
 
-const _line = (k: string, v: unknown, quote: boolean) => `${k}: ${quote ? fmQuote(String(v)) : String(v)}`;
+// A title that looks like a number or a date is quoted: an external YAML read, edit and write turned 007 into 7 (explorations N002).
+const _line = (k: string, v: unknown, quote: boolean) => `${k}: ${quote ? (k === 'title' ? fmQuoteText : fmQuote)(String(v)) : String(v)}`;
 
 /** Sets fields in a block's lines. The first line of a key is rewritten in place, its duplicates are dropped, other lines
  *  (comments, unknown keys) stay. A key that is not there yet is added at the end, or at the top with `missing: 'top'`. */

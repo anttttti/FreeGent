@@ -917,9 +917,12 @@ window._htmlToMarkdown = _htmlToMarkdown;
 
 // Re-render the WebUI queue panel whenever the queue changes, and auto-interrupt
 // the current turn if the head of the queue is promoted to 'steering'.
+// A queued message belongs to the chat it was written in (a legacy unowned one to any): another chat's head neither runs nor steers here (codex R114, D027).
+const _queuedHere = (m?: { chatId?: string | null } | null): boolean => !m?.chatId || !activeChatId || m.chatId === activeChatId;
 MsgQueue.subscribe(() => {
     _renderQueuePanel();
-    if (agentStreaming && MsgQueue.peek()?.mode === 'steering') {
+    const head = MsgQueue.peek();
+    if (agentStreaming && head?.mode === 'steering' && _queuedHere(head)) {
         setSoftStopPending(true);
         activeAbortController?.abort();
     }
@@ -991,7 +994,7 @@ async function _processQueue(): Promise<void> {
     const head = MsgQueue.peek();
     if (!head) return;
     // A message belongs to the chat it was written in; with another chat open it stays parked instead of becoming a request there (codex R114).
-    if (head.chatId && activeChatId && head.chatId !== activeChatId) return;
+    if (!_queuedHere(head)) return;
     // The same cross-tab rule as a direct Send: a turn in a chat another tab is running would overwrite its history. The message stays queued and is tried again (codex R113).
     const leaseChat = activeChatId as string | null;
     if (!acquireChatLease(leaseChat) && (await chatLeaseHolderAlive(leaseChat) || !acquireChatLease(leaseChat))) { setTimeout(() => _processQueue(), 3000); return; }
@@ -2006,7 +2009,7 @@ async function _runAgentTurn(prompt: string, container: HTMLElement | null = nul
  *  the box is sent as one. A running /goal takes it as guidance for its next turn. Returns what was steered, for the caller's notice. */
 function steerNextQueued(composerText = ''): { did: 'queued' | 'composer' | 'goal' | 'none'; text: string } {
     const text = composerText.trim();
-    const items = MsgQueue.getAll();
+    const items = MsgQueue.getAll().filter(_queuedHere);
     const target = items.find(m => m.mode !== 'steering');
     if (target) {
         while (MsgQueue.getAll()[0]?.id !== target.id) MsgQueue.move(target.id, -1);   // steering acts when the message reaches the head

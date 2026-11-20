@@ -259,11 +259,15 @@ export function renderMarkdown(text: any): any {
     // and put back before marked sees the text. Otherwise an SVG or `$$x$$` shown as source was replaced by its rendering or by
     // an internal slot (codex 377/379/381).
     const _codeParts: string[] = [];
+    // The slots carry a token that is not in the text, so a literal "%%FWCODE0%%" the author wrote stays literal (it was deleted or rebound to a snippet: Z016).
+    const _src: string = typeof text === 'string' ? text : String(text ?? '');
+    let _nonce = '';
+    do { _nonce = Math.random().toString(36).slice(2, 8); } while (_src.includes(_nonce));
     {
-        let s: string = typeof text === 'string' ? text : String(text ?? '');
-        s = s.replace(/(^|\n)(([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]{0,3}\4[`~]*[ \t]*(?=\n|$)|$))/g, (_m, nl, block) => `${nl}%%FWCODE${_codeParts.push(block) - 1}%%`);
+        let s: string = _src;
+        s = s.replace(/(^|\n)(([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]{0,3}\4[`~]*[ \t]*(?=\n|$)|$))/g, (_m, nl, block) => `${nl}%%FWCODE${_nonce}_${_codeParts.push(block) - 1}%%`);
         // Indented code: a run of 4-space/tab lines after a blank line (or the start), not inside a list item's continuation.
-        s = s.replace(/(^|\n[ \t]*\n)((?:(?: {4}|\t)[^\n]*(?:\n|$)(?:[ \t]*\n(?=(?: {4}|\t)))*)+)/g, (_m, pre, block) => `${pre}%%FWCODE${_codeParts.push(block.replace(/\n+$/, '')) - 1}%%${/\n$/.test(block) ? '\n' : ''}`);
+        s = s.replace(/(^|\n[ \t]*\n)((?:(?: {4}|\t)[^\n]*(?:\n|$)(?:[ \t]*\n(?=(?: {4}|\t)))*)+)/g, (_m, pre, block) => `${pre}%%FWCODE${_nonce}_${_codeParts.push(block.replace(/\n+$/, '')) - 1}%%${/\n$/.test(block) ? '\n' : ''}`);
         // Inline code spans may run over line ends, but not over a blank line (CommonMark): pair each backtick run with the next
         // run of the same length.
         {
@@ -281,13 +285,13 @@ export function renderMarkdown(text: any): any {
                     k = r;
                 }
                 if (end < 0 || /\n[ \t]*\n/.test(s.slice(j, end))) { out += run; i = j; continue; }
-                out += `%%FWCODE${_codeParts.push(s.slice(i, end)) - 1}%%`; i = end;
+                out += `%%FWCODE${_nonce}_${_codeParts.push(s.slice(i, end)) - 1}%%`; i = end;
             }
             s = out;
         }
         text = s;
     }
-    const _restoreCode = (t: string): string => t.replace(/%%FWCODE(\d+)%%/g, (_, i) => _codeParts[+i] ?? '');
+    const _restoreCode = (t: string): string => t.replace(new RegExp(`%%FWCODE${_nonce}_(\\d+)%%`, 'g'), (_, i) => _codeParts[+i] ?? '');
 
     // Step 0: Pre-render math expressions before marked.parse so that $$ / \( delimiters
     // are not escaped as text.  Rendered HTML is stashed and restored after DOMPurify.
@@ -298,21 +302,21 @@ export function renderMarkdown(text: any): any {
         s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
             try {
                 const html = katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false });
-                return `<div class="fg-math-block">%%FWMATH${_mathParts.push(html) - 1}%%</div>`;
+                return `<div class="fg-math-block">%%FWMATH${_nonce}_${_mathParts.push(html) - 1}%%</div>`;
             } catch { return `$$${expr}$$`; }
         });
         // Block math: \[...\]
         s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => {
             try {
                 const html = katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false });
-                return `<div class="fg-math-block">%%FWMATH${_mathParts.push(html) - 1}%%</div>`;
+                return `<div class="fg-math-block">%%FWMATH${_nonce}_${_mathParts.push(html) - 1}%%</div>`;
             } catch { return `\\[${expr}\\]`; }
         });
         // Inline math: \(...\)
         s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => {
             try {
                 const html = katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false });
-                return `<span class="fg-math-inline">%%FWMATH${_mathParts.push(html) - 1}%%</span>`;
+                return `<span class="fg-math-inline">%%FWMATH${_nonce}_${_mathParts.push(html) - 1}%%</span>`;
             } catch { return `\\(${expr}\\)`; }
         });
         text = s;
@@ -394,16 +398,17 @@ export function renderMarkdown(text: any): any {
             // At Local privacy a remote image would be fetched by the browser itself, which the fetch guard cannot see: its address and the URL's query go to a public host (codex R912).
             const local = typeof DOMPurify !== 'undefined' && getPrivacyLevel() === 'local';
             if (local) DOMPurify.addHook('afterSanitizeAttributes', _dropRemoteMedia);
+            // data-tab-name marks the step panes the saved copy may trim (request-trim.ts): message HTML cannot carry it (Z015).
             let html: string;
             try {
                 html = (typeof DOMPurify !== 'undefined')
-                    ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
+                    ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'], FORBID_ATTR: ['data-tab-name'] })
                     : escapeHtml(raw);
             } finally { if (local) DOMPurify.removeHook('afterSanitizeAttributes'); }
             html = html.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=');
             // Restore pre-rendered math (%%FWMATH0%% placeholders survive DOMPurify as text)
             if (_mathParts.length) {
-                html = html.replace(/%%FWMATH(\d+)%%/g, (_, i) => _mathParts[+i] ?? '');
+                html = html.replace(new RegExp(`%%FWMATH${_nonce}_(\\d+)%%`, 'g'), (_, i) => _mathParts[+i] ?? '');
             }
             return html;
         } catch {}

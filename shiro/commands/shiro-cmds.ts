@@ -12,7 +12,7 @@ const rmCmd: Command = {
   description: 'Remove files or directories',
   async exec(ctx) {
     let recursive = false;
-    let force = false;
+    let force = false, verbose = false;
     const files: string[] = [];
     let options = true;
     for (const arg of ctx.args) {
@@ -21,6 +21,7 @@ const rmCmd: Command = {
       if (options && arg.startsWith('-') && arg !== '-') {
         if (arg === '--recursive' || /^-[^-]*[rR]/.test(arg)) recursive = true;
         if (arg === '--force' || /^-[^-]*f/.test(arg)) force = true;
+        if (arg === '--verbose' || /^-[^-]*v/.test(arg)) verbose = true;
       } else {
         files.push(arg);
       }
@@ -32,12 +33,15 @@ const rmCmd: Command = {
     // Every operand is tried, as rm does; -f hides only "No such file" (codex R283: it hid every failure, so rm -rf reported success while files remained).
     let status = 0;
     for (const f of files) {
+      // GNU rm: an empty operand does not exist, and '.' / '..' (also as the last component) are refused.
+      if (f === '') { if (!force) { ctx.stderr += `rm: cannot remove '': No such file or directory\n`; status = 1; } continue; }
+      if (/(^|\/)\.\.?\/?$/.test(f)) { ctx.stderr += `rm: refusing to remove '.' or '..' directory: skipping '${f}'\n`; status = 1; continue; }
       const resolved = ctx.fs.resolvePath(f, ctx.cwd);
       if (!(await ctx.fs.exists(resolved))) {
         if (force) continue;
         ctx.stderr += `rm: cannot remove '${f}': No such file or directory\n`; status = 1; continue;
       }
-      try { await ctx.fs.rm(resolved, { recursive }); }
+      try { await ctx.fs.rm(resolved, { recursive }); if (verbose) ctx.stdout += `removed '${f}'\n`; }
       catch (e: any) {
         if (force && (e?.code === 'ENOENT' || /ENOENT|no such file/i.test(String(e?.message)))) continue;
         ctx.stderr += `rm: cannot remove '${f}': ${e?.message ?? e}\n`; status = 1;

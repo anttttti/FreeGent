@@ -7,7 +7,8 @@ import { isTestEditProtected } from '../tools.ts';
 // A product run (browser, TUI, a user's CLI call) loads no benchmark policy: the FG_* switches change nothing there.
 // tests/setup.js installs it for the other test files; here we take it out and put it back.
 const names = () => COMPLETION_GATES.map(g => g.name);
-afterEach(() => { delete process.env.FG_EDIT_REQUIRED; delete process.env.FG_CHANGE_REQUIRED; delete process.env.FG_PROTECT_TESTS; installBenchPolicy(); });
+let afterEachRestore = () => {};
+afterEach(() => { afterEachRestore(); afterEachRestore = () => {}; delete process.env.FG_EDIT_REQUIRED; delete process.env.FG_CHANGE_REQUIRED; delete process.env.FG_PROTECT_TESTS; installBenchPolicy(); });
 
 const ctx = (over: any = {}) => ({
     text: 'Done.\nCOMPLETED', step: 3, loopMax: 40, softStopPending: false, ps: {}, workflowMode: false,
@@ -43,6 +44,19 @@ describe('task policy', () => {
         expect(hit?.name).toBe('no_edit_complete');
         process.env.FG_PROTECT_TESTS = '1';
         expect(benchPolicyRequested()).toBe(true);
+    });
+
+    it('the test-file gate reads the path under every name the writers accept (AG-C02)', async () => {
+        await import('../tools.ts');
+        installBenchPolicy();
+        process.env.FG_PROTECT_TESTS = '1';
+        const W: any = window, prev = W.nativeExec;
+        W.nativeExec = async () => ({});   // the policy applies to headless runs only
+        afterEachRestore = () => { W.nativeExec = prev; };
+        for (const key of ['path', 'filename', 'file', 'filepath']) {
+            const r = await (window as any).executeToolAsync('write_file', { [key]: 'tests/test_x.py', content: 'x' }, null);
+            expect(r.error, key).toMatch(/Editing test files is not reflected in the grade/);
+        }
     });
 
     it('uninstalling restores the product state', () => {

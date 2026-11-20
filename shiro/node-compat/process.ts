@@ -21,6 +21,7 @@ export function createFakeProcess(
     ...ctx.env,
     MCP_CONNECTION_NONBLOCKING: '1',
   };
+  delete processEnv['__PIPE_STDIN'];   // the piped text is not an environment variable (K004)
 
   const fp: any = {
     env: processEnv,
@@ -134,7 +135,7 @@ export function createFakeProcess(
 
   // Add exitCode as a getter/setter (CLI reads and writes process.exitCode)
   Object.defineProperty(fp, 'exitCode', {
-    get: () => _st.exitCalled ? _st.exitCode : undefined,
+    get: () => _st.exitCalled || _st.exitCode !== 0 ? _st.exitCode : undefined,
     set: (v: number | undefined) => { if (v !== undefined) _st.exitCode = v; },
     configurable: true,
     enumerable: true,

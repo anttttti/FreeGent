@@ -6,6 +6,7 @@ import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 import { parseExpectations } from './page-expect.js';
 import { execTimeoutMs } from './exec-limits.js';
+import { decodeTextBytes } from './text-decode.js';
 import { runtime } from './runtime.js';
 import { MAY_WRITE_TOOLS, CONTENT_ARG_TOOLS, isFileWriteTool } from './tool-effects.js';
 import { annotateUrl, blacklistAdd, blacklistRemove, stripUnavailable } from './fetch-blacklist.js';
@@ -1700,7 +1701,8 @@ async function _handleReadFile(args, context) {
         // The worker's own base64 write, held for commit: read it back as the committed record would read (text when it is text).
         if (context.binary?.has(path) && !context.staging.has(path)) {
             let text: string | null = null;
-            try { const bin = atob(String(context.binary.get(path) ?? '')); const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0)); text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = null; }
+            // decodeTextBytes, the committed record's reader: a UTF-16 file with a BOM or a Windows-1252 one is text before the commit as after it (Y012).
+            try { const bin = atob(String(context.binary.get(path) ?? '')); text = decodeTextBytes(Uint8Array.from(bin, ch => ch.charCodeAt(0))); } catch { text = null; }
             if (text === null || text.includes('\0')) return { error: `binary file: ${path} was written as binary by this worker (staged, ${_base64Len(String(context.binary.get(path)))} bytes)`, hint: 'do not read binary files as text' };
             return _checkBinary(path, text) ?? _ret(path, text, _sliceLines(text, sl, el));
         }
@@ -1718,9 +1720,7 @@ async function _handleReadFile(args, context) {
             const content = await agentReadFile(path);
             return _checkBinary(path, content) ?? _imgPreview(path, content) ?? _ret(path, content, _sliceLines(content, sl, el));
         } catch (e) {
-            if (/\bledger\b|\bprogress\.md$/.test(path || '')) {
-                return _ret(path, '', '');
-            }
+            if (_missingLedger(path, e)) return _ret(path, '', '');
             return { error: e.message };
         }
     }
@@ -1731,12 +1731,14 @@ async function _handleReadFile(args, context) {
     } catch (e) {
         // Ledger/progress files may not exist yet — return empty content so the agent
         // can continue without treating a missing ledger as a blocking error.
-        if (/\bledger\b|\bprogress\.md$/.test(args.path || '')) {
-            return _ret(args.path, '', '');
-        }
+        if (_missingLedger(args.path, e)) return _ret(args.path, '', '');
         return { error: e.message };
     }
 }
+
+// A ledger or progress file that is not there yet reads as empty; one that exists and cannot be read (permission, directory, binary) is an error,
+// not an empty file (explorations Y015).
+const _missingLedger = (path: string | undefined, e: any): boolean => /\bledger\b|\bprogress\.md$/.test(path || '') && /not found|ENOENT|no such file/i.test(String(e?.message ?? ''));
 
 // A write_file that lost its path is refused with its content kept for the rest of the turn: the model re-sent the whole body (5-12k characters each, 15 times in one run) just
 // to add the path. A second call that names the path and no content writes what was kept (benchmark analysis v0.97 §6.1).
@@ -3387,9 +3389,11 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
     }
 
     // SWE-bench test-file gate (benchmark policy, see isTestEditProtected) — must precede write-tool dispatch.
+    // The path under any name the writers accept (AG-C02: `filename` slipped past a gate that read only `path`).
+    const _gatePath = args.path ?? args.filename ?? args.file ?? args.filepath;
     if (CONTENT_ARG_TOOLS.has(name) &&
-        isTestEditProtected(args.path))
-        return _testEditRefusal(args.path);
+        isTestEditProtected(_gatePath))
+        return _testEditRefusal(_gatePath);
 
     // Experiment edit_assist: text the model wrote counts as text it has seen (A/B 2026-10-31: flask-5063, astropy-7746 missed a
     // close match because the region held the model's own earlier edit, never read back).

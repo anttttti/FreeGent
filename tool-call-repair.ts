@@ -37,14 +37,74 @@ const _LANG_CANON: Record<string, string> = { sh: 'bash', python3: 'python', js:
 const _META = new Set(['language', 'lang', 'type', 'description', 'name', 'run_if', 'timeout']);
 const _VALID_LANGS = new Set(['bash', 'python', 'javascript', 'sql']);
 
-// Deterministic repair of fence-wrapped JSON arguments (```json ... ```). ONLY the
-// fence strip — regex fixes for python literals or trailing commas would also mutate
-// matching text INSIDE string values (e.g. write_file content containing Python code),
-// producing parseable-but-corrupted args. Irreparable → null; the caller nudges.
+// A Python-style dict (single quotes, True/False/None) as a JSON object string, by parsing it: a string is read whole, so a quote inside one is data. The global
+// replace of ' by " that stood in stream-decode.ts turned `{'code': 'print("hi")'}` into text no parser reads, and the call then ran with {}, which the loop counted as
+// the model sending nothing (explorations AG002). Null when it is not a plain dict.
+export function pythonDictToJson(src: string): string | null {
+    let i = 0;
+    const n = src.length;
+    const fail = () => { throw new Error('not a python dict'); };
+    const ws = () => { while (i < n && /\s/.test(src[i])) i++; };
+    const str = (): string => {
+        const q = src[i++]; let out = '';
+        while (i < n) {
+            const c = src[i++];
+            if (c === q) return out;
+            if (c !== '\\') { out += c; continue; }
+            const e = src[i++];
+            if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i, i + 4))) { out += String.fromCharCode(parseInt(src.slice(i, i + 4), 16)); i += 4; }
+            else if (e === 'x' && /^[0-9a-fA-F]{2}$/.test(src.slice(i, i + 2))) { out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16)); i += 2; }
+            else out += e === 'n' ? '\n' : e === 't' ? '\t' : e === 'r' ? '\r' : e === '0' ? '\0' : e;
+        }
+        return fail() as never;
+    };
+    const value = (): any => {
+        ws();
+        const c = src[i];
+        if (c === '{') {
+            i++; const o: Record<string, any> = {};
+            for (;;) { ws(); if (src[i] === '}') { i++; return o; } if (src[i] !== "'" && src[i] !== '"') fail(); const k = str(); ws(); if (src[i++] !== ':') fail(); o[k] = value(); ws(); if (src[i] === ',') i++; else if (src[i] !== '}') fail(); }
+        }
+        if (c === '[') {
+            i++; const a: any[] = [];
+            for (;;) { ws(); if (src[i] === ']') { i++; return a; } a.push(value()); ws(); if (src[i] === ',') i++; else if (src[i] !== ']') fail(); }
+        }
+        if (c === "'" || c === '"') return str();
+        const m = /^(?:-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|True|False|None|true|false|null)/.exec(src.slice(i));
+        if (!m) return fail();
+        i += m[0].length;
+        return m[0] === 'True' || m[0] === 'true' ? true : m[0] === 'False' || m[0] === 'false' ? false : m[0] === 'None' || m[0] === 'null' ? null : Number(m[0]);
+    };
+    try {
+        ws();
+        if (src[i] !== '{') return null;
+        const v = value(); ws();
+        return i === n ? JSON.stringify(v) : null;
+    } catch { return null; }
+}
+
+// Raw control characters (a literal newline in a code or file argument) inside the double-quoted strings of otherwise valid JSON, which RFC 8259 forbids and
+// JSON.parse refuses: escaped in place, outside strings untouched (a string-aware scan, not a global replace).
+function _escapeControlsInStrings(s: string): string {
+    let out = '', inStr = false, esc = false;
+    for (const c of s) {
+        if (inStr && !esc && c.charCodeAt(0) < 0x20) { out += c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'); continue; }
+        out += c;
+        if (esc) esc = false; else if (inStr && c === '\\') esc = true; else if (c === '"') inStr = !inStr;
+    }
+    return out;
+}
+
+// Deterministic repair of arguments that are not valid JSON: a fence around them (```json ... ```), a Python-style dict, raw control characters inside strings. Each is a
+// parse, never a regex over the text: a global fix of quotes or newlines would also change matching text INSIDE string values (e.g. write_file content holding
+// Python code), producing parseable-but-corrupted args. Irreparable → null; the caller nudges.
 export function _repairJsonArgs(s: string): string | null {
     const t = s.trim().replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    if (t === s.trim()) return null;
-    try { const v = JSON.parse(t); return v && typeof v === 'object' && !Array.isArray(v) ? t : null; } catch { return null; }   // a fenced array or null is as bad as a plain one
+    const isObj = (v: any) => !!v && typeof v === 'object' && !Array.isArray(v);   // a fenced array or null is as bad as a plain one
+    if (t !== s.trim()) { try { if (isObj(JSON.parse(t))) return t; } catch {} }
+    const escaped = _escapeControlsInStrings(t);
+    if (escaped !== t) { try { if (isObj(JSON.parse(escaped))) return escaped; } catch {} }
+    return pythonDictToJson(t);
 }
 
 // Malformed JSON arguments on raw OAI tool_calls: fence-wrapped args are repaired in
@@ -194,6 +254,17 @@ export function _repairExecCodeArgs(normCalls: any[]): boolean {
     return emptyCode;
 }
 
+// A tag shown as an example is text about a call, not a call: `<delete_file>{…}</delete_file>` quoted in an explanation used to run (codex R537), and
+// the text a model quotes comes from pages and files it read. Masked with spaces, so offsets stay: fenced blocks (``` or ~~~, any marker length, closed or
+// running to the end), blockquote and table lines, backtick spans of any length. Shared by the XML and Longcat parsers (explorations K021).
+export function maskQuotedCode(text: string): string {
+    const blank = (m: string) => m.replace(/[^\n]/g, ' ');
+    return text
+        .replace(/^[ ]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ ]{0,3}\1[`~]*[ \t]*$|(?![\s\S]))/gm, blank)
+        .replace(/(`+)[^`][\s\S]*?\1(?!`)|`[^`\n]*`/g, blank)
+        .replace(/^(?:[ \t]*>[^\n]*|[ \t]*\|[^\n]*)$/gm, blank);   // not indented lines: a call's pretty-printed JSON body is indented
+}
+
 // Parse XML-format pseudo-tool-calls from plain-text assistant responses.
 // Handles two formats:
 //   1. JSON-body:  <tool_name>{json}</tool_name> or <tool_name>\n{json}
@@ -203,9 +274,7 @@ export function _repairExecCodeArgs(normCalls: any[]): boolean {
 // Returns array of {name, args} for direct execution, or null if none found.
 export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
     if (!toolNames?.length) return null;
-    // A tag shown as an example (inside a fenced block or `inline code`) is text about a call, not a call: `<delete_file>{…}</delete_file>` quoted in an
-    // explanation used to run (codex R537). Masked with spaces so the offsets stay.
-    text = text.replace(/```[\s\S]*?```|`[^`\n]*`/g, m => m.replace(/[^\n]/g, ' '));
+    text = maskQuotedCode(text);
     const nameRe = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const openRe = new RegExp(`<(${nameRe})>`, 'gi');
     const results: Array<{name: string; args: any}> = [];
@@ -256,6 +325,7 @@ export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null):
 // Unknown tool names are skipped. Returns [{name, args}] or null.
 export function _repairLongcatPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
     if (!toolNames?.length || !text.includes('<longcat_tool_call>')) return null;
+    text = maskQuotedCode(text);
     const results: Array<{name: string; args: any}> = [];
     const callRe = /<longcat_tool_call>\s*([\w.-]+)([\s\S]*?)(?:<\/longcat_tool_call>|$)/g;
     let m: RegExpExecArray | null;

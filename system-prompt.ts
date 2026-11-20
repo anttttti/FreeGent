@@ -116,12 +116,9 @@ export function _buildDeviceContext(): string {
  * Saved JS source is the full body_fn.toString() edited and saved via Settings → Roles: its function body is run so it has
  * the window globals (enabledTools, rolesRegistry, isToolActive …) exactly like body_fn does.
  */
-export function parallelHintBlock(workers: boolean): string {
+export function parallelHintBlock(): string {
     return `\n## Batching calls
-Every reply is one turn, and the whole conversation is sent again each turn. Put independent calls in the same reply: they run together and all results come back before your next turn.
-- Batch: read_file for each file you already know you need; search_workspace for several different names (or one pattern with "a|b"); list_files with repo_map${workers ? '; several run_workers agents for subtasks that do not need each other\'s results (up to 8, each task written out in full)' : ''}.
-- Do not batch: a call that needs an earlier result (a path a search found, an edit based on what a read showed), or a check that must see an edit made in the same reply.
-Example: to compare three modules, send three read_file calls in one reply, not three replies.`;
+Put independent calls in the same reply (for example several read_file calls); they run together and save turns.`;
 }
 
 // Experiment lean_change: the smallest complete change (adapted from the "ponytail" lazy-senior-dev prompt, 2026-11-18). Round-two refcompare: the agent's
@@ -237,7 +234,7 @@ export function buildSystemPrompt(): string {
         ? browserPromptGuidance((n: string) => !mainAgentRole.tools || mainAgentRole.tools.has(n)) : '';
     // Experiment parallel_hint: why and how to put independent calls in one reply (the role bodies carry one terse line; local models made
     // 1 call per step in 22,331 SWE-bench steps, 27% of them read-only).
-    const _batchCtx = runtime.experiment('parallel_hint') ? parallelHintBlock(enabledTools.has('run_workers')) : '';
+    const _batchCtx = runtime.experiment('parallel_hint') ? parallelHintBlock() : '';
     const _leanCtx = runtime.experiment('lean_change') ? leanChangeBlock() : '';
     return `${_browserCtx}${_mrBody}${_envCtx}${_wsCtx}${_spNote}${_mediaCtx}${_honesty}${_tplCtx}${_deviceCtx}${_skillsCtx}${_mcpCtx}${_coworkCtx}${_coworkSummary}${_batchCtx}${_leanCtx}${_dateCtx}`;
 }

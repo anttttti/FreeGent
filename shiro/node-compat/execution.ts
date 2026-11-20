@@ -284,7 +284,9 @@ export async function executeNodeScript(
           catch (e: any) { if (!e?._isProcessExit) throw e; }
           finally {
             _activeTimers--;
-            if (_activeTimers <= 0 && _timersResolve) { _timersResolve(); _timersResolve = null; _timersDone = null; }
+            // The awaiting code continues in a microtask and may start the next timer: look again after the microtasks ran
+            // (`await sleep(5); log(1); await sleep(1); log(2)` stopped after 1)
+            _prevST(() => { if (_activeTimers <= 0 && _timersResolve) { _timersResolve(); _timersResolve = null; _timersDone = null; } }, 0);
           }
         }, ms);
         _timerIds.add(id);
@@ -372,7 +374,7 @@ export async function executeNodeScript(
           if (pendingPromises.length) await Promise.all(pendingPromises.splice(0));
           quiet = _fetchesInFlight === 0 && _activeTimers <= 0 ? quiet + 1 : 0;
         }
-        return _st.exitCalled ? _st.exitCode : 0;
+        return _st.exitCode;   // 0, or what `process.exitCode = n` set
       })();
       try {
         const waitCode = await Promise.race([deferredExitPromise, deferredTimeout, idle]);
@@ -382,6 +384,11 @@ export async function executeNodeScript(
           _st.exitCode = e.code;
         }
       }
+    }
+
+    // A script that ran to the end fires 'exit' too (process.exit() did it already): `process.on("exit", c => …)` printed nothing
+    if (!_st.exitCalled && processEvents['exit']?.length) {
+      try { processEvents['exit'].forEach(fn => fn(_st.exitCode ?? 0)); } catch { /* a throwing handler does not change the output so far */ }
     }
 
     // Flush output

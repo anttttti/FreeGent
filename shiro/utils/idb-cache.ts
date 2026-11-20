@@ -19,7 +19,7 @@ export function idbCache(open: () => Promise<IDBDatabase>) {
   async function get<T>(store: string, key: string): Promise<T | null> {
     try {
       const db = await open();
-      return new Promise((resolve) => {
+      return await new Promise((resolve) => {
         const tx = db.transaction(store, 'readonly');
         const req = tx.objectStore(store).get(key);
         req.onsuccess = () => resolve(req.result ?? null);
@@ -34,7 +34,7 @@ export function idbCache(open: () => Promise<IDBDatabase>) {
   async function write(store: string, run: (s: IDBObjectStore) => IDBRequest): Promise<void> {
     try {
       const db = await open();
-      return new Promise((resolve, reject) => {
+      return await new Promise((resolve, reject) => {
         const tx = db.transaction(store, 'readwrite');
         const req = run(tx.objectStore(store));
         req.onerror = () => reject(req.error);
@@ -52,7 +52,7 @@ export function idbCache(open: () => Promise<IDBDatabase>) {
   async function keys(store: string): Promise<string[]> {
     try {
       const db = await open();
-      return new Promise((resolve) => {
+      return await new Promise((resolve) => {
         const tx = db.transaction(store, 'readonly');
         const req = tx.objectStore(store).getAllKeys();
         req.onsuccess = () => resolve((req.result as string[]) || []);

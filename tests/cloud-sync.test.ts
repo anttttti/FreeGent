@@ -60,6 +60,18 @@ describe('/sync on the Worker', () => {
         await expect(setup().client.projects()).resolves.toEqual([]);
         await expect(setup().env && new CloudSyncClient('https://w.test', 'wrong', (async (u: any, i: any) => worker.fetch(new Request(String(u), i), { FG_DEV_KEY: 'pw', FG_SYNC: new FakeR2() })) as typeof fetch).projects()).rejects.toMatchObject({ status: 401 });
     });
+    it('parallel calls share one token exchange, and a failed exchange is tried again (X002)', async () => {
+        const { client } = setup(), f = (client as any).doFetch;
+        let auths = 0;
+        (client as any).doFetch = (async (u: any, i: any) => { if (String(u).endsWith('/sync/auth')) auths++; return f(u, i); }) as typeof fetch;
+        await Promise.all([1, 2, 3, 4].map(n => client.putBlob('proj', 'a'.repeat(63) + n, bytes('x')).catch(() => {})));   // the hash is wrong: 400 after the token worked
+        expect(auths).toBe(1);
+        const bad = new CloudSyncClient('https://w.test', 'wrong', (client as any).doFetch);
+        await Promise.all([bad.projects().catch(() => {}), bad.projects().catch(() => {})]);
+        const after = auths; (bad as any).devKey = 'pw';
+        await expect(bad.projects()).resolves.toEqual([]);   // the failure did not stay as the shared promise
+        expect(auths).toBeGreaterThan(after);
+    });
     it('stores blobs by hash, refuses a wrong hash, and swaps the manifest with a compare-and-swap', async () => {
         const { client } = setup();
         const data = bytes('hello'), h = await sha256Hex(data);

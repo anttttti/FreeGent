@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmQuote, fmUnquote } from '../yaml-scalar.ts';
+import { fmQuote, fmQuoteText, fmUnquote } from '../yaml-scalar.ts';
 
 const rt = (t: string) => fmUnquote(fmQuote(t));
 
@@ -18,6 +18,11 @@ describe('front-matter title scalars (codex report 8, cases 207-209)', () => {
         expect(fmQuote('Fix#12')).toBe('Fix#12');
         expect(fmQuote('a #b')).toBe('"a #b"');
         expect(fmQuote('No')).toBe('"No"');   // a YAML reader would take it for false
+        expect(fmQuote('007')).toBe('007');   // ids keep their plain spelling
+        for (const n of ['2026', '007', '1e3', '0x1f', '3.14', '1_000', '.inf', '2026-11-20', '2026-11-20T10:00:00Z']) expect(fmQuoteText(n), n).toBe(`"${n}"`);   // a number or date to a reader (N002)
+        expect(fmQuoteText('2026 plan')).toBe('2026 plan');
+        expect(fmQuoteText('v1.2')).toBe('v1.2');
+        expect(fmQuoteText('Fix #12')).toBe('"Fix #12"');
         expect(fmQuote('Notes')).toBe('Notes');
     });
     it('reads literal boundary punctuation and old files', () => {

@@ -124,7 +124,7 @@ export function loadInCheckWindow(path: string, content: string, onFrame: (d: an
     ch.postMessage({ kind: 'load', id, path, content });
     return {
         send: data => ch.postMessage({ kind: 'to-frame', id, data }),
-        close: () => { _onFrame = null; ch.postMessage({ kind: 'unload', id }); },
+        close: () => { if (id === _loadId) _onFrame = null; ch.postMessage({ kind: 'unload', id }); },   // an older session closing late must not drop the newer one's callback
     };
 }
 

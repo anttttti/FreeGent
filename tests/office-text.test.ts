@@ -32,6 +32,15 @@ describe('office-text', () => {
         ]);
         expect(pptxSlides(zip)).toEqual(['Title\nBody <1>', 'Second & more', 'Last']);
     });
+    it('ignores XML comments and keeps CDATA as the words it holds (Y007)', async () => {
+        const w = (inner: string) => `<w:document><w:body>${inner}</w:body></w:document>`;
+        const docx = await zipFiles([{ name: 'word/document.xml', data: enc(w('<w:p><w:r><w:t>Keep</w:t></w:r></w:p><!-- <w:p><w:r><w:t>COMMENT ONLY</w:t></w:r></w:p> --><w:p><w:r><w:t><![CDATA[a <b> & c]]></w:t></w:r></w:p>')) }]);
+        expect(docxText(docx)).toBe('Keep\n\na <b> & c');
+        const odt = await zipFiles([{ name: 'content.xml', data: enc('<office:text><text:p>One</text:p><!-- <text:p>COMMENT ONLY</text:p> --><text:p><![CDATA[x < y]]> ok</text:p></office:text>') }]);
+        expect(odfText(odt)).toBe('One\nx < y ok');
+        const pptx = await zipFiles([{ name: 'ppt/slides/slide1.xml', data: enc(slide('<![CDATA[T & U]]>')) }]);
+        expect(pptxSlides(pptx)).toEqual(['T & U']);
+    });
     it('extracts odt text', async () => {
         const xml = '<office:text><text:h>Head</text:h><text:p>One<text:s text:c="2"/>two<text:tab/>t</text:p><text:p>A &amp; B</text:p></office:text>';
         const zip = await zipFiles([{ name: 'content.xml', data: enc(xml) }]);
@@ -75,6 +84,15 @@ describe('office-text', () => {
         const fixed = readZip(await fixXlsxCharRefs(zip));
         expect(new TextDecoder().decode(fixed.get('xl/sharedStrings.xml')!())).toBe('<sst><si><t>caf&#233; 🙂 🙂 &#9731;</t></si></sst>');
         expect(new TextDecoder().decode(fixed.get('xl/workbook.xml')!())).toBe('<workbook>&#128578;</workbook>');
+    });
+    it('reads every spelling of one value alike, and leaves a workbook with only BMP references byte for byte (U009)', async () => {
+        const cell = (ref: string) => zipFiles([{ name: 'xl/sharedStrings.xml', data: enc(`<sst><si><t>${ref}</t></si></sst>`) }]);
+        for (const ref of ['&#128578;', '&#0128578;', '&#00128578;', '&#x1F642;', '&#x01F642;', '&#x001F642;']) {
+            const fixed = readZip(await fixXlsxCharRefs(await cell(ref)));
+            expect(new TextDecoder().decode(fixed.get('xl/sharedStrings.xml')!()), ref).toBe('<sst><si><t>🙂</t></si></sst>');
+        }
+        const bmp = await cell('&#00233; &#x0000E9; &#9731;');
+        expect(await fixXlsxCharRefs(bmp)).toBe(bmp);   // nothing to change: the original archive, not a recompressed copy
     });
     it('returns a workbook without such references, or one that is not a zip, unchanged', async () => {
         const zip = await zipFiles([{ name: 'xl/sharedStrings.xml', data: enc('<sst><si><t>plain</t></si></sst>') }]);

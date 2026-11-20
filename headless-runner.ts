@@ -795,7 +795,7 @@ export async function run(task: any, opts: Record<string, any> = {}): Promise<{ 
                 const key = String(record.error).replace(/\d+/g, '#').slice(0, 160);
                 const n = (_failSeen.get(key) ?? 0) + 1; _failSeen.set(key, n);
                 if (n <= 20 || n % 50 === 0)
-                    try { logAppend(_runLog, JSON.stringify({ ts: new Date().toISOString(), type: 'request_failed', error: record.error, attempt: record.attempt, count: n }) + '\n', 'utf8'); } catch {}
+                    try { logAppend(_runLog, JSON.stringify({ ts: new Date().toISOString(), type: 'request_failed', error: record.error, attempt: record.attempt, ...(record.preFlight ? { preFlight: true } : {}), count: n }) + '\n', 'utf8'); } catch {}
             }
             return;
         }

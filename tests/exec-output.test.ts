@@ -36,6 +36,13 @@ describe('clipOutput', () => {
         expect(c.endsWith('TAIL')).toBe(true);
         expect(c).toContain(`${s.length - CLIP_HEAD - CLIP_TAIL} chars omitted`);
     });
+    it('after filtering leaves little text, still names what was dropped before it, never with a negative count (Y021)', () => {
+        const c = clipOutput('Total: 42\n', 1_500);
+        expect(c).toContain('Total: 42');
+        expect(c).toContain('1500 chars omitted');
+        expect(c).not.toMatch(/-\d+ chars/);
+        expect(clipOutput('', 1_500)).toBe('');   // progress meters only: silence, as before
+    });
     it('keeps the head of a stream that overflowed the buffer', () => {
         const buf = { text: '', dropped: 0 };
         appendOut(buf, 'Columns: a, b, c\n', 50_000);

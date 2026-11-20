@@ -34,8 +34,10 @@ export function appendOut(buf: OutBuf, chunk: string, max: number): void {
 }
 
 export function clipOutput(s: string, alreadyDropped = 0, head = CLIP_HEAD, tail = CLIP_TAIL): string {
-    if (!s || (s.length <= head + tail && !alreadyDropped)) return s;
+    if (!s) return s;   // nothing left after the progress meters were filtered out: silence, as before
+    const note = (n: number) => `…[${n} chars omitted — redirect to a file and grep/head/tail it to see more]…`;
+    // Short after filtering but text was dropped before it: say so, and never count characters that were not kept (a negative count, Y021).
+    if (s.length <= head + tail) return alreadyDropped ? `${s}\n${note(alreadyDropped)}` : s;
     const keepTail = Math.min(tail, Math.max(0, s.length - head));
-    const dropped = s.length - head - keepTail + alreadyDropped;
-    return `${s.slice(0, head)}\n…[${dropped} chars omitted — redirect to a file and grep/head/tail it to see more]…\n${s.slice(s.length - keepTail)}`;
+    return `${s.slice(0, head)}\n${note(s.length - head - keepTail + alreadyDropped)}\n${s.slice(s.length - keepTail)}`;
 }

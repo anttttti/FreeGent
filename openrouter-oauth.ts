@@ -84,6 +84,7 @@ export async function handleOpenRouterCallback(): Promise<boolean | null> {
         return false;
     }
     _status('OpenRouter: getting your key…');
+    const before = localStorage.getItem('fg_openrouter_key');   // the key the user has when the exchange starts
     try {
         const r = await fetch(KEYS_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -93,6 +94,11 @@ export async function handleOpenRouterCallback(): Promise<boolean | null> {
         if (!r.ok || typeof j.key !== 'string' || !j.key) {
             const why = j?.error?.message || j?.message || `HTTP ${r.status}`;
             throw new Error(r.status === 403 ? `the sign-in code was refused or expired (${why})` : why);
+        }
+        // The page is usable while the exchange runs: a key the user pasted, replaced or cleared meanwhile (here or in another tab) is their later choice (X010).
+        if (localStorage.getItem('fg_openrouter_key') !== before) {
+            _status('OpenRouter: the key was changed while signing in, so the new "FreeGent" key was not saved. Connect again to use it, or revoke it at openrouter.ai/keys.');
+            return false;
         }
         localStorage.setItem('fg_openrouter_key', j.key);
         _status(keyVaultEnabled() && !keyVaultUnlocked()

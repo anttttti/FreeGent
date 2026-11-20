@@ -22,9 +22,11 @@ const fileType = (i: Info) => (i.type === 'dir' ? 'directory' : i.type === 'syml
 const blocks = (i: Info) => (i.type === 'symlink' || i.size === 0 && i.type === 'file' ? 0 : Math.ceil(Math.max(i.size, 1) / 4096) * 8);
 
 function human(ms: number): string {
+  // Local time with its offset, as GNU stat prints it (and as `touch -d` and `date` read and write it); it was UTC with +0000
   const d = new Date(ms);
   const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}000000 +0000`;
+  const off = -d.getTimezoneOffset(), a = Math.abs(off);
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}000000 ${off < 0 ? '-' : '+'}${p(Math.floor(a / 60))}${p(a % 60)}`;
 }
 
 function directive(c: string, i: Info): string | null {

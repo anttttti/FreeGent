@@ -42,6 +42,22 @@ describe('dd', () => {
         const r = await run('dd if=s.txt of=o.txt bs=2 count=10');
         expect(r.err).toMatch(/^2\+1 records in\n2\+1 records out\n5 bytes copied/);
     });
+    // X005: input and output block sizes are separate; the expected files are GNU dd 8.32's own results for the same command lines.
+    it('counts skip and count in input blocks and seek in output blocks, whatever the order of ibs, obs and bs', async () => {
+        const out = async (args: string) => {
+            files.set('in.txt', { content: 'abcdefghijklmnop', encoding: null }); files.set('o.txt', { content: 'ABCDEFGHIJKL', encoding: null });
+            await run(`dd if=in.txt of=o.txt ${args} status=none`);
+            return new TextDecoder().decode(bytes('o.txt'));
+        };
+        expect(await out('ibs=2 obs=4 count=2')).toBe('abcd');
+        expect(await out('obs=4 ibs=2 count=2')).toBe('abcd');
+        expect(await out('obs=4 count=1')).toBe('abcdefghijklmnop');          // the one input block is the default 512 bytes
+        expect(await out('ibs=4 skip=1 count=2')).toBe('efghijkl');
+        expect(await out('ibs=2 obs=4 skip=2 count=1 seek=1 conv=notrunc')).toBe('ABCDefGHIJKL');
+        expect(await out('bs=4 ibs=2 count=3')).toBe('abcdefghijkl');         // bs= overrides ibs=
+        expect(bytes('o.txt').length).toBe(12);
+        expect((await out('ibs=2 count=2 seek=1')).length).toBe(516);         // seek counts default 512-byte output blocks
+    });
     it('refuses a malformed size (R305)', async () => {
         files.set('k.txt', { content: 'keep me intact', encoding: null });
         const r = await run('dd if=/dev/zero of=k.txt bs=4banana count=1');

@@ -466,8 +466,17 @@ export function createFsModule(deps: FsDeps): any {
     fdatasyncSync: () => {},
     utimesSync: () => {},
     rmSync: (p: string, opts?: any) => {
+      // As in Node: an empty path does not exist, and '.' / '..' cannot be removed (an empty or dot path resolved to the working
+      // directory and `rmSync(dir, {recursive: true})` with dir === '' removed the whole workspace).
+      if (p === '') { if (opts?.force) return; throw fsError('ENOENT', `ENOENT: no such file or directory, lstat ''`, 'lstat', p); }
+      if (typeof p === 'string' && /(^|\/)\.\.?\/?$/.test(p)) throw fsError('EINVAL', `EINVAL: invalid argument, rm '${p}'`, 'rm', p);
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
       removePathFromCaches(resolved, !!opts?.recursive);
+    },
+    mkdtempSync: (prefix: string) => {
+      const dir = `${prefix}${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`;
+      fsShim.mkdirSync(dir, { recursive: true });
+      return dir;
     },
     rmdirSync: (p: string) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);

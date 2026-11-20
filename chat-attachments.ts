@@ -1,6 +1,7 @@
 import { lease, revokeLeases, liveLeases, type Lease } from './lease.js';
 import { workspaceEpoch } from './exec-limits.js';
 import { mimeOfExt, docKindOfExt, docKindOfMime, MODEL_IMAGE_MIMES } from './mime.js';
+import { decodeTextBytes } from './text-decode.js';
 // chat-attachments.ts — pending image/file attachment state and UI (thumbnails, chips, drag-drop, paste).
 // Depends on: nothing (pure DOM + state).
 
@@ -62,10 +63,12 @@ function _attachmentError(name: string, error: any, owner: string | null = _read
     if (owner !== _readerChat() && owner) { _parkFor(owner).warnings.push(text); return; }   // shown when the reader comes back
     _showAttachmentWarning(text);
 }
-function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL'): Promise<string> {
+function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL'): Promise<string>;
+function _readAttachment(file: Blob, how: 'readAsArrayBuffer'): Promise<ArrayBuffer>;
+function _readAttachment(file: Blob, how: 'readAsText' | 'readAsDataURL' | 'readAsArrayBuffer'): Promise<any> {   // FileReader also works on Safari versions without Blob.text()/arrayBuffer()
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Empty file reader result'));
+        reader.onload = () => reader.result !== null ? resolve(reader.result) : reject(new Error('Empty file reader result'));
         reader.onerror = () => reject(reader.error || new Error('Could not read file'));
         reader.onabort = () => reject(new Error('File reading cancelled'));
         try { reader[how](file); } catch (error) { reject(error); }
@@ -145,7 +148,7 @@ function _audioFmt(mimeType: string): string {
                 'audio/ogg':'ogg', 'audio/flac':'flac', 'audio/mp4':'mp4',
                 'audio/aac':'aac', 'audio/webm':'webm', 'audio/aiff':'aiff',
                 'audio/x-wav':'wav', 'audio/wave':'wav', 'audio/x-aiff':'aiff', 'audio/x-flac':'flac' };
-    return m[mimeType] || 'mp3';
+    return m[String(mimeType).split(';')[0].trim().toLowerCase()] || 'mp3';   // the type without its parameters: `audio/wav; codecs=1` is wav (U007)
 }
 
 function _addFileChip(att: any): void {
@@ -351,8 +354,10 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
 
     let content: string, contentType: string, original: string | null = null;
     if (isText) {
-        // FileReader also works on Safari versions without Blob.text().
-        content = await _readAttachment(file.size > 200_000 ? file.slice(0, 200_000, file.type) : file, 'readAsText');
+        // The same byte decoder as a Workspace upload: FileReader's text decoding read a Windows-1252 file with U+FFFD for its accents (D039).
+        // A NUL in the bytes means it is not text for that decoder; FileReader then reads it as it always did.
+        const head = file.size > 200_000 ? file.slice(0, 200_000, file.type) : file;
+        content = decodeTextBytes(new Uint8Array(await _readAttachment(head, 'readAsArrayBuffer')), head !== file) ?? await _readAttachment(head, 'readAsText');
         contentType = 'text';
     } else {
         const url = await _readAttachment(file, 'readAsDataURL');
@@ -406,12 +411,17 @@ function setupChatDropZone(): void {
         if (e.relatedTarget && chatPanel.contains(e.relatedTarget as Node)) return;
         overlay?.classList.remove('active');
     });
-    chatPanel.addEventListener('drop', async e => {
+    chatPanel.addEventListener('drop', e => {
         e.preventDefault();
         overlay?.classList.remove('active');
-        for (const file of Array.from(e.dataTransfer?.files || []))
-            await addFileAttachment(file).catch(() => {});
+        addFiles(Array.from(e.dataTransfer?.files || []));
     });
+}
+
+// Every read of a drop or paste starts in the event, under the chat it was chosen in: one that waited for the one before it started
+// after the reader had switched chats or cleared the composer, and attached to the wrong chat or came back (D036).
+function addFiles(files: File[]): void {
+    for (const file of files) void addFileAttachment(file).catch(() => {});
 }
 
 // Paste any file (image or otherwise) into the chat tab
@@ -423,7 +433,7 @@ document.addEventListener('paste', e => {
     const chatPanel = document.querySelector('#tab-content [data-panel="chat"]') as HTMLElement | null;
     if (!chatPanel?.classList.contains('active')) return;
     e.preventDefault();
-    for (const file of files) void addFileAttachment(file).catch(() => {});
+    addFiles(files);
 });
 
 // ── Attach menu: Attach (device camera / photos) · Upload (any file) · Select (workspace file) ──
@@ -532,7 +542,8 @@ async function pickWorkspaceFiles(heading = 'Attach files from the workspace'): 
 
 async function attachFromWorkspace(): Promise<void> {
     closeAttachMenu();
-    for (const path of await pickWorkspaceFiles()) await addWorkspaceAttachment(path).catch(e => _attachmentError(path, e));
+    const paths = await pickWorkspaceFiles();   // all reads start together, under the chat that picked them (as for a drop, D036)
+    await Promise.all(paths.map(path => addWorkspaceAttachment(path).catch(e => _attachmentError(path, e))));
 }
 
 // Store an uploaded file in the workspace under attachments/ (as chat attachments are) and return its path.

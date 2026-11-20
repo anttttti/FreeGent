@@ -4,11 +4,23 @@ export function createEventsModule(): any {
     _maxListeners: number = 10;
     on(event: string, fn: Function) { (this._events[event] ??= []).push(fn); return this; }
     addListener(event: string, fn: Function) { return this.on(event, fn); }
-    off(event: string, fn: Function) { this._events[event] = (this._events[event] || []).filter(f => f !== fn); return this; }
+    off(event: string, fn: Function) { this._events[event] = (this._events[event] || []).filter(f => f !== fn && (f as any).listener !== fn); return this; }
     removeListener(event: string, fn: Function) { return this.off(event, fn); }
-    emit(event: string, ...args: any[]) { (this._events[event] || []).forEach(fn => fn(...args)); return true; }
+    emit(event: string, ...args: any[]) {
+      const fns = [...(this._events[event] || [])];   // a snapshot, as Node: a listener added or removed during the emit does not change this round
+      if (!fns.length) {
+        // An 'error' event nobody listens to throws, as in Node
+        if (event === 'error') { const e = args[0]; throw e instanceof Error ? e : Object.assign(new Error('Unhandled error. (' + String(e) + ')'), { code: 'ERR_UNHANDLED_ERROR', context: e }); }
+        return false;
+      }
+      fns.forEach(fn => fn.apply(this, args));
+      return true;
+    }
     once(event: string, fn: Function) {
-      const wrapper = (...args: any[]) => { this.off(event, wrapper); fn(...args); };
+      // Fired once per registration: a nested emit can run the wrapper while an outer emit still holds it, so removing it is not enough (W004).
+      let fired = false;
+      const wrapper: any = (...args: any[]) => { if (fired) return; fired = true; this.off(event, wrapper); return fn.apply(this, args); };
+      wrapper.listener = fn;
       return this.on(event, wrapper);
     }
     prependListener(event: string, fn: Function) { (this._events[event] ??= []).unshift(fn); return this; }

@@ -9,15 +9,24 @@ import {
     _repairArgEnvelope, _repairLongcatPseudoCalls, _repairBracketPseudoCalls, _repairInlinePseudoCalls, _repairPathArg, repairAllToolCalls, repairToolCallIds,
 } from '../tool-call-repair.ts';
 
-describe('_repairJsonArgs — fence strip only', () => {
+describe('_repairJsonArgs — fences, Python-style dicts, raw control characters (each by parsing, never a regex over the text)', () => {
     it('strips a ```json fence around valid JSON', () => {
         expect(_repairJsonArgs('```json\n{"a":1}\n```')).toBe('{"a":1}');
     });
-    it('returns null for non-fenced invalid JSON (no risky regex fixes)', () => {
-        expect(_repairJsonArgs("{'a': 1}")).toBeNull();
+    it('reads a Python-style dict, and a quote or text inside a string stays data (AG002)', () => {
+        expect(_repairJsonArgs("{'a': 1}")).toBe('{"a":1}');
+        expect(JSON.parse(_repairJsonArgs(`{'code': 'print("hi")', 'language': 'python', 'ok': True, 'x': None, 'n': [1, 2.5]}`))).toEqual({ code: 'print("hi")', language: 'python', ok: true, x: null, n: [1, 2.5] });
+        expect(JSON.parse(_repairJsonArgs(`{'content': 'it\\'s a "test" with True and None and \\n inside'}`)).content).toBe('it\'s a "test" with True and None and \n inside');
+        expect(JSON.parse(_repairJsonArgs("```json\n{'a': 1}\n```")) ).toEqual({ a: 1 });   // fence then dict: the fence strip leaves a dict, which is read too
     });
-    it('returns null when the fence contents are still invalid', () => {
-        expect(_repairJsonArgs("```json\n{'a': 1}\n```")).toBeNull();
+    it('escapes a raw newline or tab inside a JSON string, and leaves other text as it is', () => {
+        expect(JSON.parse(_repairJsonArgs('{"code": "line1\nline2\tend", "k": "v"}'))).toEqual({ code: 'line1\nline2\tend', k: 'v' });
+    });
+    it('returns null for what is not an object after all: truncated text, a list, prose', () => {
+        expect(_repairJsonArgs("{'a': ")).toBeNull();
+        expect(_repairJsonArgs("['a', 'b']")).toBeNull();
+        expect(_repairJsonArgs('not json at all')).toBeNull();
+        expect(_repairJsonArgs('{"a": 1')).toBeNull();
     });
 });
 

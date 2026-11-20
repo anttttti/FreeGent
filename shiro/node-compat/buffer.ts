@@ -42,10 +42,18 @@ export function createFakeBuffer(): any {
     if (isUtf16(encoding)) { let str = ''; for (let i = 0; i + 1 < slice.length; i += 2) str += String.fromCharCode(slice[i] | (slice[i + 1] << 8)); return str; }
     return new TextDecoder().decode(slice);
   };
-  FakeBuffer.prototype.write = function(str: string, offset?: number, length?: number, _encoding?: string) {
-    const bytes = isUtf16(_encoding) ? utf16Bytes(str) : new TextEncoder().encode(str);
+  // write(string[, offset[, length]][, encoding]): the encoding may stand in the second or third place; the codec is FakeBuffer.from's, and a
+  // bounded write keeps whole characters (UTF-8 sequences, UTF-16 units) and returns the bytes it wrote (day exploration D020).
+  FakeBuffer.prototype.write = function(str: string, offset?: any, length?: any, encoding?: string) {
+    if (typeof offset === 'string') { encoding = offset; offset = undefined; length = undefined; }
+    else if (typeof length === 'string') { encoding = length; length = undefined; }
+    const bytes = FakeBuffer.from(str, encoding);
     const off = offset ?? 0;
-    const len = Math.min(length ?? bytes.length, bytes.length, this.length - off);
+    let len = Math.min(length ?? bytes.length, bytes.length, this.length - off);
+    if (len < bytes.length) {
+      if (isUtf16(encoding)) len &= ~1;
+      else if (!/^(hex|base64|base64url|latin1|binary|ascii)$/.test(encoding ?? '')) while (len > 0 && (bytes[len] & 0xc0) === 0x80) len--;
+    }
     for (let i = 0; i < len; i++) this[off + i] = bytes[i];
     return len;
   };
@@ -118,8 +126,10 @@ export function createFakeBuffer(): any {
         bytes = new TextEncoder().encode(input);
       }
     } else if (ArrayBuffer.isView(input)) {
-      // Any typed array or DataView, from any realm (instanceof fails across realms): a copy of its bytes.
-      bytes = new Uint8Array(input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength));
+      // A DataView or an 8-bit array, from any realm (instanceof fails across realms): a copy of its bytes. A wider typed array is copied element by element
+      // as Node does (Buffer.from(new Uint16Array([1, 300])) is 01 2c), not as its backing memory (Z007).
+      const wide = !(input instanceof DataView) && (input as any).BYTES_PER_ELEMENT > 1;
+      bytes = wide ? new Uint8Array(input as any) : new Uint8Array(input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength));
     } else if (input instanceof ArrayBuffer || Object.prototype.toString.call(input) === '[object ArrayBuffer]') {
       bytes = new Uint8Array(input.slice(0));
     } else if (Array.isArray(input)) {
@@ -150,6 +160,7 @@ export function createFakeBuffer(): any {
   FakeBuffer.isEncoding = (enc: string) => ['utf8', 'utf-8', 'ascii', 'base64', 'base64url', 'hex', 'binary', 'latin1', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le'].includes(enc?.toLowerCase());
   FakeBuffer.byteLength = (str: string, encoding?: string) => FakeBuffer.from(str, encoding).length;
   FakeBuffer.concat = (list: Uint8Array[], totalLength?: number) => {
+    if (!list.length) return FakeBuffer.alloc(0);   // as Node, whatever totalLength says
     const total = totalLength ?? list.reduce((n: number, b: Uint8Array) => n + b.length, 0);
     const result = new Uint8Array(total);
     let offset = 0;

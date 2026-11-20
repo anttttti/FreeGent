@@ -21,7 +21,7 @@ export function ledgerLine(record: any, now: () => string = () => new Date().toI
     const line: LedgerLine = { ts: now(), purpose, kept: purpose !== 'discarded' && purpose !== 'failed' };
     if (typeof record.promptTokens === 'number') line.promptTokens = record.promptTokens;
     if (typeof record.responseTokens === 'number') line.responseTokens = record.responseTokens;
-    if (typeof record.cachedTokens === 'number' && record.cachedTokens > 0) line.cachedTokens = record.cachedTokens;
+    if (typeof record.cachedTokens === 'number') line.cachedTokens = record.cachedTokens;   // a reported 0 stays, so a log can tell it from no report (Y003)
     if (purpose === 'main' && typeof record.step === 'number') line.step = record.step;
     return line;
 }

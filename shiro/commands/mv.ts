@@ -1,11 +1,11 @@
 
 import type { Command } from './index';
-import { cannotCreate, parseArgs, statEntry } from './flags';
+import { cannotCreate, targetDirectoryLast, parseArgs, statEntry } from './flags';
 export const mv: Command = {
   name: "mv",
   description: "Move or rename files",
   async exec(ctx) {
-    const args = ctx.args;
+    const args = targetDirectoryLast(ctx.args);
     const { positional, flags } = parseArgs(args);
     const noClobber = !!(flags.n || flags['no-clobber']);   // parsed and then ignored: mv -n overwrote the destination (codex R280)
 
@@ -46,6 +46,7 @@ export const mv: Command = {
         const why = await cannotCreate(ctx.fs, target);
         if (why) throw new Error(`cannot move '${src}' to '${positional[positional.length - 1]}': ${why}`);
         await ctx.fs.rename(srcResolved, target);
+        if (flags.v || flags.verbose) ctx.stdout += `renamed '${src}' -> '${destIsDir ? positional[positional.length - 1].replace(/\/+$/, '') + '/' + name : positional[positional.length - 1]}'\n`;
       }
       return 0;
     } catch (e: unknown) {

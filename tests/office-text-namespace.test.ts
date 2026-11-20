@@ -20,6 +20,15 @@ describe('Word text', () => {
     });
 });
 
+describe('Word text, declaration spelling (D021)', () => {
+    it('reads a namespace declared with single quotes or spaces around the equals sign', async () => {
+        for (const decl of [`xmlns:wp1='${W}'`, `xmlns:wp1 = "${W}"`]) {
+            const xml = `<wp1:document ${decl}><wp1:body><wp1:p><wp1:r><wp1:t>Line one</wp1:t><wp1:br/><wp1:t>Line two</wp1:t></wp1:r></wp1:p></wp1:body></wp1:document>`;
+            expect(docxText(await zipFiles([{ name: 'word/document.xml', data: enc(xml) }]))).toBe('Line one\nLine two');
+        }
+    });
+});
+
 describe('Word text with prefix-like words in it (day exploration D008)', () => {
     it('leaves the document\'s own words alone', async () => {
         const text = 'Use q:item and wp1:item & keep w:item a:item';
@@ -41,5 +50,17 @@ describe('PowerPoint slide order', () => {
     it('follows the declared order whichever prefixes the namespaces use', async () => {
         expect(pptxSlides(await pptx('p', 'r', 'a'))).toEqual(['Slide 2', 'Slide 1']);
         expect(pptxSlides(await pptx('pres', 'rel', 'dml'))).toEqual(['Slide 2', 'Slide 1']);
+    });
+});
+
+describe('PowerPoint relationship targets with parent segments (U005)', () => {
+    it('resolves them against the source part, so every declared slide is found in order', async () => {
+        const pres = `<p:presentation xmlns:p="${P}" xmlns:r="${R}"><p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId1"/></p:sldIdLst></p:presentation>`;
+        for (const [t1, t2] of [['slides/slide1.xml', 'slides/unused/../slide2.xml'], ['../ppt/slides/slide1.xml', '../ppt/slides/slide2.xml'], ['/ppt/slides/slide1.xml', './slides/slide2.xml']]) {
+            const rels = `<Relationships><Relationship Id="rId1" Target="${t1}"/><Relationship Id="rId2" Target="${t2}"/></Relationships>`;
+            const zip = await zipFiles([{ name: 'ppt/presentation.xml', data: enc(pres) }, { name: 'ppt/_rels/presentation.xml.rels', data: enc(rels) },
+                ...[1, 2].map(n => ({ name: `ppt/slides/slide${n}.xml`, data: enc(`<x xmlns:a="${A}"><a:p><a:r><a:t>Slide ${n}</a:t></a:r></a:p></x>`) }))]);
+            expect(pptxSlides(zip), `${t1} ${t2}`).toEqual(['Slide 2', 'Slide 1']);
+        }
     });
 });

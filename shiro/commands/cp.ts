@@ -1,11 +1,11 @@
 
 import type { Command } from './index';
-import { cannotCreate, parseArgs, readdirEntries, statEntry } from './flags';
+import { cannotCreate, targetDirectoryLast, parseArgs, readdirEntries, statEntry } from './flags';
 export const cp: Command = {
   name: "cp",
   description: "Copy files and directories",
   async exec(ctx) {
-    const args = ctx.args;
+    const args = targetDirectoryLast(ctx.args);
     const { flags, positional } = parseArgs(args);
     const recursive = flags.r || flags.R;
 

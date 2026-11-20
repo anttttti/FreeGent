@@ -20,6 +20,20 @@ describe('attachment delivery', () => {
         await W.addFileAttachment(file);
         expect(W.getPendingAttachments().files[0].content).toBe('hello from iPad');
     });
+    it('decodes text bytes as a Workspace upload does: Windows-1252 and UTF-16 keep their characters, a UTF-8 file cut mid-character stays UTF-8 (D039)', async () => {
+        await W.addFileAttachment(new File([Uint8Array.from([0x43, 0x61, 0x66, 0xe9, 0x20, 0x80])], 'latin.csv', { type: 'text/csv' }));
+        await W.addFileAttachment(new File([Uint8Array.from([0xff, 0xfe, 0x43, 0, 0xe9, 0])], 'utf16.txt', { type: 'text/plain' }));
+        await W.addFileAttachment(new File(['é' + 'a'.repeat(199_997) + 'é' + 'b'.repeat(10)], 'cut.txt', { type: 'text/plain' }));   // é spans bytes 199,999-200,000: the cut splits it
+        const [latin, utf16, cut] = W.getPendingAttachments().files.map((f: any) => f.content);
+        expect(latin).toBe('Café €');
+        expect(utf16).toBe('Cé');
+        expect(cut.startsWith('éaaa')).toBe(true);   // not 'Ã©aaa': a cut character must not send the whole file to windows-1252
+    });
+    it('names the audio format from the type without its parameters (U007)', () => {
+        expect(W._audioFmt('audio/wav; codecs=1')).toBe('wav');
+        expect(W._audioFmt('audio/FLAC;codecs=flac')).toBe('flac');
+        expect(W._audioFmt('audio/mpeg')).toBe('mp3');
+    });
     it('bounds large text reads without rejecting existing large text attachments',async()=>{
         const file=new File(['a'.repeat(250_000)],'large.txt',{type:'text/plain'});
         const slice=vi.spyOn(file,'slice');

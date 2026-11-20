@@ -27,8 +27,8 @@ export function createCryptoModule(deps: CryptoDeps): any {
       return bytes;
     },
     createHash: (algo: string) => {
-      // sha384 and sha512 are not implemented here, and a made-up digest under their name is worse than an error (day/night exploration N011).
-      if (/^sha-?(384|512)$/i.test(algo)) throw new Error(`Digest method not supported: ${algo}`);
+      // Only what is implemented here: sha384, sha512 and any other name get an error, not a made-up digest (day/night exploration N011, D019).
+      if (!/^(md5|sha-?1|sha-?256)$/i.test(String(algo))) throw new Error(`Digest method not supported: ${algo}`);
       algo = algo.toLowerCase();
       const chunks: Uint8Array[] = [];
       const hashObj: any = {
@@ -45,8 +45,9 @@ export function createCryptoModule(deps: CryptoDeps): any {
               chunks.push(new TextEncoder().encode(d));
             }
           } else {
-            // A copy: the caller may refill the same buffer for its next read before digest() runs (N012).
-            chunks.push(d instanceof Uint8Array ? d.slice() : new Uint8Array(d));
+            // A copy: the caller may refill the same buffer for its next read before digest() runs (N012). FakeBuffer.from copies any view
+            // or ArrayBuffer; a Buffer's own slice() is a shared view, so `d.slice()` kept hashing the caller's later bytes (D019).
+            chunks.push(FakeBuffer.from(d));
           }
           return hashObj;
         },
@@ -89,7 +90,11 @@ export function createCryptoModule(deps: CryptoDeps): any {
     randomUUID: () => crypto.randomUUID(),
     randomFillSync: (buf: ArrayBufferView, offset = 0, size?: number) => {
       const u = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-      fillRandom(u, offset, offset + (size ?? u.length - offset));
+      size ??= u.length - offset;
+      // As Node: a range outside the buffer is an error, not a silent no-op the caller takes for success (D019).
+      if (!Number.isInteger(offset) || offset < 0 || offset > u.length) throw Object.assign(new RangeError(`The value of "offset" is out of range. Received ${offset}`), { code: 'ERR_OUT_OF_RANGE' });
+      if (!Number.isInteger(size) || size < 0 || offset + size > u.length) throw Object.assign(new RangeError(`The value of "size" is out of range. Received ${size}`), { code: 'ERR_OUT_OF_RANGE' });
+      fillRandom(u, offset, offset + size);
       return buf;
     },
     // Compares the bytes of any ArrayBuffer, view or Buffer, as node does; element-wise it called two DataViews or Float32Array([1.1])/([1.9]) equal (exploration O013).

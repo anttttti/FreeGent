@@ -51,7 +51,9 @@ export async function takeSnapshot(root: string, store: string, id: string): Pro
     let total = 0;
     if (!snap.tooBig) for (const rel of listing.files) {
         let size = 0;
-        try { const st = await lstat(join(root, rel)); if (!st.isFile()) continue; size = st.size; } catch { continue; }   // symlinks, files deleted since git listed them
+        // Symlinks, and files deleted since git listed them (ENOENT), are left out; a file that exists and cannot be examined (permission) makes the
+        // snapshot incomplete, as a copy that fails does, rather than a usable one that silently lacks it (Y019).
+        try { const st = await lstat(join(root, rel)); if (!st.isFile()) continue; size = st.size; } catch (e: any) { if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') { snap.tooBig = true; break; } continue; }
         if (size > MAX_FILE_BYTES) { snap.skippedLarge.push(rel); continue; }
         total += size;
         if (snap.files.length + 1 > MAX_FILES || total > MAX_TOTAL_BYTES) { snap.tooBig = true; break; }
@@ -75,13 +77,13 @@ export interface RestoreResult {
     kept?: number;
     /** The ignore files changed since the copy: a file the turn created and the new rules hide could not be found. */
     ignoreRulesChanged?: boolean;
-    /** Files whose destination now sits behind a link that leaves the workspace: not written (the copy would have overwritten a file outside it). */
+    /** Files whose path now sits behind a link that leaves the workspace: not written, not removed (a copy would overwrite a file outside it, a removal delete one). */
     skippedOutside?: string[];
 }
 
 /** Put the workspace back as it was when `snap` was taken. Throws if the snapshot is not usable. */
 export async function restoreSnapshot(root: string, snap: Snapshot): Promise<RestoreResult> {
-    if (snap.tooBig) throw new Error('the workspace was too large to snapshot, so its files cannot be restored');
+    if (snap.tooBig) throw new Error('the workspace was too large, or had files that could not be read, so it was not snapshotted and its files cannot be restored');
     if (!await stat(snap.dir).then(() => true, () => false) && snap.files.length) throw new Error('the snapshot is gone');
     // Every saved copy must be there before anything is removed or overwritten: failing on the last one, after the files made since had been deleted and the first
     // ones restored, left the workspace half way between the two states (codex R115).
@@ -94,12 +96,18 @@ export async function restoreSnapshot(root: string, snap: Snapshot): Promise<Res
     const large = new Set(snap.skippedLarge);
     // If the ignore rules changed, a file the turn made may be hidden by the new rules: list the hidden ones too. What each file is (made by the turn or
     // already there) is decided by when it was born, not by which list it is on.
+    // A path whose parent directory now resolves outside the workspace (a link the turn put there) is not ours to remove or overwrite (explorations E037, E039, Y024).
+    const rootReal = await realpath(root).catch(() => root);
+    const behindLink = async (abs: string): Promise<boolean> => {
+        try { const p = await realpath(dirname(abs)); return p !== rootReal && !p.startsWith(rootReal + sep); } catch { return true; }
+    };
     const rulesChanged = snap.ignoreRules !== undefined && await ignoreRulesOf(root) !== snap.ignoreRules;
     const now = await listFiles(root, { maxEntries: RESTORE_LIST_LIMIT, deadlineMs: 15_000, skipDirs: SKIP_DIRS, includeIgnored: rulesChanged });
     if (rulesChanged) result.ignoreRulesChanged = true;
     if (!now.complete) result.createdNotRemoved = true;
     else for (const rel of now.files) {
         if (had.has(rel) || large.has(rel)) continue;
+        if (await behindLink(join(root, rel))) { (result.skippedOutside ??= []).push(rel); continue; }
         try {
             const st = await lstat(join(root, rel));
             if (!st.isFile() || st.size > MAX_FILE_BYTES) continue;
@@ -125,8 +133,7 @@ export async function restoreSnapshot(root: string, snap: Snapshot): Promise<Res
         // The copy goes into the workspace, not through a link the turn put in its place: a symlink or hard link at the path would send the write to a file
         // outside it, and so would a linked parent directory (overnight exploration E037, E039).
         try {
-            const rootReal = await realpath(root), parentReal = await realpath(dirname(to));
-            if (parentReal !== rootReal && !parentReal.startsWith(rootReal + sep)) { (result.skippedOutside ??= []).push(rel); continue; }
+            if (await behindLink(to)) { (result.skippedOutside ??= []).push(rel); continue; }
             const lt = await lstat(to).catch(() => null);
             if (lt && (lt.isSymbolicLink() || (lt.isFile() && lt.nlink > 1))) await rm(to);   // replace the link itself, never write through it
         } catch { (result.skippedOutside ??= []).push(rel); continue; }

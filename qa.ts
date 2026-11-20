@@ -219,8 +219,11 @@ async function gate_dependency_check(taskPath, content) {
 }
 
 
+// The task's own text: a checkbox line inside a fenced example or an HTML comment is quoted input, not an unfinished step (explorations W002).
+const _withoutQuotedBlocks = (md: string): string => md.replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^[ ]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ ]{0,3}\1[`~]*[ \t]*$|(?![\s\S]))/gm, '');
 async function gate_completeness_check(taskPath, content) {
-    const unchecked = [...content.matchAll(/^-\s+\[ \][ \t]*(.*)$/gm)];
+    const unchecked = [...(_withoutQuotedBlocks(content)).matchAll(/^-\s+\[ \][ \t]*(.*)$/gm)];
     if (unchecked.length) {
         // Name them: the bare count was answered by trying `done` again (uploaded chat logs of
         // 2026-10-08: five tries in a row with 3 boxes never ticked).

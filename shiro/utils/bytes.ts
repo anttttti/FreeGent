@@ -13,9 +13,18 @@ const encoder = new TextEncoder();
 export function bytesOrder(a: string, b: string): number {
     if (a === b) return 0;
     const n = Math.min(a.length, b.length);
+    // A lone U+DC80..U+DCFF stands for one byte of invalid UTF-8 (the file's own byte 0x80..0xFF); it sorts as that byte, against the first byte of a real character.
+    const raw = (s: string, i: number) => { const c = s.charCodeAt(i); return c >= 0xdc80 && c <= 0xdcff && !(i > 0 && s.charCodeAt(i - 1) >= 0xd800 && s.charCodeAt(i - 1) <= 0xdbff) ? c - 0xdc00 : -1; };
+    const lead = (s: string, i: number) => { const c = s.charCodeAt(i); if (c < 0x80) return c; if (c < 0x800) return 0xc0 | (c >> 6); if (c < 0xd800 || c >= 0xe000) return 0xe0 | (c >> 12);
+        return 0xf0 | ((((c - 0xd800) << 10) + (s.charCodeAt(i + 1) - 0xdc00) + 0x10000) >> 18); };
     for (let i = 0; i < n; i++) {
         let x = a.charCodeAt(i), y = b.charCodeAt(i);
         if (x === y) continue;
+        const rx = raw(a, i), ry = raw(b, i);
+        if (rx >= 0 || ry >= 0) {
+            const fx = rx >= 0 ? rx : lead(a, i), fy = ry >= 0 ? ry : lead(b, i);
+            return fx !== fy ? (fx < fy ? -1 : 1) : (rx >= 0) === (ry >= 0) ? 0 : rx >= 0 ? -1 : 1;   // equal first bytes: the lone byte is a prefix, so it comes first
+        }
         // Surrogates (astral characters) rank above U+E000..U+FFFF, as their 4-byte UTF-8 form does.
         x = x >= 0xd800 && x <= 0xdfff ? x + 0x2000 : x >= 0xe000 ? x - 0x800 : x;
         y = y >= 0xd800 && y <= 0xdfff ? y + 0x2000 : y >= 0xe000 ? y - 0x800 : y;

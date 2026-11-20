@@ -101,6 +101,21 @@ describe('checkChangedFiles', () => {
     });
 });
 
+describe('configuration files with comments (U008)', () => {
+    it('a tsconfig with comments or a trailing comma is fine, a truncated one is broken, an ordinary .json keeps its strict check', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fg-fin-'));
+        try {
+            writeFileSync(join(root, 'tsconfig.json'), '{\n  // strict\n  "compilerOptions": { "strict": true, },\n  /* files */ "files": ["a.ts"]\n}\n');
+            writeFileSync(join(root, 'jsconfig.json'), '{"compilerOptions": {');
+            writeFileSync(join(root, 'data.json'), '{"a": 1,}');
+            const by = Object.fromEntries((await checkChangedFiles(root, ['tsconfig.json', 'jsconfig.json', 'data.json'])).map(r => [r.path, r.problem]));
+            expect(by['tsconfig.json']).toBeNull();
+            expect(by['jsconfig.json']).toMatch(/invalid JSON/);
+            expect(by['data.json']).toMatch(/invalid JSON/);
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+});
+
 describe('finishLines', () => {
     const fin = (signal: string, extra: any = {}) => ({ signal, stopReason: null, timedOut: false, verification: 'unverified', ...extra });
     it('says nothing for a complete run that changed nothing', () => {

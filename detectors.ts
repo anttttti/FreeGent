@@ -16,6 +16,7 @@
 // window bridge.
 
 import { shellWrites } from './shell-writes.js';
+import { hashContent } from './local-sync.js';
 import { isCheckCommand, TEST_PATH_RE } from './verification.js';
 import { runtime } from './runtime.js';
 import { _degenerateTail } from './stream-decode.js';
@@ -28,11 +29,7 @@ import { _seenReadFiles, _seenListFiles } from './state.js';
 // still produces a distinct fingerprint. (A sampled hash collided on middle diffs —
 // hash every char.)
 
-export function _fpHash(s: string): number {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return h;
-}
+export const _fpHash = hashContent;   // 53 bits plus the length; the multiply-by-31 hash it replaces collided on short swaps such as AaAa / BBAa (X015)
 
 // JSON.stringify replacer: use as JSON.stringify(value, _fpTrunc).
 export function _fpTrunc(k: string, v: any): any {
@@ -115,7 +112,7 @@ export const REPEAT_WINDOW = 12;
 type RepeatGuard = {
     recent: Array<[callSig: string, resSig: string]>; refused: number;
     recentPaths?: Array<[pathSig: string, resSig: string]>;
-    tried?: number[]; seen?: number[]; pathEscapes?: Record<string, number>; credits?: number;
+    tried?: string[]; seen?: string[]; pathEscapes?: Record<string, number>; credits?: number;
 };
 const _TURN_HISTORY = 500;   // bound on tried / seen
 export const newRepeatGuard = (): RepeatGuard => ({ recent: [], refused: 0 });

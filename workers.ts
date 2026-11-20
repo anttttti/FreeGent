@@ -1055,7 +1055,7 @@ async function runWorkerTurn(task: string, context: any, taskHandle: any, worker
                 const _u = message?.usage;
                 // Worker requests were in no task total: 27% more input tokens than reported over the
                 // v0.70 suites (64% on SWE Verified). Counted apart from the main loop's.
-                metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens, cachedTokens: _u?.prompt_tokens_details?.cached_tokens ?? 0 });
+                metricsNote({ type: 'worker_step', promptTokens: _u?.prompt_tokens, responseTokens: _u?.completion_tokens, cachedTokens: _u?.prompt_tokens_details?.cached_tokens });   // absent when not reported, not zero (Y003)
                 _workerStepsThisRun++;
                 _workerInputThisRun += Number(_u?.prompt_tokens) || 0;
                 console.log(`[worker:${_wRole}:step${step}] callOAI done, tool_calls=${(message?.tool_calls||[]).length}${isFork ? ' fork' : ''} prompt_tokens=${_u?.prompt_tokens ?? '?'} cached_tokens=${_u?.prompt_tokens_details?.cached_tokens ?? '?'}`);

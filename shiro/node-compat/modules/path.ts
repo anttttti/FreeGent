@@ -1,16 +1,16 @@
 import type { CommandContext } from '../../commands/index';
-import { basename, dirname, extname } from '../../utils/posix-path';
+import { basename, dirname, extname, join, normalize } from '../../utils/posix-path';
 
 export function createPathModule(ctx: CommandContext): any {
   const pathMod: any = {
-    join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
+    join,   // Node's: normalized
     resolve: (...parts: string[]) => {
       let p = parts.reduce((a, b) => b.startsWith('/') ? b : a + '/' + b);
       return ctx.fs.resolvePath(p, ctx.cwd);
     },
     dirname, basename, extname,   // Node's (codex R191/R192)
     isAbsolute: (p: string) => p.startsWith('/'),
-    normalize: (p: string) => ctx.fs.resolvePath(p, '/'),
+    normalize,
     relative: (from: string, to: string) => {
       const f = from.split('/').filter(Boolean);
       const t = to.split('/').filter(Boolean);

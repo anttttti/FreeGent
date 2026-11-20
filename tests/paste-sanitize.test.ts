@@ -15,6 +15,11 @@ describe('sanitizePastedHtml', () => {
             .toBe('<a href="https://x.example/p?q=1" rel="noopener noreferrer">x</a>');
         expect(sanitizePastedHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
     });
+    it('keeps the line break of block elements it does not list, so two sections stay two lines (Y016)', () => {
+        expect(sanitizePastedHtml('<section>Alpha</section><section>Beta</section>')).toBe('<div>Alpha</div><div>Beta</div>');
+        expect(sanitizePastedHtml('<dl><dt>Term</dt><dd>Def</dd></dl>')).toBe('<div><div>Term</div><div>Def</div></div>');
+        expect(sanitizePastedHtml('<span>one</span><span>two</span>')).toBe('onetwo');   // inline wrappers still run together
+    });
     it('does not execute or keep SVG/MathML payloads', () => {
         expect(sanitizePastedHtml('<svg><script>1</script><a xlink:href="javascript:1">t</a></svg>ok')).toBe('ok');
     });

@@ -7,8 +7,18 @@ export const xargs: Command = {
   description: "Build and execute command lines from stdin",
   async exec(ctx) {
     // -0 / --null: parseArgs doesn't take digit flags, so pick it out first.
-    const nullFlag = ctx.args.some(a => a === '-0' || a === '--null');
-    const args = ctx.args.filter(a => a !== '-0' && a !== '--null');
+    // Options end at the command: `xargs wc -l` passes -l to wc, not to xargs (GNU xargs stops at the first non-option).
+    let optEnd = 0;
+    while (optEnd < ctx.args.length) {
+      const a = ctx.args[optEnd];
+      if (a === '--') { optEnd++; break; }
+      if (!a.startsWith('-') || a === '-') break;
+      optEnd++;
+      if (/^-[nIidEsLP]$/.test(a) || a === '--delimiter' || a === '--max-args') optEnd++;   // the option takes the next word
+    }
+    const optArgs = ctx.args.slice(0, optEnd), cmdArgs = ctx.args.slice(optEnd);
+    const nullFlag = optArgs.some(a => a === '-0' || a === '--null');
+    const args = [...optArgs.filter(a => a !== '-0' && a !== '--null' && a !== '--'), '--', ...cmdArgs];
     const { flags, positional, values } = parseArgs(args, ["n", "I", "i", "d", "delimiter"]);
     const onePerLine = flags.I || flags.L || flags.l;
     const replaceStr = values.I || values.i; // -I{} or -i

@@ -98,7 +98,14 @@ const shCmd: Command = {
     const cIdx = ctx.args.indexOf('-c');
     if (cIdx !== -1 && ctx.args[cIdx + 1]) {
       // A child shell, like a new process: variables it sets don't reach the caller.
-      const r = await ctx.shell.fork().exec(ctx.args[cIdx + 1]);
+      // sh -c SCRIPT [NAME [ARG…]]: NAME is $0, the rest are $1…
+      const child = ctx.shell.fork();
+      const rest = ctx.args.slice(cIdx + 2);
+      child.env['0'] = rest.length ? rest[0] : 'sh';
+      for (let i = 1; i < rest.length; i++) child.env[String(i)] = rest[i];
+      child.env['#'] = String(Math.max(0, rest.length - 1));
+      child.env['@'] = rest.slice(1).join(' ');
+      const r = await child.exec(ctx.args[cIdx + 1]);
       ctx.stdout += lf(r.stdout);
       ctx.stderr += lf(r.stderr);
       return r.exitCode;
@@ -154,8 +161,10 @@ const bashCmd: Command = {
 /**
  * Commands that need shell state. Parser-owned builtins take precedence.
  */
+const colonCmd: Command = { name: ':', description: 'Do nothing, successfully', async exec() { return 0; } };
+
 export const shellBuiltins: Command[] = [
-  cdCmd, exportCmd, helpCmd, commandCmd,
+  colonCmd, cdCmd, exportCmd, helpCmd, commandCmd,
   shCmd, bashCmd,
   // [ … ] (posix-test.ts: requires the closing ])
   bracket,

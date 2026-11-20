@@ -638,7 +638,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             break;
         }
 
-        if (typeof _lastResult === 'object' && _lastResult?.finishSignal === 'error' && _isRateLimit(lastMsg) && _switchToFreeModel()) {
+        if (typeof _lastResult === 'object' && _lastResult?.finishSignal === 'error' && _isRateLimit(lastMsg, oaiEndpoint()) && _switchToFreeModel()) {
             _clearHistory();
             continue;
         }

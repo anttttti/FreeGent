@@ -472,3 +472,87 @@ describe('argv dispatch and capability failures', () => {
         expect(await ic('\\377\\376A\\000', '-f UTF-16 -t UTF-8')).toEqual(['A', 0]);   // auto-detected BOM is consumed
     });
 });
+
+// X007: split -n N cuts equal chunks of floor(size/N) bytes (at least one) and the last takes the rest; the sizes below are GNU split 8.32's own.
+describe('split -n chunk boundaries', () => {
+    const sizes = async (size: number, n: number) => {
+        for (const k of [...files.keys()]) if (k.startsWith('xs')) files.delete(k);
+        files.set('sp.txt', { content: 'abcdefghijklmnopqrstuvwxyz'.slice(0, size), encoding: null });
+        await run(`split -n ${n} sp.txt xs`);
+        return [...files.keys()].filter(k => k.startsWith('xs')).sort().map(k => files.get(k)!.content.length);
+    };
+    it('matches GNU for sizes that do not divide evenly, and for fewer bytes than chunks', async () => {
+        expect(await sizes(8, 3)).toEqual([2, 2, 4]);
+        expect(await sizes(15, 4)).toEqual([3, 3, 3, 6]);
+        expect(await sizes(2, 4)).toEqual([1, 1, 0, 0]);
+        expect(await sizes(15, 8)).toEqual([1, 1, 1, 1, 1, 1, 1, 8]);
+        expect(await sizes(16, 4)).toEqual([4, 4, 4, 4]);
+    });
+    it('K/N prints the same chunk', async () => {
+        files.set('sp.txt', { content: 'abcdefgh', encoding: null });
+        expect((await run('split -n 3/3 sp.txt')).out).toBe('efgh');
+    });
+});
+
+// W003: printf kept escaped bytes in the private-use block, and decoded every character of it in the output.
+describe('printf bytes and literals', () => {
+    it('escaped bytes still decode, and a literal private-use character, an astral one or a lone-byte argument stays as typed', async () => {
+        expect(await run(String.raw`printf 'A\x42\303\251\n'`)).toEqual({ out: 'ABé\n', err: '', code: 0 });
+        const literal = '';
+        expect((await run(`printf '%s|' '${literal}'`)).out).toBe(literal + '|');
+        expect((await run(`printf '${literal}\\x41\\n'`)).out).toBe(literal + 'A\n');
+        expect((await run(`printf '%s' '😀' '\u{10000}'`)).out).toBe('😀\u{10000}');
+    });
+});
+
+// K004: the piped text travels in an internal variable; it is not an environment variable.
+describe('piped stdin is not in the environment', () => {
+    it('env, printenv and node\'s process.env do not show it', async () => {
+        expect((await run('echo secretvalue | env | grep -c PIPE')).out.trim()).toBe('0');
+        expect((await run('echo secretvalue | printenv | grep -c PIPE')).out.trim()).toBe('0');
+        expect((await run(`echo secretvalue | node -e "console.log(Object.keys(process.env).filter(k => /PIPE/.test(k)).length)"`)).out.trim()).toBe('0');
+    });
+});
+
+// U012, U013: seq against GNU seq for exponent operands, tiny steps and ordinary decimal endpoints.
+describe('seq decimals and endpoints', () => {
+    it('matches GNU seq', async () => {
+        const { spawnSync } = await import('node:child_process');
+        if (spawnSync('seq', ['--version']).status !== 0) return;
+        for (const args of ['1e-3 1e-3 5e-3', '0 2.5e-1 1', '1.5e-3 1.5e-3 6e-3', '1e0 1e0 3', '2.5e2 3', '0 1e-12 5e-12', '5 -1e-3 4.997', '0.1 0.1 0.5', '0 0.1 1', '1 0.25 2', '10 -2.5 0', '1e1 1e1 4e1', '-1 0.5 1']) {
+            const gnu = spawnSync('seq', args.split(' ')).stdout.toString();
+            expect((await run(`seq ${args}`)).out, args).toBe(gnu);
+        }
+    });
+});
+
+// U004: sort -n compares decimal strings exactly, as GNU sort does.
+describe('sort -n exactness', () => {
+    it('matches GNU sort for values a double cannot tell apart, negative keys, signed zero and leading zeros', async () => {
+        const { spawnSync } = await import('node:child_process');
+        if (spawnSync('sort', ['--version']).status !== 0) return;
+        const inputs = ['9007199254740993\n9007199254740992\n', '-9007199254740992\n-9007199254740993\n', '0.10000000000000001\n0.1\n0.10000000000000002\n', '-0\n0\n00\n+0\n-0.0\n',
+            '007\n7\n7.0\n07.5\n', '-3\n-10\n2\n-0.5\n1e3\n', '12345678901234567890123\n12345678901234567890124\n12345678901234567890122\n', '1.5\n1.25\n1.05\n', 'abc\n-\n5\n.5\n'];
+        for (const input of inputs) for (const flags of ['-n', '-nu', '-nr', '-ns']) {
+            const gnu = spawnSync('sort', flags.split(' '), { input, env: { LC_ALL: 'C' } }).stdout.toString();
+            files.set('in.txt', { content: input, encoding: null });
+            expect((await run(`sort ${flags} in.txt`)).out, `${JSON.stringify(input)} ${flags}`).toBe(gnu);
+        }
+    });
+});
+
+// N004: bytes that are not valid UTF-8 sort as the bytes they are (GNU sort, LC_ALL=C), among ASCII, two-, three- and four-byte characters.
+describe('sort and join order with invalid bytes', () => {
+    it('matches GNU sort for raw bytes between and beside real characters', async () => {
+        const { spawnSync } = await import('node:child_process');
+        if (spawnSync('sort', ['--version']).status !== 0) return;
+        const lines: Buffer[] = [Buffer.from('a'), Buffer.from([0xff]), Buffer.from('é'), Buffer.from([0x80]), Buffer.from([0xc3]), Buffer.from('€'), Buffer.from([0xe2, 0x82]), Buffer.from('😀'), Buffer.from([0xf0, 0x9f]), Buffer.from([0xbf, 0x41]), Buffer.from('z'), Buffer.from([0xc3, 0x28])];
+        const input = Buffer.concat(lines.flatMap(l => [l, Buffer.from('\n')]));
+        const gnu = spawnSync('sort', [], { input, env: { LC_ALL: 'C' } }).stdout;
+        files.set('raw.bin', { content: input.toString('base64'), encoding: 'base64' });
+        await run('sort raw.bin > sorted.bin');
+        const got = files.get('sorted.bin')!;
+        const gotBytes = got.encoding === 'base64' ? Buffer.from(got.content, 'base64') : Buffer.from(got.content, 'utf8');
+        expect(gotBytes.toString('hex')).toBe(gnu.toString('hex'));
+    });
+});

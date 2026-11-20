@@ -92,48 +92,29 @@ export function createStreamModule(): any {
     pipeline: async (...streams: any[]) => streams[streams.length - 1],
     finished: async () => {},
   };
+  // The exact bytes of every chunk (a view's own range, not its whole backing buffer; a string as UTF-8), joined once: text and json decode the whole,
+  // so a character split across chunks and a leading BOM are handled as one stream (Z013).
+  const toBytes = (c: any): Uint8Array => typeof c === 'string' ? new TextEncoder().encode(c)
+    : ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength)
+    : c instanceof ArrayBuffer ? new Uint8Array(c) : Uint8Array.from(c);
+  const collect = async (stream: any): Promise<Uint8Array> => {
+    const parts: Uint8Array[] = [];
+    for await (const chunk of stream) parts.push(toBytes(chunk));
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let offset = 0;
+    for (const p of parts) { out.set(p, offset); offset += p.length; }
+    return out;
+  };
   streamModule.consumers = {
-    arrayBuffer: async (stream: any) => {
-      const chunks: any[] = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const totalLength = chunks.reduce((acc: number, c: any) => acc + (c.byteLength || c.length || 0), 0);
-      const result = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        const bytes = typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk.buffer || chunk);
-        result.set(bytes, offset);
-        offset += bytes.length;
-      }
-      return result.buffer;
-    },
+    arrayBuffer: async (stream: any) => (await collect(stream)).buffer,
     blob: async (stream: any) => {
       const chunks: any[] = [];
       for await (const chunk of stream) chunks.push(chunk);
       return new Blob(chunks);
     },
-    buffer: async (stream: any) => {
-      const chunks: any[] = [];
-      for await (const chunk of stream) chunks.push(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk);
-      const totalLength = chunks.reduce((acc: number, c: any) => acc + (c.byteLength || c.length || 0), 0);
-      const result = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        const bytes = new Uint8Array(chunk.buffer || chunk);
-        result.set(bytes, offset);
-        offset += bytes.length;
-      }
-      return result;
-    },
-    json: async (stream: any) => {
-      let text = '';
-      for await (const chunk of stream) text += typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-      return JSON.parse(text);
-    },
-    text: async (stream: any) => {
-      let text = '';
-      for await (const chunk of stream) text += typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-      return text;
-    },
+    buffer: collect,
+    json: async (stream: any) => JSON.parse(new TextDecoder().decode(await collect(stream))),
+    text: async (stream: any) => new TextDecoder().decode(await collect(stream)),
   };
   // Make the module itself a constructor (for `const Stream = require('stream')`)
   streamModule.default = Stream;

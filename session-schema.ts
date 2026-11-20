@@ -144,4 +144,4 @@ DROP TABLE IF EXISTS worker_runs;
 `;
 
 // Window bridge for classic scripts and the headless runner (ESM migration convention).
-Object.assign(window, { SESSION_SCHEMA_SQL });
+if (typeof window !== 'undefined') Object.assign(window, { SESSION_SCHEMA_SQL });   // a direct Node import (node-sqlite-adapter) has no window

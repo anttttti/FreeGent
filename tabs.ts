@@ -1058,6 +1058,7 @@ export async function pageCheckContent(path: string, html: string, { actions = [
     return { content, fingerprint: `${content}\u0000${JSON.stringify({ actions, probes, expect })}` };
 }
 
+let _windowTurn: Promise<void> = Promise.resolve();   // the check currently using the separate window (it resolves when that check is done)
 async function runPageCheck(path: string, { actions = [] as any[], probes = [] as string[], waitMs = 1500, expect = [] as Expectation[], askToOpenWindow = true } = {}) {
     const html = await agentReadFile(path);
     if (typeof html !== 'string' || !html.trim()) return { error: `check_page: "${path}" is empty or could not be read` };
@@ -1149,8 +1150,14 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // A page that crashes the tab takes the unsaved turn with it: save the chat first, and leave a marker the next start-up reads.
     try { (globalThis as any).saveHistory?.(); } catch {}
     if (!useWindow) beginPageCheck(path, fingerprint, typeof activeChatId !== 'undefined' ? activeChatId : null);   // in a window the tab is not at risk, and is not blamed
+    // The check window is one iframe: a second check loading into it replaced the first one's page and took over its callback, so each waits for the one
+    // before it (worker turns can overlap; explorations D028, Y004).
+    const turn = useWindow ? _windowTurn : null;
+    let releaseWindow: () => void = () => {};
+    if (useWindow) _windowTurn = new Promise<void>(r => { releaseWindow = r; });
     try {
-        if (useWindow) cw = loadInCheckWindow(path, content, onData);
+        if (turn) await Promise.race([turn, abortedP]);
+        if (useWindow) { if (!aborted) cw = loadInCheckWindow(path, content, onData); }
         else { iframe.srcdoc = content; document.body.appendChild(wrap); }
         loaded = await Promise.race([ready, sleep(8000).then(() => false)]);
         // Slow device: scripts that start are given longer before the page is called not-loaded.
@@ -1225,6 +1232,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         wrap.remove();
         if (!windowDied) cw?.close();
         if (useWindow) releaseCheckWindow();
+        releaseWindow();
         endPageCheck();
     }
     if (windowDied) {

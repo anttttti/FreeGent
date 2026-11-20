@@ -71,7 +71,7 @@ function startPython(): void {
         // (pyodide-worker.ts); relay it to the page and the answer back.
         if (data?.type === 'net') {
             const w = ownedWorker;
-            pageFetch(String(data.url ?? '')).then(
+            pageFetch(String(data.url ?? ''), data.method === 'HEAD' ? 'HEAD' : 'GET').then(
                 value => w?.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
                 err   => w?.postMessage({ type: 'net-reply', id: data.id, error: String(err?.message ?? err) }));
             return;
@@ -94,7 +94,7 @@ function runJsInWorker(code: string, files: Record<string, any>): Promise<any> {
         w.onmessage = ({ data }) => {
             if (data?.type === 'started') { started = true; return; }
             if (data?.type === 'net') {
-                pageFetch(String(data.url ?? '')).then(
+                pageFetch(String(data.url ?? ''), data.method === 'HEAD' ? 'HEAD' : 'GET').then(
                     value => w.postMessage({ type: 'net-reply', id: data.id, value }, [value.body]),
                     err   => w.postMessage({ type: 'net-reply', id: data.id, error: String(err?.message ?? err) }));
                 return;

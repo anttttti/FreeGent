@@ -24,14 +24,17 @@ export const seq: Command = {
     if (!nums.length || nums.length > 3) { ctx.stderr += `seq: ${nums.length ? 'extra operand' : 'missing operand'}\n`; return 1; }
     for (const n of nums) if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(n)) { ctx.stderr += `seq: invalid floating point argument: '${n}'\n`; return 1; }
     const [first, step, last] = nums.length === 1 ? ['1', '1', nums[0]] : nums.length === 2 ? [nums[0], '1', nums[1]] : nums;
-    const decimals = (s: string) => /e/i.test(s) ? 0 : (s.split('.')[1] ?? '').length;
+    // Decimal places an operand shows, an exponent included: 1e-3 has 3, 1.5e-3 has 4, 2.5e2 has none (it printed as integer: explorations U012).
+    const decimals = (s: string) => { const [m, e] = s.toLowerCase().split('e'); return Math.max(0, (m.split('.')[1] ?? '').length - Number(e ?? 0)); };
     const prec = Math.max(decimals(first), decimals(step));
     const a = parseFloat(first), d = parseFloat(step), z = parseFloat(last);
     if (d === 0) { ctx.stderr += `seq: invalid Zero increment value: '${step}'\n`; return 1; }
     const values: string[] = [];
     for (let k = 0; ; k++) {
       const v = a + k * d;
-      if (d > 0 ? v > z + 1e-10 : v < z - 1e-10) break;
+      // A tolerance for floating-point error in the endpoint, relative to the step: an absolute 1e-10 was 100 steps of a 1e-12 step (U013).
+      const eps = Math.abs(d) * 1e-9;
+      if (d > 0 ? v > z + eps : v < z - eps) break;
       values.push(format ? sprintf(format, [v]) : v.toFixed(prec));
     }
     let out = values;

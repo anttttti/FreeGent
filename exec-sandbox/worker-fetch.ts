@@ -23,11 +23,11 @@ export function installWorkerFetch(): void {
             const id = ++netSeq;
             const r: any = await new Promise((resolve, reject) => {
                 netWaiting.set(id, { resolve, reject });
-                self.postMessage({ type: 'net', id, url });
+                self.postMessage({ type: 'net', id, url, method });
             });
             const headers: Record<string, string> = { 'X-FG-Via-Proxy': '1' };
             if (r.contentType) headers['Content-Type'] = r.contentType;
-            return new Response(NULL_BODY_STATUS.has(r.status) ? null : r.body, { status: r.status, headers });
+            return new Response(method === 'HEAD' || NULL_BODY_STATUS.has(r.status) ? null : r.body, { status: r.status, headers });   // a HEAD answer has no body, as in the frame (net.ts; explorations N011)
         }
     };
 }

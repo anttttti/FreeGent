@@ -23,6 +23,7 @@ import {
     activeChatId,
 } from './state.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
+import { hashContent } from './local-sync.js';   // the one content fingerprint: 53 bits plus the length (a 32-bit FNV here let a changed file read as unchanged, X013)
 import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 import type { Session } from './session.js';
 import { pruneSurface } from './session.js';
@@ -32,13 +33,6 @@ import { pruneSurface } from './session.js';
 export function _normPath(p: string): string { return (p || '').replace(/^local\//, ''); }
 
 export function resetSeenReadFiles(): void { setSeenReadFiles(new Map()); setSeenListFiles(new Set()); }
-
-// Cheap content fingerprint (FNV-1a over UTF-16 code units, plus length) for read dedup.
-function _contentHash(s: string): string {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-    return `${s.length}:${(h >>> 0).toString(36)}`;
-}
 
 export function _invalidateReadDedup(path: string): void {
     const norm = _normPath(path);
@@ -258,7 +252,7 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // worker) must show — answering "already listed" sent the model back to a stale list.
         // The key holds a hash of the names and sizes; a different listing replaces it.
         const prefix = result.path ?? '';
-        const key = `${prefix}\u0000${_contentHash(JSON.stringify((result.files ?? []).map((f: any) => [f?.name ?? f, f?.size ?? null])))}`;
+        const key = `${prefix}\u0000${hashContent(JSON.stringify((result.files ?? []).map((f: any) => [f?.name ?? f, f?.size ?? null])))}`;
         if (_lf.has(key)) {
             return { note: `Already listed "${prefix}" this session, and nothing has changed since — results are in your prior tool results.` };
         }
@@ -290,7 +284,7 @@ export function truncateResultForHistory(name: string, result: any, { isDirector
         // WASM bash, Pyodide, nativeExec) cannot be tracked per file — a hash of the fresh read
         // catches them all. Before this, a read after `sed -i` was answered "Already read" and
         // the model reasoned from the pre-edit copy (fg-chat 2026-09-27-01-29-29).
-        const contentHash = typeof result.content === 'string' ? _contentHash(result.content) : null;
+        const contentHash = typeof result.content === 'string' ? hashContent(result.content) : null;
         const changed = contentHash !== null && _rf.has(hashKey) && _rf.get(hashKey) !== contentHash;
         if (changed) {
             for (const k of [..._rf.keys()]) if (k.startsWith(pathNorm + ':')) _rf.delete(k);

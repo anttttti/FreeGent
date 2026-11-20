@@ -22,6 +22,7 @@ import { storedCredentialValues } from './stored-credentials.js';
 import { softStopPending, activeAbortController } from './state.js';
 import { asTransportError } from './retry.js';
 import { CONTENT_ARG_TOOLS } from './tool-effects.js';
+import { pythonDictToJson } from './tool-call-repair.js';
 
 // 90 s between any SSE bytes — safe for even the slowest streaming models (chunks arrive
 // every few seconds at most). Short enough that a browser-killed connection (tab hidden,
@@ -448,7 +449,7 @@ export async function streamOAICompat(resp: any, onChunk: any) {
     for (const tc of tool_calls) {
         if (typeof tc.function.arguments === 'string') {
             try { JSON.parse(tc.function.arguments); }
-            catch { try { const r = tc.function.arguments.replace(/'/g, '"'); JSON.parse(r); tc.function.arguments = r; } catch { /* repaired or flagged downstream */ } }
+            catch { const r = pythonDictToJson(tc.function.arguments); if (r) tc.function.arguments = r; /* else repaired or flagged downstream */ }
         }
     }
     return { role: 'assistant', content: content || null,

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { makeReplayFetch, FAKE_EP } from './replay-harness.ts';
 import { NULL_RENDER_ADAPTER } from '../render-adapter.ts';
 import { KEYS } from '../storage-keys.ts';
-import { REPEAT_LIMIT, REPEAT_WINDOW, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _updateStuckDetector, _creditProgress, PROGRESS_CREDITS_MAX, REPEAT_REFUSALS_BEFORE_STOP } from '../detectors.ts';
+import { REPEAT_LIMIT, REPEAT_WINDOW, newRepeatGuard, _callSig, _resultSig, _repeatRefused, _repeatCount, _updateRepeatGuard, _updateStuckDetector, _fpTrunc, _creditProgress, PROGRESS_CREDITS_MAX, REPEAT_REFUSALS_BEFORE_STOP } from '../detectors.ts';
 
 const W = window as any;
 
@@ -66,6 +66,16 @@ describe('stuck nudge text', () => {
         expect(r.stuckMsg).toMatch(/running the same command again/);
         expect(r.stuckMsg).toMatch(/already answers the task, give the answer now/);
         expect(r.stuckMsg).not.toMatch(/start_line/);
+    });
+});
+
+describe('result fingerprints', () => {
+    it('long results that differ in the middle keep distinct fingerprints even where a multiply-by-31 hash collides (X015)', () => {
+        const sigOf = (mid: string) => JSON.stringify([{ n: 'execute_code', res: { stdout: 'p'.repeat(256) + mid + 's'.repeat(256) } }], _fpTrunc);   // AaAa and BBAa hash alike under h*31+c
+        expect(sigOf('AaAa')).not.toBe(sigOf('BBAa'));
+        let r: any = { resultHashes: [] };
+        for (const mid of ['AaAa', 'AaBB', 'BBAa']) r = _updateStuckDetector(sigOf(mid), new Set(), r.resultHashes);
+        expect(r.stuckMsg).toBeNull();
     });
 });
 

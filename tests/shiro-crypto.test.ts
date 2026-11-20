@@ -6,7 +6,8 @@ import { sha1sync, fnvHash } from '../shiro/commands/jseval/crypto';
 import { createFakeBuffer } from '../shiro/node-compat/buffer';
 
 // Night exploration N011-N013: the shell's crypto returned digests it did not compute, kept the caller's buffer instead of its bytes, and ignored fill ranges.
-const c: any = createCryptoModule({ sha256sync, sha1sync, fnvHash, FakeBuffer: createFakeBuffer() } as any);
+const FB = createFakeBuffer();
+const c: any = createCryptoModule({ sha256sync, sha1sync, fnvHash, FakeBuffer: FB } as any);
 
 describe('shell crypto', () => {
     it('HMAC matches Node for short, block-sized and long keys', () => {
@@ -15,12 +16,19 @@ describe('shell crypto', () => {
     });
     it('refuses a digest it cannot compute instead of inventing one', () => {
         expect(() => c.createHash('sha512')).toThrow(/not supported/);
+        expect(() => c.createHash('whirlpool')).toThrow(/not supported/);   // an unknown name used to get a made-up digest (D019)
         expect(() => c.createHmac('sha512', 'k')).toThrow(/Invalid digest/);
         expect(c.createHash('SHA256').update('abc').digest('hex')).toBe(nodeHash('sha256').update('abc').digest('hex'));
     });
     it('hashes the bytes given to update(), not the buffer the caller goes on to reuse', () => {
         const buf = new Uint8Array([1, 2, 3]); const h = c.createHash('sha256'); h.update(buf); buf.fill(9);
         expect(h.digest('hex')).toBe(nodeHash('sha256').update(new Uint8Array([1, 2, 3])).digest('hex'));
+    });
+    it('and the same for the shell\'s Buffer, whose slice() is a view, whole or an offset slice (D019)', () => {
+        for (const make of [() => FB.from([1, 2, 3]), () => FB.from([0, 1, 2, 3, 0]).subarray(1, 4)]) {
+            const buf = make(); const h = c.createHash('sha256'); h.update(buf); buf.fill(9);
+            expect(h.digest('hex')).toBe(nodeHash('sha256').update(new Uint8Array([1, 2, 3])).digest('hex'));
+        }
     });
     it('timingSafeEqual compares the bytes of any buffer source, as node does (O013)', () => {
         const dv = (...b: number[]) => new DataView(new Uint8Array(b).buffer);
@@ -36,5 +44,11 @@ describe('shell crypto', () => {
         expect([...b.subarray(0, 100)].every(x => x === 0)).toBe(true);
         expect([...b.subarray(70_100)].every(x => x === 0)).toBe(true);
         expect([...b.subarray(100, 70_100)].some(x => x !== 0)).toBe(true);
+        expect(() => c.randomFillSync(new Uint8Array(8), 9, 1)).toThrow(RangeError);   // outside the buffer: Node throws (D019)
+        expect(() => c.randomFillSync(new Uint8Array(8), 4, 5)).toThrow(RangeError);
+    });
+    it('Buffer.concat of an empty list is empty whatever length is asked for', () => {
+        expect(FB.concat([], 3).length).toBe(0);
+        expect(FB.concat([FB.from([1])], 3).length).toBe(3);
     });
 });

@@ -7,6 +7,8 @@
 
 const KEEP = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'code', 'pre', 'br', 'p', 'div', 'ul', 'ol', 'li',
     'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'a']);
+// Block-level elements that are not on the list keep their line break as a div (unwrapped, "Alpha" and "Beta" of two sections ran together: explorations Y016).
+const BLOCK = new Set(['section', 'article', 'header', 'footer', 'nav', 'aside', 'main', 'figure', 'figcaption', 'dl', 'dt', 'dd', 'address', 'details', 'summary', 'hgroup', 'fieldset']);
 // Dropped with their content, not unwrapped: the text of these is never what the user copied.
 const DROP = new Set(['script', 'style', 'head', 'meta', 'link', 'title', 'template', 'noscript', 'iframe',
     'object', 'embed', 'svg', 'math', 'form', 'textarea', 'select', 'option', 'button', 'input', 'img', 'video', 'audio']);
@@ -18,8 +20,9 @@ function _copy(src: Node, into: Node, doc: Document): void {
         const el = n as Element;
         const tag = el.tagName.toLowerCase();
         if (DROP.has(tag)) continue;
-        if (!KEEP.has(tag)) { _copy(el, into, doc); continue; }   // unwrap: span, font, label ...
-        const out = doc.createElement(tag);
+        const kept = BLOCK.has(tag) ? 'div' : tag;
+        if (!KEEP.has(kept)) { _copy(el, into, doc); continue; }   // unwrap: span, font, label ...
+        const out = doc.createElement(kept);
         if (tag === 'a') {
             const href = el.getAttribute('href') ?? '';
             if (/^https?:\/\//i.test(href.trim())) { out.setAttribute('href', href.trim()); out.setAttribute('rel', 'noopener noreferrer'); }

@@ -32,3 +32,38 @@ describe('Buffer copy and concat', () => {
         expect([...B.concat([B.from([1, 2])], 4)]).toEqual([1, 2, 0, 0]);
     });
 });
+
+// D020: a bounded write stops at a character boundary and reports the bytes it wrote (Node's own Buffer is the oracle); the encoding may stand in the second or third place.
+describe('Buffer.write bounds and overloads', () => {
+    const FB = createFakeBuffer();
+    it('writes what Node writes, bytes and count, for every capacity and offset', () => {
+        for (const s of ['AéB', '😀Z', 'abc'])
+            for (const enc of [undefined, 'utf8', 'utf16le', 'latin1'] as const)
+                for (let cap = 0; cap <= 6; cap++)
+                    for (const off of [0, 1]) {
+                        const native = Buffer.alloc(8, 0x7e), shim = FB.alloc(8, 0x7e);
+                        expect(shim.write(s, off, cap, enc), `${s} ${enc} ${off} ${cap}`).toBe((native as any).write(s, off, cap, enc));
+                        expect(Buffer.from(shim).equals(native), `${s} ${enc} ${off} ${cap}`).toBe(true);
+                    }
+    });
+    it('takes the encoding in the second or third place', () => {
+        for (const [s, args] of [['é', ['utf8']], ['ff00', [0, 4, 'hex']], ['abcd', [1, 'latin1']], ['é', ['utf16le']]] as const) {
+            const native = Buffer.alloc(8, 0x7e), shim = FB.alloc(8, 0x7e);
+            expect(shim.write(s, ...args)).toBe((native as any).write(s, ...args));
+            expect(Buffer.from(shim).equals(native)).toBe(true);
+        }
+    });
+});
+
+// Z007: Buffer.from(typedArray) copies elements, whatever their width.
+describe('Buffer.from of typed arrays', () => {
+    it('copies wider elements as Node does, and 8-bit and DataView inputs as bytes', () => {
+        const FB = createFakeBuffer();
+        for (const arr of [new Uint16Array([1, 300, 65535]), new Int32Array([-1, 258]), new Float32Array([1.9, 300.5]), new Int8Array([-1, 5])])
+            expect([...FB.from(arr)], arr.constructor.name).toEqual([...Buffer.from(arr as any)]);
+        const dv = new DataView(new Uint8Array([9, 8, 7]).buffer);
+        expect([...FB.from(dv)]).toEqual([9, 8, 7]);
+        const view = new Uint8Array([0, 1, 2, 3]).subarray(1, 3);
+        expect([...FB.from(view)]).toEqual([1, 2]);
+    });
+});

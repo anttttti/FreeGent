@@ -1,52 +1,24 @@
+import { deepEqual } from './deep-equal';
+import * as nodeInspect from 'node-inspect-extracted';
 export function createUtilModule(): any {
-  const _inspect = (obj: any, opts?: any): string => {
-    if (obj === null) return 'null';
-    if (obj === undefined) return 'undefined';
-    if (typeof obj === 'string') return opts?.stylize ? opts.stylize(`'${obj}'`, 'string') : `'${obj}'`;
-    if (typeof obj === 'number' || typeof obj === 'boolean' || typeof obj === 'bigint') return String(obj);
-    if (typeof obj === 'function') return `[Function: ${obj.name || 'anonymous'}]`;
-    if (typeof obj === 'symbol') return obj.toString();
-    if (obj instanceof Date) return obj.toISOString();
-    if (obj instanceof RegExp) return obj.toString();
-    if (obj instanceof Error) return `${obj.name}: ${obj.message}`;
-    if (ArrayBuffer.isView(obj)) return `<Buffer ${Array.from(obj as Uint8Array).slice(0, 50).map(b => b.toString(16).padStart(2, '0')).join(' ')}${(obj as Uint8Array).length > 50 ? ' ...' : ''}>`;
-    try { return JSON.stringify(obj, null, 2); } catch { return '[Circular]'; }
-  };
-  _inspect.custom = Symbol.for('nodejs.util.inspect.custom');
-  _inspect.styles = {};
-  _inspect.colors = {};
-  _inspect.defaultOptions = { depth: 2, colors: false };
-  const _format = (fmt: any, ...args: any[]): string => {
-    if (typeof fmt !== 'string') return [fmt, ...args].map(a => typeof a === 'object' ? _inspect(a) : String(a)).join(' ');
-    let i = 0;
-    const str = fmt.replace(/%[sdjifoO%]/g, (m: string) => {
-      if (m === '%%') return '%';
-      if (i >= args.length) return m;
-      const a = args[i++];
-      switch (m) {
-        case '%s': return String(a);
-        case '%d': case '%i': return parseInt(a, 10).toString();
-        case '%f': return parseFloat(a).toString();
-        case '%j': try { return JSON.stringify(a); } catch { return '[Circular]'; }
-        case '%o': case '%O': return _inspect(a);
-        default: return m;
-      }
-    });
-    const rest = args.slice(i).map(a => typeof a === 'object' ? _inspect(a) : String(a));
-    return rest.length ? str + ' ' + rest.join(' ') : str;
-  };
+  // Node's own inspect/format (as the console uses): util.inspect printed JSON, %d truncated 1.5, %s printed [object Object]
+  const _inspect: any = nodeInspect.inspect;
+  const _format: any = nodeInspect.format;
   return {
     promisify: (fn: any) => {
       // Check for custom promisify implementation (e.g., child_process.exec)
       const customSym = Symbol.for('nodejs.util.promisify.custom');
       if (fn[customSym]) return fn[customSym];
-      return (...args: any[]) => new Promise((resolve, reject) => {
-        fn(...args, (err: any, result: any) => err ? reject(err) : resolve(result));
-      });
+      // A normal function that forwards its caller's receiver (`obj.method = promisify(fn)`, `.call(obj)`): an arrow dropped it (explorations U002).
+      return function (this: any, ...args: any[]) {
+        return new Promise((resolve, reject) => {
+          fn.call(this, ...args, (err: any, result: any) => err ? reject(err) : resolve(result));
+        });
+      };
     },
-    callbackify: (fn: Function) => (...args: any[]) => {
+    callbackify: (fn: Function) => function (this: any, ...args: any[]) {
       const cb = args.pop();
-      fn(...args).then((r: any) => cb(null, r)).catch((e: any) => cb(e));
+      fn.apply(this, args).then((r: any) => cb(null, r)).catch((e: any) => cb(e));
     },
     inspect: _inspect,
     format: _format,
@@ -103,7 +75,7 @@ export function createUtilModule(): any {
     isUndefined: (obj: any) => obj === undefined,
     isNullOrUndefined: (obj: any) => obj == null,
     isPrimitive: (obj: any) => obj === null || (typeof obj !== 'object' && typeof obj !== 'function'),
-    isDeepStrictEqual: (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b),
+    isDeepStrictEqual: (a: any, b: any) => deepEqual(a, b, true),
     debuglog: (_section: string) => Object.assign((..._args: any[]) => {}, { enabled: false }),
     debug: (_section: string) => Object.assign((..._args: any[]) => {}, { enabled: false }),
     getSystemErrorName: (err: number) => `ERRNO_${err}`,

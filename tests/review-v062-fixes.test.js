@@ -56,6 +56,14 @@ describe('lifecycle gates', () => {
         W.refreshTasks = async () => {};
     });
 
+    it('a checkbox quoted in a fence or an HTML comment is not an unfinished step (W002), a real one beside it still is', async () => {
+        const quoted = '```md\n- [ ] sample-checkbox\n```\n\n````\n```\n- [ ] inner\n```\n````\n\n<!-- - [ ] commented -->\n\n~~~\n- [ ] tilde\n';   // the last fence is never closed
+        files['fg-tasks/003-t.md'] = task('- [x] done step\n\n' + quoted);
+        expect((await W.transitionTask('fg-tasks/003-t.md', 'review')).reason ?? '').not.toMatch(/Plan incomplete/);
+        files['fg-tasks/004-t.md'] = task('- [ ] real unfinished step\n\n' + quoted);
+        expect((await W.transitionTask('fg-tasks/004-t.md', 'review')).reason).toMatch(/Plan incomplete: 1 unchecked step.*real unfinished step/);
+    });
+
     it('R10 the "review" spelling goes through the in-review gates', async () => {
         files['fg-tasks/001-t.md'] = task('- [ ] unfinished step\n');
         const r = await W.transitionTask('fg-tasks/001-t.md', 'review');

@@ -27,8 +27,12 @@ export function wsRecordKey(rec: { content: string; encoding?: string | null }):
 // the other replaced the project.
 export const WORKSPACE_EPOCH_KEY = 'fg_project_epoch';
 let _localEpoch = 0;
+// The larger of the stored value and this tab's own count: a bump whose write failed (storage full) still counts here, so a Clear is not undone for this tab's late
+// writes by the stored value standing still (explorations N010). Another tab sees only what was stored.
 const _epochNow = (): number => {
-    try { return Number(localStorage.getItem(WORKSPACE_EPOCH_KEY)) || 0; } catch { return _localEpoch; }
+    let stored = 0;
+    try { stored = Number(localStorage.getItem(WORKSPACE_EPOCH_KEY)) || 0; } catch {}
+    return Math.max(stored, _localEpoch);
 };
 /** The project generation: changes when the project is cleared or replaced, in this tab or another. */
 export const workspaceEpoch = (): number => _epochNow();
@@ -67,7 +71,7 @@ export async function addLiveFolderInput(o: {
     for (const f of (await o.list()) || []) {
         if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
         let c: unknown;
-        try { c = await o.read(f.name); } catch { continue; }
+        try { c = await o.read(f.name); } catch { o.omitted.add(f.name); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
         if (typeof c === 'string' && c.length <= o.maxChars) { o.put(f.name, c); o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
         else o.omitted.add(f.name);
     }
@@ -78,7 +82,8 @@ export function withLiveFiles(list: () => Promise<any[] | null | undefined>, rea
     return async () => {
         const recs = [...((await list()) || [])];
         for (const name of names) {
-            try { const c = await read(name); if (typeof c === 'string') { const i = recs.findIndex(r => r?.name === name); if (i >= 0) recs.splice(i, 1); recs.push({ name, content: c }); } } catch {}
+            try { const c = await read(name); if (typeof c === 'string') { const i = recs.findIndex(r => r?.name === name); if (i >= 0) recs.splice(i, 1); recs.push({ name, content: c }); } }
+            catch (e: any) { if (!/not found/i.test(String(e?.message ?? ''))) throw e; }   // absent is a fact (a file the run created); an unreadable one is unknown, and the guard then treats everything as changed (Y020)
         }
         return recs;
     };

@@ -42,6 +42,12 @@ export const nodeCmd: Command = {
       } else if (ctx.args[i].startsWith('--input-type=') || ctx.args[i] === '--input-type') {
         // Scripts are already evaluated as modules or CommonJS by their content; the flag's value is ignored.
         if (ctx.args[i] === '--input-type') i++;
+      } else if (['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions'].includes(ctx.args[i])) {
+        i++;   // takes a module/condition: nothing to preload here
+      } else if (ctx.args[i] === '-') {
+        // `node -` reads the script from stdin, as without an argument
+      } else if (/^--[a-z][\w-]*(=.*)?$/.test(ctx.args[i]) && ctx.args[i] !== '--help') {
+        // Runtime flags (`--no-warnings`, `--stack-trace-limit=50`, `--max-old-space-size=4096`, `--trace-uncaught`): no effect in the browser VM
       } else if (ctx.args[i] === '--help' || ctx.args[i] === '-h') {
         ctx.stdout += 'Usage: node [options] [script.js] [arguments]\n';
         ctx.stdout += '  -e, --eval <code>   Evaluate code\n';

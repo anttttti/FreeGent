@@ -24,4 +24,13 @@ describe('read_file dedup', () => {
         // …and the new content is then the one deduplicated against.
         expect(read("getElementById('high-score')").note).toMatch(/Already read/);
     });
+
+    it('serves a changed file whose old fingerprint was a 32-bit collision (X013)', () => {
+        // Two 32-character strings with equal FNV-1a hashes (found by a birthday search): the earlier 32-bit fingerprint treated them as one file.
+        const [a, b] = ['d36bf0d97d861074b2d089d3c39e9e56', '774566dc0c835839f8e64cc5199599ef'];
+        read(a);
+        const again = read(b);
+        expect(again.note).toBeUndefined();
+        expect(again.content).toBe(b);
+    });
 });

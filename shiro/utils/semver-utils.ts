@@ -1,207 +1,125 @@
 /**
- * semver-utils.ts: Semantic version parsing and range resolution
- *
- * Implements subset of semver spec for npm version resolution:
- * - Exact versions: "1.2.3"
- * - Caret ranges: "^1.2.3" (compatible with 1.x.x)
- * - Tilde ranges: "~1.2.3" (compatible with 1.2.x)
- * - Wildcard: "*" or "latest"
- * - Comparator ranges: ">=1.2.3 <2.0.0"
+ * semver-utils.ts: Semantic version parsing and range resolution, with node-semver's rules:
+ * - ranges are `||` alternatives, each a set of comparators that must all hold: ">=1.2.3 <2.0.0", ">= 1.2.3", "1.2.3 - 2.3.4"
+ * - desugared to comparators: ^, ~, ~>, x-ranges and partial versions ("1.2", "1.x", "*")
+ * - a prerelease version satisfies a set only when one of its comparators names a prerelease of the same major.minor.patch
+ * - prerelease identifiers compare numerically when both are numbers, otherwise as text, and a number is lower than a text
  */
 
 interface SemVer {
   major: number;
   minor: number;
   patch: number;
-  prerelease?: string;
-  build?: string;
+  prerelease: string[];
   raw: string;
 }
 
-/**
- * Parse a semantic version string
- */
+const PART = '(0|[1-9]\\d*|[xX*])';
+const VERSION_RE = new RegExp(`^[=v\\s]*${PART}(?:\\.${PART}(?:\\.${PART}(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?)?)?$`);
+
 function parseSemVer(version: string): SemVer | null {
-  // Remove leading 'v' if present
-  version = version.trim();
-  if (version.startsWith('v')) {
-    version = version.slice(1);
-  }
-
-  // Match semver pattern: major.minor.patch[-prerelease][+build]
-  const match = version.match(
-    /^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.-]+))?(?:\+([a-zA-Z0-9.-]+))?$/
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    major: parseInt(match[1], 10),
-    minor: parseInt(match[2], 10),
-    patch: parseInt(match[3], 10),
-    prerelease: match[4],
-    build: match[5],
-    raw: version,
-  };
+  const m = /^[=v\s]*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version.trim());
+  if (!m) return null;
+  return { major: +m[1], minor: +m[2], patch: +m[3], prerelease: m[4] ? m[4].split('.') : [], raw: version.trim().replace(/^[=v\s]+/, '') };
 }
 
-/**
- * Compare two semver versions
- * Returns: -1 if a < b, 0 if a === b, 1 if a > b
- */
-function compareSemVer(a: SemVer, b: SemVer): number {
-  // Compare major.minor.patch
-  if (a.major !== b.major) return a.major - b.major;
-  if (a.minor !== b.minor) return a.minor - b.minor;
-  if (a.patch !== b.patch) return a.patch - b.patch;
-
-  // Prerelease versions have lower precedence
-  if (!a.prerelease && b.prerelease) return 1;
-  if (a.prerelease && !b.prerelease) return -1;
-  if (a.prerelease && b.prerelease) {
-    return a.prerelease.localeCompare(b.prerelease);
+function comparePre(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return a.length ? -1 : b.length ? 1 : 0;   // a release is higher than any prerelease of it
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] === undefined) return -1;
+    if (b[i] === undefined) return 1;
+    const an = /^\d+$/.test(a[i]), bn = /^\d+$/.test(b[i]);
+    if (an && bn) { if (+a[i] !== +b[i]) return +a[i] < +b[i] ? -1 : 1; }
+    else if (an !== bn) return an ? -1 : 1;
+    else if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
   }
-
   return 0;
 }
 
-/**
- * Check if version satisfies a caret range (^1.2.3)
- * Allows changes that do not modify the left-most non-zero digit
- */
-function satisfiesCaret(version: SemVer, range: SemVer): boolean {
-  if (version.major !== range.major) return false;
-
-  if (range.major > 0) {
-    // ^1.2.3 := >=1.2.3 <2.0.0
-    return version.minor > range.minor ||
-           (version.minor === range.minor && version.patch >= range.patch);
-  }
-
-  if (range.minor > 0) {
-    // ^0.2.3 := >=0.2.3 <0.3.0
-    return version.minor === range.minor && version.patch >= range.patch;
-  }
-
-  // ^0.0.3 := >=0.0.3 <0.0.4
-  return version.minor === range.minor && version.patch === range.patch;
+function compareSemVer(a: SemVer, b: SemVer): number {
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch || comparePre(a.prerelease, b.prerelease);
 }
 
-/**
- * Check if version satisfies a tilde range (~1.2.3)
- * Allows patch-level changes
- */
-function satisfiesTilde(version: SemVer, range: SemVer): boolean {
-  // ~1.2.3 := >=1.2.3 <1.3.0
-  return version.major === range.major &&
-         version.minor === range.minor &&
-         version.patch >= range.patch;
+type Comparator = { op: '>=' | '>' | '<=' | '<' | '='; v: SemVer };
+const v = (major: number, minor: number, patch: number, pre: string[] = []): SemVer => ({ major, minor, patch, prerelease: pre, raw: '' });
+const isX = (s?: string) => s === undefined || s === '' || /^[xX*]$/.test(s);
+
+/** A possibly partial version: numbers for the parts given, undefined from the first wildcard or missing part on. */
+function parsePartial(s: string): { major?: number; minor?: number; patch?: number; pre: string[] } | null {
+  const m = VERSION_RE.exec(s.trim());
+  if (!m) return null;
+  const n = (x?: string) => isX(x) ? undefined : +x!;
+  const major = n(m[1]), minor = major === undefined ? undefined : n(m[2]), patch = minor === undefined ? undefined : n(m[3]);
+  return { major, minor, patch, pre: patch !== undefined && m[4] ? m[4].split('.') : [] };
 }
 
-/**
- * Check if version satisfies a comparator (>=, >, <, <=, =)
- */
-function satisfiesComparator(version: SemVer, operator: string, target: SemVer): boolean {
-  const cmp = compareSemVer(version, target);
-
-  switch (operator) {
-    case '=':
-    case '==':
-      return cmp === 0;
-    case '>':
-      return cmp > 0;
-    case '>=':
-      return cmp >= 0;
-    case '<':
-      return cmp < 0;
-    case '<=':
-      return cmp <= 0;
-    default:
-      return false;
+/** The comparators one range term stands for (`^1.2`, `~1`, `>=1.x`, `1.2.3`, `*`), or null when it is not a term. */
+function desugar(term: string): Comparator[] | null {
+  const m = /^(\^|~>?|>=|<=|>|<|=)?\s*(.*)$/.exec(term.trim());
+  const op = m![1] ?? '', p = parsePartial(m![2]);
+  if (!p) return null;
+  const { major, minor, patch, pre } = p;
+  const next = (a: number, b: number, c: number) => ({ op: '<' as const, v: v(a, b, c, ['0']) });   // "<2.0.0-0": no prerelease of 2.0.0 either
+  if (major === undefined) return op === '<' || op === '>' ? [{ op: '<', v: v(0, 0, 0, ['0']) }] : [];   // * : everything (> * and < * match nothing, as in node-semver)
+  const lo = v(major, minor ?? 0, patch ?? 0, pre);
+  if (op === '^') {
+    if (major > 0 || minor === undefined) return [{ op: '>=', v: lo }, next(major + 1, 0, 0)];
+    if (minor > 0 || patch === undefined) return [{ op: '>=', v: lo }, next(0, minor + 1, 0)];
+    return [{ op: '>=', v: lo }, next(0, 0, patch + 1)];
   }
+  if (op[0] === '~') return [{ op: '>=', v: lo }, minor === undefined ? next(major + 1, 0, 0) : next(major, minor + 1, 0)];
+  const partial = minor === undefined || patch === undefined;
+  if (op === '' || op === '=') return partial ? [{ op: '>=', v: lo }, minor === undefined ? next(major + 1, 0, 0) : next(major, minor + 1, 0)] : [{ op: '=', v: lo }];
+  if (op === '>') return partial ? [{ op: '>=', v: minor === undefined ? v(major + 1, 0, 0) : v(major, minor + 1, 0) }] : [{ op: '>', v: lo }];
+  if (op === '<') return [{ op: '<', v: partial ? v(major, minor ?? 0, 0, ['0']) : lo }];
+  if (op === '>=') return [{ op: '>=', v: lo }];
+  return partial ? [minor === undefined ? next(major + 1, 0, 0) : next(major, minor + 1, 0)] : [{ op: '<=', v: lo }];   // <=
 }
 
-/**
- * Check if version satisfies a range specification
- */
+/** One `||` alternative: hyphen ranges, an operator separated from its version by spaces, then whitespace-separated terms. */
+function parseSet(set: string): Comparator[] | null {
+  set = set.trim().replace(/^(.+?)\s+-\s+(.+)$/, (_, a, b) => {
+    const from = parsePartial(a), to = parsePartial(b);
+    if (!from || !to) return '\u0000';
+    const lower = isX(a) ? '' : `>=${[from.major, from.minor ?? 0, from.patch ?? 0].join('.')}${from.pre.length ? '-' + from.pre.join('.') : ''}`;
+    const upper = to.major === undefined ? '' : to.patch === undefined ? `<${to.minor === undefined ? `${to.major + 1}.0.0` : `${to.major}.${to.minor + 1}.0`}-0` : `<=${b.trim()}`;
+    return `${lower} ${upper}`;
+  });
+  if (set.includes('\u0000')) return null;
+  const out: Comparator[] = [];
+  for (const term of set.replace(/(\^|~>?|>=|<=|>|<|=)\s+/g, '$1').split(/\s+/).filter(Boolean)) {
+    const c = desugar(term);
+    if (!c) return null;
+    out.push(...c);
+  }
+  return out;
+}
+
+function holds(c: Comparator, version: SemVer): boolean {
+  const cmp = compareSemVer(version, c.v);
+  return c.op === '=' ? cmp === 0 : c.op === '>' ? cmp > 0 : c.op === '>=' ? cmp >= 0 : c.op === '<' ? cmp < 0 : cmp <= 0;
+}
+
+function satisfiesSet(version: SemVer, set: Comparator[]): boolean {
+  if (!set.every(c => holds(c, version))) return false;
+  if (!version.prerelease.length) return true;
+  // A prerelease is only offered by a range that names a prerelease of the same major.minor.patch.
+  return set.some(c => c.v.prerelease.length && c.v.major === version.major && c.v.minor === version.minor && c.v.patch === version.patch);
+}
+
+/** Check if a version satisfies a range specification ("latest" and "" mean any version). */
 export function satisfiesRange(versionStr: string, rangeStr: string): boolean {
   rangeStr = rangeStr.trim();
-
-  // Wildcard or "latest"
-  if (rangeStr === '*' || rangeStr === 'latest' || rangeStr === '') {
-    return true;
-  }
-
+  if (rangeStr === 'latest') return true;
   const version = parseSemVer(versionStr);
   if (!version) return false;
-
-  // Exact version or partial version (e.g. "4" → "^4.0.0", "4.2" → "^4.2.0")
-  if (!rangeStr.match(/[\^~><]/)) {
-    const target = parseSemVer(rangeStr);
-    if (target) return compareSemVer(version, target) === 0;
-    // Partial version: "4" or "4.2" — treat as caret range
-    const partialMatch = rangeStr.match(/^(\d+)(?:\.(\d+))?$/);
-    if (partialMatch) {
-      const coerced = parseSemVer(`${partialMatch[1]}.${partialMatch[2] || '0'}.0`);
-      return coerced ? satisfiesCaret(version, coerced) : false;
-    }
-    return false;
-  }
-
-  // Caret range: ^1.2.3
-  if (rangeStr.startsWith('^')) {
-    const target = parseSemVer(rangeStr.slice(1));
-    return target ? satisfiesCaret(version, target) : false;
-  }
-
-  // Tilde range: ~1.2.3
-  if (rangeStr.startsWith('~')) {
-    const target = parseSemVer(rangeStr.slice(1));
-    return target ? satisfiesTilde(version, target) : false;
-  }
-
-  // Comparator range: >=1.2.3 <2.0.0
-  const comparatorMatch = rangeStr.match(/^(>=?|<=?|=)\s*(.+)$/);
-  if (comparatorMatch) {
-    const operator = comparatorMatch[1];
-    const target = parseSemVer(comparatorMatch[2]);
-    return target ? satisfiesComparator(version, operator, target) : false;
-  }
-
-  // Space-separated AND ranges: >=1.2.3 <2.0.0
-  if (rangeStr.includes(' ')) {
-    const parts = rangeStr.split(/\s+/);
-    for (let i = 0; i < parts.length; i += 2) {
-      const operator = parts[i];
-      const targetStr = parts[i + 1];
-      if (!targetStr) continue;
-
-      const target = parseSemVer(targetStr);
-      if (!target) return false;
-      if (!satisfiesComparator(version, operator, target)) return false;
-    }
-    return true;
-  }
-
-  return false;
+  return rangeStr.split('||').some(alt => { const set = parseSet(alt); return set !== null && satisfiesSet(version, set); });
 }
 
-/**
- * Find the maximum version from a list that satisfies a range
- */
+/** The highest version from a list that satisfies a range. */
 export function maxSatisfying(versions: string[], range: string): string | null {
-  const satisfying = versions.filter(v => satisfiesRange(v, range));
-  if (satisfying.length === 0) return null;
-
-  // Parse and sort
-  const parsed = satisfying
-    .map(v => parseSemVer(v))
-    .filter((v): v is SemVer => v !== null);
-
-  if (parsed.length === 0) return null;
-
-  parsed.sort((a, b) => compareSemVer(b, a)); // Descending order
+  const parsed = versions.filter(x => satisfiesRange(x, range)).map(parseSemVer).filter((x): x is SemVer => x !== null);
+  if (!parsed.length) return null;
+  parsed.sort((a, b) => compareSemVer(b, a));
   return parsed[0].raw;
 }

@@ -181,7 +181,9 @@ async function untar(tarData: Uint8Array): Promise<TarEntry[]> {
 
     // Read file data if present
     let data: Uint8Array | undefined;
-    if (header.size > 0 && type === 'file') {
+    // A regular member with no bytes too: its data is an empty array, so the writer creates (or empties) the file (Y009). Other zero-size
+    // members (hard links, pax headers) have no file content to write.
+    if (type === 'file' && (header.size > 0 || /^[0\0]?$/.test(header.typeflag))) {
       if (offset + header.size > tarData.length) {
         throw new Error(`Incomplete tar file: expected ${header.size} bytes at offset ${offset}`);
       }

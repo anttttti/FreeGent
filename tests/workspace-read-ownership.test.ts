@@ -97,3 +97,14 @@ describe('a parked chat\'s second-stage read (391/393)', () => {
         delete W.extractDocumentText; delete W.agentListFiles;
     });
 });
+
+describe('a dropped batch (D036)', () => {
+    it('starts every read in the drop, so the chat switch or Clear that follows owns all of them', () => {
+        document.body.innerHTML = '<div id="img-strip"></div><div id="tab-content"><div data-panel="chat" class="active"></div></div>';
+        W.setupChatDropZone();
+        const files = ['a.txt', 'b.txt'].map(n => new File(['x'], n, { type: 'text/plain' }));
+        const drop = new Event('drop', { bubbles: true, cancelable: true }); (drop as any).dataTransfer = { files };
+        document.querySelector('[data-panel="chat"]')!.dispatchEvent(drop);
+        expect([...document.querySelectorAll('.attachment-loading')].map(c => c.textContent)).toEqual(['Reading a.txt…', 'Reading b.txt…']);
+    });
+});

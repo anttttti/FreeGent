@@ -144,8 +144,8 @@ function _parseRpcBody(text: string, contentType: string, id: any): any {
     if (/text\/event-stream/i.test(contentType)) {
         // An event is a block of lines ended by a blank line; all its data: lines make one message, joined by newlines
         // (a server may pretty-print its JSON over several data: lines).
-        for (const event of text.split(/\r?\n\r?\n/)) {
-            const data = event.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+        for (const event of text.replace(/\r\n|\r/g, '\n').split('\n\n')) {
+            const data = event.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
             if (!data.trim()) continue;
             try {
                 const hit = _answerTo(JSON.parse(data), id);
@@ -259,19 +259,25 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
 async function _readSseAnswer(resp: Response, id: any): Promise<any> {
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', size = 0;
+    let buffer = '', size = 0, heldCR = false;
     const scan = (event: string): any => {
-        const data = event.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+        const data = event.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
         if (!data.trim()) return null;
         try { return _answerTo(JSON.parse(data), id); } catch { return null; }
     };
     try {
         for (;;) {
             const { done, value } = await reader.read();
-            if (value) { size += value.byteLength; if (size > MCP_REPLY_MAX_BYTES) throw _tooLarge(); buffer += decoder.decode(value, { stream: !done }); }
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() ?? '';
-            for (const ev of events) { const hit = scan(ev); if (hit) return hit; }
+            if (value) { size += value.byteLength; if (size > MCP_REPLY_MAX_BYTES) throw _tooLarge(); }
+            // CR, LF and CRLF all end a line (SSE spec, as readSSE reads it). Only the new text is normalised and searched for a blank line: the whole buffer
+            // was split again after every chunk. A CR at the end of a chunk may be half of a CRLF and waits for the next one (X009, Z006).
+            let text = (heldCR ? '\r' : '') + (value ? decoder.decode(value, { stream: !done }) : '');
+            heldCR = !done && text.endsWith('\r');
+            if (heldCR) text = text.slice(0, -1);
+            text = text.replace(/\r\n|\r/g, '\n');
+            let from = Math.max(0, buffer.length - 1), end: number;   // a blank line may start in the old tail
+            buffer += text;
+            while ((end = buffer.indexOf('\n\n', from)) >= 0) { const hit = scan(buffer.slice(0, end)); if (hit) return hit; buffer = buffer.slice(end + 2); from = 0; }
             if (done) { const hit = scan(buffer); if (hit) return hit; break; }
         }
     } finally { reader.cancel().catch(() => {}); }
@@ -659,7 +665,15 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
             return nullable ? { ...flat, nullable: true } : flat;
         }
     }
-    if (!type) type = schema.properties ? 'object' : schema.items ? 'array' : 'string';
+    // No type: the one a uniform enum already has ([0, 1] is a number, not a string with members that are not strings: W006), else string.
+    const _enumType = (): string | undefined => {
+        const e = schema.enum;
+        if (!Array.isArray(e) || !e.length) return undefined;
+        if (e.every((v: unknown) => typeof v === 'boolean')) return 'boolean';
+        if (e.every((v: unknown) => typeof v === 'number')) return e.every((v: number) => Number.isInteger(v)) ? 'integer' : 'number';
+        return undefined;
+    };
+    if (!type) type = schema.properties ? 'object' : schema.items ? 'array' : _enumType() ?? 'string';
     out.type = type;
     for (const k of Object.keys(schema)) {
         if (!_SCHEMA_KEYS.has(k) || k === 'type') continue;

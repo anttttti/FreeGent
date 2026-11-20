@@ -76,11 +76,21 @@ function keyText(line: string, key: Key, tab: string | null, bStart: boolean, bE
   return e > s ? line.slice(s, e) : '';
 }
 
-const numPrefix = (s: string): number => {
-  const m = /^[ \t]*(-?)(\d*)(?:\.(\d*))?/.exec(s);
-  if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) return 0;
-  return parseFloat(`${m[1]}${m[2] || '0'}.${m[3] || '0'}`);
-};
+// -n compares the decimal strings exactly (sign, then integer digits, then fraction digits), as GNU does: converting to a double made distinct values
+// beyond 2^53 or past 15 digits equal, so -u dropped rows and the order of negative keys could be wrong (explorations U004).
+function numCmp(a: string, b: string): number {
+  const parse = (s: string) => {
+    const m = /^[ \t]*(-?)(\d*)(?:\.(\d*))?/.exec(s);
+    const int = (m?.[2] ?? '').replace(/^0+/, ''), frac = (m?.[3] ?? '').replace(/0+$/, '');
+    return { neg: m?.[1] === '-' && (int !== '' || frac !== ''), int, frac };
+  };
+  const x = parse(a), y = parse(b);
+  if (x.neg !== y.neg) return x.neg ? -1 : 1;
+  const mag = x.int.length !== y.int.length ? Math.sign(x.int.length - y.int.length)
+    : x.int !== y.int ? (x.int < y.int ? -1 : 1)
+    : x.frac === y.frac ? 0 : x.frac < y.frac ? -1 : 1;   // equal-length digit strings: byte order is numeric order; fractions compare digit by digit
+  return x.neg ? -mag : mag;
+}
 const generalNum = (s: string): number => {
   const m = /^[ \t]*[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?|inf(?:inity)?|nan)/i.exec(s);
   return m ? parseFloat(m[0].trim().replace(/^([-+]?)inf.*/i, '$1Infinity')) : -Infinity;
@@ -126,7 +136,7 @@ const bytesCmp = bytesOrder;
 
 function compareBy(a: string, b: string, o: Opts): number {
   if (o.b) { a = a.replace(/^[ \t]+/, ''); b = b.replace(/^[ \t]+/, ''); }
-  if (o.n) return Math.sign(numPrefix(a) - numPrefix(b));
+  if (o.n) return numCmp(a, b);
   if (o.g) { const x = generalNum(a), y = generalNum(b); return x === y ? 0 : x < y ? -1 : 1; }
   if (o.h) { const [ma, na] = humanKey(a), [mb, nb] = humanKey(b); return ma !== mb ? Math.sign(ma - mb) : Math.sign(na - nb); }
   if (o.M) return Math.sign(monthKey(a) - monthKey(b));

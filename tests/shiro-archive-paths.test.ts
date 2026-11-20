@@ -42,6 +42,17 @@ t.close(); sys.stdout.buffer.write(b.getvalue())`));
         expect(r.err).toMatch(/leaves the extraction directory/);
         expect(files.has('out/copy.txt')).toBe(false);
     });
+    it('tar: a PAX record with multibyte text keeps the records after it aligned (W007)', async () => {
+        put('pax.tar', py(`import tarfile,io,sys
+b=io.BytesIO(); t=tarfile.open(fileobj=b,mode='w',format=tarfile.PAX_FORMAT)
+for n,extra in (('café-日本.txt',{}),('real-ascii.txt',{'comment':'é'}),('😀.txt',{'mtime':'1700000000.5'})):
+    d=b'x'; i=tarfile.TarInfo(n); i.size=1; i.pax_headers=extra; t.addfile(i,io.BytesIO(d))
+t.close(); sys.stdout.buffer.write(b.getvalue())`));
+        const listed = await run('tar -tf pax.tar');
+        expect(listed.out.split('\n').filter(Boolean)).toEqual(['café-日本.txt', 'real-ascii.txt', '😀.txt']);
+        await run('mkdir -p px'); await run('tar -xf pax.tar -C px');
+        expect(['px/café-日本.txt', 'px/real-ascii.txt', 'px/😀.txt'].every(n => files.has(n))).toBe(true);
+    });
     it('tar: the legacy format refuses ".." names (R285)', async () => {
         files.set('old.tar', { content: 'FLUFFY-TAR-V1\nFILE:../escaped.txt\nSIZE:1\nTYPE:file\nDATA-START\nX\nDATA-END\n', encoding: null });
         await run('mkdir -p sub');

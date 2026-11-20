@@ -15,4 +15,10 @@ describe('workspaceName', () => {
         expect(workspaceName('workspace/notes.md')).toBe('workspace/notes.md');
         expect(workspaceName('/workspaces/x')).toBe('workspaces/x');
     });
+    it('refuses a NUL or an unpaired surrogate, and keeps emoji (Z010)', () => {
+        expect(() => workspaceName('a\0b.txt')).toThrow(/NUL/);
+        expect(() => workspaceName('x\uD800.txt')).toThrow(/surrogate/);
+        expect(() => workspaceName('y\uDC00.txt')).toThrow(/surrogate/);
+        expect(workspaceName('😀/é.txt')).toBe('😀/é.txt');
+    });
 });

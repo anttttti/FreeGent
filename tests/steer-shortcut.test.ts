@@ -50,6 +50,28 @@ describe('steerNextQueued', () => {
     });
 });
 
+describe('another chat\'s queued message', () => {
+    afterEach(async () => { const st = await import('../state.ts'); st.setActiveChatId(null); st.setActiveAbortController(null); st.setSoftStopPending(false); });
+    it('neither stops the running turn nor is picked by the shortcut while another chat is open (D027)', async () => {
+        const st = await import('../state.ts');
+        const ac = new AbortController();
+        st.setActiveChatId('B'); st.setActiveAbortController(ac); W.setAgentStreaming(true);
+        MsgQueue.enqueue('for A', 'steering', 'A');
+        expect(ac.signal.aborted).toBe(false);
+        MsgQueue.clear(); MsgQueue.enqueue('for A', 'queued', 'A');
+        expect(W.steerNextQueued('typed')).toEqual({ did: 'composer', text: 'typed' });   // A's row is not promoted; the box text is B's own steer
+        expect(MsgQueue.getAll().find(m => m.text === 'for A')?.mode).toBe('queued');
+        expect(ac.signal.aborted).toBe(false);   // A's head ahead of it keeps B's steer parked, as dispatch does
+    });
+    it('a steering message of the open chat still stops its turn', async () => {
+        const st = await import('../state.ts');
+        const ac = new AbortController();
+        st.setActiveChatId('B'); st.setActiveAbortController(ac); W.setAgentStreaming(true);
+        MsgQueue.enqueue('mine', 'steering', 'B');
+        expect(ac.signal.aborted).toBe(true);
+    });
+});
+
 describe('an asynchronous dequeue hook (the TUI copies the workspace for /rewind first)', () => {
     afterEach(() => { delete W._onQueueDequeue; });
     it('keeps the chat claimed while it runs: nothing else is dequeued or started in the gap', async () => {

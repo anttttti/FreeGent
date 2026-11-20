@@ -1,6 +1,6 @@
 // native-exec.ts: output is decoded per stream, not per chunk. A multi-byte character that a process writes
 // in pieces (OS case080: 資料🙂café, one byte at a time, 40 ms apart) arrives intact on stdout and stderr.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -17,6 +17,7 @@ for b in data:
 describe('native execute_code output decoding', () => {
     const dir = mkdtempSync(join(tmpdir(), 'fg-utf8-'));
     const exec = createNativeExec({ workspaceRoot: dir });
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));   // not in the last test's body: a test that runs after it needs the directory (K001)
     it('keeps multi-byte characters written one byte at a time on stdout', async () => {
         const r = await exec('python', PY('stdout'));
         expect(r.exit_code).toBe(0);
@@ -32,6 +33,5 @@ describe('native execute_code output decoding', () => {
         const r = await exec('bash', 'echo hello; echo oops >&2');
         expect(r.stdout).toBe('hello\n');
         expect(r.stderr).toBe('oops\n');
-        rmSync(dir, { recursive: true, force: true });
     });
 });

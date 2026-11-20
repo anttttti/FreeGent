@@ -82,7 +82,9 @@ export const splitCmd: Command = {
     const pieces: Uint8Array[] = [];
     const total = data.length;
     if (chunks && (chunks.mode === 'n' || chunks.mode === 'k')) {
-      for (let i = 0; i < chunks.n; i++) pieces.push(data.subarray(Math.floor(total * i / chunks!.n), Math.floor(total * (i + 1) / chunks!.n)));
+      // GNU's rule: equal chunks of floor(size / N) bytes (at least 1), the last one takes the rest; with fewer bytes than chunks the tail chunks are empty (X007).
+      const per = Math.max(1, Math.floor(total / chunks.n));
+      for (let i = 0; i < chunks.n; i++) pieces.push(data.subarray(Math.min(total, i * per), i === chunks.n - 1 ? total : Math.min(total, (i + 1) * per)));
     } else if (chunks) {                                   // l/N: whole lines, about equal sizes
       let start = 0;
       for (let i = 1; i <= chunks.n; i++) {

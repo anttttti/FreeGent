@@ -25,7 +25,7 @@ export const ddCmd: Command = {
     try {
       let ifPath = '';
       let ofPath = '';
-      let bs = 512;
+      let bs: number | undefined, ibsArg: number | undefined, obsArg: number | undefined;   // bs= overrides ibs= and obs=, as in GNU dd
       let blocks = -1;
       let skip = 0;
       let seek = 0;
@@ -41,7 +41,8 @@ export const ddCmd: Command = {
           case 'bs': case 'ibs': case 'obs': {
             const n = parseSize(val);
             if (n === null || !(n > 0)) throw new Error(`invalid number: '${val}' (${key}=)`);
-            bs = n; break;
+            if (key === 'bs') bs = n; else if (key === 'ibs') ibsArg = n; else obsArg = n;
+            break;
           }
           case 'count': blocks = count(key, val); break;
           case 'skip': skip = count(key, val); break;
@@ -58,12 +59,15 @@ export const ddCmd: Command = {
         }
       }
 
+      // skip= and count= are counted in input blocks, seek= in output blocks: the two sizes are separate (X005; one variable made the last operand win both).
+      const ibs = bs ?? ibsArg ?? 512, obs = bs ?? obsArg ?? 512;
+
       // Read input
       let data: Uint8Array<ArrayBufferLike>;
       if (ifPath === '/dev/zero') {
-        data = new Uint8Array(blocks >= 0 ? bs * blocks : bs);
+        data = new Uint8Array(blocks >= 0 ? ibs * blocks : ibs);
       } else if (ifPath === '/dev/random' || ifPath === '/dev/urandom') {
-        data = new Uint8Array(blocks >= 0 ? bs * blocks : bs);
+        data = new Uint8Array(blocks >= 0 ? ibs * blocks : ibs);
         for (let i = 0; i < data.length; i += 65536) crypto.getRandomValues(data.subarray(i, i + 65536) as Uint8Array<ArrayBuffer>);   // Web Crypto's per-call limit
       } else if (ifPath) {
         const resolved = ctx.fs.resolvePath(ifPath, ctx.cwd);
@@ -78,8 +82,8 @@ export const ddCmd: Command = {
         data = textToBytes(ctx.stdin);
       }
 
-      if (skip > 0) data = data.subarray(Math.min(data.length, skip * bs));
-      if (blocks >= 0) data = data.subarray(0, Math.min(data.length, blocks * bs));
+      if (skip > 0) data = data.subarray(Math.min(data.length, skip * ibs));
+      if (blocks >= 0) data = data.subarray(0, Math.min(data.length, blocks * ibs));
       const inLength = data.length;
 
       // Conversions: on bytes, ASCII letters only, as dd does
@@ -98,7 +102,7 @@ export const ddCmd: Command = {
         if (seek > 0 || convs.has('notrunc')) {
           try { const raw = await ctx.fs.readFile(resolved); existing = typeof raw === 'string' ? textToBytes(raw) : raw; } catch { /* new file */ }
         }
-        const start = seek * bs;
+        const start = seek * obs;
         // Without notrunc the output ends where the copy ends; with it, what follows in the existing file stays.
         const end = start + data.length;
         const size = convs.has('notrunc') ? Math.max(existing.length, end) : end;
@@ -111,8 +115,8 @@ export const ddCmd: Command = {
       }
 
       // Status line to stderr: whole and partial records actually copied
-      const full = Math.floor(inLength / bs), part = inLength % bs ? 1 : 0;
-      if (status !== 'none') ctx.stderr += `${full}+${part} records in\n${full}+${part} records out\n${data.length} bytes copied\n`;
+      const rec = (n: number, size: number) => `${Math.floor(n / size)}+${n % size ? 1 : 0}`;
+      if (status !== 'none') ctx.stderr += `${rec(inLength, ibs)} records in\n${rec(data.length, obs)} records out\n${data.length} bytes copied\n`;
       return 0;
     } catch (e: unknown) {
       ctx.stderr += `dd: ${e instanceof Error ? e.message : e}\n`;

@@ -5,7 +5,9 @@ import { sprintf as cSprintf } from './awk';
 /** One formatter for registry and shell builtin entry paths; strings retain raw bytes. */
 function formatPrintf(fmt: string, fmtArgs: string[]): {stdout:string; stderr:string; exitCode:number} {
   let stderr = '', exitCode = 0;
-  const BYTE = 0xe000;   // escaped bytes are held as U+E000+byte until decoded below
+  // Escaped bytes are held as lone surrogates U+DC00+byte until decoded below: the representation shiro/utils/bytes.ts uses for bytes, which valid text never
+  // contains. The private-use characters U+E000..U+E0FF held them before, and a literal one in the format or an argument came out as a byte (W003).
+  const BYTE = 0xdc00;
   let argIdx = 0;
   let result = '';
   // The format is reused until every argument is consumed (printf "%s\n" a b c).
@@ -172,9 +174,12 @@ function formatPrintf(fmt: string, fmtArgs: string[]): {stdout:string; stderr:st
     }
     if (argIdx === passStart) break;   // no conversions: printed once
   } while (argIdx < fmtArgs.length);
+  const decodeCarriers = (run: string) => run ? bytesToText(Uint8Array.from(run, c => c.charCodeAt(0) - BYTE)) : '';
   // Escaped bytes (\xHH, \NNN) are decoded as UTF-8: '\xc3\xa9' is "é"; bytes that aren't
   // UTF-8 stay bytes ('\xe9' writes the one byte E9, utils/bytes.ts).
-  result = result.replace(/[\ue000-\ue0ff]+/g, run => bytesToText(Uint8Array.from(run, c => c.charCodeAt(0) - BYTE)));
+  // Runs of byte carriers, except a low surrogate that completes a real pair (a regex lookbehind is not available in older Safari).
+  result = result.replace(/[\ud800-\udbff]?[\udc00-\udcff]+/g, run => /^[\ud800-\udbff]/.test(run)
+    ? run[0] + run.slice(1, 2) + decodeCarriers(run.slice(2)) : decodeCarriers(run));
   return {stdout:result, stderr, exitCode};
 }
 

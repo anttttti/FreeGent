@@ -227,13 +227,20 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     const _known = _knownToolNames();
     const _knownAlt = [..._known].map(_reEsc).join('|');
 
+    // Complete JSON frames (Formats E and B): their argument strings are data. The K and J scans below ran first and removed call-shaped text
+    // from inside them (`call:list_files{}` in a file's content), so a valid write arrived altered (explorations Y025).
+    const _inFrame = (at: number): boolean => {
+        for (const f of cleaned.matchAll(/<tool_call>\s*\{[\s\S]*?\}\s*<\/tool_call>|<function=[\w-]+>\s*\{[\s\S]*?\}\s*<\/function>/g)) if (at >= f.index! && at < f.index! + f[0].length) return true;
+        return false;
+    };
+
     // Format K — Gemma native (see _gemmaValue). Known tool names only.
     {
         const re = /(?:<\|tool_call>\s*)?call:([A-Za-z_][\w-]*)\s*(?=\{)/g;
         let m: RegExpExecArray | null;
         let out = '', last = 0;
         while ((m = re.exec(cleaned)) !== null) {
-            if (!_known.has(m[1])) continue;
+            if (!_known.has(m[1]) || _inFrame(m.index)) continue;
             const [args, end] = _gemmaObject(cleaned, m.index + m[0].length);
             let stop = end;
             const tail = /^\s*<tool_call\|>/.exec(cleaned.slice(stop));
@@ -252,7 +259,8 @@ export function parseFnTagCalls(text: any, opts: { fenceRescue?: boolean } = {})
     // Formats E/A start with { or <function=.
     cleaned = cleaned.replace(
         /<tool_call>[ \t]*(\w+)\s*((?:<arg_key>[\s\S]*?)?)(?:<\/tool_call>|(?=<tool_call>)|$)/g,
-        (full, name, body) => {
+        (full, name, body, offset) => {
+            if (_inFrame(offset)) return full;
             const args = {};
             const pairRe = /<arg_key>\s*([\s\S]*?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)(?:<\/arg_value>|(?=<arg_key>)|$)/g;
             let m: RegExpExecArray | null;

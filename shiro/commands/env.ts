@@ -2,7 +2,7 @@ import type { Command } from './index';
 
 // Patterns that indicate a sensitive env var (case-insensitive match on key)
 /** Shell bookkeeping that lives in the same table as the environment but is not part of it. */
-export const INTERNAL_VARS = new Set(['LINENO', '?', '#', '@', '*', '$', '!', '_', 'OLDPWD_INTERNAL']);
+export const INTERNAL_VARS = new Set(['LINENO', '?', '#', '@', '*', '$', '!', '_', 'OLDPWD_INTERNAL', '__PIPE_STDIN']);   // __PIPE_STDIN: the piped text, not an environment variable (K004)
 const SECRET_PATTERNS = /(_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIAL|API_KEY|AUTH_TOKEN|ACCESS_TOKEN|GITHUB_TOKEN)$/i;
 
 /**

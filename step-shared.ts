@@ -44,9 +44,14 @@ export function recordCallsAsBash(history: any[], ids: Set<string>): void {
 
 /** The last `n` tool calls with their clipped results, one per line — a worker's fallback report. */
 export function summarizeRecentToolCalls(history: any[], n = 4): string {
-    const results = new Map(history.filter(m => m.role === 'tool').map(m => [m.tool_call_id, String(m.content ?? '')]));
-    return history.filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
-        .flatMap(m => m.tool_calls).slice(-n)
-        .map(tc => `- ${tc.function?.name}(${String(tc.function?.arguments ?? '').slice(0, 2000)}) → ${(results.get(tc.id) ?? '').slice(0, 4000)}`)
-        .join('\n');
+    // A call is paired with the results that follow its own reply: an ID reused in a later reply must not give an earlier call that reply's result (Z012).
+    const lines: string[] = [];
+    let block: { name: string; args: string; id: any }[] = [], results = new Map<any, string>();
+    const flush = () => { for (const c of block) lines.push(`- ${c.name}(${c.args}) → ${(results.get(c.id) ?? '').slice(0, 4000)}`); block = []; results = new Map(); };
+    for (const m of history) {
+        if (m.role === 'assistant') { flush(); if (Array.isArray(m.tool_calls)) block = m.tool_calls.map((tc: any) => ({ name: tc.function?.name, args: String(tc.function?.arguments ?? '').slice(0, 2000), id: tc.id })); }
+        else if (m.role === 'tool') results.set(m.tool_call_id, String(m.content ?? ''));
+    }
+    flush();
+    return lines.slice(-n).join('\n');
 }

@@ -38,7 +38,7 @@ function updateChatMetaLastAt(id) {
     if (entry) { entry.lastAt = Date.now(); saveChatList(list); }
 }
 
-// ── Chat HTML persistence — server > IndexedDB > localStorage ─────────────
+// ── Chat HTML persistence — IndexedDB > localStorage ─────────────
 // Chat HTML snapshots are stored browser-side only: localStorage (synchronous, always current)
 // and IndexedDB (durable, survives localStorage clear, no hard size limit).
 // No data is sent to the local dev server.

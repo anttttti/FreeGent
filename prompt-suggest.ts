@@ -162,7 +162,9 @@ export async function generateAndShowSuggestion(): Promise<void> {
             const isServer = /HTTP 5\d\d|service unavailable|bad gateway/i.test(msg);
             // 429 — rate limited; apply cooldown rather than removing permanently
             const is429    = /HTTP 404|HTTP 429|rate.?limit|too many requests/i.test(msg);
-            if (isGone && ep.provider !== 'custom' && ep.provider !== 'vllm') {
+            // An obsolete generation's 401/410 says nothing about the credential the user has set since: it must not pause the model (Y013).
+            if (isGone && seq !== _seq) { /* stale: ignored */ }
+            else if (isGone && ep.provider !== 'custom' && ep.provider !== 'vllm') {
                 // Pause the model so it is skipped in future turns but stays visible in the
                 // model table for the user to manage (resume / remove themselves).
                 if (typeof savePausedMainModels === 'function' && typeof getPausedMainModels === 'function') {

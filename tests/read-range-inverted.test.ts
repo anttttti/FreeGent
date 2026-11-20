@@ -32,3 +32,29 @@ describe('read_file inverted range', () => {
         expect(r.note).toMatch(/exceeds file length \(300 lines\)/);
     });
 });
+
+// Y012: a worker's own base64 write is read back before its commit as the committed record reads it.
+describe('read_file of a worker\'s staged base64 write', () => {
+    const b64 = (bytes: number[]) => Buffer.from(bytes).toString('base64');
+    const staged = (path: string, bytes: number[]) => ({ snapshot: new Map(), staging: new Map(), binary: new Map([[path, b64(bytes)]]), depth: 0 });
+    it('reads UTF-16 with a BOM and Windows-1252 as text, and still refuses bytes that are not text', async () => {
+        const utf16 = await W.executeToolAsync('read_file', { path: 'u.txt' }, staged('u.txt', [0xff, 0xfe, 0x43, 0, 0xe9, 0]));
+        expect(utf16.content).toBe('Cé');
+        const cp1252 = await W.executeToolAsync('read_file', { path: 'w.txt' }, staged('w.txt', [0x43, 0x61, 0x66, 0xe9, 0x20, 0x80]));
+        expect(cp1252.content).toBe('Café €');
+        expect((await W.executeToolAsync('read_file', { path: 'n.txt' }, staged('n.txt', [0x41, 0, 0xff, 0x80]))).error).toMatch(/written as binary/);
+    });
+});
+
+// Y015: a ledger/progress file that is missing reads as empty; one that exists but cannot be read is an error.
+describe('read_file of a ledger that cannot be read', () => {
+    const readWith = async (message: string, path = 'fg-tasks/ledger.md') => {
+        setWorkspaceAdapter({ agentReadFile: async () => { throw new Error(message); }, agentListFiles: async () => [], agentWriteFile: async () => {}, agentDeleteFile: async () => {}, agentFileMtime: async () => null, agentListFilesInDir: async () => [] } as any);
+        return W.executeToolAsync('read_file', { path });
+    };
+    it('missing: empty content; permission denied or a directory: the error', async () => {
+        expect((await readWith('File not found: fg-tasks/ledger.md')).content).toBe('');
+        expect((await readWith('Permission denied reading "fg-tasks/ledger.md".')).error).toMatch(/Permission denied/);
+        expect((await readWith('"progress.md" is a directory — use list_files', 'progress.md')).error).toMatch(/directory/);
+    });
+});

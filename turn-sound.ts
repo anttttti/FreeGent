@@ -19,6 +19,7 @@ export function playTurnSound(): void {
         _ctx ??= new AC();
         const ctx = _ctx;
         const start = () => {
+            if (!turnSoundEnabled()) return;   // switched off while the suspended context was resuming (W008)
             const t0 = ctx.currentTime;
             [[659, 0], [880, 0.12]].forEach(([freq, at]) => {
                 const osc = ctx.createOscillator(), gain = ctx.createGain();

@@ -24,6 +24,15 @@ describe('browser-tour fixes, low-severity round', () => {
         const e: any = await _httpErrorFromResponse(resp);
         expect(e.message).toBe('HTTP 502: 502 Bad Gateway nginx');
     });
+    it('an error detail that is an object or a list keeps its message (D030)', async () => {
+        const { _httpErrorFromResponse } = await import('../retry.ts');
+        const msg = 'maximum context length is 8192 tokens. However, you requested 6000 input tokens and 6000 output tokens';
+        for (const body of [{ detail: { message: msg } }, { detail: [{ msg }] }, { error: { metadata: { raw: { error: { message: msg } } } } }]) {
+            const e: any = await _httpErrorFromResponse(new Response(JSON.stringify(body), { status: 400 }));
+            expect(e.message, JSON.stringify(body)).toBe('HTTP 400: ' + msg);
+            expect(e.message).not.toContain('[object Object]');
+        }
+    });
     it('task slugs keep the base letters of accented titles', () => {
         const slug = (t: string) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
         expect(slug('Ünïcödé 日本語 🎉')).toBe('unicode');

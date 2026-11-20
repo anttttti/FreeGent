@@ -30,6 +30,9 @@ describe('writing', () => {
     it('buildFrontmatter skips empty values and quotes where needed', () => {
         expect(buildFrontmatter({ name: 'plan', description: '', trigger: 'a: b' })).toBe('---\nname: plan\ntrigger: "a: b"\n---\n');
     });
+    it('a title that reads as a number or a date is quoted, an id is not (N002)', () => {
+        expect(buildFrontmatter({ id: '007', title: '007', created: '2026-11-20' })).toBe('---\nid: 007\ntitle: "007"\ncreated: 2026-11-20\n---\n');
+    });
     it('setFrontmatterFields edits a block, keeps the body and a missing final newline, and prepends a block when there is none', () => {
         expect(setFrontmatterFields('---\nstatus: open\n---\n# T\n', { status: 'done' })).toBe('---\nstatus: done\n---\n# T\n');
         expect(setFrontmatterFields('---\nstatus: open\n---', { status: 'done' })).toBe('---\nstatus: done\n---');

@@ -66,6 +66,17 @@ describe('mcpToolName', () => {
     });
 });
 
+describe('sanitizeMcpSchema untyped enums (W006)', () => {
+    it('takes the type a uniform enum has, and leaves strings and mixed enums as string', () => {
+        expect(W.sanitizeMcpSchema({ enum: [0, 1] })).toMatchObject({ type: 'integer', enum: [0, 1] });
+        expect(W.sanitizeMcpSchema({ enum: [0.5, 1] })).toMatchObject({ type: 'number' });
+        expect(W.sanitizeMcpSchema({ enum: [true, false] })).toMatchObject({ type: 'boolean' });
+        expect(W.sanitizeMcpSchema({ enum: ['a', 'b'] })).toMatchObject({ type: 'string' });
+        expect(W.sanitizeMcpSchema({ enum: ['a', 1] })).toMatchObject({ type: 'string' });
+        expect(W.sanitizeMcpSchema({ type: 'string', enum: ['a'] }).type).toBe('string');   // an explicit type stays
+    });
+});
+
 describe('sanitizeMcpSchema', () => {
     it('resolves percent-encoded and empty-token $ref pointers (codex R431, R432)', () => {
         const root = { type: 'object', properties: { a: { $ref: '#/$defs/Some%20Type' }, b: { $ref: '#/$defs/' } }, $defs: { 'Some Type': { type: 'number' }, '': { type: 'boolean' } } };
@@ -241,6 +252,36 @@ describe('dispatch through executeToolAsync', () => {
             W.setMcpToolEnabled(s.id, 'search_places', true);
             const r = await W.executeToolAsync(W.mcpExposedName(s.id, 'search_places'), { query: 'x' });
             expect(r.error).toMatch(/larger than 16 MB/);
+        }
+    });
+
+    it('reads an SSE reply whose lines end in CR, LF or CRLF, as the main reader does (X009)', async () => {
+        for (const [i, nl] of ['\r', '\r\n', '\n'].entries()) {
+            mockServer((msg) => {
+                if (msg.method !== 'tools/call') return standardHandler(msg);
+                const body = JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: 'crlf ok' }] } });
+                return new Response(`event: message${nl}data: ${body}${nl}${nl}`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Mcp-Session-Id': 'sess-1' } });
+            });
+            const s = await W.addMcpServer({ name: `eol${i}`, url: `https://eol${i}.example.com/mcp` });
+            W.setMcpToolEnabled(s.id, 'search_places', true);
+            const r = await W.executeToolAsync(W.mcpExposedName(s.id, 'search_places'), { query: 'x' });
+            expect(JSON.stringify(r), JSON.stringify(nl)).toContain('crlf ok');
+        }
+    });
+
+    it('reads a reply cut into small chunks anywhere, even between the CR and LF of a line end (Z006)', async () => {
+        for (const piece of [1, 3, 7]) {
+            mockServer((msg) => {
+                if (msg.method !== 'tools/call') return standardHandler(msg);
+                const body = JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: 'chunked ok' }] } });
+                const bytes = new TextEncoder().encode(`event: message\r\ndata: ${body}\r\n\r\n`);
+                const stream = new ReadableStream({ start(c) { for (let i = 0; i < bytes.length; i += piece) c.enqueue(bytes.slice(i, i + piece)); c.close(); } });
+                return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Mcp-Session-Id': 'sess-1' } });
+            });
+            const s = await W.addMcpServer({ name: `chunk${piece}`, url: `https://chunk${piece}.example.com/mcp` });
+            W.setMcpToolEnabled(s.id, 'search_places', true);
+            const r = await W.executeToolAsync(W.mcpExposedName(s.id, 'search_places'), { query: 'x' });
+            expect(JSON.stringify(r), `piece ${piece}`).toContain('chunked ok');
         }
     });
 

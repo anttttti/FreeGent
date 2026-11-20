@@ -44,6 +44,18 @@ describe('live Local Folder files in a run', () => {
         expect(stale('local/a.txt')).toBe(true);
     });
 
+    it('a file that cannot be read is not seen by the run and, at the end, not known to be unchanged (Y020)', async () => {
+        for (const k of Object.keys(live)) delete live[k];
+        live['local/a.txt'] = 'v1'; live['local/locked.txt'] = 'secret';
+        const unreadable = async (n: string) => { if (n === 'local/locked.txt') throw new Error('Could not read local/locked.txt: NotReadableError'); return read(n); };
+        const files: Record<string, string> = {}, omitted = new Set<string>(), snap = snapshotWorkspace([]);
+        await addLiveFolderInput({ list: listing, read: unreadable, maxChars: 1000, put: (n, c) => { files[n] = c; }, snap, omitted });
+        expect(omitted.has('local/locked.txt')).toBe(true);           // the run may not replace what it did not see
+        expect(files['local/a.txt']).toBe('v1');
+        const stale = await staleGuard(snap, omitted, withLiveFiles(async () => [], unreadable, ['local/a.txt', 'local/locked.txt']));
+        expect(stale('local/a.txt')).toBe(true);                      // the final read failed: nothing is known to be unchanged
+    });
+
     it('too large or not text: left out of the run and not replaceable; a small live file clears an old "too large" mark (R440)', async () => {
         for (const k of Object.keys(live)) delete live[k];
         live['local/big.txt'] = 'x'.repeat(2000); live['local/img.png'] = new Uint8Array([1, 2]); live['local/small.txt'] = 'ok';

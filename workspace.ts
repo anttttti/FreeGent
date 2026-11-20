@@ -1228,7 +1228,8 @@ function _recBytes(rec: any): Uint8Array {
 }
 /** A downloaded file as a workspace record: text when it is valid UTF-8 (and was text), otherwise base64. */
 function _bytesToRec(bytes: Uint8Array, asBase64: boolean): { content: string; encoding: string | null } {
-    if (!asBase64) { try { return { content: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: null }; } catch {} }
+    // ignoreBOM: a leading BOM stays in the text, so the stored file has the pulled bytes and the next sync sees no edit (Z009).
+    if (!asBase64) { try { return { content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), encoding: null }; } catch {} }
     return { content: bytesToBase64(bytes), encoding: 'base64' };
 }
 
@@ -1536,6 +1537,8 @@ export function workspaceName(path: string): string {
     // A Windows-style path ("C:\\x\\y.txt") is a path inside the workspace like any other, never a drive.
     if (/^[A-Za-z]:[\\/]/.test(p)) p = p.slice(2);
     p = p.replace(/\\/g, '/');
+    // A NUL or a lone surrogate cannot be a file name in a ZIP, a folder or a download: two such names collapsed into one or ended early there (Z010).
+    if (/\0/.test(p) || /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(p) || /(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(p)) throw new Error('A file name cannot contain a NUL character or an unpaired surrogate; use a plain name.');
     if (p === '/workspace' || p.startsWith('/workspace/')) p = p.slice('/workspace'.length);
     const out: string[] = [];
     for (const seg of p.split('/')) {
@@ -1562,7 +1565,8 @@ export async function agentReadFile(path) {
     };
     if (path.startsWith('local/')) {
         // With a folder synced, local/… IS the folder: a file it does not have is not found, whatever an old snapshot in the workspace holds.
-        if (fsaHandle) { try { return await _fsaRead(path.slice(6)); } catch { throw new Error(`File not found: ${path}`); } }
+        // Only a file the folder does not have is "not found"; one it has and cannot read keeps its own error, so a caller can tell absence from not knowing (Y020).
+        if (fsaHandle) { try { return await _fsaRead(path.slice(6)); } catch (e: any) { throw new Error(e?.name === 'NotFoundError' || e?.name === 'TypeMismatchError' ? `File not found: ${path}` : `Could not read ${path}: ${e?.message || e?.name || e}`); } }
         try { return await _fsaRead(path.slice(6)); } catch {}
         const rec = await readWorkspaceFile(path);
         if (rec) return rec.encoding === 'base64' ? await _readBase64Record(path, rec.content) : rec.content;
@@ -1787,9 +1791,11 @@ function _buildPyRunnerHtml(filename, code, files) {
     ));
 
     // Pre-compute Python snippets that reference workDir (so the inner iframe JS is constant-only)
-    const sysPathPy = `import sys\nfor _p in ['/workspace', '${workDir}']:\n    if _p not in sys.path: sys.path.insert(0, _p)\n`;
-    const localCheckPy = `import sys, importlib.util, os\ndef _il(n):\n    for b in ['/workspace', '${workDir}']:\n        if os.path.exists(b+'/'+n+'.py') or os.path.isdir(b+'/'+n): return True\n    return False\n[m for m in ${JSON.stringify(imports)} if importlib.util.find_spec(m) is None and not _il(m)]\n`;
-    const chdirPy = `import os\nos.chdir('${workDir}')\n`;
+    // The directory goes into Python source as a JSON string (a valid Python literal): a folder name with an apostrophe ended the old '…' literal (Z005).
+    const pyDir = JSON.stringify(workDir);
+    const sysPathPy = `import sys\nfor _p in ['/workspace', ${pyDir}]:\n    if _p not in sys.path: sys.path.insert(0, _p)\n`;
+    const localCheckPy = `import sys, importlib.util, os\ndef _il(n):\n    for b in ['/workspace', ${pyDir}]:\n        if os.path.exists(b+'/'+n+'.py') or os.path.isdir(b+'/'+n): return True\n    return False\n[m for m in ${JSON.stringify(imports)} if importlib.util.find_spec(m) is None and not _il(m)]\n`;
+    const chdirPy = `import os\nos.chdir(${pyDir})\n`;
 
     const fnEsc = filename.replace(/[<>&]/g, c => c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;');
 

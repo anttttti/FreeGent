@@ -21,6 +21,23 @@ const complete = (text = 'COMPLETED evidence'): GoalTurn => ({ text, finishSigna
 
 beforeEach(() => _resetGoalForTest());
 
+describe('Stop while a resume is still reading the saved goal (Y014)', () => {
+    it('is not lost: the loop is not started, and Stop reports it took effect', async () => {
+        const h = host([work()]);
+        h.file = serializeGoal({ text: 'g', status: 'paused', turns: 1, maxTurns: 10, note: '', updated: '2026-01-01T00:00:00Z', progress: [] } as GoalRecord);
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        const read = h.read; h.read = async () => { await gate; return read(); };
+        const pending = resumeGoal(h as GoalHost);
+        expect(stopGoal()).toBe(true);
+        release();
+        expect(await pending).toBeNull();
+        expect(h.prompts).toEqual([]);
+        expect(goalRunning()).toBe(false);
+        expect(stopGoal()).toBe(false);
+    });
+});
+
 describe('goal loop', () => {
     it('works until a turn completes, then verifies once, then is done', async () => {
         const h = host([work('a'), work('b'), complete(), complete('verified')]);

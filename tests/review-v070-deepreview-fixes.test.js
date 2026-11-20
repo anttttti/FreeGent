@@ -499,6 +499,21 @@ describe('event log growth is bounded', () => {
         expect(msgs.some(m => /unreadable line|out-of-sequence/.test(m))).toBe(false);
         warn.mockRestore();
     });
+    it('a failed cap-marker write is retried, so a later load still says the tail is missing (X004)', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const p = new SessionPersistence(dir, 60_000, { maxFileBytes: 400 });
+        for (let i = 0; i < 3; i++) { p.enqueue('s', ev(i, 'y'.repeat(60))); await p.flush(); }
+        const file = path.join(dir, 's.jsonl'), kept = await fsp.readFile(file);
+        await fsp.rm(file); await fsp.mkdir(file);               // the append fails (EISDIR) where the marker is to go
+        p.enqueue('s', ev(3, 'y'.repeat(60)));
+        await expect(p.flush()).rejects.toThrow();               // like a failed event write
+        await fsp.rm(file, { recursive: true }); await fsp.writeFile(file, kept);
+        await p.flush();                                         // the retry writes the marker
+        warn.mockClear();
+        await new SessionPersistence(dir).load('s');
+        expect(warn.mock.calls.map(c => String(c[0])).some(m => /was capped/.test(m))).toBe(true);
+        warn.mockRestore();
+    });
     it('prunes files by age, then oldest first down to the size budget', async () => {
         const w = async (n, bytes, ageDays) => {
             const f = path.join(dir, n + '.jsonl'); await fsp.writeFile(f, 'z'.repeat(bytes));

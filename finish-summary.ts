@@ -3,6 +3,7 @@
 // final message that did not say so. The changed paths come from verification.ts (the same record that decides `verification`).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, extname } from 'node:path';
+import { JSONC_RE } from './syntax-check.js';
 
 export interface ChangedFile { path: string; problem: string | null }
 
@@ -22,6 +23,12 @@ async function problemWith(abs: string): Promise<string | null> {
     if (st.size > 2_000_000) return null;
     const ext = extname(abs).toLowerCase();
     let text: string; try { text = readFileSync(abs, 'utf8'); } catch { return null; }
+    if (ext === '.json' && JSONC_RE.test(abs)) {
+        // tsconfig.json and the like allow comments and trailing commas: TypeScript's own config parser decides, and without it the file is unchecked (U008).
+        const ts = await _typescript();
+        const err = ts?.parseConfigFileTextToJson?.(abs, text)?.error;
+        return err ? `invalid JSON (${String(ts.flattenDiagnosticMessageText(err.messageText, ' ')).slice(0, 80)})` : null;
+    }
     if (ext === '.json') { try { JSON.parse(text); } catch (e: any) { return `invalid JSON (${String(e?.message ?? e).slice(0, 80)})`; } return null; }
     if (['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
         const ts = await _typescript();

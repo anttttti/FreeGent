@@ -66,7 +66,7 @@ function _prune(): Record<string, number> {
 export function blacklistAdd(url: string): void {
     const host = _hostname(url);
     if (!host) return;
-    const data = _load();
+    const data = _prune();   // the expired entries of other hosts go too (as every read does)
     data[host] = Date.now() + BLACKLIST_TTL_MS;
     _save(data);
     console.warn(`[fetch-blacklist] added ${host} (expires in 7 days)`);

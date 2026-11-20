@@ -65,16 +65,22 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
             : d.decode(encoder.encode(typeof c === 'string' ? c : String(c)), { stream: true });
     const con = nodeConsole(t => { stdout.push(text(decoders.out, t)); }, t => { stderr.push(text(decoders.err, t)); });
     let exited: number | undefined;   // set by process.exit, also when it is thrown inside code nobody awaits
+    // What the program had written and printed when it exited: callbacks that still run afterwards (promise continuations nobody can stop) do not add to the result (N013).
+    let atExit: { written: Record<string, any>; deleted: string[]; out: number; err: number } | undefined;
     const process = {
         env: {}, argv: ['node'], platform: 'linux', exitCode: undefined as number | undefined,
         cwd: () => WORKSPACE,
-        exit: (c?: number) => { throw new ProcessExit(exited = c ?? process.exitCode ?? 0); },
+        exit: (c?: number) => {
+            if (exited === undefined) atExit = { written: { ...written }, deleted: [...deleted], out: stdout.length, err: stderr.length };
+            throw new ProcessExit(exited ??= c ?? process.exitCode ?? 0);   // the first exit decides the code, as in Node
+        },
         stdout: { write: (c: any) => { stdout.push(text(decoders.out, c)); return true; }, isTTY: false },
         stderr: { write: (c: any) => { stderr.push(text(decoders.err, c)); return true; }, isTTY: false },
     };
     const result = (exit_code: number, extra: Record<string, any> = {}) => {
         // A character still incomplete at exit is flushed (as U+FFFD), like Node's end of stream.
         stdout.push(decoders.out.decode()); stderr.push(decoders.err.decode());
+        if (atExit) return { stdout: stdout.slice(0, atExit.out).join(''), stderr: stderr.slice(0, atExit.err).join(''), written: atExit.written, deleted: atExit.deleted, exit_code, failed: exit_code !== 0, ...extra };
         return { stdout: stdout.join(''), stderr: stderr.join(''), written, deleted: [...deleted], exit_code, failed: exit_code !== 0, ...extra };
     };
     // Node keeps running while timers are pending and a detached `(async () => { … process.exit(1) })()` still ends the process
@@ -83,7 +89,12 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
     let lateErr: any;
     const owned = new Set<any>();   // timers this program set and has not seen fire or cancel: the drain below waits for these only
     const timeout = (f: any, ms?: number, ...a: any[]) => {
-        const h: any = setTimeout(() => { owned.delete(h); f(...a); }, ms);
+        const h: any = setTimeout(() => {
+            owned.delete(h);
+            if (exited !== undefined) return;   // the program already exited: a timer it set does not run (N013)
+            // A throw in the callback is the run's error like a rejection, not a page error that ends nothing (N012).
+            try { f(...a); } catch (e) { if (!(e instanceof ProcessExit)) lateErr ??= e; }
+        }, ms);
         owned.add(h);
         return h;
     };
@@ -101,7 +112,7 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
         const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', 'clearTimeout', `return (async()=>{ ${code}\n})()`);
         await fn(fs, require, con, process, Buffer, timeout, clearTimer);
         const end = Date.now() + 10000;
-        for (let i = 0; i < 3 || (owned.size > 0 && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
+        for (let i = 0; i < 3 || (owned.size > 0 && exited === undefined && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
         for (const h of owned) clearTimeout(h);   // what is still pending after the deadline does not fire into the next run
         owned.clear();
         if (exited !== undefined) return result(exited & 0xff);

@@ -3,6 +3,7 @@
 // the file-tab preview and the chat attachment reader.
 
 import { inflateRaw } from './inflate.js';
+import { escapeHtml } from './html-escape.js';
 
 const u16 = (b: Uint8Array, o: number) => b[o] | (b[o + 1] << 8);
 const u32 = (b: Uint8Array, o: number) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
@@ -35,6 +36,18 @@ export function readZip(bytes: Uint8Array): Map<string, ZipEntry> {
     return out;
 }
 
+/** A relationship target as a part name: package-root relative when it starts with "/", otherwise relative to the source part's folder, with "." and ".." segments
+ *  resolved (`../ppt/slides/slide2.xml` is `ppt/slides/slide2.xml`; it was looked up as written and the slide dropped: explorations U005). */
+function _partPath(baseDir: string, target: string): string {
+    const out: string[] = target.startsWith('/') ? [] : baseDir.split('/');
+    for (const seg of target.split('/')) {
+        if (!seg || seg === '.') continue;
+        if (seg === '..') { out.pop(); continue; }
+        out.push(seg);
+    }
+    return out.join('/');
+}
+
 /** The package's declared order of slides: presentation.xml lists slide ids, its .rels map each id to a part. */
 function slideOrder(zip: Map<string, () => Uint8Array>): string[] | null {
     const pres = zip.get('ppt/presentation.xml'), rels = zip.get('ppt/_rels/presentation.xml.rels');
@@ -42,7 +55,7 @@ function slideOrder(zip: Map<string, () => Uint8Array>): string[] | null {
     const target = new Map<string, string>();
     for (const m of utf8(rels()).matchAll(/<Relationship\b[^>]*>/g)) {
         const id = /\bId="([^"]*)"/.exec(m[0])?.[1], t = /\bTarget="([^"]*)"/.exec(m[0])?.[1];
-        if (id && t) target.set(id, t.startsWith('/') ? t.slice(1) : 'ppt/' + t.replace(/^\.\//, ''));
+        if (id && t) target.set(id, _partPath('ppt', t));
     }
     const ids = [...canonicalPrefixes(utf8(pres())).matchAll(/<p:sldId\b[^>]*\br:id="([^"]*)"/g)].map(m => target.get(m[1]));
     const parts = ids.filter((t): t is string => !!t && zip.has(t));
@@ -58,6 +71,9 @@ function decodeXml(s: string): string {
     });
 }
 const utf8 = (b: Uint8Array) => new TextDecoder().decode(b);
+/** The part's XML with comments dropped and CDATA turned into escaped text, so the tag-shaped scans below see only markup and the words
+ *  (a commented-out paragraph used to be extracted, and `<![CDATA[x]]>` came out with its delimiters: explorations Y007). */
+const plainXml = (xml: string) => xml.replace(/<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, text) => text === undefined ? '' : escapeHtml(text));
 
 /** Rewrites a part's namespace prefixes to the ones the readers below match on. The same document can bind WordprocessingML,
  *  PresentationML, DrawingML or the relationships namespace to another prefix; the readers look for `w:`/`p:`/`a:`/`r:` literally,
@@ -71,8 +87,8 @@ const OOXML_NS: Record<string, string[]> = {
 function canonicalPrefixes(xml: string): string {
     // Rename in two steps through a placeholder, so swapping prefixes (a file that binds w: to another namespace) cannot collide.
     const renames: [string, string][] = [];
-    for (const m of xml.matchAll(/xmlns:([A-Za-z_][\w.-]*)="([^"]*)"/g)) {
-        for (const [canon, uris] of Object.entries(OOXML_NS)) if (uris.includes(m[2]) && m[1] !== canon) renames.push([m[1], canon]);
+    for (const m of xml.matchAll(/xmlns:([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {   // either quote, spaces around "=" (D021)
+        for (const [canon, uris] of Object.entries(OOXML_NS)) if (uris.includes(m[2] ?? m[3]) && m[1] !== canon) renames.push([m[1], canon]);
     }
     // Only inside tags, and outside their quoted values: a literal "q:item" in the text (or an attribute value) is the document's own words.
     for (const [alias] of renames) {
@@ -90,7 +106,7 @@ export function pptxSlides(bytes: Uint8Array): string[] {
     const slides = slideOrder(zip) ?? [...zip.keys()].filter(k => /^ppt\/slides\/slide\d+\.xml$/.test(k))
         .sort((a, b) => parseInt(a.match(/\d+/)![0], 10) - parseInt(b.match(/\d+/)![0], 10));
     return slides.map(k => {
-        const xml = canonicalPrefixes(utf8(zip.get(k)!()));
+        const xml = canonicalPrefixes(plainXml(utf8(zip.get(k)!())));
         const paras = xml.match(/<a:p[ >][\s\S]*?<\/a:p>/g) || [];
         // A soft line break (<a:br/>, Shift+Enter) ends a line inside the paragraph.
         return paras.map(p => decodeXml([...p.replace(/<a:br\b[^>]*?(?:\/>|>[\s\S]*?<\/a:br>)/g, '<a:t>\n</a:t>').matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map(m => m[1]).join('')))
@@ -103,7 +119,7 @@ export function pptxSlides(bytes: Uint8Array): string[] {
 export function docxText(bytes: Uint8Array): string {
     const entry = readZip(bytes).get('word/document.xml');
     if (!entry) throw new Error('No word/document.xml in this Word file');
-    const xml = canonicalPrefixes(utf8(entry()));
+    const xml = canonicalPrefixes(plainXml(utf8(entry())));
     const paras = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
     return paras.map(p => {
         let out = '';
@@ -121,7 +137,7 @@ export function docxText(bytes: Uint8Array): string {
 export function odfText(bytes: Uint8Array): string {
     const entry = readZip(bytes).get('content.xml');
     if (!entry) throw new Error('No content.xml in this OpenDocument file');
-    const xml = utf8(entry());
+    const xml = plainXml(utf8(entry()));
     return xml.replace(/<text:(?:tab)\/>/g, '\t').replace(/<text:line-break\/>/g, '\n')
         .replace(/<text:s(?:\s+text:c="(\d+)")?\s*\/>/g, (_, c) => ' '.repeat(+c || 1))
         .replace(/<\/text:(?:p|h)>/g, '\n').replace(/<[^>]+>/g, '')
@@ -141,17 +157,21 @@ export async function fixXlsxCharRefs(bytes: Uint8Array): Promise<Uint8Array> {
         let total = 0;
         for (const get of zip.values()) total += get.size;
         if (total > XLSX_REWRITE_MAX_BYTES) return bytes;
-        const astral = /&#(?:x([0-9a-fA-F]{5,6})|(\d{5,7}));/g;
+        // Any spelling of a reference to a character past U+FFFF, leading zeros included (the pinned SheetJS reads it as a BMP character): the value decides,
+        // not the number of digits; a part is rewritten only when a reference really changed (explorations U009).
+        const astral = /&#(?:x([0-9a-fA-F]{1,24})|(\d{1,24}));/g;
         const fixed = new Map<string, Uint8Array>();
         for (const [name, get] of zip) {
             if (!/^xl\/(?:sharedStrings|worksheets\/[^/]+)\.xml$/.test(name)) continue;
             const xml = utf8(get());
-            if (!astral.test(xml)) continue;
-            astral.lastIndex = 0;
-            fixed.set(name, new TextEncoder().encode(xml.replace(astral, (m, hex, dec) => {
+            let changed = false;
+            const out = xml.replace(astral, (m, hex, dec) => {
                 const cp = hex ? parseInt(hex, 16) : parseInt(dec, 10);
-                return cp > 0xffff && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
-            })));
+                if (!(cp > 0xffff && cp <= 0x10ffff)) return m;
+                changed = true;
+                return String.fromCodePoint(cp);
+            });
+            if (changed) fixed.set(name, new TextEncoder().encode(out));
         }
         if (!fixed.size) return bytes;
         const { zipFiles } = await import('./workspace-zip.js');

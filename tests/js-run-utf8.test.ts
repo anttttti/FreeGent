@@ -87,3 +87,23 @@ describe('runJs timers', () => {
         expect(r.stdout).toBe('leaked\n');
     });
 });
+
+// N012, N013: a throw in a timer callback is the run's error; what runs after process.exit does not change the result (Node ends the process there).
+describe('runJs timers and exit', () => {
+    it('a synchronous throw in a timer callback fails the run', async () => {
+        const r = await runJs(`setTimeout(() => { throw new Error('late boom'); }, 5);`, {});
+        expect(r.exit_code).toBe(1);
+        expect(r.stderr).toContain('late boom');
+    });
+    it('an exit inside an async function ends the result there: later callbacks, timers, output and writes do not count', async () => {
+        const r = await runJs(`
+            console.log('before');
+            fs.writeFileSync('early.txt', 'e');
+            setTimeout(() => { console.log('timer'); fs.writeFileSync('timer.txt', 't'); }, 20);
+            (async () => { await null; process.exit(3); })();
+            (async () => { await new Promise(res => setTimeout(res, 5)); fs.writeFileSync('late.txt', 'l'); console.log('late'); })();`, {});
+        expect(r.exit_code).toBe(3);
+        expect(r.stdout).toBe('before\n');
+        expect(Object.keys(r.written)).toEqual(['early.txt']);
+    });
+});

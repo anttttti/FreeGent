@@ -6,6 +6,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 
 | Command | Default owner / route | Parity scope | Explicit package alternative | Native inputs |
 |---|---|---|---|---:|
+| `:` | typescript; shiro/commands/shell-builtins.ts | bash |  | 0 |
 | `!` | shell grammar; shiro/shell.ts | bash |  | 2 |
 | `.` | shell parser; shiro/shell.ts | bash |  | 2 |
 | `((...))` | shell parser; shiro/shell.ts | bash |  | 2 |
@@ -117,6 +118,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `in` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `install` | typescript; shiro/commands/install.ts | bash |  | 3 |
 | `irb` | wasm package; shiro/wasi-packages.ts | bash | ruby@0.1.2: ruby; argv ["ruby","-e","module Kernel; alias_method :__fg_require, :require; private; def require(n); %w[io/console io/wait].include?(n.to_s) ? (IO.singleton_class.send(:define_method, :console) { \|*\| nil } unless IO.respond_to?(:console); IO.send(:define_method, :wait_readable) { \|*\| true } unless IO.method_defined?(:wait_readable); true) : __fg_require(n); end; end; require \"irb\"; IRB.start","--"] | 1 |
+| `jobs` | shell parser; shiro/shell.ts | bash |  | 0 |
 | `join` | typescript; shiro/commands/join.ts | bash |  | 3 |
 | `jq` | wasm; shiro/commands/jq.ts | bash | jq@1.8.2: jq; argv ["jq"] | 27 |
 | `js-eval` | typescript; shiro/commands/jseval/js-eval-cmd.ts | bash |  | 2 |
@@ -232,6 +234,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `uuidgen` | typescript; shiro/commands/extras.ts | bash |  | 2 |
 | `viu` | wasm package; shiro/wasi-packages.ts | bash | viu@0.2.3: viu; argv ["viu"] | 1 |
 | `wabt` | adapter; shiro/commands/index.ts | bash | wabt@: declared subcommand launcher; argv [null] | 1 |
+| `wait` | shell parser; shiro/shell.ts | bash |  | 0 |
 | `wasm-grep` | wasm package; shiro/wasi-packages.ts | bash | grep@3.12.0: grep; argv ["grep"] | 2 |
 | `wasm-sed` | wasm package; shiro/wasi-packages.ts | bash | sed@4.9.0: sed; argv ["sed"] | 2 |
 | `wasm-strip` | wasm package; shiro/wasi-packages.ts | bash | wabt@1.0.37: wasm-strip; argv ["wasm-strip"] | 1 |

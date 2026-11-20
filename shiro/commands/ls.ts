@@ -183,8 +183,8 @@ export const ls: Command = {
       }
 
       if (stat.type === "file" || stat.type === "symlink") {
-        const baseName = resolved.split("/").pop()!;
-        const name = colorize(baseName, stat, useColor) + (classify ? typeIndicator(stat) : '');
+        // A file operand is printed as it was given (`ls src/*.js` lists `src/a.js`), not as its basename
+        const name = colorize(p, stat, useColor) + (classify ? typeIndicator(stat) : '');
         results.push(longFormat ? formatLong(name, stat, humanReadable) : name);
         continue;
       }

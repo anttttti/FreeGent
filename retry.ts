@@ -274,7 +274,7 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
         catch (e) {
             _noteFailRun(e);
             // Every failed attempt is a request that ran and is in no token total: count it.
-            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: String(e?.message ?? e).slice(0, 400), attempt }); } catch {}
+            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: String(e?.message ?? e).slice(0, 400), attempt, ...(e?.preFlight ? { preFlight: true } : {}) }); } catch {}   // preFlight: refused locally, no request was sent (Y008)
             try { onFailure?.(e); } catch {}
             // Soft-stop is active (timeout or UI stop button): never retry — the caller will
             // see the error and return *(break)* or propagate it cleanly.
@@ -568,6 +568,14 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
 // bare status code can never be classified as retryable even when the discarded body would
 // have said "rate limited" or "maximum context length" — this is what actually reaches them.
 // prefix: optional string prepended to the message (e.g. "[provider|model]").
+// A provider's error detail is a string, an object ({message}) or a list of them (validation errors): never "[object Object]", which
+// hid the context-limit wording from the overflow parser (D030).
+function _detailText(v: any): string {
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.map(_detailText).filter(Boolean).join('; ').slice(0, 300);
+    if (v && typeof v === 'object') return _detailText(v.message ?? v.msg ?? v.detail) || JSON.stringify(v).slice(0, 300);
+    return v ? String(v) : '';
+}
 export async function _httpErrorFromResponse(resp, prefix = '') {
     let retryAfterMs = _parseRetryAfter(resp);
     const text = await resp.text().catch(() => '');
@@ -577,11 +585,11 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
         // Nous Portal's fair-share 429 gives the wait in the body ("retry_after": seconds), not in a header.
         const bodyWait = Number(j.retry_after ?? j.error?.retry_after);
         if (retryAfterMs === null && bodyWait > 0 && bodyWait < 86_400) retryAfterMs = Math.ceil(bodyWait) * 1000;
-        const detail = j.message || j.detail || j.error?.message || (typeof j.error === 'string' ? j.error : '') || '';
+        const detail = _detailText(j.message || j.detail || j.error?.message || (typeof j.error === 'string' ? j.error : ''));
         if (detail) msg += ': ' + detail;
         const raw = j.error?.metadata?.raw;
         if (raw) {
-            try { const r = JSON.parse(raw); msg += ': ' + (r.error?.message || r.message || raw); }
+            try { const r = typeof raw === 'string' ? JSON.parse(raw) : raw; msg += ': ' + (_detailText(r.error?.message || r.message) || _detailText(raw)); }
             catch { msg += ': ' + raw; }
         }
     } catch {
