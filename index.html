@@ -883,6 +883,8 @@
 
 </div>
 
+<button type="button" id="help-btn" class="help-btn" onclick="toggleHelp()" title="Help for this view" aria-label="Help for this view" aria-haspopup="dialog" aria-expanded="false" hidden>?</button>
+
 <div id="skill-autocomplete" class="skill-autocomplete"></div>
 
 <script type="module" src="polyfills.ts"></script>
@@ -939,6 +941,7 @@
 <script type="module" src="runner.ts"></script>
 <script type="module" src="key-vault-ui.ts"></script>
 <script type="module" src="openrouter-oauth.ts"></script>
+<script type="module" src="help.ts"></script>
 <script type="module" src="init.ts"></script>
 <!-- Document extraction: loaded async — only needed when user attaches a file.
      async prevents blocking the main thread on low-end hardware (iPad Air 1 A5 chip).

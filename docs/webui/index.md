@@ -11,6 +11,8 @@ The WebUI is the browser app, the same on [freegent.ai](https://freegent.ai) and
 
 ## First chat
 
+The first time you open FreeGent, a short introduction explains the Chat view. "Don't show again" is ticked by default. The **?** button in the top-right corner explains whichever view you are in and links to its page in this documentation, and in Chat, Project, Chats, Tasks and Settings its **Show me around** button highlights the parts of that view one by one. On freegent.ai you can start without a key by choosing the guest quota when you send your first message.
+
 1. Open **Settings → Credentials** and paste a key for one provider (see [Default providers](../models/providers.md)).
 2. Type a request and press **Enter**. **Shift+Enter** adds a newline and **Esc** stops generation.
 3. The agent may call tools: read and write project files, run code, search the web. Each call appears as a step in the chat. Files it creates land in [Project](project/index.md).
