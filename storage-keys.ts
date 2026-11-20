@@ -146,6 +146,7 @@ export const KEYS = {
     CHECK_SILENT_BLOCKED:       'fg_check_silent_blocked',
     DARK_MODE:                  'fg_dark_mode',
     DEV_KEY:                    'fg_dev_key',
+    INTRO_SEEN:                 'fg_intro_seen',   // help.ts: the first-load help popover was dismissed with "Don't show again"
     FETCH_BLACKLIST:            'fg_fetch_blacklist',
     GEO_LOOKUP:                 'fg_geo_lookup',
     KEY_VAULT:                  'fg_key_vault',

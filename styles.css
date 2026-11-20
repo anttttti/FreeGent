@@ -1972,3 +1972,21 @@ body.fg-viewing-other #chat-welcome { display: none !important; }
 .fg-pass-text { margin: 0; }
 .fg-pass-error { min-height: 1.2em; font-size: 12px; color: var(--muted); }
 .fg-pass-buttons { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* ── Help button, help popover and spotlight tour (help.ts) ─────────────── */
+.help-btn { position: fixed; top: 6px; right: 10px; z-index: 500; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); background: var(--sidebar-bg); color: var(--muted); font-weight: 600; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
+.help-btn[hidden] { display: none; }
+.chat-toolbar, .project-toolbar, .tasks-toolbar, .chats-toolbar { padding-right: 44px; }   /* the top bars leave the corner to the help button */
+@media (max-width: 1000px) { .settings-panel-scroll { padding-top: 40px; } }   /* the tab row can run to the corner */
+.help-btn:hover, .help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+body.preview-mode .help-btn { display: none; }
+#fg-help-pop { position: fixed; top: 40px; right: 10px; z-index: 1500; width: 360px; max-height: calc(100vh - 56px); }
+.fg-help-list { margin: 0 0 10px; padding-left: 18px; line-height: 1.5; }
+.fg-help-list li { margin-bottom: 6px; }
+.fg-help-doc { margin-right: auto; align-self: center; font-size: 12px; color: var(--accent); }
+#fg-tour { position: fixed; inset: 0; z-index: 9500; }
+.fg-tour-hole { position: fixed; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); outline: 2px solid var(--accent); pointer-events: none; transition: left .2s, top .2s, width .2s, height .2s; }
+.fg-tour-card { position: fixed; width: 360px; max-height: calc(100vh - 24px); }
+.fg-tour-count { margin-right: auto; align-self: center; font-size: 11px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .fg-tour-hole { transition: none; } }
+#fg-tour .fg-modal-btn-ok, #fg-help-pop .fg-modal-btn-ok { background: #3465e0; border-color: #3465e0; }   /* the dark theme's accent gives white text 3.8:1; this is 5.1:1 */

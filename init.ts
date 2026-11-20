@@ -5,6 +5,7 @@ import { installPassHeader, installPrivacyGuard } from './proxy.js';
 import { installRelaySession } from './relay-session.js';
 import { installGuestQuotaWatch } from './guest-quota.js';
 import { getPrivacyLevel } from './privacy.js';
+import { maybeShowHelp } from './help.js';
 import { installDevLog, sendTaskLog } from './dev-log.js';
 import { takePageCheckCrash, describePageCheckCrash, takeToolCrash, describeToolCrash, spendAutoRecovery } from './page-check-guard.js';
 import { buildRedactedChatJson } from './convo-log.js';
@@ -306,6 +307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.innerWidth > 700) {
         document.getElementById('left-rail')?.classList.add('expanded');
     }
+    setTimeout(maybeShowHelp, 500);   // first load only; after the rail is laid out, so the tour can point at it
 
     // ── Input keydown — send, Tab-complete, ↑/↓ history recall, Cmd+K ────
     let _historyIdx = -1; // -1 = not navigating history
