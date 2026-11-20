@@ -799,6 +799,7 @@ const _DEFAULT_MAIN_MODELS = [
     // 88% / 87% / 79% on NVIDIA / OpenRouter / Kilo; MiMo V2.6 Flash 82%. Crouton Alpha (92% on Kilo, 90% on Nous) and Nous's Beam 1.0 free id
     // (404 "free period has ended", 2026-11-18) left the list. Ling 3.1 Flash (88% on Kilo, 78% on Vercel) left the list on 2026-11-05:
     // Kilo no longer lists its free snapshot and Vercel prices it ($0.30/$0.90 per M tokens).
+    // ERNIE 5.5 Flash Preview joined on 2026-11-20, between Step 5 (90.1%) and the Nemotron entries (87.6%). Nous Hy4 Flash (27 of 27, stopped at 174K) waits for its other two conversations.
     // Not here: Nemotron 3 Ultra (69% on Kilo, 81% on NVIDIA at 28 tok/s), Requesty's routes (shared free budget that
     // stayed refused for over an hour; Ling 74.5% there), Dots 3 Note (garbled <dots_function_call> tool calls), stealth models
     // (withdrawn without notice), Ornith 1.5 (no longer free on Nous, 2026-11-05).
@@ -810,6 +811,7 @@ const _DEFAULT_MAIN_MODELS = [
     'nvidia|z-ai/glm-5.3-flash',                       // NIM free credits; slow (36 tok/s)
     'moonmath|glm-5.3-flash',                          // same GLM, MoonMath's shared daily allowance
     'nvidia|stepfun-ai/step-5-preview',                // NIM free credits; slow (22 tok/s)
+    'kilo|baidu/ernie-5.5-flash-preview:free',         // Kilo's free quota; 89.8% (97 of 108), held the context ceiling in all three conversations, 131 tok/s (2026-11-19)
     'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning; Nous's hourly token cap
     'nvidia|nvidia/nemotron-3.5-super-vl-120b-a12b',   // 120B MoE, 1M ctx, images
     'openrouter|nvidia/nemotron-3.5-super-vl:free',    // same model; OpenRouter free: about 50 requests a day
