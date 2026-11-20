@@ -182,7 +182,7 @@ describe('task dialog uploads (codex 233, 236-240)', () => {
         const batch = { files: [{ name: 'one.txt' }, { name: 'two.txt' }], value: 'x' };
         const done = (async () => { input.onchange({ target: batch }); })();
         await done;
-        document.getElementById('atd-cancel').click();       // Cancel while one.txt is still being stored
+        document.getElementById('atd-close').click();       // Cancel while one.txt is still being stored
         release();
         await vi.waitFor(() => expect(files['attachments/u/one.txt']).toBeUndefined());
         expect(stored).toEqual(['attachments/u/one.txt']);   // two.txt was never stored
@@ -252,6 +252,32 @@ describe('concurrent task edits and creation (codex 331-339)', () => {
         const names = Object.keys(files).filter(k => /^fg-tasks\/\d+-/.test(k));
         expect(new Set(names.map(n => n.match(/\/(\d+)-/)[1])).size).toBe(names.length);
     });
+    it('a click on the backdrop saves the typed task; Escape and a second Add leave the form open; only the X discards it', async () => {
+        const created = () => Object.keys(files).filter(k => /^fg-tasks\/\d+-/.test(k) && !k.includes('first'));
+        const press = (el, type) => el.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+        W.openAddTaskDialog('todo');
+        document.getElementById('atd-desc').value = 'details I typed';
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        W.openAddTaskDialog('todo');
+        expect(document.getElementById('atd-desc').value).toBe('details I typed');   // same form, text kept
+        const ov = document.getElementById('fg-add-task-dialog');
+        press(document.getElementById('atd-desc'), 'mousedown'); press(ov, 'click');   // a text selection ending on the backdrop
+        expect(document.getElementById('atd-desc')).not.toBeNull();
+        press(ov, 'mousedown'); press(ov, 'click');                                    // a real click outside
+        await vi.waitFor(() => expect(document.getElementById('atd-desc')).toBeNull());
+        expect(created()).toHaveLength(1);
+        expect(files[created()[0]]).toContain('details I typed');
+        expect(files[created()[0]]).toMatch(/title: details I typed/);   // no title typed: the first line of the description
+        W.openAddTaskDialog('todo');                                       // nothing typed: a click outside creates nothing
+        press(document.getElementById('fg-add-task-dialog'), 'mousedown'); press(document.getElementById('fg-add-task-dialog'), 'click');
+        expect(document.getElementById('atd-desc')).toBeNull();
+        expect(created()).toHaveLength(1);
+        W.openAddTaskDialog('todo');
+        document.getElementById('atd-title').value = 'discard me';
+        document.getElementById('atd-close').click();
+        expect(document.getElementById('atd-desc')).toBeNull();
+        expect(created()).toHaveLength(1);
+    });
     it('Cancel while a Save is writing does not close the form or delete what it references (333)', async () => {
         files['fg-tasks/001-first.md'] = base();
         await edit();
@@ -261,7 +287,7 @@ describe('concurrent task edits and creation (codex 331-339)', () => {
         document.getElementById('atd-desc').value = 'changed';
         document.getElementById('atd-ok').click();
         await new Promise(r => setTimeout(r, 5));
-        document.getElementById('atd-cancel').click();
+        document.getElementById('atd-close').click();
         expect(document.getElementById('atd-ok')).not.toBeNull();       // still open
         release(); W.agentReadFile = read;
         await vi.waitFor(() => expect(document.getElementById('atd-ok')).toBeNull());

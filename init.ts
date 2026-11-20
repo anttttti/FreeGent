@@ -1003,6 +1003,7 @@ function _modalKeydown(e: KeyboardEvent) {
     const ov = all[all.length - 1];          // only the topmost dialog reacts
     if (!ov) return;
     if (e.key === 'Escape') {
+        if (ov.dataset.keepOnEscape) { e.preventDefault(); e.stopPropagation(); return; }   // a form that holds typed text (the task form) closes only with its X
         e.preventDefault(); e.stopPropagation();
         const btn = ov.querySelector<HTMLElement>('.fg-modal-close, .fg-modal-btn-cancel, .ws-pick-footer button');
         if (btn) btn.click(); else ov.remove();

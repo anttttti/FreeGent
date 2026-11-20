@@ -291,7 +291,10 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     const editing = opts.path !== undefined;
     const parsed = editing ? parseTaskForEdit(opts.content || '') : null;
     const status = opts.status || 'todo';
-    document.getElementById('fg-add-task-dialog')?.remove();
+    // A form that is open keeps its text: opening another (the + button again, a card, a late event) used to replace it and drop what was typed.
+    const open = document.getElementById('fg-add-task-dialog');
+    if (open && !(open.querySelector('#atd-ok') as HTMLButtonElement | null)?.disabled) { (open.querySelector('#atd-title') as HTMLElement | null)?.focus(); return; }
+    open?.remove();   // a form whose Save is already writing is finished with; its overlay is replaced
     const overlay = document.createElement('div');
     overlay.id = 'fg-add-task-dialog';
     overlay.className = 'fg-modal-overlay';
@@ -305,12 +308,19 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     // Uploads belong to the project they were stored in. After Clear or an import the same paths may name a restored file
     // that the form never owned, so a late cleanup must leave them (codex report 8, cases 233/238).
     const epoch = workspaceEpoch();
+    let autoSave = () => {};
     const dismiss = () => {
         if (saving) return;
         overlay.remove();
         if (!saved && workspaceEpoch() === epoch) for (const p of uploaded) void agentDeleteFile?.(p).catch(() => {});
     };
-    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+    // The form closes only with its X. A click on the backdrop saves what is typed as a task (a Save on an edit), and Escape does nothing:
+    // chats running in other tabs and stray clicks used to close it and erase the text. A press that starts inside the form and ends on the
+    // backdrop (selecting text) is not a click outside.
+    overlay.dataset.keepOnEscape = '1';
+    let pressedOnBackdrop = false;
+    overlay.addEventListener('mousedown', e => { pressedOnBackdrop = e.target === overlay; });
+    overlay.addEventListener('click', e => { if (e.target === overlay && pressedOnBackdrop) autoSave(); });
     const lbl = 'padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:80px;vertical-align:top';
     const inp = 'margin:0;width:100%';
     const statuses = [['open', 'To Do'], ['in-progress', 'In Progress'], ['in-review', 'Review'], ['done', 'Done']];
@@ -352,13 +362,12 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
     <div id="atd-err" style="color:#c62828;font-size:11px;min-height:14px"></div>
   </div>
   <div class="fg-modal-btns">
-    <button class="fg-modal-btn fg-modal-btn-cancel" id="atd-cancel" title="Close without ${editing ? 'saving' : 'adding a task'}">Cancel</button>
     <button class="fg-modal-btn fg-modal-btn-ok" id="atd-ok" title="${editing ? 'Write these changes to the task file' : 'Create the task file with these details and add it to the board'}">${verb}</button>
   </div>
 </div>`;
     document.body.appendChild(overlay);
     const $ = (id: string) => overlay.querySelector('#' + id) as any;
-    $('atd-close').onclick = $('atd-cancel').onclick = dismiss;
+    $('atd-close').onclick = dismiss;
     const menu = $('atd-attach-menu');
     const renderAttached = () => {
         const box = $('atd-attached');
@@ -426,7 +435,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
         if (pendingUploads > 0) { $('atd-err').textContent = 'A file is still being attached. Save again when it has finished.'; return; }
         $('atd-ok').disabled = true;
         saving = true;
-        $('atd-cancel').setAttribute('disabled', ''); $('atd-close').setAttribute('disabled', '');
+        $('atd-close').setAttribute('disabled', '');
         try {
             if (parsed && opts.path) {
                 const stripBullet = (l: string) => l.trim().replace(/^[-*]\s*(\[[ x]\]\s*)?/, '');
@@ -496,10 +505,19 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
             $('atd-err').textContent = `Failed to ${editing ? 'save' : 'add'} task: ` + (e?.message || e);
             saving = false;
             $('atd-ok').disabled = false;
-            $('atd-cancel').removeAttribute('disabled'); $('atd-close').removeAttribute('disabled');
+            $('atd-close').removeAttribute('disabled');
         }
     };
-    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
+    // Click outside: keep the work. Nothing typed (or nothing changed in an edit) closes quietly; otherwise Save runs, with a title taken
+    // from the description when the title is empty. A file still being attached, or a Save that fails, leaves the form open.
+    const formState = () => JSON.stringify([$('atd-title').value, $('atd-status').value, $('atd-priority').value, $('atd-desc').value, $('atd-criteria').value, attached]);
+    const initialState = formState();
+    autoSave = () => {
+        if (saving || pendingUploads > 0) return;
+        if (formState() === initialState && (editing || !attached.length)) { dismiss(); return; }
+        if (!$('atd-title').value.trim()) $('atd-title').value = ($('atd-desc').value.trim().split('\n')[0] || '').slice(0, 80) || 'Untitled task';
+        $('atd-ok').click();
+    };
 }
 
 // Column drop targets. Wired once; the column elements persist across refreshes.
