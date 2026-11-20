@@ -1070,7 +1070,16 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     content = injectIntoHead(content, _CHECK_CAPTURE);
 
     // A page whose check took the tab down before is checked in a separate window when there is one (check-window.ts); otherwise in the tab, as always.
-    const useWindow = wantsCheckWindow(path) && await ensureCheckWindow(askToOpenWindow);
+    // The check window is one iframe and one window to open and close: a second check opening it at the same time opened another window, one check's release closed the window
+    // under the other, and a page loading into it replaced the other's. So each waits for the one before it, from before the window is opened (worker turns can overlap; explorations D028, Y004).
+    const wantWindow = wantsCheckWindow(path);
+    const turn = wantWindow ? _windowTurn : null;
+    let releaseWindow: () => void = () => {};
+    const myTurn = new Promise<void>(r => { releaseWindow = r; });
+    if (wantWindow) _windowTurn = myTurn;
+    if (turn) await turn;
+    const useWindow = wantWindow && await ensureCheckWindow(askToOpenWindow);
+    if (wantWindow && !useWindow) releaseWindow();   // checked in the tab after all: the next check may take its turn
     let cw: CheckWindowSession | null = null;
     let windowDied = false;
     const startedAt = Date.now();
@@ -1139,7 +1148,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         wake();
     };
     const signal: AbortSignal | undefined = activeAbortController?.signal;
-    if (signal?.aborted) return { error: 'check_page stopped' };
+    if (signal?.aborted) { releaseWindow(); return { error: 'check_page stopped' }; }
     signal?.addEventListener('abort', stopCheck);
 
     const steps: any[] = [];
@@ -1150,13 +1159,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // A page that crashes the tab takes the unsaved turn with it: save the chat first, and leave a marker the next start-up reads.
     try { (globalThis as any).saveHistory?.(); } catch {}
     if (!useWindow) beginPageCheck(path, fingerprint, typeof activeChatId !== 'undefined' ? activeChatId : null);   // in a window the tab is not at risk, and is not blamed
-    // The check window is one iframe: a second check loading into it replaced the first one's page and took over its callback, so each waits for the one
-    // before it (worker turns can overlap; explorations D028, Y004).
-    const turn = useWindow ? _windowTurn : null;
-    let releaseWindow: () => void = () => {};
-    if (useWindow) _windowTurn = new Promise<void>(r => { releaseWindow = r; });
     try {
-        if (turn) await Promise.race([turn, abortedP]);
         if (useWindow) { if (!aborted) cw = loadInCheckWindow(path, content, onData); }
         else { iframe.srcdoc = content; document.body.appendChild(wrap); }
         loaded = await Promise.race([ready, sleep(8000).then(() => false)]);
@@ -1231,7 +1234,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         signal?.removeEventListener('abort', stopCheck);
         wrap.remove();
         if (!windowDied) cw?.close();
-        if (useWindow) releaseCheckWindow();
+        if (useWindow && _windowTurn === myTurn) releaseCheckWindow();   // a check waiting for its turn uses the window as it is: the last one closes it
         releaseWindow();
         endPageCheck();
     }

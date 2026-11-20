@@ -259,7 +259,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
 async function _readSseAnswer(resp: Response, id: any): Promise<any> {
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', size = 0, heldCR = false;
+    let buffer = '', parts: string[] = [], last = '', size = 0, heldCR = false;
     const scan = (event: string): any => {
         const data = event.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
         if (!data.trim()) return null;
@@ -275,10 +275,15 @@ async function _readSseAnswer(resp: Response, id: any): Promise<any> {
             heldCR = !done && text.endsWith('\r');
             if (heldCR) text = text.slice(0, -1);
             text = text.replace(/\r\n|\r/g, '\n');
-            let from = Math.max(0, buffer.length - 1), end: number;   // a blank line may start in the old tail
-            buffer += text;
-            while ((end = buffer.indexOf('\n\n', from)) >= 0) { const hit = scan(buffer.slice(0, end)); if (hit) return hit; buffer = buffer.slice(end + 2); from = 0; }
-            if (done) { const hit = scan(buffer); if (hit) return hit; break; }
+            // The pieces are joined only when a blank line shows up in the new text (or its first character after the old tail): searching a string grown by += flattened all of it every chunk.
+            if (!(last + text).includes('\n\n')) { if (text) { parts.push(text); last = text.slice(-1); } }
+            else {
+                buffer = parts.join('') + text; parts = [];
+                let from = Math.max(0, buffer.length - text.length - 1), end: number;   // a blank line may start in the old tail
+                while ((end = buffer.indexOf('\n\n', from)) >= 0) { const hit = scan(buffer.slice(0, end)); if (hit) return hit; buffer = buffer.slice(end + 2); from = 0; }
+                parts = buffer ? [buffer] : []; last = buffer.slice(-1);
+            }
+            if (done) { const hit = scan(parts.join('')); if (hit) return hit; break; }
         }
     } finally { reader.cancel().catch(() => {}); }
     throw new Error('MCP: no matching response in SSE stream');
