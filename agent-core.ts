@@ -822,6 +822,66 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
     cancelBtn.className = 'agent-ckpt-btn';
     cancelBtn.textContent = 'Cancel';
     btnRow.append(saveBtn, cancelBtn);
+
+    // The message's attachments: removable chips and two ways to add more (this device, the workspace). They are kept in lists of their own
+    // and become the composer's attachments at Re-run, so Cancel changes nothing.
+    const editImgs: any[] = [], editFiles: any[] = [];
+    let reading = 0;
+    const attBox = document.createElement('div');
+    attBox.className = 'msg-edit-attachments';
+    attBox.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px';
+    attBox.addEventListener('click', e => e.stopPropagation());
+    const attNote = document.createElement('span');
+    attNote.style.cssText = 'color:var(--muted);font-size:11px';
+    const renderAtt = () => {
+        attBox.textContent = '';
+        for (const img of editImgs) {
+            const wrap = document.createElement('div'); wrap.className = 'img-thumb-wrap';
+            const im = document.createElement('img'); im.className = 'img-thumb'; im.alt = img.name || 'attachment'; im.src = `data:${img.mimeType};base64,${img.base64}`;
+            const x = document.createElement('button'); x.type = 'button'; x.className = 'img-remove-btn'; x.textContent = '×'; x.title = 'Remove from this message';
+            x.onclick = () => { editImgs.splice(editImgs.indexOf(img), 1); renderAtt(); };
+            wrap.append(im, x); attBox.appendChild(wrap);
+        }
+        for (const f of editFiles) {
+            const chip = document.createElement('div'); chip.className = 'file-chip'; chip.title = f.name;
+            const icon = document.createElement('span'); icon.className = 'file-chip-icon'; icon.textContent = _fileIcon?.(f.mimeType, f.name) ?? '📎';
+            const nm = document.createElement('span'); nm.className = 'file-chip-name'; nm.textContent = f.name.length > 26 ? f.name.slice(0, 23) + '…' : f.name;
+            const x = document.createElement('button'); x.type = 'button'; x.className = 'img-remove-btn'; x.textContent = '×'; x.title = 'Remove from this message';
+            x.onclick = () => { editFiles.splice(editFiles.indexOf(f), 1); renderAtt(); };
+            chip.append(icon, nm, x); attBox.appendChild(chip);
+        }
+        const addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'agent-ckpt-btn'; addBtn.textContent = '📎 Add files';
+        addBtn.title = 'Attach files from this device to the message';
+        const wsBtn = document.createElement('button'); wsBtn.type = 'button'; wsBtn.className = 'agent-ckpt-btn'; wsBtn.textContent = 'Select from workspace';
+        wsBtn.title = 'Attach files that are already in the workspace';
+        const input = document.createElement('input'); input.type = 'file'; input.multiple = true; input.style.display = 'none';
+        addBtn.onclick = () => input.click();
+        const collect = async (work: () => Promise<unknown>) => {
+            reading++; attNote.textContent = 'Reading…';
+            const sink = { images: [] as any[], files: [] as any[] };
+            try { await readAttachmentsInto(sink, work); attNote.textContent = ''; }
+            catch (e: any) { attNote.textContent = `Could not attach: ${e?.message || e}`; }
+            finally { reading--; }
+            editImgs.push(...sink.images); editFiles.push(...sink.files);
+            if (bubble.isConnected) renderAtt();
+        };
+        input.onchange = () => { const fl = [...(input.files || [])]; input.value = ''; void collect(() => Promise.all(fl.map(f => addFileAttachment(f)))); };
+        wsBtn.onclick = async () => {
+            const paths: string[] = await (window as any).pickWorkspaceFiles?.('Attach files to the message') ?? [];
+            if (paths.length) void collect(() => Promise.all(paths.map(pth => addWorkspaceAttachment(pth))));
+        };
+        attBox.append(addBtn, wsBtn, input, attNote);
+    };
+    renderAtt();
+    const attReady = (async () => {
+        try {
+            const { images = [], files = [], unavailable } = await _checkpointAttachments(ckptId, JSON.parse(raw));
+            editImgs.push(...images); editFiles.push(...files);
+            if (unavailable) attNote.textContent = 'The files attached to this message could not be loaded; re-running sends it without them.';
+        } catch {}
+        if (bubble.isConnected) renderAtt();
+    })();
+    bubble.appendChild(attBox);
     bubble.appendChild(btnRow);
 
     cancelBtn.onclick = (e) => {
@@ -834,6 +894,9 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         const newText = ta.value.trim();
         if (!newText) { ta.focus(); return; }
         if (aiBusy()) return;   // an AI task started while the editor was open
+        if (reading > 0) { attNote.textContent = 'A file is still being attached. Re-run again when it has finished.'; return; }
+        await attReady;
+        if (aiBusy()) return;
         // Update checkpoint with edited text
         try {
             const d = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
@@ -845,13 +908,11 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         saveHistory();
         updateTokenLabel();
         setInputState(true);
-        // Restore attachments stored in the checkpoint
+        // The attachments the editor now holds: the message's own, less the ones removed, plus the ones added
         try {
-            const d2 = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
-            const { images, files } = await _checkpointAttachments(ckptId, d2);
             clearImageAttachments();
-            for (const img of images) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
-            await _restoreCheckpointFiles(files);
+            for (const img of editImgs) addImageAttachment(img.mimeType, img.base64, { name: img.name, workspacePath: img.workspacePath });
+            await _restoreCheckpointFiles(editFiles);
         } catch {}
         const inp = document.getElementById('agent-input') as HTMLTextAreaElement | null;
         if (inp) { _setInputText(inp, newText); autoResizeTextarea(inp); }

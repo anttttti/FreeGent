@@ -28,6 +28,7 @@ declare global {
     var clearImageAttachments: any;
     var isToolOffByUser: any;
     var addFileAttachment: any;
+    var readAttachmentsInto: any;
     var hasPendingAttachments: () => boolean;
     var warnAttachmentSendBusy: () => void;
     var waitForAttachments: () => Promise<boolean | void>;

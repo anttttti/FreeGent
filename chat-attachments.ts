@@ -207,6 +207,14 @@ type _ReadToken = Lease<_ReadMeta>;
 const _newRead = (owner: string | null, name: string): _ReadToken => lease<_ReadMeta>('read', { chat: owner, meta: { survives: false, name } });
 const _readerChat = (): string | null => (globalThis as any).activeChatId ?? null;
 
+// While a sink is set, files read by addFileAttachment / addWorkspaceAttachment are collected into it instead of the composer: the message
+// editor reads the files it adds the same way and keeps them in its own list until Re-run.
+let _sink: { images: _Img[]; files: any[] } | null = null;
+async function readAttachmentsInto(sink: { images: _Img[]; files: any[] }, work: () => Promise<unknown>): Promise<void> {
+    const prev = _sink; _sink = sink;
+    try { await work(); } finally { _sink = prev; }
+}
+
 function clearImageAttachments(): void {
     _attachmentGeneration++;
     revokeLeases<_ReadMeta>('read', t => !t.meta.survives);
@@ -348,6 +356,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         }
         const extra = { name, ...(workspacePath ? { workspacePath } : {}) };
         if (token.chat !== _readerChat()) _parkFor(token.chat!).images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });   // finished in another chat
+        else if (_sink) _sink.images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });
         else addImageAttachment(sendImage.mimeType, sendImage.base64, extra);
         return;
     }
@@ -389,6 +398,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
     if (token.chat !== _readerChat()) { _parkFor(token.chat!).files.push(att); return; }   // finished in another chat
+    if (_sink) { _sink.files.push(att); return; }
     _pendingFiles.push(att);
     _addFileChip(att);
 }
@@ -589,6 +599,6 @@ Object.assign(window, {
 
 Object.assign(window, {
     addImageAttachment, clearImageAttachments, parkPendingAttachments, restoreParkedAttachments, clearParkedAttachments, addFileAttachment, waitForAttachments, hasPendingAttachments, warnAttachmentSendBusy,
-    setupChatDropZone, restoreFileAttachment, getPendingAttachments, takeAttachmentFailures, resumePendingReads,
+    readAttachmentsInto, setupChatDropZone, restoreFileAttachment, getPendingAttachments, takeAttachmentFailures, resumePendingReads,
     _guessMime, _fileIcon, _fmtSz, _LANG_MAP, _audioFmt,
 });
