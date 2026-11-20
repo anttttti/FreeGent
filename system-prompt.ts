@@ -50,6 +50,8 @@ export function _buildLangsDesc(): string {
     if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide and also starts in the workspace — use relative paths (`open(\'foo\')`).';
     if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
     if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm).';
+    // full_clean: bash and python are not available on this path, so the line does not point at them.
+    if (runtime.experiment('full_clean')) return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the /workspace files, no npm). Written files sync back to workspace.';
     return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Written files sync back to workspace.';
 }
 

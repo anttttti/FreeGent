@@ -81,10 +81,11 @@ const BUILTIN_SKILLS = [
         trigger_on_tool: 'execute_code=>exit_code!=0&&stdout==',
         trigger_on_completion: 'triggered',
 
-        body: `A command or test just failed. Diagnose it before changing anything:
+        body: '',
+        body_fn: () => `A command or test just failed. Diagnose it before changing anything:
 
 ### Step 1 — Gather context
-Parse the error: type, file, line number, stack trace. Call list_files to orient yourself. Read the file(s) named in the stack trace, plus any direct dependencies or config files that affect the failure path.
+Parse the error: type, file, line number, stack trace. ${runtime.experiment('clean_prompt') || runtime.experiment('full_clean') ? '' : 'Call list_files to orient yourself. '}Read the file(s) named in the stack trace, plus any direct dependencies or config files that affect the failure path.
 
 ### Step 2 — State the root cause hypothesis
 Before touching any code: write one sentence — "This fails because X when Y." If uncertain, list 2–3 hypotheses ranked by likelihood and mark which you'll investigate first.
@@ -430,12 +431,11 @@ or ask for a readable text or image version when those tools cannot process it.`
 1. **Orient once.** ${rm ? 'Use **repo_map** for code tasks (file structure + symbols), or **list_files** for doc/data tasks.' : 'Use **list_files** (and **search_workspace** for code) to see what is there.'} Never call either again if already in context. **"local/foo" and "foo" are the same file — never read twice.**
 2. **File search hard stops:**
    - NEVER use execute_code to list or search. Use list_files or search_workspace — faster, no sandbox startup.
-   - NEVER grep or read files sequentially. "The grep was truncated, let me read the file" — forbidden.
+   - ${runtime.experiment('full_clean') ? 'Search before you read; do not read files one after another hoping to find the code.' : 'NEVER grep or read files sequentially. "The grep was truncated, let me read the file" — forbidden.'}
    - NEVER re-read a file already in context.
    - In a new session: treat all files as unknown. Start with ${rm ? '\`repo_map\` or ' : ''}\`search_workspace\` — never open a file speculatively without a grep hit.
    - NEVER read a whole file to find a function. Use line-range read_file or search_workspace.
-   - CORRECT PATTERN: \`run_workers\` with one worker — (1) ${rm ? 'repo_map + search_workspace in parallel' : 'search_workspace'}, (2) read freely, (3) return excerpts with file:line. One call; nothing else.
-3. **Before writing a new file:** read one similar existing file first and match it — import style, naming, error handling, type-annotation depth. Do not invent a house style.
+${runtime.experiment('full_clean') ? '' : `   - CORRECT PATTERN: \`run_workers\` with one worker — (1) ${rm ? 'repo_map + search_workspace in parallel' : 'search_workspace'}, (2) read freely, (3) return excerpts with file:line. One call; nothing else.\n`}3. **Before writing a new file:** read one similar existing file first and match it — import style, naming, error handling, type-annotation depth. Do not invent a house style.
 4. **Write complete code.** No pseudocode and no \`TODO: implement\` stubs. If the real logic is not yet known, write a stub that returns a typed placeholder and say so — never leave a comment where code belongs.
 For code execution, deletions, or multi-file refactors use a **coder** worker.`;
         },

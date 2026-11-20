@@ -458,8 +458,18 @@ export function activeTools(forWorker: boolean = false, toolFilterOverride: Set<
     return t;
 }
 
+const _CLEAN_DESCRIPTIONS: Record<string, string> = {
+    check_page: 'Load a workspace HTML page (with its CSS/JS) in a hidden browser sandbox and report what happens: uncaught errors with line numbers, failed resources, and console output. Optionally click elements, type into fields and press/hold keys, and evaluate JS expressions after load and again at the end (e.g. "gameState", "player && player.x") to check that buttons and controls actually work. Use it after writing or changing a web page or game, and whenever the user reports it does not work — instead of guessing from the code. Pages run with internet access like the ▶ Preview, so CDN scripts and fetch() of public URLs work. Add integrity= only when copied from the library\'s docs: a wrong hash blocks the file.',
+    fetch_url: 'Make an HTTP request — GET, POST, PUT, PATCH, DELETE — with custom headers and body. JSON responses returned parsed; HTML stripped to plain text. Python requests/urllib do not work in Pyodide — use this instead. For a large page where you need only specific information, set "extract" to keep just the relevant passages out of your context. Skip search results ending with " [UNAVAILABLE]": those sites block automated requests.',
+};
+
 export function buildOAITools(forWorker: boolean | undefined = false, toolFilterOverride: Set<string> | null | undefined = null): { type: string; function: any; }[] {
-    return activeTools(forWorker, toolFilterOverride).map(t => ({ type: 'function', function: t }));
+    const tools = activeTools(forWorker, toolFilterOverride).map(t => ({ type: 'function', function: t }));
+    // Experiment full_clean: two descriptions that carried advice about other things (CDN hashes for pages, a keyword that triggers harness guidance).
+    if (runtime.experiment('full_clean')) for (const t of tools) {
+        const d = _CLEAN_DESCRIPTIONS[t.function?.name]; if (d) t.function = { ...t.function, description: d };
+    }
+    return tools;
 }
 
 // Window bridge for classic scripts.
