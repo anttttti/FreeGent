@@ -64,6 +64,7 @@ The status bar shows the model, whether the agent is running, throughput (`↑in
 | Command | Effect |
 |---|---|
 | `/clear` | New session. Refused while a reply is running |
+| `/quit`, `/exit` | Leave the TUI (a running reply is stopped first) |
 | `/stop`, `/break`, `/retry` | Same as `Alt+X`, `Alt+B`, `Alt+U` |
 | `/compact` | Compact the history now. Refused while a reply is running: wait for it or stop it first |
 | `/rewind` | Go back before your last message: the conversation, the workspace's files (as far as a snapshot reaches: large files and `.git`, `node_modules` and build folders are left as they are) and the screen. Repeat to go back further; the last ten messages are kept |

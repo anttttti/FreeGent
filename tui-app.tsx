@@ -873,6 +873,7 @@ const HELP_LINES = [
     '',
     'Slash commands:',
     '  /clear /compact /rewind /rerun   (also the [Rewind] [Rerun] buttons on a turn; click a step\'s [Rerun] to go on from it)',
+    '  /quit /exit  — leave the TUI',
     '  /export  — save chat as markdown file',
     '  /resume  — choose a previous session from a list  (/resume N: by number)',
     '  /goal <text> — keep working until the goal is met',
@@ -1109,7 +1110,7 @@ function QueuePanel({ queue, rows }: { queue: Store.QueuedMsg[]; rows: number })
 // ── Input line ────────────────────────────────────────────────────────────────
 
 const SLASH_COMMANDS = [
-    '/clear', '/stop', '/break', '/retry', '/rerun', '/rewind', '/compact',
+    '/clear', '/quit', '/exit', '/stop', '/break', '/retry', '/rerun', '/rewind', '/compact',
     '/export', '/resume', '/goal',
     '/project', '/tasks', '/agent', '/model', '/role',
     '/set', '/skills', '/settings', '/help',
@@ -1547,11 +1548,16 @@ async function runExport(workspaceRoot: string): Promise<void> {
     Store.addNotice(`Exported to \`${filename}\``);
 }
 
+// Set by TuiApp (useApp's exit lives in the component); /quit and /exit call it.
+let _exitApp: () => void = () => {};
+
 async function handleSlash(cmd: string) {
     const parts = cmd.split(' ');
     const base  = parts[0];
     switch (base) {
         case '/clear':    startNewSession(); break;
+        case '/quit':
+        case '/exit':     if (Store.getState().agentRunning) stopAgent(); _exitApp(); break;   // stops a running reply first, like Alt+X
         case '/stop':     stopAgent(); break;
         case '/break':    try { dom.window.stopAfterStep?.(); } catch {} break;
         case '/retry':    await retryLast(); break;
@@ -1646,6 +1652,7 @@ export function TuiApp({ opts }: { opts: Record<string, any> }) {
     const { columns, rows } = useWindowSize();
     const { exit } = useApp();
 
+    useEffect(() => { _exitApp = exit; return () => { _exitApp = () => {}; }; }, [exit]);
     useEffect(() => {
         setMouseHandler(_handleMouseClick);
         setScrollHandler(_handleMouseScroll);
