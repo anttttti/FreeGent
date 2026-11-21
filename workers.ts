@@ -123,11 +123,10 @@ const BUILTIN_ROLES = [
 - "code": code to run. Returns stdout, stderr, exit_code.
 - Use for running tests, inspecting output, or shell operations. Do NOT use bash to write or edit files — use write_file or replace_in_file instead.`);
 
-            const _full = runtime.experiment('full_clean');   // the schemas carry the parameters; the style rule is the Director's merged one
-            const toolSection = toolLines.length && !_full ? `\n## Tools\n\n${toolLines.join('\n\n')}` : '';
+            const toolSection = toolLines.length ? `\n## Tools\n\n${toolLines.join('\n\n')}` : '';
             return `You are a coding specialist agent. Read code, edit files, run commands, and return findings or results.
 
-${_full ? '**Response style:** Use the requested output format; otherwise answer with the shortest text that holds the outcome and the findings the task asked for. No preamble before tool calls, no recap of what a tool already printed, no post-action summary. Run commands with a tool call; print one as text only when the user asked for the code itself.' : '**Response style:** Not allowed: multiple sentences of preamble, post-action summaries, narrating the answer instead of stating it directly, and printing a command as text instead of running it. Never output a shell command or code snippet as your answer — call the tool.'}
+**Response style:** Not allowed: multiple sentences of preamble, post-action summaries, narrating the answer instead of stating it directly, and printing a command as text instead of running it. Never output a shell command or code snippet as your answer — call the tool.
 
 ## Tool use
 **Parallel:** Whenever possible, send tool calls as a list in a single response so they run in parallel. Only sequence calls when a later one depends on the result of an earlier one.
@@ -168,9 +167,6 @@ ${toolSection}`;
         // body_fn: called at prompt-build time so the Available tools section reflects
         // the tools actually in enabledTools at that moment, rather than a static snapshot.
         body_fn(): string {
-            // Experiment clean_prompt (FG_EXPERIMENTS): the same prompt with its contradictions and repeats removed (notes/2026_11_21_v1.0_claudecode_prompt_review.md).
-            const _full = runtime.experiment('full_clean');   // clean_prompt plus the larger edits: one parallel statement, no tool prose the schemas repeat
-            const _clean = _full || runtime.experiment('clean_prompt');
             const _has = (t: string) => isToolActive(t);   // mode-aware: Cowork keeps its own enabled set
 
             // ── Direct tools available to the director ──────────────────────────
@@ -248,15 +244,7 @@ ${toolSection}`;
                     'tasks too large for one turn',
                     ...(researcherWebTools.length || hasGit ? ['web/git research'] : []),
                 ].join(', ');
-                // Experiment clean_prompt: the sentence about what a worker sees is said once, after the role list.
-                toolLines.push(_clean ?
-`- **Delegate** — run_workers(agents): spawn parallel workers; choose the role that matches the sub-task:
-  - role "director" — a fork of you with your full context and tools. Use it when the subtask depends on what you've learned. Just state the subtask.
-  - role "coder" — ${coderDesc}. Use coder for edits spanning several files.
-  - role "researcher" — ${researcherDesc} (${researcherTools.join(', ')}).
-  Coder and researcher see only the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
-Delegate to workers for: ${delegateCases}.`
-:
+                toolLines.push(
 `- **Delegate** — run_workers(agents): spawn parallel workers; choose the role that matches the sub-task:
   - role "director" — a fork of you with your full context and tools. Use it when the subtask depends on what you've learned. Just state the subtask.
   - role "coder" — ${coderDesc}. Use coder for edits spanning several files. Sees the user's request and the task you send, not the rest of the conversation: include any paths, findings and constraints you have worked out.
@@ -265,10 +253,8 @@ Delegate to workers for: ${delegateCases}.`
                 );
             }
 
-            // full_clean: the role list stays; the per-tool lines repeat what the tool schemas already say.
-            const _shownLines = _full ? toolLines.filter(l => l.startsWith('- **Delegate**')) : toolLines;
-            const availableToolsSection = _shownLines.length
-                ? `\n## Available tools\n${_shownLines.join('\n')}`
+            const availableToolsSection = toolLines.length
+                ? `\n## Available tools\n${toolLines.join('\n')}`
                 : '';
 
             return `You are the Director for FreeGent's autonomous task loop. You read code, run commands, make targeted edits, and delegate parallel or complex work to specialized workers.
@@ -278,13 +264,14 @@ Delegate to workers for: ${delegateCases}.`
 ## State machine
 
 Every response with no tool call must end with exactly one of:
-- \`COMPLETED\` — Task done. Past tense: report what was done, not what you are doing.${_clean ? '' : ' Sanity-check each deliverable exists.'} Use for answered questions too.
+- \`COMPLETED\` — Task done. Past tense: report what was done, not what you are doing. Sanity-check each deliverable exists. Use for answered questions too.
 - \`BLOCKED: <reason>\` — Cannot proceed. Name the exact blocker. Do not loop on an unobtainable thing.
 
-${_clean ? 'A response with no tool call and no state line is bounced. Do not repeat a call you already ran.' : 'A response with no tool call and no state line will be bounced. The only wrong move is trailing off without a state line or repeating a call you already ran.'}
+A response with no tool call and no state line will be bounced. The only wrong move is trailing off without a state line or repeating a call you already ran.
 The state line is internal protocol metadata: FreeGent removes it before displaying or returning your answer. For JSON-only or other exact output, keep the answer body in the requested format and append COMPLETED on a separate line. The user receives only the answer body.
 
-${_full ? '' : '**Dispatch independent sub-tasks in one \`run_workers\` call** rather than sequentially.\n'}
+**Dispatch independent sub-tasks in one \`run_workers\` call** rather than sequentially.
+
 ## Definition of done
 COMPLETED requires every deliverable verified to exist by a tool result — not assumed.
 Task-type-specific done criteria are injected as guidance when they become relevant — apply them.
@@ -292,26 +279,23 @@ Task-type-specific done criteria are injected as guidance when they become relev
 ## Context budget
 Your history is shared with the user. Keep it lean:
 - Summarise file contents — never echo them in full.
-${_full ? '' : '- One \`run_workers\` call per logical phase.\n'}- Tool results in your history are compressed to ~20k chars. For detailed multi-file work, workers get full content in their own context.
+- One \`run_workers\` call per logical phase.
+- Tool results in your history are compressed to ~20k chars. For detailed multi-file work, workers get full content in their own context.
 
-${_clean ? `## Response style
-Use the requested output format; otherwise answer with the shortest text that holds the outcome and the findings the task asked for. No preamble before tool calls, no recap of what a tool already printed, no post-action summary. Run commands with a tool call; print one as text only when the user asked for the code itself.
-` : `## Response style
+## Response style
 Not allowed: multiple sentences of preamble, post-action summaries, narrating the answer instead of stating it directly, and printing a command as text instead of running it. Never output a shell command or code snippet as your answer — call the tool.
-`}
+
 # Tool use
-${_full ? '**Parallel:** Whenever possible, send independent tool calls (including several run_workers agents) as a list in a single response so they run in parallel. Only sequence calls when a later one depends on the result of an earlier one.' : '**Parallel:** Whenever possible, send tool calls as a list in a single response so they run in parallel. Only sequence calls when a later one depends on the result of an earlier one.'}
+**Parallel:** Whenever possible, send tool calls as a list in a single response so they run in parallel. Only sequence calls when a later one depends on the result of an earlier one.
 **Format:** Use the structured JSON function-call format the API provides. Do NOT output tool calls as XML tags (e.g. \`<execute_code>\`), markdown links, or code fences — only structured calls are processed.
-${_clean ? '' : `**Text is never executed:** Code blocks and command text do nothing. If you want something run, make the tool call.
-`}
+**Text is never executed:** Code blocks and command text do nothing. If you want something run, make the tool call.
+
 ## Policy
-${_clean ? `After a tool succeeds: check an edit once, with the cheapest check that can fail (read it back, run the test), then move on; do not repeat a check that already passed.
+After a tool succeeds: do not second-guess. Move to the next step — no re-checking, no replaying, no validation theater.
 
-After a tool fails: retry with a fix (corrected args, exact text re-read from the file, smaller step), run a diagnostic, or state plainly what failed. A failed tool is not a stopping condition; only COMPLETED or BLOCKED ends the turn.` : `After a tool succeeds: do not second-guess. Move to the next step — no re-checking, no replaying, no validation theater.
-
-After a tool fails: retry with a fix (corrected args, exact text re-read from the file, smaller step), run a diagnostic, or state plainly what failed. A failed tool is not a stopping condition — only DONE or BLOCKED is.`}
+After a tool fails: retry with a fix (corrected args, exact text re-read from the file, smaller step), run a diagnostic, or state plainly what failed. A failed tool is not a stopping condition — only DONE or BLOCKED is.
 ${availableToolsSection}
-${_clean ? '' : _roleConciseBlock()}`;
+${_roleConciseBlock()}`;
         },
     },
     {
