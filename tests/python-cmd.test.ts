@@ -166,6 +166,34 @@ describe('pythonCmd arguments and input', () => {
   });
 });
 
+describe('pythonCmd --version and packages', () => {
+  it('prints the version for --version and -V instead of waiting for a terminal (chat log a77535, python3 --version)', async () => {
+    for (const flag of ['--version', '-V']) {
+      const r = await run([flag]);
+      expect([r.code, r.stdout]).toEqual([0, expect.stringMatching(/^Python 3\.\d+\.\d+\n$/)]);
+    }
+  });
+
+  it("loads Pyodide's own packages for the imports of -c code, a piped program and a script, as execute_code does (\"No module named 'PIL'\", 6 of 12 chat logs)", async () => {
+    const spy = vi.spyOn(realPy, 'loadPackagesFromImports').mockResolvedValue(undefined as any);
+    try {
+      await run(['-c', 'import numpy\nprint(1)']);
+      await run([], {}, 'import PIL\nprint(2)\n');
+      await run(['s.py'], { '/workspace/s.py': 'import scipy\nprint(3)\n' });
+      expect(spy.mock.calls.map(c => c[0])).toEqual(['import numpy\nprint(1)', 'import PIL\nprint(2)\n', 'import scipy\nprint(3)\n']);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('reports a package that cannot be loaded as a warning and still runs the program', async () => {
+    const spy = vi.spyOn(realPy, 'loadPackagesFromImports').mockRejectedValue(new Error('offline'));
+    try {
+      const r = await run(['-c', 'print(4)']);
+      expect([r.code, r.stdout]).toEqual([0, '4\n']);
+      expect(r.stderr).toContain('Could not load some built-in packages: offline');
+    } finally { spy.mockRestore(); }
+  });
+});
+
 describe('pythonCmd workspace files', () => {
   it('reads workspace files byte for byte', async () => {
     const r = await run(['-c', 'print(open("a.txt", "rb").read(), open("b.bin", "rb").read())'],

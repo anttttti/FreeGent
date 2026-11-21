@@ -240,10 +240,11 @@ export function _extractExitCode(err: any, ctx: CommandContext): number {
  * Python's command line: [options] (-c code | -m module | script | - | nothing) [args…].
  * Options end at the first of those; everything after is the program's own arguments.
  */
-function parseCommandLine(args: string[]): { kind: 'code' | 'module' | 'path' | 'stdin' | 'none'; target: string; argv: string[] } {
+function parseCommandLine(args: string[]): { kind: 'code' | 'module' | 'path' | 'stdin' | 'version' | 'none'; target: string; argv: string[] } {
   const withValue = new Set(['-W', '-X', '--check-hash-based-pycs']);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (a === '--version' || a === '-V') return { kind: 'version', target: '', argv: [''] };
     if (a === '-c') return { kind: 'code', target: args[i + 1] ?? '', argv: ['-c', ...args.slice(i + 2)] };
     if (a.startsWith('-c') && a.length > 2 && !a.startsWith('--')) return { kind: 'code', target: a.slice(2), argv: ['-c', ...args.slice(i + 1)] };
     if (a === '-m') return { kind: 'module', target: args[i + 1] ?? '', argv: ['-m', ...args.slice(i + 2)] };
@@ -277,12 +278,17 @@ export const pythonCmd: Command = {
       ctx.stderr = `error: failed to load Pyodide: ${err.message}\n`;
       return 1;
     }
+    if (cmd.kind === 'version') {
+      ctx.stdout += `Python ${py.runPython('import sys; ".".join(map(str, sys.version_info[:3]))')}\n`;
+      return 0;
+    }
     return withRuntimeLock(py,async () => {
 
     let target = cmd.target;
     let filename = '<string>';
     let stdinData = ctx.stdin;
     if (cmd.kind === 'stdin') { target = ctx.stdin; filename = '<stdin>'; stdinData = ''; }
+    let source = cmd.kind === 'code' || cmd.kind === 'stdin' ? target : '';
     if (cmd.kind === 'path') {
       const scriptPath = ctx.fs.resolvePath(cmd.target, ctx.cwd);
       try {
@@ -292,6 +298,13 @@ export const pythonCmd: Command = {
         ctx.stderr = `python: can't open file '${cmd.target}': [Errno 2] No such file or directory\n`;
         return 2;
       }
+      try { const raw = await ctx.fs.readFile(scriptPath); source = typeof raw === 'string' ? raw : bytesToText(raw); } catch {}
+    }
+    // Pyodide's own packages (numpy, Pillow, ...) are loaded for the imports of the program, as execute_code's python does. A shell python3 answered
+    // "No module named 'PIL'" in 6 of 12 task chats (v1.0.115-121, 10 calls); the model then went looking for another way to read an image.
+    if (source) {
+      try { await py.loadPackagesFromImports(source); }
+      catch (e: any) { ctx.stderr += `Warning: Could not load some built-in packages: ${e?.message ?? e}\n`; }
     }
 
     // Always sync from workspace root so imports from any directory work

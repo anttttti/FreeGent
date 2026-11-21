@@ -10188,7 +10188,7 @@
     "shiro/commands/printenv.ts": "5f00087b8323d5652f28e6edd9d971480f6a56c4d0b67ac136c64f9575770f7e",
     "shiro/commands/printf.ts": "842a3b1c0bc86436286edc2d0a6d9c0fd1828c287450704507f08ecec5f4dfdd",
     "shiro/commands/pwd.ts": "8366faeaf19b85b879707461752e09de15ec299c9ee5068fd8257e45e5fe2162",
-    "shiro/commands/python.ts": "671ce2c94271d851497e8fdb8c15d039fecbb0b65738adcaa24ae326a9b29651",
+    "shiro/commands/python.ts": "a27a12987642588f0182796c89c9e91823659f381bda36984d731977331dde6a",
     "shiro/commands/readlink.ts": "57efd313007b2198918a20dd5848e3a582a26cbeb23cf5521e02878953283e4c",
     "shiro/commands/realpath.ts": "18903b0705cca452b873d8389618d8cab153c8344fa236da7a1e87e83a46d1b6",
     "shiro/commands/return.ts": "0053047e0beae664697aff88d543b44bd194407fb00ec7dfb0e09f5459e08808",
