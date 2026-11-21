@@ -200,9 +200,17 @@ export function _isRateLimit(msg: string, ep?: any): boolean {
     if (ep && isCustomEndpoint(ep) && /HTTP 503\b/.test(msg || '') && !/rate.?limit|too many requests/i.test(msg || '')) return false;
     return /HTTP 429|HTTP 402|HTTP 503|rate.?limit|too many requests|quota exceeded|insufficient balance|high demand|spikes in demand|monthly spend limit/i.test(msg || '');
 }
+// Every transient wording that names the provider or the connection is here too, not only "HTTP 5xx": a bare "terminated", "fetch failed" or "network error" was retried on the
+// same model without a cooldown or a rotation.
+// An abort that is not the user's Stop (withRetry throws those first) is the request's own timeout; Safari words it "Fetch is aborted": without a match here
+// the model was never cooled or rotated away from, and one nvidia model got 57 requests in 3 h (uploaded log 6b0b3a3b, v1.0.121).
 export function _isServerError(msg: string): boolean {
-    return /HTTP [45]\d\d|idle timeout|signal timed out|read operation timed out|stream error|failed to fetch|networkerror|load failed|connection reset|connection refused|econnreset|socket hang up|bodystreambuffer|stream.*aborted/i.test(msg || '');
+    return /HTTP [45]\d\d|idle timeout|signal timed out|read operation timed out|stream error|fetch is aborted|operation was aborted|user aborted a request|failed to fetch|networkerror|load failed|connection reset|connection refused|econnreset|socket hang up|bodystreambuffer|stream.*aborted|service unavailable|bad gateway|gateway time-?out|high traffic|overloaded|temporarily unavailable|upstream connect error|no healthy upstream|error code: (?:1015|5\d\d)|connection error|request timed out|internal error|network error|net::ERR_|error in input stream|network connection was lost|software caused connection abort|fetch failed|^terminated$|^aborted$|other side closed|premature close|\bE(?:TIMEDOUT|NOTFOUND|AI_AGAIN)\b|(?:body|headers|connect) timeout error|network request failed/i.test(msg || '');
 }
+/** The request failed before any HTTP answer ("Load failed", "Failed to fetch"): the connection, or one blocked provider, not a model that misbehaved. */
+export function _isNoAnswer(msg: string): boolean { return /failed to fetch|networkerror|load failed/i.test(msg || '') && !/HTTP \d{3}/.test(msg || ''); }
+/** Models one request may rotate through on such failures before it backs off on the model it is on (a few can be one blocked provider). */
+export const NO_ANSWER_ROTATIONS = 3;
 // Consecutive HTTP 403 answers per endpoint; a success clears it.
 export const REFUSAL_LIMIT = 3;
 export const REFUSAL_COOLDOWN_MS = 30 * 60_000;
@@ -663,7 +671,7 @@ Object.assign(window, {
     RATE_LIMIT_COOLDOWN_MS, RATE_LIMIT_MAX_MS, RATE_LIMIT_PENALTY_MS,
     noteRefusal, REFUSAL_LIMIT, REFUSAL_COOLDOWN_MS,
     knownLimitWaitMs, recordRequest, recordSuccess, recordCacheCapable, isCacheCapable,
-    _isRateLimit, _isServerError, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining,
+    _isRateLimit, _isServerError, _isNoAnswer, NO_ANSWER_ROTATIONS, _markCooldown, _markFlatCooldown, _markExactCooldown, _isCoolingDown, getCooldownRemaining,
     oaiEndpoint, specToEndpoint, _defaultEndpoint, firstFreeEndpoint, utilityEndpoint,
     _anyFreeSpec, getRateLimitFallbackEndpoint, _switchToFreeModel, _nextRotationSpec,
     modelFriendlyName, resolveWorkerModelSpec, withEndpointSlot, singleRequestPerEndpoint,

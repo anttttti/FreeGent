@@ -366,7 +366,21 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         return null;
     };
+    // Nothing in the pool is free: the model that comes free first, with its wait in ms, so the request moves on to it instead of
+    // re-sending to the one that just failed (the WebUI sent the same request to one endpoint twenty times while the rest of the pool cooled).
+    const _soonestSpecSameFormat = (curKey: string): { spec: string; ms: number } | null => {
+        if (typeof getActiveMainModelList !== 'function' || typeof getCooldownRemaining !== 'function') return null;
+        const here = _target(curKey);
+        let best: { spec: string; ms: number } | null = null;
+        for (const c of getActiveMainModelList().filter(_sameFormat)) {
+            if (c === curKey || _target(c) === here) continue;
+            const ms = getCooldownRemaining(c) * 1000;
+            if (!best || ms < best.ms) best = { spec: c, ms };
+        }
+        return best;
+    };
     let _clientErrors = 0;
+    let _noAnswers = 0;
     // Waiting out the same endpoint when there is nothing to rotate to. withRetry is called with no attempt
     // limit by the main loop, and every branch below returns a positive delay, so a local server that stays
     // down (OOM, crash, wrong port) was retried every 5-60 s until the task's wall clock ended (review
@@ -499,6 +513,14 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         }
         // preFlight: thrown by knownLimitWaitMs before any HTTP request — cooldown already set,
         // don't extend it. Just let the existing cooldown expire by sleeping retryAfterMs.
+        // Past NO_ANSWER_ROTATIONS models in a row that never answered, it is the connection and not the models (error reports 2026-10-23, 10-25 and
+        // 11-20: twelve to fourteen models walked in 50 ms, each cooled for two minutes, then a two-minute wait): no more cooling or rotating, back off here.
+        if (!is429 && !isCustom && _isNoAnswer(e.message) && ++_noAnswers > NO_ANSWER_ROTATIONS) {
+            const wait = _boundedWait(Math.min(d, 60_000), ep, e, false, false);
+            if (wait === false) return false;
+            onNote(_retryNote(ep, n, e, wait));
+            return wait;
+        }
         if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null, e);
         else if (effectiveErr && !isStreamTimeout) _markFlatCooldown(ep);
         // Stream timeout on custom endpoint: the model was just slow. Retry locally, no fallback.
@@ -526,6 +548,17 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 onModelChange?.(next);
                 onNote(`[${ep.provider}|${ep.model}][${is429 ? 'rate limited' : 'server error'}: rotating to ${next}]`);
                 return 0;
+            }
+            // Nothing free: when another model comes free sooner than this one, wait for that one and move to it.
+            const soon = _soonestSpecSameFormat(curKey);
+            if (soon) {
+                const own = is429 && e.retryAfterMs != null ? Math.max(e.retryAfterMs, 5_000) : getCooldownRemaining(curKey) * 1000;
+                if (own > 0 && soon.ms < own) {
+                    const nextEp = specToEndpoint(soon.spec);
+                    setEp(nextEp); setFallback?.(nextEp); onModelChange?.(soon.spec);
+                    onNote(`[${curKey}][${is429 ? 'rate limited' : 'server error'}: all models cooling, switching to ${soon.spec}${soon.ms > 0 ? `, waiting ${fmtDelay(soon.ms)}` : ''}]`);
+                    return soon.ms;
+                }
             }
             // No rotation target — retry same endpoint after cooldown.
             if (is429 && e.retryAfterMs != null) return _boundedWait(Math.max(e.retryAfterMs, 5_000), ep, e, is429, isCustom);

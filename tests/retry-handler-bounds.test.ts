@@ -165,6 +165,63 @@ describe('rotation never goes to the endpoint it is leaving', () => {
     });
 });
 
+// Error reports 2026-10-23, 10-25, 11-20: a request whose fetch never gets an answer ("Load failed") walked twelve to fourteen models in 50 ms, each cooled
+// for two minutes. A few rotations stay (one blocked provider); past NO_ANSWER_ROTATIONS the request backs off on the model it is on.
+describe('requests that never get an answer', () => {
+    it('rotate a few models, then back off on the current one without cooling more of the pool', async () => {
+        const { NO_ANSWER_ROTATIONS } = await import('../model-router.ts');
+        let k = 0;
+        (window as any).getActiveMainModelList = () => [`kilo|net-${k}`, `kilo|net-${k + 1}`];
+        const { h, notes, ep } = handler({ provider: 'kilo', model: 'net-0', url: 'https://api.kilo.ai/api/gateway/chat/completions' });
+        const outs: any[] = [];
+        for (let n = 0; n < NO_ANSWER_ROTATIONS + 3; n++) { outs.push(h(n, err('Load failed'), 3000)); if (outs.at(-1) === 0) k++; }
+        expect(outs.slice(0, NO_ANSWER_ROTATIONS)).toEqual(Array(NO_ANSWER_ROTATIONS).fill(0));
+        expect(outs.slice(NO_ANSWER_ROTATIONS).every(o => o === 3000)).toBe(true);   // the wait is the caller's backoff, not a cooldown
+        expect(ep().model).toBe(`net-${NO_ANSWER_ROTATIONS}`);                        // it stayed on the last model it reached
+        expect(getCooldownRemaining(`kilo|net-${NO_ANSWER_ROTATIONS}`)).toBe(0);
+        expect(notes.at(-1)).toMatch(/retry \d+: Load failed, waiting 3s/);
+    });
+    it('an answer with an HTTP status is a server error as before: it keeps rotating', () => {
+        let k = 0;
+        (window as any).getActiveMainModelList = () => [`kilo|srv-${k}`, `kilo|srv-${k + 1}`];
+        const { h } = handler({ provider: 'kilo', model: 'srv-0', url: 'https://api.kilo.ai/api/gateway/chat/completions' });
+        for (let n = 0; n < 8; n++) { expect(h(n, err('HTTP 500: upstream error'), 3000)).toBe(0); k++; }
+    });
+});
+
+describe('a request aborted by its own timeout', () => {
+    it('cools the model and rotates away from it', () => {
+        (window as any).getActiveMainModelList = () => ['nvidia|abort-a', 'nvidia|abort-b'];
+        const { h, ep } = handler({ provider: 'nvidia', model: 'abort-a', url: 'https://integrate.api.nvidia.com/v1/chat/completions' });
+        expect(h(0, err('Fetch is aborted'), 3000)).toBe(0);
+        expect(ep().model).toBe('abort-b');
+        expect(getCooldownRemaining('nvidia|abort-a')).toBeGreaterThan(0);
+    });
+});
+
+describe('bare transport and overload wordings (no HTTP status)', () => {
+    it.each(['terminated', 'fetch failed', 'network error', 'Service Unavailable', 'upstream connect error', 'body timeout error', 'ETIMEDOUT'])('%s cools the model and rotates', (msg) => {
+        (window as any).getActiveMainModelList = () => ['nvidia|bare-a', 'nvidia|bare-b'];
+        const { h, ep } = handler({ provider: 'nvidia', model: 'bare-a', url: 'https://integrate.api.nvidia.com/v1/chat/completions' });
+        expect(h(0, err(msg), 3000)).toBe(0);
+        expect(ep().model).toBe('bare-b');
+    });
+});
+
+describe('every model cooling', () => {
+    it('moves on to the one that comes free first instead of re-sending to the failed one', async () => {
+        const { _markExactCooldown } = await import('../model-router.ts');
+        (window as any).getActiveMainModelList = () => ['kilo|cool-a', 'kilo|cool-b', 'kilo|cool-c'];
+        _markExactCooldown({ provider: 'kilo', model: 'cool-b' }, 90_000);
+        _markExactCooldown({ provider: 'kilo', model: 'cool-c' }, 20_000);
+        const { h, ep } = handler({ provider: 'kilo', model: 'cool-a', url: 'https://api.kilo.ai/api/gateway/chat/completions' });
+        const out = h(0, err('HTTP 500: upstream error'), 3000);
+        expect(ep().model).toBe('cool-c');
+        expect(out).toBeGreaterThan(15_000);
+        expect(out).toBeLessThanOrEqual(20_000);
+    });
+});
+
 // Autopilot exploration 2026-10-28, AE-13: five minutes of outage read as a bare "Running…". withRetry counts the failed model requests in a
 // row (the runner shows them from three on); a cut-off reply is not a failure to reach the model, and a success ends the run.
 describe('modelFailureRun', () => {

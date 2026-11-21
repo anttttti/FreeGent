@@ -2,7 +2,7 @@ import { workflowMode, activeChatId, activeAbortController, setPendingAgentsCont
 import { type RenderAdapter } from './render-adapter.js';
 import { withRetry, asTransportError, _isTimeoutError, parseContextOverflow, fmtDelay, _httpErrorFromResponse } from './retry.js';
 import { getCooldownRemaining, specToEndpoint, _isCoolingDown, modelFriendlyName, withEndpointSlot, recordSuccess,
-         firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError } from './model-router.js';
+         firstFreeEndpoint, _defaultEndpoint, _markCooldown, _markFlatCooldown, _isRateLimit, _isServerError, _isNoAnswer, NO_ANSWER_ROTATIONS } from './model-router.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { buildChatPayload, buildRequestMessages, isCustomEndpoint } from './payload-builder.js';
 import { buildOAITools } from './tool-schemas.js';
@@ -173,6 +173,7 @@ function _compactFetchSignal(ep: any = null, promptTokens = 0) {
 // Keep the shared behaviour (context-overflow headroom, cooldown marking, delays) in step with
 // _makeOAIRetryHandler — tests/retry-consistency.test.ts pins the classifier contract.
 function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = null as any, onContextTruncate = null as any }) {
+    let _noAnswers = 0;
     return (n: number, e: any, d: number) => {
         // Context overflow (OAI "maximum context length" error)
         const headroom = parseContextOverflow(e, 256);   // a summary can be short: the answer-sized floor is for the main loop
@@ -192,6 +193,12 @@ function _makeCompactRetryHandler({ getEp, setEp, onNote, onContextOverflow = nu
         if (_isTimeoutError(e) && isCustom) {
             onNote(`[${key}][fetch timeout: server unresponsive, not retrying]`);
             return false;
+        }
+        // As in retry.ts: past NO_ANSWER_ROTATIONS models in a row that never answered it is the connection, not the models.
+        if (!is429 && !isCustom && _isNoAnswer(e.message) && ++_noAnswers > NO_ANSWER_ROTATIONS) {
+            const wait = Math.min(d, 60_000);
+            onNote(`[${key}][retry ${n + 1}: ${e.message}, waiting ${fmtDelay(wait)}]`);
+            return wait;
         }
         if (is429 && !e.preFlight) _markCooldown(ep, e.retryAfterMs ?? null, e);
         else if (isErr) _markFlatCooldown(ep, null);

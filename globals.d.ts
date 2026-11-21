@@ -432,6 +432,7 @@ declare global {
     var _httpErrorFromResponse: any;
     var _isCoolingDown: any;
     var _isRateLimit: any;
+    var _isNoAnswer: any;
     var _isServerError: any;
     var _lcsMatrix: any;
     var _makeOAIRetryHandler: any;
@@ -439,6 +440,7 @@ declare global {
     var _markExactCooldown: any;
     var _markFlatCooldown: any;
     var noteRefusal: any;
+    var NO_ANSWER_ROTATIONS: any;
     var REFUSAL_LIMIT: any;
     var REFUSAL_COOLDOWN_MS: any;
     var _switchToFreeModel: any;
