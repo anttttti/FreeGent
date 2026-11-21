@@ -99,9 +99,14 @@ export function _updateStuckDetector(resSig: string, stalledPaths: Set<string>, 
 // of executed. v0.54: 9 tasks looped like this (e.g. `ps aux | grep postgres` 72 times). Counted in a
 // window, not a streak: v0.55 OS task 38 slipped one variant (`ls -ld`) between runs of `ls -l`,
 // which reset a streak each time. Refusals accumulate over the turn for the same reason.
-/** First line of a tool error, cut to 120 characters, for the tool_failure nudge: a slice of the whole text ended in the middle of replace_in_file's
+/** First line of a tool error, cut to 120 characters (at a sentence end when there is one), for the tool_failure nudge: a slice of the whole text ended in the middle of replace_in_file's
  *  "Closest matches" list ("...one of these):\n  L. Fix before declaring COMPLETED"), which the model already has in full in the tool result (uploaded log, v1.0.109). */
-export const errorLine = (e: unknown): string => String(e).split('\n')[0].slice(0, 120);
+export const errorLine = (e: unknown): string => {
+    const line = String(e).split('\n')[0];
+    if (line.length <= 120) return line;
+    const cut = line.slice(0, 120), end = cut.lastIndexOf('. ');
+    return end > 20 ? cut.slice(0, end + 1) : cut;   // the repeat refusal read "Running it again will not ." with its action cut off (uploaded log 576d172f, v1.0.121)
+};
 
 export const REPEAT_LIMIT = 8;
 export const REPEAT_WINDOW = 12;
