@@ -36,7 +36,7 @@ export function formatThrown(e: any): string {
 // import() reaches the page's module loader, not the workspace: the three engines word the refusal differently and none says what to do instead
 // (kanbanflow set 3: a model's `await import('./lib/list.mjs')` died with "Failed to resolve module specifier" and it tried again).
 const _IMPORT_HINT = '\n(import() cannot load workspace files in the browser JS sandbox: read the file with require("fs") and run it with the bash tool: node file.mjs)';
-const _IMPORT_FAILED_RE = /Failed to resolve module specifier|error loading dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported module|dynamic import callback/;
+const _IMPORT_FAILED_RE = /Failed to resolve module specifier|error loading dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported module|dynamic import callback|Module specifier does not start with|import call expects exactly one argument/;   // the last two: Safari's words for import('fs') and `import fs from 'fs'` (chat logs 2026-11-21)
 const thrownText = (e: any): string => formatThrown(e) + (_IMPORT_FAILED_RE.test(String(e?.message ?? e)) ? _IMPORT_HINT : '') + '\n';
 
 export async function runJs(code: string, files: Record<string, WorkspaceFileData>) {

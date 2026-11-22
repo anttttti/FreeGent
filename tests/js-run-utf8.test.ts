@@ -72,6 +72,12 @@ describe('runJs dynamic import', () => {
         expect(r.exit_code).toBe(1);
         expect(r.stderr).toMatch(/import\(\) cannot load workspace files/);
     });
+    it("also for Safari's wording of a bare import('fs') and of `import fs from 'fs'`", async () => {
+        for (const msg of ['Module specifier does not start with "/", "./", or "../".', "Unexpected identifier 'fs'. import call expects exactly one argument."]) {
+            const r = await runJs(`throw new TypeError(${JSON.stringify(msg)});`, {});
+            expect(r.stderr).toMatch(/import\(\) cannot load workspace files/);
+        }
+    });
 });
 
 // review 2026-11-08 (CR20-05): a cancelled timer never fires, so the drain waited its whole deadline for it.
