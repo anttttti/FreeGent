@@ -32,7 +32,10 @@ function _attrEsc(v: unknown): string {
     return String(v).replace(/["\\]/g, '\\$&').replace(/[\n\r\f]/g, c => '\\' + c.charCodeAt(0).toString(16) + ' ').replace(/\0/g, '\uFFFD');
 }
 
+// The tab shown before the current one: closing a file tab returns there (the Project view, not always the Chat).
+let _curTab = 'chat', _prevTab = 'chat';
 function activateTab(key) {
+    if (key !== _curTab) { _prevTab = _curTab; _curTab = key; }
     // Rail nav button active state
     document.querySelectorAll('.left-rail .rail-nav-btn').forEach(b => b.classList.remove('active'));
     const railBtn = document.querySelector(`.left-rail .rail-nav-btn[data-tab="${_attrEsc(key)}"]`);
@@ -510,7 +513,10 @@ function closeFileTab(name) {
         const n = r.querySelector('.workspace-file-name') as HTMLElement | null;
         if ((n?.dataset.fullname ?? n?.textContent) === name) r.classList.remove('tab-open');
     });
-    if (wasActive) activateTab('chat');
+    if (wasActive) {
+        const back = _prevTab !== name && document.querySelector(`#tab-content [data-panel="${_attrEsc(_prevTab)}"]`) ? _prevTab : 'chat';
+        activateTab(back);
+    }
 }
 
 // localStorage/sessionStorage polyfill injected into every sandboxed artifact iframe.

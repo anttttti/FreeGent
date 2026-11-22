@@ -2644,7 +2644,8 @@ export function buildFileActions(name: string, opts: { playOnly?: boolean } = {}
 
     if (opts.playOnly) return actions;
 
-    actions.appendChild(_openButton(name));
+    // ▶ of a previewable file already opens its tab: ↗ would do the same.
+    if (!kind) actions.appendChild(_openButton(name));
 
     const dl = document.createElement('button');
     dl.className = 'ws-btn'; dl.title = 'Download'; dl.textContent = '↓';
