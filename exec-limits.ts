@@ -16,6 +16,32 @@ export function omittedFileWriteMessage(path: string): string {
     return `${path}: not written. The existing file is too large to be copied into the run, so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
 }
 
+/** Characters of workspace files (stored size: base64 for binary) one JavaScript run gets a copy of. Every run was sent every file: a 690-file, about 70 MB
+ *  project took the tab down on the second run on an iPad (Safari 12, 1 GB; five tab crashes in the 2026-11-22 chat log review, each the second run or later). */
+export const EXEC_COPY_MAX_CHARS = 24_000_000;
+
+/** Which workspace records a run gets: files named in its code first (by path or by file name), then the rest smallest first, while the copy stays within `maxTotal`;
+ *  a file over `maxFile` never. Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
+export function planWorkspaceCopy<T extends { name?: string; content?: unknown; encoding?: string | null }>(recs: Iterable<T | null | undefined>, code: string, maxFile: number, maxTotal = EXEC_COPY_MAX_CHARS): { send: T[]; omitted: Map<string, number> } {
+    const omitted = new Map<string, number>(), cand: { r: T; len: number; named: boolean }[] = [];
+    const sizeOf = (r: T, len: number) => r.encoding === 'base64' ? Math.floor(len * 3 / 4) : len;
+    for (const r of recs) {
+        if (!r?.name || typeof r.content !== 'string') continue;
+        const len = r.content.length;
+        if (len > maxFile) { omitted.set(r.name, sizeOf(r, len)); continue; }
+        const base = r.name.slice(r.name.lastIndexOf('/') + 1);
+        cand.push({ r, len, named: code.includes(r.name) || (base.length >= 4 && code.includes(base)) });
+    }
+    cand.sort((a, b) => a.named === b.named ? a.len - b.len : a.named ? -1 : 1);
+    const send: T[] = [];
+    let used = 0;
+    for (const c of cand) {
+        if (c.named || used + c.len <= maxTotal) { send.push(c.r); used += c.len; }
+        else omitted.set(c.r.name!, sizeOf(c.r, c.len));
+    }
+    return { send, omitted };
+}
+
 /** A workspace record as one comparable string (text and base64 content never compare equal). */
 export function wsRecordKey(rec: { content: string; encoding?: string | null }): string {
     return (rec.encoding === 'base64' ? 'B:' : 'T:') + rec.content;

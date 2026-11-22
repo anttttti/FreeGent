@@ -49,8 +49,8 @@ function fsError(code: string, op: string, p: string): Error {
     return makeFsError(code, `${code}: ${what}, ${op} '${p}'`, op, p);
 }
 
-/** A workspace file as the page sends it: text, or binary as base64. */
-export type WorkspaceFileData = string | { base64: string };
+/** A workspace file as the page sends it: text, binary as base64, or `{ omitted: size }` for one that exists but was left out of this run's copy. */
+export type WorkspaceFileData = string | { base64: string } | { omitted: number };
 type Content = string | Uint8Array;
 
 const fromBase64 = base64ToBytes;
@@ -62,7 +62,12 @@ const fromBase64 = base64ToBytes;
 export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffer?: { from(data: any, enc?: string): Uint8Array & { toString(enc?: string): string } }) {
     // No prototype: a file named toString, constructor or __proto__ is an ordinary name, and an absent one is absent.
     const files: Record<string, Content> = Object.create(null);
-    for (const [name, v] of Object.entries(sent)) files[name] = typeof v === 'string' ? v : fromBase64(v.base64);
+    const left: Record<string, number> = Object.create(null);   // in the workspace, not copied into this run: listed and sized, never read
+    for (const [name, v] of Object.entries(sent)) {
+        if (typeof v === 'string') files[name] = v;
+        else if ('omitted' in v) left[name] = v.omitted;
+        else files[name] = fromBase64(v.base64);
+    }
     const written: Record<string, Content> = Object.create(null);
     const deleted = new Set<string>();
     const scratch = new Map<string, Content>();    // outside /workspace: this run only
@@ -83,7 +88,9 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         if (name === '') throw fsError('EISDIR', 'open', p);
         files[name] = content; written[name] = content; deleted.delete(name);
     };
-    const keys = () => [...Object.keys(files).map(n => `${WORKSPACE}/${n}`), ...scratch.keys(), ...dirs];
+    const skipped = (p: string): string | null => { const n = wsName(posix.resolve(p)); return n !== null && n in left ? n : null; };
+    const notCopied = (op: string, p: string): Error => makeFsError('EIO', `EIO: '${p}' is in the workspace but was not copied into this run (files over 10 MB, and files beyond about 24 MB of the workspace that the code does not name, are left out): name its path as a literal string in the code, or use bash or Python for it`, op, p);
+    const keys = () => [...Object.keys(files).map(n => `${WORKSPACE}/${n}`), ...Object.keys(left).map(n => `${WORKSPACE}/${n}`), ...scratch.keys(), ...dirs];
     const isDir = (p: string) => {
         const abs = posix.resolve(p);
         return abs === WORKSPACE || abs === '/' || abs === '/tmp' || dirs.has(abs) || keys().some(k => k.startsWith(abs + '/'));
@@ -101,6 +108,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
 
     const stored = (p: string): Content => {
         const c = get(p);
+        if (c === undefined && skipped(p) !== null) throw notCopied('open', p);
         if (c === undefined) throw fsError(isDir(p) ? 'EISDIR' : 'ENOENT', 'open', p);
         return c;
     };
@@ -108,6 +116,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         // As in Node: bytes (a Buffer) without an encoding, text with one.
         readFileSync(p: string, opts?: any): any {
             const c = get(p);
+            if (c === undefined && skipped(p) !== null) throw notCopied('open', p);
             if (c === undefined) throw fsError(isDir(p) ? 'EISDIR' : 'ENOENT', 'open', p);
             const enc = encodingOf(opts);
             if (!enc) return Buffer ? Buffer.from(bytesOf(c)) : bytesOf(c);
@@ -122,14 +131,15 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
             all.set(a); all.set(b, a.length);
             put(p, all);
         },
-        existsSync(p: string) { return get(p) !== undefined || isDir(p); },
+        existsSync(p: string) { return get(p) !== undefined || skipped(p) !== null || isDir(p); },
         readdirSync(p: string = '.') {
             if (!isDir(p)) throw fsError('ENOENT', 'scandir', p);
             const pre = posix.resolve(p).replace(/\/?$/, '/');
             return [...new Set(keys().filter(k => k.startsWith(pre)).map(k => k.slice(pre.length).split('/')[0]).filter(Boolean))].sort();
         },
         statSync(p: string) {
-            const c = get(p), dir = c === undefined && isDir(p);
+            const c = get(p), dir = c === undefined && isDir(p), n = c === undefined ? skipped(p) : null;
+            if (n !== null) return { size: left[n], isFile: () => true, isDirectory: () => false, mtime: new Date(), mtimeMs: Date.now() };
             if (c === undefined && !dir) throw fsError('ENOENT', 'stat', p);
             return { size: c === undefined ? 0 : size(c), isFile: () => !dir, isDirectory: () => dir, mtime: new Date(), mtimeMs: Date.now() };
         },
@@ -148,6 +158,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         },
         unlinkSync(p: string) {
             const abs = posix.resolve(p), name = wsName(abs);
+            if (get(p) === undefined && skipped(p) !== null) throw notCopied('unlink', p);
             if (get(p) === undefined) throw fsError('ENOENT', 'unlink', p);
             if (name === null) { scratch.delete(abs); return; }
             delete files[name]; delete written[name];

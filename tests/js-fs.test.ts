@@ -132,3 +132,23 @@ describe('mkdirSync follows Node', async () => {
         nodeFs.rmSync(real, { recursive: true, force: true });
     });
 });
+
+// A run's copy of the workspace is limited (exec-limits.ts planWorkspaceCopy): a file left out is listed and sized, and a read says why.
+describe('files left out of the run\'s copy', () => {
+    const left = () => createWorkspaceFs({ 'a.txt': 'A', 'img/big.jpeg': { omitted: 700000 } });
+    it('are listed, exist and have their size, so code that scans a folder does not take them for missing', () => {
+        const { fs } = left();
+        expect(fs.readdirSync('img')).toEqual(['big.jpeg']);
+        expect(fs.existsSync('img/big.jpeg')).toBe(true);
+        expect(fs.statSync('img/big.jpeg')).toMatchObject({ size: 700000 });
+        expect(fs.statSync('img').isDirectory()).toBe(true);
+    });
+    it('refuse a read, a copy and a delete with EIO and the way out, never ENOENT', () => {
+        const { fs } = left();
+        for (const f of [() => fs.readFileSync('img/big.jpeg'), () => fs.copyFileSync('img/big.jpeg', 'x.jpeg'), () => fs.unlinkSync('img/big.jpeg')]) {
+            try { f(); throw new Error('no throw'); } catch (e: any) { expect([e.code, /not copied into this run/.test(e.message), /literal string/.test(e.message)]).toEqual(['EIO', true, true]); }
+        }
+        expect(() => fs.readFileSync('nope.txt')).toThrow(/ENOENT/);
+    });
+});
+
