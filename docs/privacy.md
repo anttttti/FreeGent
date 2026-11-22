@@ -26,7 +26,7 @@ Clearing the site's data in your browser removes all of it. If you run FreeGent 
 | Your IP address | ipinfo.io. The city, region and ISP it returns are added to prompts, so the model provider also sees them. | Only at the Routed level, and only if the location lookup in **Settings → Privacy** is on (it is by default). |
 | A chat log | FreeGent's Worker, kept for 14 days and read by the maintainer for debugging | Only when you press **Send log to developer**. Saved keys and any key-like values in the chat are removed first. Not available at Provider-only or Local. |
 
-Two more things apply only to the maintainer's own sessions: a [Developer key](models/access.md#developer-key) enables uploads of console errors and finished Autopilot chats, and project sync to a Cloudflare bucket. Ordinary visitors never send either.
+Two more things apply only to the maintainer's own sessions: a [Developer key](models/access.md#developer-key) enables uploads of console errors and finished Autopilot chats (with the browser, OS and device memory they came from), and project sync to a Cloudflare bucket. Ordinary visitors never send either.
 
 ## The three privacy levels
 

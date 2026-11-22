@@ -1,5 +1,5 @@
 // tests/dev-log.test.ts — developer logging: off without a Developer key, batched POST /errlog with the session id, task log.
-import { devLogEntry, flushDevLog, sendTaskLog, SESSION_ID, _resetDevLogForTest, _devLogQueueForTest } from '../dev-log.js';
+import { devLogEntry, flushDevLog, sendTaskLog, describeDevice, SESSION_ID, _resetDevLogForTest, _devLogQueueForTest } from '../dev-log.js';
 
 describe('dev-log', () => {
     let f: any;
@@ -27,6 +27,34 @@ describe('dev-log', () => {
         const body = JSON.parse(init.body);
         expect(body.sessionId).toBe(SESSION_ID);
         expect(body.entries.map((e: any) => [e.level, e.text, e.count])).toEqual([['warn', 'same', 2], ['error', 'other', undefined]]);
+    });
+
+    it('sends the device with each batch and task log', async () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        devLogEntry('error', 'console', 'x'); await flushDevLog();
+        const dev = JSON.parse(f.mock.calls[0][1].body).device;
+        expect(Object.keys(dev).sort()).toEqual(expect.arrayContaining(['browser', 'mobile', 'os', 'wasm']));
+        await sendTaskLog({ id: '1', title: 't', path: 'p' }, 'done', '', 'c1', async () => '{}');
+        expect(JSON.parse(f.mock.calls[1][1].body).device.os).toBe(dev.os);
+    });
+
+    it('describes the device coarsely, never as the user agent string', () => {
+        const ua = {
+            ipad12: 'Mozilla/5.0 (iPad; CPU OS 12_5_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Mobile/15E148 Safari/604.1',
+            ipados: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+            chromeIos: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/123.0.6312.52 Mobile/15E148 Safari/604.1',
+            android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+            edge: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0',
+            firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0',
+        };
+        expect(describeDevice(ua.ipad12, 5, undefined, false)).toEqual({ browser: 'Safari 12', os: 'iPadOS 12', mobile: true, wasm: false });
+        expect(describeDevice(ua.ipados, 5)).toMatchObject({ browser: 'Safari 17', os: 'iPadOS', mobile: true });
+        expect(describeDevice(ua.ipados, 0)).toMatchObject({ os: 'macOS', mobile: false });
+        expect(describeDevice(ua.chromeIos)).toMatchObject({ browser: 'Chrome 123', os: 'iOS 17', mobile: true });
+        expect(describeDevice(ua.android, 5, 4)).toEqual({ browser: 'Chrome 124', os: 'Android 14', mobile: true, wasm: true, memGb: 4 });
+        expect(describeDevice(ua.edge)).toMatchObject({ browser: 'Edge 124', os: 'Windows', mobile: false });
+        expect(describeDevice(ua.firefox)).toMatchObject({ browser: 'Firefox 125', os: 'Linux', mobile: false });
+        expect(JSON.stringify(describeDevice(ua.android))).not.toMatch(/Mozilla|AppleWebKit|Pixel/);
     });
 
     it('redacts other saved credentials from entries', () => {

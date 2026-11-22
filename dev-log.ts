@@ -18,6 +18,29 @@ function _randomId(): string {
 /** One ID per page load. Carried by every error-log batch and every task chat log. */
 export const SESSION_ID: string = _randomId();
 
+/** The device, coarsely, for the uploads: browser and OS with major versions, phone or not, whether WebAssembly exists, and the device memory where the browser reports it (Chromium).
+ *  Not the user agent string. Missing in the reports until now, so a tab crash or a "Load failed" could not be told from an old iPad or a desktop. */
+export function describeDevice(ua: string, maxTouch = 0, mem?: number, wasm = true): { browser: string; os: string; mobile: boolean; wasm: boolean; memGb?: number } {
+    const v = (re: RegExp) => ua.match(re)?.[1];
+    const browser = v(/\b(?:Edg|EdgA|EdgiOS)\/(\d+)/) ? `Edge ${v(/\b(?:Edg|EdgA|EdgiOS)\/(\d+)/)}`
+        : v(/\b(?:Firefox|FxiOS)\/(\d+)/) ? `Firefox ${v(/\b(?:Firefox|FxiOS)\/(\d+)/)}`
+        : v(/\b(?:Chrome|CriOS)\/(\d+)/) ? `Chrome ${v(/\b(?:Chrome|CriOS)\/(\d+)/)}`
+        : v(/\bVersion\/(\d+)[\d.]* .*Safari\//) ? `Safari ${v(/\bVersion\/(\d+)[\d.]* .*Safari\//)}`
+        : 'other';
+    const ipad = /\biPad\b/.test(ua) || (/\bMacintosh\b/.test(ua) && maxTouch > 1);   // iPadOS 13+ reports a Mac
+    const os = /\b(?:iPhone|iPod)\b/.test(ua) || ipad ? `${ipad ? 'iPadOS' : 'iOS'}${v(/\bOS (\d+)_/) ? ' ' + v(/\bOS (\d+)_/) : ''}`
+        : /\bAndroid\b/.test(ua) ? `Android${v(/\bAndroid (\d+)/) ? ' ' + v(/\bAndroid (\d+)/) : ''}`
+        : /\bCrOS\b/.test(ua) ? 'ChromeOS' : /\bWindows\b/.test(ua) ? 'Windows' : /\bMac OS X\b/.test(ua) ? 'macOS' : /\bLinux\b/.test(ua) ? 'Linux' : 'other';
+    return { browser, os, mobile: /\b(?:iPhone|iPod|Android)\b.*\bMobile\b|\biPhone\b|\biPod\b|\biPad\b/.test(ua) || ipad, wasm, ...(typeof mem === 'number' ? { memGb: mem } : {}) };
+}
+let _device: ReturnType<typeof describeDevice> | null = null;
+function _deviceInfo() {
+    if (_device) return _device;
+    try { _device = describeDevice(navigator.userAgent || '', navigator.maxTouchPoints || 0, (navigator as any).deviceMemory, typeof WebAssembly === 'object'); }
+    catch { _device = { browser: 'other', os: 'other', mobile: false, wasm: false }; }
+    return _device;
+}
+
 function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'routed'; }
 
 interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
@@ -69,7 +92,7 @@ export async function flushDevLog(): Promise<void> {
     try {
         const r = await _origFetch()(`${DEFAULT_CF_WORKER}/errlog`, {
             method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-FG-Dev-Key': getDevKey() }, keepalive: true,
-            body: JSON.stringify({ sessionId: SESSION_ID, version: FG_VERSION, url: location.origin + location.pathname, entries: batch }),
+            body: JSON.stringify({ sessionId: SESSION_ID, version: FG_VERSION, url: location.origin + location.pathname, device: _deviceInfo(), entries: batch }),
         });
         if (!r.ok) throw new Error(String(r.status));
         ok = true;
@@ -115,7 +138,7 @@ export async function sendTaskLog(task: { id: string; title: string; path: strin
         const chat = JSON.parse(await build(chatId));
         if (!devLoggingOn()) return;   // the Developer key was removed while the chat was being built (explorations 2026-11-10 N026)
         // `build` redacts the chat only: the task's own fields are text from the run too (a crash's reason quotes the code that ran).
-        const body = JSON.stringify({ devSession: SESSION_ID, task: { id: redactForLog(task.id), title: redactForLog(task.title), path: redactForLog(task.path),
+        const body = JSON.stringify({ devSession: SESSION_ID, device: _deviceInfo(), task: { id: redactForLog(task.id), title: redactForLog(task.title), path: redactForLog(task.path),
             outcome, reason: redactForLog(String(reason || '')).slice(0, 500) }, ...chat });
         await _origFetch()(`${DEFAULT_CF_WORKER}/log`, { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-FG-Dev-Key': getDevKey() }, body });
     } catch (e) {

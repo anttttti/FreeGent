@@ -50,7 +50,7 @@ What guest access sends where is listed under [Privacy](../privacy.md#what-leave
 
 ## Developer key
 
-The Developer key is a secret that the operator of a Worker sets on it (`FG_DEV_KEY`) and pastes into Settings → Credentials → **Developer key**. With it, that browser's requests through the Worker can use every Worker key, without the guest limits and without the bot check. It also turns on uploads of console errors and finished Autopilot chats to the operator's logs, and project sync. Saving it switches Privacy to Routed.
+The Developer key is a secret that the operator of a Worker sets on it (`FG_DEV_KEY`) and pastes into Settings → Credentials → **Developer key**. With it, that browser's requests through the Worker can use every Worker key, without the guest limits and without the bot check. It also turns on uploads of console errors and finished Autopilot chats to the operator's logs, each with the device it came from (browser and OS with major versions, phone or not, whether WebAssembly exists, device memory where the browser reports it; not the user agent string), and project sync. Saving it switches Privacy to Routed.
 
 It is meant for one person: the Worker's operator. It is never needed to use FreeGent, and it must not be shared, because it unlocks every key on the Worker, including providers whose terms forbid serving other people. To let others use your keys within those terms, use guest access instead.
 
