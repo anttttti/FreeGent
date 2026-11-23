@@ -482,7 +482,7 @@ async function _listTools(server: { url: string; headers?: Record<string, string
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
         for (const t of r?.tools || []) {
             if (t && typeof t.name === 'string')
-                tools.push({ name: t.name, description: _clean(t.description), inputSchema: t.inputSchema, annotations: t.annotations });
+                tools.push({ name: t.name, description: _clean(t.description), inputSchema: _redactDeep(t.inputSchema, server.headers), annotations: t.annotations });   // the schema's descriptions and defaults reach the model too (night exploration D028)
         }
         cursor = r?.nextCursor;
         if (!cursor) break;
@@ -701,6 +701,13 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
     return out;
 }
 
+// Every string in a JSON value, redacted (property names are left as they are).
+function _redactDeep(v: any, headers?: Record<string, string>): any {
+    return typeof v === 'string' ? redactMcpSecrets(v, headers)
+        : Array.isArray(v) ? v.map(x => _redactDeep(x, headers))
+        : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, _redactDeep(x, headers)])) : v;
+}
+
 // Enabled tools across enabled servers, as { name, description, parameters } specs.
 function mcpToolSpecs(): any[] {
     const specs: any[] = [];
@@ -714,10 +721,11 @@ function mcpToolSpecs(): any[] {
             const max = _MAX_DESC - note.length;
             // The description is the server's own text, in the list the model takes for its capabilities: said to be that, like the server's usage notes
             // (hermes C18).
-            let desc = `${s.name} (external MCP server; its own description): ${(t.description || t.name).trim()}`;
+            // Redacted again with the credentials as they are now: one stored after the discovery is not in the text the discovery cleaned (D032).
+            let desc = `${s.name} (external MCP server; its own description): ${redactMcpSecrets((t.description || t.name).trim(), s.headers)}`;
             if (desc.length > max) desc = desc.slice(0, max - 1) + '…';
             desc += note;
-            specs.push({ name: names.get(t.name)!, description: desc, parameters: sanitizeMcpSchema(t.inputSchema || { type: 'object' }) });
+            specs.push({ name: names.get(t.name)!, description: desc, parameters: _redactDeep(sanitizeMcpSchema(t.inputSchema || { type: 'object' }), s.headers) });
         }
     }
     return specs;
@@ -735,7 +743,7 @@ function mcpServerInstructionsBlock(isAllowed: (toolName: string) => boolean = (
         const exposed = _exposedNames(s);
         const names = (s.tools || []).filter(t => on.has(t.name)).map(t => exposed.get(t.name)!).filter(isAllowed);
         if (!names.length) continue;
-        entries.push({ s, text: s.instructions.replace(/\n{3,}/g, '\n\n') });
+        entries.push({ s, text: redactMcpSecrets(s.instructions, s.headers).replace(/\n{3,}/g, '\n\n') });
     }
     // Aggregate budget, shared out smallest first: a short note keeps all of its text and what it
     // leaves unused goes to the longer ones, which are clipped to an equal share of the rest.

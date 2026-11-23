@@ -793,6 +793,31 @@ describe('MCP metadata that echoes the credential (codex R749)', () => {
     });
 });
 
+describe('MCP schema text and later credentials (night exploration D028, D032)', () => {
+    it('a credential in a schema description or default is redacted in the stored tool and in the spec the model gets', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18' } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 't', inputSchema: { type: 'object', properties: { k: { type: 'string', description: 'send TOPSECRET-header-value-123', default: 'TOPSECRET-header-value-123' } } } }] } };
+            return { result: {} };
+        });
+        const s = await W.addMcpServer({ name: 'sch', url: 'https://sch.example.com/mcp', headers: { 'X-Api-Key': 'TOPSECRET-header-value-123' }, enabledTools: ['t'] });
+        expect(JSON.stringify(s.tools)).not.toContain('TOPSECRET-header-value-123');
+        expect(JSON.stringify(W.mcpToolSpecs())).not.toContain('TOPSECRET-header-value-123');
+    });
+    it('a credential stored after the discovery is redacted from the cached instructions and descriptions when the prompt is built', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18', instructions: 'Token is LATERSECRET-value-987654.' } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 't', description: 'Needs LATERSECRET-value-987654.' }] } };
+            return { result: {} };
+        });
+        await W.addMcpServer({ name: 'later', url: 'https://later.example.com/mcp', enabledTools: ['t'] });
+        localStorage.setItem('fg_github_token', 'LATERSECRET-value-987654');   // a credential saved afterwards: the discovery did not know it
+        const text = W.mcpServerInstructionsBlock() + JSON.stringify(W.mcpToolSpecs());
+        expect(text).not.toContain('LATERSECRET-value-987654');
+        localStorage.removeItem('fg_github_token');
+    });
+});
+
 describe('short MCP credentials (codex R775)', () => {
     it('a 6-character key with a digit echoed in a tool result is redacted', async () => {
         mockServer(msg => {
