@@ -149,7 +149,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         // directory it made, or undefined when there was none to make.
         mkdirSync(p: string, opts?: any) {
             const abs = posix.resolve(p), recursive = !!(opts && typeof opts === 'object' && opts.recursive);
-            if (get(p) !== undefined) throw fsError('EEXIST', 'mkdir', p);
+            if (get(p) !== undefined || skipped(p) !== null) throw fsError('EEXIST', 'mkdir', p);   // a file left out of the copy is still a file (explorations W004)
             if (isDir(p)) { if (recursive) return undefined; throw fsError('EEXIST', 'mkdir', p); }
             const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
             if (!recursive) { if (!isDir(parent)) throw fsError('ENOENT', 'mkdir', p); dirs.add(abs); return undefined; }

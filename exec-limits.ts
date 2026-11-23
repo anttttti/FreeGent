@@ -20,23 +20,42 @@ export function omittedFileWriteMessage(path: string): string {
  *  project took the tab down on the second run on an iPad (Safari 12, 1 GB; five tab crashes in the 2026-11-22 chat log review, each the second run or later). */
 export const EXEC_COPY_MAX_CHARS = 24_000_000;
 
+/** The bytes a stored workspace record stands for: UTF-8 for text, decoded for base64 (padding is not data). Counted, not decoded: the strings can be 10M characters. */
+export function byteSize(content: string, base64: boolean): number {
+    if (base64) { const n = content.length; return Math.max(0, Math.floor(n * 3 / 4) - (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0)); }
+    let b = 0;
+    for (let i = 0; i < content.length; i++) {
+        const c = content.charCodeAt(i);
+        if (c < 0x80) b += 1; else if (c < 0x800) b += 2;
+        else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < content.length && (content.charCodeAt(i + 1) & 0xFC00) === 0xDC00) { b += 4; i++; }
+        else b += 3;
+    }
+    return b;
+}
+
 /** Which workspace records a run gets: files named in its code first (by path or by file name), then the rest smallest first, while the copy stays within `maxTotal`;
  *  a file over `maxFile` never (those are also in `large`: naming them does not help; the Local Folder's unreadable files are too). Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
 export function planWorkspaceCopy<T extends { name?: string; content?: unknown; encoding?: string | null }>(recs: Iterable<T | null | undefined>, code: string, maxFile: number, maxTotal = EXEC_COPY_MAX_CHARS): { send: T[]; omitted: Map<string, number>; large: Set<string> } {
-    const omitted = new Map<string, number>(), large = new Set<string>(), cand: { r: T; len: number; named: boolean }[] = [];
-    const sizeOf = (r: T, len: number) => r.encoding === 'base64' ? Math.floor(len * 3 / 4) : len;
+    const omitted = new Map<string, number>(), large = new Set<string>(), cand: { r: T; len: number; named: boolean; sure: boolean }[] = [];
+    const sizeOf = (r: T, len: number) => byteSize(r.content as string, r.encoding === 'base64');
     for (const r of recs) {
         if (!r?.name || typeof r.content !== 'string') continue;
         const len = r.content.length;
         if (len > maxFile) { omitted.set(r.name, sizeOf(r, len)); large.add(r.name); continue; }
         const base = r.name.slice(r.name.lastIndexOf('/') + 1);
-        cand.push({ r, len, named: code.includes(r.name) || (base.length >= 4 && code.includes(base)) });
+        cand.push({ r, len, named: code.includes(r.name) || (base.length >= 4 && code.includes(base)), sure: code.includes(r.name) });
     }
+    // A file named by its path is always sent. One named only by its file name is too, unless several files share that name: then the name does not say which is meant,
+    // and sending them all past the budget (one path in the code pulled five 8 MB files of one name) would defeat it; they come first, within the budget (explorations W002).
+    const nameOf = (r: T) => r.name!.slice(r.name!.lastIndexOf('/') + 1);
+    const sameName = new Map<string, number>();
+    for (const c of cand) sameName.set(nameOf(c.r), (sameName.get(nameOf(c.r)) ?? 0) + 1);
+    for (const c of cand) if (c.named && !c.sure && (sameName.get(nameOf(c.r)) ?? 0) === 1) c.sure = true;   // a name that is the file's alone says which file is meant
     cand.sort((a, b) => a.named === b.named ? a.len - b.len : a.named ? -1 : 1);
     const send: T[] = [];
     let used = 0;
     for (const c of cand) {
-        if (c.named || used + c.len <= maxTotal) { send.push(c.r); used += c.len; }
+        if (c.sure || used + c.len <= maxTotal) { send.push(c.r); used += c.len; }
         else omitted.set(c.r.name!, sizeOf(c.r, c.len));
     }
     return { send, omitted, large };

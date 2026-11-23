@@ -157,6 +157,12 @@ describe('files left out of the run\'s copy', () => {
         expect(fs.existsSync('img/small.png')).toBe(true);   // nothing was removed before the refusal
         fs.rmSync('a.txt'); expect(fs.existsSync('a.txt')).toBe(false);
     });
+    it('mkdirSync on a left-out file is EEXIST like on a visible one, and an omitted file does not become a folder (explorations W004)', () => {
+        const { fs } = createWorkspaceFs({ 'a.txt': 'A', 'assets/big.png': { omitted: 700000 } });
+        expect(() => fs.mkdirSync('assets/big.png')).toThrow(/EEXIST/);
+        expect(() => fs.mkdirSync('assets/big.png', { recursive: true })).toThrow(/EEXIST/);
+        expect(fs.statSync('assets/big.png').isFile()).toBe(true);
+    });
     it('refuse renaming onto a left-out file: the source stays, nothing is queued for write-back (a rename used to delete the source and lose its content)', () => {
         const { fs, written, deleted } = createWorkspaceFs({ 'new.txt': 'my output', 'assets/big.png': { omitted: 700000 } });
         expect(() => fs.renameSync('new.txt', 'assets/big.png')).toThrow(/not copied into this run/);
