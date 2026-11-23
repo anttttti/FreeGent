@@ -61,7 +61,9 @@ async function _saveLogAndCreateReviewTask() {
         agentWriteFile(logPath, redactSecrets(lines.join('\n'), storedSecretValues())),
         agentListFiles(),
     ]);
-    if (filesResult.status === 'fulfilled') {
+    // Without the listing there is no way to know which ids are taken: 001 may be a task that exists, and writing it replaces it (night exploration D038).
+    if (filesResult.status !== 'fulfilled') { console.warn('[post-turn] review task not created: the task files could not be listed'); return; }
+    {
         const ids = (filesResult.value || [])
             .map(f => (f.name || f).match(/^(?:local\/)?(?:fg-)?tasks\/(\d+)-/))
             .filter(Boolean)
@@ -112,15 +114,22 @@ async function _saveLogAndCreateReviewTask() {
     ].join('\n');
 
     const ledgerPath = `${tasksDir}/ledger.md`;
-    const [, ledgerResult] = await Promise.allSettled([
+    const [taskWrite, ledgerResult] = await Promise.allSettled([
         agentWriteFile(taskPath, taskContent),
         agentReadFile(ledgerPath),
     ]);
+    // A task that was not written gets no ledger row (D033); a ledger that exists but could not be read is not replaced by a header and one row (D029):
+    // the task stays, and the next ledger rebuild lists it.
+    if (taskWrite.status !== 'fulfilled') { console.warn('[post-turn] review task not written, ledger left alone:', (taskWrite.reason as any)?.message ?? taskWrite.reason); refreshTasks?.(); return; }
+    const _missing = (e: any) => /ENOENT|not found|no such file|does not exist/i.test(String(e?.message ?? e));
+    if (ledgerResult.status === 'rejected' && !_missing(ledgerResult.reason)) { console.warn('[post-turn] ledger not updated: it could not be read:', (ledgerResult.reason as any)?.message ?? ledgerResult.reason); refreshTasks?.(); return; }
     try {
         const existing = ledgerResult.status === 'fulfilled' ? ledgerResult.value : '';
         const ledger = existing.trim() ? existing : LEDGER_HEADER;
         const newRow  = `| ${nextId} | open        | Low      | Review session log ${today} for AI inefficiencies |`;
-        await agentWriteFile(ledgerPath, ledger.trimEnd() + '\n' + newRow + '\n');
+        // The active table ends where `## Archive` starts (as in qa.ts): a row appended after the archive is not an active task.
+        const arch = ledger.indexOf('\n## Archive');
+        await agentWriteFile(ledgerPath, arch >= 0 ? ledger.slice(0, arch).trimEnd() + '\n' + newRow + '\n' + ledger.slice(arch) : ledger.trimEnd() + '\n' + newRow + '\n');
     } catch {}
 
     refreshTasks?.();

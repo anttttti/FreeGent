@@ -10,7 +10,7 @@ beforeEach(() => {
     saved = Object.fromEntries(STUBBED.map(k => [k, W[k]]));
     files = { 'fg-tasks/007-existing.md': '---\nid: 007\n---\n' };
     W.agentListFiles = async () => Object.keys(files).map(name => ({ name }));
-    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error('nf'); return files[p]; };
+    W.agentReadFile = async (p) => { if (!(p in files)) throw new Error('File not found: ' + p); return files[p]; };
     W.agentWriteFile = async (p, c) => { files[p] = c; };
     W.refreshTasks = () => {};
     localStorage.setItem('fg_agent_review_logs', 'true');
@@ -29,6 +29,32 @@ describe('session-log review task', () => {
         expect(task).toMatch(/^fg-tasks\/008-review-session-log-/);
         expect(files['fg-tasks/ledger.md']).toContain('| 008 |');
         expect(Object.keys(files).some(k => k.startsWith('tasks/'))).toBe(false);
+    });
+    it('does not guess an id when the task files cannot be listed (001 may be a task that exists)', async () => {
+        files = { 'fg-tasks/001-existing.md': 'precious' };
+        W.agentListFiles = async () => { throw new Error('IDB error'); };
+        await post.runPostTurnAgents();
+        expect(files['fg-tasks/001-existing.md']).toBe('precious');
+        expect(Object.keys(files).some(k => /review-session-log/.test(k))).toBe(false);
+    });
+    it('does not replace a ledger it could not read, and adds no row for a task it could not write', async () => {
+        files = { 'fg-tasks/ledger.md': '| ID | Status |\n| 001 | done |\n\n## Archive\n| 000 | old |\n' };
+        W.agentReadFile = async (p) => { if (p === 'fg-tasks/ledger.md') throw new Error('UnknownError: IDB'); throw new Error('File not found'); };
+        await post.runPostTurnAgents();
+        expect(files['fg-tasks/ledger.md']).toContain('| 000 | old |');
+        W.agentReadFile = async (p) => { if (!(p in files)) throw new Error('File not found: ' + p); return files[p]; };
+        const write = W.agentWriteFile;
+        W.agentWriteFile = async (p, c) => { if (/review-session-log/.test(p) && p.startsWith('fg-tasks/')) throw new Error('quota'); return write(p, c); };
+        const before = files['fg-tasks/ledger.md'];
+        await post.runPostTurnAgents();
+        expect(files['fg-tasks/ledger.md']).toBe(before);
+    });
+    it('puts the row above the archive section', async () => {
+        files = { 'fg-tasks/ledger.md': '| ID | Status |\n| 001 | done |\n\n## Archive\n| 000 | old |\n', 'fg-tasks/001-a.md': '---\n---\n' };
+        await post.runPostTurnAgents();
+        const led = files['fg-tasks/ledger.md'];
+        expect(led.indexOf('| 002 |')).toBeGreaterThan(-1);
+        expect(led.indexOf('| 002 |')).toBeLessThan(led.indexOf('## Archive'));
     });
     it('writes a log without the credentials the session used', async () => {
         await post.runPostTurnAgents();
