@@ -28,5 +28,7 @@ describe('planWorkspaceCopy', () => {
         const r = planWorkspaceCopy([rec('huge.bin', 2000)], 'huge.bin', 1000, 10_000);
         expect(r.send).toEqual([]);
         expect(r.omitted.get('huge.bin')).toBe(1500);
+        expect([...r.large]).toEqual(['huge.bin']);
+        expect(planWorkspaceCopy([rec('late.png', 800)], '', 1000, 100).large.size).toBe(0);   // left out for the total, not the size: naming it helps
     });
 });

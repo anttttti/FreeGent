@@ -150,5 +150,18 @@ describe('files left out of the run\'s copy', () => {
         }
         expect(() => fs.readFileSync('nope.txt')).toThrow(/ENOENT/);
     });
+    it('refuse rmSync too, force or not, and a recursive one that would leave a left-out file behind', () => {
+        const { fs } = createWorkspaceFs({ 'a.txt': 'A', 'img/small.png': 'x', 'img/big.jpeg': { omitted: 700000 } });
+        for (const opts of [undefined, { force: true }]) expect(() => fs.rmSync('img/big.jpeg', opts)).toThrow(/not copied into this run/);
+        expect(() => fs.rmSync('img', { recursive: true })).toThrow(/not copied into this run/);
+        expect(fs.existsSync('img/small.png')).toBe(true);   // nothing was removed before the refusal
+        fs.rmSync('a.txt'); expect(fs.existsSync('a.txt')).toBe(false);
+    });
+    it('say a file over the file limit cannot be had by naming it, and one past the total limit can', () => {
+        const { fs } = createWorkspaceFs({ 'big.bin': { omitted: 20_000_000, large: true }, 'late.png': { omitted: 500000 } });
+        expect(() => fs.readFileSync('big.bin')).toThrow(/over 10 MB/);
+        expect(() => fs.readFileSync('late.png')).toThrow(/literal string/);
+        expect(() => fs.readFileSync('big.bin')).not.toThrow(/literal string/);
+    });
 });
 

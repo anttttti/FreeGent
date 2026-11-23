@@ -67,6 +67,14 @@ describe('live Local Folder files in a run', () => {
         expect(omitted2.has('local/small.txt')).toBe(false);
     });
 
+    it('hands over the size of each file it leaves out, for the run to list it with', async () => {
+        for (const k of Object.keys(live)) delete live[k];
+        live['local/big.txt'] = 'x'.repeat(2000); live['local/ok.txt'] = 'ok';
+        const sizes = new Map<string, number>(), omitted = new Set<string>();
+        await addLiveFolderInput({ list: async () => [{ name: 'local/big.txt', isLocal: true, size: 2000 }, { name: 'local/ok.txt', isLocal: true, size: 2 }], read, maxChars: 1000, put: () => {}, snap: new Map(), omitted, sizes });
+        expect([...sizes]).toEqual([['local/big.txt', 2000]]);
+    });
+
     it('skips what the caller names (logs) and entries that are not folder files', async () => {
         for (const k of Object.keys(live)) delete live[k];
         live['local/logs/run.log'] = 'noise'; live['local/keep.txt'] = 'k';

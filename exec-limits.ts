@@ -10,10 +10,10 @@ export function execTimeoutMs(seconds: unknown): number {
     return Number.isFinite(n) && n > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, Math.max(1_000, Math.round(n * 1000))) : EXEC_TIMEOUT_MS;
 }
 
-/** Why a run's write was refused: the file it targets was left out of the run's copy of the workspace (too large),
+/** Why a run's write was refused: the file it targets was left out of the run's copy of the workspace (over the file limit, or past the copy's total limit),
  *  so the run could not have seen its content and writing it would replace the original with whatever the run made. */
 export function omittedFileWriteMessage(path: string): string {
-    return `${path}: not written. The existing file is too large to be copied into the run, so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
+    return `${path}: not written. The existing file was left out of the run's copy of the project (too large to copy), so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
 }
 
 /** Characters of workspace files (stored size: base64 for binary) one JavaScript run gets a copy of. Every run was sent every file: a 690-file, about 70 MB
@@ -21,14 +21,14 @@ export function omittedFileWriteMessage(path: string): string {
 export const EXEC_COPY_MAX_CHARS = 24_000_000;
 
 /** Which workspace records a run gets: files named in its code first (by path or by file name), then the rest smallest first, while the copy stays within `maxTotal`;
- *  a file over `maxFile` never. Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
-export function planWorkspaceCopy<T extends { name?: string; content?: unknown; encoding?: string | null }>(recs: Iterable<T | null | undefined>, code: string, maxFile: number, maxTotal = EXEC_COPY_MAX_CHARS): { send: T[]; omitted: Map<string, number> } {
-    const omitted = new Map<string, number>(), cand: { r: T; len: number; named: boolean }[] = [];
+ *  a file over `maxFile` never (those are also in `large`: naming them does not help). Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
+export function planWorkspaceCopy<T extends { name?: string; content?: unknown; encoding?: string | null }>(recs: Iterable<T | null | undefined>, code: string, maxFile: number, maxTotal = EXEC_COPY_MAX_CHARS): { send: T[]; omitted: Map<string, number>; large: Set<string> } {
+    const omitted = new Map<string, number>(), large = new Set<string>(), cand: { r: T; len: number; named: boolean }[] = [];
     const sizeOf = (r: T, len: number) => r.encoding === 'base64' ? Math.floor(len * 3 / 4) : len;
     for (const r of recs) {
         if (!r?.name || typeof r.content !== 'string') continue;
         const len = r.content.length;
-        if (len > maxFile) { omitted.set(r.name, sizeOf(r, len)); continue; }
+        if (len > maxFile) { omitted.set(r.name, sizeOf(r, len)); large.add(r.name); continue; }
         const base = r.name.slice(r.name.lastIndexOf('/') + 1);
         cand.push({ r, len, named: code.includes(r.name) || (base.length >= 4 && code.includes(base)) });
     }
@@ -39,7 +39,7 @@ export function planWorkspaceCopy<T extends { name?: string; content?: unknown; 
         if (c.named || used + c.len <= maxTotal) { send.push(c.r); used += c.len; }
         else omitted.set(c.r.name!, sizeOf(c.r, c.len));
     }
-    return { send, omitted };
+    return { send, omitted, large };
 }
 
 /** A workspace record as one comparable string (text and base64 content never compare equal). */
@@ -93,13 +93,15 @@ export async function staleGuard(snap: Map<string, string>, omitted: Set<string>
 export async function addLiveFolderInput(o: {
     list: () => Promise<any[] | null | undefined>; read: (name: string) => Promise<unknown>; maxChars: number;
     put: (name: string, content: string) => void; snap: Map<string, string>; omitted: Set<string>; skip?: RegExp;
+    /** Receives the size of each file left out, for the run to list it with. */
+    sizes?: Map<string, number>;
 }): Promise<void> {
     for (const f of (await o.list()) || []) {
         if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
         let c: unknown;
-        try { c = await o.read(f.name); } catch { o.omitted.add(f.name); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
+        try { c = await o.read(f.name); } catch { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
         if (typeof c === 'string' && c.length <= o.maxChars) { o.put(f.name, c); o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
-        else o.omitted.add(f.name);
+        else { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); }
     }
 }
 /** A listing for `staleGuard` that also holds the current content of the `local/` files the run changed: the guard compares the baseline with this. */

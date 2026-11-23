@@ -2954,7 +2954,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
         execResult = await (async () => {
             // Copy the workspace for this run: raw records (binary files as base64, no text
             // extraction), plus a synced local folder's files if one is open.
-            const files: Record<string, string | { base64: string } | { omitted: number }> = Object.create(null);   // no prototype: __proto__ is a file name here
+            const files: Record<string, string | { base64: string } | { omitted: number; large?: boolean }> = Object.create(null);   // no prototype: __proto__ is a file name here
             const omitted = new Set<string>();   // too large to copy: the run cannot see them, so it may not replace them
             let sentSnap = new Map<string, string>();
             try {
@@ -2963,9 +2963,10 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 // What does not fit is listed with its size and refused on read, not silently absent: the run may not mistake it for a missing file.
                 const plan = planWorkspaceCopy(_recs, args.code, EXEC_FILE_MAX_CHARS);
                 for (const rec of plan.send) files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content as string } : rec.content as string;
-                for (const [n, size] of plan.omitted) { omitted.add(n); files[n] = { omitted: size }; }
-                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted });
-                for (const n of omitted) if (!(n in files)) files[n] = { omitted: 0 };
+                for (const [n, size] of plan.omitted) { omitted.add(n); files[n] = { omitted: size, ...(plan.large.has(n) ? { large: true } : {}) }; }
+                const folderSizes = new Map<string, number>();
+                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes });
+                for (const n of omitted) if (!(n in files)) files[n] = { omitted: folderSizes.get(n) ?? 0, large: true };
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
             // storage or the dev server) with fs/path over this copy of the files, at /workspace

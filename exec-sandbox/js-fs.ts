@@ -49,8 +49,8 @@ function fsError(code: string, op: string, p: string): Error {
     return makeFsError(code, `${code}: ${what}, ${op} '${p}'`, op, p);
 }
 
-/** A workspace file as the page sends it: text, binary as base64, or `{ omitted: size }` for one that exists but was left out of this run's copy. */
-export type WorkspaceFileData = string | { base64: string } | { omitted: number };
+/** A workspace file as the page sends it: text, binary as base64, or `{ omitted: size }` for one that exists but was left out of this run's copy (`large`: over the file limit, so naming it does not help). */
+export type WorkspaceFileData = string | { base64: string } | { omitted: number; large?: boolean };
 type Content = string | Uint8Array;
 
 const fromBase64 = base64ToBytes;
@@ -62,10 +62,10 @@ const fromBase64 = base64ToBytes;
 export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffer?: { from(data: any, enc?: string): Uint8Array & { toString(enc?: string): string } }) {
     // No prototype: a file named toString, constructor or __proto__ is an ordinary name, and an absent one is absent.
     const files: Record<string, Content> = Object.create(null);
-    const left: Record<string, number> = Object.create(null);   // in the workspace, not copied into this run: listed and sized, never read
+    const left: Record<string, { size: number; large: boolean }> = Object.create(null);   // in the workspace, not copied into this run: listed and sized, never read
     for (const [name, v] of Object.entries(sent)) {
         if (typeof v === 'string') files[name] = v;
-        else if ('omitted' in v) left[name] = v.omitted;
+        else if ('omitted' in v) left[name] = { size: v.omitted, large: !!v.large };
         else files[name] = fromBase64(v.base64);
     }
     const written: Record<string, Content> = Object.create(null);
@@ -89,7 +89,9 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         files[name] = content; written[name] = content; deleted.delete(name);
     };
     const skipped = (p: string): string | null => { const n = wsName(posix.resolve(p)); return n !== null && n in left ? n : null; };
-    const notCopied = (op: string, p: string): Error => makeFsError('EIO', `EIO: '${p}' is in the workspace but was not copied into this run (files over 10 MB, and files beyond about 24 MB of the workspace that the code does not name, are left out): name its path as a literal string in the code, or use bash or Python for it`, op, p);
+    const notCopied = (op: string, p: string): Error => makeFsError('EIO', left[skipped(p) ?? '']?.large
+        ? `EIO: '${p}' is in the workspace but over 10 MB, more than a run is given: use bash or Python for it`
+        : `EIO: '${p}' is in the workspace but was not copied into this run (a run gets about 24 MB of the workspace, the files its code names first): name its path as a literal string in the code, or use bash or Python for it`, op, p);
     const keys = () => [...Object.keys(files).map(n => `${WORKSPACE}/${n}`), ...Object.keys(left).map(n => `${WORKSPACE}/${n}`), ...scratch.keys(), ...dirs];
     const isDir = (p: string) => {
         const abs = posix.resolve(p);
@@ -139,7 +141,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         },
         statSync(p: string) {
             const c = get(p), dir = c === undefined && isDir(p), n = c === undefined ? skipped(p) : null;
-            if (n !== null) return { size: left[n], isFile: () => true, isDirectory: () => false, mtime: new Date(), mtimeMs: Date.now() };
+            if (n !== null) return { size: left[n].size, isFile: () => true, isDirectory: () => false, mtime: new Date(), mtimeMs: Date.now() };
             if (c === undefined && !dir) throw fsError('ENOENT', 'stat', p);
             return { size: c === undefined ? 0 : size(c), isFile: () => !dir, isDirectory: () => dir, mtime: new Date(), mtimeMs: Date.now() };
         },
@@ -167,8 +169,12 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         },
         rmSync(p: string, opts?: { recursive?: boolean; force?: boolean }) {
             if (get(p) !== undefined) return fs.unlinkSync(p);
+            if (skipped(p) !== null) throw notCopied('rm', p);   // not even with force: the file is there
             if (isDir(p) && opts?.recursive) {
                 const pre = posix.resolve(p) + '/';
+                // Nothing is removed from a folder that holds a file this run did not get: deleting around it would leave it behind in a half-emptied folder.
+                const kept = Object.keys(left).find(n => `${WORKSPACE}/${n}`.startsWith(pre));
+                if (kept !== undefined) throw notCopied('rm', `${WORKSPACE}/${kept}`);
                 for (const k of keys()) if (k.startsWith(pre) && get(k) !== undefined) fs.unlinkSync(k);
                 for (const d of [...dirs]) if (d === pre.slice(0, -1) || d.startsWith(pre)) dirs.delete(d);
                 return;
