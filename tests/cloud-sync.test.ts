@@ -102,6 +102,16 @@ describe('/sync on the Worker', () => {
         await client.putManifest('sz', { files: { 'a.txt': { h, s: -5 } } }, null);
         await expect(client.getManifest('sz')).rejects.toMatchObject({ status: 422 });
     });
+    it('does not accept a download that is damaged or larger than its limit (night exploration D027, D030)', async () => {
+        const { client, env } = setup();
+        const data = bytes('hello world'), h = await sha256Hex(data);
+        await client.putBlob('p', h, data);
+        expect((await client.getBlob('p', h, 1000)).length).toBe(11);
+        await expect(client.getBlob('p', h, 5)).rejects.toMatchObject({ status: 413 });          // counted on the bytes, whatever the manifest said
+        const stored = (env.FG_SYNC as any).objs; const key = [...stored.keys()].find((k: string) => k.endsWith('/b/' + h))!;
+        stored.set(key, { ...stored.get(key), data: bytes('HELLO WORLD') });                       // the stored copy is damaged
+        await expect(client.getBlob('p', h)).rejects.toMatchObject({ status: 502 });
+    });
     it('rejects bad project names and manifests without hashes; gc drops unused blobs; remove clears the project', async () => {
         const { client } = setup();
         await expect(client.getManifest('..')).rejects.toBeInstanceOf(CloudError);

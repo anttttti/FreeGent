@@ -2,6 +2,9 @@
 // A project is a manifest (path → {h: SHA-256 hex, s: size, e?: 'base64', m?: mtime}) plus content-addressed blobs. Pure protocol and hashing here;
 // workspace.ts decides what to copy.
 
+import { readBytesCapped } from './read-capped.js';
+const SYNC_BLOB_MAX = 100 * 1024 * 1024;   // the Worker takes 95 MB a blob (SYNC_BLOB_MAX there)
+
 export interface CloudFile { h: string; s: number; e?: 'base64'; m?: number }
 export interface CloudManifest { files: Record<string, CloudFile> }
 
@@ -121,8 +124,13 @@ export class CloudSyncClient {
     async putBlob(project: string, hash: string, bytes: Uint8Array): Promise<void> {
         await this.call('PUT', `/${project}/b/${hash}`, { body: bytes as BodyInit, headers: { 'Content-Type': 'application/octet-stream' } });
     }
-    async getBlob(project: string, hash: string): Promise<Uint8Array> {
-        return new Uint8Array(await (await this.call('GET', `/${project}/b/${hash}`)).arrayBuffer());
+    /** The blob named by `hash`, which is the SHA-256 of its bytes: what arrives is counted against `max` while it is read (the manifest's size is only a claim) and
+     *  hashed before it is used (a damaged or substituted copy never reaches the workspace or a merge). */
+    async getBlob(project: string, hash: string, max = SYNC_BLOB_MAX): Promise<Uint8Array> {
+        const resp = await this.call('GET', `/${project}/b/${hash}`);
+        const bytes = await readBytesCapped(resp, max, () => new CloudError(413, `A file in the cloud is larger than ${Math.round(max / 1048576)} MB; not downloaded.`));
+        if (await sha256Hex(bytes) !== hash.toLowerCase()) throw new CloudError(502, 'A file in the cloud does not match its hash (the stored copy is damaged); not used.');
+        return bytes;
     }
     async gc(project: string): Promise<number> { return (await (await this.call('POST', `/${project}/gc`)).json()).deleted; }
     async remove(project: string): Promise<number> { return (await (await this.call('DELETE', `/${project}`)).json()).deleted; }

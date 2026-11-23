@@ -1283,12 +1283,14 @@ export async function openCloudSyncDialog(): Promise<void> {
                 const f = remote.manifest.files[p];
                 if (!f || f.e === 'base64' || f.s > 2 * 1024 * 1024) return null;
                 // A cloud file that cannot be fetched only means no merge for it: the dialog (and its Replace buttons) must still open.
-                try { const rec = _bytesToRec(await client.getBlob(slug, f.h), false); return rec.encoding ? null : rec; } catch { return null; }
+                try { const rec = _bytesToRec(await client.getBlob(slug, f.h, 2 * 1024 * 1024), false); return rec.encoding ? null : rec; } catch { return null; }   // the preview's own cap, on the bytes that arrive
             });
         if (Object.keys(merges).length) items = planSync(ws.hashes, remoteHashes, base, merges);
         _cloudStatus(null);
         if (!items.length) {
-            localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag: remote.etag, files: nextBase(ws.hashes, remoteHashes, base), name }));
+            // A full or blocked localStorage is not "sync failed" for a project that is in sync: the base only saves the next comparison some work (night exploration D034).
+            try { localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag: remote.etag, files: nextBase(ws.hashes, remoteHashes, base), name })); }
+            catch (e: any) { console.warn('[cloud-sync] in sync, but the base could not be saved:', e?.message ?? e); }
             alert(`“${slug}” is in sync with the cloud.`); return;
         }
         await _showSyncDialog({
@@ -1357,8 +1359,8 @@ async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remot
         const f = remote.manifest.files[path];
         const tooMuch = () => new Error('Too much to download in one sync (over 200 MB): choose “Leave” for the large files and sync again.');
         pullBytes += Number.isFinite(f.s) && f.s > 0 ? f.s : 0; if (pullBytes > _CLOUD_PULL_MAX) throw tooMuch();
-        const bytes = await client.getBlob(slug, f.h);
-        // The manifest's size is only a claim (a hand-made one can say 0): the cap is also kept on the bytes that arrived (codex R354).
+        // The manifest's size is only a claim (a hand-made one can say 0): the read itself stops at what is left of the cap, and the bytes are checked against the file's hash (codex R354, night exploration D027, D030).
+        const bytes = await client.getBlob(slug, f.h, Math.max(0, _CLOUD_PULL_MAX - actualBytes)).catch(e => { throw e?.status === 413 ? tooMuch() : e; });
         actualBytes += bytes.byteLength; if (actualBytes > _CLOUD_PULL_MAX) throw tooMuch();
         const rec = _bytesToRec(bytes, f.e === 'base64');
         writes.push({ name: as, content: rec.content, encoding: rec.encoding, lastModified: f.m || Date.now() });
@@ -1411,10 +1413,14 @@ async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remot
     const remoteAfter: Record<string, string> = {};
     for (const [p, f] of Object.entries(files)) remoteAfter[p] = f.h;
     const next = nextBase(wsAfter, remoteAfter, base);
-    localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag, files: next, name: _cloudProjectName() }));
-    const recs: Array<{ path: string; content: string; encoding?: string | null }> = [];
-    for (const p of Object.keys(next).filter(p => next[p] !== base[p])) { const r = await readWorkspaceFile(p); if (r && !r.encoding) recs.push({ path: p, content: r.content }); }
-    await _saveBaseTexts(`cloud/${slug}`, recs);
+    // The uploads, the manifest and the workspace writes are done by here: a failure to save the bookkeeping must not be reported as a failed sync (and the dialog reopened on
+    // changes that were applied). The next sync starts from the old base and shows what it shows (night exploration D031).
+    try {
+        localStorage.setItem(_CLOUD_BASE(slug), JSON.stringify({ etag, files: next, name: _cloudProjectName() }));
+        const recs: Array<{ path: string; content: string; encoding?: string | null }> = [];
+        for (const p of Object.keys(next).filter(p => next[p] !== base[p])) { const r = await readWorkspaceFile(p); if (r && !r.encoding) recs.push({ path: p, content: r.content }); }
+        await _saveBaseTexts(`cloud/${slug}`, recs);
+    } catch (e: any) { console.warn('[cloud-sync] synced, but the base state could not be saved:', e?.message ?? e); }
     _cloudStatus(null);
     await renderFileList();
     return { changed: writes.length + deletes.length + uploads.size, markers };
