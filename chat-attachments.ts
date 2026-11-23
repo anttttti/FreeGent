@@ -202,17 +202,22 @@ function addImageAttachment(mimeType: string, base64: string, extra: { name?: st
 // A read that is still running belongs to the chat it was started in. Leaving the chat parks its attachments
 // (parkPendingAttachments), and a read in flight then survives: it finishes into that chat's parked set, so the
 // file is there when the reader comes back. Anything else that empties the composer (a send, Clear) cancels it.
-type _ReadMeta = { survives: boolean; read?: Promise<void>; name?: string };
+type _ReadMeta = { survives: boolean; read?: Promise<void>; name?: string; sink?: { images: _Img[]; files: any[] } | null };
 type _ReadToken = Lease<_ReadMeta>;
-const _newRead = (owner: string | null, name: string): _ReadToken => lease<_ReadMeta>('read', { chat: owner, meta: { survives: false, name } });
+// The sink is taken when the read starts (`sink` defaults to the one readAttachmentsInto has set for the reads its work starts): where a file goes was decided by what started it, not by what happens to be running when it finishes.
+const _newRead = (owner: string | null, name: string, sink: { images: _Img[]; files: any[] } | null = _sink): _ReadToken => lease<_ReadMeta>('read', { chat: owner, meta: { survives: false, name, sink } });
 const _readerChat = (): string | null => (globalThis as any).activeChatId ?? null;
 
 // While a sink is set, files read by addFileAttachment / addWorkspaceAttachment are collected into it instead of the composer: the message
 // editor reads the files it adds the same way and keeps them in its own list until Re-run.
 let _sink: { images: _Img[]; files: any[] } | null = null;
 async function readAttachmentsInto(sink: { images: _Img[]; files: any[] }, work: () => Promise<unknown>): Promise<void> {
+    // Every read `work` starts takes the sink in the synchronous part of its call; it is not set while the reads run, so two overlapping calls cannot
+    // swap each other's files and a file chosen in the composer meanwhile goes to the composer.
     const prev = _sink; _sink = sink;
-    try { await work(); } finally { _sink = prev; }
+    let done: Promise<unknown>;
+    try { done = work(); } finally { _sink = prev; }
+    await done;
 }
 
 function clearImageAttachments(): void {
@@ -297,8 +302,8 @@ function restoreFileAttachment(att: { name: string; mimeType: string; contentTyp
     _addFileChip(att);
 }
 
-function addFileAttachment(file: File, existingPath?: string, owner: string | null = _readerChat()): Promise<void> {
-    const token = _newRead(owner, file.name);
+function addFileAttachment(file: File, existingPath?: string, owner: string | null = _readerChat(), sink: { images: _Img[]; files: any[] } | null = _sink): Promise<void> {
+    const token = _newRead(owner, file.name, sink);
     const strip = document.getElementById('img-strip');
     const loading = document.createElement('div');
     loading.className = 'file-chip attachment-loading'; loading.setAttribute('role', 'status');
@@ -356,7 +361,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
         }
         const extra = { name, ...(workspacePath ? { workspacePath } : {}) };
         if (token.chat !== _readerChat()) _parkFor(token.chat!).images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });   // finished in another chat
-        else if (_sink) _sink.images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });
+        else if (token.meta.sink) token.meta.sink.images.push({ mimeType: sendImage.mimeType, base64: sendImage.base64, ...extra });
         else addImageAttachment(sendImage.mimeType, sendImage.base64, extra);
         return;
     }
@@ -398,7 +403,7 @@ async function _loadFileAttachment(file: File, token: _ReadToken, existingPath?:
     }
     const att = { name, mimeType, contentType, content, size: file.size, ...(workspacePath ? { workspacePath } : {}) };
     if (token.chat !== _readerChat()) { _parkFor(token.chat!).files.push(att); return; }   // finished in another chat
-    if (_sink) { _sink.files.push(att); return; }
+    if (token.meta.sink) { token.meta.sink.files.push(att); return; }
     _pendingFiles.push(att);
     _addFileChip(att);
 }
@@ -571,7 +576,8 @@ function addWorkspaceAttachment(path: string, mimeType?: string): Promise<void> 
     // The byte read is part of the attachment: it is owned by the chat the file was chosen in, and Clear/Send cancel it like any
     // other read. Before this only the later File read had a token, so a workspace read that failed after Clear still put its
     // warning in the fresh chat and its next request (codex report 8, case 219).
-    const token = _newRead(_readerChat(), path);
+    const sink = _sink;   // the File read below starts after an await: it gets the sink this call started under
+    const token = _newRead(_readerChat(), path, sink);
     const run = (async () => {
         let bytes: Uint8Array | ArrayBuffer;
         try { bytes = await agentReadFileBytes(path) as any; }
@@ -583,7 +589,7 @@ function addWorkspaceAttachment(path: string, mimeType?: string): Promise<void> 
         if (!token.finish()) return;     // the File read below takes over with a lease of its own
         const name = path.split('/').pop() || path;
         const file = new File([bytes as BlobPart], name, { type: mimeType || _guessMime(name.split('.').pop()?.toLowerCase() || '') });
-        await addFileAttachment(file, path, token.chat);
+        await addFileAttachment(file, path, token.chat, sink);
     })();
     const settled = run.then(() => {}, () => {});
     token.meta.read = settled;
