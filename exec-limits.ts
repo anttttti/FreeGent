@@ -125,16 +125,18 @@ export async function addLiveFolderInput(o: {
     put: (name: string, content: string) => void; snap: Map<string, string>; omitted: Set<string>; skip?: RegExp;
     /** Receives the size of each file left out, for the run to list it with. */
     sizes?: Map<string, number>;
+    /** Receives the files left out because they cannot be read as text or are over `maxChars`: naming them does not help (a file left out only for the copy budget is not here). */
+    large?: Set<string>;
     /** The characters of the run's copy still free after the workspace's records: a folder file past it is left out unless the code names it (commit review of 3376cb1, Codex). */
     budget?: { chars: number; named?: (name: string) => boolean };
 }): Promise<void> {
     for (const f of (await o.list()) || []) {
         if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
         let c: unknown;
-        try { c = await o.read(f.name); } catch { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
+        try { c = await o.read(f.name); } catch { o.omitted.add(f.name); o.large?.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
         const fits = !o.budget || o.budget.named?.(f.name) || (typeof c === 'string' && c.length <= o.budget.chars);
         if (typeof c === 'string' && c.length <= o.maxChars && fits) { o.put(f.name, c); if (o.budget) o.budget.chars -= c.length; o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
-        else { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); }
+        else { o.omitted.add(f.name); if (typeof c !== 'string' || c.length > o.maxChars) o.large?.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); }
     }
 }
 /** A listing for `staleGuard` that also holds the current content of the `local/` files the run changed: the guard compares the baseline with this. */

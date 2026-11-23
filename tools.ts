@@ -2964,12 +2964,12 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const plan = planWorkspaceCopy(_recs, args.code, EXEC_FILE_MAX_CHARS);
                 for (const rec of plan.send) files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content as string } : rec.content as string;
                 for (const [n, size] of plan.omitted) { omitted.add(n); files[n] = { omitted: size, ...(plan.large.has(n) ? { large: true } : {}) }; }
-                const folderSizes = new Map<string, number>();
+                const folderSizes = new Map<string, number>(), folderLarge = new Set<string>();
                 // The folder's files share the run's copy limit with the workspace's records: what the plan sent is spent, the rest is the folder's.
                 const spent = plan.send.reduce((n, r) => n + String(r.content ?? '').length, 0);
-                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes,
+                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes, large: folderLarge,
                     budget: { chars: Math.max(0, EXEC_COPY_MAX_CHARS - spent), named: n => namesFile(args.code, n) } });
-                for (const n of omitted) if (!(n in files)) files[n] = { omitted: folderSizes.get(n) ?? 0, large: true };
+                for (const n of omitted) if (!(n in files)) files[n] = { omitted: folderSizes.get(n) ?? 0, ...(folderLarge.has(n) ? { large: true } : {}) };
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
             // storage or the dev server) with fs/path over this copy of the files, at /workspace
