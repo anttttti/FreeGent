@@ -18,6 +18,7 @@ import { checkFetchAllowed } from './fetch-allow.js';
 import { combineSignals } from './abort.js';
 import { activeAbortController } from './state.js';
 import { sandboxCspMeta } from './privacy.js';
+import { readBytesCapped } from './read-capped.js';
 
 const LOAD_TIMEOUT_MS = 30_000;
 
@@ -125,9 +126,9 @@ async function _answerNet(d: any, target:Window): Promise<void> {
             reply({ value: { status: resp.status, contentType: resp.headers.get('Content-Type') ?? '', body } }, [body]);
             return;
         }
-        if (Number(resp.headers.get('Content-Length') ?? 0) > NET_MAX_BYTES) throw new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`);
-        const body = await resp.arrayBuffer();
-        if (body.byteLength > NET_MAX_BYTES) throw new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`);
+        // Counted while it is read: a response without a Content-Length, or with a wrong one, was held in full before the cap looked at it (night exploration D036).
+        const read = await readBytesCapped(resp, NET_MAX_BYTES, () => new Error(`response is larger than ${NET_MAX_BYTES >> 20} MB`));
+        const body = read.buffer.byteLength === read.byteLength ? read.buffer as ArrayBuffer : read.slice().buffer as ArrayBuffer;
         reply({ value: { status: resp.status, contentType: resp.headers.get('Content-Type') ?? '', body } }, [body]);
     } catch (err: any) {
         reply({ error: String(err?.message ?? err) });

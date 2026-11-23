@@ -160,6 +160,19 @@ describe('exec sandbox host', () => {
             expect(posted.find(m => m.id === 13).error).toMatch(/proxy refused this URL — private address/);
         });
 
+        it('stops reading a response that has no Content-Length once it passes the cap (night exploration D036)', async () => {
+            W.getEffectiveProxy = () => 'https://proxy.test';
+            const host = await import('../exec-sandbox-host.ts');
+            let pulled = 0;
+            const MB = 1048576, chunks = 60;   // 60 MB against a 48 MB cap
+            const body = new ReadableStream<Uint8Array>({ pull(c) { if (pulled >= chunks) { c.close(); return; } pulled++; c.enqueue(new Uint8Array(MB)); } });
+            globalThis.fetch = vi.fn(async () => new Response(body, { status: 200 })) as any;
+            fromFrame({ fg: 'net', id: 16, url: 'https://example.com/big' });
+            await vi.waitFor(() => expect(posted.some(m => m.id === 16)).toBe(true), { timeout: 3000 });
+            expect(posted.find(m => m.id === 16).error).toMatch(/larger than 48 MB/);
+            expect(pulled).toBeLessThan(host.NET_MAX_BYTES / MB + 4);   // it stopped near the cap; the old code read all 60 before it looked
+        });
+
         it('fails without a proxy instead of fetching directly', async () => {
             W.getEffectiveProxy = () => '';
             const f = vi.fn(); globalThis.fetch = f as any;
