@@ -185,6 +185,8 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
         renameSync(from: string, to: string) {
             const c = stored(from);
             if (posix.resolve(from) === posix.resolve(to)) return;
+            // A target left out of this run's copy would be refused at write-back while the source's deletion still applied: the source's content was nowhere.
+            if (skipped(to) !== null) throw notCopied('rename', to);
             put(to, c);   // first: when the target can't be written, the source stays
             fs.unlinkSync(from);
         },

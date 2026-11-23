@@ -157,6 +157,12 @@ describe('files left out of the run\'s copy', () => {
         expect(fs.existsSync('img/small.png')).toBe(true);   // nothing was removed before the refusal
         fs.rmSync('a.txt'); expect(fs.existsSync('a.txt')).toBe(false);
     });
+    it('refuse renaming onto a left-out file: the source stays, nothing is queued for write-back (a rename used to delete the source and lose its content)', () => {
+        const { fs, written, deleted } = createWorkspaceFs({ 'new.txt': 'my output', 'assets/big.png': { omitted: 700000 } });
+        expect(() => fs.renameSync('new.txt', 'assets/big.png')).toThrow(/not copied into this run/);
+        expect(fs.readFileSync('new.txt', 'utf8')).toBe('my output');
+        expect([Object.keys(written), [...deleted]]).toEqual([[], []]);
+    });
     it('say a file over the file limit cannot be had by naming it, and one past the total limit can', () => {
         const { fs } = createWorkspaceFs({ 'big.bin': { omitted: 20_000_000, large: true }, 'late.png': { omitted: 500000 } });
         expect(() => fs.readFileSync('big.bin')).toThrow(/over 10 MB/);
