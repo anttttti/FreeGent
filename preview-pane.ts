@@ -64,7 +64,8 @@ export async function updateRailPreview(): Promise<void> {
     const seq = ++_seq;
     let names: string[] = [];
     try { names = (await agentListFiles()).filter((f: any) => !f.isLocal).map((f: any) => f.name); } catch { return; }
-    const sig = names.includes('index.html') ? 'index.html' : previewCandidates(names).sort().join('\n');
+    // JSON, not a newline join: two lists whose names differ only by where a newline sits (`a.html\nb.txt` against `a.html`, `b.txt`) had one signature and kept a stale choice (explorations W009).
+    const sig = names.includes('index.html') ? 'index.html' : JSON.stringify(previewCandidates(names).sort());
     let choice = _lastChoice;
     if (sig !== _lastSig || (choice && !names.includes(choice))) {
         choice = await selectPreviewFile(names, _utilityPick);

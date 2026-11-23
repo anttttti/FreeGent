@@ -40,9 +40,8 @@ function _clipStrings(value: any, max: number, hit: { cut: boolean }): any {
     }
     if (Array.isArray(value)) return value.map(v => _clipStrings(v, max, hit));
     if (value && typeof value === 'object') {
-        const out: any = {};
-        for (const k of Object.keys(value)) out[k] = _clipStrings(value[k], max, hit);
-        return out;
+        // fromEntries defines own properties: assigning to `out['__proto__']` set the prototype and the key was lost from the serialized event (explorations W012).
+        return Object.fromEntries(Object.keys(value).map(k => [k, _clipStrings(value[k], max, hit)]));
     }
     return value;
 }
