@@ -514,7 +514,7 @@ function closeFileTab(name) {
         if ((n?.dataset.fullname ?? n?.textContent) === name) r.classList.remove('tab-open');
     });
     if (wasActive) {
-        const back = _prevTab !== name && document.querySelector(`#tab-content [data-panel="${_attrEsc(_prevTab)}"]`) ? _prevTab : 'chat';
+        const back = _prevTab !== name && (fileTabs.has(_prevTab) || document.querySelector(`#tab-content [data-panel="${_attrEsc(_prevTab)}"]`)) ? _prevTab : 'chat';   // a file tab's panel has no data-panel
         activateTab(back);
     }
 }

@@ -278,10 +278,10 @@ export const pythonCmd: Command = {
       ctx.stderr = `error: failed to load Pyodide: ${err.message}\n`;
       return 1;
     }
-    if (cmd.kind === 'version') {
+    if (cmd.kind === 'version') return withRuntimeLock(py, async () => {   // under the lock: a program may be running in this Pyodide
       ctx.stdout += `Python ${py.runPython('import sys; ".".join(map(str, sys.version_info[:3]))')}\n`;
       return 0;
-    }
+    });
     return withRuntimeLock(py,async () => {
 
     let target = cmd.target;
@@ -304,7 +304,7 @@ export const pythonCmd: Command = {
     // "No module named 'PIL'" in 6 of 12 task chats (v1.0.115-121, 10 calls); the model then went looking for another way to read an image.
     if (source) {
       try { await py.loadPackagesFromImports(source); }
-      catch (e: any) { ctx.stderr += `Warning: Could not load some built-in packages: ${e?.message ?? e}\n`; }
+      catch (e: any) { ctx.stderr += `Warning: Could not load some built-in packages: ${e?.message || e}\n`; }
     }
 
     // Always sync from workspace root so imports from any directory work

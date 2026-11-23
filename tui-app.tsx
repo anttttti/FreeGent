@@ -1557,7 +1557,7 @@ async function handleSlash(cmd: string) {
     switch (base) {
         case '/clear':    startNewSession(); break;
         case '/quit':
-        case '/exit':     if (Store.getState().agentRunning) stopAgent(); _exitApp(); break;   // stops a running reply first, like Alt+X
+        case '/exit':     stopAgent(); _exitApp(); break;   // stops a running reply first, like /stop: the running flag lags real work by a moment, so not gated on it
         case '/stop':     stopAgent(); break;
         case '/break':    try { dom.window.stopAfterStep?.(); } catch {} break;
         case '/retry':    await retryLast(); break;

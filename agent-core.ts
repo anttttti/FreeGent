@@ -859,7 +859,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         const collect = async (work: () => Promise<unknown>) => {
             reading++; attNote.textContent = 'Reading…';
             const sink = { images: [] as any[], files: [] as any[] };
-            try { await readAttachmentsInto(sink, work); attNote.textContent = ''; }
+            try { await readAttachmentsInto(sink, work); if (attNote.textContent === 'Reading…') attNote.textContent = ''; }   // not the note of an unavailable checkpoint file
             catch (e: any) { attNote.textContent = `Could not attach: ${e?.message || e}`; }
             finally { reading--; }
             editImgs.push(...sink.images); editFiles.push(...sink.files);
@@ -897,6 +897,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         if (reading > 0) { attNote.textContent = 'A file is still being attached. Re-run again when it has finished.'; return; }
         await attReady;
         if (aiBusy()) return;
+        if (reading > 0) { attNote.textContent = 'A file is still being attached. Re-run again when it has finished.'; return; }   // one added while the checkpoint's files loaded
         // Update checkpoint with edited text
         try {
             const d = JSON.parse(localStorage.getItem(ckptKey(ckptId)) || '{}');
