@@ -274,6 +274,7 @@ async function _fetchMoonmathModels(): Promise<FetchResult> {
 const _VERCEL_FREE_IDS = [
     'reflection/beam-free',
     'reflection/beam',
+    'recursive/flint-v1.0',   // in the catalog: left off this list, the fallback proposed its removal (Codex review of 865c5b8)
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.
 const _VERCEL_DOMAIN_SPECIFIC = new Set([

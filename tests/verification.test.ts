@@ -27,6 +27,12 @@ describe('verification states', () => {
         expect(run([[edit], [nodeCheck(1)], [unittest]])).toBe('failed_verification');   // the unrelated pass must not clear the failed syntax check
         expect(run([[edit], [nodeCheck(1)], [unittest], [nodeCheck(0)]])).toBe('verified');
     });
+    it('a failed compound check fails every kind in it: a later pass of one of them does not clear the rest (Codex review of 3da162b)', () => {
+        const both = (exit_code: number) => ({ name: 'execute_code', args: { code: 'npx tsc --noEmit && npx vitest run' }, result: { exit_code, stdout: exit_code ? '1 failed' : 'ok' } });
+        const tscOnly = { name: 'execute_code', args: { code: 'npx tsc --noEmit' }, result: { exit_code: 0, stdout: '' } };
+        expect(run([[edit], [both(1)], [tscOnly]])).toBe('failed_verification');
+        expect(run([[edit], [both(1)], [both(0)]])).toBe('verified');
+    });
     it('a scratch file is not the change', () => {
         expect(run([[{ name: 'write_file', args: { path: 'repro_bug.py' }, result: { success: true } }]])).toBe('no_change');
         expect(run([[{ name: 'execute_code', args: { code: 'echo x > /tmp/o' }, result: { exit_code: 0, files_written: ['tmp/o.txt'] } }]])).toBe('no_change');

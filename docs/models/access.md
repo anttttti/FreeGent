@@ -29,7 +29,7 @@ At Provider-only nothing is sent to the Worker until you choose the guest quota.
 
 | Provider | Default models it serves as a guest |
 |---|---|
-| Kilo | Beam, Nemotron 3.5 Super VL |
+| Kilo | Beam, ERNIE 5.5 Flash Preview, Nemotron 3.5 Super VL |
 | OpenRouter | Nemotron 3.5 Super VL |
 | TokenHarbor | DeepSeek V4.1 Flash, MiMo V2.6 Flash |
 | Groq | none in the default list; Groq models you add to Model Priority are covered |

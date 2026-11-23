@@ -84,6 +84,15 @@ describe('search skill — delegation recipe', () => {
         expect(out).toContain('run_workers');
     });
 
+    it('uses the body the user saved for the skill, not the built-in short text (Codex review of 865c5b8)', () => {
+        const reads = Array.from({ length: 6 }, () => ({ name: 'read_file', result: { content: 'x' } }));
+        const sk = search(), saved = { body: sk.body, defaults: sk.__defaults };
+        try {
+            sk.body = 'MY OWN SEARCH ADVICE'; sk.__defaults = { ...(sk.__defaults || {}), body: saved.body };   // what loadSkills does for a saved body override
+            expect(W.reactiveSkillGuidance(reads)).toContain('MY OWN SEARCH ADVICE');
+        } finally { sk.body = saved.body; sk.__defaults = saved.defaults; }
+    });
+
     it('fires on repeated search_workspace calls', () => {
         const greps = Array.from({ length: 4 }, () => ({ name: 'search_workspace', result: { matches: [] } }));
         expect(W.reactiveSkillGuidance(greps)).toContain('### search');

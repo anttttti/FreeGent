@@ -617,7 +617,11 @@ export function createMiscModule(name: string, deps: MiscDeps): any | null {
       assert.ifError = (v: any) => { if (v !== null && v !== undefined) throw v instanceof Error ? v : new AssertionError({ message: 'ifError got unwanted exception: ' + inspect(v), actual: v, operator: 'ifError' }); };
       assert.fail = (msg?: any) => fail(msg, undefined, undefined, 'fail', 'Failed');
       assert.AssertionError = AssertionError;
-      assert.strict = assert;
+      // assert.strict: the loose names are the strict assertions.
+      const strictAssert: any = (v: any, m?: any) => assert(v, m);
+      Object.assign(strictAssert, assert, { equal: assert.strictEqual, notEqual: assert.notStrictEqual, deepEqual: assert.deepStrictEqual, notDeepEqual: assert.notDeepStrictEqual });
+      strictAssert.strict = strictAssert;
+      assert.strict = strictAssert;
       return assert;
     }
 

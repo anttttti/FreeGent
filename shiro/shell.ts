@@ -359,7 +359,7 @@ export class Shell {
       b = this.expandVars(b);
       heredocStdin = b.slice(1, -1).replace(/\\([\\"$`])/g, '$1');
     }
-    if (heredoc?.unterminated) writeStderr(`bash: warning: here-document at line ${this.currentLine} delimited by end-of-file (wanted \`${heredoc.unterminated}')\r\n`);
+    if (heredoc?.unterminated) (writeStderr || writeStdout)(`bash: warning: here-document at line ${this.currentLine} delimited by end-of-file (wanted \`${heredoc.unterminated}')\r\n`);
 
     // Strip control characters from history entries (ink UI can leak ANSI/DEL chars)
     // Only record user-typed commands (not programmatic calls from child_process, spawn, etc.)
@@ -2522,7 +2522,11 @@ export class Shell {
     // "${arr[@]}" / "${!arr[@]}" of an empty or unset array is no word at all (it used to be one empty word:
     // `for e in "${arr[@]}"` ran once, `set -- "${arr[@]}"` gave $# = 1).
     if (line.includes('[@]}"')) {
-      line = line.replace(/(^|[\s;(|&=])"\$\{(!?)([A-Za-z_][A-Za-z0-9_]*)\[@\]\}"(?=$|[\s;)|&])/g, (m, pre, _bang, name) => {
+      line = line.replace(/(^|[\s;(|&=])"\$\{(!?)([A-Za-z_][A-Za-z0-9_]*)\[@\]\}"(?=$|[\s;)|&])/g, (m, pre, _bang, name, offset: number) => {
+        // Inside single quotes the text is data: `printf '%s' 'a "${arr[@]}" b'` keeps the expression.
+        let sq = false, dq = false;
+        for (let k = 0; k < offset + pre.length; k++) { const c = line[k]; if (c === "'" && !dq) sq = !sq; else if (c === '"' && !sq) dq = !dq; }
+        if (sq) return m;
         const assoc = this.assocArrays.get(name);
         const arr = this.arrays.get(name);
         return (assoc ? assoc.size === 0 : !arr || arr.length === 0) ? pre : m;

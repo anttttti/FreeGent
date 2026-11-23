@@ -388,7 +388,8 @@ export async function executeNodeScript(
 
     // A script that ran to the end fires 'exit' too (process.exit() did it already): `process.on("exit", c => …)` printed nothing
     if (!_st.exitCalled && processEvents['exit']?.length) {
-      try { processEvents['exit'].forEach(fn => fn(_st.exitCode ?? 0)); } catch { /* a throwing handler does not change the output so far */ }
+      try { processEvents['exit'].forEach(fn => fn(_st.exitCode ?? 0)); }
+      catch (e: any) { stderrBuf.push((e?.stack || e?.message || String(e)) + '\n'); _st.exitCode = 1; }   // an assertion in an exit handler fails the run, as in Node
     }
 
     // Flush output

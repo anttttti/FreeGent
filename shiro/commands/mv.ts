@@ -9,6 +9,14 @@ export const mv: Command = {
     const { positional, flags } = parseArgs(args);
     const noClobber = !!(flags.n || flags['no-clobber']);   // parsed and then ignored: mv -n overwrote the destination (codex R280)
 
+    // -t names a directory that must exist: reordered to the end it would otherwise be an ordinary destination (a file, overwritten).
+    if (args !== ctx.args && positional.length >= 2) {
+      const t = positional[positional.length - 1];
+      let isDir = false;
+      try { isDir = (await ctx.fs.stat(ctx.fs.resolvePath(t, ctx.cwd))).isDirectory(); } catch {}
+      if (!isDir) { ctx.stderr += `mv: target '${t}' is not a directory\n`; return 1; }
+    }
+
     if (positional.length < 2) {
       ctx.stderr += "mv: missing operand\n";
       return 1;

@@ -35,7 +35,8 @@ interface VerificationState { edits: number; changedSinceCheck: boolean; lastChe
 export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set(), deleted: new Set(), failing: new Set() });
 // The kind comes from the command that runs the check, not from the first runner name anywhere in the text: a name in a comment or a quoted string is data, and a later pass of the
 // other kind used to clear a failure it did not cover (explorations W011).
-const _kind = (call: any): string => call?.name === 'check_page' ? 'page' : (CHECK_RE.exec(_checkCommands(String(call?.args?.code ?? ''))[0] ?? '')?.[0] ?? 'check').replace(/\s+/g, ' ');
+// A compound (`npx tsc --noEmit && npx vitest run`) is every kind in it: when it fails the failure may be any of them, and a later pass of one does not clear the others (Codex review of 3da162b).
+const _kinds = (call: any): string[] => call?.name === 'check_page' ? ['page'] : (_checkCommands(String(call?.args?.code ?? '')).map(c => (CHECK_RE.exec(c)?.[0] ?? 'check').replace(/\s+/g, ' ')).filter((k, i, a) => a.indexOf(k) === i).slice(0) || ['check']);
 
 /** Whether the call changed the workspace (scratch files do not count) and which files it names. */
 function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
@@ -161,7 +162,8 @@ export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | 
         if (k) {
             st.lastCheck = k; st.changedSinceCheck = false;
             // `tsc` failed on a missing import, then `vitest` on one file passed, and the run was `verified` (refcompare 2026-11-17, R1r2).
-            if (k === 'fail') st.failing.add(_kind(c)); else st.failing.delete(_kind(c));
+            const ks = _kinds(c); if (!ks.length) ks.push('check');
+            for (const kind of ks) { if (k === 'fail') st.failing.add(kind); else st.failing.delete(kind); }
         }
     }
     return st;

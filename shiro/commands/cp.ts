@@ -9,6 +9,14 @@ export const cp: Command = {
     const { flags, positional } = parseArgs(args);
     const recursive = flags.r || flags.R;
 
+    // -t names a directory that must exist: reordered to the end it would otherwise be an ordinary destination (a file, overwritten).
+    if (args !== ctx.args && positional.length >= 2) {
+      const t = positional[positional.length - 1];
+      let isDir = false;
+      try { isDir = (await ctx.fs.stat(ctx.fs.resolvePath(t, ctx.cwd))).isDirectory(); } catch {}
+      if (!isDir) { ctx.stderr += `cp: target '${t}' is not a directory\n`; return 1; }
+    }
+
     if (positional.length < 2) {
       ctx.stderr += "cp: missing operand\n";
       return 1;

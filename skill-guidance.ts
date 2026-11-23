@@ -292,7 +292,7 @@ export function reactiveSkillGuidance(toolResults: any): string {
         // A built-in skill's short text for this cause instead of its whole body. The three largest
         // (search, failure-recovery, code-fix-done) were 89% of reactive_guidance text in the user logs of 2026-11-10, and 73% of the
         // failure-recovery fires there followed a plain read_file step, with edit, shell and worker advice attached.
-        if (typeof s.reactive === 'function') body = s.reactive(cause) || body;
+        if (typeof s.reactive === 'function' && !(s.__defaults && 'body' in s.__defaults)) body = s.reactive(cause) || body;   // not over a body the user saved: that one is theirs (Codex review of 865c5b8)
         parts.push(`### ${s.name}\n${body}`);
         fired.add(s.name);
         if (_perCause(s)) fired.add(_key);

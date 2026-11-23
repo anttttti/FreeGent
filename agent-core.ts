@@ -884,8 +884,9 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
     bubble.appendChild(attBox);
     bubble.appendChild(btnRow);
 
+    let cancelled = false;   // Cancel while Re-run waits for the checkpoint's files: the save must not resume (Codex review of 58ad8b9)
     cancelBtn.onclick = (e) => {
-        e.stopPropagation();
+        e.stopPropagation(); cancelled = true;
         bubble.style.minHeight = ''; // allow natural resize again
         bubble.innerHTML = origHtml;
     };
@@ -896,7 +897,7 @@ async function _startEditUserMsg(msgEl: HTMLElement): Promise<void> {
         if (aiBusy()) return;   // an AI task started while the editor was open
         if (reading > 0) { attNote.textContent = 'A file is still being attached. Re-run again when it has finished.'; return; }
         await attReady;
-        if (aiBusy()) return;
+        if (cancelled || aiBusy()) return;
         if (reading > 0) { attNote.textContent = 'A file is still being attached. Re-run again when it has finished.'; return; }   // one added while the checkpoint's files loaded
         // Update checkpoint with edited text
         try {

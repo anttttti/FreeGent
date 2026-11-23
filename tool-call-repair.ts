@@ -54,7 +54,9 @@ export function pythonDictToJson(src: string): string | null {
             const e = src[i++];
             if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i, i + 4))) { out += String.fromCharCode(parseInt(src.slice(i, i + 4), 16)); i += 4; }
             else if (e === 'x' && /^[0-9a-fA-F]{2}$/.test(src.slice(i, i + 2))) { out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16)); i += 2; }
-            else out += e === 'n' ? '\n' : e === 't' ? '\t' : e === 'r' ? '\r' : e === '0' ? '\0' : e;
+            else if (e === '\\' || e === "'" || e === '"') out += e;
+            else if (e === '\n') { /* a backslash before a line break joins the lines */ }
+            else { const m: Record<string, string> = { n: '\n', t: '\t', r: '\r', '0': '\0', a: '\x07', b: '\b', f: '\f', v: '\v' }; out += m[e] ?? '\\' + e; }   // an escape Python does not know stays as written: '\d+' is backslash-d-plus
         }
         return fail() as never;
     };

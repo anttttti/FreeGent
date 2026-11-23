@@ -13,7 +13,13 @@ export function deepEqual(a: any, b: any, strict: boolean, seen: [any, any][] = 
   if (a instanceof Error && (a.message !== b.message || a.name !== b.name)) return false;
   if (a instanceof Map) {
     if (a.size !== b.size) return false;
-    for (const [k, v] of a) { if (!b.has(k) || !deepEqual(v, b.get(k), strict, seen)) return false; }
+    // A key that is an object matches a key of the other map by structure, one to one (Node's deepStrictEqual), not by identity.
+    const rest = [...b];
+    for (const [k, v] of a) {
+      const i = b.has(k) && deepEqual(v, b.get(k), strict, seen) ? rest.findIndex(([x]) => Object.is(x, k)) : rest.findIndex(([x, y]) => deepEqual(k, x, strict, seen) && deepEqual(v, y, strict, seen));
+      if (i < 0) return false;
+      rest.splice(i, 1);
+    }
     return true;
   }
   if (a instanceof Set) {
@@ -27,6 +33,7 @@ export function deepEqual(a: any, b: any, strict: boolean, seen: [any, any][] = 
     for (let i = 0; i < x.length; i++) if (!deepEqual(x[i], y[i], strict, seen)) return false;
     return true;
   }
+  if (Array.isArray(a) && a.length !== b.length) return false;   // a hole is not a missing key: [] is not Array(1)
   const ka = Object.keys(a), kb = Object.keys(b);
   if (ka.length !== kb.length) return false;
   for (const k of ka) { if (!Object.prototype.hasOwnProperty.call(b, k) || !deepEqual(a[k], b[k], strict, seen)) return false; }

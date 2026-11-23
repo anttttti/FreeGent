@@ -13,6 +13,10 @@ describe('_repairJsonArgs — fences, Python-style dicts, raw control characters
     it('strips a ```json fence around valid JSON', () => {
         expect(_repairJsonArgs('```json\n{"a":1}\n```')).toBe('{"a":1}');
     });
+    it("a Python dict keeps the escapes Python does not know: '\\d+' is backslash-d, not d (Codex review of e49098b)", () => {
+        expect(JSON.parse(_repairJsonArgs("{'pattern': '\\d+\\.txt', 'is_regex': True}")).pattern).toBe('\\d+\\.txt');
+        expect(JSON.parse(_repairJsonArgs("{'a': 'x\\\\y\\ttab'}")).a).toBe('x\\y\ttab');
+    });
     it('reads a Python-style dict, and a quote or text inside a string stays data (AG002)', () => {
         expect(_repairJsonArgs("{'a': 1}")).toBe('{"a":1}');
         expect(JSON.parse(_repairJsonArgs(`{'code': 'print("hi")', 'language': 'python', 'ok': True, 'x': None, 'n': [1, 2.5]}`))).toEqual({ code: 'print("hi")', language: 'python', ok: true, x: null, n: [1, 2.5] });
