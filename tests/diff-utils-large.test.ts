@@ -23,6 +23,22 @@ describe('tryMerge on a very long file', () => {
     });
 });
 
+describe('tryMerge does not depend on how long the unchanged text around the edits is (explorations W008)', () => {
+    // A replaces the first of two identical lines, B replaces the third line: disjoint, so they merge. 700 lines of unique padding on each side put the two files past the size where
+    // the exact method gave way to the greedy one, which then matched the other copy of the repeated line and made the edits overlap.
+    const core = ['shared', 'anchor-1', 'anchor-2', 'shared', 'anchor-4'];
+    const pad = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag} ${i}`);
+    for (const [name, pre, post] of [['no padding', 0, 0], ['707 lines', 707, 0], ['700 before and after', 700, 700]] as const) {
+        it(name, () => {
+            const mk = (c: string[]) => [...pad(pre, 'pre'), ...c, ...pad(post, 'post')].join('\n');
+            const base = mk(core);
+            const a = mk(['edit-A', ...core.slice(1)]), b = mk([core[0], core[1], 'edit-B', ...core.slice(3)]);
+            const want = mk(['edit-A', 'anchor-1', 'edit-B', 'shared', 'anchor-4']);
+            for (const [x, y] of [[a, b], [b, a]]) expect(tryMerge(base, x, y)).toEqual({ merged: want, conflicts: false });
+        });
+    }
+});
+
 describe('tryMerge with two insertions at the same place (opencode cleanup discovery 2026-11-09 §3)', () => {
     const base = 'a\nb\n';
     it('identical insertions collapse to one, different ones conflict, one-sided ones merge as before', () => {

@@ -18,6 +18,23 @@ export function splitLines(text: string): string[] { return text === '' ? [] : t
 
 // LCS match pairs [iA, iB]; greedy hash for large files, DP for small ones
 export function lcsMatches(a: string[], b: string[]): [number, number][] {
+    // The lines both sides share at the start and at the end are matched first, and only what lies between is compared: that is also what an exact LCS keeps, and it makes the
+    // choice between the exact and the greedy method depend on the changed part, not on how long the file is around it (500 unique lines of padding turned two independent edits
+    // into a conflict and a model call; explorations W008).
+    let lo = 0;
+    while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+    let ea = a.length, eb = b.length;
+    while (ea > lo && eb > lo && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+    if (lo > 0 || ea < a.length) {
+        const out: [number, number][] = [];
+        for (let i = 0; i < lo; i++) out.push([i, i]);
+        for (const [i, j] of _lcsCore(a.slice(lo, ea), b.slice(lo, eb))) out.push([i + lo, j + lo]);
+        for (let k = 0; k < a.length - ea; k++) out.push([ea + k, eb + k]);
+        return out;
+    }
+    return _lcsCore(a, b);
+}
+function _lcsCore(a: string[], b: string[]): [number, number][] {
     const M = a.length, N = b.length;
     if (!M || !N) return [];
     if (M * N > 500000) {
