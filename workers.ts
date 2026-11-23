@@ -397,23 +397,24 @@ async function loadRoles() {
     // each read finished, kept a deleted or renamed role selectable, and let an older read overwrite newer instructions (codex R127, R128).
     const seq = ++_rolesLoadSeq;
     const next = new Map<string, any>(BUILTIN_ROLES.map(r => [r.name, r]));
-    let complete = true;
+    let complete = true, why = '';
+    const _fail = (e: any) => { complete = false; why ||= String(e?.message ?? e).slice(0, 120); };
     try {
         const files = await agentListFiles();
         // A listing the Docker adapter cut (its 500-entry marker) or could not make says nothing about which roles exist (codex R688).
-        if (files.some(f => /^\[listing (?:truncated|failed)/.test(String(f.name)))) complete = false;
+        if (files.some(f => /^\[listing (?:truncated|failed)/.test(String(f.name)))) _fail('the listing was cut or failed');
         const roleFiles = files.filter(f => /^(?:local\/)?roles\/[^/]+\.md$/i.test(f.name));
         await Promise.all(roleFiles.map(async f => {
             try {
                 const content = await agentReadFile(f.name);
                 const r = _parseRoleFile(content);
                 if (r) next.set(r.name, r);
-            } catch { complete = false; }   // a role file that could not be read is not a role file that is gone
+            } catch (e) { _fail(e); }   // a role file that could not be read is not a role file that is gone
         }));
-    } catch { complete = false; }
+    } catch (e) { _fail(e); }
     if (seq !== _rolesLoadSeq) return;
     if (!complete) {
-        console.warn('[roles] reload incomplete (a listing or a read failed); the custom roles already loaded are kept');
+        console.warn(`[roles] reload incomplete (a listing or a read failed: ${why}); the custom roles already loaded are kept`);
         for (const [k, v] of rolesRegistry) if (!next.has(k)) next.set(k, v);
     }
     rolesRegistry.clear();

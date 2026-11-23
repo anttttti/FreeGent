@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 
 // codex R394-R396: the attached Local Folder's AGENTS.md, skills, rules and roles were not loaded, and writing them did not reload.
 const W = window as any;
@@ -25,6 +25,18 @@ describe('Local Folder setup files', () => {
         expect(W.skillsRegistry.get('shared')?.path).toBe('skills/shared/SKILL.md');
         const { _skillNameConflicts } = await import('../skills.ts');
         expect(_skillNameConflicts).toEqual([]);
+    });
+});
+
+describe('an incomplete reload says why', () => {
+    it('the skills warning carries the first error (5 Safari sessions a day logged only "a listing or a read failed")', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            stub('agentListFilesInDir', async (dir: string) => { if (dir === 'skills') throw new Error('UnknownError: Attempt to iterate a cursor that doesn\'t exist'); return []; });
+            await W.loadSkills();
+            const text = warn.mock.calls.map(c => String(c[0])).join('\n');
+            expect(text).toMatch(/\[skills\] reload incomplete \(a listing or a read failed: UnknownError: Attempt to iterate a cursor/);
+        } finally { warn.mockRestore(); }
     });
 });
 

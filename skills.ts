@@ -968,7 +968,8 @@ export async function loadSkills() {
     }
     // A listing or a read that failed leaves the inventory incomplete: the registry is then not replaced (a skill whose file is still stored would vanish from it
     // and from trigger matching, codex R129). A folder that does not exist is a complete, empty answer.
-    let complete = true;
+    let complete = true, why = '';
+    const _fail = (e: any) => { complete = false; why ||= String(e?.message ?? e).slice(0, 120); };   // the first cause goes in the warning: it said only "a listing or a read failed" in 5 Safari sessions a day
     const _absent = (e: any) => /ENOENT|not found|no such file|does not exist/i.test(String(e?.message ?? e));
     try {
         // agentListFilesInDir scans only skills/ and rules/ — avoids a full workspace
@@ -978,8 +979,8 @@ export async function loadSkills() {
         let ruleFiles:  Array<{name:string}> = [];
         if (typeof agentListFilesInDir === 'function') {
             [skillFiles, ruleFiles] = await Promise.all([
-                agentListFilesInDir('skills').catch((e: any) => { if (!_absent(e)) complete = false; return []; }),
-                agentListFilesInDir('rules').catch((e: any) => { if (!_absent(e)) complete = false; return []; }),
+                agentListFilesInDir('skills').catch((e: any) => { if (!_absent(e)) _fail(e); return []; }),
+                agentListFilesInDir('rules').catch((e: any) => { if (!_absent(e)) _fail(e); return []; }),
             ]);
             // Normalise paths relative to workspace root so patterns match
             skillFiles = skillFiles.map(f => ({ ...f, name: `skills/${f.name}` }));
@@ -988,7 +989,7 @@ export async function loadSkills() {
             // An adapter that treats `local/` as an alias of the root (the TUI) lists the same files again: they are skipped by name.
             for (const [dir, into] of [['skills', skillFiles], ['rules', ruleFiles]] as const) {
                 const have = new Set(into.map(f => f.name));
-                const local: Array<{ name: string }> = await agentListFilesInDir(`local/${dir}`).catch((e: any) => { if (!_absent(e)) complete = false; return []; });
+                const local: Array<{ name: string }> = await agentListFilesInDir(`local/${dir}`).catch((e: any) => { if (!_absent(e)) _fail(e); return []; });
                 for (const f of local) if (!have.has(`${dir}/${f.name}`)) into.push({ ...f, name: `local/${dir}/${f.name}` });
             }
         } else {
@@ -1012,7 +1013,7 @@ export async function loadSkills() {
                 const norm = content.replace(/\r\n/g, '\n');
                 const body = (splitFrontmatter(norm)?.body ?? norm).trim();
                 return { name: fm.name, description: fm.description || '', trigger: fm.trigger || '', requires: fm.requires || '', requires_tools: fm.requires_tools || '', roles: fm.roles || '', exclude_roles: fm.exclude_roles || '', exclude_mode: fm.exclude_mode || '', trigger_on_tool: fm.trigger_on_tool || '', trigger_on_failure: fm.trigger_on_failure || '', trigger_on_event: fm.trigger_on_event || '', trigger_on_filetype: fm.trigger_on_filetype || '', trigger_on_media: fm.trigger_on_media || '', trigger_on_file_present: fm.trigger_on_file_present || '', trigger_on_message_pattern: fm.trigger_on_message_pattern || '', trigger_on_history_tool: fm.trigger_on_history_tool || '', trigger_on_turn: fm.trigger_on_turn || '', trigger_on_repeat: fm.trigger_on_repeat || '', trigger_on_completion: fm.trigger_on_completion || '', body, path: f.name, type };
-            } catch { complete = false; return null; }
+            } catch (e) { _fail(e); return null; }
         };
 
         // Re-filter with patterns after path normalisation (works for both code paths)
@@ -1039,11 +1040,11 @@ export async function loadSkills() {
             if (had && had.path !== 'builtin') { _skillNameConflicts.push(`${entry.path} (also ${had.path})`); console.warn(`[skills] "${entry.name}" is defined twice: ${had.path} is used, ${entry.path} is not`); continue; }
             next.set(entry.name, entry);
         }
-    } catch { complete = false; }
+    } catch (e) { _fail(e); }
     if (seq !== _skillsLoadSeq) return;
     if (!complete) {
         // Built-ins are always current; the workspace's own skills and rules that were loaded before stay (a file that could not be read is not a file that is gone).
-        console.warn('[skills] reload incomplete (a listing or a read failed); the workspace skills already loaded are kept');
+        console.warn(`[skills] reload incomplete (a listing or a read failed: ${why}); the workspace skills already loaded are kept`);
         for (const [k, v] of skillsRegistry) if (!next.has(k) && (v as any).path !== 'builtin') next.set(k, v);
     }
     skillsRegistry.clear();
