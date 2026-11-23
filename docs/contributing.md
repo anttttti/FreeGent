@@ -30,7 +30,7 @@ Pull requests run typecheck, tests, build and the headless probe (`.github/workf
 
 ## Deploying (maintainers)
 
-Do not run `git push` directly. Use `./deploy.sh`, which runs the safety, bug and leak checks first and requires a clean working tree:
+Do not run `git push` directly. Use `./deploy.sh`, which runs the safety, bug and leak checks first and requires a clean working tree. It is a wrapper for `bench/deploy.sh`, from the maintainers' bench repository: a checkout without `bench/` cannot deploy (it says so and stops).
 
 ```bash
 ./deploy.sh --check-only     # checks and build, no deploy
