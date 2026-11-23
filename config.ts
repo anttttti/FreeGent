@@ -550,7 +550,7 @@ const MODEL_CATALOG = [
     // MoonMath Free plan: daily allowance on these two Flash models; API key required.
     // https://zro.moonmath.ai/pricing (2026-11-01). Paid accounts meter usage; quotas are not published.
     { provider:'moonmath', model:'deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash (MoonMath)', released:'2026-09', contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'MoonMath Free plan daily allowance; API key required. Paid plans meter usage. API docs list 1M context and 64K output. Completion and streamed tool round trip verified 2026-11-01; daily allowance size not measured.' },
-    { provider:'moonmath', model:'glm-5.3-flash', label:'GLM 5.3 Flash (MoonMath)', released:'2026-10', contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'MoonMath Free plan daily allowance; API key required. Paid plans meter usage. API docs list 1M context and 64K output; reasoning cannot be disabled (off uses low). Completion and streamed tool round trip verified 2026-11-01; daily allowance size not measured.' },
+    { provider:'moonmath', model:'glm-5.3', label:'GLM 5.3 (MoonMath)', released:'2026-10', contextK:1000, params:null, media:['text','image'], tools:true, thinking:true, note:'MoonMath Free plan daily allowance; API key required. Replaces glm-5.3-flash, which MoonMath no longer serves (HTTP 403, 2026-11-23). Listed by its /models and accepted (HTTP 402 at the daily limit); not yet probed with a tool call or run through the long-chat test.' },
     // Requesty: $0 routes among its 800+ priced models; free calls work on a $0 balance. In-flight requests per organization are
     // capped at (balance rounded up) x tier multiplier, about 2 at $0 (checked 2026-11-01). Tool calls (streamed) checked 2026-11-01;
     // images checked with a random code (Gemma 4 rejects images here, HTTP 400).
@@ -560,7 +560,6 @@ const MODEL_CATALOG = [
     { provider:'requesty', model:'nvidia/muse-glimmer-30b', label:'Muse Glimmer 30B (Requesty)', released:'2026-08', contextK:131, params:30, media:['text','image'], tools:true, thinking:true, note:'Meta multimodal 30B; 131K context; image reading verified 2026-11-01. Requesty $0 route; API key required (works on a $0 balance). The org can have only about 2 requests in flight at $0 balance (limit = balance x 5). Requesty lists the route as possibly used for training, with 30-day retention.' },
     { provider:'requesty', model:'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label:'Nemotron 3 Nano Omni (Requesty)', released:'2026-06', contextK:131, params:30, media:['text','image'], tools:true, thinking:true, note:'30B MoE (3B active); 131K context; image reading verified 2026-11-01. Requesty $0 route; API key required (works on a $0 balance). The org can have only about 2 requests in flight at $0 balance (limit = balance x 5). Requesty lists the route as possibly used for training, with 30-day retention.' },
     { provider:'requesty', model:'google/gemma-4-31b-it', label:'Gemma 4 31B (Requesty)', released:'2026-04', contextK:262, params:31, media:['text'], tools:true, thinking:false, note:'256K context, 8K output; images rejected on this route (HTTP 400, 2026-11-01). Requesty $0 route; API key required (works on a $0 balance). The org can have only about 2 requests in flight at $0 balance (limit = balance x 5).' },
-    { provider:'requesty', model:'mistral/leanstral-1-5', label:'Leanstral 1.5 (Requesty)', released:'2026-05', contextK:262, params:null, media:['text'], tools:true, thinking:true, note:'Lean 4 proof-engineering model (domain-specific); EU-hosted; 256K context. Requesty $0 route; API key required (works on a $0 balance). The org can have only about 2 requests in flight at $0 balance (limit = balance x 5).' },
 ];
 
 
@@ -748,6 +747,8 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'openrouter|liquid/lfm-2.5-2.6b:free',       // no longer listed by OpenRouter (2026-11-18)
     'nvidia|deepseek-ai/deepseek-v4.1-flash',    // no longer in NVIDIA's /models list (2026-11-18)
     'tokenharbor|deepseek-v4-flash:free',        // no longer in TokenHarbor's /models list (2026-11-18)
+    'moonmath|glm-5.3-flash',                    // HTTP 403 "not available for this API key"; MoonMath's /models lists glm-5.3, not glm-5.3-flash (2026-11-23)
+    'requesty|mistral/leanstral-1-5',            // HTTP 404 "no longer available"; not listed as free by Requesty (2026-11-23)
 ]);
 function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
@@ -801,6 +802,8 @@ const _DEFAULT_MAIN_MODELS = [
     // (404 "free period has ended", 2026-11-18) left the list. Ling 3.1 Flash (88% on Kilo, 78% on Vercel) left the list on 2026-11-05:
     // Kilo no longer lists its free snapshot and Vercel prices it ($0.30/$0.90 per M tokens).
     // ERNIE 5.5 Flash Preview joined on 2026-11-20, between Step 5 (90.1%) and the Nemotron entries (87.6%). Nous Hy4 Flash (27 of 27, stopped at 174K) waits for its other two conversations.
+    // 2026-11-23: MoonMath's GLM 5.3 Flash left the list (403 "not available for this API key"; MoonMath serves glm-5.3 now, accepted but not yet probed because the daily credits were used up).
+    // TokenHarbor answered 429 (weekly allowance, back on 24 Nov 04:23 UTC) and MoonMath DeepSeek 402 (daily credits): both stay.
     // Not here: Nemotron 3 Ultra (69% on Kilo, 81% on NVIDIA at 28 tok/s), Requesty's routes (shared free budget that
     // stayed refused for over an hour; Ling 74.5% there), Dots 3 Note (garbled <dots_function_call> tool calls), stealth models
     // (withdrawn without notice), Ornith 1.5 (no longer free on Nous, 2026-11-05).
@@ -810,7 +813,6 @@ const _DEFAULT_MAIN_MODELS = [
     'tokenharbor|deepseek-v4.1-flash:free',            // weekly quota
     'moonmath|deepseek-v4.1-flash',                    // daily Free-plan allowance (about 2M tokens)
     'nvidia|z-ai/glm-5.3-flash',                       // NIM free credits; slow (36 tok/s)
-    'moonmath|glm-5.3-flash',                          // same GLM, MoonMath's shared daily allowance
     'nvidia|stepfun-ai/step-5-preview',                // NIM free credits; slow (22 tok/s)
     'kilo|baidu/ernie-5.5-flash-preview:free',         // Kilo's free quota; 89.8% (97 of 108), held the context ceiling in all three conversations, 131 tok/s (2026-11-19)
     'nous|stepfun/step-3.7-flash:free',                // 198B MoE, fast reasoning; Nous's hourly token cap

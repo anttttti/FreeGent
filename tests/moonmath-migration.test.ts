@@ -6,14 +6,14 @@ describe('zro → moonmath settings migration', () => {
 
     it('moves the key and rewrites saved model specs once', async () => {
         localStorage.setItem('fg_zro_key', 'synthetic-old-key');
-        localStorage.setItem('fg_main_models', JSON.stringify(['zro|glm-5.3-flash', 'kilo|reflection/beam-free']));
+        localStorage.setItem('fg_main_models', JSON.stringify(['zro|glm-5.3', 'kilo|reflection/beam-free']));
         localStorage.setItem('fg_worker_model', 'zro|deepseek-v4.1-flash');
         localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'zro', model: 'new-flash', label: 'New' }]));
         vi.resetModules();
         await import('../config.ts');
         expect(localStorage.getItem('fg_zro_key')).toBeNull();
         expect(localStorage.getItem('fg_moonmath_key')).toBe('synthetic-old-key');
-        expect(JSON.parse(localStorage.getItem('fg_main_models')!)).toEqual(['moonmath|glm-5.3-flash', 'kilo|reflection/beam-free']);
+        expect(JSON.parse(localStorage.getItem('fg_main_models')!)).toEqual(['moonmath|glm-5.3', 'kilo|reflection/beam-free']);
         expect(localStorage.getItem('fg_worker_model')).toBe('moonmath|deepseek-v4.1-flash');
         expect(JSON.parse(localStorage.getItem('fg_custom_models')!)[0].provider).toBe('moonmath');
     });
@@ -33,7 +33,7 @@ describe('removed APInex provider', () => {
     it('drops its saved key, models and priority-list entries on load', async () => {
         localStorage.setItem('fg_apinex_key', 'synthetic-apinex-key');
         localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'apinex', model: 'free/new', label: 'Old' }]));
-        localStorage.setItem('fg_main_models', JSON.stringify(['apinex|free/glm-5.3-flash', 'kilo|reflection/beam-free']));
+        localStorage.setItem('fg_main_models', JSON.stringify(['apinex|free/glm-5.3', 'kilo|reflection/beam-free']));
         vi.resetModules();
         await import('../config.ts');
         const C = window as any;

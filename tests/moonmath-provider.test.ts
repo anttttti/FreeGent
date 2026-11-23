@@ -5,7 +5,7 @@ import { stripThinkingFields } from '../payload-builder.ts';
 
 const W = window as any;
 const DEEPSEEK = 'moonmath|deepseek-v4.1-flash';
-const GLM = 'moonmath|glm-5.3-flash';
+const GLM = 'moonmath|glm-5.3';
 const KEY = 'synthetic-moonmath-credential';
 let findKeysInText: (text: string) => Record<string, string>;
 beforeAll(async () => {
@@ -28,8 +28,8 @@ it('keeps MoonMath inactive without credentials, then routes main and worker req
     expect(W.oaiEndpoint()).toMatchObject({ provider: 'moonmath', model: 'deepseek-v4.1-flash', key: KEY,
         url: 'https://zro.moonmath.ai/v1/chat/completions' });
     expect(W.resolveWorkerModelSpec(null, null)).toBe(GLM);
-    expect(W.specToEndpoint(GLM)).toMatchObject({ provider: 'moonmath', model: 'glm-5.3-flash', key: KEY });
-    expect(modelPageUrl('moonmath', 'zro/glm-5.3-flash')).toBe('https://zro.moonmath.ai/docs/models/glm-5.3-flash');
+    expect(W.specToEndpoint(GLM)).toMatchObject({ provider: 'moonmath', model: 'glm-5.3', key: KEY });
+    expect(modelPageUrl('moonmath', 'zro/glm-5.3')).toBe('https://zro.moonmath.ai/docs/models/glm-5.3');
 });
 
 it('recognizes explicit MOONMATH_API_KEY assignments without guessing the provider of a bare sk- key', () => {
@@ -42,14 +42,14 @@ it('can discover models directly when privacy settings disable the proxy', async
     W.hideBuiltinModel(GLM);
     vi.spyOn(W, 'getLocalApiProxy').mockReturnValue('');
     const request = vi.fn(async (url: string) => ({ ok: true, json: async () =>
-        url === 'https://zro.moonmath.ai/v1/models' ? { data: [{ id: 'glm-5.3-flash', max_input_tokens: 1000000 }] } : null }));
+        url === 'https://zro.moonmath.ai/v1/models' ? { data: [{ id: 'glm-5.3', max_input_tokens: 1000000 }] } : null }));
     vi.stubGlobal('fetch', request);
     showModelUpdateModal();
     await vi.waitFor(() => expect(document.getElementById('fg-mu-apply')).not.toBeNull());
     const call = request.mock.calls.find(([url]) => url === 'https://zro.moonmath.ai/v1/models') as any;
     expect(call[1]).toMatchObject({ method: 'GET', headers: { Authorization: `Bearer ${KEY}` } });
     document.getElementById('fg-mu-apply')!.click();
-    expect(W.getAllModels().find((m: any) => m.provider === 'moonmath' && m.model === 'glm-5.3-flash'))
+    expect(W.getAllModels().find((m: any) => m.provider === 'moonmath' && m.model === 'glm-5.3'))
         .toMatchObject({ contextK: 1000, media: ['text', 'image'], tools: true, thinking: true });
 });
 
@@ -82,8 +82,8 @@ it('uses the shared completion path with MoonMath authentication and background 
 });
 
 it.each([
-    ['deepseek-v4.1-flash', 0, 'none'], ['glm-5.3-flash', 0, 'low'],
-    ['deepseek-v4.1-flash', 1024, 'low'], ['glm-5.3-flash', 8192, 'high'], ['deepseek-v4.1-flash', 24576, 'max'],
+    ['deepseek-v4.1-flash', 0, 'none'], ['glm-5.3', 0, 'low'],
+    ['deepseek-v4.1-flash', 1024, 'low'], ['glm-5.3', 8192, 'high'], ['deepseek-v4.1-flash', 24576, 'max'],
 ])('maps %s budget %s to supported effort %s while preserving streaming and tools', (model, thinkingBudget, effort) => {
     const p = W.buildChatPayload({ provider: 'moonmath', model }, { messages: [{ role: 'user', content: 'hi' }],
         temperature: 0.2, maxTokens: 100, stream: true, thinkingBudget,
@@ -112,7 +112,7 @@ it('discovers only advertised Free-plan IDs, deduplicates aliases, and excludes 
         const target = opts?.body ? JSON.parse(opts.body).url : '';
         return { ok: true, json: async () => target === 'https://zro.moonmath.ai/v1/models' ? { data: [
             { id: 'deepseek-v4.1-flash' }, { id: 'zro/deepseek-v4.1-flash' },
-            { id: 'glm-5.3-flash' }, { id: 'glm-5.3' }, { id: 'dolly-2-security' },
+            { id: 'glm-5.3' }, { id: 'glm-5.3' }, { id: 'dolly-2-security' },
         ] } : null };
     });
     vi.stubGlobal('fetch', request);

@@ -13,19 +13,19 @@ describe('MoonMath quota policies', () => {
 
     it('waits for 00:00 UTC on spent MoonMath Free usage, but re-checks a per-key spend limit hourly', () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-01T22:00:00Z'));
-        _markCooldown({ provider: 'moonmath', model: 'glm-5.3-flash' }, null, new Error('HTTP 402: Spend quota or plan budget exhausted'));
+        _markCooldown({ provider: 'moonmath', model: 'glm-5.3' }, null, new Error('HTTP 402: Spend quota or plan budget exhausted'));
         expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(2 * 3_600 + 60);
         _endpointCooldown.clear();
-        _markCooldown({ provider: 'moonmath', model: 'glm-5.3-flash' }, null,
+        _markCooldown({ provider: 'moonmath', model: 'glm-5.3' }, null,
             new Error('HTTP 402: This API key has reached its spend limit. Create a new API key or use another key.'));
-        expect(getCooldownRemaining('moonmath|glm-5.3-flash')).toBe(3_600);
+        expect(getCooldownRemaining('moonmath|glm-5.3')).toBe(3_600);
         expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(3_600);
     });
 
     it('retries a MoonMath parallel-request refusal after seconds, not its Retry-After minute, and leaves the other model alone', () => {
         const err = new Error('HTTP 429: The Free plan runs a limited number of requests at once. Wait for one to finish, or add a usage pack or plan.');
-        _markCooldown({ provider: 'moonmath', model: 'glm-5.3-flash' }, 60_000, err);
-        expect(getCooldownRemaining('moonmath|glm-5.3-flash')).toBe(5);
+        _markCooldown({ provider: 'moonmath', model: 'glm-5.3' }, 60_000, err);
+        expect(getCooldownRemaining('moonmath|glm-5.3')).toBe(5);
         expect(getCooldownRemaining('moonmath|deepseek-v4.1-flash')).toBe(0);
     });
 

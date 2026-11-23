@@ -240,7 +240,7 @@ async function _fetchRequestyModels(): Promise<FetchResult> {
 
 // MoonMath's Free plan grants a daily allowance on these IDs despite their nonzero paid-plan prices.
 // Other /models entries are paid and must not enter the free-model catalog automatically.
-const _MOONMATH_FREE_IDS = new Set(['deepseek-v4.1-flash', 'glm-5.3-flash']);
+const _MOONMATH_FREE_IDS = new Set(['deepseek-v4.1-flash', 'glm-5.3']);
 async function _fetchMoonmathModels(): Promise<FetchResult> {
     try {
         const key = typeof getMoonmathKey === 'function' ? getMoonmathKey() : '';
