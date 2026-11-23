@@ -1,9 +1,12 @@
 // Regression tests for the codex v0.61 commit-review findings R02, R05 and R06.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+// The deployment script lives in the bench repo (bench/deploy.sh; ./deploy.sh is a wrapper). A checkout without the bench repo has nothing to scan.
+const DEPLOY_SH = join(__dirname, '..', 'bench', 'deploy.sh');
 
 describe('R02: runner task label is text, not HTML', () => {
     it('does not create elements from a task title', async () => {
@@ -34,7 +37,7 @@ describe('R05: an expired negative tool format is renewed', () => {
 });
 
 describe('R06: history secret scan under pipefail', () => {
-    it('finds a secret early in a large commit', () => {
+    it.skipIf(!existsSync(DEPLOY_SH))('finds a secret early in a large commit', () => {
         const dir = mkdtempSync(join(tmpdir(), 'r06-'));
         const sh = (c: string) => execFileSync('bash', ['-c', c], { cwd: dir, encoding: 'utf8' });
         sh('git init -q && git config user.email a@b && git config user.name t && git commit -q --allow-empty -m base');
@@ -42,7 +45,7 @@ describe('R06: history secret scan under pipefail', () => {
         writeFileSync(join(dir, 'big.txt'), secret + '\n' + 'filler line\n'.repeat(200000));
         sh('git add . && git commit -q -m big');
         // The exact scan lines from deploy.sh, run under its shell options.
-        const src = readFileSync(join(__dirname, '..', 'deploy.sh'), 'utf8');
+        const src = readFileSync(DEPLOY_SH, 'utf8');
         const m = src.match(/_hits=\$\(git show[\s\S]*?\|\| true\)\n\s*if \[ "\$\{_hits:-0\}" -gt 0 \]/);
         expect(m).not.toBeNull();
         const out = sh(`set -euo pipefail; SECRET_RE='ghp_[A-Za-z0-9]{36,}'; _hash=$(git rev-parse HEAD); ${m![0]}; then echo FOUND; else echo MISSED; fi`);

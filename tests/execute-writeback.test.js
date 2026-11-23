@@ -69,7 +69,7 @@ describe('execute_code with the Local provider', () => {
         expect(written.has('big.txt')).toBe(false);
         expect(written.get('a.txt')).toBe('AA');
         expect(r.files_written).toEqual(['a.txt']);
-        expect(r.stderr).toMatch(/\[write failed\] big\.txt: not written.*too large/);
+        expect(r.stderr).toMatch(/\[write failed\] big\.txt: not written.*over the size limit/);
         expect(r.write_errors).toHaveLength(1);
         expect(r.exit_code).toBe(0);   // part of the work was applied
     });

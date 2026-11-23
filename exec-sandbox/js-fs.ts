@@ -49,7 +49,7 @@ function fsError(code: string, op: string, p: string): Error {
     return makeFsError(code, `${code}: ${what}, ${op} '${p}'`, op, p);
 }
 
-/** A workspace file as the page sends it: text, binary as base64, or `{ omitted: size }` for one that exists but was left out of this run's copy (`large`: over the file limit, so naming it does not help). */
+/** A workspace file as the page sends it: text, binary as base64, or `{ omitted: size }` for one that exists but was left out of this run's copy (`large`: over the file limit or not readable as text, so naming it does not help). */
 export type WorkspaceFileData = string | { base64: string } | { omitted: number; large?: boolean };
 type Content = string | Uint8Array;
 
@@ -90,7 +90,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
     };
     const skipped = (p: string): string | null => { const n = wsName(posix.resolve(p)); return n !== null && n in left ? n : null; };
     const notCopied = (op: string, p: string): Error => makeFsError('EIO', left[skipped(p) ?? '']?.large
-        ? `EIO: '${p}' is in the workspace but over 10 MB, more than a run is given: use bash or Python for it`
+        ? `EIO: '${p}' is in the workspace but cannot be given to a run (over 10 MB, or not readable as text): use bash or Python for it`
         : `EIO: '${p}' is in the workspace but was not copied into this run (a run gets about 24 MB of the workspace, the files its code names first): name its path as a literal string in the code, or use bash or Python for it`, op, p);
     const keys = () => [...Object.keys(files).map(n => `${WORKSPACE}/${n}`), ...Object.keys(left).map(n => `${WORKSPACE}/${n}`), ...scratch.keys(), ...dirs];
     const isDir = (p: string) => {

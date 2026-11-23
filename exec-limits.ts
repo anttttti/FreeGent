@@ -13,7 +13,7 @@ export function execTimeoutMs(seconds: unknown): number {
 /** Why a run's write was refused: the file it targets was left out of the run's copy of the workspace (over the file limit, or past the copy's total limit),
  *  so the run could not have seen its content and writing it would replace the original with whatever the run made. */
 export function omittedFileWriteMessage(path: string): string {
-    return `${path}: not written. The existing file was left out of the run's copy of the project (too large to copy), so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
+    return `${path}: not written. The existing file was left out of the run's copy of the project (over the size limit for a file, or past the limit for the whole copy), so the run did not see it, and writing it would have replaced its content. Change it with append_file or replace_in_file, or write the new output to a different file.`;
 }
 
 /** Characters of workspace files (stored size: base64 for binary) one JavaScript run gets a copy of. Every run was sent every file: a 690-file, about 70 MB
@@ -21,7 +21,7 @@ export function omittedFileWriteMessage(path: string): string {
 export const EXEC_COPY_MAX_CHARS = 24_000_000;
 
 /** Which workspace records a run gets: files named in its code first (by path or by file name), then the rest smallest first, while the copy stays within `maxTotal`;
- *  a file over `maxFile` never (those are also in `large`: naming them does not help). Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
+ *  a file over `maxFile` never (those are also in `large`: naming them does not help; the Local Folder's unreadable files are too). Everything else is `omitted` with its size, for the run to list and to refuse to read with a message. A workspace within the limit is sent whole. */
 export function planWorkspaceCopy<T extends { name?: string; content?: unknown; encoding?: string | null }>(recs: Iterable<T | null | undefined>, code: string, maxFile: number, maxTotal = EXEC_COPY_MAX_CHARS): { send: T[]; omitted: Map<string, number>; large: Set<string> } {
     const omitted = new Map<string, number>(), large = new Set<string>(), cand: { r: T; len: number; named: boolean }[] = [];
     const sizeOf = (r: T, len: number) => r.encoding === 'base64' ? Math.floor(len * 3 / 4) : len;

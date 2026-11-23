@@ -12,6 +12,7 @@ node_modules/
 /logs/
 /handover.md
 /results/
+/commit-reviews/
 /memory/
 /research/
 /dist/
