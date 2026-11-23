@@ -163,6 +163,12 @@ describe('files left out of the run\'s copy', () => {
         expect(() => fs.mkdirSync('assets/big.png', { recursive: true })).toThrow(/EEXIST/);
         expect(fs.statSync('assets/big.png').isFile()).toBe(true);
     });
+    it('mkdirSync recursive below a left-out file is ENOTDIR, and the file does not become a folder (commit review of b686d2b)', () => {
+        const { fs } = createWorkspaceFs({ 'assets/big.png': { omitted: 700000 } });
+        expect(() => fs.mkdirSync('assets/big.png/sub', { recursive: true })).toThrow(/ENOTDIR/);
+        expect(fs.statSync('assets/big.png').isFile()).toBe(true);
+        expect(fs.statSync('assets/big.png').isDirectory()).toBe(false);
+    });
     it('refuse renaming onto a left-out file: the source stays, nothing is queued for write-back (a rename used to delete the source and lose its content)', () => {
         const { fs, written, deleted } = createWorkspaceFs({ 'new.txt': 'my output', 'assets/big.png': { omitted: 700000 } });
         expect(() => fs.renameSync('new.txt', 'assets/big.png')).toThrow(/not copied into this run/);

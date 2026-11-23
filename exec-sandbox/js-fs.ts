@@ -154,7 +154,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
             const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
             if (!recursive) { if (!isDir(parent)) throw fsError('ENOENT', 'mkdir', p); dirs.add(abs); return undefined; }
             let first = abs;
-            for (let d = parent; d && !isDir(d); d = d.slice(0, d.lastIndexOf('/')) || '/') { if (get(d) !== undefined) throw fsError('ENOTDIR', 'mkdir', p); first = d; }
+            for (let d = parent; d && !isDir(d); d = d.slice(0, d.lastIndexOf('/')) || '/') { if (get(d) !== undefined || skipped(d) !== null) throw fsError('ENOTDIR', 'mkdir', p); first = d; }
             dirs.add(abs);
             return first;
         },
