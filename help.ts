@@ -60,11 +60,13 @@ function placeHelp() {   // the first-load popover has no focus to lose, so it n
 export function closeHelp(): void {
     const pop = popover();
     if (!pop) return;
+    const hadFocus = pop.contains(document.activeElement);   // closed from the keyboard (its Close button): the opener gets the focus back, as for Escape (explorations V008)
     if (firstLoad) { try { if ((pop.querySelector('.fg-help-dont') as HTMLInputElement | null)?.checked) localStorage.setItem(KEYS.INTRO_SEEN, '1'); } catch {} }
     pop.remove();
     firstLoad = false;
     shownFor = '';
     q('#help-btn')?.setAttribute('aria-expanded', 'false');
+    if (hadFocus) q('#help-btn')?.focus();
 }
 
 function openHelp(auto = false): void {
@@ -130,6 +132,7 @@ interface Step {
 
 let steps: Step[] = [];
 let idx = -1;
+let tourView = '';        // the view the tour was started in: it ends when another one is shown (explorations V003)
 let prevFocus: HTMLElement | null = null;
 const TOUR = 'fg-tour';
 const tourEl = () => document.getElementById(TOUR);
@@ -242,6 +245,13 @@ function renderTour() {
     const s = steps[idx];
     s.enter?.();
     for (const sel of s.sel) { const el = q(sel); if (visible(el)) { el!.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'instant' as ScrollBehavior }); break; } }   // a row that scrolls (Settings tabs on a phone)
+    if (!stepRect(s)) {   // a resize or a layout change took the target off the screen: go on with the next step that is there, or end the tour
+        const next = steps.findIndex((x, k) => k > idx && usable(x));
+        if (next < 0) { closeTour(); return; }
+        idx = next;
+        renderTour();
+        return;
+    }
     const holeEl = el.querySelector('.fg-tour-hole') as HTMLElement;
     const card = el.querySelector('.fg-tour-card') as HTMLElement;
     const shown = steps.filter(usable);
@@ -296,6 +306,7 @@ export function startTour(view = activeView()): void {
     if (activeView() !== view || view === 'settings') (window as any).activateTab?.(view);   // Settings opens on Credentials, where its tour starts
     prevFocus = document.activeElement as HTMLElement | null;
     steps = buildTours()[view];
+    tourView = view;
     const first = steps.findIndex(usable);
     if (first < 0) return;
     const el = document.createElement('div');
@@ -324,6 +335,7 @@ function syncButton() {
     const has = !!PAGES[activeView()];
     btn.hidden = !has;
     if (popover() && shownFor !== activeView()) closeHelp();
+    if (tourEl() && activeView() !== tourView) closeTour();   // a key (Ctrl/Cmd+K) or a click can change the view under a tour
 }
 
 function install() {
