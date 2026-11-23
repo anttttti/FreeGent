@@ -4,6 +4,7 @@
 
 **Never run `git push` or `git push origin` directly.**
 Always use `./deploy.sh` (or `./deploy.sh --git-only` / `./deploy.sh --worker-only`).
+(`./deploy.sh` is a short wrapper; the script itself is `bench/deploy.sh`, in the bench repo.)
 
 The script runs safety, bug, and leak checks before any push or CF Worker deploy.
 A `pre-push` git hook enforces this; bare `git push` is rejected.
