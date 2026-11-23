@@ -21,6 +21,12 @@ import { registerNativeRun } from './native-running.js';
 const TOOL_CACHE_PATH_RE = /(?:^|\/)(?:\.pytest_cache|__pycache__|\.mypy_cache|\.ruff_cache|\.hypothesis|\.tox|\.nox|\.cache|node_modules\/\.cache)\/|(?:^|\/)\.coverage(?:\.[\w.-]+)?$/;
 export { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS, execTimeoutMs } from './exec-limits.js';
 // Exit code for a process ended by a signal, as a shell reports it (128 + signal number).
+/** SIGKILL to a command's process group (it is spawned detached, so the group is its own) and to the child. A child that never started has no pid: `-(pid ?? 0)` made that
+ *  `kill(0)`, the calling process's own group (a Stop or a deadline before a failed spawn settled; explorations W014), so a group is signalled only for a positive pid. */
+export function killChildGroup(child: { pid?: number; kill(signal?: any): any }, killPid: (pid: number, signal: any) => void = process.kill.bind(process)): void {
+    if (Number.isInteger(child.pid) && (child.pid as number) > 0) { try { killPid(-(child.pid as number), 'SIGKILL'); } catch {} }
+    try { child.kill('SIGKILL'); } catch {}
+}
 export function signalExitCode(signal: string | null | undefined): number {
     const n = signal ? (osConstants.signals as Record<string, number>)[signal] : undefined;
     return 128 + (n ?? 0) || 1;
@@ -67,7 +73,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
             env: { ...scrubEnv(process.env), PYTHONDONTWRITEBYTECODE: '1' } });
         child.unref();
         // A hard Stop ends the command, not only the turn waiting for it: a process left running wrote its files after the next turn had begun.
-        const kill = () => { try { process.kill(-(child.pid ?? 0), 'SIGKILL'); } catch {} try { child.kill('SIGKILL'); } catch {} };
+        const kill = () => killChildGroup(child);
         const unregister = registerNativeRun(kill);
         // No interactive input: close stdin so a program that reads it gets EOF at once instead of
         // blocking until the timeout (read, input(), vim prompts, menu-driven binaries).
@@ -122,7 +128,7 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         child.on('error', (e) => _done({ error: `${cmd}: ${e.message}`, ..._shaped(), exit_code: 1 }));
         const timer = setTimeout(() => {
             timedOut = true;
-            try { process.kill(-(child.pid ?? 0), 'SIGKILL'); } catch {}
+            killChildGroup(child);
             void _withChanges({ ..._shaped(),
                     exit_code: 124, error: `Command timed out after ${Math.round(TIMEOUT_MS / 1000)}s. If it was waiting for input, pass input through a pipe or file (stdin is closed). ${TIMEOUT_MS < EXEC_TIMEOUT_MAX_MS ? `A step that really needs longer can pass timeout_s (up to ${EXEC_TIMEOUT_MAX_MS / 1000}); ` : ''}for anything longer, run the job in the background and poll its output file.` }).then(_done);
         }, TIMEOUT_MS);

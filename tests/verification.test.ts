@@ -21,6 +21,12 @@ describe('verification states', () => {
         expect(run([[edit], [tsc(2)], [vitest], [tsc(0)]])).toBe('verified');   // the same kind passing clears it
         expect(run([[edit], [tsc(2)], [edit], [vitest]])).toBe('verified');      // a change in between starts over, as before
     });
+    it('the kind of a check is the command that runs it, not a runner name in a comment or a quoted string (explorations W011)', () => {
+        const nodeCheck = (exit_code: number) => ({ name: 'execute_code', args: { code: '# earlier: python -m unittest\nnode --check src/a.js' }, result: { exit_code, stdout: exit_code ? 'SyntaxError' : '' } });
+        const unittest = { name: 'execute_code', args: { code: 'python -m unittest discover' }, result: { exit_code: 0, stdout: 'Ran 3 tests\nOK' } };
+        expect(run([[edit], [nodeCheck(1)], [unittest]])).toBe('failed_verification');   // the unrelated pass must not clear the failed syntax check
+        expect(run([[edit], [nodeCheck(1)], [unittest], [nodeCheck(0)]])).toBe('verified');
+    });
     it('a scratch file is not the change', () => {
         expect(run([[{ name: 'write_file', args: { path: 'repro_bug.py' }, result: { success: true } }]])).toBe('no_change');
         expect(run([[{ name: 'execute_code', args: { code: 'echo x > /tmp/o' }, result: { exit_code: 0, files_written: ['tmp/o.txt'] } }]])).toBe('no_change');

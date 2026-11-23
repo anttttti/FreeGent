@@ -33,7 +33,9 @@ const SCRATCH_RE = /(?:^|\/)(?:tmp|scratch)(?:[_./-]|$)|^\.?\/?(?:temp|repro\w*|
 // `failing`: the kinds of check (tsc, vitest, pytest, a page check) that failed since the last change and have not passed since. A pass of another kind does not clear them.
 interface VerificationState { edits: number; changedSinceCheck: boolean; lastCheck: 'pass' | 'fail' | null; files: Set<string>; deleted: Set<string>; failing: Set<string> }
 export const newVerification = (): VerificationState => ({ edits: 0, changedSinceCheck: false, lastCheck: null, files: new Set(), deleted: new Set(), failing: new Set() });
-const _kind = (call: any): string => call?.name === 'check_page' ? 'page' : (CHECK_RE.exec(String(call?.args?.code ?? ''))?.[0] ?? 'check').replace(/\s+/g, ' ');
+// The kind comes from the command that runs the check, not from the first runner name anywhere in the text: a name in a comment or a quoted string is data, and a later pass of the
+// other kind used to clear a failure it did not cover (explorations W011).
+const _kind = (call: any): string => call?.name === 'check_page' ? 'page' : (CHECK_RE.exec(_checkCommands(String(call?.args?.code ?? ''))[0] ?? '')?.[0] ?? 'check').replace(/\s+/g, ' ');
 
 /** Whether the call changed the workspace (scratch files do not count) and which files it names. */
 function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
@@ -89,18 +91,19 @@ const NO_TESTS_RE = /collected 0 items|\bno tests ran\b|no tests collected|ERROR
 // first word on, after the wrappers that only start another command (cd, env assignments, time, timeout, sudo, python -m, uv run, npx, docker exec, bash -c).
 const _WRAP = '(?:\\w+=\\S*|time|env|sudo|nice(?:\\s+-n\\s*\\d+)?|exec|command|xvfb-run(?:\\s+-a)?|timeout\\s+\\S+|(?:uv|poetry|pipenv|pdm|hatch)\\s+run|npx|bundle\\s+exec|docker\\s+exec(?:\\s+-\\S+)*\\s+\\S+|python[\\d.]*(?:\\s+-[A-Za-z]+)*(?:\\s+-m)?)';
 const CHECK_AT_START_RE = new RegExp(`^(?:${_WRAP}\\s+)*(?:${CHECK_RE.source})`);
-export function isCheckCommand(code: string): boolean {
+// The simple commands of `code`, with the data blanked (what isCheckCommand and the kind of a check both look at).
+function _commands(code: string): string[] {
     let t = String(code ?? '');
     t = t.replace(/\b(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*?)\1/g, '\n$2\n');                  // the program a shell is told to run is a command
     t = t.replace(/<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\s*\1\b/g, ' ')                     // heredoc bodies are data
          .replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#.*$/gm, '');
-    for (const seg of t.split(/&&|\|\||;|\n|\||\(|\)/)) {
-        const c = seg.trim().replace(/^[!{]\s*/, '').replace(/^\.\/(?=(?:mvnw|gradlew)\b)/, '');
-        if (c && /\b(?:vitest|jest)\s+(?:list\b|(?:\S+\s+)*--(?:listTests|list)\b)/.test(c)) continue;   // test discovery runs nothing (codex R977)
-        if (c && CHECK_AT_START_RE.test(c)) return true;
-    }
-    return false;
+    return t.split(/&&|\|\||;|\n|\||\(|\)/).map(seg => seg.trim().replace(/^[!{]\s*/, '').replace(/^\.\/(?=(?:mvnw|gradlew)\b)/, ''));
 }
+// The check commands of `code`: the ones that run a runner (not test discovery, codex R977).
+function _checkCommands(code: string): string[] {
+    return _commands(code).filter(c => c && !/\b(?:vitest|jest)\s+(?:list\b|(?:\S+\s+)*--(?:listTests|list)\b)/.test(c) && CHECK_AT_START_RE.test(c));
+}
+export function isCheckCommand(code: string): boolean { return _checkCommands(code).length > 0; }
 function _isCheckCall(call: any): boolean {
     return call?.name === 'execute_code' && isCheckCommand(String(call.args?.code ?? ''));
 }
