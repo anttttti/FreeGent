@@ -1080,11 +1080,20 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     // under the other, and a page loading into it replaced the other's. So each waits for the one before it, from before the window is opened (worker turns can overlap; explorations D028, Y004).
     const wantWindow = wantsCheckWindow(path);
     const turn = wantWindow ? _windowTurn : null;
-    let releaseWindow: () => void = () => {};
-    const myTurn = new Promise<void>(r => { releaseWindow = r; });
+    let finishTurn: () => void = () => {};
+    const myTurn = new Promise<void>(r => { finishTurn = r; });
+    // Releasing waits for the check before this one: a check that gives up early (Stop, an error) must not let the next one in beside a check still using the window.
+    const releaseWindow = () => { void (turn ?? Promise.resolve()).then(finishTurn); };
     if (wantWindow) _windowTurn = myTurn;
-    if (turn) await turn;
-    const useWindow = wantWindow && await ensureCheckWindow(askToOpenWindow);
+    let useWindow = false;
+    try {
+        if (turn) {   // the wait ends on Stop too (the abort listener of the check itself is attached further down)
+            const sig0 = activeAbortController?.signal;
+            const stopped = new Promise<boolean>(r => { if (sig0?.aborted) r(true); else sig0?.addEventListener('abort', () => r(true), { once: true }); });
+            if (await Promise.race([turn.then(() => false), stopped])) { releaseWindow(); return { error: 'check_page stopped' }; }
+        }
+        useWindow = wantWindow && await ensureCheckWindow(askToOpenWindow);
+    } catch (e) { releaseWindow(); throw e; }   // any other way out used to leave every later check for the window waiting for this one
     if (wantWindow && !useWindow) releaseWindow();   // checked in the tab after all: the next check may take its turn
     let cw: CheckWindowSession | null = null;
     let windowDied = false;
