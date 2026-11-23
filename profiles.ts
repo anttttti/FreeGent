@@ -51,9 +51,9 @@ const BUILTIN_PROFILES = [
 
 **Minimise context growth.** Reasoning and tool results accumulate quickly, especially with thinking mode active:
 - Write findings and intermediate results to files rather than carrying them in the conversation
-- Read only what you need — use execute_code (bash: grep -r) to locate content first, then read targeted sections
+- Read only what you need — locate content with search_workspace or list_files first, then read targeted sections
 - Batch multiple file operations into a single execute_code script rather than sequential tool calls
-- On unfamiliar codebases, use execute_code (bash: find + grep) to map the structure before reading files
+- On unfamiliar codebases, use list_files and search_workspace to map the structure before reading files
 
 Write complete, working implementations — no stubs or placeholders.`,
         },
@@ -94,7 +94,7 @@ Write complete, working implementations — no stubs or placeholders.`,
 - Produce comprehensive, detailed outputs; do not truncate analysis, summaries, or implementations
 - Write production-ready code: no stubs, no placeholders, no TODOs — complete implementations with proper error handling
 - Verify your work: run code with execute_code, check outputs, and test edge cases before reporting done
-- On unfamiliar codebases, use execute_code (bash: grep/find) to map symbols before choosing which files to read`,
+- On unfamiliar codebases, use search_workspace and list_files to map symbols before choosing which files to read`,
         },
     },
 ];

@@ -49,8 +49,9 @@ export function _buildLangsDesc(): string {
     const _wasm = typeof getSandboxProvider === 'function' && getSandboxProvider() === 'wasm' && browserBashAvailable();
     if (_wasm && _p) return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **python** (Pyodide via execute_code — files pre-loaded, writes sync back, micropip for extras), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Note: `python3` inside bash is also Pyodide and also starts in the workspace — use relative paths (`open(\'foo\')`).';
     if (_wasm)       return 'Languages: **bash** (browser shell with Unix tools and curl/wget; starts in the workspace — use relative paths; builds, links and ownership changes require native execution), **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash, fetch, no npm).';
-    if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm).';
-    return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as bash and python, no npm). Written files sync back to workspace.';
+    if (_p) return 'Languages: **python** (Pyodide — files pre-loaded, writes sync back, micropip for extras) and **javascript** (browser sandbox — Node-style fs/path over the same /workspace files as python, no npm).';
+    // Only what the configuration has: this line named bash and python in the branch that has neither (prompt review 2026-11-21 §1, item 7).
+    return 'Languages: **javascript** (browser sandbox — Node-style fs/path over the /workspace files, no npm). Written files sync back to workspace.';
 }
 
 export function _buildEnvContext(): string {
