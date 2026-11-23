@@ -63,7 +63,7 @@ deduplicates `zro/` aliases, and checks the two known free-plan model IDs. The A
 mark free-plan eligibility, so newly added free-plan models need the allowlist updated;
 the updater does not automatically assume every accessible model is free.
 
-MoonMath's two Flash routes passed image-reading checks (random six-digit codes) and appear in image-model routing.
+MoonMath's DeepSeek V4.1 Flash passed an image-reading check (a random six-digit code) and appears in image-model routing. GLM-5.3, which replaced GLM-5.3 Flash there, is catalogued with image input but has not been probed yet.
 
 ## Requesty
 
